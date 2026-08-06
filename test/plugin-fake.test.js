@@ -208,18 +208,18 @@ test('fake plugin: ipc.handle round-trips through dispatch, incl. async and thro
     const { mod } = makeEnginePlugin();
     engine.register('fake', mod);
 
-    assert.deepStrictEqual(await engine.dispatch('fake', 'ping', [7]), { ok: true, pong: 7 });
+    assert.deepStrictEqual(await engine.dispatch('fake', 'ping', [7], 'desktop'), { ok: true, pong: 7 });
     // A promise-returning handler is awaited by dispatch — unlike the session
     // hooks and the intent tail, which are sync-only because they sit inside PTY
     // teardown / turn handling. An IPC call has a caller waiting on a reply, so
     // async is legal HERE and nowhere else in the host.
-    assert.deepStrictEqual(await engine.dispatch('fake', 'slow', []), { ok: true, async: true });
+    assert.deepStrictEqual(await engine.dispatch('fake', 'slow', [], 'desktop'), { ok: true, async: true });
     // A throwing handler becomes a shaped refusal, never a rejected invoke: the
     // renderer half must always get something it can render.
-    assert.deepStrictEqual(await engine.dispatch('fake', 'boom', []), { ok: false, error: 'handler exploded' });
+    assert.deepStrictEqual(await engine.dispatch('fake', 'boom', [], 'desktop'), { ok: false, error: 'handler exploded' });
     // Unknown method / unknown plugin degrade the same way.
-    assert.deepStrictEqual(await engine.dispatch('fake', 'nope', []), { ok: false, error: NO_SUCH_METHOD });
-    assert.deepStrictEqual(await engine.dispatch('ghost', 'ping', []), { ok: false, error: NO_SUCH_METHOD });
+    assert.deepStrictEqual(await engine.dispatch('fake', 'nope', [], 'desktop'), { ok: false, error: NO_SUCH_METHOD });
+    assert.deepStrictEqual(await engine.dispatch('ghost', 'ping', [], 'desktop'), { ok: false, error: NO_SUCH_METHOD });
   });
 });
 
@@ -365,12 +365,12 @@ test('fake plugin: settings shallow-merge into uiSettings.plugins[id], reachable
 
     // The renderer's settings sections persist through the same one channel, on
     // the _host pseudo-id — NOT a channel of their own (constraint 5).
-    assert.deepStrictEqual(await engine.dispatch(HOST_PSEUDO_ID, 'settings.get', ['fake']),
+    assert.deepStrictEqual(await engine.dispatch(HOST_PSEUDO_ID, 'settings.get', ['fake'], 'desktop'),
       { ok: true, values: { a: 1, b: 2 } });
-    assert.deepStrictEqual(await engine.dispatch(HOST_PSEUDO_ID, 'settings.set', ['fake', { c: 3 }]), { ok: true });
+    assert.deepStrictEqual(await engine.dispatch(HOST_PSEUDO_ID, 'settings.set', ['fake', { c: 3 }], 'desktop'), { ok: true });
     assert.deepStrictEqual(record.host.settings.get(), { a: 1, b: 2, c: 3 });
     // An unregistered plugin cannot have settings written on its behalf.
-    assert.deepStrictEqual(await engine.dispatch(HOST_PSEUDO_ID, 'settings.set', ['ghost', { c: 3 }]),
+    assert.deepStrictEqual(await engine.dispatch(HOST_PSEUDO_ID, 'settings.set', ['ghost', { c: 3 }], 'desktop'),
       { ok: false, error: 'no such plugin' });
   });
 });
@@ -458,12 +458,12 @@ test('fake plugin: two plugins are independent — one disabled, the other untou
     engine.register('other', bMod);
 
     // Same METHOD name, different plugin: the host namespaces, so no collision.
-    assert.deepStrictEqual(await engine.dispatch('fake', 'ping', [1]), { ok: true, pong: 1 });
-    assert.deepStrictEqual(await engine.dispatch('other', 'ping', []), { ok: true, from: 'other' });
+    assert.deepStrictEqual(await engine.dispatch('fake', 'ping', [1], 'desktop'), { ok: true, pong: 1 });
+    assert.deepStrictEqual(await engine.dispatch('other', 'ping', [], 'desktop'), { ok: true, from: 'other' });
 
     engine.setEnabled('fake', false);
-    assert.deepStrictEqual(await engine.dispatch('fake', 'ping', [1]), { ok: false, error: NO_SUCH_METHOD });
-    assert.deepStrictEqual(await engine.dispatch('other', 'ping', []), { ok: true, from: 'other' });
+    assert.deepStrictEqual(await engine.dispatch('fake', 'ping', [1], 'desktop'), { ok: false, error: NO_SUCH_METHOD });
+    assert.deepStrictEqual(await engine.dispatch('other', 'ping', [], 'desktop'), { ok: true, from: 'other' });
     assert.strictEqual(intentRegistry.pluginRowFor('fake-note'), null);
     assert.ok(intentRegistry.pluginRowFor('other-note'), "the other plugin's verb survived");
   });

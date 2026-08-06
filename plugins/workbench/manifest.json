@@ -6,5 +6,15 @@
   "entry": { "engine": "engine.js", "renderer": "renderer.js" },
   "style": "style.css",
   "enabledByDefault": true,
-  "announce": "Workbench enabled — Files, Source Control and Worktrees for any local session, in the sidebar footer."
+  "announce": "Workbench enabled — Files, Source Control and Worktrees for any local session, in the sidebar footer.",
+  "surfaces": {
+    "fs.list": "any",
+    "fs.read": "any",
+    "fs.find": "any",
+    "scm.status": "any",
+    "scm.diff": "any",
+    "scm.branches": "any",
+    "wt.list": "any",
+    "wt.selected": "any"
+  }
 }

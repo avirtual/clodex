@@ -145,7 +145,7 @@ test('every session-scoped row resolves the cwd through the host and delegates',
   const { engine, calls, cleanup } = boot();
   for (const [method, args] of NAME_SCOPED_ROWS) {
     calls.length = 0;
-    const res = await engine.dispatch('workbench', method, args);
+    const res = await engine.dispatch('workbench', method, args, 'desktop');
     assert.equal(res.ok, true, `${method} should succeed for a local session`);
     assert.equal(calls.length, 1, `${method} should delegate exactly once`);
     assert.equal(calls[0].args[0], '/repo/seat',
@@ -158,7 +158,7 @@ test('MUST-FIX 5: EVERY session-scoped row refuses a peer session with "remote"'
   const { engine, calls, cleanup } = boot();
   for (const [method, args] of NAME_SCOPED_ROWS) {
     calls.length = 0;
-    const res = await engine.dispatch('workbench', method, ['far', ...args.slice(1)]);
+    const res = await engine.dispatch('workbench', method, ['far', ...args.slice(1)], 'desktop');
     assert.deepEqual(res, { ok: false, error: 'remote' },
       `${method} must refuse a peer session with the exact string the renderer renders`);
     assert.deepEqual(calls, [], `${method} must not touch the filesystem for a peer session`);
@@ -168,9 +168,9 @@ test('MUST-FIX 5: EVERY session-scoped row refuses a peer session with "remote"'
 
 test('the other two fsScope refusals reach the caller unchanged', async () => {
   const { engine, calls, cleanup } = boot();
-  assert.deepEqual(await engine.dispatch('workbench', 'fs.list', ['nobody', '']),
+  assert.deepEqual(await engine.dispatch('workbench', 'fs.list', ['nobody', ''], 'desktop'),
     { ok: false, error: 'Session not found' });
-  assert.deepEqual(await engine.dispatch('workbench', 'scm.status', ['bare']),
+  assert.deepEqual(await engine.dispatch('workbench', 'scm.status', ['bare'], 'desktop'),
     { ok: false, error: 'Session has no working directory' });
   assert.deepEqual(calls, [], 'a refused scope never reaches a leaf');
   cleanup();
@@ -179,10 +179,10 @@ test('the other two fsScope refusals reach the caller unchanged', async () => {
 test('scm.remote keeps the op allowlist on the ENGINE side', async () => {
   const { engine, calls, cleanup } = boot();
   for (const op of ['push', 'pull', 'fetch']) {
-    assert.equal((await engine.dispatch('workbench', 'scm.remote', ['seat', op])).ok, true);
+    assert.equal((await engine.dispatch('workbench', 'scm.remote', ['seat', op], 'desktop')).ok, true);
   }
   calls.length = 0;
-  assert.deepEqual(await engine.dispatch('workbench', 'scm.remote', ['seat', 'reset --hard']),
+  assert.deepEqual(await engine.dispatch('workbench', 'scm.remote', ['seat', 'reset --hard'], 'desktop'),
     { ok: false, error: 'Bad op' });
   assert.deepEqual(calls, [], 'a refused op never reaches git');
   cleanup();
@@ -190,7 +190,7 @@ test('scm.remote keeps the op allowlist on the ENGINE side', async () => {
 
 test('wt.remove takes a PATH and is deliberately unscoped, like core\'s row', async () => {
   const { engine, calls, cleanup } = boot();
-  const res = await engine.dispatch('workbench', 'wt.remove', ['/tmp/some-worktree']);
+  const res = await engine.dispatch('workbench', 'wt.remove', ['/tmp/some-worktree'], 'desktop');
   assert.equal(res.ok, true);
   assert.deepEqual(calls, [{ leaf: 'wt', method: 'removeWorktree', args: ['/tmp/some-worktree'] }],
     'the path is passed straight through — core\'s worktree:remove has no sessionCwd guard either');
@@ -199,8 +199,8 @@ test('wt.remove takes a PATH and is deliberately unscoped, like core\'s row', as
 
 test('wt.create reaches core\'s permanent gitWorktree leaf, opts defaulted to null', async () => {
   const { engine, calls, cleanup } = boot();
-  await engine.dispatch('workbench', 'wt.create', ['/repo', 'feature', { base: 'main' }]);
-  await engine.dispatch('workbench', 'wt.create', ['/repo', 'feature']);
+  await engine.dispatch('workbench', 'wt.create', ['/repo', 'feature', { base: 'main' }], 'desktop');
+  await engine.dispatch('workbench', 'wt.create', ['/repo', 'feature'], 'desktop');
   assert.deepEqual(calls.map((c) => c.args), [
     ['/repo', 'feature', { base: 'main' }],
     ['/repo', 'feature', null],
@@ -338,12 +338,12 @@ test('wt.apply refuses a REAL directory that is not a worktree of this repo', as
   const outsider = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-outsider-'));
   try {
     assert.ok(fs.statSync(outsider).isDirectory(), 'fixture really exists');
-    const res = await engine.dispatch('workbench', 'wt.apply', ['seat', outsider]);
+    const res = await engine.dispatch('workbench', 'wt.apply', ['seat', outsider], 'desktop');
     assert.strictEqual(res.ok, false, 'an arbitrary real directory is not selectable');
 
     // And nothing was written: the rows still read the session cwd.
     calls.length = 0;
-    const list = await engine.dispatch('workbench', 'fs.list', ['seat', '']);
+    const list = await engine.dispatch('workbench', 'fs.list', ['seat', ''], 'desktop');
     assert.strictEqual(list.ok, true);
     assert.strictEqual(calls[0].args[0], '/repo/seat',
       'a refused apply must leave the root at the session cwd');
@@ -355,7 +355,7 @@ test('wt.apply refuses a REAL directory that is not a worktree of this repo', as
 
 test('wt.apply with null clears back to the session cwd', async () => {
   const { engine, cleanup } = boot();
-  const res = await engine.dispatch('workbench', 'wt.apply', ['seat', null]);
+  const res = await engine.dispatch('workbench', 'wt.apply', ['seat', null], 'desktop');
   assert.deepStrictEqual(res, { ok: true, root: null });
   cleanup();
 });
@@ -374,12 +374,12 @@ test('no reachable row writes the selection without validating it', async () => 
 
 test('wt.selected reports the session cwd and never leaks across sessions', async () => {
   const { engine, cleanup } = boot();
-  const mine = await engine.dispatch('workbench', 'wt.selected', ['seat']);
+  const mine = await engine.dispatch('workbench', 'wt.selected', ['seat'], 'desktop');
   assert.strictEqual(mine.ok, true);
   assert.strictEqual(mine.cwd, '/repo/seat', 'the session cwd is reported alongside');
   assert.strictEqual(mine.selected, null, 'nothing selected by default');
 
-  const other = await engine.dispatch('workbench', 'wt.selected', ['bare']);
+  const other = await engine.dispatch('workbench', 'wt.selected', ['bare'], 'desktop');
   assert.strictEqual(other.ok, false, 'a session with no cwd still refuses, unchanged');
   cleanup();
 });
@@ -389,11 +389,11 @@ test('a selected root that no longer exists DROPS to the session cwd, it does no
   // what `git worktree remove` (or our own Remove button) does in practice.
   const gone = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-gone-'));
   const { engine, calls, cleanup } = boot({ worktrees: ['/repo/seat', gone] });
-  const applied = await engine.dispatch('workbench', 'wt.apply', ['seat', gone]);
+  const applied = await engine.dispatch('workbench', 'wt.apply', ['seat', gone], 'desktop');
   assert.strictEqual(applied.ok, true, 'a genuine worktree is selectable');
   fs.rmSync(gone, { recursive: true, force: true });
 
-  const sel = await engine.dispatch('workbench', 'wt.selected', ['seat']);
+  const sel = await engine.dispatch('workbench', 'wt.selected', ['seat'], 'desktop');
   assert.strictEqual(sel.ok, true, 'reporting the root never fails');
   assert.strictEqual(sel.root, '/repo/seat', 'it falls back to the session cwd');
   assert.strictEqual(sel.selected, null, 'and reports no active selection');
@@ -401,7 +401,7 @@ test('a selected root that no longer exists DROPS to the session cwd, it does no
 
   // And the fs rows go back to the cwd rather than refusing.
   calls.length = 0;
-  const res = await engine.dispatch('workbench', 'fs.list', ['seat', '']);
+  const res = await engine.dispatch('workbench', 'fs.list', ['seat', ''], 'desktop');
   assert.strictEqual(res.ok, true);
   assert.strictEqual(calls[0].args[0], '/repo/seat', 'the row ran against the session cwd');
   cleanup();
@@ -412,12 +412,12 @@ test('the selection moves EVERY scoped row together — Files and Source cannot 
   // required now, since apply validates and effectiveRoot re-checks at use time.
   const real = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-wt-'));
   const { engine, calls, cleanup } = boot({ worktrees: ['/repo/seat', real] });
-  const applied = await engine.dispatch('workbench', 'wt.apply', ['seat', real]);
+  const applied = await engine.dispatch('workbench', 'wt.apply', ['seat', real], 'desktop');
   assert.strictEqual(applied.ok, true, 'selection succeeded');
   try {
     for (const [method, args] of NAME_SCOPED_ROWS) {
       calls.length = 0;
-      await engine.dispatch('workbench', method, args);
+      await engine.dispatch('workbench', method, args, 'desktop');
       assert.strictEqual(calls[0].args[0], real,
         `${method} must follow the selected worktree, not the session cwd`);
     }
@@ -429,8 +429,8 @@ test('the selection moves EVERY scoped row together — Files and Source cannot 
 
 test('the peer refusal is untouched by selection — fsScope still runs first', async () => {
   const { engine, cleanup } = boot();
-  await engine.dispatch('workbench', 'wt.apply', ['far', '/anything']);
-  const res = await engine.dispatch('workbench', 'fs.list', ['far', '']);
+  await engine.dispatch('workbench', 'wt.apply', ['far', '/anything'], 'desktop');
+  const res = await engine.dispatch('workbench', 'fs.list', ['far', ''], 'desktop');
   assert.deepStrictEqual(res, { ok: false, error: 'remote' },
     'a selection cannot smuggle a peer session past MUST-FIX 5');
   cleanup();

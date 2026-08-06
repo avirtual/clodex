@@ -9,5 +9,9 @@
   },
   "style": "style.css",
   "enabledByDefault": false,
-  "announce": "Read-only board of a team's tickets: what is open, who holds it, how long it has been quiet, and where its spec lives on disk. Closing and reassigning stay with [agent:task …]."
+  "announce": "Read-only board of a team's tickets: what is open, who holds it, how long it has been quiet, and where its spec lives on disk. Closing and reassigning stay with [agent:task …].",
+  "surfaces": {
+    "teams": "any",
+    "board": "any"
+  }
 }

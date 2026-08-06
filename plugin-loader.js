@@ -1,6 +1,9 @@
 'use strict';
 
-const { isValidPluginId, HOST_API_VERSION, RESERVED_PLUGIN_IDS, PLUGIN_SCOPES, scopeOf } = require('./plugin-api');
+const {
+  isValidPluginId, HOST_API_VERSION, RESERVED_PLUGIN_IDS, PLUGIN_SCOPES, scopeOf,
+  PLUGIN_METHOD_SURFACES,
+} = require('./plugin-api');
 
 function validateManifest(m, dirName) {
   if (!m || typeof m !== 'object') return 'manifest is not a JSON object';
@@ -17,6 +20,20 @@ function validateManifest(m, dirName) {
   // silent. An absent scope is legal and means global.
   if (m.scope != null && !PLUGIN_SCOPES.includes(m.scope)) {
     return `invalid scope: ${JSON.stringify(m.scope)} — must be ${PLUGIN_SCOPES.map((s) => JSON.stringify(s)).join(' or ')}`;
+  }
+  // Same refusal logic as `scope`, and for a sharper reason: `methodSurfaceOf`
+  // resolves anything unrecognized to `desktop`, so a typo here fails CLOSED —
+  // the plugin loads and the method silently stops working on the web surface.
+  // A named refusal at load time is the only way that reaches the author.
+  if (m.surfaces != null) {
+    if (typeof m.surfaces !== 'object' || Array.isArray(m.surfaces)) {
+      return 'manifest.surfaces must be an object mapping method name to surface';
+    }
+    for (const [method, want] of Object.entries(m.surfaces)) {
+      if (!PLUGIN_METHOD_SURFACES.includes(want)) {
+        return `invalid surface for method ${JSON.stringify(method)}: ${JSON.stringify(want)} — must be ${PLUGIN_METHOD_SURFACES.map((s) => JSON.stringify(s)).join(' or ')}`;
+      }
+    }
   }
   if (!m.entry || typeof m.entry !== 'object') return 'manifest.entry is missing';
   if (m.entry.engine && typeof m.entry.engine !== 'string') return 'manifest.entry.engine must be a string';

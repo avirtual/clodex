@@ -173,11 +173,50 @@ function pluginsEnabled(env = {}) {
   return String(env.CLODEX_PLUGINS ?? '') !== '0';
 }
 
+// ── Caller surface (t217) ───────────────────────────────────────────────────
+// `plugin:invoke` is ONE multiplexed channel serving every plugin method, and
+// it is registered unconditionally because the web renderer legitimately uses
+// plugins. So the drawer's gate-by-non-registration (`enableDrawerServices`)
+// cannot see plugin methods at all: registration is per-channel, and there is
+// one channel. The surface therefore has to ride the CALL.
+//
+// Two vocabularies, and they are deliberately not the same one. A CALLER is
+// 'desktop' or 'web' — where the invoke physically came from. A METHOD requires
+// 'desktop' or 'any' — how much reach it needs. Collapsing them would make
+// `surfaces: { "x": "web" }` writable, i.e. a method that the DESKTOP cannot
+// call, which nothing wants and which would read as a grant.
+const PLUGIN_SURFACES = Object.freeze(['desktop', 'web']);
+const PLUGIN_METHOD_SURFACES = Object.freeze(['desktop', 'any']);
+const DEFAULT_METHOD_SURFACE = 'desktop';
+
+// Per-METHOD, and with no per-plugin default to inherit: a plugin-level "any"
+// would hand every method added later the permission it never asked for, which
+// is the shape of the defect this exists to close. An unlisted method is
+// desktop-only, so a manifest that says nothing is fully restricted.
+function methodSurfaceOf(manifest, method) {
+  const table = manifest && manifest.surfaces;
+  if (!table || typeof table !== 'object') return DEFAULT_METHOD_SURFACE;
+  const want = table[String(method)];
+  return want === 'any' ? 'any' : DEFAULT_METHOD_SURFACE;
+}
+
+// Anything that is not exactly the desktop token is untrusted — including
+// undefined. A transport that forgets to declare itself must land in the
+// restricted branch, because "caller unknown ⇒ trusted" IS the defect.
+function surfaceAllows(callerSurface, requiredSurface) {
+  if (callerSurface === 'desktop') return true;
+  return requiredSurface === 'any';
+}
+
 // The invoke error envelope (plan §3.4). A disabled plugin, an unknown id, or an
 // unregistered method degrades LOUDLY — the caller gets a shaped refusal it can
 // render — rather than silently resolving undefined, which is indistinguishable
 // from "the call worked and returned nothing".
 const NO_SUCH_METHOD = 'no such plugin method';
+// A refusal for surface, not for existence. Distinct from NO_SUCH_METHOD so the
+// operator-facing message can say why, but it rides the SAME envelope shape, so
+// every caller's existing failure branch already handles it.
+const NOT_ON_THIS_SURFACE = 'plugin method not available on this surface';
 function errorEnvelope(error) {
   return { ok: false, error };
 }
@@ -201,6 +240,12 @@ module.exports = {
   HOST_PSEUDO_ID,
   namespaced,
   pluginsEnabled,
+  PLUGIN_SURFACES,
+  PLUGIN_METHOD_SURFACES,
+  DEFAULT_METHOD_SURFACE,
+  methodSurfaceOf,
+  surfaceAllows,
   NO_SUCH_METHOD,
+  NOT_ON_THIS_SURFACE,
   errorEnvelope,
 };

@@ -212,6 +212,11 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     openWirescopeWindow: (url) => openExternal(url),
     refreshAppMenu: () => {}, refreshTrayMenu: () => {}, setUiTheme: () => {},
     workspaceOfSender: (e) => (e && e.sender && e.sender.conn && e.sender.conn.workspaceId) || DEFAULT_WORKSPACE_ID,
+    // `plugin:invoke` is ONE channel for every plugin method and must stay
+    // registered here — the web renderer's plugin UI rides it — so the gate
+    // below cannot be the gate-by-absence the drawer services use. This is what
+    // lets the plugin host refuse a desktop-only method per CALL.
+    surfaceOfSender: () => 'web',
     // The drawer's service-backed tenants (`ctl:*` verb runner, `wterm:*`
     // workbench PTY) must never have handlers in THIS map: onFrame dispatches
     // any registered channel by name, so registration IS the capability. Set

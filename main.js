@@ -491,6 +491,11 @@ app.whenReady().then(() => {
     fs, https, os, path, log,
     UPDATE_REPO, checkForUpdate,
     createWindow, openWirescopeWindow, workspaceOfSender, workspaceOfSenderStrict,
+    // The desktop registrar's half of the plugin surface gate. A constant
+    // because this registrar only ever serves BrowserWindows; the value is
+    // supplied per-transport, exactly like workspaceOfSender, so a transport
+    // that supplies nothing lands in the restricted branch by default.
+    surfaceOfSender: () => 'desktop',
     refreshAppMenu, refreshTrayMenu, setUiTheme,
     getUpdateInfo: () => updateInfo,
     getReleasesCache: () => releasesCache,

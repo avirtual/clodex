@@ -12,6 +12,7 @@ merely violate the spirit of the thing: the test suite fails the build for it
 
 - [1. What a plugin is](#1-what-a-plugin-is)
 - [2. The manifest](#2-the-manifest)
+- [2.2 Surfaces: which transports may call a method](#22-surfaces-which-transports-may-call-a-method)
 - [3. The two halves, and the law that separates them](#3-the-two-halves-and-the-law-that-separates-them)
 - [4. The engine `host` object](#4-the-engine-host-object)
 - [5. The renderer `rhost` object](#5-the-renderer-rhost-object)
@@ -149,6 +150,7 @@ the menu bar has a tick next to it.
 | `enabledByDefault` | no | Defaults to `true`. Only consulted for a plugin the user has never made a decision about; once they toggle anything, their explicit set wins forever. Set it to `false` for a plugin that should ship dormant. |
 | `announce` | no | One sentence describing what the plugin does. Shown as the description line in the Manage Plugins dialog. |
 | `scope` | no | `"global"` (the default) or `"session"`. A `session`-scoped plugin is **invisible** to any session that has not granted it — see §2.1. Absent means `global`, which is the behaviour every plugin had before this field existed. |
+| `surfaces` | no | An object mapping a method name to `"any"`. A method listed as `"any"` may be called from the browser surface as well as the desktop app; **anything you do not list is desktop-only**. Absent means the whole plugin is desktop-only. See §2.2 — this is the one manifest field whose default costs you reach rather than granting it. |
 
 Unknown fields are ignored, not refused. That is deliberate: it lets a future
 version add optional fields without breaking your manifest, and lets you carry
@@ -188,6 +190,11 @@ The refusals, and what to do about each:
   `global` everywhere else in the host, so a typo on a plugin meant to be
   invisible would silently make it visible to every session. `"Session"` with a
   capital S is a refusal, not an opt-in.
+- **`surfaces` is present but isn't an object, or names a value other than
+  `"any"`.** Refused for the mirror-image reason to `scope`: an unrecognized
+  value there resolves to *desktop-only*, so a typo would fail closed — your
+  method would simply stop answering in the browser, with nothing to read. An
+  array, a bare string, `"web"`, `true` and `"ANY"` are all refusals.
 
 ---
 
@@ -277,6 +284,81 @@ determined plugin could reach. The enforcement that was already there —
 `intentEnabledFor`'s strict per-session gate — is unchanged and is what actually
 refuses a verb. Scope stops a plugin from being *offered*; the gate is what stops
 it from *firing*.
+
+---
+
+## 2.2 Surfaces: which transports may call a method
+
+Clodex runs as a desktop app and, optionally, as a browser client talking to a
+running desktop app over an authenticated socket. Both surfaces run the *same*
+plugin host: your engine half is loaded once, in the desktop process, and both
+transports reach it through the one multiplexed invoke channel.
+
+They are not equally trusted. Several capabilities the desktop app has — a
+verb runner, a shell — are simply not served to the browser at all. Plugin
+methods cannot be withheld the same way, because they all share a single
+channel: withholding it would take *every* plugin away from the browser. So
+the distinction rides the call instead, and `surfaces` is where you declare it.
+
+```json
+"surfaces": {
+  "fs.list": "any",
+  "fs.read": "any",
+  "scm.status": "any"
+}
+```
+
+Every method named `"any"` may be called from either surface. **Every method you
+do not name is desktop-only** — a browser client calling it gets
+
+```js
+{ ok: false, error: 'plugin method not available on this surface' }
+```
+
+and your handler never runs. A plugin with no `surfaces` field at all is
+entirely desktop-only, which is why the field is worth adding the moment your
+plugin has a renderer half you expect to work in the browser.
+
+**The default is restrictive on purpose, and it is not symmetric.** A method
+you forget to list stops working in the browser — visible, annoying, and fixed
+by one line. A permissive default would instead mean that every method you add
+later is silently reachable from the network the day you write it, including
+the one that writes files. That asymmetry is the whole design: the grain is
+per-method with no plugin-wide default to inherit, so opening something is
+always an explicit act recorded in your manifest.
+
+**What to mark `"any"`.** Reads. Listing a directory, reading a file, showing
+`git status`, enumerating worktrees — the browser client's UI needs these and
+they change nothing. **What to leave off:** anything that writes a file, commits,
+discards, checks out, pushes, creates or removes a worktree, or changes a
+setting another method then acts on. The shipped workbench follows exactly that
+line: eight reads are `"any"`, and its ten mutating methods are not.
+
+Note the last clause. A method that only *selects* something can still be
+load-bearing if other methods act on the selection — gating the writers while
+leaving the selector open moves the target rather than protecting it.
+
+This is enforced in the host, before your handler is reached, so it does not
+depend on your code being careful. It is still a **capability** boundary and not
+a sandbox: §13's posture is unchanged, and an engine half remains unsandboxed
+in-process Node. What `surfaces` buys is that a *remote* caller cannot reach a
+method you did not open, which is a different and narrower claim.
+
+**`surfaces` governs `invoke`, and nothing else.** Your intent verbs (§7) and
+your session hooks (§4) are not covered by it and cannot be: a verb fires from
+turn text and a hook fires from session lifecycle, so anything that can write
+into a session's PTY reaches both, regardless of which transport it came in on.
+If a verb of yours does what a desktop-only method does, marking the method is
+not enough — the verb is the open door.
+
+**One method that is not yours is also ungated: `_host`'s `settings.set`.** The
+plugin subsystem's own plumbing answers on both surfaces (see §13), so a browser
+caller can write *your* settings key. Nothing today reads a setting as a path or
+a command, and nothing should start: **never store a path, a command, an
+argument list or a URL in `settings` and then act on it unvalidated.** Treat a
+settings value as caller-supplied input at the point you use it, the same way
+you would treat an `invoke` argument. A desktop-only method that reads a
+browser-writable setting is a desktop-only method in name only.
 
 ---
 
@@ -1467,6 +1549,18 @@ That exact string is the discriminator. Nothing ever resolves `undefined`,
 because an undefined resolution is indistinguishable from a successful call that
 returned nothing.
 
+There is one more host refusal, in the same envelope shape:
+
+```js
+{ ok: false, error: 'plugin method not available on this surface' }
+```
+
+The caller is the browser client and the method is not marked `"any"` in your
+manifest (§2.2). Note it is a *different* string from the routing refusal above,
+and deliberately only reachable for a method that exists — a method that does
+not exist answers `'no such plugin method'` on both surfaces, so the two
+refusals cannot be used to discover which of your methods are desktop-only.
+
 An `async` handler is awaited. A handler that never settles hangs the caller;
 Clodex imposes no timeout.
 
@@ -1725,13 +1819,26 @@ one, it is a conversation about extending the host, not a gap to route around.
   with `type: 'remote'` and are refused by `fsScope`. The peer wire is not
   reachable, and plugin channels are not on the peer query whitelist — a plugin's
   methods are unreachable across the network by construction.
+- **A desktop-only method, from the browser client.** The browser surface is a
+  real caller of your engine half — that is the point of it — but only for the
+  methods you marked `"any"` (§2.2). Everything else is refused in the host
+  before your handler runs. This one is not a decision *you* are exempt from
+  making: the default denies, so a plugin that never thinks about surfaces is
+  desktop-only rather than accidentally networked. Scope it exactly, though:
+  `surfaces` gates `invoke` and only `invoke`. Intent verbs (§7) and session
+  hooks (§4) fire from turn text and session lifecycle, reachable by anything
+  that can write a PTY, and no surface check stands in front of either.
 - **The IPC transport seams.** You cannot register your own channel. §11 says why.
 - **Another plugin.** `rhost.invoke` binds your id; `host.settings` binds your
   id; there is no plugin-to-plugin API and no directory of loaded plugins with
   callable methods.
 - **The `_host` pseudo-plugin.** Its methods take a plugin id as an *argument* —
   which is precisely why plugins cannot reach it. An openable `_host` would let
-  plugin A write plugin B's settings. The practical consequence to design
+  plugin A write plugin B's settings. It is not, however, gated by surface: the
+  browser client's plugin UI cannot function without it, so `_host` answers on
+  both surfaces including `settings.set`. Design for that — see the warning in
+  §2.2 about never storing a path or a command in `settings`. The practical
+  consequence to design
   around: **your renderer half has no direct read of its own settings.** Values
   reach it as the second argument to `settings.section`'s `render(body, values)`,
   or from your engine half over `invoke` — add a `settings.get` method to your
@@ -1760,7 +1867,9 @@ Honest inventory as of `"1"`. These are stated so that a future addition is
   Compare `handle.workspaceId` against a workspace you established yourself when that matters to
   you, and confine your own path joins (a lexical check is not enough — a symlink inside the cwd
   resolves out of it). Closing the workspace half in the host would mean carrying a caller workspace
-  on the transport — additive, but not yet decided.
+  on the transport — additive, but not yet decided. The transport now carries a caller *surface*
+  (§2.2), which is the same shape of fact and shows the plumbing is available; it answers "desktop
+  or browser", not "which window", so it does not close this gap.
 - **Your `style.css` is not scoped.** The host injects it verbatim as a single
   `<style data-plugin-style="<yourId>">` in the shared document — the text is not
   rewritten, wrapped or prefixed, so your selectors match anywhere in the window,
@@ -1779,6 +1888,14 @@ Honest inventory as of `"1"`. These are stated so that a future addition is
   four rules that follow from this, including the newline hazard, are with
   `inject` itself in §4 rather than here, because they bite while you are
   writing the call rather than while you are designing around a gap.
+- **A renderer half cannot ask which surface it is running on** (§2.2). There is
+  no `rhost.surface`. A UI built against a desktop-only method therefore looks
+  identical in the browser until the call comes back refused — so handle the
+  refusal string rather than assuming a method you registered is callable.
+- **`surfaces` is per method name, and method names are yours to choose.**
+  Nothing correlates an entry with a `host.ipc.handle` registration, so renaming
+  a method and forgetting the manifest silently makes it desktop-only. It fails
+  closed, which is the right direction, but it fails *quietly*.
 - **Slot ordering across plugins is unspecified** (§6). Do not depend on it.
 - **Events are unbuffered, so `events.on` is not a state feed** (§9). A window
   closed at emit time never learns. Pull on open; subscribe to skip the timer.
@@ -1830,6 +1947,21 @@ than half-activated against a surface it predates.
 existing `"1"` plugins simply do not use, and this document records when each
 arrived. The version goes to `"2"` only for a change that could break a
 conforming `"1"` plugin.
+
+**`surfaces` (§2.2) is a borderline case, and it did not bump.** It is a new
+optional manifest field, so by the rule above it is additive — but its default
+*removes* reach a `"1"` plugin previously had: before it existed, every plugin
+method was callable from the browser client. A third-party plugin with a
+renderer half will lose its browser functionality until it adds the field.
+
+It stays at `"1"` because the alternative is worse in the direction that
+matters. The old behaviour was not a documented guarantee — nothing in this
+document ever said the browser surface could call arbitrary plugin methods, and
+§13 has always claimed the opposite posture — and bumping to `"2"` would refuse
+every existing plugin by name in order to protect a capability that was a
+defect. The failure a plugin author sees is a refusal string with a name that
+says what to do, on a call they can retry after one manifest line. That is a
+"1.1 behaviour" with a rough edge, not a contract break.
 
 What that means for you: write `"hostApi": "1"`, and expect this document to grow
 new sections rather than contradict existing ones. If a section here ever

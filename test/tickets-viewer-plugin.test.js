@@ -114,7 +114,7 @@ test('tickets-viewer: a team with no tickets.json is EMPTY, not failed', async (
   const { host, teams, cleanup } = boot();
   try {
     mkTeam(teams, 'alpha');
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     assert.equal(res.ok, true, 'a team that never opened a ticket is a healthy empty board');
     assert.deepEqual(res.open, []);
     assert.deepEqual(res.recent, []);
@@ -126,7 +126,7 @@ test('tickets-viewer: an UNPARSEABLE tickets.json fails loudly instead of readin
   try {
     const dir = mkTeam(teams, 'alpha');
     fs.writeFileSync(path.join(dir, 'tickets.json'), '{ this is not json');
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     // The exact assertion that separates this plugin from tickets-store.load():
     // load() would answer [] here and the board would look idle.
     assert.equal(res.ok, false, 'a corrupt registry must NOT render as an empty board');
@@ -140,7 +140,7 @@ test('tickets-viewer: a tickets.json that is not an ARRAY fails too', async () =
     const dir = mkTeam(teams, 'alpha');
     // Valid JSON, wrong shape — the second thing load() silently swallows.
     fs.writeFileSync(path.join(dir, 'tickets.json'), '{"t1":{"state":"open"}}');
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     assert.equal(res.ok, false);
     assert.match(res.error, /ticket array/);
   } finally { cleanup(); }
@@ -151,7 +151,7 @@ test('tickets-viewer: non-object records inside a valid array are COUNTED, not s
   try {
     const dir = mkTeam(teams, 'alpha');
     writeTickets(dir, [ticket('t1'), 'garbage', null, 42]);
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     assert.equal(res.ok, true, 'one bad record does not fail a readable registry');
     assert.equal(res.open.length, 1);
     // A half-eaten registry would otherwise render as a shorter healthy board.
@@ -163,13 +163,13 @@ test('tickets-viewer: no teams DIRECTORY is "no teams", an unreadable one is an 
   const { host, teams, cleanup } = boot();
   try {
     fs.rmSync(teams, { recursive: true, force: true });
-    const none = await host.dispatch('tickets-viewer', 'teams', []);
+    const none = await host.dispatch('tickets-viewer', 'teams', [], 'desktop');
     assert.deepEqual(none, { ok: true, teams: [] }, 'nothing has created a team yet');
 
     // A path that exists but is not a directory: readdir fails with ENOTDIR,
     // which is a real failure and must not read as "no teams".
     fs.writeFileSync(teams, 'not a directory');
-    const broken = await host.dispatch('tickets-viewer', 'teams', []);
+    const broken = await host.dispatch('tickets-viewer', 'teams', [], 'desktop');
     assert.equal(broken.ok, false, 'an unreadable teams root is an error, not an empty list');
     assert.match(broken.error, /could not read/);
   } finally { cleanup(); }
@@ -183,7 +183,7 @@ test('tickets-viewer: one broken team does not hide the healthy ones', async () 
     const good = mkTeam(teams, 'alpha');
     writeTickets(good, [ticket('t1')]);
 
-    const res = await host.dispatch('tickets-viewer', 'teams', []);
+    const res = await host.dispatch('tickets-viewer', 'teams', [], 'desktop');
     assert.equal(res.ok, true, 'the list survives a corrupt member');
     const byName = Object.fromEntries(res.teams.map((t) => [t.team, t]));
     assert.equal(byName.alpha.open, 1);
@@ -199,7 +199,7 @@ test('tickets-viewer: a directory with no team.json is not listed as a team', as
   try {
     mkTeam(teams, 'alpha');
     fs.mkdirSync(path.join(teams, 'stray-dir'), { recursive: true });
-    const res = await host.dispatch('tickets-viewer', 'teams', []);
+    const res = await host.dispatch('tickets-viewer', 'teams', [], 'desktop');
     assert.deepEqual(res.teams.map((t) => t.team), ['alpha']);
   } finally { cleanup(); }
 });
@@ -218,17 +218,17 @@ test('tickets-viewer: an UNREADABLE team.json is an error, not an absent team', 
     fs.mkdirSync(path.join(dir, 'team.json'), { recursive: true });
     mkTeam(teams, 'alpha');
 
-    const list = await host.dispatch('tickets-viewer', 'teams', []);
+    const list = await host.dispatch('tickets-viewer', 'teams', [], 'desktop');
     const row = list.teams.find((t) => t.team === 'unreadable');
     assert.ok(row, 'the team must not disappear from the list');
     assert.match(row.error, /could not read team\.json/);
     assert.equal(row.open, undefined, 'a team that could not be read reports no count');
 
-    const board = await host.dispatch('tickets-viewer', 'board', ['unreadable']);
+    const board = await host.dispatch('tickets-viewer', 'board', ['unreadable'], 'desktop');
     assert.equal(board.ok, false);
     assert.match(board.error, /could not read team\.json/);
     // Distinct from the absent case, which is the whole point of the split.
-    const gone = await host.dispatch('tickets-viewer', 'board', ['no-such-team']);
+    const gone = await host.dispatch('tickets-viewer', 'board', ['no-such-team'], 'desktop');
     assert.match(gone.error, /no team/);
   } finally { cleanup(); }
 });
@@ -250,11 +250,11 @@ test('tickets-viewer: a team.json core would REJECT is warned about, not rendere
       const dir = mkTeam(teams, 'bad');
       fs.writeFileSync(path.join(dir, 'team.json'), JSON.stringify(manifest));
       writeTickets(dir, [ticket('t1')]);
-      const res = await host.dispatch('tickets-viewer', 'board', ['bad']);
+      const res = await host.dispatch('tickets-viewer', 'board', ['bad'], 'desktop');
       assert.equal(res.ok, true, 'the tickets are readable, so the board renders');
       assert.equal(res.open.length, 1);
       assert.match(res.warning, re);
-      const list = await host.dispatch('tickets-viewer', 'teams', []);
+      const list = await host.dispatch('tickets-viewer', 'teams', [], 'desktop');
       assert.match(list.teams.find((t) => t.team === 'bad').warning, re);
     }
 
@@ -262,7 +262,7 @@ test('tickets-viewer: a team.json core would REJECT is warned about, not rendere
     const dir = mkTeam(teams, 'bad');
     fs.writeFileSync(path.join(dir, 'team.json'), '{ nope');
     writeTickets(dir, [ticket('t1')]);
-    const res = await host.dispatch('tickets-viewer', 'board', ['bad']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['bad'], 'desktop');
     assert.equal(res.ok, true);
     assert.match(res.warning, /not valid JSON/);
     assert.equal(res.stallMs, DEFAULT_STALL_MS, 'an unusable manifest still gets core\'s default threshold');
@@ -270,7 +270,7 @@ test('tickets-viewer: a team.json core would REJECT is warned about, not rendere
     // The accept half, which is what catches a warning that fires on everything.
     const okDir = mkTeam(teams, 'good', { root: '/tmp', lead: 'lead', roles: { lead: {} } });
     writeTickets(okDir, [ticket('t1')]);
-    const good = await host.dispatch('tickets-viewer', 'board', ['good']);
+    const good = await host.dispatch('tickets-viewer', 'board', ['good'], 'desktop');
     assert.equal(good.warning, '', 'a manifest core accepts carries no warning');
   } finally { cleanup(); }
 });
@@ -285,7 +285,7 @@ test('tickets-viewer: a team name that escapes the teams root is REFUSED', async
     // checks "nothing was read" passes for an implementation that read the
     // wrong directory and found it empty.
     for (const name of ['.', '..', '../..', '../alpha', 'sub/alpha', '', null, 7]) {
-      const res = await host.dispatch('tickets-viewer', 'board', [name]);
+      const res = await host.dispatch('tickets-viewer', 'board', [name], 'desktop');
       assert.equal(res.ok, false, `board(${JSON.stringify(name)}) must be refused`);
       assert.match(res.error, /valid team name/);
     }
@@ -296,14 +296,14 @@ test('tickets-viewer: a team name that escapes the teams root is REFUSED', async
     // team that is not there. A nonexistent team rendering as an empty board is
     // the same false green as a corrupt one.
     for (const name of ['...', 'no-such-team']) {
-      const res = await host.dispatch('tickets-viewer', 'board', [name]);
+      const res = await host.dispatch('tickets-viewer', 'board', [name], 'desktop');
       assert.equal(res.ok, false, `board(${JSON.stringify(name)}) must be refused`);
       assert.match(res.error, /no team/);
     }
     // The accept half, which is what catches an over-eager guard: dots in a
     // legal position are legal team names.
     mkTeam(teams, 'my.team');
-    const ok = await host.dispatch('tickets-viewer', 'board', ['my.team']);
+    const ok = await host.dispatch('tickets-viewer', 'board', ['my.team'], 'desktop');
     assert.equal(ok.ok, true, 'a dotted team name is still a valid team name');
   } finally { cleanup(); }
 });
@@ -320,7 +320,7 @@ test('tickets-viewer: open tickets sort QUIETEST first', async () => {
       ticket('t2', { lastActivityAt: now - 5 * HOUR }),
       ticket('t3', { lastActivityAt: now - 30 * 1000 }),
     ]);
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     assert.deepEqual(res.open.map((t) => t.id), ['t2', 't1', 't3'],
       'the ticket nobody has touched leads the board');
   } finally { cleanup(); }
@@ -335,7 +335,7 @@ test('tickets-viewer: a ticket with no usable timestamp sorts to the TOP', async
       ticket('t1', { lastActivityAt: now - 5 * HOUR }),
       ticket('t2', { lastActivityAt: null, openedAt: null }),
     ]);
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     assert.equal(res.open[0].id, 't2', 'an age that cannot be computed is itself worth looking at');
     assert.equal(res.open[0].quietMs, null);
     assert.equal(res.open[0].ageMs, null);
@@ -350,7 +350,7 @@ test('tickets-viewer: lastActivityAt falls back to openedAt, as core measures it
     // _sweepTickets reads `t.lastActivityAt || t.openedAt` — a ticket opened to
     // the backlog and never touched is quiet since it was opened, not unknown.
     writeTickets(dir, [ticket('t1', { lastActivityAt: null, openedAt: now - 3 * HOUR })]);
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     assert.ok(res.open[0].quietMs >= 3 * HOUR - 5000, 'quiet since it was opened');
     assert.equal(res.open[0].stalled, true);
   } finally { cleanup(); }
@@ -377,11 +377,11 @@ test('tickets-viewer: the stall threshold is the TEAM\'s watchdogMs, not a numbe
     const slow = mkTeam(teams, 'slow-team', { watchdogMs: wide });
     writeTickets(slow, [ticket('t1', quiet)]);
 
-    const a = await host.dispatch('tickets-viewer', 'board', ['default-team']);
+    const a = await host.dispatch('tickets-viewer', 'board', ['default-team'], 'desktop');
     assert.equal(a.stallMs, 30 * 60 * 1000);
     assert.equal(a.open[0].stalled, true);
 
-    const b = await host.dispatch('tickets-viewer', 'board', ['slow-team']);
+    const b = await host.dispatch('tickets-viewer', 'board', ['slow-team'], 'desktop');
     assert.equal(b.stallMs, 4 * HOUR);
     assert.equal(b.open[0].stalled, false, 'a team that widened its own window is not stalled here');
   } finally { cleanup(); }
@@ -408,11 +408,11 @@ test('tickets-viewer: watchdogMs is CLAMPED as core clamps it, in both direction
     const huge = mkTeam(teams, 'huge', { watchdogMs: above });
     writeTickets(huge, [ticket('t1', { lastActivityAt: now - WATCHDOG_MAX_MS * 4 })]);
 
-    const a = await host.dispatch('tickets-viewer', 'board', ['tiny']);
+    const a = await host.dispatch('tickets-viewer', 'board', ['tiny'], 'desktop');
     assert.equal(a.stallMs, WATCHDOG_MIN_MS, 'below the floor reads as the floor');
     assert.equal(a.open[0].stalled, false, 'quiet under the FLOORED threshold is not stalled');
 
-    const b = await host.dispatch('tickets-viewer', 'board', ['huge']);
+    const b = await host.dispatch('tickets-viewer', 'board', ['huge'], 'desktop');
     assert.equal(b.stallMs, WATCHDOG_MAX_MS, 'above the ceiling reads as the ceiling');
     assert.equal(b.open[0].stalled, true, 'quiet past the CAPPED threshold is stalled');
   } finally { cleanup(); }
@@ -430,7 +430,7 @@ test('tickets-viewer: a non-finite watchdogMs cannot empty the stalled column', 
       '{"name":"inf","root":"/tmp","lead":"lead","roles":{"lead":{}},"watchdogMs":1e400}');
     writeTickets(inf, [ticket('t1', { lastActivityAt: now - 5 * HOUR })]);
 
-    const res = await host.dispatch('tickets-viewer', 'board', ['inf']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['inf'], 'desktop');
     assert.ok(Number.isFinite(res.stallMs), 'the threshold is always a real number');
     assert.equal(res.stallMs, DEFAULT_STALL_MS, 'a non-finite value reads as absent, as in loadManifest');
     assert.equal(res.open[0].stalled, true, 'a ticket quiet for 5h is stalled whatever team.json claims');
@@ -450,7 +450,7 @@ test('tickets-viewer: an UNASSIGNED open ticket is backlog, never stalled', asyn
       ticket('t1', { assignee: null, lastActivityAt: now - 40 * HOUR }),
       ticket('t2', { assignee: 'hand', lastActivityAt: now - 5 * HOUR }),
     ]);
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     const byId = Object.fromEntries(res.open.map((t) => [t.id, t]));
     assert.equal(byId.t1.stalled, false, 'an unassigned ticket has nobody to have gone quiet');
     assert.equal(byId.t1.backlog, true, 'it is backlog, which is its own state');
@@ -461,7 +461,7 @@ test('tickets-viewer: an UNASSIGNED open ticket is backlog, never stalled', asyn
     assert.equal(byId.t2.backlog, false);
 
     assert.equal(res.counts.backlog, 1);
-    const list = await host.dispatch('tickets-viewer', 'teams', []);
+    const list = await host.dispatch('tickets-viewer', 'teams', [], 'desktop');
     const row = list.teams.find((t) => t.team === 'alpha');
     // The two chips are separate numbers on purpose: assign versus chase.
     assert.equal(row.stalled, 1, 'the sidebar stall count excludes backlog too');
@@ -483,7 +483,7 @@ test('tickets-viewer: a PARKED open ticket is parked, never stalled (t174)', asy
       ticket('t1', { assignee: 'hand', parked: true, lastActivityAt: now - 40 * HOUR }),
       ticket('t2', { assignee: 'hand', lastActivityAt: now - 5 * HOUR }),
     ]);
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     const byId = Object.fromEntries(res.open.map((t) => [t.id, t]));
     assert.equal(byId.t1.parked, true);
     assert.equal(byId.t1.stalled, false, 'nothing was dispatched, so quiet is expected');
@@ -491,7 +491,7 @@ test('tickets-viewer: a PARKED open ticket is parked, never stalled (t174)', asy
     assert.equal(byId.t2.parked, false, 'an ordinary ticket carries the flag as false, not undefined');
     assert.equal(byId.t2.stalled, true);
     assert.equal(res.counts.parked, 1);
-    const list = await host.dispatch('tickets-viewer', 'teams', []);
+    const list = await host.dispatch('tickets-viewer', 'teams', [], 'desktop');
     const row = list.teams.find((t) => t.team === 'alpha');
     assert.equal(row.stalled, 1, 'the sidebar stall count excludes parked too');
     assert.equal(row.parked, 1);
@@ -507,7 +507,7 @@ test('tickets-viewer: an already-nudged stall is marked as such', async () => {
       ticket('t1', { lastActivityAt: now - 5 * HOUR, nudgedAt: now - HOUR }),
       ticket('t2', { lastActivityAt: now - 4 * HOUR }),
     ]);
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     const byId = Object.fromEntries(res.open.map((t) => [t.id, t]));
     // "Nobody has chased this" and "it was chased and is still quiet" are
     // different problems for a lead.
@@ -526,7 +526,7 @@ test('tickets-viewer: the artifact path crosses, and its ABSENCE is representabl
       ticket('t1', { taskDir: 'tasks/some-task' }),
       ticket('t2'), // extractTaskDir found nothing — the field is simply absent
     ]);
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     const byId = Object.fromEntries(res.open.map((t) => [t.id, t]));
     assert.equal(byId.t1.taskDir, 'tasks/some-task');
     assert.equal(byId.t2.taskDir, '', 'an absent taskDir is an empty string, never undefined');
@@ -541,7 +541,7 @@ test('tickets-viewer: the spec body crosses whole, and its absence is representa
     // runs to a couple of KB of implementation detail.
     const long = `tasks/deep-work — do the thing\n\n- step one\n- step two\n\n${'x'.repeat(4000)}`;
     writeTickets(dir, [ticket('t1', { spec: long }), ticket('t2', { spec: null })]);
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     const byId = Object.fromEntries(res.open.map((t) => [t.id, t]));
     // Deliberately NOT truncated here. A JS-side cap drops content with nothing
     // on screen to say so; the display limit belongs in CSS, where the rest of
@@ -556,7 +556,7 @@ test('tickets-viewer: an unassigned ticket keeps an empty assignee rather than a
   try {
     const dir = mkTeam(teams, 'alpha');
     writeTickets(dir, [ticket('t1', { assignee: null })]);
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     // The wording of "unassigned" belongs to the renderer; baking it in here
     // would put a user-facing string in the engine and hide the null.
     assert.equal(res.open[0].assignee, '');
@@ -577,7 +577,7 @@ test('tickets-viewer: recently-closed is DONE only, newest first, inside a 24h w
       ticket('t4', { state: 'cancelled', closedAt: now - HOUR }),   // never in this section
       ticket('t5'),
     ]);
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     assert.deepEqual(res.recent.map((t) => t.id), ['t2', 't1']);
     assert.deepEqual(res.open.map((t) => t.id), ['t5'], 'closed tickets never appear as open');
     // Counted separately: one number answers neither "what did we ship" nor
@@ -595,7 +595,7 @@ test('tickets-viewer: recently-closed is capped, and says how many it left out',
     const many = [];
     for (let i = 1; i <= 14; i++) many.push(ticket(`t${i}`, { state: 'done', closedAt: now - i * 60 * 1000 }));
     writeTickets(dir, many);
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     assert.equal(res.recent.length, 10, 'core\'s RECENT_DONE_CAP');
     assert.equal(res.counts.recentOver, 4);
   } finally { cleanup(); }
@@ -606,7 +606,7 @@ test('tickets-viewer: a state this app never writes is surfaced, not swallowed',
   try {
     const dir = mkTeam(teams, 'alpha');
     writeTickets(dir, [ticket('t1'), ticket('t2', { state: 'archived' })]);
-    const res = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     assert.equal(res.open.length, 1);
     // Invisible in every other listing too — the board is where it shows up.
     assert.equal(res.counts.unknownState, 1);
@@ -623,9 +623,9 @@ test('tickets-viewer: the per-team open count agrees with the board it opens', a
       ticket('t2', { lastActivityAt: now - 10 * 1000 }),
       ticket('t3', { state: 'done', closedAt: now }),
     ]);
-    const list = await host.dispatch('tickets-viewer', 'teams', []);
+    const list = await host.dispatch('tickets-viewer', 'teams', [], 'desktop');
     const row = list.teams.find((t) => t.team === 'alpha');
-    const board = await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    const board = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     assert.equal(row.open, board.open.length, 'the sidebar count is the board it opens');
     assert.equal(row.stalled, board.open.filter((t) => t.stalled).length);
     assert.equal(row.stalled, 1);
@@ -653,8 +653,8 @@ test('tickets-viewer: reading a board writes NOTHING to disk', async () => {
     const before = fs.readFileSync(file, 'utf8');
     const beforeEntries = fs.readdirSync(dir).sort();
 
-    await host.dispatch('tickets-viewer', 'teams', []);
-    await host.dispatch('tickets-viewer', 'board', ['alpha']);
+    await host.dispatch('tickets-viewer', 'teams', [], 'desktop');
+    await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
 
     assert.equal(fs.readFileSync(file, 'utf8'), before, 'the registry is byte-identical after a read');
     assert.deepEqual(fs.readdirSync(dir).sort(), beforeEntries, 'no file was created beside it');

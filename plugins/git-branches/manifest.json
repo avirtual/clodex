@@ -6,5 +6,10 @@
   "entry": { "engine": "engine.js", "renderer": "renderer.js" },
   "style": "style.css",
   "enabledByDefault": true,
-  "announce": "Shows each local session's current git branch as a badge on its sidebar row, and adds the [agent:branch] intent verb."
+  "announce": "Shows each local session's current git branch as a badge on its sidebar row, and adds the [agent:branch] intent verb.",
+  "surfaces": {
+    "branch.get": "any",
+    "branch.getMany": "any",
+    "settings.get": "any"
+  }
 }

@@ -13,6 +13,28 @@ blocks a release.
 
 ## Unreleased
 
+- **Security fix: plugins could write files and run destructive git operations
+  from the browser client.** When you serve Clodex to a browser, that connection
+  is deliberately denied some of the sharper desktop capabilities. Plugin
+  methods slipped past that line: an authenticated browser session could call
+  *any* method of *any* loaded plugin, which for the built-in Workbench meant
+  writing arbitrary files, committing, discarding changes, checking out
+  branches, pushing, and creating or removing worktrees in any session's
+  directory. Those now refuse from the browser and work only in the desktop app;
+  reads — the file tree, file contents, `git status`, diffs, branch and worktree
+  listings — are unaffected, so the browser Workbench still shows you everything
+  it did before.
+
+  This covers plugins only. Clodex's own file editing and session controls are
+  unchanged and still reachable from a browser, so the browser surface remains
+  a privileged one: only give the address and token to someone you would hand
+  the machine to.
+
+  Plugins now say which of their methods a browser may call, and the default is
+  none. A third-party plugin with a browser-facing UI needs one line in its
+  manifest to keep working there; the built-in plugins are already updated. If
+  you only ever use the desktop app, nothing changes.
+
 - **The agent can see what you run in its terminal.** Off by default;
   Preferences → "Report the commands I run in a session's terminal". With it on,
   each command you run in a session's Terminal tab is reported to that session's

@@ -9,5 +9,9 @@
   },
   "style": "style.css",
   "enabledByDefault": false,
-  "announce": "Browse the memories agents have saved, per agent, with pinned units marked. Can permanently delete a memory, after a confirmation showing its contents."
+  "announce": "Browse the memories agents have saved, per agent, with pinned units marked. Can permanently delete a memory, after a confirmation showing its contents.",
+  "surfaces": {
+    "agents": "any",
+    "units": "any"
+  }
 }

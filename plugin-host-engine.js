@@ -9,7 +9,8 @@
 
 const {
   HOST_API_VERSION, isValidPluginId, RESERVED_PLUGIN_IDS, namespaced, HOST_PSEUDO_ID,
-  NO_SUCH_METHOD, errorEnvelope, scopeOf, pluginGranted,
+  NO_SUCH_METHOD, NOT_ON_THIS_SURFACE, errorEnvelope, scopeOf, pluginGranted,
+  methodSurfaceOf, surfaceAllows,
 } = require('./plugin-api');
 const { registerIntent, unregisterSource } = require('./intent-registry');
 
@@ -585,14 +586,39 @@ function createPluginHostEngine(deps) {
   };
 
   const api = {
-    async dispatch(pluginId, method, args = []) {
+// `callerSurface` is REQUIRED in effect: everything but the exact string
+// 'desktop' is treated as untrusted, so a transport that forgets to declare
+// itself gets the restricted branch rather than inheriting the desktop's reach.
+// One multiplexed channel serves every plugin method, so `enableDrawerServices`
+// — a gate that works by not registering a channel — cannot see this call at
+// all; the check has to be here.
+    async dispatch(pluginId, method, args = [], callerSurface = undefined) {
       if (String(pluginId) === HOST_PSEUDO_ID) {
+        // UNGATED, ruled deliberately (t217) rather than left to the early
+        // return. These are the plugin SUBSYSTEM's own plumbing: the web
+        // renderer's plugin UI cannot function without settings.get/set,
+        // renderer.info and plugins.status, and none of them takes a
+        // caller-supplied path or command (see listUserRoot's header).
+        // `plugins.rescan` is the sharp one — it loads code — but gating it
+        // alone would be theatre: `plugin:setEnabled` reaches activateById →
+        // loadOne over a separate unconditional channel with identical effect.
+        // Both belong to "core's own web surface is privileged", which is a
+        // wider question than plugin dispatch and is ticketed separately.
+        // The method list is pinned by test/plugin-surface-gate.test.js so a
+        // ninth one has to be argued for, not inherited.
         const hf = hostMethods[String(method)];
         if (typeof hf !== 'function') return errorEnvelope(NO_SUCH_METHOD);
         try { return hf(...args); } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
       }
       const fn = dispatchMap.get(namespaced(String(pluginId), String(method)));
       if (typeof fn !== 'function') return errorEnvelope(NO_SUCH_METHOD);
+      // AFTER the existence check, so an unknown method still answers
+      // NO_SUCH_METHOD on every surface: answering "not on this surface" for a
+      // method that does not exist would turn the refusal into an oracle for
+      // enumerating the desktop-only method names.
+      const rec = registered.get(String(pluginId));
+      const required = methodSurfaceOf(rec && rec.manifest, method);
+      if (!surfaceAllows(callerSurface, required)) return errorEnvelope(NOT_ON_THIS_SURFACE);
       try {
         return await fn(...args);
       } catch (e) {
@@ -642,6 +668,10 @@ function createPluginHostEngine(deps) {
     register, deactivate, hooks,
     hostApiVersion: HOST_API_VERSION,
     _dispatchKeys: () => [...dispatchMap.keys()],
+    // The `_host` table is the surface-gate's one exemption (see dispatch), so a
+    // test pins it as a literal — a ninth method must edit that list rather than
+    // inherit web reach from the early return.
+    _hostMethodNames: () => Object.keys(hostMethods),
     _hookCounts: () => ({
       create: createHooks.size,
       exit: exitHooks.size,

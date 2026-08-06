@@ -182,7 +182,11 @@ const CRASH = /is not a function|is not defined|Cannot read propert|Cannot acces
   for (const key of keys) {
     const method = key.slice(manifest.id.length + 1);
     try {
-      const res = await engine.dispatch(manifest.id, method, []);
+      // 'desktop' explicitly: dispatch refuses anything that is not that exact
+      // token, and the refusal it returns is not crash-shaped — so an omitted
+      // surface would grade every unannotated method "rejected cleanly" without
+      // ever entering the handler, and this whole loop would pass vacuously.
+      const res = await engine.dispatch(manifest.id, method, [], 'desktop');
       const msg = res && typeof res === 'object' && res.ok === false ? String(res.error) : '';
       const crashed = msg && CRASH.test(msg);
       record(`ipc ${method}() answers`, !crashed,

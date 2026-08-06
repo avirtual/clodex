@@ -50,7 +50,7 @@ function registerIpcHandlers(deps) {
     getWebTunnelManager, openPeerWeb, closePeerWeb,
     getSandbox, getSandboxManager,
     enableDrawerServices, getCtlService, getDrawerPtys, workspaceOfSenderStrict,
-    getPluginHost,
+    getPluginHost, surfaceOfSender,
   } = deps;
 
   async function spawnFromParams(e, p) {
@@ -798,10 +798,17 @@ function registerIpcHandlers(deps) {
   // dispose() is implementable. A missing host degrades to a shaped refusal
   // rather than an undefined resolution.
   const pluginRefusal = () => errorEnvelope(NO_SUCH_METHOD);
+  // The CALLER SURFACE rides the call, because it cannot ride registration:
+  // this channel stays registered on every transport (the web renderer's plugin
+  // UI needs it), so `enableDrawerServices`-style gating by absence would take
+  // plugins away from the web entirely. Supplied per-transport like
+  // workspaceOfSender; a transport that supplies nothing yields undefined,
+  // which the host treats as untrusted rather than as the desktop.
   handle('plugin:invoke', async (_e, pluginId, method, args) => {
     const host = getPluginHost && getPluginHost();
     if (!host) return pluginRefusal();
-    return host.dispatch(pluginId, method, Array.isArray(args) ? args : []);
+    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(_e) : undefined;
+    return host.dispatch(pluginId, method, Array.isArray(args) ? args : [], surface);
   });
   handle('plugin:catalog', () => {
     const host = getPluginHost && getPluginHost();

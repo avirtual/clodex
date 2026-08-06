@@ -201,19 +201,19 @@ test('dispatch is namespaced, disposable, and refuses unknown methods loudly', a
 
   const dispose = host.ipc.handle('do.thing', (x) => ({ ok: true, got: x }));
   assert.deepEqual(engine._dispatchKeys(), ['demo:do.thing'], 'the key names its owner');
-  assert.deepEqual(await engine.dispatch('demo', 'do.thing', [7]), { ok: true, got: 7 });
+  assert.deepEqual(await engine.dispatch('demo', 'do.thing', [7], 'desktop'), { ok: true, got: 7 });
 
   // Loud, not silent: an undefined resolution is indistinguishable from a
   // successful call that returned nothing.
-  assert.deepEqual(await engine.dispatch('demo', 'nope', []), { ok: false, error: NO_SUCH_METHOD });
-  assert.deepEqual(await engine.dispatch('ghost', 'do.thing', []), { ok: false, error: NO_SUCH_METHOD });
+  assert.deepEqual(await engine.dispatch('demo', 'nope', [], 'desktop'), { ok: false, error: NO_SUCH_METHOD });
+  assert.deepEqual(await engine.dispatch('ghost', 'do.thing', [], 'desktop'), { ok: false, error: NO_SUCH_METHOD });
 
   // A throwing handler becomes an envelope, never an unhandled rejection.
   host.ipc.handle('boom', () => { throw new Error('nope'); });
-  assert.deepEqual(await engine.dispatch('demo', 'boom', []), { ok: false, error: 'nope' });
+  assert.deepEqual(await engine.dispatch('demo', 'boom', [], 'desktop'), { ok: false, error: 'nope' });
 
   dispose();
-  assert.deepEqual(await engine.dispatch('demo', 'do.thing', [7]), { ok: false, error: NO_SUCH_METHOD },
+  assert.deepEqual(await engine.dispatch('demo', 'do.thing', [7], 'desktop'), { ok: false, error: NO_SUCH_METHOD },
     'dispose() mutates the Map — the only shape in which disposal is implementable at all');
   dispose(); // idempotent
 });
@@ -240,7 +240,7 @@ test('deactivate tears down everything the host handed out, plugin cooperation o
   assert.deepEqual(engine.catalog(), []);
   // And the hooks are genuinely gone — firing must not reach the dead plugin.
   engine.hooks.fireCreate('a');
-  assert.deepEqual(await engine.dispatch('demo', 'm', []), { ok: false, error: NO_SUCH_METHOD });
+  assert.deepEqual(await engine.dispatch('demo', 'm', [], 'desktop'), { ok: false, error: NO_SUCH_METHOD });
   void host;
 });
 
@@ -688,7 +688,7 @@ function fakeLoader(over = {}) {
 test('_host plugins.status serves the settings section every plugin ON DISK', async () => {
   const loader = fakeLoader();
   const { engine } = makeHost({ loader });
-  const r = await engine.dispatch('_host', 'plugins.status', []);
+  const r = await engine.dispatch('_host', 'plugins.status', [], 'desktop');
   assert.equal(r.ok, true);
   // Quarantined AND enabled at once — the shadow, not a replacement. `catalog()`
   // could never show this row: nothing registered.
@@ -698,14 +698,14 @@ test('_host plugins.status serves the settings section every plugin ON DISK', as
 
 test('_host plugins.status degrades to empty with no loader (CLODEX_PLUGINS=0 shape)', async () => {
   const { engine } = makeHost();
-  assert.deepEqual(await engine.dispatch('_host', 'plugins.status', []), { ok: true, plugins: [], problems: [] });
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.status', [], 'desktop'), { ok: true, plugins: [], problems: [] });
 });
 
 test('_host renderer.report forwards a window\'s outcome to the loader', async () => {
   const loader = fakeLoader();
   const { engine } = makeHost({ loader });
-  await engine.dispatch('_host', 'renderer.report', ['demo', false, 'kaboom']);
-  await engine.dispatch('_host', 'renderer.report', ['demo', true]);
+  await engine.dispatch('_host', 'renderer.report', ['demo', false, 'kaboom'], 'desktop');
+  await engine.dispatch('_host', 'renderer.report', ['demo', true], 'desktop');
   assert.deepEqual(loader.calls, [
     { id: 'demo', ok: false, error: 'kaboom' },
     { id: 'demo', ok: true, error: undefined },
@@ -759,7 +759,7 @@ test('_host plugins.rescan announces ADDED and REMOVED to every window', async (
   });
   const { engine } = makeHost({ manager, loader });
 
-  const r = await engine.dispatch('_host', 'plugins.rescan', []);
+  const r = await engine.dispatch('_host', 'plugins.rescan', [], 'desktop');
   assert.equal(r.ok, true);
   assert.deepEqual(r.added, ['fresh']);
 
@@ -781,7 +781,7 @@ test('_host plugins.rescan does NOT announce a CHANGED plugin', async () => {
   });
   const { engine } = makeHost({ manager, loader });
 
-  const r = await engine.dispatch('_host', 'plugins.rescan', []);
+  const r = await engine.dispatch('_host', 'plugins.rescan', [], 'desktop');
   assert.deepEqual(r.changed, ['gamma']);
   assert.deepEqual(manager.sent.filter((s) => s.channel === 'plugin-event'), [],
     'a changed plugin produces no state hint at all');
@@ -789,7 +789,7 @@ test('_host plugins.rescan does NOT announce a CHANGED plugin', async () => {
 
 test('_host plugins.rescan degrades shaped with no loader', async () => {
   const { engine } = makeHost();
-  const r = await engine.dispatch('_host', 'plugins.rescan', []);
+  const r = await engine.dispatch('_host', 'plugins.rescan', [], 'desktop');
   assert.equal(r.ok, false, 'a shaped refusal, never an undefined resolution');
 });
 
@@ -801,7 +801,7 @@ test('_host plugins.userRoot serves the path rather than letting the renderer re
   // owns it.
   const loader = fakeLoader({ ensureUserRoot: () => '/home/u/.clodex/plugins' });
   const { engine } = makeHost({ loader });
-  assert.deepEqual(await engine.dispatch('_host', 'plugins.userRoot', []),
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.userRoot', [], 'desktop'),
     { ok: true, dir: '/home/u/.clodex/plugins' });
 });
 
@@ -810,7 +810,7 @@ test('_host plugins.userRoot refuses when no user root is configured', async () 
   // button at the read-only asar, which is worse than having no button.
   const loader = fakeLoader({ ensureUserRoot: () => null });
   const { engine } = makeHost({ loader });
-  const r = await engine.dispatch('_host', 'plugins.userRoot', []);
+  const r = await engine.dispatch('_host', 'plugins.userRoot', [], 'desktop');
   assert.equal(r.ok, false);
 });
 
@@ -825,7 +825,7 @@ test('_host plugins.listUserRoot serves the host path and its entries', async ()
     listUserRoot: () => ({ dir: '/home/u/.clodex/plugins', entries: [{ name: 'demo', isDir: true }] }),
   });
   const { engine } = makeHost({ loader });
-  assert.deepEqual(await engine.dispatch('_host', 'plugins.listUserRoot', []),
+  assert.deepEqual(await engine.dispatch('_host', 'plugins.listUserRoot', [], 'desktop'),
     { ok: true, dir: '/home/u/.clodex/plugins', entries: [{ name: 'demo', isDir: true }] });
 });
 
@@ -838,7 +838,7 @@ test('_host plugins.listUserRoot takes NO path from the caller', async () => {
     listUserRoot: (...args) => { seen.push(args); return { dir: '/home/u/.clodex/plugins', entries: [] }; },
   });
   const { engine } = makeHost({ loader });
-  const r = await engine.dispatch('_host', 'plugins.listUserRoot', ['/etc', '..', { dir: '/' }]);
+  const r = await engine.dispatch('_host', 'plugins.listUserRoot', ['/etc', '..', { dir: '/' }], 'desktop');
   assert.equal(r.ok, true);
   assert.deepEqual(seen, [[]], 'the loader is called with no arguments at all');
   assert.equal(r.dir, '/home/u/.clodex/plugins', 'the answer is the configured root, not the requested path');
@@ -851,7 +851,7 @@ test('_host plugins.listUserRoot reports the path even when the read fails', asy
     listUserRoot: () => ({ dir: '/home/u/.clodex/plugins', entries: null, error: 'EACCES' }),
   });
   const { engine } = makeHost({ loader });
-  const r = await engine.dispatch('_host', 'plugins.listUserRoot', []);
+  const r = await engine.dispatch('_host', 'plugins.listUserRoot', [], 'desktop');
   assert.equal(r.ok, true);
   assert.equal(r.dir, '/home/u/.clodex/plugins');
   assert.equal(r.entries, null, 'null entries, distinct from an empty directory');
@@ -860,5 +860,5 @@ test('_host plugins.listUserRoot reports the path even when the read fails', asy
 test('_host plugins.listUserRoot refuses when no user root is configured', async () => {
   const loader = fakeLoader({ listUserRoot: () => null });
   const { engine } = makeHost({ loader });
-  assert.equal((await engine.dispatch('_host', 'plugins.listUserRoot', [])).ok, false);
+  assert.equal((await engine.dispatch('_host', 'plugins.listUserRoot', [], 'desktop')).ok, false);
 });

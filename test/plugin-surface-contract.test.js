@@ -306,11 +306,11 @@ test('the _host pseudo-plugin serves exactly five methods, and no plugin can rea
   const { engine, cleanup } = realEngineHost();
   try {
     for (const m of HOST_METHODS) {
-      const r = await engine.dispatch('_host', m, ['demo']);
+      const r = await engine.dispatch('_host', m, ['demo'], 'desktop');
       assert.notDeepStrictEqual(r, { ok: false, error: 'no such plugin method' },
         `_host ${m} must be served`);
     }
-    assert.deepStrictEqual(await engine.dispatch('_host', 'settings.wipe', ['demo']),
+    assert.deepStrictEqual(await engine.dispatch('_host', 'settings.wipe', ['demo'], 'desktop'),
       { ok: false, error: 'no such plugin method' }, 'and nothing beyond the five');
     // The id itself is unreachable by a plugin: PLUGIN_ID_RE forbids a leading
     // underscore, so `_host` can never BE a plugin, and rhost.invoke binds the

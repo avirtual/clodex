@@ -98,16 +98,16 @@ test('memory-viewer: forget forwards to the library seam and the unit goes away'
     const file = writeUnit(root, 'clodex', 'mem-1-aaaaaa');
     assert.ok(fs.existsSync(file));
 
-    const before = await host.dispatch('memory-viewer', 'units', ['clodex']);
+    const before = await host.dispatch('memory-viewer', 'units', ['clodex'], 'desktop');
     assert.equal(before.units.length, 1);
 
-    const res = await host.dispatch('memory-viewer', 'forget', [{ agent: 'clodex', id: 'mem-1-aaaaaa' }]);
+    const res = await host.dispatch('memory-viewer', 'forget', [{ agent: 'clodex', id: 'mem-1-aaaaaa' }], 'desktop');
     assert.deepEqual(res, { ok: true });
     assert.deepEqual(removals, [{ agent: 'clodex', id: 'mem-1-aaaaaa' }],
       'the ref core receives carries exactly agent + id');
     assert.equal(fs.existsSync(file), false);
 
-    const after = await host.dispatch('memory-viewer', 'units', ['clodex']);
+    const after = await host.dispatch('memory-viewer', 'units', ['clodex'], 'desktop');
     assert.equal(after.units.length, 0, 'the list reflects the delete on next read');
   } finally { cleanup(); }
 });
@@ -121,7 +121,7 @@ test('memory-viewer: the delete is the SEAM, not an unlink the plugin does itsel
   });
   try {
     const file = writeUnit(root, 'clodex', 'mem-1-aaaaaa');
-    const res = await host.dispatch('memory-viewer', 'forget', [{ agent: 'clodex', id: 'mem-1-aaaaaa' }]);
+    const res = await host.dispatch('memory-viewer', 'forget', [{ agent: 'clodex', id: 'mem-1-aaaaaa' }], 'desktop');
     assert.deepEqual(res, { ok: false, error: 'core refused' });
     assert.ok(fs.existsSync(file),
       'a refused seam must leave the unit on disk — the plugin must not unlink it');
@@ -132,13 +132,13 @@ test('memory-viewer: forget vets the AGENT through agentDir before the seam sees
   const { host, removals, cleanup } = boot();
   try {
     for (const agent of ['..', '.', '../../etc', 'has/slash', '', null, undefined, 42, {}]) {
-      const res = await host.dispatch('memory-viewer', 'forget', [{ agent, id: 'mem-1-aaaaaa' }]);
+      const res = await host.dispatch('memory-viewer', 'forget', [{ agent, id: 'mem-1-aaaaaa' }], 'desktop');
       assert.equal(res.ok, false, `${String(agent)} must be refused`);
       assert.match(res.error, /valid agent name/);
     }
     // A missing payload is the same refusal, not a crash.
     for (const payload of [null, undefined, 'nope']) {
-      const res = await host.dispatch('memory-viewer', 'forget', [payload]);
+      const res = await host.dispatch('memory-viewer', 'forget', [payload], 'desktop');
       assert.equal(res.ok, false);
     }
     assert.deepEqual(removals, [], 'no traversal ref ever reached core');
@@ -152,7 +152,7 @@ test('memory-viewer: the unit id is core\'s grammar to enforce, not the plugin\'
     removeImpl: () => ({ ok: false, error: 'invalid unit id: ../evil' }),
   });
   try {
-    const res = await host.dispatch('memory-viewer', 'forget', [{ agent: 'clodex', id: '../evil' }]);
+    const res = await host.dispatch('memory-viewer', 'forget', [{ agent: 'clodex', id: '../evil' }], 'desktop');
     assert.deepEqual(res, { ok: false, error: 'invalid unit id: ../evil' });
     assert.deepEqual(removals, [{ agent: 'clodex', id: '../evil' }],
       'the id reaches core unmodified — core owns that refusal');
@@ -172,13 +172,13 @@ test('memory-viewer: a unit whose id line disagrees with its filename deletes th
     const victim = writeUnit(root, 'clodex', 'mem-1-aaaaaa', { metaId: 'mem-2-bbbbbb', body: 'the one on screen' });
     const bystander = writeUnit(root, 'clodex', 'mem-2-bbbbbb', { body: 'must survive' });
 
-    const list = await host.dispatch('memory-viewer', 'units', ['clodex']);
+    const list = await host.dispatch('memory-viewer', 'units', ['clodex'], 'desktop');
     const shown = list.units.find((u) => u.body === 'the one on screen');
     assert.equal(shown.key, 'mem-1-aaaaaa', 'key is the basename');
     assert.equal(shown.id, 'mem-2-bbbbbb', 'the id line is preserved for display');
     assert.equal(shown.idMismatch, true, 'the disagreement is surfaced, not silently resolved');
 
-    await host.dispatch('memory-viewer', 'forget', [{ agent: 'clodex', id: shown.key }]);
+    await host.dispatch('memory-viewer', 'forget', [{ agent: 'clodex', id: shown.key }], 'desktop');
     assert.deepEqual(removals, [{ agent: 'clodex', id: 'mem-1-aaaaaa' }]);
     assert.equal(fs.existsSync(victim), false, 'the confirmed unit is the one deleted');
     assert.ok(fs.existsSync(bystander), 'the unrelated unit named by the id line survives');
@@ -192,13 +192,13 @@ test('memory-viewer: a unit with NO id line is still deletable', async () => {
   const { host, root, removals, cleanup } = boot();
   try {
     const file = writeUnit(root, 'clodex', 'mem-3-cccccc', { metaId: null, body: 'no id line' });
-    const list = await host.dispatch('memory-viewer', 'units', ['clodex']);
+    const list = await host.dispatch('memory-viewer', 'units', ['clodex'], 'desktop');
     const u = list.units[0];
     assert.equal(u.key, 'mem-3-cccccc');
     assert.equal(u.id, 'mem-3-cccccc', 'display falls back to the basename, like core list()');
     assert.equal(u.idMismatch, false, 'an absent id line is not a disagreement');
 
-    const res = await host.dispatch('memory-viewer', 'forget', [{ agent: 'clodex', id: u.key }]);
+    const res = await host.dispatch('memory-viewer', 'forget', [{ agent: 'clodex', id: u.key }], 'desktop');
     assert.deepEqual(res, { ok: true });
     assert.deepEqual(removals, [{ agent: 'clodex', id: 'mem-3-cccccc' }]);
     assert.equal(fs.existsSync(file), false);
