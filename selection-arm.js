@@ -43,12 +43,14 @@ const PEEK_TTL_MS = PEEK_TTL_S * 1000;
 // deps:
 //   armHints    ({base, route, hint}) -> Promise<{status}>
 //   clearHints  ({base, route, id}) -> Promise
+//   readHints   ({base, route}) -> Promise<{status, json}>   what the proxy HOLDS
 //   queue       ({name, text}) -> void   append to the seat's hook queue
+//   readQueue   ({name}) -> string[]     what is STILL in that file, undrained
 //   enabled     () -> bool               the live pref, read per call
 //   scrubber    () -> {scrub, tokens}    the token set to redact, read per call
 function createSelectionArm({
-  armHints, clearHints, queue = null, enabled = null, scrubber = null, log = null,
-  now = Date.now,
+  armHints, clearHints, readHints = null, queue = null, readQueue = null,
+  enabled = null, scrubber = null, log = null, now = Date.now,
 }) {
   // session name -> { peek, pending }.
   //   peek    — `{ text, bytes, truncated, until }` the proxy currently holds.
@@ -254,6 +256,69 @@ function createSelectionArm({
         try { await clearHints({ base, route, id: PEEK_ID }); }
         catch (e) { debug(`selection forget failed for ${route}: ${e.message}`); }
       }).then(drop, drop);
+    },
+
+    // What is ACTUALLY on its way to the agent, for the operator's popover.
+    //
+    // Reports the proxy's answer and this module's memo SEPARATELY rather than
+    // reconciling them, because their disagreement is the interesting state and
+    // reconciling would hide it. Measured 2026-08-06: three arms logged
+    // `timeout`, the memo rolled back to empty, and the peek was registered on
+    // the proxy the whole time and rode the next request. An instrument built
+    // on the memo alone would have reported "nothing armed" while text was
+    // being sent, which is the failure this exists to make visible.
+    //
+    // NOT serialized onto the session's chain: a read must not queue behind a
+    // POST that is hung, since a hung POST is exactly when the operator opens
+    // this. Reading mid-flight can catch a half-applied state, which is honest —
+    // waiting for a chain that may never drain is not.
+    async inspect(key, ctx = {}) {
+      const reg = regFor(key);
+      const memo = heldPeek(key);
+      const out = {
+        enabled: !(enabled && !enabled()),
+        local: {
+          peek: memo ? { text: memo.text, bytes: memo.bytes, truncated: memo.truncated,
+            expiresInMs: Math.max(0, memo.until - now()) } : null,
+          pending: [...reg.pending],
+        },
+        proxy: { routed: false, hints: null, error: null },
+        // The queue FILE, which is the attach tier's truth for the same reason
+        // the proxy is the peek tier's: the hook drains it in another process,
+        // so `pending` is only what this one believes it queued. A drain between
+        // the two makes them disagree, and that disagreement is worth seeing.
+        queued: null,
+      };
+      if (readQueue) {
+        try { out.queued = readQueue({ name: key }); }
+        catch (e) { out.queued = { error: e.message }; }
+      }
+      const { base, route } = ctx || {};
+      if (!base || !route) return out;
+      out.proxy.routed = true;
+      out.proxy.route = route;
+      if (!readHints) { out.proxy.error = 'no reader'; return out; }
+      try {
+        const res = await readHints({ base, route });
+        if (!res || res.status >= 400 || !res.json) {
+          out.proxy.error = `proxy ${(res && res.status) || 'unreachable'}`;
+          return out;
+        }
+        const list = Array.isArray(res.json.agent_hints) ? res.json.agent_hints : [];
+        // Age, not set_at: the operator cares how long it has left, and the
+        // proxy's clock is not this process's. `age_s` is the proxy's own
+        // subtraction, so it survives any skew between the two.
+        out.proxy.hints = list.map((h) => ({
+          id: h.id,
+          text: typeof h.text === 'string' ? h.text : '',
+          ttlS: typeof h.ttl_s === 'number' ? h.ttl_s : null,
+          ageS: typeof h.age_s === 'number' ? h.age_s : null,
+          turnStartOnly: !!h.turn_start_only,
+        }));
+      } catch (e) {
+        out.proxy.error = e.message;
+      }
+      return out;
     },
 
     // Test/inspection surface. Projects to raw text so a caller cannot hold a

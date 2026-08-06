@@ -441,6 +441,10 @@
       <div class="popover-title"><span>Touched Files — <span id="files-popover-name"></span></span><button type="button" class="popover-close" id="files-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div id="files-popover-body"></div>
     </div>
+    <div id="selection-popover" class="hidden">
+      <div class="popover-title"><span>Riding your next message — <span id="selection-popover-name"></span></span><button type="button" class="popover-close" id="selection-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div id="selection-popover-body"></div>
+    </div>
     <div id="file-peek-overlay" class="hidden">
       <div id="file-peek-modal">
         <div class="popover-title">
@@ -479,6 +483,7 @@
         <div id="drawer-tabs"></div>
         <div id="drawer-actions"></div>
         <span id="drawer-status"></span>
+        <button id="drawer-clipboard" title="What is riding your next message" type="button" aria-label="What is riding your next message">📋<span id="drawer-clipboard-count"></span></button>
         <button id="drawer-copy" title="Copy the selected text" type="button">Copy</button>
         <button id="drawer-tall" title="Make the panel taller" type="button" aria-pressed="false">⇕</button>
         <button id="drawer-toggle" title="Toggle panel" type="button">▼</button>

@@ -1635,6 +1635,15 @@ function createSessionManager(deps) {
       return selectionArm.release(s.name, this._armCtx(s));
     }
 
+    // What is on its way to this session's agent, for the drawer's inspector.
+    // Read-only: it registers nothing and takes nothing back, so opening the
+    // popover cannot change what rides the next request.
+    inspectSelection(name) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead) return Promise.resolve(null);
+      return selectionArm.inspect(s.name, this._armCtx(s));
+    }
+
     // The read API for the contextual-hint injector: 'full' (body is in
     // context — skip the hint), 'title' (an index line rode, so the model knows
     // the unit exists and cannot read it — the BEST hint candidate), 'absent'.

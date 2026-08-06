@@ -202,6 +202,7 @@ const API_CONTRACT = [
   // connection.
   { name: 'drawerArmSelection', kind: 'invoke', channel: 'drawer:armSelection' },
   { name: 'drawerReleaseSelection', kind: 'invoke', channel: 'drawer:releaseSelection' },
+  { name: 'drawerInspectSelection', kind: 'invoke', channel: 'drawer:inspectSelection' },
   // The drawer's terminal tenant (t215), same reasoning.
   { name: 'wtermSpawn', kind: 'invoke', channel: 'wterm:spawn' },
   { name: 'wtermWrite', kind: 'invoke', channel: 'wterm:write' },

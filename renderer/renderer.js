@@ -60,6 +60,7 @@ const { initCostPopover } = require('./popovers/cost-popover');
 const { initBustPopover } = require('./popovers/bust-popover');
 const { initSessionInfoPopover } = require('./popovers/session-info-popover');
 const { initFilesPopover } = require('./popovers/files-popover');
+const { initSelectionPopover } = require('./popovers/selection-popover');
 const { initChecklistPopovers } = require('./popovers/checklist-popovers');
 const { initTeamRolesPopover } = require('./popovers/team-roles-popover');
 const { initContextPopover } = require('./popovers/context-popover');
@@ -3151,7 +3152,20 @@ window.api.onSessionMention((name, mtype /* 'dm' */) => {
 // sorts by its frozen id list).
 // refitActiveTerminal is a hoisted declaration below — passed by reference so
 // the drawer refits through the SAME peer-aware path as every other caller.
-const drawerHost = createDrawerHost({ refitActiveTerminal, getActiveSession: () => activeSession });
+// Assigned just below, and crossed as a lazy call rather than a value: the host
+// is built before the popover that owns the badge, and capturing here would
+// freeze the no-op.
+let refreshSelectionBadge = () => {};
+const drawerHost = createDrawerHost({
+  refitActiveTerminal,
+  getActiveSession: () => activeSession,
+  onArmChanged: () => refreshSelectionBadge(),
+});
+
+const { openSelectionPopover, refreshSelectionBadge: doRefreshSelectionBadge } = initSelectionPopover({
+  getActiveSession: () => activeSession,
+});
+refreshSelectionBadge = doRefreshSelectionBadge;
 const { appendIpcEntry } = createIpcLog({ host: drawerHost });
 // Registered after the log, so the log stays the boot-active tab (drawer-host
 // activates the first registration); the strip's ORDER is the host's frozen id

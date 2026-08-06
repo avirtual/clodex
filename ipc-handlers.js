@@ -1633,6 +1633,12 @@ function registerIpcHandlers(deps) {
         attach: p.attach === true,
       });
     });
+    // Read-only, and inside this gate with the other two for the same reason:
+    // it reports the operator's own screen text back, which is exactly what a
+    // web-host connection must not be able to ask for.
+    handle('drawer:inspectSelection', async (_e, name) => (
+      await manager.inspectSelection(String(name || ''))
+    ));
     handle('drawer:releaseSelection', async (_e, name) => await manager.releaseSelection(String(name || '')));
     // The workbench terminal, under the SAME gate for a sharper reason: an
     // unconditionally registered `wterm:spawn` is a remote shell on the host,

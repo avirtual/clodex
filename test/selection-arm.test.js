@@ -453,3 +453,82 @@ test('the attach framing does not claim to persist, because the transcript does'
   assert.ok(!/stays attached/.test(queued[0].text));
   assert.match(queued[0].text, /deliberate gesture/);
 });
+
+// ── inspect(): the operator's instrument ──────────────────────────────────
+//
+// It reports the proxy's registry and this module's memo SEPARATELY, and that
+// separation is the point: on 2026-08-06 an arm timed out, the memo rolled back
+// to empty, and the peek was registered on the proxy and rode the next request.
+// A reconciled answer would have hidden exactly that.
+
+
+test('inspect reports the proxy registry even when the memo is empty', async () => {
+  // The measured failure, reproduced: nothing local, everything remote.
+  const { arm } = mk({
+    readHints: () => Promise.resolve({
+      status: 200,
+      json: { agent_hints: [{ id: 'operator-selection', text: 'riding', ttl_s: 120, age_s: 4, turn_start_only: true }] },
+    }),
+  });
+  const out = await arm.inspect('a', CTX);
+  assert.strictEqual(out.local.peek, null, 'ENTER: the memo is empty, as a rollback leaves it');
+  assert.strictEqual(out.proxy.hints.length, 1, 'the proxy answer survives an empty memo');
+  assert.strictEqual(out.proxy.hints[0].text, 'riding');
+  assert.strictEqual(out.proxy.hints[0].ageS, 4, 'age comes from the proxy, not a local clock');
+});
+
+test('inspect reads the queue FILE, not the pending list', async () => {
+  // The hook drains in another process, so `pending` is only a belief.
+  const { arm } = mk({
+    readHints: () => Promise.resolve({ status: 200, json: { agent_hints: [] } }),
+    readQueue: () => ['what the file really holds'],
+  });
+  await arm.arm('a', { text: 'something else', tab: 'term', attach: true });
+  const out = await arm.inspect('a', CTX);
+  assert.deepStrictEqual(out.queued, ['what the file really holds']);
+  assert.deepStrictEqual(out.local.pending, ['something else'],
+    'the belief is reported too, so the two can be compared');
+});
+
+test('inspect never throws out at the caller when the proxy is down', async () => {
+  const { arm } = mk({ readHints: () => Promise.reject(new Error('ECONNREFUSED')) });
+  const out = await arm.inspect('a', CTX);
+  assert.strictEqual(out.proxy.error, 'ECONNREFUSED');
+  assert.strictEqual(out.proxy.hints, null, 'no hints is distinct from an empty registry');
+});
+
+test('inspect on an unrouted session reports local state without a proxy call', async () => {
+  let called = 0;
+  const { arm } = mk({ readHints: () => { called++; return Promise.resolve({ status: 200, json: {} }); } });
+  const out = await arm.inspect('a', {});
+  assert.strictEqual(out.proxy.routed, false);
+  assert.strictEqual(called, 0, 'no base/route means nothing to ask');
+});
+
+test('inspect does not queue behind a hung POST', async () => {
+  // The operator opens this precisely WHEN an arm is hanging, so serializing the
+  // read onto the same chain would make the instrument unavailable exactly when
+  // it is needed.
+  const { arm, ops, settle } = slowMk({
+    readHints: () => Promise.resolve({ status: 200, json: { agent_hints: [] } }),
+  });
+  const inFlight = arm.arm('a', { text: 'hanging', tab: 'term' }, CTX);
+  await settle();
+  // ENTER: the arm really is unresolved, or this test proves nothing about
+  // reading past a hung op.
+  assert.strictEqual(ops.length, 1, 'ENTER: an arm is in flight');
+  const out = await arm.inspect('a', CTX);   // must resolve with that arm still hanging
+  assert.ok(out, 'inspect resolved while an arm was unresolved');
+  assert.strictEqual(out.proxy.routed, true);
+  ops[0].release();
+  await inFlight;
+});
+
+test('inspect reports the pref being off, since that explains an empty panel', async () => {
+  const { arm } = mk({
+    enabled: () => false,
+    readHints: () => Promise.resolve({ status: 200, json: { agent_hints: [] } }),
+  });
+  const out = await arm.inspect('a', CTX);
+  assert.strictEqual(out.enabled, false);
+});

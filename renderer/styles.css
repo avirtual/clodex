@@ -3420,7 +3420,74 @@ html, body {
   flex-shrink: 0;
   text-align: right;
 }
-#drawer-copy, #drawer-tall, #drawer-toggle { flex-shrink: 0; }
+#drawer-copy, #drawer-tall, #drawer-toggle, #drawer-clipboard { flex-shrink: 0; }
+
+/* The inspector button. Dimmed to near-invisible when nothing is riding: this
+   is an instrument the operator reaches for when they doubt what was sent, and
+   a permanently lit icon in the header is one more thing to stop seeing. */
+#drawer-clipboard {
+  opacity: 0.4;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+#drawer-clipboard.live {
+  opacity: 1;
+  color: var(--accent);
+}
+#drawer-clipboard-count {
+  font-size: 9px;
+  margin-left: 2px;
+}
+
+#selection-popover {
+  position: fixed;
+  z-index: 60;
+  width: 460px;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--panel, #1e2127);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+#selection-popover.hidden { display: none; }
+#selection-popover-body { padding: 6px 10px 10px; }
+.sel-row {
+  border-top: 1px solid var(--border);
+  padding: 8px 0 6px;
+}
+.sel-row:first-child { border-top: none; }
+.sel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+}
+.sel-title { color: var(--text); font-weight: 600; }
+.sel-meta { color: var(--text-dim); font-size: 10px; white-space: nowrap; }
+/* pre-wrap, not nowrap: indentation is content in a selection (the same reason
+   the composer keeps it), and a one-line preview of an indented block is
+   unrecognisable to the person who selected it. */
+.sel-text {
+  margin-top: 4px;
+  padding: 5px 7px;
+  background: var(--bg, #16181d);
+  border-radius: 4px;
+  font-family: var(--mono, monospace);
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 132px;
+  overflow-y: auto;
+}
+.sel-note { margin-top: 4px; font-size: 10px; color: var(--text-dim); }
+/* The disagreement that matters (proxy holds it, Clodex thinks it does not) is
+   the one thing here the operator cannot work out from the text. */
+.sel-note.warn { color: var(--warn, #d19a66); }
+.sel-empty { padding: 10px 2px; font-size: 11px; color: var(--text-dim); }
+.sel-kind-memory .sel-title { color: var(--text-dim); }
 /* A failed copy must not read as a confirmation at a glance — the message says
    so, but the colour is what gets seen first. */
 #drawer-status.bad { color: var(--danger, #e06c75); }

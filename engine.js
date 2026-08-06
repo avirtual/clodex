@@ -416,6 +416,9 @@ const selectionArm = createSelectionArm({
   scrubber: () => (ctlService && ctlService.scrubber ? ctlService.scrubber() : null),
   armHints: ({ base, route, hint }) => ProxyClient.armHints(base, route, [hint]),
   clearHints: ({ base, route, id }) => ProxyClient.clearHints(base, route, id),
+  // The inspector's read. Deliberately the SAME endpoint the arm writes to, so
+  // the popover cannot report a different registry than the one being armed.
+  readHints: ({ base, route }) => ProxyClient.readHints(base, route),
   // The Copy button's channel: a line appended to the seat's own queue file,
   // which the CLI's UserPromptSubmit hook drains into the transcript. APPEND
   // and not write — two clicks between one pair of submits are two
@@ -425,6 +428,20 @@ const selectionArm = createSelectionArm({
   // hook will never run either, so the throw is the honest answer.
   queue: ({ name, text }) => {
     fs.appendFileSync(pathFor(REGISTRY_DIR, name, 'selection'), `${JSON.stringify({ text })}\n`);
+  },
+  // Reads the same file the hook drains, so the popover shows what is STILL
+  // waiting rather than what this process once appended. An absent file is the
+  // ordinary drained state, not an error.
+  readQueue: ({ name }) => {
+    let raw;
+    try { raw = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'selection'), 'utf8'); }
+    catch { return []; }
+    const out = [];
+    for (const line of raw.split('\n')) {
+      if (!line.trim()) continue;
+      try { const o = JSON.parse(line); if (o && o.text) out.push(o.text); } catch {}
+    }
+    return out;
   },
   log,
 });

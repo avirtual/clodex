@@ -71,7 +71,11 @@ const TAB_IDS = Object.freeze(['log', 'activity', 'ctl', 'term']);
 // Beyond this the badge is "a lot"; the count itself keeps counting.
 const BADGE_MAX = 99;
 
-function createDrawerHost({ refitActiveTerminal, getActiveSession }) {
+// onArmChanged: something was armed, handed over, or released — the inspector's
+// badge is stale. Fired rather than polled so the badge costs a proxy read only
+// when the state it reports actually moved.
+function createDrawerHost({ refitActiveTerminal, getActiveSession, onArmChanged = null }) {
+  const armChanged = () => { try { if (onArmChanged) onArmChanged(); } catch {} };
   const drawer = document.getElementById('drawer');
   const drawerHeader = document.getElementById('drawer-header');
   const tabsEl = document.getElementById('drawer-tabs');
@@ -448,7 +452,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession }) {
     peekLabel = '';
     refreshStatus();
     if (!name || !window.api.drawerReleaseSelection) return;
-    window.api.drawerReleaseSelection(name).catch(() => {});
+    window.api.drawerReleaseSelection(name).then(armChanged, () => {});
   }
 
   function label(res, fallback) {
@@ -489,6 +493,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession }) {
       peekLabel = '';
     }
     refreshStatus();
+    armChanged();
   }
 
   // Cancelled per event so only the pause arms — a drag fires selectionchange on
@@ -530,6 +535,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession }) {
       // and it is cleared when it does rather than by any gesture here.
       if (name) attachedBy.set(name, `sending · ${label(res, text.length)}`);
       refreshStatus();
+      armChanged();
       flash(`copied · ${clipSize} · sending`);
       return;
     }
@@ -622,6 +628,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession }) {
   function onSelectionSent(name) {
     if (!name || !attachedBy.delete(name)) return;
     refreshStatus();
+    armChanged();
   }
 
   return {
