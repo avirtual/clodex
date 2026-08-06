@@ -3676,6 +3676,9 @@ html, body {
 }
 
 #ctl-prompt.none { color: var(--text-dim); }
+/* A failed copy must not read as a confirmation at a glance — the message says
+   so, but the colour is what gets seen first. */
+#ctl-prompt.flash-bad { color: var(--danger, #e06c75); }
 
 #ctl-input {
   flex: 1;

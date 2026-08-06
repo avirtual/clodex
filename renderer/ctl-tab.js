@@ -182,7 +182,36 @@ function createCtlTab({ host }) {
     // A block is command + its own output, which is the unit the operator
     // reasons about — flattening to bare output would lose which command wrote it.
     const text = picked || (last ? `$ ${last.command}\n${last.output}` : '');
-    if (text) navigator.clipboard.writeText(text);
+    if (!text) { flashCopy('nothing to copy', true); return; }
+    // A clipboard write is async and CAN reject (permissions, an unfocused
+    // document). Unreported, a rejection is indistinguishable from a copy that
+    // worked — which is the exact failure the label flip exists to prevent, so
+    // report both arms rather than only the happy one.
+    navigator.clipboard.writeText(text)
+      .then(() => flashCopy(`copied ${picked ? 'selection' : 'block'} · ${bytesLabel(text.length)}`))
+      .catch((e) => flashCopy(`copy failed: ${e && e.message ? e.message : e}`, true));
+  }
+
+  function bytesLabel(n) {
+    return n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`;
+  }
+
+  // Confirmation on the PROMPT line, not a toast: it is the pane's existing
+  // status surface, it is already where the eye is after a command, and it costs
+  // no new element or z-index. Restores by calling renderPrompt rather than
+  // stashing the old string, so it cannot resurrect a stale context name.
+  let copyFlash = null;
+  function flashCopy(msg, failed = false) {
+    if (!promptEl) return;
+    clearTimeout(copyFlash);
+    promptEl.textContent = `${msg} ❯`;
+    promptEl.classList.toggle('flash-bad', !!failed);
+    copyFlash = setTimeout(() => {
+      promptEl.classList.remove('flash-bad');
+      // Never over a command's elapsed counter: that one is live and this one is
+      // stale by construction.
+      if (!running) renderPrompt();
+    }, 1600);
   }
 
   // The cheat sheet. Anchored to its button and rendered from ctl:help, which
