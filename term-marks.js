@@ -1,0 +1,165 @@
+'use strict';
+// term-marks.js — OSC 133 semantic prompt marks: the parser, and the prose that
+// describes a finished command to the agent.
+//
+// WHY MARKS AT ALL. A terminal is a screen, not a stream of results: there is no
+// byte that says "this command's output starts here", no exit code anywhere in
+// the bytes, and — because the operator may edit a line before running it — no
+// way to know from the outside what actually ran. Inferring any of that from the
+// output (find the prompt, diff the screen) is prompt-shape guesswork that
+// breaks on every custom PS1 and cannot recover the exit code at all.
+//
+// OSC 133 is the existing answer (iTerm2, VSCode, WezTerm all speak it): the
+// SHELL emits invisible marks at the boundaries it alone knows. That is what
+// makes this parser small and honest — it reads facts rather than deducing them.
+//
+// The subset this file understands, which is what term-shim.js emits:
+//   ESC ] 133 ; A            BEL   prompt about to be drawn
+//   ESC ] 133 ; C ; <b64>    BEL   command STARTED; payload is what actually ran
+//   ESC ] 133 ; D ; <exit>   BEL   command finished, with its status
+// The command rides base64 on the C mark because a command line legitimately
+// contains `;` and BEL-adjacent bytes, and a raw one would end its own mark.
+// A is parsed but carries nothing; it exists so the abandon case below can be
+// told apart from a command that is simply still running.
+//
+// Electron-free and stream-shaped by construction: it is fed PTY chunks and
+// emits records. That is also what makes it testable without a shell.
+
+// Bounded so a lone ESC arriving at the end of a chunk cannot grow `carry`
+// without limit — the longest legal mark is C with a base64 command, which the
+// shim itself caps.
+const MAX_CARRY = 8 * 1024;
+
+// A mark, complete only when BEL-terminated. `[^\x07]*` deliberately cannot
+// cross a BEL, so a mark can never swallow the output that follows it.
+const MARK_RE = /\x1b\]133;([^\x07]*)\x07/g;
+// A trailing PARTIAL mark: the chunk ended mid-sequence. Anything matching this
+// is held for the next feed rather than being emitted as output — without it,
+// a mark split across two PTY reads would print its own bytes into the captured
+// output and then fail to frame anything.
+const PARTIAL_RE = /\x1b(?:\](?:1(?:3(?:3(?:;[^\x07]*)?)?)?)?)?$/;
+
+function createMarkParser({ onCommand, maxOutput } = {}) {
+  const MAX_OUT = maxOutput || 64 * 1024;
+  let carry = '';
+  let capturing = false;
+  let command = '';
+  let out = '';
+
+  function emit(exitCode) {
+    const rec = { command, exitCode, output: out };
+    capturing = false;
+    command = '';
+    out = '';
+    if (onCommand) onCommand(rec);
+  }
+
+  function text(chunk) {
+    if (!capturing || !chunk) return;
+    out += chunk;
+    // Keep the TAIL, not the head: a build's last lines are where the error is,
+    // and the head is the part the operator already watched scroll past.
+    if (out.length > MAX_OUT) out = out.slice(-MAX_OUT);
+  }
+
+  return {
+    feed(data) {
+      if (typeof data !== 'string' || !data) return;
+      const s = carry + data;
+      carry = '';
+      let last = 0;
+      MARK_RE.lastIndex = 0;
+      let m;
+      while ((m = MARK_RE.exec(s)) !== null) {
+        text(s.slice(last, m.index));
+        last = MARK_RE.lastIndex;
+        const body = m[1];
+        if (body === 'A') {
+          // A fresh prompt while a command is open means it never finished and
+          // never will — Ctrl-C at the prompt, or a shell that reset. Drop it
+          // rather than reporting it: an abandoned line has no exit code, and
+          // holding it open would attribute the NEXT command's output to it.
+          if (capturing) { capturing = false; command = ''; out = ''; }
+        } else if (body === 'C' || body.startsWith('C;')) {
+          let cmd = '';
+          try { cmd = Buffer.from(body.slice(2), 'base64').toString('utf8'); } catch { cmd = ''; }
+          // A command whose payload did not survive is still a real command;
+          // reporting it with an empty line is honest, dropping it is not.
+          command = cmd;
+          capturing = true;
+          out = '';
+        } else if (body === 'D' || body.startsWith('D;')) {
+          // D without a preceding C is the shell's FIRST prompt (precmd runs
+          // before any command has been typed) and every prompt redraw after an
+          // abandoned line. Nothing ran, so there is nothing to report.
+          if (capturing) {
+            const raw = body.slice(2);
+            const n = Number(raw);
+            emit(raw !== '' && Number.isFinite(n) ? n : null);
+          }
+        }
+      }
+      const rest = s.slice(last);
+      const p = rest.match(PARTIAL_RE);
+      if (p && p.index + p[0].length === rest.length) {
+        text(rest.slice(0, p.index));
+        carry = p[0].length > MAX_CARRY ? '' : p[0];
+      } else {
+        text(rest);
+      }
+    },
+    // Test/diagnostic read. The live state is deliberately not exposed to the
+    // rest of the app: a consumer that could see a half-finished command would
+    // be tempted to report it before its exit code exists.
+    _state: () => ({ capturing, command, carry: carry.length, out: out.length }),
+  };
+}
+
+// The agent-facing prose. Separate from the parser because it is PRODUCT — what
+// the agent is told, and how much it costs — while the parser above is a fact
+// reader.
+//
+// The exit code is most of the value and nearly free: "ran, exit 0" is often the
+// entire answer at a handful of tokens. So output rides only when it is likely
+// to be NEWS — a nonzero exit — and a successful command reports its line alone.
+// A build that prints four thousand lines and works is not something the agent
+// needs in its context.
+function formatCommand(rec, { stripAnsi, maxLines, maxChars, always } = {}) {
+  const cmd = String((rec && rec.command) || '').trim();
+  if (!cmd) return null;
+  const code = rec.exitCode;
+  const status = code === null || code === undefined ? 'exit unknown' : `exit ${code}`;
+  const head = `[terminal] ${cmd}\n${status}`;
+  if (!always && (code === 0 || code === null || code === undefined)) return head;
+
+  let body = String((rec && rec.output) || '');
+  if (stripAnsi) body = stripAnsi(body);
+  // Carriage returns are how a progress bar redraws one line; kept raw they
+  // read as one enormous unreadable line in the transcript.
+  body = body.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = body.split('\n');
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  // zsh's PROMPT_SP end-of-line marker: an inverse-video `%` padded to the
+  // terminal width, printed when output did not end in a newline. It is emitted
+  // by the shell CORE after the command finishes and BEFORE precmd hooks run, so
+  // no hook ordering can keep it out of the capture — measured against a real
+  // PTY, it landed at the tail of a failing `ls`. A display artifact, not
+  // output. Bounded to the final line so a command legitimately printing `%`
+  // mid-stream keeps it.
+  if (lines.length && /^[%$#]\s*$/.test(lines[lines.length - 1])) lines.pop();
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  while (lines.length && !lines[0].trim()) lines.shift();
+  if (!lines.length) return head;
+  const cap = maxLines || 40;
+  const trimmed = lines.length > cap;
+  const kept = trimmed ? lines.slice(-cap) : lines;
+  let text = kept.join('\n');
+  const chars = maxChars || 4000;
+  if (text.length > chars) text = `…\n${text.slice(-chars)}`;
+  // The truncation is STATED. An agent reading a tail as if it were the whole
+  // output will confidently describe a failure whose cause scrolled off.
+  const note = trimmed ? ` (last ${kept.length} of ${lines.length} lines)` : '';
+  return `${head}\noutput${note}:\n${text}`;
+}
+
+module.exports = { createMarkParser, formatCommand };

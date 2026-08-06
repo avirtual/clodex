@@ -26,7 +26,7 @@
 //
 // A seatless key is still valid and is the workspace-wide shell: the drawer
 // opened with no session selected has nowhere else to belong.
-function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid }) {
+function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser }) {
   const ptys = new Map(); // key(windowId, seat) -> { proc, scrollback, cols, rows, windowId, seat }
 
   // NUL joins the two halves because it is the one byte neither can contain: a
@@ -65,6 +65,13 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // passing only the window would reintroduce it one layer down.
     const cwd = (cwdFor && cwdFor(windowId, seat)) || process.env.HOME || '/';
 
+    // The OSC 133 shim's env additions, or null on a host that could not build
+    // one (non-zsh, unwritable dir). Null must stay ordinary: the shell spawns
+    // unshimmed, emits no marks, and behaves exactly as it did before this
+    // feature existed — reporting is the thing that degrades, never the
+    // terminal.
+    const extraEnv = (shimEnv && shimEnv(seat)) || null;
+
     let proc;
     try {
       proc = spawn(shellFor(), ['-l'], {
@@ -72,7 +79,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         cols,
         rows,
         cwd,
-        env: { ...(env || process.env), TERM: 'xterm-256color' },
+        env: { ...(env || process.env), ...(extraEnv || {}), TERM: 'xterm-256color' },
       });
     } catch (e) {
       logger.warn('wterm', `spawn failed: ${e.message}`);
@@ -85,9 +92,20 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // different IPC paths, so their relative order is not guaranteed and a
     // seq-less renderer must either double-print the overlap or drop the tail.
     const rec = { proc, scrollback: '', cols, rows, windowId, seat: seat || null, seq: 0 };
+    // The mark parser is per SHELL, not per window: it holds the open command's
+    // state, and one shared across seats would attribute one seat's output to
+    // another's command. Only built for a shell that belongs to a seat — there
+    // is nobody to report a seatless workspace shell's commands TO.
+    // Marks are consumed by the parser but still forwarded to the renderer
+    // untouched: xterm ignores an unknown OSC, and stripping them here would
+    // mean two divergent copies of the same bytes.
+    rec.marks = (onCommand && makeMarkParser && seat)
+      ? makeMarkParser({ onCommand: (c) => { try { onCommand(seat, c); } catch {} } })
+      : null;
     ptys.set(key, rec);
 
     proc.onData((data) => {
+      if (rec.marks) { try { rec.marks.feed(data); } catch {} }
       rec.scrollback += data;
       rec.seq += 1;
       if (rec.scrollback.length > MAX) rec.scrollback = rec.scrollback.slice(-MAX);

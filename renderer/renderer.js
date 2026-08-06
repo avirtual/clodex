@@ -3525,6 +3525,7 @@ const prefsCompactOnResume = document.getElementById('prefs-compact-on-resume');
 const prefsContextHints = document.getElementById('prefs-context-hints');
 const prefsSemanticHints = document.getElementById('prefs-semantic-hints');
 const prefsSelectionHints = document.getElementById('prefs-selection-hints');
+const prefsTerminalReporting = document.getElementById('prefs-terminal-reporting');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
 const prefsToolsList = document.getElementById('prefs-tools-list');
@@ -5143,6 +5144,7 @@ async function openPrefs() {
   prefsContextHints.checked = !!s.contextHints;
   if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
   if (prefsSelectionHints) prefsSelectionHints.checked = !!s.selectionHints;
+  if (prefsTerminalReporting) prefsTerminalReporting.checked = !!s.terminalReporting;
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
   applyPrefsGate();
@@ -5187,6 +5189,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     contextHints: prefsContextHints.checked,
     semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
     selectionHints: prefsSelectionHints ? prefsSelectionHints.checked : false,
+    terminalReporting: prefsTerminalReporting ? prefsTerminalReporting.checked : false,
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     remoteEnabled: prefsRemoteEnabled.checked,
   });

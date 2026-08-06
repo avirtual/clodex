@@ -28,7 +28,7 @@ const CONTROLS = [
   'prefs-compact-on-resume', 'prefs-compact-on-resume-why',
   'prefs-context-hints', 'prefs-context-hints-why',
   'prefs-semantic-hints', 'prefs-semantic-hints-why',
-  'prefs-selection-hints',
+  'prefs-selection-hints', 'prefs-terminal-reporting',
   'ws-logs-block', 'ws-logs-size', 'ws-logs-age', 'ws-logs-clear-btn',
   'prefs-remote-enabled', 'remote-dot', 'remote-status-text',
   'prefs-remote-token', 'prefs-remote-token-save', 'prefs-remote-token-clear',

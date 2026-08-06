@@ -136,6 +136,12 @@ const SCANNED_MODULES = [
   // by injection, so a bare `pty` or `manager` name appearing in it means it
   // reached for the session machinery it is defined by not using.
   'drawer-pty.js',
+  // OSC 133 terminal reporting. Both are pure leaves taking everything by
+  // argument (term-marks is fed bytes and emits records; term-shim is handed a
+  // dir, a shell and an env), so any free identifier here is a reach into the
+  // coordinator that neither is allowed to see.
+  'term-marks.js',
+  'term-shim.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction

@@ -934,6 +934,12 @@
           <input type="checkbox" id="prefs-selection-hints">
           <span>Send text I select in the panel</span>
         </label>
+        <h5>Tell the agent what you run in the terminal</h5>
+        <p class="hint-text">Each command you run in a session's Terminal tab is reported to that session's agent: the command line and its exit code, plus the tail of the output when it failed. A command that succeeded sends its line alone, not its output. Nothing is sent for the shared terminal when no session is selected, and nothing is sent while this is off. Reports ride along with your next message rather than interrupting the agent. This adds a small generated startup file to the terminal's shell so it can mark where each command begins and ends; your own <code>.zshrc</code> is sourced normally and is never modified. Requires zsh — another shell simply gets an ordinary terminal. Turning this on or off applies to terminals opened afterwards.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-terminal-reporting">
+          <span>Report the commands I run in a session's terminal</span>
+        </label>
         <div id="ws-logs-block" style="display: none;">
           <h5>Capture logs</h5>
           <p class="hint-text">The proxy keeps per-session request captures on disk to power cost and cache-bust forensics. They accrue over time; clearing collapses old sessions to their billing receipts (cost history is preserved — only the detailed request forensics are removed) and clears the probe-traffic bucket. Active, warm, and recent sessions are never touched.</p>

@@ -56,6 +56,12 @@ function mk(over = {}) {
     scrollbackMax: over.scrollbackMax,
     setTimeout: over.setTimeout,
     killPid: over.killPid,
+    shimEnv: over.shimEnv,
+    onCommand: over.onCommand,
+    // The real parser, injected — drawer-pty requires nothing (see the
+    // not-a-session test below), so the wiring tests exercise the same one
+    // engine.js wires rather than a stand-in that could drift from it.
+    makeMarkParser: over.makeMarkParser || require('../term-marks').createMarkParser,
     env: { PATH: '/usr/bin' },
     log: { info() {}, warn() {}, error() {} },
   });
@@ -465,4 +471,114 @@ test('the scrollback snapshot carries the seq it reflects', () => {
   // Every live send carried its own seq, so a byte that arrives after the
   // snapshot is distinguishable from one already inside it.
   assert.deepStrictEqual(sent.map((s) => s[4]), [1, 2]);
+});
+
+// --- OSC 133 command reporting ------------------------------------------
+// The parser itself is pinned in term-marks.test.js; what belongs here is the
+// WIRING: which shells get one, that the bytes still reach the renderer, and
+// that a seatless shell reports nothing.
+
+const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
+const MARKED = (cmd, out, code) =>
+  `\x1b]133;C;${b64(cmd)}\x07${out}\x1b]133;D;${code}\x07`;
+
+test('marks: a seat shell reports its finished commands', () => {
+  const got = [];
+  const { w, spawn } = mk({ onCommand: (seat, rec) => got.push([seat, rec]) });
+  w.spawn('ws-1', 'alice', {});
+  spawn.spawned[0].emit(MARKED('npm test', 'ok\n', 0));
+
+  assert.strictEqual(got.length, 1, 'ENTER: one command was reported');
+  assert.strictEqual(got[0][0], 'alice', 'reported against the seat that ran it');
+  assert.deepStrictEqual(got[0][1], { command: 'npm test', exitCode: 0, output: 'ok\n' });
+});
+
+// There is nobody to report a workspace-wide shell's commands TO.
+test('marks: a SEATLESS shell reports nothing', () => {
+  const got = [];
+  const { w, spawn } = mk({ onCommand: (seat, rec) => got.push([seat, rec]) });
+  w.spawn('ws-1', null, {});
+  spawn.spawned[0].emit(MARKED('ls', 'x\n', 0));
+
+  assert.strictEqual(got.length, 0, 'the shared terminal belongs to no agent');
+});
+
+// One parser per shell. A shared one would attribute one seat's output to
+// another seat's command whenever the two interleave.
+test('marks: each seat is framed by its OWN parser', () => {
+  const got = [];
+  const { w, spawn } = mk({ onCommand: (seat, rec) => got.push([seat, rec.command, rec.output]) });
+  w.spawn('ws-1', 'alice', {});
+  w.spawn('ws-1', 'bob', {});
+  const [a, b] = spawn.spawned;
+
+  // Interleaved: both commands open before either closes.
+  a.emit(`\x1b]133;C;${b64('a-cmd')}\x07`);
+  b.emit(`\x1b]133;C;${b64('b-cmd')}\x07`);
+  a.emit('from-a\n');
+  b.emit('from-b\n');
+  a.emit('\x1b]133;D;0\x07');
+  b.emit('\x1b]133;D;1\x07');
+
+  assert.strictEqual(got.length, 2, 'ENTER: both commands were framed');
+  assert.deepStrictEqual(got, [
+    ['alice', 'a-cmd', 'from-a\n'],
+    ['bob', 'b-cmd', 'from-b\n'],
+  ]);
+});
+
+// The renderer must receive the bytes UNCHANGED — xterm ignores an unknown OSC,
+// and a stripped copy here would diverge from the scrollback.
+test('marks: the renderer still receives the raw bytes', () => {
+  const { w, sent, spawn } = mk({ onCommand: () => {} });
+  w.spawn('ws-1', 'alice', {});
+  const raw = MARKED('ls', 'out\n', 0);
+  spawn.spawned[0].emit(raw);
+
+  const data = sent.filter((s) => s[1] === 'wterm:data').map((s) => s[2]).join('');
+  assert.strictEqual(data, raw, 'the bytes are forwarded, not consumed');
+});
+
+test('marks: a throwing reporter cannot break the terminal', () => {
+  const { w, sent, spawn } = mk({ onCommand: () => { throw new Error('boom'); } });
+  w.spawn('ws-1', 'alice', {});
+  spawn.spawned[0].emit(MARKED('ls', 'out\n', 0));
+
+  const data = sent.filter((s) => s[1] === 'wterm:data').map((s) => s[2]).join('');
+  assert.ok(data.length > 0, 'ENTER: output still reached the renderer');
+  assert.strictEqual(w._count(), 1, 'the shell is still alive');
+});
+
+// --- the shell shim seam -------------------------------------------------
+
+test('shim: its env additions reach the spawned shell', () => {
+  const { w, spawn } = mk({ shimEnv: (seat) => ({ ZDOTDIR: `/run/${seat}/zsh` }) });
+  w.spawn('ws-1', 'alice', {});
+
+  assert.strictEqual(spawn.spawned[0].opts.env.ZDOTDIR, '/run/alice/zsh');
+  assert.strictEqual(spawn.spawned[0].opts.env.PATH, '/usr/bin', 'the base env survives');
+});
+
+// A host that cannot build a shim must still get an ORDINARY terminal.
+test('shim: a null shim leaves the environment untouched', () => {
+  const { w, spawn } = mk({ shimEnv: () => null });
+  w.spawn('ws-1', 'alice', {});
+
+  assert.ok(!('ZDOTDIR' in spawn.spawned[0].opts.env), 'no redirect');
+  assert.strictEqual(spawn.spawned[0].opts.env.TERM, 'xterm-256color', 'ENTER: a real shell spawned');
+});
+
+// TERM is set AFTER the shim spread, so a shim cannot break xterm's rendering.
+test('shim: it cannot override TERM', () => {
+  const { w, spawn } = mk({ shimEnv: () => ({ TERM: 'dumb' }) });
+  w.spawn('ws-1', 'alice', {});
+  assert.strictEqual(spawn.spawned[0].opts.env.TERM, 'xterm-256color');
+});
+
+test('shim: the seat is what decides which shim is built', () => {
+  const asked = [];
+  const { w } = mk({ shimEnv: (seat) => { asked.push(seat); return null; } });
+  w.spawn('ws-1', 'alice', {});
+  w.spawn('ws-1', 'bob', {});
+  assert.deepStrictEqual(asked, ['alice', 'bob']);
 });

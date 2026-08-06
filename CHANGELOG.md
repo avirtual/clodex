@@ -13,6 +13,26 @@ blocks a release.
 
 ## Unreleased
 
+- **The agent can see what you run in its terminal.** Off by default;
+  Preferences → "Report the commands I run in a session's terminal". With it on,
+  each command you run in a session's Terminal tab is reported to that session's
+  agent: the command line and its exit code, plus the tail of the output when it
+  failed. A command that succeeded sends its line alone — a build that prints
+  four thousand lines and works is not news. Reports ride along with your next
+  message rather than interrupting, so they cost nothing until you say something.
+  Nothing is sent for the shared terminal when no session is selected.
+
+  This works by adding a small generated startup file to the terminal's shell so
+  it can mark where each command begins and ends (the OSC 133 convention iTerm2
+  and VSCode use). Your own `.zshrc` is sourced normally and is never modified.
+  Requires zsh; another shell simply gets an ordinary terminal with no reporting.
+
+- **Each session gets its own terminal.** The drawer's Terminal tab used to be
+  one shell per window, so switching sessions left you in the previous one's
+  shell and directory. Every session now has its own, opening in its own working
+  directory and keeping its own scrollback, and switching sessions switches
+  shells. A session's shell ends when the session is deleted.
+
 - **The drawer can be made taller.** A **⇕** button in the drawer header swaps
   the proportions — the drawer takes about 70% of the window and the session
   terminal keeps the rest, which is enough room to actually debug in the

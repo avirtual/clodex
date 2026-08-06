@@ -1368,6 +1368,9 @@ const ctlService = enableDrawerServices ? createCtlService({}) : null;
 // terminal spawned after the operator opens sessions lands in the directory
 // they are actually working in.
 const { createDrawerPtys } = require('./drawer-pty');
+const { buildZshShim } = require('./term-shim');
+const { formatCommand, createMarkParser } = require('./term-marks');
+const { stripAnsi } = require('./cli/src/output');
 const drawerPtys = enableDrawerServices ? createDrawerPtys({
   spawn: pty.spawn.bind(pty),
   send: (workspaceId, channel, ...args) => {
@@ -1378,6 +1381,35 @@ const drawerPtys = enableDrawerServices ? createDrawerPtys({
   },
   cwdFor: (workspaceId, seat) => drawerPtyCwd(workspaceId, seat),
   scrollbackMax: SCROLLBACK_MAX,
+  // The OSC 133 shim, built per seat so its generated rc can be removed with the
+  // seat. Gated on the pref at SPAWN time, which is coarse on purpose: a shell
+  // already running keeps whatever startup it was born with, and toggling the
+  // pref governs the next shell rather than reaching into a live one.
+  // Injected rather than required inside drawer-pty: that module takes every
+  // dependency this way, and its own test pins the absence of any require as
+  // the thing keeping a workbench terminal out of the session machinery.
+  makeMarkParser: createMarkParser,
+  shimEnv: (seat) => {
+    if (!seat || !uiSettings.get().terminalReporting) return null;
+    return buildZshShim({
+      dir: pathFor(REGISTRY_DIR, seat, 'termShim'),
+      shell: process.env.SHELL,
+      env: process.env,
+    });
+  },
+  // A finished command, framed by the marks. Delivered onto the seat's EXISTING
+  // selection queue rather than a channel of its own: the queue is already a
+  // line-delimited file drained by the UserPromptSubmit hook, already claimed by
+  // rename, and already consume-once — every property this needs. A second
+  // mechanism would be a second set of the same bugs.
+  onCommand: (seat, rec) => {
+    if (!uiSettings.get().terminalReporting) return;
+    const text = formatCommand(rec, { stripAnsi });
+    if (!text) return;
+    try {
+      fs.appendFileSync(pathFor(REGISTRY_DIR, seat, 'selection'), `${JSON.stringify({ text })}\n`);
+    } catch {}
+  },
   log,
 }) : null;
 

@@ -32,8 +32,10 @@
 //                        never existed flat, but stays sweepable)
 //     selection.jsonl    queued drawer ATTACHMENTS awaiting the next submit
 //     selection.sh       attachment drain hook (same defensive posture)
+//     zsh/               generated ZDOTDIR for the drawer terminal's OSC 133
+//                        shim — a DIRECTORY, unlike every other kind
 //
-// 22 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
+// 23 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
 // move: messages/ (HARD — --add-dir scope + IPC_PROMPT teaching + historical
 // spill pointers), pending/ (parked DMs — pending.sh RELOCATES but its BODY
 // still targets ~/.clodex/pending/<name>/), promptcache/ (the frozen system
@@ -83,6 +85,13 @@ const KINDS = {
   ipcdeltaScript: 'ipcdelta.sh',
   selection: 'selection.jsonl',
   selectionScript: 'selection.sh',
+  // The ONE kind that is a DIRECTORY, not a file: zsh reads a whole set of
+  // startup files from $ZDOTDIR, so the shim has to be a dir to redirect it.
+  // The legacy sweep's rmSync is non-recursive and would refuse it, which is
+  // harmless — no flat build ever wrote a `{name}-zsh`, and the sweep is
+  // name-driven, so it can only ever look for one that is not there. The entry
+  // below exists to keep every kind sweepable, per the invariant.
+  termShim: 'zsh',
 };
 
 // The OLD flat-grammar suffixes, per kind — what the one-time legacy sweep
@@ -113,6 +122,7 @@ const LEGACY_SUFFIXES = {
   ipcdeltaScript: '-ipcdelta.sh',
   selection: '-selection.jsonl',
   selectionScript: '-selection.sh',
+  termShim: '-zsh',
 };
 
 // The per-agent runtime dir: ~/.clodex/run/<name>/.
