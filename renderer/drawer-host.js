@@ -64,12 +64,22 @@ function createDrawerHost({ refitActiveTerminal }) {
   const tabsEl = document.getElementById('drawer-tabs');
   const actionsEl = document.getElementById('drawer-actions');
   const toggleBtn = document.getElementById('drawer-toggle');
+  const tallBtn = document.getElementById('drawer-tall');
   const panesEl = document.getElementById('drawer-panes');
 
   const tenants = new Map(); // id -> { id, def, pane, actions, tabEl, badgeEl, unread, mounted }
   let activeId = null;
 
   const isCollapsed = () => drawer.classList.contains('collapsed');
+
+  // Tall mode persists per window across restarts — a drawer the operator sized
+  // for a debugging session should still be that size after a reload. localStorage
+  // rather than the settings store: it is per-window view state, the same tier as
+  // the sidebar width, and it must be readable synchronously at boot (an async
+  // read would apply the class a frame late and animate the drawer open).
+  const TALL_KEY = 'clodex-drawer-tall';
+  let tall = false;
+  try { tall = localStorage.getItem(TALL_KEY) === '1'; } catch {}
   const isVisible = (id) => !isCollapsed() && activeId === id;
 
   function renderBadge(rec) {
@@ -152,10 +162,39 @@ function createDrawerHost({ refitActiveTerminal }) {
     if (!isCollapsed()) dispatchShow(rec);
   }
 
+  // Tall mode is remembered across collapses but only ever REACHES the layout
+  // while expanded: #main's offsets are what keep the session terminal from
+  // painting under the drawer, so a collapsed-but-tall drawer with the class
+  // still on would reserve 70% for a 36px bar.
+  function syncTall() {
+    const expanded = !isCollapsed();
+    drawer.classList.toggle('tall', tall && expanded);
+    document.getElementById('main').classList.toggle('drawer-tall', tall && expanded);
+    if (tallBtn) {
+      tallBtn.classList.toggle('on', tall);
+      tallBtn.title = tall ? 'Restore panel height' : 'Make the panel taller';
+      tallBtn.setAttribute('aria-pressed', tall ? 'true' : 'false');
+    }
+  }
+
+  function setTall(next) {
+    if (tall === next) return;
+    tall = next;
+    syncTall();
+    try { localStorage.setItem(TALL_KEY, tall ? '1' : '0'); } catch {}
+    // Both boxes changed. The tenant's own resize is coalesced to one call per
+    // frame by dispatchResize, so the 200ms height transition is one SIGWINCH
+    // at the end rather than a storm.
+    const rec = tenants.get(activeId);
+    if (rec && isVisible(rec.id)) dispatchResize(rec);
+    refitSessionTerminal();
+  }
+
   function toggle() {
     drawer.classList.toggle('collapsed');
     const expanded = !isCollapsed();
     document.getElementById('main').classList.toggle('drawer-expanded', expanded);
+    syncTall();
     const rec = tenants.get(activeId);
     if (rec) {
       if (expanded) {
@@ -265,6 +304,18 @@ function createDrawerHost({ refitActiveTerminal }) {
     toggle();
   });
   toggleBtn.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+  if (tallBtn) {
+    tallBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Talling a collapsed drawer opens it — the operator asked for more room,
+      // and applying the mode invisibly would read as a dead button.
+      if (isCollapsed()) toggle();
+      setTall(!tall);
+    });
+  }
+  // Boot: a remembered tall flag has to reach the DOM, and the drawer boots
+  // collapsed so this only sets the button state until the first expand.
+  syncTall();
 
   // Rule 3: the drawer's own geometry changes (window resize, collapse
   // transition) reach the active tenant. Nothing else observes this box.

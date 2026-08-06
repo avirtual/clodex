@@ -431,3 +431,119 @@ test('an absent contextsFile falls back to the CLI default path, not null', asyn
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+// Help is LOCAL rendering off help.js's registry — no context, no dial. It
+// short-circuits ahead of the allowlist gate for the same reason main.js puts
+// it ahead of context resolution, and the bug this pins is that the flag was
+// simply not read: `sessions --help` ran the verb and returned live session
+// data from whatever context was current.
+test('--help short-circuits before the wire, for every help spelling', async () => {
+  // openTransport THROWS: any path that reaches a dial fails this test loudly
+  // rather than quietly succeeding against a context the developer happens to
+  // have. That is the whole assertion — help must never get here.
+  const dialed = [];
+  const svc = createCtlService({
+    contextsFile: tmpCtxFile(),
+    env: {},
+    openTransport: (ctx) => { dialed.push(ctx); throw new Error('DIALED — help must not open a transport'); },
+  });
+
+  for (const line of ['help', '--help', '-h', 'sessions --help', 'help ctx']) {
+    const b = await svc.run(line);
+    assert.strictEqual(b.exitCode, 0, `${line} -> exit ${b.exitCode}: ${b.output}`);
+    // ENTER: rendered help, not an empty block. An absence assertion below
+    // ("never dialed") is equally true of a service that returned nothing.
+    assert.match(b.output, /clodexctl|USAGE|^\w+ —/m, `ENTER: ${line} produced no help text`);
+  }
+  assert.deepStrictEqual(dialed, [], 'help opened a transport');
+  svc.dispose();
+});
+
+test('help explains a verb the tab refuses to RUN', async () => {
+  // The gate must not swallow the explanation: "why is exec refused here" is a
+  // question only help answers, and refusing both leaves no way to find out.
+  const { svc } = mkService();
+  const b = await svc.run('exec --help');
+  assert.strictEqual(b.exitCode, 0);
+  assert.match(b.output, /^exec —/m);
+  assert.doesNotMatch(b.output, /refused/);
+
+  // …while the verb itself stays refused. Without this the test above would
+  // pass on a build that dropped the allowlist entirely.
+  const run = await svc.run('exec ls');
+  assert.strictEqual(run.exitCode, 2);
+  assert.match(run.output, /refused: "exec" is not available/);
+  svc.dispose();
+});
+
+test('an unknown verb has no help, and says so', async () => {
+  const { svc } = mkService();
+  const b = await svc.run('help nosuchverb');
+  assert.notStrictEqual(b.exitCode, 0);
+  assert.match(b.output, /no help for "nosuchverb"/);
+  svc.dispose();
+});
+
+test('help is not in the allowlist, and does not need to be', () => {
+  // The table above is the containment contract, and this feature deliberately
+  // did NOT widen it: help short-circuits ahead of refuse(), so an entry would
+  // be dead code that reads like a widened runner. Pinned because the obvious
+  // "fix" on seeing `help` work without a table entry is to add one.
+  assert.ok(!Object.prototype.hasOwnProperty.call(ALLOWED, 'help'),
+    'help must stay out of ALLOWED — it never reaches the gate');
+  assert.match(String(refuse(['help'])), /^refused:/,
+    'the gate itself has no opinion on help; execute() short-circuits first');
+});
+
+// The cheat sheet the `?` popover renders. It exists as a DERIVED index rather
+// than a list in the renderer because a hand-kept copy is what drifts: the pane
+// would keep advertising a verb after the allowlist dropped it, or hide one it
+// gained. These tests pin the derivation, not the current contents.
+test('helpIndex advertises exactly the verbs the service will run', () => {
+  const { svc } = mkService();
+  const idx = svc.helpIndex();
+  // ENTER: a real index. Every assertion below is about the SHAPE of a set,
+  // and an empty set satisfies most of them.
+  assert.ok(idx.verbs.length >= 5, `ENTER: expected the allowed verbs, got ${idx.verbs.length}`);
+
+  // The derivation itself: the advertised set IS the allowlist's key set. A
+  // literal list here would restate the renderer's bug rather than catch it.
+  assert.deepStrictEqual(
+    idx.verbs.map((v) => v.verb).sort(),
+    Object.keys(ALLOWED).sort(),
+    'the cheat sheet and the allowlist must not drift',
+  );
+
+  // Nothing deferred leaks into the advertised set.
+  for (const v of idx.verbs) {
+    assert.ok(!['exec', 'run', 'kill', 'spawn', 'restart', 'attach', 'logs'].includes(v.verb),
+      `${v.verb} is deferred and must not be advertised as runnable`);
+  }
+  svc.dispose();
+});
+
+test('helpIndex names the subcommands of a PARTIALLY allowed family', () => {
+  const { svc } = mkService();
+  const args = svc.helpIndex().verbs.find((v) => v.verb === 'args');
+  // `args` admits only `get`. Without the subs field the pane would fall back
+  // to the registry's usage line — `args <get|set> …` — advertising the write
+  // this service refuses.
+  assert.deepStrictEqual(args.subs, ['get']);
+  const sessions = svc.helpIndex().verbs.find((v) => v.verb === 'sessions');
+  assert.strictEqual(sessions.subs, null, 'a fully-allowed verb carries no subs restriction');
+  svc.dispose();
+});
+
+test('helpIndex carries summaries and no credential material', () => {
+  const { svc } = mkService();
+  const idx = svc.helpIndex();
+  for (const v of idx.verbs) {
+    assert.ok(typeof v.summary === 'string' && v.summary.length > 0,
+      `${v.verb} must carry a summary from the help registry`);
+  }
+  // It is derived from a static registry, never from the contexts store — so
+  // there is no path by which a token reaches it. Pinned because the obvious
+  // future edit ("show the current context in the popover") would change that.
+  assert.doesNotMatch(JSON.stringify(idx), /token/i);
+  svc.dispose();
+});

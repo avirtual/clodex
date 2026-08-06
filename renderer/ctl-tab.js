@@ -141,10 +141,85 @@ function createCtlTab({ host }) {
     if (text) navigator.clipboard.writeText(text);
   }
 
+  // The cheat sheet. Anchored to its button and rendered from ctl:help, which
+  // DERIVES the list from the service's allowlist — deliberately not a literal
+  // here: a hand-kept copy would go on advertising a verb the service had
+  // dropped, and this pane's whole job is to say what actually runs.
+  //
+  // Inside the drawer rather than document.body: the drawer is the tallest
+  // thing on screen in tall mode, and a body-level popover would need its own
+  // z-index race against it.
+  function renderHelp(el, data) {
+    if (!data || !data.verbs || !data.verbs.length) {
+      el.innerHTML = '<div class="ctl-help-note">Help is unavailable on this surface.</div>';
+      return;
+    }
+    const rows = data.verbs.map((v) => {
+      // A partially-allowed family shows the subcommands that RUN, not the
+      // registry's usage line — `args <get|set>` would advertise the `set` this
+      // tab refuses.
+      const usage = v.subs ? `${v.verb} ${v.subs.join('|')} …` : (v.usage || v.verb);
+      return `<div class="ctl-help-row">`
+        + `<code class="ctl-help-usage">${esc(usage)}</code>`
+        + `<span class="ctl-help-sum">${esc(v.summary || '')}</span>`
+        + `</div>`;
+    }).join('');
+    el.innerHTML = `<div class="ctl-help-sec">These verbs run here</div>${rows}`
+      + `<div class="ctl-help-note">Everything else is refused — this console is read-only.<br>`
+      + `Type <code>help</code> for the full CLI index, or <code>&lt;verb&gt; --help</code> for one verb `
+      + `(including the ones that will not run here).</div>`;
+  }
+
+  function wireHelpButton(pane, actions) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'ctl-help-btn';
+    btn.title = 'What can I type here?';
+    btn.textContent = '?';
+    const pop = document.createElement('div');
+    pop.id = 'ctl-help-pop';
+    pop.className = 'hidden';
+    pane.appendChild(pop);
+
+    let loaded = false;
+    const close = () => pop.classList.add('hidden');
+
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!pop.classList.contains('hidden')) { close(); return; }
+      pop.classList.remove('hidden');
+      if (!loaded) {
+        pop.innerHTML = '<div class="ctl-help-note">Loading…</div>';
+        try {
+          const data = await window.api.ctlHelp();
+          renderHelp(pop, data);
+          // Cached: the allowlist cannot change while the app runs, so a second
+          // open is not worth a round trip.
+          loaded = true;
+        } catch (err) {
+          renderHelp(pop, null);
+        }
+      }
+    });
+
+    // Dismissal, scoped to the pane: a document-level listener would fire for
+    // clicks in other windows' panes and for the drawer's own header buttons.
+    pane.addEventListener('mousedown', (ev) => {
+      if (pop.classList.contains('hidden')) return;
+      if (pop.contains(ev.target) || ev.target === btn) return;
+      close();
+    });
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && !pop.classList.contains('hidden')) { close(); inputEl.focus(); }
+    });
+
+    actions.appendChild(btn);
+  }
+
   function mount(pane, actions) {
     pane.innerHTML = `
       <div id="ctl-body">
-        <div id="ctl-empty">clodexctl — read-only verbs: <code>info</code>, <code>sessions</code>, <code>query</code>, <code>ctx …</code>, <code>args get</code>.</div>
+        <div id="ctl-empty">clodexctl — read-only verbs: <code>info</code>, <code>sessions</code>, <code>query</code>, <code>ctx …</code>, <code>args get</code>. Type <code>help</code> for the full index.</div>
       </div>
       <div id="ctl-input-row">
         <span id="ctl-prompt">(no context) ❯</span>
@@ -177,6 +252,7 @@ function createCtlTab({ host }) {
     copyBtn.title = 'Copy every block as text';
     copyBtn.textContent = 'Copy';
     copyBtn.addEventListener('click', (e) => { e.stopPropagation(); copyAll(); });
+    wireHelpButton(pane, actions);
     actions.appendChild(copyBtn);
     actions.appendChild(clearBtn);
   }

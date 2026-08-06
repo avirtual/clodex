@@ -30,6 +30,7 @@ function loadCli() {
     client: require('./cli/src/client'),
     transport: require('./cli/src/transport'),
     args: require('./cli/src/args'),
+    help: require('./cli/src/help'),
     // PARSE_OPTS comes from the CLI's own dispatcher rather than a copy here:
     // a second flag table would drift silently, and the failure mode is a flag
     // the terminal CLI honours being parsed as a positional in the REPL.
@@ -54,6 +55,13 @@ const ALLOWED = Object.freeze({
   args: ['get'],       // `args set` writes — deferred
 });
 const DEFERRED_HINT = 'deferred in v1: exec, input, spawn, send, run, kill, restart, restart-app, attach, logs, skills, args set, deploy, undeploy, upgrade, port-forward, web';
+
+// `help` is deliberately ABSENT from that table and is not an omission. Help
+// short-circuits in execute() ahead of the gate, so it never reaches refuse()
+// and an entry here would be dead code — worse, it would read as though the
+// runner had been widened by a verb. It is pure local rendering off help.js's
+// registry: no context resolution, no dial, nothing to contain. Adding it back
+// changes no behaviour and makes the allowlist overstate what runs.
 
 // Verbs that run against the local contexts file and need NO wire client.
 const CTX_SUBS = ['add', 'use', 'list', 'ls', 'rm', 'remove', 'show', 'import', 'test'];
@@ -226,7 +234,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
   }
 
   async function execute(line) {
-    const { V, errors, output, args: A, main } = loadCli();
+    const { V, errors, output, args: A, main, help: H } = loadCli();
     const { CliError, EXIT } = errors;
     let buf = '';
     const write = (s) => { buf += s; };
@@ -251,6 +259,19 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     catch (e) {
       return done(`clodexctl: ${e.message}\n`, e instanceof CliError ? e.exitCode : EXIT.USAGE, currentName());
     }
+    // Help routing, BEFORE the allowlist gate and before any context
+    // resolution or dial — the same short-circuit main.js does. Ahead of the
+    // gate because `exec --help` must EXPLAIN the verb this tab refuses to
+    // run; refusing the explanation too leaves no way to learn why. Ahead of
+    // the flags-only refusal because bare `--help` is the index, not an empty
+    // line. Without it the flag is ignored entirely and `sessions --help`
+    // opens a WireClient and returns live session data.
+    if (flags.help || flags._[0] === 'help') {
+      const tokens = flags._[0] === 'help' ? flags._.slice(1) : flags._;
+      const { text, code } = H.help(tokens);
+      return done(`${text}\n`, code, currentName());
+    }
+
     // The gate reads PARSED POSITIONALS, never the raw argv. `--json sessions`
     // and `sessions` are the same command and only the parsed form says so; a
     // raw-argv gate refuses the first as a verb named "--json". A flag that
@@ -374,6 +395,37 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     },
     // The prompt line's context name, without running a command.
     context() { return currentName(); },
+
+    // The tab's own cheat sheet: the verbs this service will RUN, joined to
+    // help.js's registry for their summaries. DERIVED from ALLOWED rather than
+    // written out, because a hand-kept list in the renderer is the thing that
+    // drifts — the pane would keep advertising a verb after the allowlist
+    // dropped it, or hide one it gained. The CLI's own index lists 21 verbs of
+    // which this tab refuses 16, so showing that index here would be mostly
+    // refusals.
+    //
+    // Data, not markup: the renderer escapes and lays it out. Carries no token
+    // and no context, so it needs no scrub.
+    helpIndex() {
+      const { help: H } = loadCli();
+      const byName = new Map(H.VERB_REGISTRY.map((e) => [e.name, e]));
+      const rows = [];
+      for (const [verb, rule] of Object.entries(ALLOWED)) {
+        const entry = byName.get(verb);
+        // `subs` is what the pane shows for a partially-allowed family: `args`
+        // admits only `get`, and printing a bare `args` would advertise the
+        // whole family including the `set` this service refuses.
+        const subs = Array.isArray(rule) ? rule.slice() : null;
+        rows.push({
+          verb,
+          subs,
+          usage: entry ? entry.usage : null,
+          summary: entry ? entry.summary : '',
+        });
+      }
+      rows.sort((a, b) => a.verb.localeCompare(b.verb));
+      return { verbs: rows, deferred: DEFERRED_HINT };
+    },
     dispose() { disposed = true; closeWarm(); },
   };
 }

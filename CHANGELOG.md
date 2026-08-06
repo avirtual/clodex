@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **The drawer can be made taller.** A **⇕** button in the drawer header swaps
+  the proportions — the drawer takes about 70% of the window and the session
+  terminal keeps the rest, which is enough room to actually debug in the
+  terminal or clodexctl tabs. It deliberately stops short of full screen: the
+  session terminal stays visible, since watching an agent react to what you
+  just typed is the point. The setting is remembered per window, and collapsing
+  a tall drawer still collapses it — the height comes back on the next expand.
+
 - **The bottom drawer is now a tab host.** It used to be the IPC log and
   nothing else; it now owns a tab strip with per-tab unread badges, and the IPC
   log is simply the first tab. Everything about the old drawer still works the
@@ -71,8 +79,13 @@ blocks a release.
   connection stays warm between commands instead of re-dialing each time.
   Anything that mutates is refused by name, bearer tokens are stripped from
   every block including error output, and `ctx list` masks them the way
-  `ctx show` always has. The console exists only in the desktop app: a Clodex
-  reached over the web has no such channel registered at all.
+  `ctx show` always has. `help` and `<verb> --help` work as they do in the
+  terminal, including for the verbs the console will not run — asking why
+  `exec` is refused gets you the verb's documentation, not a second refusal.
+  A **?** button lists the verbs that actually run here, derived from the
+  console's own allowlist rather than a copy that could drift from it.
+  The console exists only in the desktop app: a Clodex reached over the web has
+  no such channel registered at all.
 
 - **The drawer has a terminal.** A **term** tab with a real login shell, one per
   window, opening in the directory your sessions in that window already work in.

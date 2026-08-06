@@ -131,6 +131,10 @@ test('the SAME registrar registers ctl:* when the capability is granted', () => 
   assert.ok(registered.has('session:list'), 'ENTER: the capture is real');
   assert.ok(registered.has('ctl:run'), 'the desktop path must register the verb runner');
   assert.ok(registered.has('ctl:context'), 'and the prompt-line context read');
+  // Inside the gate despite carrying no token and touching no wire: a channel
+  // the web host never registers cannot be probed to enumerate what the
+  // desktop's verb runner would accept.
+  assert.ok(registered.has('ctl:help'), 'and the cheat sheet');
   assert.ok(registered.has('wterm:spawn'), 'the desktop path must register the workbench shell');
   assert.ok(registered.has('wterm:write'), 'and its input');
   assert.ok(registered.has('wterm:resize'), 'and its SIGWINCH');

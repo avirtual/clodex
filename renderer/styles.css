@@ -1000,6 +1000,13 @@ html, body {
      proxy bar from the terminal bottom unless all six moved together. */
   --drawer-collapsed-h: 36px;
   --drawer-h: 220px;
+  /* Tall mode: the drawer and the session terminal SWAP proportions rather than
+     the drawer going full-screen. A percentage, not a pixel count, because the
+     point is that the terminal keeps a usable remainder on any window size —
+     driving a session from the drawer while watching the agent react to it is
+     the case this exists for, and a drawer that covers the terminal breaks it.
+     Deliberately short of the 88-90% a "maximize" would take. */
+  --drawer-tall-h: 70%;
 }
 
 #search-bar {
@@ -1082,6 +1089,20 @@ html, body {
 }
 #main.has-proxy-bar.drawer-expanded #terminal-container {
   bottom: calc(var(--drawer-h) + 24px);
+}
+
+/* Tall mode, both offsets. These exist for the same reason the two above do:
+   the terminal's bottom and the proxy bar are positioned independently of the
+   drawer's own height, so a height change that skips them leaves the terminal
+   painting underneath the drawer. */
+#main.drawer-tall #terminal-container {
+  bottom: var(--drawer-tall-h);
+}
+#main.has-proxy-bar.drawer-tall #terminal-container {
+  bottom: calc(var(--drawer-tall-h) + 24px);
+}
+#main.drawer-tall #proxy-bar {
+  bottom: var(--drawer-tall-h);
 }
 
 #proxy-bar {
@@ -3244,8 +3265,20 @@ html, body {
   overflow: hidden;
 }
 
+/* Tall mode raises the cap with the height: the 50% above would otherwise clamp
+   this to half and the class would look like it did nothing. */
+#drawer.tall {
+  height: var(--drawer-tall-h);
+  max-height: var(--drawer-tall-h);
+}
+
+/* Collapsed WINS over tall — the operator can collapse a tall drawer without
+   first un-talling it, and tall is remembered for the next expand. Source order
+   is the mechanism (equal specificity, later rule wins), so this block must
+   stay below .tall. */
 #drawer.collapsed {
   height: var(--drawer-collapsed-h);
+  max-height: var(--drawer-collapsed-h);
 }
 
 #drawer.collapsed #drawer-panes {
@@ -3341,6 +3374,16 @@ html, body {
 #drawer-header button:not(.drawer-tab):hover {
   background: var(--sidebar-hover);
   color: var(--text);
+}
+
+/* Inherits the header button rule above; only the ON state is new. The active
+   colour rather than a background so it reads as a mode that is engaged, the
+   same vocabulary the tab strip uses for the active tab. */
+#drawer-tall {
+  font-size: 12px !important;
+}
+#drawer-tall.on {
+  color: var(--accent);
 }
 
 #drawer-toggle {
@@ -3631,6 +3674,62 @@ html, body {
 }
 
 #ctl-input:disabled { color: var(--text-dim); }
+
+/* The ctl tab's cheat sheet. Anchored INSIDE the pane (bottom-right, above the
+   input row) rather than at document level: the drawer is the tallest element
+   on screen in tall mode, so a body-level popover would have to win a z-index
+   race against it. */
+#ctl-help-pop {
+  position: absolute;
+  right: 10px;
+  bottom: 40px;
+  z-index: 20;
+  width: min(560px, calc(100% - 20px));
+  max-height: calc(100% - 56px);
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+}
+
+#ctl-help-pop.hidden { display: none; }
+
+.ctl-help-sec {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+
+.ctl-help-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 0;
+}
+
+.ctl-help-usage {
+  flex: none;
+  min-width: 200px;
+  color: var(--accent);
+  font-family: 'SF Mono', 'Menlo', monospace;
+}
+
+.ctl-help-sum { color: var(--text-dim); }
+
+.ctl-help-note {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+#ctl-help-btn { font-weight: 600; }
 
 /* --- Drawer: terminal tenant (`term`) ---------------------------------- */
 /* An xterm host, so the ONLY job here is to give it a box with real geometry.

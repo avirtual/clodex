@@ -1214,6 +1214,7 @@ body {
   z-index: 11;
   --drawer-collapsed-h: 36px;
   --drawer-h: 220px;
+  --drawer-tall-h: 70%;
 }
 #search-bar {
   position: absolute;
@@ -1283,6 +1284,15 @@ body {
 }
 #main.has-proxy-bar.drawer-expanded #terminal-container {
   bottom: calc(var(--drawer-h) + 24px);
+}
+#main.drawer-tall #terminal-container {
+  bottom: var(--drawer-tall-h);
+}
+#main.has-proxy-bar.drawer-tall #terminal-container {
+  bottom: calc(var(--drawer-tall-h) + 24px);
+}
+#main.drawer-tall #proxy-bar {
+  bottom: var(--drawer-tall-h);
 }
 #proxy-bar {
   position: absolute;
@@ -4503,8 +4513,13 @@ body {
   max-height: 50%;
   overflow: hidden;
 }
+#drawer.tall {
+  height: var(--drawer-tall-h);
+  max-height: var(--drawer-tall-h);
+}
 #drawer.collapsed {
   height: var(--drawer-collapsed-h);
+  max-height: var(--drawer-collapsed-h);
 }
 #drawer.collapsed #drawer-panes {
   visibility: hidden;
@@ -4585,6 +4600,12 @@ body {
 #drawer-header button:not(.drawer-tab):hover {
   background: var(--sidebar-hover);
   color: var(--text);
+}
+#drawer-tall {
+  font-size: 12px !important;
+}
+#drawer-tall.on {
+  color: var(--accent);
 }
 #drawer-toggle {
   font-size: 10px !important;
@@ -4846,6 +4867,59 @@ body {
 }
 #ctl-input:disabled {
   color: var(--text-dim);
+}
+#ctl-help-pop {
+  position: absolute;
+  right: 10px;
+  bottom: 40px;
+  z-index: 20;
+  width: min(560px, calc(100% - 20px));
+  max-height: calc(100% - 56px);
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+}
+#ctl-help-pop.hidden {
+  display: none;
+}
+.ctl-help-sec {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+.ctl-help-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 0;
+}
+.ctl-help-usage {
+  flex: none;
+  min-width: 200px;
+  color: var(--accent);
+  font-family:
+    "SF Mono",
+    "Menlo",
+    monospace;
+}
+.ctl-help-sum {
+  color: var(--text-dim);
+}
+.ctl-help-note {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+#ctl-help-btn {
+  font-weight: 600;
 }
 #wterm-host {
   flex: 1;
@@ -5835,6 +5909,7 @@ body {
       <div id="drawer-header">
         <div id="drawer-tabs"></div>
         <div id="drawer-actions"></div>
+        <button id="drawer-tall" title="Make the panel taller" type="button" aria-pressed="false">⇕</button>
         <button id="drawer-toggle" title="Toggle panel" type="button">▲</button>
       </div>
       <div id="drawer-panes"></div>
@@ -6630,6 +6705,7 @@ body {
         // registration is gated on enableDrawerServices (ipc-handlers.js).
         { name: "ctlRun", kind: "invoke", channel: "ctl:run" },
         { name: "ctlContext", kind: "invoke", channel: "ctl:context" },
+        { name: "ctlHelp", kind: "invoke", channel: "ctl:help" },
         // The drawer's terminal tenant (t215), same reasoning.
         { name: "wtermSpawn", kind: "invoke", channel: "wterm:spawn" },
         { name: "wtermWrite", kind: "invoke", channel: "wterm:write" },
@@ -20586,10 +20662,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const tabsEl = document.getElementById("drawer-tabs");
         const actionsEl = document.getElementById("drawer-actions");
         const toggleBtn = document.getElementById("drawer-toggle");
+        const tallBtn = document.getElementById("drawer-tall");
         const panesEl = document.getElementById("drawer-panes");
         const tenants = /* @__PURE__ */ new Map();
         let activeId = null;
         const isCollapsed = () => drawer.classList.contains("collapsed");
+        const TALL_KEY = "clodex-drawer-tall";
+        let tall = false;
+        try {
+          tall = localStorage.getItem(TALL_KEY) === "1";
+        } catch {
+        }
         const isVisible = (id) => !isCollapsed() && activeId === id;
         function renderBadge(rec) {
           rec.badgeEl.textContent = rec.unread > BADGE_MAX ? `${BADGE_MAX}+` : String(rec.unread);
@@ -20648,10 +20731,33 @@ ${m[2].replace(/^\r?\n/, "")}`;
           clearBadge(rec);
           if (!isCollapsed()) dispatchShow(rec);
         }
+        function syncTall() {
+          const expanded = !isCollapsed();
+          drawer.classList.toggle("tall", tall && expanded);
+          document.getElementById("main").classList.toggle("drawer-tall", tall && expanded);
+          if (tallBtn) {
+            tallBtn.classList.toggle("on", tall);
+            tallBtn.title = tall ? "Restore panel height" : "Make the panel taller";
+            tallBtn.setAttribute("aria-pressed", tall ? "true" : "false");
+          }
+        }
+        function setTall(next) {
+          if (tall === next) return;
+          tall = next;
+          syncTall();
+          try {
+            localStorage.setItem(TALL_KEY, tall ? "1" : "0");
+          } catch {
+          }
+          const rec = tenants.get(activeId);
+          if (rec && isVisible(rec.id)) dispatchResize(rec);
+          refitSessionTerminal();
+        }
         function toggle() {
           drawer.classList.toggle("collapsed");
           const expanded = !isCollapsed();
           document.getElementById("main").classList.toggle("drawer-expanded", expanded);
+          syncTall();
           const rec = tenants.get(activeId);
           if (rec) {
             if (expanded) {
@@ -20743,6 +20849,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
           e.stopPropagation();
           toggle();
         });
+        if (tallBtn) {
+          tallBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (isCollapsed()) toggle();
+            setTall(!tall);
+          });
+        }
+        syncTall();
         new ResizeObserver(() => {
           const rec = tenants.get(activeId);
           if (rec && isVisible(rec.id)) dispatchResize(rec);
@@ -22362,10 +22476,64 @@ helper=${d.helperPath}`;
 ${b.output}`).join("\n");
           if (text) navigator.clipboard.writeText(text);
         }
+        function renderHelp(el, data) {
+          if (!data || !data.verbs || !data.verbs.length) {
+            el.innerHTML = '<div class="ctl-help-note">Help is unavailable on this surface.</div>';
+            return;
+          }
+          const rows = data.verbs.map((v) => {
+            const usage = v.subs ? `${v.verb} ${v.subs.join("|")} \u2026` : v.usage || v.verb;
+            return `<div class="ctl-help-row"><code class="ctl-help-usage">${esc(usage)}</code><span class="ctl-help-sum">${esc(v.summary || "")}</span></div>`;
+          }).join("");
+          el.innerHTML = `<div class="ctl-help-sec">These verbs run here</div>${rows}<div class="ctl-help-note">Everything else is refused \u2014 this console is read-only.<br>Type <code>help</code> for the full CLI index, or <code>&lt;verb&gt; --help</code> for one verb (including the ones that will not run here).</div>`;
+        }
+        function wireHelpButton(pane, actions) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.id = "ctl-help-btn";
+          btn.title = "What can I type here?";
+          btn.textContent = "?";
+          const pop = document.createElement("div");
+          pop.id = "ctl-help-pop";
+          pop.className = "hidden";
+          pane.appendChild(pop);
+          let loaded = false;
+          const close = () => pop.classList.add("hidden");
+          btn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            if (!pop.classList.contains("hidden")) {
+              close();
+              return;
+            }
+            pop.classList.remove("hidden");
+            if (!loaded) {
+              pop.innerHTML = '<div class="ctl-help-note">Loading\u2026</div>';
+              try {
+                const data = await window.api.ctlHelp();
+                renderHelp(pop, data);
+                loaded = true;
+              } catch (err) {
+                renderHelp(pop, null);
+              }
+            }
+          });
+          pane.addEventListener("mousedown", (ev) => {
+            if (pop.classList.contains("hidden")) return;
+            if (pop.contains(ev.target) || ev.target === btn) return;
+            close();
+          });
+          document.addEventListener("keydown", (ev) => {
+            if (ev.key === "Escape" && !pop.classList.contains("hidden")) {
+              close();
+              inputEl.focus();
+            }
+          });
+          actions.appendChild(btn);
+        }
         function mount(pane, actions) {
           pane.innerHTML = `
       <div id="ctl-body">
-        <div id="ctl-empty">clodexctl \u2014 read-only verbs: <code>info</code>, <code>sessions</code>, <code>query</code>, <code>ctx \u2026</code>, <code>args get</code>.</div>
+        <div id="ctl-empty">clodexctl \u2014 read-only verbs: <code>info</code>, <code>sessions</code>, <code>query</code>, <code>ctx \u2026</code>, <code>args get</code>. Type <code>help</code> for the full index.</div>
       </div>
       <div id="ctl-input-row">
         <span id="ctl-prompt">(no context) \u276F</span>
@@ -22412,6 +22580,7 @@ ${b.output}`).join("\n");
             e.stopPropagation();
             copyAll();
           });
+          wireHelpButton(pane, actions);
           actions.appendChild(copyBtn);
           actions.appendChild(clearBtn);
         }

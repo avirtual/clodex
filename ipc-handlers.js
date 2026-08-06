@@ -1600,6 +1600,14 @@ function registerIpcHandlers(deps) {
       const svc = getCtlService();
       return svc ? svc.context() : null;
     });
+    // The tab's cheat sheet. Read-only, derived from the allowlist and the CLI's
+    // help registry — no context, no wire, no token — but it stays inside this
+    // gate with the rest of the family: a channel the web host does not register
+    // cannot be probed to enumerate what the desktop's runner would accept.
+    handle('ctl:help', () => {
+      const svc = getCtlService();
+      return svc ? svc.helpIndex() : null;
+    });
     // The workbench terminal, under the SAME gate for a sharper reason: an
     // unconditionally registered `wterm:spawn` is a remote shell on the host,
     // for any authenticated web connection, with no verb allowlist in front of
