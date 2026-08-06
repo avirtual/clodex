@@ -310,19 +310,37 @@ test('tickets-viewer: a team name that escapes the teams root is REFUSED', async
 
 // ── stalled work is what the board is for ───────────────────────────────────
 
-test('tickets-viewer: open tickets sort QUIETEST first', async () => {
+test('tickets-viewer: open tickets sort NEWEST first', async () => {
   const { host, teams, cleanup } = boot();
   try {
     const dir = mkTeam(teams, 'alpha');
     const now = Date.now();
     writeTickets(dir, [
-      ticket('t1', { lastActivityAt: now - 60 * 1000 }),
-      ticket('t2', { lastActivityAt: now - 5 * HOUR }),
-      ticket('t3', { lastActivityAt: now - 30 * 1000 }),
+      ticket('t1', { openedAt: now - 2 * HOUR }),
+      ticket('t2', { openedAt: now - 5 * HOUR }),
+      ticket('t3', { openedAt: now - 30 * 1000 }),
     ]);
     const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
-    assert.deepEqual(res.open.map((t) => t.id), ['t2', 't1', 't3'],
-      'the ticket nobody has touched leads the board');
+    assert.deepEqual(res.open.map((t) => t.id), ['t3', 't1', 't2'],
+      'the ticket just filed leads the board');
+  } finally { cleanup(); }
+});
+
+// The ordering must key on when a ticket was OPENED, not on when it was last
+// touched — otherwise chasing an old ticket teleports it to the top and the
+// board reorders under the reader for a change that filed nothing.
+test('tickets-viewer: activity on an old ticket does NOT move it to the top', async () => {
+  const { host, teams, cleanup } = boot();
+  try {
+    const dir = mkTeam(teams, 'alpha');
+    const now = Date.now();
+    writeTickets(dir, [
+      ticket('old', { openedAt: now - 5 * HOUR, lastActivityAt: now - 1000 }),
+      ticket('new', { openedAt: now - 30 * 1000, lastActivityAt: now - 30 * 1000 }),
+    ]);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
+    assert.deepEqual(res.open.map((t) => t.id), ['new', 'old'],
+      'the freshly-touched OLD ticket stays below the newly-filed one');
   } finally { cleanup(); }
 });
 
@@ -332,7 +350,7 @@ test('tickets-viewer: a ticket with no usable timestamp sorts to the TOP', async
     const dir = mkTeam(teams, 'alpha');
     const now = Date.now();
     writeTickets(dir, [
-      ticket('t1', { lastActivityAt: now - 5 * HOUR }),
+      ticket('t1', { openedAt: now - 5 * HOUR }),
       ticket('t2', { lastActivityAt: null, openedAt: null }),
     ]);
     const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');

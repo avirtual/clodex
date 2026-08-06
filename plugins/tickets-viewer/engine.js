@@ -273,15 +273,17 @@ function board(teamName) {
   const open = all
     .filter((t) => t.state === 'open')
     .map((t) => shape(t, now, stallMs))
-    // Quietest first: the board's job is surfacing what has gone silent, and a
-    // stalled ticket at the bottom of a long list is a stalled ticket nobody
-    // sees. A ticket with no usable timestamp sorts to the top rather than the
-    // bottom — an unreadable age is itself something to look at.
+    // Newest first. Deliberately NOT quietest-first: that ordering surfaced
+    // stalls by POSITION, which the row's stall flag, its `tv-stalled` class and
+    // the header's "N quiet longer than …" count already do wherever the row
+    // sits — so it bought nothing and buried the ticket just filed under a
+    // growing board. A ticket with no usable openedAt still sorts to the top
+    // rather than the bottom — an unreadable age is itself worth looking at.
     .sort((a, b) => {
-      if (a.quietMs === b.quietMs) return 0;
-      if (a.quietMs === null) return -1;
-      if (b.quietMs === null) return 1;
-      return b.quietMs - a.quietMs;
+      if (a.openedAt === b.openedAt) return 0;
+      if (a.openedAt === null) return -1;
+      if (b.openedAt === null) return 1;
+      return b.openedAt - a.openedAt;
     });
 
   const doneAll = all.filter((t) => t.state === 'done');
