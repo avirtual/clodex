@@ -1547,9 +1547,18 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  handle('session:forget', (_e, name) => {
+  handle('session:forget', (e, name) => {
     manager.clearHintForRecord(name);
     persistence.remove(name);
+    // The seat's workbench shell has no record to resume from, so it dies with
+    // the seat. Nothing else reaps it: window close is the wrong event, and a
+    // long-lived workspace would otherwise accumulate one orphaned shell per
+    // deleted seat, unreachable from any UI.
+    try {
+      const w = getDrawerPtys();
+      const ws = workspaceOfSenderStrict ? workspaceOfSenderStrict(e) : workspaceOfSender(e);
+      if (w && ws && w.killSeat) w.killSeat(ws, String(name || ''));
+    } catch {}
     return true;
   });
 
@@ -1651,22 +1660,36 @@ function registerIpcHandlers(deps) {
     // an in-flight keystroke from a closing window would land in a DIFFERENT
     // workspace's shell. Unresolved is a refusal, not a default.
     const wtermWorkspace = (e) => (workspaceOfSenderStrict ? workspaceOfSenderStrict(e) : workspaceOfSender(e));
+    // The SEAT comes from the payload, unlike the workspace — and that asymmetry
+    // is deliberate. The workspace is a security boundary (a caller-supplied one
+    // would let a connection write into another workspace's shell), so it is
+    // taken from the sender. A seat is a scoping key WITHIN the window the
+    // sender already owns: the worst a forged one can do is open a shell in a
+    // sibling seat's cwd, which that connection can already do by switching to
+    // it. Validated for shape only, so a junk value cannot alias a real seat's
+    // shell or escape the key grammar. The dot-only guard is t115's grammar,
+    // not decoration: `.` and `..` are spelled entirely in this charset, and
+    // this value is resolved against the session map to choose a shell's cwd.
+    const seatOf = (v) => {
+      const t = typeof v === 'string' ? v : '';
+      return /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(t) ? t : null;
+    };
     handle('wterm:spawn', (e, opts) => {
       const w = getDrawerPtys();
       if (!w) return { ok: false, error: 'drawer terminals are unavailable on this host' };
       const ws = wtermWorkspace(e);
       if (!ws) return { ok: false, error: 'no workspace for this window' };
-      return w.spawn(ws, opts || {});
+      return w.spawn(ws, seatOf(opts && opts.seat), opts || {});
     });
-    handle('wterm:write', (e, data) => {
+    handle('wterm:write', (e, seat, data) => {
       const w = getDrawerPtys();
       const ws = wtermWorkspace(e);
-      return w && ws ? w.write(ws, data) : false;
+      return w && ws ? w.write(ws, seatOf(seat), data) : false;
     });
-    handle('wterm:resize', (e, cols, rows) => {
+    handle('wterm:resize', (e, seat, cols, rows) => {
       const w = getDrawerPtys();
       const ws = wtermWorkspace(e);
-      return w && ws ? w.resize(ws, cols, rows) : false;
+      return w && ws ? w.resize(ws, seatOf(seat), cols, rows) : false;
     });
   }
 

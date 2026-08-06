@@ -178,26 +178,56 @@ test('wterm:* resolve the workspace from the SENDER, not the payload', () => {
     workspaceOfSenderStrict: () => 'ws1',
     workspaceOfSender: () => 'ws-WRONG',
     getDrawerPtys: () => ({
-      spawn: (id, opts) => { calls.push(['spawn', id, opts]); return { ok: true }; },
-      write: (id, data) => { calls.push(['write', id, data]); return true; },
-      resize: (id, c, r) => { calls.push(['resize', id, c, r]); return true; },
+      spawn: (id, seat, opts) => { calls.push(['spawn', id, seat, opts]); return { ok: true }; },
+      write: (id, seat, data) => { calls.push(['write', id, seat, data]); return true; },
+      resize: (id, seat, c, r) => { calls.push(['resize', id, seat, c, r]); return true; },
     }),
   });
 
   assert.ok(handlers['wterm:spawn'], 'ENTER: the handlers registered, so the calls below are real');
 
-  handlers['wterm:spawn']({}, { cols: 80, rows: 24, workspaceId: 'ws2' });
+  handlers['wterm:spawn']({}, { cols: 80, rows: 24, workspaceId: 'ws2', seat: 'alpha' });
   // write is the sharpest of the three: it is the one that actually delivers
   // keystrokes into a shell, so a payload-honouring version is a live
   // cross-workspace write, not merely a misfiled spawn.
-  handlers['wterm:write']({}, 'rm -rf /\r');
-  handlers['wterm:resize']({}, 200, 60);
+  handlers['wterm:write']({}, 'alpha', 'rm -rf /\r');
+  handlers['wterm:resize']({}, 'alpha', 200, 60);
 
+  // The WORKSPACE is the security boundary and comes from the sender; the SEAT
+  // is a scoping key inside the window the sender already owns and rides the
+  // payload. That asymmetry is the claim: ws1 in every row despite the payload
+  // saying ws2, with the seat passed through.
   assert.deepStrictEqual(calls, [
-    ['spawn', 'ws1', { cols: 80, rows: 24, workspaceId: 'ws2' }],
-    ['write', 'ws1', 'rm -rf /\r'],
-    ['resize', 'ws1', 200, 60],
+    ['spawn', 'ws1', 'alpha', { cols: 80, rows: 24, workspaceId: 'ws2', seat: 'alpha' }],
+    ['write', 'ws1', 'alpha', 'rm -rf /\r'],
+    ['resize', 'ws1', 'alpha', 200, 60],
   ], 'every wterm handler addressed the SENDER\'s workspace, ignoring the payload\'s claim');
+});
+
+test('a malformed seat is normalised to null, never passed through', () => {
+  // The seat rides the payload, so it is the one wterm input a caller controls.
+  // It is a KEY, so a value outside the session-name grammar could alias another
+  // pair's shell or escape the key's own separator. Shape-checked, not trusted.
+  const calls = [];
+  const handlers = registerDesktop({
+    workspaceOfSenderStrict: () => 'ws1',
+    getDrawerPtys: () => ({
+      spawn: (id, seat) => { calls.push(seat); return { ok: true }; },
+      write: (id, seat) => { calls.push(seat); return true; },
+      resize: (id, seat) => { calls.push(seat); return true; },
+    }),
+  });
+
+  assert.ok(handlers['wterm:write'], 'ENTER: the handlers registered');
+  handlers['wterm:write']({}, 'ws-other\u0000evil', 'x');   // a forged key separator
+  handlers['wterm:write']({}, '../../etc/passwd', 'x');
+  handlers['wterm:write']({}, '..', 'x');                   // dot-only (t115 grammar)
+  handlers['wterm:write']({}, 'a'.repeat(65), 'x');          // past the 64-char grammar
+  handlers['wterm:write']({}, { toString: () => 'alpha' }, 'x'); // not a string
+  handlers['wterm:write']({}, 'good-name_1.2', 'x');         // the grammar, in full
+
+  assert.deepStrictEqual(calls, [null, null, null, null, null, 'good-name_1.2'],
+    'anything outside [a-zA-Z0-9._-]{1,64} becomes the seatless shell');
 });
 
 test('wterm:* refuse when the sender resolves to no workspace', () => {

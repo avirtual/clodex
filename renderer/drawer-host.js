@@ -606,6 +606,15 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, onArmChanged 
     clearTimeout(armTimer);
     armTimer = null;
     releasePeek();
+    // Tenants that are SCOPED to a seat need to re-acquire, and the onShow/
+    // onHide pair cannot tell them: rule 2 makes it strictly alternating, so a
+    // switch while the tab is already visible fires neither. Only the VISIBLE
+    // tenant is told — a hidden one re-acquires on its next onShow anyway, and
+    // waking it here would spawn shells for panes nobody is looking at.
+    const active = tenants.get(activeId);
+    if (active && active.shown && active.def.onSeatChanged) {
+      try { active.def.onSeatChanged(); } catch {}
+    }
     // The attachment stays where it was put, so switching BACK has to find the
     // claim again — stickyText() reads it off the map by the now-current name,
     // and this repaint is what makes that visible without a selection change.

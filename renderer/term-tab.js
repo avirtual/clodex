@@ -20,7 +20,15 @@
 const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
 
-function createTermTab({ host, xtermTheme }) {
+function createTermTab({ host, xtermTheme, getActiveSession }) {
+  // The seat this pane is currently showing a shell for. One xterm is reused
+  // across seats — a terminal per seat would multiply the DOM and the fit
+  // measurements for panes nobody is looking at — so this is what says whose
+  // bytes belong on screen.
+  let seat = null;
+  // Live bytes arriving between a spawn request and its reply. Null when no
+  // spawn is in flight, which is the ordinary state.
+  let pending = null;
   let terminal = null;
   let fitAddon = null;
   let hostEl = null;
@@ -49,7 +57,7 @@ function createTermTab({ host, xtermTheme }) {
     // Keystrokes go to the shell, never to a session. `onData` is post-decode
     // (it carries the escape sequences an interactive program expects), which
     // is what makes arrow keys and Ctrl-C work in `vim` and `less`.
-    terminal.onData((d) => { window.api.wtermWrite(d); });
+    terminal.onData((d) => { window.api.wtermWrite(seat, d); });
 
     // Output arrives for THIS window only — the main side resolves the target
     // window itself, so there is no name to filter on here.
@@ -57,8 +65,20 @@ function createTermTab({ host, xtermTheme }) {
     // IpcRendererEvent before invoking this (api-contract `kind: 'on'`). An
     // `(_e, data)` signature here shifts every byte into the ignored parameter
     // and renders an empty terminal that looks like a shell that never started.
-    window.api.onWtermData((data) => {
+    window.api.onWtermData((data, from, seq) => {
       if (!terminal) return;
+      // Every seat's shell in this window sends here, so bytes for one the pane
+      // is not showing must be DROPPED, not written: the main side keeps a
+      // scrollback per shell and replays it on switch, so nothing is lost — but
+      // writing them would interleave two shells into one unrecoverable buffer.
+      // `undefined` is the pre-seat shape and is treated as "mine" so a stale
+      // main process cannot blank the tab.
+      if (from !== undefined && (from || null) !== seat) return;
+      // A spawn is in flight for this seat, so the scrollback snapshot that is
+      // about to arrive may or may not already contain these bytes. Writing them
+      // now risks printing them twice; dropping them risks losing the ones that
+      // came after the snapshot. So hold them and flush AFTER the replay.
+      if (pending) { pending.push({ data, seq }); return; }
       terminal.write(data);
       // Unread only when the operator is not looking; the host suppresses the
       // badge for a visible tab itself.
@@ -99,12 +119,42 @@ function createTermTab({ host, xtermTheme }) {
       terminal.open(hostEl);
       opened = true;
     }
+    const want = (getActiveSession && getActiveSession()) || null;
+    // A seat change means a DIFFERENT shell, so the pane is cleared and redrawn
+    // from that shell's scrollback rather than continuing under the previous
+    // seat's output. `drawn` resets with it: the replay guard is per-shell, and
+    // carrying it across a switch would leave the new pane empty.
+    if (want !== seat) {
+      seat = want;
+      drawn = false;
+      terminal.reset();
+    }
     const dims = fitAddon.proposeDimensions();
-    window.api.wtermSpawn({ cols: dims && dims.cols, rows: dims && dims.rows })
+    const asked = seat;
+    pending = [];
+    // Everything at or below the snapshot's seq is already inside the scrollback
+    // that was just written, so only what came AFTER it is flushed. Without the
+    // comparison the overlap is either printed twice or dropped, and which one
+    // depends on IPC timing rather than on anything the operator did.
+    const flush = (upto) => {
+      const held = pending || [];
+      pending = null;
+      for (const h of held) {
+        if (typeof h.seq === 'number' && typeof upto === 'number' && h.seq <= upto) continue;
+        terminal.write(h.data);
+      }
+    };
+    window.api.wtermSpawn({ seat, cols: dims && dims.cols, rows: dims && dims.rows })
       .then((res) => {
         if (!terminal) return;
+        // A switch that resolved after a LATER switch must not paint: its
+        // scrollback belongs to a seat the operator has already left. The held
+        // bytes go with it — they are that seat's, and the switch already
+        // cleared the pane.
+        if (asked !== seat) { pending = null; return; }
         if (!res || !res.ok) {
           terminal.write(`\r\n\x1b[31m${(res && res.error) || 'failed to start a shell'}\x1b[0m\r\n`);
+          pending = null;
           return;
         }
         // Replay ONLY a shell this pane has never drawn. `wterm:data` is live
@@ -115,8 +165,9 @@ function createTermTab({ host, xtermTheme }) {
         // the whole history again under the output already there.
         if (!drawn && !res.fresh && res.scrollback) terminal.write(res.scrollback);
         drawn = true;
+        flush(res.seq);
       })
-      .catch(() => {});
+      .catch(() => { pending = null; });
     terminal.focus();
   }
 
@@ -126,7 +177,7 @@ function createTermTab({ host, xtermTheme }) {
   function onResize() {
     if (!terminal || !opened) return;
     fitAddon.fit();
-    window.api.wtermResize(terminal.cols, terminal.rows);
+    window.api.wtermResize(seat, terminal.cols, terminal.rows);
   }
 
   notify = host.register({
@@ -141,6 +192,13 @@ function createTermTab({ host, xtermTheme }) {
     onResize,
     // Rule 5: the terminal's selected text lives in xterm's model, not the DOM.
     selection: () => (terminal ? terminal.getSelection() : ''),
+    // The shell is per-seat, so a switch is a different shell. onShow does the
+    // whole job (clear, re-key, replay) and is idempotent about a seat that did
+    // not actually change, so this is a plain re-entry rather than a second
+    // acquisition path that could drift from it.
+    // The host only calls this on the VISIBLE tenant, so there is no visibility
+    // check here — adding one would duplicate a rule that lives in the host.
+    onSeatChanged: () => onShow(),
   });
 
   return { open: () => host.open('term') };

@@ -1376,7 +1376,7 @@ const drawerPtys = enableDrawerServices ? createDrawerPtys({
     // its window, and a detached one is being killed, not buffered.
     if (win && !win.isDestroyed()) win.webContents.send(channel, ...args);
   },
-  cwdFor: (workspaceId) => drawerPtyCwd(workspaceId),
+  cwdFor: (workspaceId, seat) => drawerPtyCwd(workspaceId, seat),
   scrollbackMax: SCROLLBACK_MAX,
   log,
 }) : null;
@@ -1386,7 +1386,16 @@ const drawerPtys = enableDrawerServices ? createDrawerPtys({
 // view), so the operator's own sessions are the best available statement of
 // where this workspace lives — the same signal session:cwdSuggestions already
 // mines for the new-session dialog.
-function drawerPtyCwd(workspaceId) {
+function drawerPtyCwd(workspaceId, seat) {
+  // A seat's own cwd, when the shell belongs to one. This is the point of the
+  // per-seat keying: the workspace-wide guess below is a decent default for a
+  // shell that belongs to no seat, and the wrong directory for one that does.
+  if (seat) {
+    try {
+      const s = manager.sessions.get(seat);
+      if (s && s.cwd && fs.existsSync(s.cwd)) return s.cwd;
+    } catch {}
+  }
   try {
     const counts = new Map();
     for (const s of manager.listForWorkspace(workspaceId)) {

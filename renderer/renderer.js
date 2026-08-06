@@ -3179,7 +3179,7 @@ createCtlTab({ host: drawerHost });
 
 // The workbench shell takes the session terminals' theme, read per-mount so a
 // theme switch before first open is picked up.
-createTermTab({ host: drawerHost, xtermTheme: currentXtermTheme });
+createTermTab({ host: drawerHost, xtermTheme: currentXtermTheme, getActiveSession: () => activeSession });
 
 createInboxDrawer();
 
