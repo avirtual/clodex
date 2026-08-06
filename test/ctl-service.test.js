@@ -1,8 +1,15 @@
 'use strict';
 // ctl-service.test.js — the drawer's clodexctl REPL service. What is pinned
-// here is the part that is NOT the pane: the allowlist (the containment for a
-// token-backed runner), the block shape the tenant renders, and the injected
-// io set that keeps a verb from reaching the main process's stdio.
+// here is the part that is NOT the pane: the allowlist, the block shape the
+// tenant renders, and the injected io set that keeps a verb from reaching the
+// main process's stdio.
+//
+// The allowlist is a SLIP GUARD, not a containment boundary, and the tests
+// below should not be read as security pins. `exec` is admitted, so
+// `exec box "clodexctl kill x --force"` is typeable — nothing in this table
+// contains what the operator can reach. The boundary is enableDrawerServices at
+// IPC registration (pinned by drawer-services-seam.test.js), which keeps the
+// whole `ctl:*` family off the web surface.
 //
 // The wire verbs (info/sessions/query/args get) are deliberately NOT exercised
 // against a live node — that is cli/test's job and it needs a server. Every
@@ -15,7 +22,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { createCtlService, tokenize, refuse, ALLOWED } = require('../ctl-service');
+const { createCtlService, tokenize, refuse, ALLOWED, MAX_BLOCK_CHARS } = require('../ctl-service');
 
 function tmpCtxFile() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-ctl-'));
@@ -46,35 +53,63 @@ test('tokenize: quotes, escapes, and the shell things it is NOT', () => {
   assert.throws(() => tokenize('query "unbalanced'), /unbalanced/);
 });
 
-test('refuse: the v1 allowlist admits exactly the read-only set', () => {
+test('refuse: the allowlist admits the block-shaped verbs and no others', () => {
   // ENTER: the allowed verbs really are allowed — without this row every
   // refusal assertion below would also hold for a service that refuses
   // everything, which is a containment that ships a useless tab.
-  for (const argv of [['info'], ['sessions'], ['query', '--kind', 'x'], ['ctx', 'use', 'p'], ['ctx', 'list'], ['args', 'get', 'n']]) {
+  for (const argv of [['info'], ['sessions'], ['query', '--kind', 'x'], ['ctx', 'use', 'p'], ['ctx', 'list'],
+    ['args', 'get', 'n'], ['args', 'set', 'n'], ['run', 'a', 'ls'], ['exec', 'a', 'ls'], ['send', 'a', 'hi'],
+    ['input', 'a', 'x'], ['spawn', 'a'], ['restart', 'a'], ['logs', 'a'], ['skills', 'a']]) {
     assert.strictEqual(refuse(argv), null, `${argv.join(' ')} must be allowed`);
   }
-  // The deferred set, named one by one rather than by a loop over a list that
-  // could itself drift: each of these is a mutation, an interactive prompt, or
-  // a stream the service cannot yet carry.
-  for (const argv of [['exec', 'a', 'ls'], ['input', 'a'], ['spawn', 'a'], ['send', 'a', 'hi'], ['run', 'a', 'hi'],
-    ['kill', 'a'], ['restart', 'a'], ['restart-app'], ['attach', 'a'], ['logs', 'a'], ['skills'],
+  // The refused set, named one by one rather than by a loop over a list that
+  // could itself drift. Each fails the SHAPE test, not a mutation test: a live
+  // terminal, a server, a long child, or an irreversible act whose confirmation
+  // prompt cannot run in a pane that has no way to ask.
+  for (const argv of [['attach', 'a'], ['kill', 'a'], ['restart-app'],
     ['deploy', 'h'], ['undeploy', 'h'], ['upgrade', 'h'], ['port-forward'], ['web']]) {
     assert.match(String(refuse(argv)), /^refused:/, `${argv.join(' ')} must be refused`);
   }
-  assert.match(String(refuse(['args', 'set', 'k', 'v'])), /^refused:/, 'args set writes — refused');
   assert.strictEqual(refuse([]), null, 'an empty line is not a refusal');
   // The table is the contract; a verb silently gaining `true` here widens the
   // runner. Assert the WHOLE object, not a spot check.
   assert.deepStrictEqual({ ...ALLOWED }, {
-    info: true, sessions: true, query: true, ctx: '*', args: ['get'],
+    info: true, sessions: true, query: true, logs: true, skills: true,
+    send: true, input: true, exec: true, run: true, spawn: true, restart: true,
+    ctx: '*', args: ['get', 'set'],
   });
 });
 
+// The two irreversible engine-side verbs, called out on their own because the
+// reason they stay refused is NOT "it mutates" — `restart` and `spawn` mutate
+// and are allowed. It is that neither can be confirmed here: the injected
+// `prompt` rejects, so the only spelling that would reach the wire is the
+// --force one, which turns a hard delete (kill: no resume) and a whole-engine
+// relaunch into a single unguarded Enter in a 12-line strip.
+test('kill and restart-app stay refused even with --force', () => {
+  for (const argv of [['kill', 'a'], ['kill', 'a', '--force'], ['restart-app'], ['restart-app', '--force']]) {
+    assert.match(String(refuse(argv)), /^refused:/, `${argv.join(' ')} must be refused`);
+  }
+  // ENTER, and it is the whole point of this test: the neighbouring mutating
+  // verbs DO run, so this is a targeted refusal and not a service that happens
+  // to refuse everything with a dangerous-sounding name.
+  assert.strictEqual(refuse(['restart', 'a']), null, 'restart (resumable) is allowed');
+  assert.strictEqual(refuse(['spawn', 'a']), null, 'spawn is allowed');
+});
+
 test('run: a refused verb is a block, and never opens a transport', async () => {
-  const { svc } = mkService();
-  const b = await svc.run('exec somebox rm -rf /');
-  assert.strictEqual(b.command, 'exec somebox rm -rf /');
-  assert.match(b.output, /refused: "exec"/);
+  // `kill` rather than a read-only verb: the gate must stop it BEFORE
+  // wireFor(), and a service that gated after the dial would still produce a
+  // refusal block — just one that had already resolved a context and opened a
+  // transport on the way. The injected openTransport throws, so a dial fails
+  // loudly instead of passing quietly.
+  const svc = createCtlService({
+    contextsFile: tmpCtxFile(), env: {},
+    openTransport: () => { throw new Error('DIALED — the gate ran after the transport'); },
+  });
+  const b = await svc.run('kill somebox --force');
+  assert.strictEqual(b.command, 'kill somebox --force');
+  assert.match(b.output, /refused: "kill"/);
   assert.strictEqual(b.exitCode, 2);
   svc.dispose();
 });
@@ -85,8 +120,8 @@ test('a leading flag moves the verb, and the gate follows it', async () => {
   // is one test. A gate reading the RAW argv sees `--json` in slot 0 for both
   // lines: it would refuse the legitimate one as a verb named "--json", and
   // judge the refusable one on a token that is not its verb.
-  const bad = await svc.run('--json exec somebox ls');
-  assert.match(bad.output, /refused: "exec"/, 'the PARSED verb is what the gate judges');
+  const bad = await svc.run('--json kill somebox --force');
+  assert.match(bad.output, /refused: "kill"/, 'the PARSED verb is what the gate judges');
   assert.strictEqual(bad.exitCode, 2);
 
   const ok = await svc.run('--json ctx list');
@@ -460,20 +495,204 @@ test('--help short-circuits before the wire, for every help spelling', async () 
 });
 
 test('help explains a verb the tab refuses to RUN', async () => {
-  // The gate must not swallow the explanation: "why is exec refused here" is a
-  // question only help answers, and refusing both leaves no way to find out.
+  // The gate must not swallow the explanation: "why is attach refused here" is
+  // a question only help answers, and refusing both leaves no way to find out.
   const { svc } = mkService();
-  const b = await svc.run('exec --help');
+  const b = await svc.run('attach --help');
   assert.strictEqual(b.exitCode, 0);
-  assert.match(b.output, /^exec —/m);
+  assert.match(b.output, /^attach —/m);
   assert.doesNotMatch(b.output, /refused/);
 
   // …while the verb itself stays refused. Without this the test above would
   // pass on a build that dropped the allowlist entirely.
-  const run = await svc.run('exec ls');
+  const run = await svc.run('attach box');
   assert.strictEqual(run.exitCode, 2);
-  assert.match(run.output, /refused: "exec" is not available/);
+  assert.match(run.output, /refused: "attach" is not available/);
   svc.dispose();
+});
+
+// `logs` is allowed but `logs --follow` is not, and the refusal is on the FLAG.
+// A verb-keyed gate cannot see it, so this lives past the gate in execute() —
+// which is exactly why it needs its own test: nothing about the allowlist
+// implies it, and follow would otherwise hold the command chain open forever
+// while the pane showed a disabled input and no output.
+test('logs --follow is refused, in every spelling, while plain logs is not', async () => {
+  const svc = createCtlService({
+    contextsFile: tmpCtxFile(), env: {},
+    openTransport: () => { throw new Error('DIALED — follow must be refused before the wire'); },
+  });
+  // A context must EXIST, or the ENTER below cannot tell "the flag check let it
+  // through" from "context resolution refused it first" — both produce a
+  // non-follow error message and the test would pass without the check running.
+  await svc.run('ctx add prod --url http://prod.example --token STORED_TOKEN_L');
+  for (const line of ['logs bob --follow', 'logs bob -f', '--follow logs bob']) {
+    const b = await svc.run(line);
+    assert.strictEqual(b.exitCode, 2, `${line} -> exit ${b.exitCode}: ${b.output}`);
+    assert.match(b.output, /streams and never returns/, `${line} must name the reason`);
+  }
+  // ENTER, and it carries the test: plain `logs` must get PAST this check. It
+  // then fails on the throwing transport, which is what proves the flag check
+  // let it through rather than refusing every logs line.
+  const plain = await svc.run('logs bob --tail 5');
+  assert.doesNotMatch(plain.output, /streams and never returns/, 'plain logs must not hit the follow refusal');
+  assert.match(plain.output, /DIALED/, 'ENTER: plain logs reached the transport, so the check is flag-scoped');
+  svc.dispose();
+});
+
+// The block cap. Reachable only since the allowlist admitted `exec`/`run`:
+// exec accumulates every output frame with no byte limit, so a plausible line
+// (`exec box "cat big.log"`) arrives at done() as an unbounded string that then
+// gets copied whole by a scrub pass per token, a structured clone over IPC, and
+// an escaped DOM node — and retained in the pane's 200-block model. Driven
+// through a real socket rather than by calling done() directly, because the
+// claim is about what a COMMAND produces.
+test('a huge block is capped, and says it was', async () => {
+  const http = require('node:http');
+  const huge = 'x'.repeat(MAX_BLOCK_CHARS * 2);
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, name: 'bob', extraArgs: [huge] }));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const svc = createCtlService({
+    contextsFile: tmpCtxFile(), env: {},
+    openTransport: async () => ({ baseUrl: base, close() {} }),
+  });
+  try {
+    await svc.run('ctx add prod --url http://prod.example --token STORED_TOKEN_L');
+    const b = await svc.run('args get bob');
+    // ENTER: the command succeeded and produced the oversize output. Without
+    // this, a service that errored early would satisfy the cap trivially.
+    assert.strictEqual(b.exitCode, 0, `ENTER: the query ran (${b.output.slice(0, 200)})`);
+    assert.ok(b.output.length > 1000, 'ENTER: real output came back, not an empty block');
+
+    assert.ok(b.output.length <= MAX_BLOCK_CHARS + 200,
+      `block is ${b.output.length} chars — the cap did not apply`);
+    assert.match(b.output, /output truncated at 256KB/, 'a truncated block must say so');
+  } finally {
+    svc.dispose();
+    await new Promise((r) => server.close(r));
+  }
+});
+
+// The cap and the token scrub interact, and the interaction is the whole risk:
+// scrub SHRINKS the string (each hit becomes '***'), so a token sitting past
+// the cap before scrubbing can slide under it afterwards — and a cut landing
+// mid-token leaves a PREFIX that scrub can no longer match. A cap applied
+// naively (slice, then scrub, or scrub, then slice) leaks token bytes into a
+// block that is then rendered, retained, and copied.
+test('the cap never leaks token material, wherever the token sits', async () => {
+  const http = require('node:http');
+  const TOKEN = 'SUPERSECRETTOKENVALUE1234567890';
+
+  // A SWEEP, not three chosen offsets, and that is what makes this test able to
+  // fail. The leak needs the cut to land strictly inside the final token, a
+  // window one token wide — and the payload's own JSON framing shifts every
+  // position by an amount this test does not control, so any single guessed
+  // offset lands in the window only by luck. Verified against a naive
+  // implementation: it leaks 24-27 char prefixes at 4 offsets in this range and
+  // is clean at the rest, so a fixture that guessed one offset would have
+  // shipped a green test over a live leak.
+  //
+  // The EARLIER occurrences are the other half. Each scrubs to '***', pulling
+  // everything after it left by (TOKEN.length - 3) — which is the only way a
+  // token that sat past the cap can slide under it and be cut mid-way. With a
+  // single occurrence nothing shifts and the naive version passes.
+  const REPEATS = 1;
+  const head = (TOKEN + 'w'.repeat(7)).repeat(REPEATS);
+  const shrink = REPEATS * (TOKEN.length - 3);
+
+  // The offset rides in the SESSION NAME (`off_m60` / `off_p20`), which lands
+  // in the request path — a query string on the base URL would be concatenated
+  // ahead of the API path and never reach the server as a query at all.
+  const server = http.createServer((req, res) => {
+    const m = /off_([mp])(\d+)/.exec(req.url);
+    const off = m ? (m[1] === 'm' ? -Number(m[2]) : Number(m[2])) : 0;
+    const at = MAX_BLOCK_CHARS + shrink + off;
+    const payload = head + 'y'.repeat(Math.max(0, at - head.length)) + TOKEN + 'z'.repeat(4000);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, name: 'bob', extraArgs: [payload] }));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  let checked = 0;
+  try {
+    for (let off = -60; off <= 20; off++) {
+      const svc = createCtlService({
+        contextsFile: tmpCtxFile(), env: {},
+        openTransport: async () => ({ baseUrl: base, close() {} }),
+      });
+      try {
+        await svc.run(`ctx add prod --url http://prod.example --token ${TOKEN}`);
+        const name = `off_${off < 0 ? 'm' : 'p'}${Math.abs(off)}`;
+        const b = await svc.run(`args get ${name}`);
+        // ENTER, inside the loop: an iteration that errored would satisfy every
+        // absence assertion below while testing nothing.
+        assert.strictEqual(b.exitCode, 0, `ENTER (off=${off}): the command ran — ${b.output.slice(0, 160)}`);
+        assert.ok(b.output.length > MAX_BLOCK_CHARS - 1000, `ENTER (off=${off}): a full-size block came back`);
+        checked++;
+
+        assert.doesNotMatch(b.output, new RegExp(TOKEN), `off=${off}: the whole token survived the cap`);
+        // The sharper claim, and the reason done() cuts back by a token's width
+        // AFTER scrubbing: not even a PREFIX may survive, since a prefix is
+        // token material that scrub can no longer match.
+        for (let n = 8; n < TOKEN.length; n++) {
+          assert.ok(!b.output.includes(TOKEN.slice(0, n)),
+            `off=${off}: a ${n}-char token prefix survived the cut`);
+        }
+      } finally {
+        svc.dispose();
+      }
+    }
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+  // ENTER on the reduction itself: the sweep really ran its whole range.
+  assert.strictEqual(checked, 81, `expected 81 offsets checked, got ${checked}`);
+});
+
+// The `args` family is the only one whose SUBCOMMAND picks the handler, and
+// both subs are now allowed. A dispatcher that ignored the sub would run
+// argsGet for `args set` — a write silently becoming a read, with a plausible
+// success block on screen. Driven against a real socket because the claim is
+// about the REQUEST that leaves: a GET where a PATCH was typed.
+test('args set and args get reach different handlers — the method proves it', async () => {
+  const http = require('node:http');
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push(`${req.method} ${req.url.split('?')[0]}`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, name: 'bob', extraArgs: [] }));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const svc = createCtlService({
+    contextsFile: tmpCtxFile(), env: {},
+    openTransport: async () => ({ baseUrl: base, close() {} }),
+  });
+  try {
+    await svc.run('ctx add prod --url http://prod.example --token STORED_TOKEN_L');
+    const get = await svc.run('args get bob');
+    assert.strictEqual(get.exitCode, 0, `ENTER: args get succeeded (${get.output})`);
+    const set = await svc.run('args set bob --proxy p');
+    assert.strictEqual(set.exitCode, 0, `ENTER: args set succeeded (${set.output})`);
+
+    // ENTER on the reduction: both lines really reached the wire. Without this
+    // the shape assertion below would hold for a service that sent nothing.
+    assert.strictEqual(seen.length, 2, `expected two requests, got ${seen.length}: ${seen.join(', ')}`);
+    // The two must not be the same request. Naming the exact methods would pin
+    // the wire API rather than the dispatch; what this test owns is that the
+    // sub SELECTED something, and a collapsed ternary makes these identical.
+    assert.notStrictEqual(seen[0], seen[1],
+      `args get and args set issued the same request (${seen[0]}) — the subcommand was ignored`);
+    assert.match(seen[0], /^GET /, 'args get reads');
+    assert.doesNotMatch(seen[1], /^GET /, 'args set must not be a read');
+  } finally {
+    svc.dispose();
+    await new Promise((r) => server.close(r));
+  }
 });
 
 test('an unknown verb has no help, and says so', async () => {
@@ -514,10 +733,13 @@ test('helpIndex advertises exactly the verbs the service will run', () => {
     'the cheat sheet and the allowlist must not drift',
   );
 
-  // Nothing deferred leaks into the advertised set.
+  // Nothing REFUSED leaks into the advertised set. Named literally rather than
+  // derived from ALLOWED: deriving both sides from the same table would make
+  // this the deepStrictEqual above a second time, and what it must catch is a
+  // verb reaching the popover without reaching the runner.
   for (const v of idx.verbs) {
-    assert.ok(!['exec', 'run', 'kill', 'spawn', 'restart', 'attach', 'logs'].includes(v.verb),
-      `${v.verb} is deferred and must not be advertised as runnable`);
+    assert.ok(!['attach', 'kill', 'restart-app', 'deploy', 'undeploy', 'upgrade', 'port-forward', 'web'].includes(v.verb),
+      `${v.verb} is refused and must not be advertised as runnable`);
   }
   svc.dispose();
 });
@@ -525,10 +747,12 @@ test('helpIndex advertises exactly the verbs the service will run', () => {
 test('helpIndex names the subcommands of a PARTIALLY allowed family', () => {
   const { svc } = mkService();
   const args = svc.helpIndex().verbs.find((v) => v.verb === 'args');
-  // `args` admits only `get`. Without the subs field the pane would fall back
-  // to the registry's usage line — `args <get|set> …` — advertising the write
-  // this service refuses.
-  assert.deepStrictEqual(args.subs, ['get']);
+  // `args` is the ONE family the allowlist spells as a subcommand array, so it
+  // is the only verb whose entry can carry `subs` at all. The mechanism has to
+  // stay wired even while both subs are admitted: the moment a family is
+  // narrowed again, the pane must show the surviving subs rather than the
+  // registry's full usage line.
+  assert.deepStrictEqual(args.subs, ['get', 'set']);
   const sessions = svc.helpIndex().verbs.find((v) => v.verb === 'sessions');
   assert.strictEqual(sessions.subs, null, 'a fully-allowed verb carries no subs restriction');
   svc.dispose();

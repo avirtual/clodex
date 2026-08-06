@@ -39,22 +39,57 @@ function loadCli() {
   return cli;
 }
 
-// v1 allowlist — read-only wire verbs plus the stateful `ctx` family that makes
-// the REPL worth having. ENFORCED HERE, never in the pane: the renderer's copy
-// of this list would be a UI affordance, and the pane is not the boundary.
+// The allowlist. ENFORCED HERE, never in the pane: the renderer's copy of this
+// list would be a UI affordance, and the pane is not the boundary.
 //
-// Deferred, each for a reason the service cannot yet satisfy: exec/input/
-// spawn/kill/restart mutate; kill and restart-app want an interactive `prompt`;
-// attach and `logs --follow` need the streaming block event that does not exist
-// until a `ctl:block` push channel does.
+// THIS TABLE IS NOT A SECURITY BOUNDARY, and reasoning about it as one leads
+// straight to a wrong edit. `exec` is admitted, so `exec box "clodexctl kill x
+// --force"` is typeable: nothing here contains what the operator can reach. The
+// boundary is enableDrawerServices at IPC registration (ipc-handlers.js), which
+// keeps this whole family off the web surface. What this table is, is a guard
+// against a SLIP at a live prompt with ↑-history.
+//
+// "It mutates" was the earlier criterion and it was wrong on its own terms:
+// the console is desktop-only, dials a context the operator configured, and
+// sits one tab away from a shell running the same binary unrestricted, so
+// refusing `run` bought nothing and cost the tab its point.
+//
+// Two prongs decide the line, and BOTH are needed — prong 1 alone would admit
+// `kill --force`, which is perfectly block-shaped:
+//
+// 1. SHAPE. A block is a value that resolves once, carries its own output, and
+//    cannot be interrupted from inside. Excluded:
+//      attach          — a live terminal, not a value; the term tab is for this
+//      logs --follow   — streams until interrupted (refused by flag, below)
+//      deploy/undeploy/upgrade/port-forward/web
+//                      — long children, interactive prompts, or servers that
+//                        never return
+//
+// 2. UNRECOVERABLE *and* unconfirmable here. The injected `prompt` rejects, so
+//    admitting these would admit the --force spelling ONLY — the CLI's
+//    deliberate scripted path, offered at a prompt where ↑+Enter re-runs it.
+//      kill            — hard delete on the engine, no resume
+//      restart-app     — relaunches the engine and every session on it
+//    The line is session-survives-and-transcript-survives, not
+//    "mutates": `restart --fresh` IS admitted and unconfirmed, and it does lose
+//    conversation continuity — but the session and its transcript are still
+//    there afterwards, and `spawn`/`send`/`input` are likewise recoverable.
 const ALLOWED = Object.freeze({
   info: true,
   sessions: true,
   query: true,
+  logs: true,          // `--follow` refused separately — the flag is the problem
+  skills: true,
+  send: true,
+  input: true,
+  exec: true,
+  run: true,
+  spawn: true,
+  restart: true,
   ctx: '*',            // every subcommand (`use` is the stateful payoff)
-  args: ['get'],       // `args set` writes — deferred
+  args: ['get', 'set'],
 });
-const DEFERRED_HINT = 'deferred in v1: exec, input, spawn, send, run, kill, restart, restart-app, attach, logs, skills, args set, deploy, undeploy, upgrade, port-forward, web';
+const DEFERRED_HINT = 'not available here: attach, kill, restart-app, deploy, undeploy, upgrade, port-forward, web';
 
 // `help` is deliberately ABSENT from that table and is not an omission. Help
 // short-circuits in execute() ahead of the gate, so it never reaches refuse()
@@ -139,6 +174,14 @@ function ctxKey(ctx) {
 // protecting. A token that short is not a credential worth the tradeoff.
 const MIN_SCRUBBABLE_TOKEN = 8;
 
+// The block cap, in characters. Every stage past done() copies the block whole
+// — a scrub pass per stored token, a structured clone over IPC, an escaped DOM
+// node — and the pane then RETAINS up to MAX_BLOCKS of them and re-concatenates
+// the lot on Copy. 256K is roughly a screenful of `logs --tail` an order of
+// magnitude over, which is the largest output worth reading in a drawer strip.
+const MAX_BLOCK_CHARS = 256 * 1024;
+const TRUNCATION_NOTE = '\n… output truncated at 256KB — run it from the Terminal tab for the whole stream\n';
+
 // A copy of the store with every token replaced by the same marker `ctx show`
 // uses. A COPY: mutating the loaded store in place would hand a redacted entry
 // to a later `ctx add`, which persists the store — writing `'***'` over a real
@@ -215,10 +258,42 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
   // expression is evaluated, so the block had already captured the unscrubbed
   // string and rebinding the local changed nothing (JS strings are values).
   // Anything that returns a block around this helper reintroduces that bug.
+  //
+  // It also CAPS the block, and that is not defensive tidiness: `exec` (and
+  // `run` against a bash session, which routes into it) accumulates every
+  // output frame with no byte limit — its only ceiling is a 30s timer the
+  // operator can raise with --timeout. `exec box "cat big.log"` therefore
+  // arrives here as hundreds of MB, and every stage downstream copies it whole:
+  // a scrub pass per stored token, a structured clone across IPC, an escaped
+  // DOM node, then retention in the pane's 200-block model. The Terminal tab
+  // survives the same command because xterm has a scrollback cap and
+  // backpressure; a block has neither, which is exactly why the cap belongs
+  // here rather than being argued away as "a shell is one tab away".
   function done(text, exitCode, ctxLabel, resolvedToken) {
     const { client: C } = loadCli();
     let out = String(text == null ? '' : text);
-    for (const t of scrubbableTokens(resolvedToken)) out = C.scrub(out, t);
+    const tokens = scrubbableTokens(resolvedToken);
+    const over = out.length > MAX_BLOCK_CHARS;
+    // Pre-slice bounds the WORK, not just the value: scrub is a split/join per
+    // token, so capping afterwards would still pay a full-length copy per token
+    // on a string that may be hundreds of MB. The +margin keeps an occurrence
+    // that straddles the cap intact so scrub can still match it, rather than
+    // shredding it into an unmatchable prefix.
+    //
+    // The FINAL cut-back is the actual guarantee, and it is not redundant with
+    // the margin above (verified: removing it leaks, removing the margin does
+    // not). Scrub SHRINKS the string — every hit becomes '***' — so a token
+    // that sat safely past the cap slides under it, and the cut lands
+    // mid-token, leaving a PREFIX that scrub can no longer match. Discarding
+    // the last `margin` characters removes it by construction: a partial is at
+    // most margin-1 long and always ends at the string's end. Cheap, because by
+    // then the string is already short.
+    const margin = tokens.reduce((m, t) => Math.max(m, t.length), 0);
+    if (over) out = out.slice(0, MAX_BLOCK_CHARS + margin);
+    for (const t of tokens) out = C.scrub(out, t);
+    if (over) {
+      out = out.slice(0, Math.min(MAX_BLOCK_CHARS, Math.max(0, out.length - margin))) + TRUNCATION_NOTE;
+    }
     return { output: out, exitCode, ctx: ctxLabel };
   }
 
@@ -279,6 +354,14 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     // positionals are what track it.
     const denied = refuse(flags._);
     if (denied) return done(`clodexctl: ${denied}\n`, EXIT.USAGE, currentName());
+    // `logs` is allowed; `logs --follow` is not, and the flag is the whole
+    // reason. A block resolves ONCE — follow streams until interrupted, so it
+    // would hold the chain open forever and print nothing until it was
+    // cancelled. Refused here rather than in ALLOWED because the gate keys on
+    // verbs and this is a flag on an otherwise fine one.
+    if (flags._[0] === 'logs' && flags.follow) {
+      return done('clodexctl: `logs --follow` streams and never returns — a block resolves once. Use `logs <name> --tail N` here, or follow it from the Terminal tab.\n', EXIT.USAGE, currentName());
+    }
     // A line that is all flags (`--tunnel …` eats the rest greedily) leaves no
     // verb at all. Say so, rather than falling through to a handler lookup on
     // `undefined`.
@@ -296,9 +379,23 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
       }
       const w = await wireFor(flags);
       token = w.ctx.token || null;
+      // `args` is the one family whose SUBCOMMAND picks the handler, and the
+      // sub is dropped from args before the verb sees it (the CLI's dispatcher
+      // does the same) — argsGet/argsSet both read args[0] as the session name.
+      //
+      // A LOOKUP rather than a `set ? … : argsGet` ternary, deliberately: the
+      // ternary's default arm turns a sub added to ALLOWED.args into a silent
+      // READ, which is the failure that shows a plausible success block for a
+      // write that never happened. An unmapped sub lands on the
+      // `typeof handler !== 'function'` guard below and says so.
+      const argsSubs = { get: V.argsGet, set: V.argsSet };
       const handler = verb === 'args'
-        ? ({ client, ...b }) => V.argsGet({ client, ...b, args: rest.slice(1) })
-        : { info: V.info, sessions: V.sessions, query: V.query }[verb];
+        ? (argsSubs[rest[0]] && (({ client, ...b }) => argsSubs[rest[0]]({ client, ...b, args: rest.slice(1) })))
+        : {
+          info: V.info, sessions: V.sessions, query: V.query, logs: V.logs,
+          skills: V.skills, send: V.send, input: V.input, exec: V.exec,
+          run: V.run, spawn: V.spawn, restart: V.restart,
+        }[verb];
       // A verb name that survived the allowlist but has no handler is a
       // programming error, not operator input — say so instead of dying with
       // "handler is not a function" three frames down.
@@ -400,9 +497,9 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     // help.js's registry for their summaries. DERIVED from ALLOWED rather than
     // written out, because a hand-kept list in the renderer is the thing that
     // drifts — the pane would keep advertising a verb after the allowlist
-    // dropped it, or hide one it gained. The CLI's own index lists 21 verbs of
-    // which this tab refuses 16, so showing that index here would be mostly
-    // refusals.
+    // dropped it, or hide one it gained. The CLI's own index is the wrong thing
+    // to show here for the same reason in reverse: it lists verbs this console
+    // refuses, without saying which.
     //
     // Data, not markup: the renderer escapes and lays it out. Carries no token
     // and no context, so it needs no scrub.
@@ -412,9 +509,11 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
       const rows = [];
       for (const [verb, rule] of Object.entries(ALLOWED)) {
         const entry = byName.get(verb);
-        // `subs` is what the pane shows for a partially-allowed family: `args`
-        // admits only `get`, and printing a bare `args` would advertise the
-        // whole family including the `set` this service refuses.
+        // `subs` is what the pane shows for a family the allowlist spells as a
+        // subcommand array — today `args`, with both subs admitted. The
+        // mechanism stays wired while nothing is narrowed so that a future
+        // narrowing shows the surviving subs rather than the registry's full
+        // usage line, which would advertise a sub that no longer runs.
         const subs = Array.isArray(rule) ? rule.slice() : null;
         rows.push({
           verb,
@@ -430,4 +529,4 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
   };
 }
 
-module.exports = { createCtlService, tokenize, refuse, ALLOWED, CTX_SUBS };
+module.exports = { createCtlService, tokenize, refuse, ALLOWED, CTX_SUBS, MAX_BLOCK_CHARS };

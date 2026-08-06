@@ -71,21 +71,26 @@ blocks a release.
   scans for `[agent:...]` commands, and an agent that merely reasons about
   sending a message must never be treated as having sent one.
 
-- **The drawer has a clodexctl console.** A new **ctl** tab runs the read-only
-  half of `clodexctl` — `info`, `sessions`, `query`, `args get` and the `ctx`
-  family — against your contexts without leaving the app or opening a terminal.
-  Each command and its output stay together as one block, so Copy gives you a
-  transcript rather than a flattened blob, and ↑/↓ walks your history. The
-  connection stays warm between commands instead of re-dialing each time.
-  Anything that mutates is refused by name, bearer tokens are stripped from
-  every block including error output, and `ctx list` masks them the way
-  `ctx show` always has. `help` and `<verb> --help` work as they do in the
-  terminal, including for the verbs the console will not run — asking why
-  `exec` is refused gets you the verb's documentation, not a second refusal.
-  A **?** button lists the verbs that actually run here, derived from the
-  console's own allowlist rather than a copy that could drift from it.
-  The console exists only in the desktop app: a Clodex reached over the web has
-  no such channel registered at all.
+- **The drawer has a clodexctl console.** A new **ctl** tab runs `clodexctl`
+  against your contexts without leaving the app or opening a terminal —
+  `sessions`, `run`, `exec`, `send`, `spawn`, `restart`, `logs`, `query`,
+  `skills`, `args`, and the whole `ctx` family. Each command and its output stay
+  together as one block, so Copy gives you a transcript rather than a flattened
+  blob, and ↑/↓ walks your history. The connection stays warm between commands
+  instead of re-dialing each time. Bearer tokens are stripped from every block
+  including error output, and `ctx list` masks them the way `ctx show` always
+  has. A **?** button lists the verbs that actually run here, derived from the
+  console's own allowlist rather than a copy that could drift from it, and
+  `help` / `<verb> --help` work as they do in the terminal — including for the
+  verbs the console will not run, so asking why `attach` is refused gets you the
+  verb's documentation rather than a second refusal.
+
+  What it will not run is what a block cannot hold: `attach` and `logs
+  --follow` are live streams, `deploy`/`upgrade`/`web` and friends are long
+  children or servers, and `kill` and `restart-app` are irreversible acts whose
+  confirmation prompt has nowhere to appear in a one-line input. The Terminal
+  tab next door runs all of them. The console exists only in the desktop app: a
+  Clodex reached over the web has no such channel registered at all.
 
 - **The drawer has a terminal.** A **term** tab with a real login shell, one per
   window, opening in the directory your sessions in that window already work in.

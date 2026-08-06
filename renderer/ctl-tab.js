@@ -89,6 +89,20 @@ function createCtlTab({ host }) {
 
     running = true;
     inputEl.disabled = true;
+    // The allowlist admits verbs that WAIT — `run` waits up to 300s for an
+    // agent's turn to end, `exec` up to 30 for a quiet gate. A disabled input
+    // and an empty pane is indistinguishable from a wedged tab over that span,
+    // so the prompt line counts. There is no cancel: the service serializes
+    // commands on one chain and the CLI's event streams take no abort signal,
+    // so the verb's own --timeout is the only ceiling. Say so at 10s rather
+    // than let the operator discover it by waiting.
+    const startedAt = Date.now();
+    const tick = setInterval(() => {
+      const s = Math.round((Date.now() - startedAt) / 1000);
+      promptEl.textContent = s >= 10
+        ? `running ${s}s — no cancel; --timeout is the ceiling ❯`
+        : `running ${s}s ❯`;
+    }, 1000);
     try {
       const block = await window.api.ctlRun(line);
       pushBlock(block);
@@ -106,8 +120,12 @@ function createCtlTab({ host }) {
       pushBlock({ command: line, output: `clodexctl: ${e && e.message ? e.message : String(e)}\n`, exitCode: 1, ctx: ctxName, ts: Date.now() });
       notify('attention');
     } finally {
+      clearInterval(tick);
       running = false;
       inputEl.disabled = false;
+      // Unconditional: the catch above may have left the prompt showing an
+      // elapsed count for a command that already failed.
+      renderPrompt();
       inputEl.focus();
     }
   }
@@ -155,17 +173,21 @@ function createCtlTab({ host }) {
       return;
     }
     const rows = data.verbs.map((v) => {
-      // A partially-allowed family shows the subcommands that RUN, not the
-      // registry's usage line — `args <get|set>` would advertise the `set` this
-      // tab refuses.
+      // A family the service spells as a subcommand list shows the subs that
+      // RUN, not the registry's usage line — so a narrowed family advertises
+      // only what survived rather than the whole `<get|set>`.
       const usage = v.subs ? `${v.verb} ${v.subs.join('|')} …` : (v.usage || v.verb);
       return `<div class="ctl-help-row">`
         + `<code class="ctl-help-usage">${esc(usage)}</code>`
         + `<span class="ctl-help-sum">${esc(v.summary || '')}</span>`
         + `</div>`;
     }).join('');
+    // The refusal list comes from the service (`deferred`), not a literal here,
+    // for the same reason the verb rows do — it is the other half of the same
+    // table and would drift the same way.
     el.innerHTML = `<div class="ctl-help-sec">These verbs run here</div>${rows}`
-      + `<div class="ctl-help-note">Everything else is refused — this console is read-only.<br>`
+      + `<div class="ctl-help-note">${esc(data.deferred || '')}<br>`
+      + `A block resolves once, so anything that streams or asks a question belongs in the Terminal tab.<br>`
       + `Type <code>help</code> for the full CLI index, or <code>&lt;verb&gt; --help</code> for one verb `
       + `(including the ones that will not run here).</div>`;
   }
@@ -219,7 +241,7 @@ function createCtlTab({ host }) {
   function mount(pane, actions) {
     pane.innerHTML = `
       <div id="ctl-body">
-        <div id="ctl-empty">clodexctl — read-only verbs: <code>info</code>, <code>sessions</code>, <code>query</code>, <code>ctx …</code>, <code>args get</code>. Type <code>help</code> for the full index.</div>
+        <div id="ctl-empty">clodexctl against your current context. Press <code>?</code> for what runs here, or type <code>help</code> for the full index.</div>
       </div>
       <div id="ctl-input-row">
         <span id="ctl-prompt">(no context) ❯</span>
