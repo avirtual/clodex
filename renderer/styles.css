@@ -1101,15 +1101,20 @@ html, body {
 #main.has-proxy-bar.drawer-tall #terminal-container {
   bottom: calc(var(--drawer-tall-h) + 24px);
 }
-#main.drawer-tall #proxy-bar {
-  bottom: var(--drawer-tall-h);
-}
 
+/* THE FLOOR OF THE WINDOW, below the drawer — not above it. The bar used to
+   ride on top of the drawer, so its `bottom` had to track every drawer height
+   (collapsed, expanded, tall) through a parallel set of rules. Two of those
+   collided at equal specificity (`#main.drawer-tall #proxy-bar` vs
+   `#main.drawer-expanded #proxy-bar`, and tall implies expanded), so source
+   order won and a tall drawer painted straight over the bar. Pinning it at 0
+   deletes that whole family: the bar has ONE position, and only the things
+   above it need to know its height. */
 #proxy-bar {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: var(--drawer-collapsed-h); /* sit just above the collapsed drawer bar */
+  bottom: 0;
   height: 24px;
   z-index: 5;
   display: flex;
@@ -1123,10 +1128,6 @@ html, body {
   border-top: 1px solid var(--border);
   white-space: nowrap;
   overflow: hidden;
-  transition: bottom 0.2s ease;
-}
-#main.drawer-expanded #proxy-bar {
-  bottom: var(--drawer-h);
 }
 /* Staleness dims the telemetry only — the action icons stay fully usable. */
 #proxy-telemetry { display: flex; align-items: center; flex: 1; min-width: 0; overflow: hidden; }
@@ -3249,6 +3250,11 @@ html, body {
 /* NOTHING in this subtree may be hidden with `display:none` — collapse is
    height-only and inactive panes use `visibility`. An xterm tenant inside a
    display:none ancestor measures zero and never recovers (CLAUDE.md). */
+/* Sits ON the status bar, not under it: #proxy-bar is pinned to the window
+   floor, so the drawer's own floor is the bar's height when it is shown. The
+   bar is the one strip that must never be covered — it carries cost and
+   context-pressure numbers, and a maximized drawer used to hide exactly the
+   readings you want while doing something expensive. */
 #drawer {
   position: absolute;
   bottom: 0;
@@ -3259,11 +3265,13 @@ html, body {
   display: flex;
   flex-direction: column;
   z-index: 5;
-  transition: height 0.2s ease;
+  transition: height 0.2s ease, bottom 0.2s ease;
   height: var(--drawer-h);
   max-height: 50%;
   overflow: hidden;
 }
+/* The class is on #main, so the drawer is matched through its parent. */
+#main.has-proxy-bar #drawer { bottom: 24px; }
 
 /* Tall mode raises the cap with the height: the 50% above would otherwise clamp
    this to half and the class would look like it did nothing. */
