@@ -19,8 +19,12 @@ const PROXY_DEPENDENT = [
   ['compactOnResume', 'Needs wirescope — it is what bakes the transcript.'],
   ['contextHints', 'Needs wirescope — it is what attaches the hint.'],
   ['semanticHints', 'Needs wirescope — it is what attaches the hint.'],
-  ['selectionHints', 'Needs wirescope — it is what attaches the selection.'],
 ];
+// NOT proxy-dependent, and deliberately so: only the ephemeral half of this
+// pref rides wirescope. The Copy button hands its text to the CLI's own
+// UserPromptSubmit hook through a file on disk, which works with the proxy off
+// entirely — greying the checkbox would take away the half that still works.
+// The wirescope caveat lives in the control's own hint text instead.
 
 // state: the live checkbox values, NOT saved settings — the gate must respond to
 // unticking the master before Save, or the dialog would claim a control is live

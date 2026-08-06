@@ -378,6 +378,7 @@ function createSessionManager(deps) {
   const NO_SELECTION_ARM = {
     arm: () => Promise.resolve({ armed: false, reason: 'selection hints are unavailable on this host' }),
     release: () => Promise.resolve({ armed: false }),
+    onSubmit() {},
     forget() {},
   };
   const selectionArm = selectionArmDep || NO_SELECTION_ARM;
@@ -1566,6 +1567,18 @@ function createSessionManager(deps) {
           s._draft = '';
           s._draftState = null;
           arm.onSubmit(key);
+          // The CLI's hook drains the attachment queue on this same submit, so
+          // the pending list has served its purpose. Holding it longer would
+          // suppress a peek for text the transcript now carries anyway — once
+          // it is IN the conversation, re-selecting it is an ordinary selection
+          // about an ordinary part of the context.
+          //
+          // The renderer is told because its status line claims a delivery that
+          // had not happened yet; this is the event that makes the claim true
+          // and then retires it.
+          try {
+            if (selectionArm.onSubmit(key)) this._sendToSession(key, 'selection-sent', key);
+          } catch {}
           return;
         }
         arm.onDraft(key, s._draft, this._armCtx(s), { overflow: r.overflow, desync: r.desync });
@@ -1600,10 +1613,12 @@ function createSessionManager(deps) {
       };
     }
 
-    // The drawer's selection, armed on the session the operator is looking at.
-    // Routed through _armCtx like every other hint so the route grammar and the
-    // proxy-off rule have ONE implementation — a second base resolution here
-    // would re-introduce the captured-base bug that comment describes.
+    // The drawer's selection. The PEEK half is routed through _armCtx like every
+    // other hint so the route grammar and the proxy-off rule have ONE
+    // implementation — a second base resolution here would re-introduce the
+    // captured-base bug that comment describes. The ATTACH half ignores all of
+    // it: a hard copy goes into the seat's queue file for the CLI's own hook,
+    // so it works with wirescope off entirely.
     //
     // A session that is not in the map is not an error the operator needs to see:
     // it is a selection that outlived the tab it came from (the debounce fires

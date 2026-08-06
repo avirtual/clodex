@@ -285,6 +285,42 @@ if (body) {
 JSEOF
 `, { mode: 0o700 });
 
+    // The drawer's ATTACHED selections (the Copy button). Unlike ctxwarn this
+    // hook CONSUMES the file: an attachment is a hard copy the operator asked
+    // to put in the transcript, and once it is in the transcript it is there
+    // for good — re-emitting it every turn would stack duplicates of the same
+    // text. The one-shot PEEK tier never comes through here at all; it rides
+    // the wirescope tail, uncached, and is gone whether or not it was used.
+    //
+    // Line-delimited so two Copy clicks between one pair of submits both land:
+    // the file is a QUEUE, not a slot. Renamed before it is read, so a click
+    // landing mid-drain queues into a fresh file rather than being dropped.
+    const selectionPath = pathFor(REGISTRY_DIR, name, 'selection');
+    const selectionScriptPath = pathFor(REGISTRY_DIR, name, 'selectionScript');
+    fs.writeFileSync(selectionScriptPath, `#!/bin/bash
+[ -s "${selectionPath}" ] || exit 0
+${INTERP} - "${selectionPath}" <<'JSEOF'
+const fs = require('fs');
+const src = process.argv[2];
+const claim = src + '.' + process.pid;
+// Claim by RENAME before reading: a Copy click racing this drain writes to a
+// fresh file and is delivered next turn, rather than being truncated away.
+try { fs.renameSync(src, claim); } catch (e) { process.exit(0); }
+let texts = [];
+try {
+  for (const line of fs.readFileSync(claim, 'utf8').split('\\n')) {
+    if (!line.trim()) continue;
+    try { const o = JSON.parse(line); if (o && o.text) texts.push(o.text); } catch (e) {}
+  }
+} catch (e) {}
+try { fs.rmSync(claim, { force: true }); } catch (e) {}
+if (texts.length) {
+  console.log(JSON.stringify({ hookSpecificOutput: {
+    hookEventName: "UserPromptSubmit", additionalContext: texts.join('\\n\\n') } }));
+}
+JSEOF
+`, { mode: 0o700 });
+
     // ORDER IS THE MECHANISM: emit delta.md, THEN rename next.md over
     // notified.md, then drop delta.md. The baseline advance is last, so a crash
     // re-delivers the same diff next turn; at-least-once is deliberate.
@@ -326,6 +362,7 @@ JSEOF
             { type: 'command', command: ipcdeltaScriptPath },
             { type: 'command', command: ackScriptPath },
             { type: 'command', command: pendingScriptPath },
+            { type: 'command', command: selectionScriptPath },
             { type: 'command', command: ctxwarnScriptPath },
           ]
         }],

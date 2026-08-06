@@ -76,14 +76,16 @@ function peekText(where, body) {
     + '<selection>\n' + body + '\n</selection>';
 }
 
-// The attach framing. Deliberate, so it is stated as such — and it must say it
-// PERSISTS, or the model treats a second turn's carriage as a fresh attachment
-// and re-acknowledges text the operator handed it several turns ago.
+// The attach framing. Deliberate, so it is stated as such. It does NOT say
+// "stays attached": this tier is delivered once, into the TRANSCRIPT, and the
+// transcript keeps it — so it is an ordinary part of the conversation from the
+// next turn on and needs no standing claim about its own lifetime. Saying it
+// persists would be true but useless, and would invite the model to
+// re-acknowledge it every turn, which is exactly what the wire version's
+// framing had to work to prevent.
 function attachText(where, body) {
-  return 'The user attached this text from Clodex\'s ' + where + '. '
+  return 'The user copied this text out of Clodex\'s ' + where + ' and handed it to you. '
     + 'This was a deliberate gesture, so treat it as relevant to what they are asking.\n'
-    + 'It stays attached until they clear it — it is the same text on later '
-    + 'requests, not a new attachment each turn.\n'
     + '<attachment>\n' + body + '\n</attachment>';
 }
 

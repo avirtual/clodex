@@ -421,3 +421,59 @@ test('writeClaudeDigestFile: the roster is a THIRD block, and a seat with no tea
   assert.match(early, /clodex agent named 'early'/);
   assert.doesNotMatch(early, /roster/);
 });
+
+// The drawer's Copy button writes JSONL into the seat's run dir; this script is
+// what turns it into transcript content. It CONSUMES what it reads — unlike
+// ctxwarn, which re-emits every turn — because a hard copy that re-delivered
+// itself would stack duplicates of the same block forever.
+test('the selection drain claims by rename, consumes, and emits UserPromptSubmit', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('agent1');
+
+  const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'selectionScript');
+  const queuePath = pathFor(REGISTRY_DIR, 'agent1', 'selection');
+  const body = fs.readFileSync(scriptPath, 'utf-8');
+  assert.match(body, /renameSync/, 'the queue must be claimed by rename, not read in place');
+  assert.match(body, /hookEventName: "UserPromptSubmit"/);
+
+  // Registered, or it never runs.
+  const settings = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'agent1', 'settings'), 'utf-8'));
+  const submitCmds = settings.hooks.UserPromptSubmit[0].hooks.map((x) => x.command);
+  assert.ok(submitCmds.includes(scriptPath), 'the selection drain must be under UserPromptSubmit');
+  // NOT under PostToolUse: an attachment is the operator's turn-boundary
+  // gesture, and draining it mid-loop would land it between two tool calls.
+  const postCmds = settings.hooks.PostToolUse[0].hooks.map((x) => x.command);
+  assert.ok(!postCmds.includes(scriptPath), 'the drain must not fire per-tool');
+
+  // Two clicks between submits, as the queue is written.
+  fs.writeFileSync(queuePath,
+    `${JSON.stringify({ text: 'FIRST BLOCK' })}\n${JSON.stringify({ text: 'SECOND BLOCK' })}\n`);
+  const out = cp.execFileSync('bash', [scriptPath], { encoding: 'utf-8' });
+  const parsed = JSON.parse(out);
+  assert.strictEqual(parsed.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  const ctx = parsed.hookSpecificOutput.additionalContext;
+  assert.match(ctx, /FIRST BLOCK/, 'ENTER: the first attachment was delivered');
+  assert.match(ctx, /SECOND BLOCK/, 'both attachments ride one submit');
+  assert.ok(ctx.indexOf('FIRST BLOCK') < ctx.indexOf('SECOND BLOCK'), 'in the order queued');
+
+  // Consumed: a second submit with nothing new must deliver nothing, or the
+  // same block accretes in the transcript every turn.
+  assert.ok(!fs.existsSync(queuePath), 'the queue file is gone after the drain');
+  assert.strictEqual(cp.execFileSync('bash', [scriptPath], { encoding: 'utf-8' }), '',
+    'an empty queue produces no output at all');
+});
+
+// A corrupt line must not cost the operator the attachments around it.
+test('the selection drain skips an unparseable line and delivers the rest', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('agent1');
+  const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'selectionScript');
+  fs.writeFileSync(pathFor(REGISTRY_DIR, 'agent1', 'selection'),
+    `${JSON.stringify({ text: 'GOOD ONE' })}\n{ not json\n${JSON.stringify({ text: 'GOOD TWO' })}\n`);
+  const ctx = JSON.parse(cp.execFileSync('bash', [scriptPath], { encoding: 'utf-8' }))
+    .hookSpecificOutput.additionalContext;
+  assert.match(ctx, /GOOD ONE/, 'ENTER: the drain ran and delivered');
+  assert.match(ctx, /GOOD TWO/, 'the line after the corrupt one still arrived');
+});

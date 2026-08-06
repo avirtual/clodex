@@ -27,8 +27,8 @@ test('pathFor: the three bare forms are unsuffixed', () => {
   assert.strictEqual(path.basename(pathFor(ROOT, 'a', 'socket')), 'agent.sock');
 });
 
-test('pathFor: 20 per-agent kinds are defined', () => {
-  assert.strictEqual(Object.keys(KINDS).length, 20);
+test('pathFor: 22 per-agent kinds are defined', () => {
+  assert.strictEqual(Object.keys(KINDS).length, 22);
   // every kind has a matching legacy suffix (the sweep depends on the pairing) —
   // file-heat.json and ipcdelta.sh have no flat ancestor but keep a defensive
   // suffix so the invariant (every kind sweepable) holds.

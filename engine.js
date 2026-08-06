@@ -416,6 +416,16 @@ const selectionArm = createSelectionArm({
   scrubber: () => (ctlService && ctlService.scrubber ? ctlService.scrubber() : null),
   armHints: ({ base, route, hint }) => ProxyClient.armHints(base, route, [hint]),
   clearHints: ({ base, route, id }) => ProxyClient.clearHints(base, route, id),
+  // The Copy button's channel: a line appended to the seat's own queue file,
+  // which the CLI's UserPromptSubmit hook drains into the transcript. APPEND
+  // and not write — two clicks between one pair of submits are two
+  // attachments, and the hook claims the file by rename before reading it, so
+  // a click landing mid-drain queues into a fresh file rather than vanishing.
+  // The run dir is created at spawn; a seat whose dir is gone is one whose
+  // hook will never run either, so the throw is the honest answer.
+  queue: ({ name, text }) => {
+    fs.appendFileSync(pathFor(REGISTRY_DIR, name, 'selection'), `${JSON.stringify({ text })}\n`);
+  },
   log,
 });
 

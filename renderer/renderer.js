@@ -2297,6 +2297,8 @@ window.api.onSessionExit((name, code, meta) => {
   }
 });
 
+window.api.onSelectionSent((name) => drawerHost.onSelectionSent(name));
+
 window.api.onSessionActivity((name, state) => {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!el) return;
@@ -5100,7 +5102,6 @@ function applyPrefsGate() {
     ['compactOnResume', prefsCompactOnResume],
     ['contextHints', prefsContextHints],
     ['semanticHints', prefsSemanticHints],
-    ['selectionHints', prefsSelectionHints],
   ]) {
     if (!el) continue;
     const g = gate[key];

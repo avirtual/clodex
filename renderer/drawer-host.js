@@ -524,24 +524,16 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession }) {
     const [clipErr, res] = await Promise.all([clip, wire]);
     if (clipErr) { flash(`copy failed: ${clipErr}`, true); return; }
     const clipSize = bytesLabel(text.length);
-    // Detaching is the second click on the same text — reported as its own
-    // outcome, because "copied" alone would read as though it is still attached.
-    // Dropping the attach claim is this path's job ALONE: nothing else in the
-    // renderer may clear it, or the text keeps riding with the line blank.
-    if (res && res.detached) {
-      if (name) attachedBy.delete(name);
+    if (res && res.handed) {
+      // Queued for the transcript, delivered on the operator's next submit —
+      // so the standing claim is about a DELIVERY that has not happened yet,
+      // and it is cleared when it does rather than by any gesture here.
+      if (name) attachedBy.set(name, `sending · ${label(res, text.length)}`);
       refreshStatus();
-      flash(`copied · ${clipSize} · detached`);
+      flash(`copied · ${clipSize} · sending`);
       return;
     }
-    if (res && res.armed) {
-      // The attachment supersedes any peek: same bytes, stronger framing.
-      if (name) attachedBy.set(name, `attached · ${label(res, text.length)}`);
-      refreshStatus();
-      flash(`copied · ${clipSize} · attached`);
-      return;
-    }
-    flash(`copied · ${clipSize} · not attached (${(res && res.reason) || 'unavailable'})`);
+    flash(`copied · ${clipSize} · not sent (${(res && res.reason) || 'unavailable'})`);
   }
 
   if (copyBtn) {
@@ -624,7 +616,18 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession }) {
     refreshStatus();
   }
 
-  return { register, open, toggle, hasFocus, domSelection, onSessionChanged, forgetSession };
+  // The queue went out with a submit. The claim was about a pending delivery,
+  // so it retires here rather than on any gesture — the text is in the
+  // transcript now and is nothing the operator still needs warning about.
+  function onSelectionSent(name) {
+    if (!name || !attachedBy.delete(name)) return;
+    refreshStatus();
+  }
+
+  return {
+    register, open, toggle, hasFocus, domSelection,
+    onSessionChanged, forgetSession, onSelectionSent,
+  };
 }
 
 module.exports = { createDrawerHost, TAB_IDS };

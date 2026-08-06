@@ -30,8 +30,10 @@
 //                        wrote it, but keeping every kind sweepable is the invariant)
 //     ipcdelta.sh        IPC-prompt-delta drain hook (same defensive posture:
 //                        never existed flat, but stays sweepable)
+//     selection.jsonl    queued drawer ATTACHMENTS awaiting the next submit
+//     selection.sh       attachment drain hook (same defensive posture)
 //
-// 20 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
+// 22 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
 // move: messages/ (HARD — --add-dir scope + IPC_PROMPT teaching + historical
 // spill pointers), pending/ (parked DMs — pending.sh RELOCATES but its BODY
 // still targets ~/.clodex/pending/<name>/), promptcache/ (the frozen system
@@ -79,6 +81,8 @@ const KINDS = {
   pendingScript: 'pending.sh',
   fileHeat: 'file-heat.json',
   ipcdeltaScript: 'ipcdelta.sh',
+  selection: 'selection.jsonl',
+  selectionScript: 'selection.sh',
 };
 
 // The OLD flat-grammar suffixes, per kind — what the one-time legacy sweep
@@ -107,6 +111,8 @@ const LEGACY_SUFFIXES = {
   pendingScript: '-pending.sh',
   fileHeat: '-file-heat.json',
   ipcdeltaScript: '-ipcdelta.sh',
+  selection: '-selection.jsonl',
+  selectionScript: '-selection.sh',
 };
 
 // The per-agent runtime dir: ~/.clodex/run/<name>/.

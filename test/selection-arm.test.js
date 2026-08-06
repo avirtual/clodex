@@ -1,9 +1,11 @@
-// selection-arm.js — WHEN the operator's drawer selection is on the wire.
+// selection-arm.js — WHICH CHANNEL carries the operator's drawer selection.
 //
 // The composer's own tests (selection-hint.test.js) pin what the text says.
-// What is worth pinning here is traffic and tier interaction: the same bytes
-// must not be POSTed twice, must not ride under two framings at once, and a
-// refused POST must not leave a memo claiming the proxy holds something.
+// What is worth pinning here is the routing and the traffic: selecting goes on
+// the wirescope tail and copying goes into the seat's hook queue, the same
+// bytes must not be POSTed twice, the two channels must not put the same text
+// in one request under two framings, and a refused POST must not leave a memo
+// claiming the proxy holds something.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -19,13 +21,15 @@ const CTX = { agent: 'seat', base: 'http://127.0.0.1:7800', route: 'clodex-seat-
 function mk(overrides = {}) {
   const armed = [];
   const cleared = [];
+  const queued = [];
   const arm = createSelectionArm({
     enabled: () => true,
     armHints: ({ route, hint }) => { armed.push({ route, ...hint }); return Promise.resolve({ status: 200 }); },
     clearHints: ({ route, id }) => { cleared.push({ route, id }); return Promise.resolve({ status: 200 }); },
+    queue: ({ name, text }) => { queued.push({ name, text }); },
     ...overrides,
   });
-  return { arm, armed, cleared };
+  return { arm, armed, cleared, queued };
 }
 
 // A proxy whose round trips can be resolved BY THE TEST, in any order. The
@@ -50,16 +54,18 @@ function slowMk(overrides = {}) {
     ops.push(rec);
     return p;
   }
+  const queued = [];
   const arm = createSelectionArm({
     enabled: () => true,
     armHints: ({ hint }) => op('arm', hint.id),
     clearHints: ({ id }) => op('clear', id),
+    queue: ({ name, text }) => { queued.push({ name, text }); },
     ...overrides,
   });
   const pending = (kind) => ops.filter((o) => o.kind === kind && !landed.includes(`${o.kind}:${o.id}`));
   // Lets the chain advance as far as it can without resolving anything new.
   const settle = () => new Promise((r) => setTimeout(r, 0));
-  return { arm, ops, landed, pending, settle };
+  return { arm, ops, landed, pending, settle, queued };
 }
 
 test('a peek arms once and re-arming the same text does not POST again', async () => {
@@ -102,61 +108,9 @@ test('clearing what was never armed costs no request', async () => {
   assert.deepStrictEqual(cleared, [], 'the memo, not the proxy, is what says there is nothing to clear');
 });
 
-test('attaching suppresses the peek carrying the same bytes', async () => {
-  const { arm, armed, cleared } = mk();
-  // The realistic order: the drag arms a peek, then the operator clicks Copy.
-  await arm.arm('seat', { text: 'the line', tab: 'term' }, CTX);
-  const at = await arm.arm('seat', { text: 'the line', tab: 'term', attach: true }, CTX);
-  assert.strictEqual(at.armed, true, 'ENTER: the attach went through');
-  assert.strictEqual(at.attached, true);
-  assert.deepStrictEqual(armed.map((h) => h.id), [PEEK_ID, ATTACH_ID]);
-  // Without this the model gets the same text twice under two framings, one
-  // calling it deliberate and one calling it possibly irrelevant.
-  assert.deepStrictEqual(cleared, [{ route: CTX.route, id: PEEK_ID }],
-    'the superseded peek came off the wire');
-});
 
-test('a peek is refused while the identical text is attached', async () => {
-  const { arm, armed } = mk();
-  await arm.arm('seat', { text: 'x marks', tab: 'term', attach: true }, CTX);
-  assert.strictEqual(armed.length, 1, 'ENTER: the attachment is live');
-  // Re-selecting the text you just attached (very easy: the selection is still
-  // there after the click) must not re-add it as a peek.
-  const p = await arm.arm('seat', { text: 'x marks', tab: 'term' }, CTX);
-  assert.strictEqual(p.armed, false);
-  assert.strictEqual(p.reason, 'already attached');
-  assert.strictEqual(armed.length, 1, 'no duplicate on the wire');
-});
 
-test('clicking Copy again on attached text DETACHES it', async () => {
-  const { arm, armed, cleared } = mk();
-  await arm.arm('seat', { text: 'keep me', tab: 'ctl', attach: true }, CTX);
-  assert.strictEqual(armed.length, 1, 'ENTER: attached');
-  // An attachment is not `once`, so without this gesture the operator's text
-  // rides every request until the TTL runs out with no way to stop it.
-  const off = await arm.arm('seat', { text: 'keep me', tab: 'ctl', attach: true }, CTX);
-  assert.strictEqual(off.armed, false);
-  assert.strictEqual(off.detached, true);
-  assert.deepStrictEqual(cleared, [{ route: CTX.route, id: ATTACH_ID }]);
-  assert.strictEqual(armed.length, 1, 'the toggle-off is a clear, not another arm');
 
-  // And it is genuinely gone: the next click re-attaches rather than being
-  // dropped as unchanged.
-  const on = await arm.arm('seat', { text: 'keep me', tab: 'ctl', attach: true }, CTX);
-  assert.strictEqual(on.armed, true, 'the register was released, not merely reported');
-  assert.strictEqual(armed.length, 2);
-});
-
-test('release takes back the peek and leaves the attachment alone', async () => {
-  const { arm, cleared } = mk();
-  await arm.arm('seat', { text: 'attached text', tab: 'term', attach: true }, CTX);
-  await arm.arm('seat', { text: 'peeked text', tab: 'term' }, CTX);
-  await arm.release('seat', CTX);
-  // The operator asked for the attachment; a tab switch or a collapse is not a
-  // retraction of that.
-  assert.deepStrictEqual(cleared, [{ route: CTX.route, id: PEEK_ID }]);
-  assert.strictEqual(arm._registers('seat').attach, 'attached text', 'the attachment survived');
-});
 
 test('the pref is read per call, not captured at construction', async () => {
   let on = false;
@@ -227,7 +181,7 @@ test('forget drops the registers so a name reused by a new seat starts clean', a
   await arm.arm('seat', { text: 'old', tab: 'term' }, CTX);
   assert.strictEqual(armed.length, 1, 'ENTER: the dead seat had armed something');
   arm.forget('seat');
-  assert.deepStrictEqual(arm._registers('seat'), { peek: null, attach: null });
+  assert.deepStrictEqual(arm._registers('seat'), { peek: null, pending: [] });
   const again = await arm.arm('seat', { text: 'old', tab: 'term' }, CTX);
   assert.strictEqual(again.armed, true, 'the replacement can arm the same text');
   assert.strictEqual(again.unchanged, undefined);
@@ -267,50 +221,7 @@ test('the scrubber is read per call and reaches the composed text', async () => 
 // 300ms and a proxy round trip is not guaranteed to be shorter. A cold review
 // found three defects in this gap; these pin the fixes.
 
-test('an attach behind an in-flight peek reaches the proxy AFTER it', async () => {
-  const { arm, ops, landed, settle } = slowMk();
-  // The drag arms a peek; the operator clicks Copy before it comes back.
-  const peek = arm.arm('seat', { text: 'the line', tab: 'term' }, CTX);
-  await settle();
-  assert.strictEqual(ops.length, 1, 'ENTER: the peek POST is in flight, not yet resolved');
 
-  const attach = arm.arm('seat', { text: 'the line', tab: 'term', attach: true }, CTX);
-  await settle();
-  // The chain is the point: the attach must not have issued anything yet.
-  assert.strictEqual(ops.length, 1, 'the attach waits for the peek rather than racing it');
-
-  ops[0].release();
-  await peek;
-  await settle();
-  ops[1].release();          // the attach POST
-  await settle();
-  ops[2].release();          // the DELETE for the superseded peek
-  const res = await attach;
-
-  assert.strictEqual(res.armed, true, 'the attach went through');
-  // Without the chain the DELETE is issued while the peek POST is still in
-  // flight, so the proxy ends up holding BOTH framings of the same bytes with
-  // nothing left in the memo that could ever take the peek back.
-  assert.deepStrictEqual(landed, [
-    `arm:${PEEK_ID}`, `arm:${ATTACH_ID}`, `clear:${PEEK_ID}`,
-  ], 'the peek is deleted only after the POST that registered it landed');
-  assert.strictEqual(arm._registers('seat').peek, null, 'and the memo agrees it is gone');
-});
-
-test('a peek is superseded by an attach carrying DIFFERENT bytes', async () => {
-  const { arm, cleared, armed } = mk();
-  // Reachable whenever the operator selects new text and hits Copy inside the
-  // debounce window: the older selection's peek is still registered.
-  await arm.arm('seat', { text: 'older selection', tab: 'term' }, CTX);
-  assert.strictEqual(armed.length, 1, 'ENTER: the older peek is live');
-  const res = await arm.arm('seat', { text: 'brand new text', tab: 'term', attach: true }, CTX);
-  assert.strictEqual(res.armed, true);
-  // The renderer drops its handle on the peek at this moment, so a peek left
-  // registered here is one nothing will ever release.
-  assert.deepStrictEqual(cleared, [{ route: CTX.route, id: PEEK_ID }],
-    'the stale peek came off the wire even though the bytes differ');
-  assert.strictEqual(arm._registers('seat').peek, null);
-});
 
 test('two arms with different text land in issue order, so the memo matches the proxy', async () => {
   const { arm, ops, landed, settle } = slowMk();
@@ -378,25 +289,7 @@ test('an expired memo costs no DELETE', async () => {
   assert.deepStrictEqual(cleared, [], 'the proxy already dropped it at its ttl');
 });
 
-test('forget clears a live attachment off the proxy, not just the memo', async () => {
-  const { arm, cleared } = mk();
-  await arm.arm('seat', { text: 'left behind', tab: 'term', attach: true }, CTX);
-  // _armCtx falls back to a NAME GLOB, so a dead seat's 1800s attachment
-  // matches its same-named replacement until the TTL runs out.
-  await arm.forget('seat', CTX);
-  assert.deepStrictEqual(cleared, [{ route: CTX.route, id: ATTACH_ID }],
-    'the registration was taken back, not merely forgotten here');
-  assert.deepStrictEqual(arm._registers('seat'), { peek: null, attach: null });
-});
 
-test('forget without a ctx is still synchronous and silent', async () => {
-  const { arm, cleared } = mk();
-  await arm.arm('seat', { text: 'no route to clear on', tab: 'term', attach: true }, CTX);
-  await arm.forget('seat');
-  assert.deepStrictEqual(cleared, [], 'no ctx means no route to send a DELETE to');
-  assert.deepStrictEqual(arm._registers('seat'), { peek: null, attach: null },
-    'the memo is dropped regardless, so a replacement seat starts clean');
-});
 
 test('the reported byte count is what WENT, not what was selected', async () => {
   const { arm, armed } = mk();
@@ -424,4 +317,139 @@ test('a half-built scrubber falls back to the composer defaults instead of throw
   const r = await arm.arm('seat', { text: 'plain text', tab: 'term' }, CTX);
   assert.strictEqual(r.armed, true);
   assert.ok(armed[0].text.includes('plain text'));
+});
+
+// ── The two channels ───────────────────────────────────────────────────────
+//
+// Selecting is ephemeral and rides the wire; copying is a hard copy that goes
+// into the transcript through the seat's own UserPromptSubmit hook. The split
+// is the design, so these pin that each gesture uses ITS channel and not the
+// other — a Copy that quietly POSTed would put permanent text on an uncached
+// tail, and a selection that quietly queued would make an idle highlight
+// permanent.
+
+test('Copy queues for the transcript and never touches the proxy', async () => {
+  const { arm, armed, cleared, queued } = mk();
+  const res = await arm.arm('seat', { text: 'the failing line', tab: 'ctl', attach: true }, CTX);
+  assert.strictEqual(res.handed, true, 'ENTER: the hand-off went through');
+  assert.strictEqual(queued.length, 1, 'exactly one queue entry');
+  assert.strictEqual(queued[0].name, 'seat', 'queued against the seat, whose hook will read it');
+  assert.ok(queued[0].text.includes('the failing line'));
+  assert.deepStrictEqual(armed, [], 'a hard copy is not tail traffic');
+  assert.deepStrictEqual(cleared, []);
+});
+
+test('Copy works with wirescope off entirely', async () => {
+  const { arm, queued } = mk();
+  // The hook reads a file the app wrote; no proxy is involved on this path, so
+  // the tier that survives a stopped wirescope must be the deliberate one.
+  const res = await arm.arm('seat', { text: 'still works', tab: 'term', attach: true },
+    { agent: 'seat', base: null, route: null });
+  assert.strictEqual(res.handed, true);
+  assert.strictEqual(queued.length, 1, 'the queue is the whole mechanism here');
+});
+
+test('a peek is suppressed while the same bytes are queued for the transcript', async () => {
+  const { arm, armed, queued } = mk();
+  await arm.arm('seat', { text: 'one line', tab: 'term', attach: true }, CTX);
+  assert.strictEqual(queued.length, 1, 'ENTER: it is waiting for the next submit');
+  // The selection is still on screen after the click, so the drag's debounce
+  // fires against text the transcript is about to carry. Both in one request
+  // is the same text under two contradictory framings.
+  const p = await arm.arm('seat', { text: 'one line', tab: 'term' }, CTX);
+  assert.strictEqual(p.armed, false);
+  assert.strictEqual(p.reason, 'already handed over');
+  assert.deepStrictEqual(armed, [], 'nothing on the tail beside it');
+});
+
+test('the suppression lifts once the queue has gone out', async () => {
+  const { arm, armed } = mk();
+  await arm.arm('seat', { text: 'shipped', tab: 'term', attach: true }, CTX);
+  assert.strictEqual(arm.onSubmit('seat'), true, 'ENTER: something was waiting and went');
+  // It is in the transcript now, so re-selecting it is an ordinary selection
+  // about an ordinary part of the context — suppressing forever would be the
+  // wrong way round.
+  const p = await arm.arm('seat', { text: 'shipped', tab: 'term' }, CTX);
+  assert.strictEqual(p.armed, true, 'the peek is no longer suppressed');
+  assert.strictEqual(armed.length, 1);
+});
+
+test('onSubmit reports whether anything was actually waiting', async () => {
+  const { arm } = mk();
+  // The renderer retires its "sending" claim on this, so a submit with an
+  // empty queue must not be reported as a delivery.
+  assert.strictEqual(arm.onSubmit('seat'), false, 'nothing queued, nothing sent');
+  await arm.arm('seat', { text: 'queued', tab: 'term', attach: true }, CTX);
+  assert.strictEqual(arm.onSubmit('seat'), true);
+  assert.strictEqual(arm.onSubmit('seat'), false, 'and the queue is empty again');
+});
+
+test('two Copy clicks between submits are two attachments', async () => {
+  const { arm, queued } = mk();
+  await arm.arm('seat', { text: 'first', tab: 'term', attach: true }, CTX);
+  await arm.arm('seat', { text: 'second', tab: 'log', attach: true }, CTX);
+  // The queue file is line-delimited for exactly this: a slot would silently
+  // drop the first of two things the operator deliberately handed over.
+  assert.strictEqual(queued.length, 2);
+  assert.ok(queued[0].text.includes('first'));
+  assert.ok(queued[1].text.includes('second'));
+});
+
+test('clicking Copy twice on the same text queues it once', async () => {
+  const { arm, queued } = mk();
+  await arm.arm('seat', { text: 'same text', tab: 'term', attach: true }, CTX);
+  const again = await arm.arm('seat', { text: 'same text', tab: 'term', attach: true }, CTX);
+  assert.strictEqual(again.handed, true, 'reported as handed over, because it is');
+  assert.strictEqual(again.unchanged, true);
+  // There is no un-queue gesture, so a second click is the same hand-off — not
+  // a second copy of the same block in the transcript.
+  assert.strictEqual(queued.length, 1, 'the transcript gets it once');
+});
+
+test('a queue write that fails is reported, never raised at the caller', async () => {
+  const { arm } = mk({ queue: () => { throw new Error('ENOENT'); } });
+  const res = await arm.arm('seat', { text: 'nowhere to put it', tab: 'term', attach: true }, CTX);
+  assert.strictEqual(res.handed, false);
+  assert.match(res.reason, /ENOENT/);
+  // And it did not memoise: the retry must be able to queue it.
+  assert.deepStrictEqual(arm._registers('seat').pending, []);
+});
+
+test('the pref gates the Copy channel too', async () => {
+  let on = false;
+  const { arm, queued } = mk({ enabled: () => on });
+  const off = await arm.arm('seat', { text: 'hi', tab: 'term', attach: true }, CTX);
+  assert.strictEqual(off.handed, false);
+  assert.deepStrictEqual(queued, [], 'an unticked box means nothing leaves, on either channel');
+  on = true;
+  const now = await arm.arm('seat', { text: 'hi', tab: 'term', attach: true }, CTX);
+  assert.strictEqual(now.handed, true);
+  assert.strictEqual(queued.length, 1);
+});
+
+test('the queued text is the COMPOSED hint, not the raw selection', async () => {
+  const TOKEN = 'sk-live-TOKENVALUE-42';
+  const { arm, queued } = mk({
+    scrubber: () => ({ scrub: (s, t) => (t ? s.split(t).join('***') : s), tokens: [TOKEN] }),
+  });
+  await arm.arm('seat', { text: `key ${TOKEN} here`, tab: 'ctl', attach: true }, CTX);
+  assert.strictEqual(queued.length, 1, 'ENTER: something was queued to inspect');
+  // This lands in the transcript PERMANENTLY, so an unredacted token here is
+  // worse than one on a 120s tail hint.
+  assert.ok(!queued[0].text.includes(TOKEN), 'the token was redacted before it could persist');
+  assert.ok(queued[0].text.includes('***'));
+  // And it carries its framing, or it arrives as a bare wall of text with no
+  // account of where it came from.
+  assert.match(queued[0].text, /clodexctl tab/);
+  assert.match(queued[0].text, /<attachment>/);
+});
+
+test('the attach framing does not claim to persist, because the transcript does', async () => {
+  const { arm, queued } = mk();
+  await arm.arm('seat', { text: 'body', tab: 'term', attach: true }, CTX);
+  // The wire version had to say "it stays attached" because it rode every
+  // request. This one is delivered once into the conversation, so the same
+  // sentence would invite the model to re-acknowledge it every turn.
+  assert.ok(!/stays attached/.test(queued[0].text));
+  assert.match(queued[0].text, /deliberate gesture/);
 });

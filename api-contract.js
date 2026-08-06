@@ -114,6 +114,11 @@ const API_CONTRACT = [
   { name: 'onSessionExit', kind: 'on', channel: 'session-exit' },
   { name: 'onIpcMessage', kind: 'on', channel: 'ipc-message' },
   { name: 'onSessionActivity', kind: 'on', channel: 'session-activity' },
+  // The seat's queued drawer attachments went out with a submit. The status
+  // line claims a delivery BEFORE it happens (the queue is drained by the CLI's
+  // own hook, which the app cannot observe directly), so this is what makes
+  // that claim stop.
+  { name: 'onSelectionSent', kind: 'on', channel: 'selection-sent' },
   { name: 'onPendingCount', kind: 'on', channel: 'pending-count' },
   { name: 'onSessionTicket', kind: 'on', channel: 'session-ticket' },
   { name: 'onSessionAttention', kind: 'on', channel: 'session-attention' },

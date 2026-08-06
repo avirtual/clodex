@@ -80,13 +80,16 @@ test('the peek framing carries its hedge and its silence clause', () => {
   assert.match(h.text, /IPC log tab/);
 });
 
-test('the attach framing says it persists, so it is not re-acknowledged', () => {
+test('the attach framing states the gesture without claiming a lifetime', () => {
   const h = buildSelectionHint({ text: 'x', tab: 'term', attach: true });
   assert.ok(h, 'ENTER: the hint was built');
   assert.match(h.text, /deliberate/);
-  // Without this the model treats a second turn's carriage as a fresh
-  // attachment and re-acknowledges text handed over several turns ago.
-  assert.match(h.text, /not a new attachment each turn/);
+  // This tier is delivered ONCE, into the transcript, which then keeps it — so
+  // it needs no standing claim about its own lifetime, and making one would
+  // invite the model to re-acknowledge it every turn. (The earlier wire
+  // version had the opposite requirement, which is why this is pinned.)
+  assert.ok(!/stays attached/.test(h.text));
+  assert.ok(!/each turn/.test(h.text));
 });
 
 test('an unknown tab id never reaches the model as a raw id', () => {
