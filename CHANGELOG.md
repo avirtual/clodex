@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- **`ListAgents` is now in the tool list**, so it can be turned off per session
+  like the rest. Anthropic added it to the CLI; until it was listed here,
+  unticking it would have had no effect, because a tool Clodex doesn't know
+  about can't be put on a session's deny list.
+
 - **A Terminal tab for a peer's session — a real shell on their machine.** Off
   by default, and the machine that would host the shell is the one that decides:
   tick "Allow terminal sharing" on a peer in its info popover. Until someone

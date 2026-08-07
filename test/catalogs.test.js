@@ -17,6 +17,18 @@ test('CLAUDE_TOOLS: non-empty, unique, includes the staples', () => {
   }
 });
 
+// A tool absent from the catalog cannot be denied AT ALL: cli-hooks filters
+// disabledTools against it, so unchecking one in the UI is silently dropped.
+// That makes a missed addition a functional gap rather than a cosmetic one, and
+// it is invisible — the checklist just never offers the tool. Pinning the ones
+// observed on the live wire is the only cheap guard; ListAgents shipped in an
+// Anthropic drop and went unnoticed until it showed up in a system prompt.
+test('CLAUDE_TOOLS: covers the tools observed on the live wire', () => {
+  for (const t of ['SendMessage', 'ListAgents', 'Agent', 'Skill', 'WebSearch']) {
+    assert.ok(CLAUDE_TOOLS.includes(t), `missing ${t}`);
+  }
+});
+
 test('DEFAULT_TOOL_DENY_FLOOR: every entry is a known tool', () => {
   assert.ok(Array.isArray(DEFAULT_TOOL_DENY_FLOOR));
   for (const t of DEFAULT_TOOL_DENY_FLOOR) {

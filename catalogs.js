@@ -33,7 +33,7 @@ const CLAUDE_TOOLS = [
   // Web
   'WebFetch', 'WebSearch',
   // Subagents & teams
-  'Agent', 'SendMessage',
+  'Agent', 'SendMessage', 'ListAgents',
   // Skills & workflows
   'Skill', 'Workflow',
   // Plan mode & worktrees
