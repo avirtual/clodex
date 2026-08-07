@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.1.1 — 2026-08-07
+
 - **Fixed the documented syntax for running a command in your terminal tab.**
   The help text told agents to write `[agent:term exec <command>]`, with the
   command inside the brackets. That form has never worked: the command belongs
