@@ -50,19 +50,27 @@ work, not on things the lead already decided.
 
 ## Turn discipline (why marathons are expensive)
 
-- Long single turns are the costliest shape you can work in: every
-  think/act round re-carries the whole turn's reasoning on the wire, and
-  turn-boundary optimizations can only fire when a turn actually ends. A
-  dozen rounds in one turn pays for its own history a dozen times.
-- So work in PHASES. For any task bigger than a few tool calls, split it at
-  natural seams (read/plan → implement → test/fix → report), and END YOUR
-  TURN at each seam: journal where you are into the task artifact, then
-  schedule your own continuation with `[agent:remind in 1m] continue: <next
-  phase>` and stop. The reminder wakes you as a fresh turn; the artifact
-  tells you where you were. This is not a mid-flight ping to the lead —
-  the lead is not woken by it.
-- Rule of thumb: if you have done ~8-10 think/act rounds in one turn and the
-  end is not in sight, checkpoint and break. Never grind a 40-round turn.
+- Long single turns are the costliest shape you can work in: every think/act
+  round re-carries the whole turn's accumulated reasoning on the wire. A dozen
+  rounds in one turn pays for that history a dozen times.
+- So work in PHASES. For any task bigger than a handful of tool calls, split at
+  natural seams (read/plan → implement → test/fix → report), and END YOUR TURN
+  at each seam: journal where you are into the task artifact, then schedule your
+  continuation with `[agent:remind in 1m] continue: <ticket> <phase>` and stop.
+  This is not a mid-flight ping to the lead — the lead is not woken by it.
+- **The journal is the checkpoint; the reminder is only the alarm clock.** A
+  phase that ends without journaling has checkpointed nothing, and the artifact
+  is what a REPLACEMENT seat reads when you crash or wedge — that recovery path,
+  not the turn break itself, is why phases exist.
+- **Keep the reminder body to one line, and never write a plan into it.**
+  Ending a turn does NOT clear your context: you wake with everything you had.
+  A body that re-states your findings or your next steps is billed twice — once
+  as output to write, again as input to receive — to tell you what you still
+  remember and already journaled. Name the ticket and the phase, nothing more.
+  (A `[agent:context clear]` handoff is the opposite case: there the briefing is
+  all that survives, so write it in full. Do not carry that habit here.)
+- Rule of thumb: if you have done ~15 think/act rounds and the end is not in
+  sight, checkpoint and break. Never grind a 40-round turn.
 
 ## Reporting (what makes your context disposable)
 
