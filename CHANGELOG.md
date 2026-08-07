@@ -11,7 +11,47 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — The drawer grows up, and terminals get shared
+
+- **Text you select in the drawer can ride along to the agent.** Off by default,
+  behind its own preference. With it on, highlighting text in any drawer tab —
+  the terminal, the ctl console, the activity feed — offers it to the active
+  session, and there are two gestures with two different meanings. *Selecting*
+  is ephemeral: it rides the next request only, is never cached, expires on its
+  own, and is gone whether the agent used it or not. *Copy* is deliberate and
+  permanent: it lands in the session's transcript, where the agent can refer
+  back to it for the rest of the conversation. The split is deliberate — a
+  highlight is a glance, a copy is a decision — and this is separate from the
+  memory hints, which offer an agent things it wrote itself; this forwards what
+  *you* highlighted, which is a different consent decision and so has its own
+  switch.
+
+  Copy works from every drawer tab now, not just the console, and it takes your
+  selection rather than the whole pane — selecting a few lines in a 200-block
+  console and pressing Copy used to overwrite the clipboard with all of it, and
+  you only found out when you pasted. It also tells you what it copied, with a
+  byte count, since a clipboard write can fail silently and look exactly like
+  one that worked.
+
+  A **📋** button in the drawer header shows what is actually riding your next
+  message: the selection, anything queued, and the memory hints sharing the same
+  block. It deliberately reports what the proxy holds and what Clodex believes
+  *separately* instead of reconciling them into one answer — during development
+  the two disagreed, with text on the wire while the status line said nothing
+  was armed, and an inspector built on the same belief as the status line would
+  have repeated that with more authority.
+
+- **The status bar moved to the bottom of the window**, below the drawer instead
+  of above it. It had been colliding with a tall drawer and getting painted over.
+
+- **The ticket board shows the newest tickets first.** It used to sort
+  quietest-first to surface stalls by position, but a stalled ticket already
+  announces itself, so the ordering only meant the ticket you just filed landed
+  at the bottom of a growing board.
+
+- **`ctx` commands work without the prefix in the ctl console.** `list` does
+  what `ctx list` does, in a pane whose status line already shows which context
+  you are in. Real verbs always win, so nothing is shadowed.
 
 - **`ListAgents` is now in the tool list**, so it can be turned off per session
   like the rest. Anthropic added it to the CLI; until it was listed here,
@@ -247,8 +287,9 @@ blocks a release.
   It starts the first time you look at it, not at launch, and keeps its
   scrollback while you switch tabs or collapse the drawer. Closing the window
   closes its shell. Like the ctl console, it exists only in the desktop app —
-  there is no such channel on a Clodex reached over the web — and it is yours
-  alone: no agent can read it or type into it.
+  there is no such channel on a Clodex reached over the web. It starts out yours
+  alone; the two ways an agent can reach a terminal both arrived later in this
+  release, and both are off until you turn them on.
 
 ## 4.15.0 — 2026-08-05 — Infra paths, and a review that arrives
 
