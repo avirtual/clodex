@@ -11,7 +11,30 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — terminal results that used to be thrown away
+
+- **A terminal command whose result the shell could not label is no longer
+  discarded.** Running `[agent:term exec] pwd` twice in a row answered "finished,
+  but the shell did not report which command ran" — with no exit code and no
+  output — even though both had been captured correctly. Bash declines to add a
+  repeated command to its history, and Clodex read the unchanged history number
+  as "we do not know what this was" and threw the whole answer away. Since a
+  stock Ubuntu sets `HISTCONTROL=ignoreboth`, this hit every repeated command on
+  a Linux box, including the very first command in a new terminal when the same
+  one was the last thing run in the previous one.
+
+  An agent that asked for a command now gets its exit code and its output back,
+  under the command it sent. Where the shell genuinely did not confirm what ran,
+  the answer says the name is *assumed* rather than reported, and warns that if
+  the operator ran something at that moment the output may be theirs — so the
+  agent can tell a confirmed result from an inferred one.
+
+- **More commands are reported by name on Linux terminals.** Where the shell
+  skipped a history entry only because the command repeated one, Clodex can now
+  say what ran instead of reporting it unnamed. Commands hidden from history on
+  purpose — typed with a leading space, or with history switched off — stay
+  unnamed, deliberately: guessing there would attach an unrelated command's name
+  to output the operator meant to keep out of the record.
 
 ## 5.1.1 — 2026-08-07
 

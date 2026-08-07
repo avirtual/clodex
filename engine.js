@@ -1463,10 +1463,12 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
       const ran = (res.record && res.record.command) || 'something else';
       text = `[terminal] ${res.command}\nthe terminal reported \`${ran}\` finishing instead — that was already running when your command arrived. Yours may never have run, or may still be queued behind it. Look at the terminal before sending it again.`;
     } else if (res.status === 'ok') {
-      text = formatCommand(res.record, { stripAnsi, always: true })
-        // formatCommand returns null for a record whose command line did not
-        // survive; the agent still asked, so it still gets an answer.
-        || `[terminal] ${res.command}\nfinished, but the shell did not report which command ran`;
+      // `assumed` is what makes this branch total. A shell that did not name the
+      // command still reported its exit code and its output, and dropping all of
+      // that for a missing label answered nothing — vetTermCommand guarantees
+      // `res.command` is a non-empty single line, so formatCommand always has a
+      // name to use and cannot answer null here.
+      text = formatCommand(res.record, { stripAnsi, always: true, assumed: res.command });
     } else if (res.status === 'abandoned') {
       text = `[terminal] ${res.command}\nabandoned — a new prompt appeared before it finished, so it was interrupted (Ctrl-C) or the shell reset. There is no exit code. Its output was not captured; look at the terminal, or ask your operator.`;
     } else if (res.status === 'timeout') {

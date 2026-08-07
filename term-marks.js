@@ -139,12 +139,38 @@ function createMarkParser({ onCommand, onAbandon, maxOutput } = {}) {
 // to be NEWS — a nonzero exit — and a successful command reports its line alone.
 // A build that prints four thousand lines and works is not something the agent
 // needs in its context.
-function formatCommand(rec, { stripAnsi, maxLines, maxChars, always } = {}) {
+function formatCommand(rec, { stripAnsi, maxLines, maxChars, always, assumed } = {}) {
   const cmd = String((rec && rec.command) || '').trim();
-  if (!cmd) return null;
-  const code = rec.exitCode;
+  // A record the shell did not NAME still has a real exit code and real output,
+  // and which of those is worth keeping depends entirely on who is asking.
+  //
+  // The passive firehose passes no `assumed` and still drops the record: nobody
+  // asked for it, and a report that cannot say what ran is not worth the
+  // operator's privacy. A caller that KNOWS what it sent passes it here instead
+  // of losing the answer to a missing label — measured against a real bash on
+  // ubuntu 24.04, HISTCONTROL=ignoreboth makes every REPEATED command arrive
+  // unnamed, so this was discarding correct output routinely rather than rarely.
+  //
+  // ASSUMED, NEVER REPORTED, and the wording carries that: drawer-pty's
+  // `foreignRecord` tells our command from the operator's by comparing the
+  // reported text, so an unnamed record is exactly the one it cannot vet. An
+  // operator who pressed Enter inside the exec race window would have THEIR
+  // output land here under our name, and a message that claimed the shell said
+  // so would be a confident lie about whose work it is.
+  const named = cmd || String(assumed || '').trim();
+  if (!named) return null;
+  // Read off a possibly-absent record: with `assumed` set, a caller can now get
+  // past the guard above without one at all, and the old `rec.exitCode` threw.
+  const code = rec && rec.exitCode;
   const status = code === null || code === undefined ? 'exit unknown' : `exit ${code}`;
-  const head = `[terminal] ${cmd}\n${status}`;
+  // THE MARKER RIDES THE LINE THE AGENT QUOTES, not just the parenthetical below
+  // it. The argument is frequency rather than phrasing: on a stock ubuntu seat
+  // HISTCONTROL=ignoreboth makes this the answer to every REPEATED command, and a
+  // paragraph seen hourly gets skimmed while the `[terminal] …` line it quotes
+  // back does not.
+  const marker = cmd ? '' : ' (assumed)';
+  const doubt = cmd ? '' : '\n(the shell did not name the command that finished — this is the command that was sent, assumed to be it. If your operator ran something at that moment, the output below may be theirs.)';
+  const head = `[terminal] ${named}${marker}\n${status}${doubt}`;
   if (!always && (code === 0 || code === null || code === undefined)) return head;
 
   let body = String((rec && rec.output) || '');

@@ -204,12 +204,32 @@ function bashSupport({ shell, probeVersion }) {
 // command on 4.4–5.0 where PROMPT_COMMAND is scalar.
 //
 // THE COMMAND TEXT COMES FROM `history`, because there is no $BASH_COMMAND at
-// PS0 time. That is also why the number is tracked: under HISTCONTROL=ignoredups
-// or ignorespace (and with history switched off entirely) the line is never
-// added, and a naive read reports the PREVIOUS command's text — measured,
-// `echo first` was reported twice. An unchanged history number means we do not
-// know what ran, and an EMPTY payload says exactly that; term-marks already
-// treats an undecodable command as a real command with an unknown line.
+// PS0 time (measured: PS0 expanding it yields this hook's own printf). That is
+// why the number is tracked: when a line is not added, a naive read reports the
+// PREVIOUS command's text — measured, `echo first` was reported twice.
+//
+// WHY THE NUMBER ALONE IS NOT THE RULE. An unchanged number has two causes that
+// need opposite answers, and treating them alike made every REPEATED command
+// unnamed on a stock ubuntu — which sets HISTCONTROL=ignoreboth in its default
+// ~/.bashrc, reached through the profile this rc sources. Measured in
+// ghcr.io/avirtual/clodex:5.1.1: a second `pwd` reported an empty payload, and
+// clearing HISTCONTROL in the same shell reported it correctly.
+//
+//   ignoredups / erasedups — the entry was suppressed BECAUSE it equals the last
+//   one, so the last one IS the command. Naming it is correct.
+//   ignorespace, and history switched off — the last entry is some earlier,
+//   unrelated command. Naming it would attribute this command's output to that
+//   one.
+//
+// The two are indistinguishable at this point, so `ignoreboth` (both at once)
+// must stay silent. That asymmetry is deliberate rather than conservative:
+// ignorespace and `set +o history` are how an operator hides a command with a
+// secret in it, and a stale label on THAT output is the one wrong answer worth
+// paying an unnamed command to avoid.
+//
+// An EMPTY payload still says "we do not know what ran" — term-marks treats an
+// unnamed record as a real command with an unknown line, and formatCommand's
+// `assumed` lets a caller that knows what it sent recover the answer.
 //
 // The static PS0 branch is not a nicety. With `shopt -u promptvars` bash does
 // not expand a prompt, so a PS0 carrying a command substitution is printed
@@ -237,11 +257,11 @@ if [[ $- == *i* && -z \${__clodex_installed:-} ]]; then
     return $s
   }
   __clodex_preexec() {
-    local h n line b=''
+    local h n line b='' hc=":\${HISTCONTROL}:"
     h=$(HISTTIMEFORMAT= builtin history 1 2>/dev/null)
     h=\${h#"\${h%%[![:space:]]*}"}
     n=\${h%%[[:space:]]*}
-    if [[ -n $n && $n != "$__clodex_hist" ]]; then
+    if [[ -n $n && -o history ]] && [[ $n != "$__clodex_hist" || ( $hc != *:ignorespace:* && $hc != *:ignoreboth:* ) ]]; then
       __clodex_hist=$n
       line=\${h#*[[:space:]]}
       line=\${line#"\${line%%[![:space:]]*}"}

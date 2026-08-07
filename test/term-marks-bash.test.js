@@ -24,7 +24,7 @@ const path = require('node:path');
 
 const { buildTermShim, bashSupport } = require('../term-shim');
 const { createDrawerPtys } = require('../drawer-pty');
-const { createMarkParser } = require('../term-marks');
+const { createMarkParser, formatCommand } = require('../term-marks');
 
 // A bash too old for PS0 cannot be shimmed at all, so it is not a machine this
 // property can be measured on. Resolved through bashSupport rather than a
@@ -243,6 +243,97 @@ test('a command typed by the operator is reported passively', opts, async () => 
     assert.strictEqual(passive[passive.length - 1].command, 'echo typed_by_operator');
     assert.strictEqual(passive[passive.length - 1].exitCode, 0);
   });
+});
+
+// THE v5.1.x DEFECT, and it is a real shell's behaviour rather than ours: a
+// command bash declines to add to history leaves the history NUMBER unchanged,
+// and the guard read that as "we do not know what ran". Reproduced in
+// ghcr.io/avirtual/clodex:5.1.1, where ubuntu's stock ~/.bashrc sets
+// HISTCONTROL=ignoreboth — so every REPEATED command arrived unnamed and the
+// agent was told "the shell did not report which command ran".
+//
+// Set through the PROFILE rather than the env, because that is the door it comes
+// through on a real box: the generated rc sources their startup, which is where
+// a distro puts this.
+test('a REPEATED command is still named under HISTCONTROL=ignoredups', opts, async () => {
+  await withShell(async ({ exec }) => {
+    const first = await exec('echo twice');
+    assert.strictEqual(first.record.command, 'echo twice', 'ENTER: the first one was named');
+    const second = await exec('echo twice');
+    assert.strictEqual(second.record.command, 'echo twice',
+      'the entry was suppressed BECAUSE it equals the last one, so the last one IS the command');
+    assert.match(second.record.output, /twice/, 'and its output is real');
+  }, { profile: 'HISTCONTROL=ignoredups\n' });
+});
+
+// The other half, and the asymmetry is deliberate: ignorespace is how an
+// operator hides a command carrying a secret, so its history entry is some
+// EARLIER unrelated command. Naming it would attribute the hidden command's
+// output to the wrong line — the one wrong answer worth paying an unnamed
+// command to avoid.
+test('a space-hidden command is NOT named under HISTCONTROL=ignorespace', opts, async () => {
+  await withShell(async ({ exec, proc, passive }) => {
+    await exec('echo visible');
+    proc().write(' echo hidden\r');
+    const got = await waitFor(() => passive.length > 0);
+    assert.ok(got, 'ENTER: the hidden command was framed and reached the passive path');
+    assert.strictEqual(passive[passive.length - 1].command, '',
+      'borrowing `echo visible` as its name would label the hidden command\'s output');
+  }, { profile: 'HISTCONTROL=ignorespace\n' });
+});
+
+// The same rule where the operator switched history off outright, and the one
+// case a byte pin cannot reach: with history off NOTHING is ever added, so the
+// last entry is whatever was loaded from their history FILE — an old command
+// with no relationship to what is running now. Mutation-checked against a real
+// bash: with the `-o history` clause deleted, an unrelated `date` sitting in the
+// history file was reported as the command for two different `echo`s.
+//
+// The file has to be SEEDED for that to be observable. An empty history reports
+// nothing either way, which is exactly how this survived a green suite.
+test('a shell with history off does not borrow an old entry as the command name', opts, async () => {
+  const hist = path.join(os.tmpdir(), `clodex-hist-${process.pid}-${Date.now()}`);
+  fs.writeFileSync(hist, 'date\n');
+  try {
+    await withShell(async ({ exec }) => {
+      // ENTER: the seeded entry is genuinely loaded and readable, so a shell
+      // that named it would be reporting something real rather than nothing.
+      const seeded = await exec('HISTTIMEFORMAT= builtin history 1');
+      assert.match(seeded.record.output, /date/,
+        'ENTER: the old entry is what `history 1` returns in this shell');
+      const res = await exec('echo now');
+      assert.strictEqual(res.record.command, '',
+        'naming it `date` would attribute this command\'s output to an unrelated one');
+      assert.match(res.record.output, /now/, 'the output is still captured and still real');
+    }, { profile: 'set +o history\n', env: { HISTFILE: hist } });
+  } finally {
+    try { fs.rmSync(hist, { force: true }); } catch {}
+  }
+});
+
+// What the AGENT ends up being told when the shell genuinely cannot name it.
+// The record is intact — right exit code, right output — and only the label is
+// missing, which is exactly what v5.1.x threw the whole answer away for.
+test('an unnamed record still carries a usable answer for the caller that asked', opts, async () => {
+  await withShell(async ({ exec }) => {
+    await exec('echo again');
+    const res = await exec('echo again');
+    assert.strictEqual(res.status, 'ok', `ENTER: it completed: ${JSON.stringify(res)}`);
+    // ENTER: the whole point is the UNNAMED case, and a bash that named it
+    // anyway would leave every assertion below true of the ordinary path — the
+    // test would pass while measuring nothing this fix changed.
+    assert.strictEqual(res.record.command, '',
+      'ENTER: ignoreboth really did leave the command unnamed');
+    assert.strictEqual(res.record.exitCode, 0, 'the exit code survived the missing name');
+    assert.match(res.record.output, /again/, 'and so did the output');
+    // engine.js's asked path, with the command it knows it sent.
+    const text = formatCommand(res.record, { always: true, assumed: res.command });
+    assert.strictEqual(text.split('\n')[0], '[terminal] echo again (assumed)',
+      'the agent gets a named answer, marked on the line it quotes back');
+    assert.match(text, /again/, 'with the output that used to be discarded');
+    assert.match(text, /did not name the command/,
+      'and the name is flagged as assumed rather than claimed as reported');
+  }, { profile: 'HISTCONTROL=ignoreboth\n' });
 });
 
 // Dropping -l is what makes --rcfile work at all, and the generated rc puts the

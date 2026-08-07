@@ -322,16 +322,58 @@ test('the bash exit status is captured on the first line of precmd', () => {
   assert.match(m[1], /local s=\$\?/, 'anything before this destroys the status being reported');
 });
 
-// There is no $BASH_COMMAND at PS0 time, so the line comes from `history`. Under
-// HISTCONTROL=ignoredups/ignorespace, or with history off, the command is never
-// added and a naive read reports the PREVIOUS one — measured, `echo first` was
-// reported twice. An unchanged history number means we do not know what ran,
-// and an empty payload says exactly that.
+// There is no $BASH_COMMAND at PS0 time, so the line comes from `history`, and a
+// line that was never added makes a naive read report the PREVIOUS one —
+// measured, `echo first` was reported twice.
 test('the reported command is guarded on the history number changing', () => {
   const { body } = bash();
   assert.match(body, /__clodex_hist=\$\{h%%\[\[:space:\]\]\*\}/, 'precmd remembers the number');
-  assert.match(body, /if \[\[ -n \$n && \$n != "\$__clodex_hist" \]\]/,
-    'preexec reports the text only when the entry is genuinely new');
+  assert.match(body, /\$n != "\$__clodex_hist"/,
+    'preexec reports the text when the entry is genuinely new');
+});
+
+// The number alone is NOT the rule, and treating it as one is what shipped in
+// v5.1.x: ubuntu's stock ~/.bashrc sets HISTCONTROL=ignoreboth, so every REPEATED
+// command arrived unnamed. Measured in ghcr.io/avirtual/clodex:5.1.1 — a second
+// `pwd` reported an empty payload, and clearing HISTCONTROL in that same shell
+// reported it correctly.
+//
+// Under ignoredups/erasedups the entry was suppressed BECAUSE it equals the last
+// one, so the last one IS the command and naming it is right. Under ignorespace
+// the last entry is some earlier, unrelated command. The two are
+// indistinguishable here, so the combined `ignoreboth` must stay silent.
+test('an unchanged history number still names the command, except where the last entry may not be it', () => {
+  const { body } = bash();
+  const m = body.match(/^\s*if \[\[ -n \$n[^\n]*$/m);
+  assert.ok(m, 'ENTER: the preexec guard line was found');
+  const guard = m[0];
+  assert.match(guard, /\$hc != \*:ignorespace:\*/,
+    'a space-hidden command must not borrow the previous entry as its name');
+  assert.match(guard, /\$hc != \*:ignoreboth:\*/,
+    'ignoreboth is ignorespace too, so it cannot be told from a dup');
+  assert.ok(!/\$hc != \*:ignoredups:\*/.test(guard),
+    'ignoredups is the case this fix EXISTS to name — excluding it would restore the defect');
+});
+
+// Not conservatism: ignorespace and `set +o history` are how an operator hides a
+// command carrying a secret, so a stale label on THAT output is the one wrong
+// answer worth paying an unnamed command to avoid. Measured against a real bash
+// in the 5.1.1 image: with this clause deleted, an unrelated `date` sitting in
+// ~/.bash_history was reported as the command for two different `echo`s.
+test('a shell with history switched off names nothing at all', () => {
+  const { body } = bash();
+  assert.match(body, /\[\[ -n \$n && -o history \]\]/,
+    'without this the last entry in the history FILE is reported as every command');
+});
+
+// The token match is anchored on both sides. HISTCONTROL is colon-separated and
+// a bare substring test would read `ignoredups` as containing... nothing, but
+// would read a hypothetical `noignorespace` as ignorespace and go silent on a
+// shell that had no such setting.
+test('the HISTCONTROL tokens are matched colon-delimited, not as substrings', () => {
+  const { body } = bash();
+  assert.match(body, /hc=":\$\{HISTCONTROL\}:"/,
+    'the wrapping colons are what make the first and last tokens matchable');
 });
 
 test('the bash hooks only run in an interactive shell, and only once', () => {

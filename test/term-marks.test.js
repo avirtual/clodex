@@ -228,6 +228,58 @@ test('a command with no text is not reported', () => {
   assert.strictEqual(formatCommand({ command: '   ', exitCode: 0, output: 'x' }), null);
 });
 
+// The passive firehose has no idea what ran, so it keeps the drop above. A
+// caller that ASKED knows what it sent, and losing a correct exit code and
+// correct output to a missing LABEL answered nothing — which is what shipped in
+// v5.1.x, on every repeated command under a stock ubuntu's HISTCONTROL.
+test('an unnamed record is reported under the assumed command, with its output', () => {
+  const out = formatCommand({ command: '', exitCode: 0, output: '/home/clodex\n' },
+    { always: true, assumed: 'pwd' });
+  assert.match(out, /^\[terminal\] pwd \(assumed\)\nexit 0/, 'the assumed command names the report');
+  assert.match(out, /\/home\/clodex/, 'the output survives — losing it is the defect');
+});
+
+// NEVER SILENTLY CLAIMED. drawer-pty's foreignRecord tells our command from the
+// operator's by comparing the reported TEXT, so an unnamed record is exactly the
+// one it cannot vet: an operator pressing Enter inside the exec race window has
+// their output delivered here under our name. A message that claimed the shell
+// reported it would be a confident lie about whose work it is.
+test('an assumed command SAYS it was assumed, and says the output may be the operator\'s', () => {
+  const out = formatCommand({ command: '', exitCode: 0, output: 'x' },
+    { always: true, assumed: 'pwd' });
+  assert.match(out, /did not name the command/, 'the doubt is stated');
+  assert.match(out, /may be theirs/, 'and whose output it might be');
+  // ON THE LINE THE AGENT QUOTES, not only in the paragraph under it. Frequency
+  // is the argument: under a stock ubuntu's HISTCONTROL this is the answer to
+  // every repeated command, and a parenthetical read hourly stops being read.
+  assert.strictEqual(out.split('\n')[0], '[terminal] pwd (assumed)',
+    'the first line is what gets quoted back, so the doubt has to survive being quoted');
+});
+
+test('a NAMED record carries no assumption notice even when assumed is passed', () => {
+  const out = formatCommand({ command: 'pwd', exitCode: 0, output: 'x' },
+    { always: true, assumed: 'pwd' });
+  assert.ok(!/did not name the command/.test(out),
+    'the shell DID say — hedging a reported command would train the agent to discount the notice');
+  assert.strictEqual(out.split('\n')[0], '[terminal] pwd',
+    'and no marker on the quoted line either, for the same reason');
+});
+
+// The passive path passes no `assumed`, and this is the whole reason the option
+// exists rather than a change to the default: nobody asked for that report, so a
+// command that cannot be named is not worth the operator's privacy.
+test('an unnamed record is still dropped when no assumed command is given', () => {
+  assert.strictEqual(formatCommand({ command: '', exitCode: 0, output: 'x' }, { always: true }), null);
+  assert.strictEqual(formatCommand({ command: '', exitCode: 0, output: 'x' }, { assumed: '  ' }), null);
+});
+
+// `assumed` lets a caller clear the name guard with no record at all, which the
+// old `rec.exitCode` read would have thrown on.
+test('an assumed command with no record at all is reported, as an unknown exit', () => {
+  const out = formatCommand(null, { always: true, assumed: 'pwd' });
+  assert.match(out, /^\[terminal\] pwd \(assumed\)\nexit unknown/);
+});
+
 test('an unknown exit code is stated as unknown, not as success', () => {
   const out = formatCommand({ command: 'x', exitCode: null, output: '' });
   assert.match(out, /exit unknown/);
@@ -236,4 +288,24 @@ test('an unknown exit code is stated as unknown, not as success', () => {
 test('always:true carries output for a successful command', () => {
   const out = formatCommand({ command: 'x', exitCode: 0, output: 'hello\n' }, { always: true });
   assert.match(out, /hello/);
+});
+
+// WHICH CALLER PASSES `assumed` IS THE WHOLE PRIVACY RULE, and neither call site
+// is reachable from a test: engine.js requires node-pty at module load, so there
+// is no way to stand up a shell whose result would arrive here. Pinned at the
+// SOURCE, in the style term-shim.test.js already uses for the same reason — a
+// weaker statement than a behavioural test, and here because the alternative
+// measures nothing at all.
+test('engine passes `assumed` on the asked path only, and never on the firehose', () => {
+  const src = require('fs').readFileSync(require.resolve('../engine.js'), 'utf8');
+  const calls = src.match(/formatCommand\([^)]*\)/g) || [];
+  assert.strictEqual(calls.length, 2, 'ENTER: both call sites were found');
+  const [passive, asked] = calls;
+  assert.match(passive, /formatCommand\(rec, \{ stripAnsi \}\)/,
+    'the firehose stays unnamed-and-dropped — nobody asked, so an unnameable command is not worth the operator\'s privacy');
+  assert.match(asked, /assumed: res\.command/, 'the agent asked, so it gets an answer');
+  // The `|| "…did not report which command ran"` fallback this replaced threw
+  // the exit code and the output away. If it comes back, so does the defect.
+  assert.ok(!/did not report which command ran/.test(src),
+    'the discard-the-answer fallback must not return');
 });
