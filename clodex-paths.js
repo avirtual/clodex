@@ -91,6 +91,13 @@ const KINDS = {
   // harmless — no flat build ever wrote a `{name}-zsh`, and the sweep is
   // name-driven, so it can only ever look for one that is not there. The entry
   // below exists to keep every kind sweepable, per the invariant.
+  //
+  // The basename now UNDER-DESCRIBES it: bash's generated rc lives in this same
+  // directory (term-shim.js writes `bashrc` into it). Sharing the dir is what
+  // keeps bash out of this table entirely — no new kind, no new legacy suffix,
+  // and one dir per seat that goes away with the seat. Renaming it to something
+  // shell-neutral would strand every shim dir already on disk, which is a
+  // migration bought for a nicer word.
   termShim: 'zsh',
 };
 

@@ -111,7 +111,7 @@ function mk(over = {}) {
       return t;
     },
     killPid: () => {},
-    shimEnv: 'shimEnv' in over ? over.shimEnv : (() => ({ ZDOTDIR: '/run/shim' })),
+    shimEnv: 'shimEnv' in over ? over.shimEnv : (() => ({ env: { ZDOTDIR: '/run/shim' }, args: ['-l'] })),
     onCommand: over.onCommand || ((seat, rec) => passive.push([seat, rec])),
     // The REAL parser and the REAL vetter, not stand-ins: the refusals below are
     // claims about what happens with the ones engine.js wires, and a permissive
@@ -209,7 +209,7 @@ test('the shell remembers whether IT was shimmed, not what the pref says now', (
   // believe an old shell will report back — that is the third no-marks cause the
   // operator gets told about, and it is only knowable from the shell.
   let on = false;
-  const { w } = mk({ shimEnv: () => (on ? { ZDOTDIR: '/run/shim' } : null) });
+  const { w } = mk({ shimEnv: () => (on ? { env: { ZDOTDIR: '/run/shim' }, args: ['-l'] } : null) });
   w.spawn('ws-1', 'alice', {});
   on = true;
 

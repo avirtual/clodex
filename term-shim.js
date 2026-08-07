@@ -1,5 +1,5 @@
 'use strict';
-// term-shim.js — the generated zsh startup that emits OSC 133 marks.
+// term-shim.js — the generated shell startup that emits OSC 133 marks.
 //
 // THIS FILE REACHES INTO THE OPERATOR'S SHELL STARTUP, which is the most
 // intrusive thing Clodex does to a surface it does not own. Everything here is
@@ -7,23 +7,31 @@
 // without us, and any failure of ours must degrade to a plain shell rather than
 // to a broken one.
 //
-// The mechanism is ZDOTDIR (VSCode's approach): zsh reads its startup files from
-// $ZDOTDIR when set, so we point it at a generated directory whose .zshrc
-// sources the operator's real one and then adds two hooks. We do NOT edit any
-// file the operator owns — nothing under their home is written, ever.
-//
 // Marks emitted, matching term-marks.js:
 //   A  before each prompt        C;<b64>  a command started, with what ran
 //   D;<status>  it finished
 //
-// Only zsh is shimmed. bash's equivalent is a different mechanism entirely
-// (PROMPT_COMMAND + DEBUG trap, with its own well-known reentrancy traps) and a
-// half-correct version that mangles a bash user's prompt is worse than not
-// offering the feature. A non-zsh shell simply gets no marks and no shim.
+// TWO SHELLS, TWO MECHANISMS, and they are not variations on each other:
+//
+//   zsh  — ZDOTDIR (VSCode's approach). Purely an ENV redirect: zsh reads its
+//          startup from $ZDOTDIR when set, and it works for a LOGIN shell, so
+//          the spawn argv is untouched.
+//   bash — `--rcfile <generated>` and NO `-l`, because the two are mutually
+//          exclusive (measured: a login bash ignores --rcfile entirely and
+//          reads ~/.bash_profile). Purely an ARGV change, with the login
+//          semantics reconstructed inside the generated file.
+//
+// That is why a builder returns { env, args } rather than an env map: bash
+// cannot be shimmed without changing how the shell is spawned, and a seam that
+// carried only env would write a correct file that bash never reads.
+//
+// We do NOT edit any file the operator owns — nothing under their home is
+// written, ever, for either shell.
 
 const path = require('path');
 
 function isZsh(shell) { return /(^|\/)zsh$/.test(String(shell || '')); }
+function isBash(shell) { return /(^|\/)bash$/.test(String(shell || '')); }
 
 // preexec's $1 is the line as typed — which is the point: the operator may have
 // edited what was proposed, and what gets reported must be what actually ran.
@@ -110,10 +118,14 @@ function forwardBody(file, realZdotdir) {
 `;
 }
 
-// Build the shim directory and return the env additions, or null when the shell
-// is not zsh / the write fails. Returning null must always be safe: the caller
+// Build the shim directory and return { env, args }, or null when the shell is
+// not zsh / the write fails. Returning null must always be safe: the caller
 // spawns an unshimmed shell and the operator gets a terminal with no marks,
 // which is exactly what they had before this feature.
+//
+// `args` is `-l` — the same login shell the tab spawned before any of this
+// existed. ZDOTDIR needs no argv change, so this half of the contract exists
+// only because the bash builder below cannot say the same.
 function buildZshShim({ dir, shell, env, fs: fsDep }) {
   const fs = fsDep || require('fs');
   if (!isZsh(shell)) return null;
@@ -131,7 +143,237 @@ function buildZshShim({ dir, shell, env, fs: fsDep }) {
   } catch {
     return null;
   }
-  return { ZDOTDIR: dir, __CLODEX_REAL_ZDOTDIR: real };
+  return { env: { ZDOTDIR: dir, __CLODEX_REAL_ZDOTDIR: real }, args: ['-l'] };
 }
 
-module.exports = { buildZshShim, isZsh, HOOK_SNIPPET, zshrcBody, forwardBody, FORWARDED };
+// --- bash ----------------------------------------------------------------
+
+// PS0 was added in bash 4.4, and without it there is no preexec at all — the
+// shell emits D marks with no C before them, so term-marks never starts
+// capturing and an agent's exec would wait for an ending that cannot come.
+// Silence is the one outcome worse than refusing, so an older bash gets no
+// shim. macOS still ships 3.2 as /bin/bash, which makes this the COMMON case
+// on this platform rather than a defensive corner.
+const BASH_MIN = [4, 4];
+
+// `--norc --noprofile` because this runs on every terminal spawn: reading the
+// operator's startup twice would double any side effect in it, and their rc is
+// the slow part (measured ~10ms for the probe as written). Any failure — no
+// such binary, a timeout, output that does not parse — answers null, which the
+// caller reads as "not supported" and degrades on.
+function defaultProbeVersion(shell) {
+  try {
+    const { execFileSync } = require('child_process');
+    const out = execFileSync(shell, ['--norc', '--noprofile', '-c', 'echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}'], { timeout: 2000, encoding: 'utf8' });
+    const m = String(out).trim().match(/^(\d+)\s+(\d+)$/);
+    return m ? [Number(m[1]), Number(m[2])] : null;
+  } catch {
+    return null;
+  }
+}
+
+// Whether THIS bash can be shimmed, and what it turned out to be. Shared with
+// the diagnosis message rather than duplicated there: two copies of the floor
+// is how a supported shell starts being told it is unsupported.
+function bashSupport({ shell, probeVersion }) {
+  const v = (probeVersion || defaultProbeVersion)(shell);
+  const ok = Array.isArray(v) && (v[0] > BASH_MIN[0] || (v[0] === BASH_MIN[0] && v[1] >= BASH_MIN[1]));
+  return { ok, version: Array.isArray(v) ? v : null };
+}
+
+// THE HOOKS. Measured against a real bash 5.3 through a PTY, and every line
+// below is one of those measurements — see the notes as you go.
+//
+// NO DEBUG TRAP. That mechanism is what made bash look unshimmable: it fires
+// per SIMPLE command, so one `f` call in a 3-statement function produced six
+// firings, and marking a command once from it means keeping a state machine in
+// step with the shell's own recursion. PS0 is bash's actual preexec — expanded
+// and printed ONCE, after the line is read and before it runs — so a compound
+// command, a pipeline, a `&&` chain and a `for` loop each report exactly once,
+// and an empty line reports nothing. It also leaves the operator's own DEBUG
+// trap completely untouched, because we never install one.
+//
+// PROMPT_COMMAND IS PREPENDED, and it is the STRING form deliberately. Same
+// reason as zsh's precmd prepend (ours must run before anything else can spray
+// bytes into the captured output or destroy `$?`), and measured the same way:
+// with the operator's `PROMPT_COMMAND='true'` set, prepending reported `false`
+// as exit 1 while appending reported 0. bash 5.1+ also allows an ARRAY here,
+// and the array form looks tidier, but assigning a STRING onto an existing
+// array replaces element 0 and leaves the rest — so the string form composes
+// correctly with both, while the array form silently drops the operator's
+// command on 4.4–5.0 where PROMPT_COMMAND is scalar.
+//
+// THE COMMAND TEXT COMES FROM `history`, because there is no $BASH_COMMAND at
+// PS0 time. That is also why the number is tracked: under HISTCONTROL=ignoredups
+// or ignorespace (and with history switched off entirely) the line is never
+// added, and a naive read reports the PREVIOUS command's text — measured,
+// `echo first` was reported twice. An unchanged history number means we do not
+// know what ran, and an EMPTY payload says exactly that; term-marks already
+// treats an undecodable command as a real command with an unknown line.
+//
+// The static PS0 branch is not a nicety. With `shopt -u promptvars` bash does
+// not expand a prompt, so a PS0 carrying a command substitution is printed
+// LITERALLY on every command — measured, `$(__clodex_preexec)` on screen each
+// time, which is precisely the mangled prompt this feature must never cause.
+// The static form is pure backslash escapes, needs no expansion, and still
+// frames the command; it just cannot say what the command was.
+const BASH_HOOK_SNIPPET = `
+# --- clodex terminal integration (OSC 133) -------------------------------
+# Emits invisible semantic marks so Clodex can tell where a command's output
+# begins and ends, and what it exited with. Remove the shim to disable.
+if [[ $- == *i* && -z \${__clodex_installed:-} ]]; then
+  __clodex_installed=1
+  __clodex_hist=''
+  __clodex_precmd() {
+    local s=$?
+    builtin printf '\\033]133;D;%s\\007' "$s"
+    builtin printf '\\033]133;A\\007'
+    # The history number as it stands BEFORE the next command is read, so the
+    # preexec below can tell a new entry from a suppressed one.
+    local h
+    h=$(HISTTIMEFORMAT= builtin history 1 2>/dev/null)
+    h=\${h#"\${h%%[![:space:]]*}"}
+    __clodex_hist=\${h%%[[:space:]]*}
+    return $s
+  }
+  __clodex_preexec() {
+    local h n line b=''
+    h=$(HISTTIMEFORMAT= builtin history 1 2>/dev/null)
+    h=\${h#"\${h%%[![:space:]]*}"}
+    n=\${h%%[[:space:]]*}
+    if [[ -n $n && $n != "$__clodex_hist" ]]; then
+      __clodex_hist=$n
+      line=\${h#*[[:space:]]}
+      line=\${line#"\${line%%[![:space:]]*}"}
+      b=$(builtin printf '%s' "$line" | base64 2>/dev/null | tr -d '\\n')
+    fi
+    builtin printf '\\033]133;C;%s\\007' "$b"
+  }
+  # NO \\[ \\] AROUND EITHER FORM. They are a readline hint meaning "zero-width",
+  # and readline only strips them from PS1, which it has to measure. PS0 is
+  # printed by the shell after the line is accepted, so the pair is expanded to
+  # literal SOH and STX and sent to the terminal — measured, two stray control
+  # bytes landed at the head of every captured command's output. Nothing needs
+  # them here: PS0 is never measured for cursor placement.
+  if shopt -q promptvars; then
+    PS0='$(__clodex_preexec)'"\${PS0}"
+  else
+    PS0='\\e]133;C;\\a'"\${PS0}"
+  fi
+  PROMPT_COMMAND="__clodex_precmd\${PROMPT_COMMAND:+; \$PROMPT_COMMAND}"
+fi
+# --- end clodex terminal integration -------------------------------------
+`;
+
+// The generated rc. Everything above the hooks exists to put back what dropping
+// `-l` took away, and NOT to improve on it:
+//
+//   /etc/profile FIRST — a real login bash reads it before anything in $HOME,
+//   and on Linux it is where the distro's PATH comes from. Skipping it would
+//   gut the reason the tab spawns a login shell at all.
+//
+//   Then the FIRST ONE THAT EXISTS of .bash_profile / .bash_login / .profile.
+//   Not all three: bash stops at the first, and sourcing the others would run
+//   startup the operator's own login shell never runs.
+//
+// ~/.bashrc IS DELIBERATELY ABSENT. `--rcfile` replaces it, and a login bash
+// would not have read it either — the tab spawned `-l` before this, so
+// profile-only IS the behaviour being matched. The common `.bash_profile`
+// sources it anyway and it arrives transitively; adding it unconditionally
+// would be a behaviour change dressed as a convenience.
+//
+// Their startup runs BEFORE the hooks for the same reason zsh's does: a
+// PROMPT_COMMAND or PS0 they set must be visible to the prepend, and a plain
+// assignment in their profile running afterwards would erase ours.
+function bashrcBody() {
+  return `# Generated by Clodex. Do not edit — rewritten on every terminal spawn.
+# Reconstructs what a login bash reads, because --rcfile and -l are mutually
+# exclusive: a login bash ignores this file entirely.
+if [[ -r /etc/profile ]]; then
+  source /etc/profile
+fi
+for __clodex_profile in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+  if [[ -r "$__clodex_profile" ]]; then
+    source "$__clodex_profile"
+    break
+  fi
+done
+unset __clodex_profile
+${BASH_HOOK_SNIPPET}`;
+}
+
+// The bash counterpart of buildZshShim. Shares its directory (one shim dir per
+// seat, cleaned up with the seat) but writes a single FILE inside it, since
+// --rcfile names a file rather than a search path.
+//
+// Two ways to answer null here, and both are the standing degradation rule
+// rather than an error path: a bash too old for PS0 (see BASH_MIN) and a write
+// that failed. Either way the caller spawns the shell exactly as it did before
+// this feature existed.
+function buildBashShim({ dir, shell, fs: fsDep, probeVersion }) {
+  const fs = fsDep || require('fs');
+  if (!isBash(shell)) return null;
+  if (!bashSupport({ shell, probeVersion }).ok) return null;
+  const file = path.join(dir, 'bashrc');
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(file, bashrcBody(), { mode: 0o600 });
+  } catch {
+    return null;
+  }
+  // No env additions at all — the whole mechanism is argv. The empty object is
+  // deliberate rather than omitted: a caller spreading `shim.env` must not have
+  // to special-case a shell that needs none.
+  //
+  // NO `-l`, and that is the point: with it, bash reads ~/.bash_profile and
+  // never opens the file just written. The login semantics are inside that
+  // file instead.
+  return { env: {}, args: ['--rcfile', file, '-i'] };
+}
+
+// Why THIS shell cannot be shimmed, phrased for the operator, or null when it
+// can be. Lives here rather than in the caller for the same reason the
+// dispatcher does: the floor and the supported set are stated once, and a
+// second copy is how a shell we do support starts being told it does not.
+//
+// The too-old-bash case earns its own sentence because it is the one an
+// operator reaches without doing anything unusual — macOS still ships 3.2 as
+// /bin/bash, and "your shell is unsupported" would send them to install zsh
+// when the fix is a newer bash they may already have.
+function unsupportedShellReason({ shell, probeVersion }) {
+  if (isZsh(shell)) return null;
+  if (isBash(shell)) {
+    const { ok, version } = bashSupport({ shell, probeVersion });
+    if (ok) return null;
+    const have = version ? `bash ${version.join('.')}` : 'a bash whose version could not be read';
+    return `your terminal runs ${have}, and reporting needs bash ${BASH_MIN.join('.')} or newer (it uses PS0, added there) — macOS ships 3.2 as /bin/bash, so a newer one from Homebrew as your $SHELL would work`;
+  }
+  return `your terminal runs ${shell || 'a shell Clodex does not shim'}, and only zsh and bash report command results back`;
+}
+
+// The one entry point the app uses. Dispatching here rather than in the caller
+// keeps shell knowledge in this file: engine.js asks for a shim and gets one or
+// null, and adding fish later does not touch it.
+function buildTermShim(opts) {
+  const shell = opts && opts.shell;
+  if (isZsh(shell)) return buildZshShim(opts);
+  if (isBash(shell)) return buildBashShim(opts);
+  return null;
+}
+
+module.exports = {
+  buildTermShim,
+  buildZshShim,
+  buildBashShim,
+  bashSupport,
+  unsupportedShellReason,
+  isZsh,
+  isBash,
+  BASH_MIN,
+  HOOK_SNIPPET,
+  BASH_HOOK_SNIPPET,
+  zshrcBody,
+  bashrcBody,
+  forwardBody,
+  FORWARDED,
+};

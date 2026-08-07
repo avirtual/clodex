@@ -600,7 +600,7 @@ test('marks: a throwing reporter cannot break the terminal', () => {
 // --- the shell shim seam -------------------------------------------------
 
 test('shim: its env additions reach the spawned shell', () => {
-  const { w, spawn } = mk({ shimEnv: (seat) => ({ ZDOTDIR: `/run/${seat}/zsh` }) });
+  const { w, spawn } = mk({ shimEnv: (seat) => ({ env: { ZDOTDIR: `/run/${seat}/zsh` }, args: ['-l'] }) });
   w.spawn('ws-1', 'alice', {});
 
   assert.strictEqual(spawn.spawned[0].opts.env.ZDOTDIR, '/run/alice/zsh');
@@ -618,9 +618,36 @@ test('shim: a null shim leaves the environment untouched', () => {
 
 // TERM is set AFTER the shim spread, so a shim cannot break xterm's rendering.
 test('shim: it cannot override TERM', () => {
-  const { w, spawn } = mk({ shimEnv: () => ({ TERM: 'dumb' }) });
+  const { w, spawn } = mk({ shimEnv: () => ({ env: { TERM: 'dumb' }, args: ['-l'] }) });
   w.spawn('ws-1', 'alice', {});
   assert.strictEqual(spawn.spawned[0].opts.env.TERM, 'xterm-256color');
+});
+
+// bash's whole mechanism is the argv (--rcfile, and NO -l), so a shim that
+// could only add env would generate a file the shell never reads. Pinned as a
+// pair with the default below: the interesting half is that a shim can REPLACE
+// the argv, and asserting only the default would be true of a build that
+// ignores `shim.args` entirely.
+test('shim: a shim can replace the spawn argv', () => {
+  const { w, spawn } = mk({ shimEnv: () => ({ env: {}, args: ['--rcfile', '/run/alice/zsh/bashrc', '-i'] }) });
+  w.spawn('ws-1', 'alice', {});
+  assert.deepStrictEqual(spawn.spawned[0].args, ['--rcfile', '/run/alice/zsh/bashrc', '-i']);
+});
+
+test('shim: an unshimmed shell still spawns as a LOGIN shell', () => {
+  const { w, spawn } = mk({ shimEnv: () => null });
+  w.spawn('ws-1', 'alice', {});
+  assert.deepStrictEqual(spawn.spawned[0].args, ['-l'],
+    'the operator PATH and aliases are the point of the tab');
+});
+
+// A bash shim adds no environment at all. `shimmed` is what exec() consults
+// before agreeing to run anything, so deriving it from the env half would
+// refuse every command on a correctly shimmed bash.
+test('shim: a shim with no env additions still counts as shimmed', () => {
+  const { w } = mk({ shimEnv: () => ({ env: {}, args: ['--rcfile', '/x/bashrc', '-i'] }) });
+  w.spawn('ws-1', 'alice', {});
+  assert.strictEqual(w._execState('ws-1', 'alice').shimmed, true);
 });
 
 test('shim: the seat is what decides which shim is built', () => {

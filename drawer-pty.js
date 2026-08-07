@@ -72,12 +72,20 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   const ABANDON_ACK_MS = 250;
 
   function shellFor() {
-    // $SHELL, then the platform default. A login shell (`-l`) is deliberate:
-    // the operator's aliases and PATH are the point of a workbench terminal,
-    // and an aws-cli or nvm-shimmed binary missing from a non-login PATH is
-    // exactly the debugging case this tab exists for.
     return shell || (env && env.SHELL) || process.env.SHELL || '/bin/zsh';
   }
+
+  // A login shell is the default and is deliberate: the operator's aliases and
+  // PATH are the point of a workbench terminal, and an aws-cli or nvm-shimmed
+  // binary missing from a non-login PATH is exactly the debugging case this tab
+  // exists for.
+  //
+  // A shim may REPLACE it, which is why the argv is not simply fixed here. bash
+  // cannot be shimmed and stay a login shell — the two mechanisms are mutually
+  // exclusive (a login bash ignores `--rcfile`) — so its shim hands back a
+  // non-login argv and reconstructs the login startup inside the file it
+  // generates. An unshimmed shell, and zsh's shim, both keep `-l`.
+  const DEFAULT_ARGS = ['-l'];
 
   function spawnFor(windowId, seat, opts) {
     if (disposed) return null;
@@ -96,27 +104,35 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // passing only the window would reintroduce it one layer down.
     const cwd = (cwdFor && cwdFor(windowId, seat)) || process.env.HOME || '/';
 
-    // The OSC 133 shim's env additions, or null on a host that could not build
-    // one (non-zsh, unwritable dir). Null must stay ordinary: the shell spawns
-    // unshimmed, emits no marks, and behaves exactly as it did before this
-    // feature existed — reporting is the thing that degrades, never the
-    // terminal.
-    const extraEnv = (shimEnv && shimEnv(seat)) || null;
+    // The OSC 133 shim, or null on a host that could not build one (an
+    // unsupported shell, a bash too old for PS0, an unwritable dir). Null must
+    // stay ordinary: the shell spawns unshimmed, emits no marks, and behaves
+    // exactly as it did before this feature existed — reporting is the thing
+    // that degrades, never the terminal.
+    //
+    // `{ env, args }`, not an env map. bash's mechanism is entirely in the
+    // argv, so a seam carrying only env would silently produce a shell that
+    // reads none of what was generated for it.
+    const shim = (shimEnv && shimEnv(seat)) || null;
     // Whether THIS shell was born shimmed, remembered because the pref can be
     // toggled afterwards and the shell keeps whatever startup it got. Anything
     // asking "will a command in here report back?" must consult the shell, not
     // the current setting — a shell spawned before the pref was turned on emits
     // no marks however the checkbox reads now.
-    const shimmed = !!extraEnv;
+    //
+    // Read off the SHIM, never off its env half: bash's shim legitimately adds
+    // no environment at all, and a `!!shim.env` test would call a correctly
+    // shimmed bash unshimmed and refuse every exec on it with `no-marks`.
+    const shimmed = !!shim;
 
     let proc;
     try {
-      proc = spawn(shellFor(), ['-l'], {
+      proc = spawn(shellFor(), (shim && shim.args) || DEFAULT_ARGS, {
         name: 'xterm-256color',
         cols,
         rows,
         cwd,
-        env: { ...(env || process.env), ...(extraEnv || {}), TERM: 'xterm-256color' },
+        env: { ...(env || process.env), ...((shim && shim.env) || {}), TERM: 'xterm-256color' },
       });
     } catch (e) {
       logger.warn('wterm', `spawn failed: ${e.message}`);

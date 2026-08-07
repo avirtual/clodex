@@ -76,7 +76,7 @@ async function runCase({ shellPath, keymapCmd, prefill }) {
     // No shim: this test is about the bytes reaching the line editor, and the
     // OSC 133 marks are a separate mechanism with their own tests. exec()
     // refuses without marks, so the parser is stubbed busy-free below.
-    shimEnv: () => ({ TERM_EXEC_KEYMAP_TEST: '1' }),
+    shimEnv: () => ({ env: { TERM_EXEC_KEYMAP_TEST: '1' }, args: ['-l'] }),
     makeMarkParser: () => ({ feed() {}, isBusy: () => false, _state: () => ({}) }),
     onCommand: () => {},
     log: { info() {}, warn() {}, error() {} },

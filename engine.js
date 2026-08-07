@@ -1392,7 +1392,7 @@ const ctlService = enableDrawerServices ? createCtlService({}) : null;
 // terminal spawned after the operator opens sessions lands in the directory
 // they are actually working in.
 const { createDrawerPtys } = require('./drawer-pty');
-const { buildZshShim, isZsh } = require('./term-shim');
+const { buildTermShim, unsupportedShellReason } = require('./term-shim');
 const { formatCommand, createMarkParser } = require('./term-marks');
 const { stripAnsi } = require('./cli/src/output');
 const drawerPtys = enableLocalTerminal ? createDrawerPtys({
@@ -1415,7 +1415,7 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
   makeMarkParser: createMarkParser,
   shimEnv: (seat) => {
     if (!seat || !uiSettings.get().terminalReporting) return null;
-    return buildZshShim({
+    return buildTermShim({
       dir: pathFor(REGISTRY_DIR, seat, 'termShim'),
       shell: process.env.SHELL,
       env: process.env,
@@ -1532,14 +1532,17 @@ function queueForSeat(seat, text) {
 }
 
 // Why an agent's terminal command cannot be reported on, stated so the OPERATOR
-// can fix it — "no marks" alone tells them nothing. The three causes are
-// genuinely different actions, and the shell's own birth state is what
-// distinguishes the last from the second: the shim is applied at spawn, so a
-// shell older than the pref emits nothing however the checkbox reads now.
+// can fix it — "no marks" alone tells them nothing. The causes are genuinely
+// different actions, and the shell's own birth state is what distinguishes the
+// last from the pref: the shim is applied at spawn, so a shell older than the
+// pref emits nothing however the checkbox reads now.
+//
+// The SHELL half is term-shim's to answer: which shells are supported and what
+// the bash floor is are its facts, and a copy here would drift from the
+// builder that enforces them. The two causes below are this module's own.
 function termShimDiagnosis() {
-  if (!isZsh(process.env.SHELL)) {
-    return `your terminal runs ${process.env.SHELL || 'a non-zsh shell'}, and only zsh reports command results back`;
-  }
+  const shellReason = unsupportedShellReason({ shell: process.env.SHELL });
+  if (shellReason) return shellReason;
   if (!uiSettings.get().terminalReporting) {
     return 'terminal reporting is switched off in Settings, so the shell emits no completion marks';
   }

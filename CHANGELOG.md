@@ -13,6 +13,31 @@ blocks a release.
 
 ## Unreleased
 
+- **`[agent:term exec]` works on bash now, not just zsh.** Until now an agent
+  asking to run something in your terminal was refused outright unless your
+  shell was zsh — bash could be typed into, but nothing could tell the agent
+  what a command had printed or what it exited with, so the feature declined
+  rather than run something blind. bash is the default on most Linux
+  distributions, so that was a large share of people getting nothing.
+
+  It needs **bash 4.4 or newer**, and the reason is worth stating because macOS
+  is the awkward case: Apple still ships bash **3.2** as `/bin/bash`, which
+  lacks the hook this relies on. If that is your `$SHELL`, the agent's refusal
+  now tells you the version you have and the version you need rather than
+  suggesting you switch to zsh. A newer bash from Homebrew works.
+
+  One honest caveat. Reporting requires us to start bash with our own startup
+  file, and bash refuses to combine that with being a login shell — the two are
+  mutually exclusive, unlike zsh where they are not. So the terminal tab
+  *reconstructs* what a login shell reads: `/etc/profile` first, then the first
+  of `~/.bash_profile`, `~/.bash_login` or `~/.profile` that exists, exactly as
+  bash itself would. Your PATH and aliases come through. What differs is that
+  `shopt -q login_shell` answers false, so a startup file that branches on it
+  takes the other path. We would rather tell you that than fake the flag. As
+  always, nothing under your home directory is written or modified, and if any
+  of this cannot be done the terminal opens as an ordinary shell with reporting
+  switched off — never a broken one.
+
 - **The drawer's terminal now works over the web too.** 5.0.0 said the term tab
   exists only in the desktop app; that has changed, and the reason it changed is
   that the restriction never bought anything. A Clodex reached over the web can
