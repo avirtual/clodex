@@ -819,11 +819,23 @@ test('t170 every bodiless gateable verb is structurally unspillable', () => {
   const bodiless = GATEABLE_INTENTS
     .map((i) => i.type)
     .filter((t) => SUBS.every((sub) => bodyModeFor({ type: t, sub }) === 'none'));
-  assert.deepStrictEqual(bodiless.sort(), ['file', 'reboot', 'resend', 'spawn', 'who'],
-    'the bodiless five — if this list changed, the disposition table needs a deliberate verdict for the new verb');
+  assert.deepStrictEqual(bodiless.sort(), ['file', 'reboot', 'resend', 'spawn', 'term', 'who'],
+    'the bodiless six — if this list changed, the disposition table needs a deliberate verdict for the new verb');
   for (const type of bodiless) {
     assert.deepStrictEqual(deniedBodyDisposition({ type }), { how: 'none', label: null },
       `${type} carries no body, so it can never reach a spill`);
+  }
+  // `bodyModeFor === 'none'` means "captures no FOLLOWING lines", which is not
+  // the same as "carries no body": reboot and term both take one on their own
+  // line, so the loop above — which probes with no body at all — is vacuous for
+  // them. The property this test is named for is that a denied body is never
+  // written to disk, so assert that against the bodies they really carry.
+  const { parseIntent } = require('../intent-scanner');
+  for (const line of ['[agent:term exec] pwd', '[agent:reboot] because reasons']) {
+    const i = parseIntent(line);
+    assert.ok(i.body, `ENTER: ${i.type} parsed a same-line body — the vacuous case is what this guards`);
+    assert.notStrictEqual(deniedBodyDisposition(i).how, 'spill',
+      `a denied ${i.type} reports its body as lost; it must never spill one to disk`);
   }
 });
 
@@ -6529,6 +6541,60 @@ test('[agent:end]: bare at top level (no open body) is silently spent', () => {
   assert.deepStrictEqual(m._extractIntents('[agent:end]'), []);
   // and it is not a near-miss: no `unknown` bounce is synthesized for it
   assert.deepStrictEqual(m._extractIntents('prose\n[agent:end]\nmore prose'), []);
+});
+
+// --- term exec is LINE-SCOPED (t233) ---
+// The live incident: a seat emitted the correct `[agent:term exec] <cmd>` form
+// and kept writing prose underneath. Greedy capture pulled the prose into the
+// command, and vetTermCommand refused the result for containing a newline — so
+// a correctly-written command became a refusal because of text after it. The
+// vetter was right; the row's capture mode was wrong. These drive the real
+// _extractIntents and then the real vetter, because the bug only appears when
+// the two are composed: either half alone looks correct.
+const { vetTermCommand } = require('../drawer-avail');
+const termBodyOf = (m, text) => {
+  const found = m._extractIntents(text).filter((x) => x.type === 'term');
+  assert.strictEqual(found.length, 1, `ENTER: exactly one term intent parsed from ${JSON.stringify(text)}`);
+  return found[0].body;
+};
+
+test('term exec: prose on following lines is NOT part of the command (the live incident)', () => {
+  const m = mkExtract();
+  const body = termBodyOf(m, '[agent:term exec] git status\nI am running this to check the tree.');
+  assert.strictEqual(body, 'git status');
+  // The half that actually bit: the composed path must now VET clean.
+  assert.deepStrictEqual(vetTermCommand(body), { ok: true, command: 'git status' });
+});
+
+test('term exec: a trailing [agent:end] is harmless — the trained incantation still works', () => {
+  const m = mkExtract();
+  // Agents have been taught to close bodies. term no longer opens one, so this
+  // must be inert rather than an error: `end` is spent at the top of the scan.
+  const out = m._extractIntents('[agent:term exec] pwd\n[agent:end]\nOperator prose.');
+  assert.deepStrictEqual(out.map((x) => x.type), ['term'], 'no bounce, no second intent');
+  assert.strictEqual(out[0].body, 'pwd');
+  assert.deepStrictEqual(vetTermCommand(out[0].body), { ok: true, command: 'pwd' });
+});
+
+test('term exec: interior spacing and shell metacharacters survive line scoping', () => {
+  const m = mkExtract();
+  const body = termBodyOf(m, '[agent:term exec] echo "a]b" && echo \'c;d\'  | cat\ntrailing prose');
+  assert.strictEqual(body, 'echo "a]b" && echo \'c;d\'  | cat',
+    'the command is the rest of the line verbatim — brackets and quotes included');
+  assert.strictEqual(vetTermCommand(body).ok, true);
+});
+
+test('term exec: a command written on the line BELOW is refused, not silently run', () => {
+  const m = mkExtract();
+  // This form used to work (greedy capture + the vetter's end-trim) and the
+  // vetter's own refusal used to advertise it. Line scoping ends it, so the
+  // contract is that it produces the empty-command REFUSAL — never a command
+  // assembled out of lines the agent did not put after the bracket.
+  const body = termBodyOf(m, '[agent:term exec]\npwd');
+  assert.strictEqual(body, '', 'nothing is captured from the following line');
+  const vet = vetTermCommand(body);
+  assert.strictEqual(vet.ok, false);
+  assert.match(vet.error, /SAME line/, 'and the refusal names the form that works');
 });
 
 test('[agent:end]: escaped \\[agent:end] stays literal body text, not a boundary', () => {

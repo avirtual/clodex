@@ -172,7 +172,14 @@ const CORE_ROWS = [
   { type: 'context', parse: parseContext, bodyMode: (i) => (i.sub === 'compact' || i.sub === 'reload' || i.sub === 'clear' ? 'greedy' : 'none') },
   { type: 'memory', parse: parseMemory, bodyMode: (i) => (i.sub === 'remember' ? 'greedy' : 'none') },
   { type: 'file', parse: parseFile, bodyMode: NONE },
-  { type: 'term', parse: parseTerm, bodyMode: (i) => (i.sub === 'exec' ? 'greedy' : 'none') },
+  // Line-scoped, unlike every other body-carrying row here: the command is
+  // whatever follows the bracket on THAT line and nothing after it. Greedy
+  // capture (how this shipped) could only ever swallow the agent's next lines
+  // into the command, and vetTermCommand rejects any body with a newline — so
+  // prose written under a correct command turned it into a refusal instead of
+  // running it. A body that must survive vetting cannot span lines, which is
+  // what makes this row different from dm/memory/task.
+  { type: 'term', parse: parseTerm, bodyMode: NONE },
   { type: 'exec', parse: parseExec, bodyMode: () => 'json' },
   { type: 'remind', parse: parseRemind, bodyMode: GREEDY },
   { type: 'notify-user', parse: parseNotifyUser, bodyMode: GREEDY },

@@ -6,6 +6,7 @@ const assert = require('node:assert');
 const { IPC_PROMPT, buildIpcPrompt } = require('../ipc-prompt');
 const { GATEABLE_INTENTS, PRIVILEGED_INTENTS } = require('../intent-catalog');
 const { parseIntent } = require('../intent-scanner');
+const { bodyModeFor } = require('../intent-registry');
 
 // PRIVILEGED intents (reboot) are EXCLUDED here on purpose: under the `null`
 // allowlist intentEnabled('reboot', null) is false, so IPC_PROMPT is
@@ -185,6 +186,22 @@ test('term grammar line: the old bracket-argumented spelling is gone from the pr
   // the two must not drift apart again.
   assert.ok(p.includes('The command is the rest of the line, AFTER the closing bracket'),
     'prose states where the command goes, agreeing with the syntax line above it');
+});
+
+// t233: the prose above says "the rest of the line", which was a claim the
+// PARSER did not honour — the row captured greedily, so following prose joined
+// the command. The row is line-scoped now, and this pins the doc against the
+// behaviour rather than against itself: a revert to greedy leaves this text
+// lying again.
+test('term grammar line: the documented line scope matches what the row actually captures', () => {
+  const p = buildIpcPrompt(['term', ...ALL_GATEABLE]);
+  assert.ok(p.includes('It ends where the line ends'),
+    'the line scope is stated, not left to be inferred from "rest of the line"');
+  assert.strictEqual(bodyModeFor(parseIntent('[agent:term exec] pwd')), 'none',
+    'and the parser agrees — this is the assertion the prose above is worth nothing without');
+  // The neighbour that DOES take a multi-line body, so the claim above is
+  // specific to term rather than true of the whole grammar block by accident.
+  assert.strictEqual(bodyModeFor(parseIntent('[agent:memory remember] x')), 'greedy');
 });
 
 // The generalisation of the bug, and the reason this is a test rather than a

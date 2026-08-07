@@ -307,6 +307,17 @@ test('bodyMode per sub-verb for team / memory / context', () => {
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:context clear]')), 'greedy');
 });
 
+// `term exec` is the one body-carrying verb whose body is LINE-SCOPED, because
+// vetTermCommand rejects any command containing a newline. Greedy capture (how
+// it shipped) could therefore only ever swallow the agent's following prose and
+// convert a correctly-written command into a refusal.
+test('bodyMode: term exec is line-scoped, not greedy like its body-carrying peers', () => {
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:term exec] pwd')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:term list]')), 'none');
+  // The contrast that makes the row's shape deliberate rather than an oversight.
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:memory remember] x')), 'greedy');
+});
+
 test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent', () => {
   // The allow-set as it stood in _extractIntents before the collapse.
   const legacyGreedy = (i) => (
@@ -326,18 +337,20 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   // explicitly rather than folded into legacyGreedy above, so the legacy record
   // stays a record and a second silent widening still fails here.
   const deliberatelyWidened = (i) => i.type === 'context' && i.sub === 'clear';
-  // Verbs that did not EXIST when the legacy chain was frozen. Kept apart from
-  // both lists above because it is a different claim: those two say the capture
-  // for an existing verb did or did not change, this one says the oracle has
-  // nothing to say. Folding a new verb into legacyGreedy would forge the record;
-  // folding it into deliberatelyWidened would call it a change to something that
-  // was never there. `term exec` captures greedily because a shell command
-  // cannot live inside the brackets — it contains `]`, quotes and arbitrary
-  // bytes — and every other term sub is bodiless.
-  const newSinceLegacy = (i) => i.type === 'term' && i.sub === 'exec';
+  // Verbs that did not EXIST when the legacy chain was frozen would go here —
+  // the list is empty, and that is a claim rather than an omission. `term exec`
+  // was the only entry: it shipped greedy, then narrowed to line-scoped, so it
+  // now agrees with the legacy oracle's silence by capturing nothing. Keeping
+  // the slot named means a future verb that captures has somewhere honest to
+  // land; folding one into legacyGreedy would forge the record, and folding it
+  // into deliberatelyWidened would call it a change to something that never
+  // existed.
+  const newSinceLegacy = () => false;
+  let sawTerm = 0;
   for (const line of CORPUS) {
     const i = parseIntent(line);
     if (!i || i.type === 'escape' || i.type === 'end') continue;
+    if (i.type === 'term') sawTerm++;
     const mode = registry.bodyModeFor(i);
     // exec is the one type whose 'json' mode is a REFINEMENT of the legacy
     // greedy capture (it terminates at the complete JSON value); it was in the
@@ -345,6 +358,11 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
     const capturesNow = mode === 'greedy' || mode === 'json';
     assert.strictEqual(capturesNow, legacyGreedy(i) || deliberatelyWidened(i) || newSinceLegacy(i), `body capture differs for ${JSON.stringify(line)}`);
   }
+  // The loop skips lines that don't parse, and every assertion it makes about
+  // term is that term does NOT capture — which is also true of a term row the
+  // corpus stopped containing. Without this the narrowing above could be
+  // reverted and the loop would still pass over an empty term set.
+  assert.ok(sawTerm >= 4, `ENTER: the corpus still carries term rows (saw ${sawTerm})`);
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:exec c] {}')), 'json');
 });
 

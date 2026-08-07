@@ -119,7 +119,13 @@ function vetTermCommand(raw) {
   const s = typeof raw === 'string' ? raw : '';
   // Trimmed only at the ENDS. Interior whitespace is the command's own.
   const cmd = s.trim();
-  if (!cmd) return { ok: false, error: 'no command — [agent:term exec] needs the command on the same line or the lines below it' };
+  // "on the same line" is the whole rule, and this string is the only place an
+  // agent learns it after the fact: the intent's body is line-scoped, so a
+  // command written on the line BELOW the bracket arrives here as empty. That
+  // form used to work (the row captured greedily) and this message used to
+  // advertise it — saying so now would send the agent back to a form that
+  // silently sends nothing.
+  if (!cmd) return { ok: false, error: 'no command — [agent:term exec] needs the command on the SAME line, after the closing bracket' };
   const bytes = Buffer.byteLength(cmd, 'utf8');
   if (bytes > TERM_EXEC_MAX) {
     return { ok: false, error: `command is ${bytes} bytes, over the ${TERM_EXEC_MAX}-byte limit — put a long command in a script and run that` };

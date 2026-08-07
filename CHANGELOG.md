@@ -32,6 +32,20 @@ blocks a release.
   correct form for that specific mistake. It never guesses at the command and
   never runs one: it explains and refuses.
 
+- **Writing a terminal command no longer breaks when the agent keeps talking.**
+  A command ended at the closing bracket in the documentation but not in the
+  code: whatever the agent wrote on the lines below was pulled into the command,
+  which was then refused for spanning multiple lines. So a correctly written
+  command failed because of the sentence after it, and the agent had to know to
+  close it with `[agent:end]`. The command now ends where its line ends, as the
+  instructions always said. A trailing `[agent:end]` is still accepted and does
+  nothing.
+
+  One form stops working: putting the command on the line *below* the bracket.
+  That was never in the agent instructions — only in an error message you saw
+  after already getting it wrong — and it now produces a refusal naming the
+  form that works.
+
 ## 5.1.0 — 2026-08-07 — Terminals reach further, and a lost message finally arrives
 
 - **The "Clodex is back" notice now actually reaches the agent that asked for
