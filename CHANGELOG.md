@@ -13,6 +13,64 @@ blocks a release.
 
 ## Unreleased
 
+- **A Terminal tab for a peer's session — a real shell on their machine.** Off
+  by default, and the machine that would host the shell is the one that decides:
+  tick "Allow terminal sharing" on a peer in its info popover. Until someone
+  ticks it, a peer session's Terminal tab simply says the other box has not
+  enabled it. With it on, the tab works the way the local one does — you type,
+  you see output, resizing follows your window.
+
+  It is the *same* shell the operator of that machine sees in their own Terminal
+  tab for that session, not a second private one. That is deliberate: a shell
+  running on someone's machine that they cannot see is the thing to avoid, and
+  sharing the terminal makes their view of it impossible to lose. Closing your
+  tab detaches your view and leaves their shell alone.
+
+  The grant is visible while it lasts, not just at the moment you give it: the
+  peer's header carries a marker for as long as terminal sharing is on, and both
+  machines log the opening and the closing to the IPC log. Turning it off closes
+  any shell already open, immediately, and the other end is told it was revoked
+  rather than being left to think the network dropped.
+
+  Separately from the grant, the session in your sidebar is marked for as long
+  as someone is actually watching its terminal, and the mark clears when they
+  leave — including when their connection simply drops. Opening the shared
+  terminal starts the shell if it wasn't running, so a peer can be in a shell on
+  your machine with no tab open for it on your screen; this is the marker that
+  says so. Reconnects of a viewer who was already there stay quiet in the log,
+  so a flaky link doesn't bury the openings that matter.
+
+  Alongside the per-session mark there is a standing notice at the bottom of the
+  sidebar whenever anyone is in one of your terminals, naming the session. The
+  mark rides a session row, and a row is not always there to ride — you might
+  have archived the session, filtered it out of the list, or be looking at a
+  different workspace. The notice doesn't depend on any of that. Killing or
+  archiving a session also ends the peer's view of its terminal, told to them as
+  a close rather than a dropped connection; the shell itself keeps running,
+  since it's yours.
+
+  That mark is a precondition, not a decoration: keystrokes and resizes from a
+  peer are refused unless that peer's box has the terminal open, so there is no
+  way to type into one of your shells without the marker being on. And if you
+  close the window a shared shell belongs to, the peer watching it is told the
+  terminal was closed rather than being left with a pane that has quietly
+  stopped — after which the peer cannot start a new one there either. Sessions
+  outlive their window, so without that a peer could open a shell in a workspace
+  you had closed, and every surface that would tell you — the mark, the tab, the
+  log row — lives in the window that isn't there.
+
+  On your side of a peer's terminal, if their box goes offline or they withdraw
+  the grant while you have the tab open, the pane says so instead of going
+  quietly inert.
+
+  One thing worth being clear about, because the checkbox sits next to a
+  particular peer: the switch is per peer as a *record of what you intended*, but
+  what it turns on is a capability of your machine's wire. Clodex's peer wire has
+  no cryptographic caller identity — it binds to loopback and the SSH tunnel is
+  the boundary — so anyone who can reach that tunnel can use the capability while
+  it is on. Treat it as "terminal sharing is on for this box", and turn it off
+  when you are done.
+
 - **Security fix: plugins could write files and run destructive git operations
   from the browser client.** When you serve Clodex to a browser, that connection
   is deliberately denied some of the sharper desktop capabilities. Plugin

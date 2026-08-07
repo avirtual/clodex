@@ -68,6 +68,15 @@
       </div>
     </div>
     <div id="session-list"></div>
+    <!-- A peer is in a shell on this box right now (t219). Sits OUTSIDE
+         #session-list on purpose: the per-seat mark rides a row, and a served
+         seat can have no row at all — killed or archived, filtered out, or
+         owned by another window. This one is bound to the served-seat count
+         and to nothing else. -->
+    <div id="served-terminal-banner" class="hidden" data-tip="A peer has a shell open on this machine">
+      <span class="served-terminal-glyph">&#9646;_</span>
+      <span id="served-terminal-text">A peer has a shell open here</span>
+    </div>
     <div id="update-banner" class="hidden" data-tip="Click to view the release">
       <span class="update-dot">●</span>
       <span id="update-text">Update available</span>
@@ -378,6 +387,9 @@
       <div id="peer-info-body" class="peer-info-body"></div>
       <label id="peer-info-relay-row" class="peer-info-relay-row hidden" title="Let this peer's sessions see and DM sessions on your other relay-enabled peers, routed through this hub. Off by default.">
         <input type="checkbox" id="peer-info-relay"> Relay mesh — allow cross-peer see &amp; DM via this hub
+      </label>
+      <label id="peer-info-shell-row" class="peer-info-relay-row hidden" title="Let peers open a terminal on THIS box, sharing the same shell your own Terminal tab shows. Off by default. The peer wire has no per-caller identity, so this enables the capability for anything that can reach your tunnel — not for one peer.">
+        <input type="checkbox" id="peer-info-shell"> Terminal sharing — let peers open a shell on this box
       </label>
       <div class="popover-actions">
         <button id="peer-info-update" type="button" class="hidden">Update Clodex</button>

@@ -148,6 +148,12 @@ const SCANNED_MODULES = [
   // main.js now rather than renderer.js: the renderer half (term-tab) still
   // reads it, but a leaked identifier here would be a main-scope name.
   'drawer-avail.js',
+  // The peer-terminal grant decisions (t219). Read by remote-wiring (whether to
+  // register the serving handlers), peer-client and the renderer (whether to
+  // ask) — three readers across both processes and both ends of the wire, so a
+  // free identifier here would be a reach into whichever scope happened to be
+  // loaded first.
+  'peer-shell.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction
@@ -185,6 +191,10 @@ const RENDERER_SCANNED_MODULES = [
   // extraction, but it is read BY peers-ui (which is DOM-bound and untested), so
   // the cheap guard that it never reaches for a renderer.js name is worth having.
   'renderer/lib/peer-web-view.js',
+  // The served-terminal notice's decision (t219). Same reason as the two above:
+  // read by peers-ui, which is DOM-bound and untested, and this one is the ONLY
+  // surface for a served seat whose row is filtered or collapsed out of sight.
+  'renderer/lib/served-banner.js',
   // Read by BOTH renderer.js (terminal link provider) and files-popover.js
   // (peek linkify), so a reach for a renderer.js name would break one caller
   // and not the other.

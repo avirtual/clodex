@@ -135,6 +135,12 @@ function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, prox
     if (item.dataset.remoteControl) {
       parts.push(`<div class="hovercard-note hc-attn">Remote control: ${esc(item.dataset.remoteControl)}</div>`);
     }
+    // The row's mark says a peer is in this seat's shell; this says it in
+    // words. The mark is the one that must always be there — a hovercard needs
+    // a hover — so this is the explanation, not the signal.
+    if (item.dataset.servedTerminal) {
+      parts.push('<div class="hovercard-note hc-attn">A peer is watching this seat’s terminal</div>');
+    }
 
     if (type === 'remote') parts.push('<div class="hovercard-hint">click to attach</div>');
     else parts.push('<div class="hovercard-hint">double-click the name to rename</div>');

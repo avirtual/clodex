@@ -8,11 +8,13 @@ const { wireBulkToggles } = require('./lib/checklists');
 const { nextVisibleWithName } = require('./lib/peer-visibility');
 const { openUrl: sandboxOpenUrl } = require('./lib/sandbox-view');
 const { webViewAffordance } = require('./lib/peer-web-view');
+const { servedBannerView } = require('./lib/served-banner');
 
 function initPeersUi({
   sessions, sessionList, getActiveSession, createTerminal, switchSession,
   removeSession, updateSidebarActive, showToast, appendIpcEntry,
   remeasureReadonlyPeer, peerStatuses, peerTunnels, peerWebTunnels, getOurAppVersion,
+  syncSeatAvailability,
   getDeployLineHandlers, proxyState, ctxPct, ctxTokens, peerFilesCount,
   filesUnseen, applyCtxBadge, applyWarmBadge, renderProxyBar, openFilePeek,
   isFilesPopoverForKey, openArgsDialog, openSkillsPopover,
@@ -33,6 +35,41 @@ function initPeersUi({
   function peerKey(id, name) { return `${name}@${id}`; }
 
   function peerDisplayHost(st) { return (st && (st.host || st.label)) || 'peer'; }
+
+  // Peers whose record carries the terminal-sharing grant. Read from SETTINGS,
+  // not from any peer's hello: this is what THIS box serves, and a peer cannot
+  // be asked whether we let it in.
+  //
+  // The persistent indicator ruling 2 asked for. A toast is missed and a chip
+  // scrolls away; this sits in the header for as long as the grant does, which
+  // is the property that matters — an operator must never have a shell open on
+  // their box that nothing on screen mentions.
+  let shellAllowedIds = new Set();
+  async function refreshShellAllowed() {
+    let s = null;
+    try { s = await window.api.getSettings(); } catch { return; }
+    const next = new Set(((s && s.peers) || []).filter((p) => p && p.shellAllowed).map((p) => String(p.id)));
+    const changed = next.size !== shellAllowedIds.size || [...next].some((x) => !shellAllowedIds.has(x));
+    shellAllowedIds = next;
+    if (changed) renderPeers();
+  }
+  refreshShellAllowed();
+  // The toggle lives in one window's popover but the grant is box-wide, so
+  // every OTHER window has to re-read it. Without this the chip is a boot-time
+  // snapshot: a window open since before the grant was turned on says "off"
+  // over a box that is serving shells. The attachment mark self-heals on the
+  // serving heartbeat; this one has no such tick.
+  // Drawer tabs are per-seat and the host only re-asks on a session SWITCH
+  // (renderer's switchSession is syncSeatAvailability's one caller). Peer state
+  // and the shell grant both change the answer without any switch, so a tunnel
+  // blip or a revoked grant leaves a terminal tab visible over a backend that
+  // no longer exists — and the tab is the operator's only signal that one does.
+  // term-tab refuses to act on a null backend either way; this is what takes the
+  // tab away instead of leaving an inert one, which is what the peer terminal
+  // looked like while it was quietly sharing a shell.
+  const reevaluateSeatTabs = () => { if (syncSeatAvailability) syncSeatAvailability(); };
+
+  window.api.onPeerShellAllowed(() => { refreshShellAllowed(); reevaluateSeatTabs(); });
 
   // A box's peer id IS its box id, so box ids ∩ peer ids marks managed boxes.
   let boxIds = new Set();
@@ -127,6 +164,8 @@ function initPeersUi({
         : webViewAffordance({ status: st, tunnel: tun, webTunnel: peerWebTunnels.get(id) });
       header.innerHTML = `<span class="peer-dot ${st.online ? 'online' : ''}"></span>` +
         (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : '') +
+        (shellAllowedIds.has(String(id))
+          ? `<span class="peer-shell-chip" data-tip="Terminal sharing is ON — peers can open a shell on this box" aria-label="Terminal sharing on">&#9646;_</span>` : '') +
         `<span class="peer-label${nameSev}">${esc(hostLabel)}</span>` +
         `<span class="peer-state">${esc(stateText)}</span>` +
         `<span class="peer-actions">` +
@@ -665,6 +704,7 @@ function initPeersUi({
     peerStatuses.set(id, status);
     renderPeers();
     renderPeerBar();
+    reevaluateSeatTabs();
     maybeRestorePeer(id);
     if (isNewPeer && !boxIds.has(id)) refreshBoxIds();
   });
@@ -857,6 +897,53 @@ function initPeersUi({
     if (!el) return;
     if (holder) el.dataset.remoteControl = holder;
     else delete el.dataset.remoteControl;
+  });
+
+  // Seats on THIS box whose terminal a peer is watching right now (t219). The
+  // header chip beside a peer's name reports the GRANT — a setting, and true
+  // whether or not anyone is looking. This reports ATTACHMENT, which is the
+  // thing that must never be unannounced: opening the stream SPAWNS the shell,
+  // so a remote party can be sitting in a terminal on this box with no tab open
+  // for it here.
+  //
+  // The message carries the WHOLE set, not a delta. A delta stream drifts the
+  // moment one message is missed — a window opened after the fact would show
+  // marks that were cleared before it existed — and the server already knows
+  // the answer, so recomputing it here would be a second source of truth for a
+  // safety indicator.
+  //
+  // It also goes to EVERY window, unfiltered, and that is not an oversight to
+  // narrow into a per-workspace send. Filtering by workspace would add a mapping
+  // that can be wrong, and a mark that fails to appear is the failure mode this
+  // indicator exists to prevent.
+  //
+  // TWO surfaces, and the row is the weaker one. It resolves for at most one
+  // window (session names are globally unique) and for some served seats it
+  // resolves for NONE: a killed or archived session has no row, `rowPasses`
+  // display:none's a filtered one, and archived rows carry no `.session-badges`
+  // for the glyph to hang on. The BANNER below is what makes the claim true —
+  // it is bound to the size of this set and to nothing about any row, so a seat
+  // nobody can see still says a peer is in a shell here. The row attribute
+  // stays as the per-seat detail: which one.
+  const servedBanner = document.getElementById('served-terminal-banner');
+  const servedText = document.getElementById('served-terminal-text');
+  window.api.onServedTerminals((seats) => {
+    const live = new Set(Array.isArray(seats) ? seats.map(String) : []);
+    for (const el of sessionList.querySelectorAll('[data-served-terminal]')) {
+      if (!live.has(el.dataset.name)) delete el.dataset.servedTerminal;
+    }
+    for (const seat of live) {
+      const el = sessionList.querySelector(`[data-name="${CSS.escape(seat)}"]`);
+      if (el) el.dataset.servedTerminal = '1';
+    }
+    if (!servedBanner) return;
+    // The decision is a leaf (served-banner.js) and this is assignment only:
+    // the strings come back finished and go in with textContent, so a seat name
+    // — which is operator-supplied — never becomes markup.
+    const view = servedBannerView([...live]);
+    if (servedText) servedText.textContent = view.text;
+    servedBanner.dataset.tip = view.tip;
+    servedBanner.classList.toggle('hidden', view.hidden);
   });
 
   window.api.peerList().then((statuses) => {
@@ -1103,6 +1190,8 @@ function initPeersUi({
   const peerInfoDisableBtn = document.getElementById('peer-info-disable');
   const peerInfoRelayRow = document.getElementById('peer-info-relay-row');
   const peerInfoRelayCheck = document.getElementById('peer-info-relay');
+  const peerInfoShellRow = document.getElementById('peer-info-shell-row');
+  const peerInfoShellCheck = document.getElementById('peer-info-shell');
 
   function closePeerInfoPopover() {
     peerInfoPopover.classList.add('hidden');
@@ -1112,6 +1201,8 @@ function initPeersUi({
     peerInfoDisableBtn.onclick = null;
     peerInfoRelayRow.classList.add('hidden');
     peerInfoRelayCheck.onchange = null;
+    peerInfoShellRow.classList.add('hidden');
+    peerInfoShellCheck.onchange = null;
   }
 
   function openPeerInfoPopover(id, anchorBtn) {
@@ -1154,6 +1245,8 @@ function initPeersUi({
     // it from config, not from peerStatuses.
     peerInfoRelayRow.classList.add('hidden');
     peerInfoRelayCheck.onchange = null;
+    peerInfoShellRow.classList.add('hidden');
+    peerInfoShellCheck.onchange = null;
     window.api.getSettings().then((s) => {
       if (peerInfoPopover.classList.contains('hidden') || peerInfoPopover.dataset.peerId !== String(id)) return;
       const cfg = ((s && s.peers) || []).find((p) => String(p.id) === String(id));
@@ -1161,6 +1254,23 @@ function initPeersUi({
       peerInfoRelayRow.classList.remove('hidden');
       peerInfoRelayCheck.onchange = () => {
         window.api.peerSetRelayAllowed(id, peerInfoRelayCheck.checked).catch(() => {});
+      };
+      // Terminal sharing, same read-from-config shape: it is OUR setting about
+      // what this box serves, not something the peer's hello reports.
+      peerInfoShellCheck.checked = !!(cfg && cfg.shellAllowed);
+      peerInfoShellRow.classList.remove('hidden');
+      peerInfoShellCheck.onchange = () => {
+        const on = peerInfoShellCheck.checked;
+        window.api.peerSetShellAllowed(id, on)
+          .then(() => refreshShellAllowed())
+          .catch(() => {});
+        // Named at the moment of the decision rather than only in a tooltip: a
+        // per-peer checkbox that is box-wide in effect is the one thing about
+        // this feature an operator can reasonably get wrong.
+        showToast(on
+          ? 'Terminal sharing ON — any peer that can reach your tunnel can open a shell here.'
+          : 'Terminal sharing off — open remote shells were closed.',
+        { kind: on ? 'warm' : 'peer-ui' });
       };
     }).catch(() => {});
     if (!boxIds.has(id) && st.online && updateApplies(sev)) {

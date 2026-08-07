@@ -16,6 +16,7 @@ const { feedSince } = require('./subagent-ring');
 // — an imported token must never round-trip through the renderer (see the
 // peer:import handlers below).
 const peerImport = require('./peer-import');
+const { wireSeatFor } = require('./peer-shell');
 
 function registerIpcHandlers(deps) {
   const {
@@ -1054,6 +1055,29 @@ function registerIpcHandlers(deps) {
     log.info('peer', `${rec.label || id} relay ${on ? 'allowed' : 'disallowed'}`);
     return { ok: true };
   });
+  // The peer-terminal grant. Stored per peer RECORD, but the capability it
+  // registers is box-wide in effect — the wire has no cryptographic caller
+  // identity, so the serving handler cannot tell which peer is calling (see
+  // peer-shell.js). syncRemoteServer is what makes the toggle take effect: it
+  // re-derives the wterm callbacks, and dropping them closes open streams
+  // first, so turning this off ends shells that are already running.
+  handle('peer:setShellAllowed', (_e, id, on) => {
+    const peers = (uiSettings.get().peers || []).map((p) => ({ ...p }));
+    const rec = peers.find((p) => String(p.id) === String(id));
+    if (!rec) return { ok: false, error: 'no such peer' };
+    if (on) rec.shellAllowed = true; else delete rec.shellAllowed;
+    uiSettings.set({ peers });
+    // Every window, not just the one that toggled: the grant is box-wide in
+    // effect and the header chip is the standing statement that it is on. A
+    // window that missed the change goes on showing "off" over a box that
+    // serves shells, which is the one direction this indicator must never be
+    // wrong in. Carries no payload — the renderer re-reads settings, so there
+    // is one derivation of the chip rather than a delta that can drift.
+    manager._broadcast('peer-shell-allowed');
+    syncRemoteServer();
+    log.info('peer', `${rec.label || id} terminal sharing ${on ? 'ENABLED' : 'revoked'}`);
+    return { ok: true };
+  });
   handle('peer:visible', () => uiSettings.get().peerVisible || {});
   handle('peer:setVisible', (_e, id, names) => {
     const map = { ...(uiSettings.get().peerVisible || {}) };
@@ -1141,6 +1165,54 @@ function registerIpcHandlers(deps) {
     const conn = getPeerManager() && getPeerManager().get(id);
     if (conn) conn.input(name, String(data ?? ''), () => {});
   });
+
+  // A terminal tab pointed at a PEER seat's shell. Behind the SAME
+  // enableDrawerServices gate as the local `wterm:*` family, in a second block
+  // rather than inside that one so the code sits with its peer relatives.
+  //
+  // Gated even though the rest of `peer:*` is not, and the difference is real:
+  // every other peer channel drives a session the far side already exposes to
+  // attach, while this one opens a SHELL. The web host's connection is bound to
+  // a workspace on THIS box; handing it a shell on a third machine is not a
+  // capability the desktop gate was written to allow, and un-gating later is a
+  // one-line change if a web surface ever wants it. Covered by
+  // test/drawer-services-seam.test.js's prefix list.
+  //
+  // Unlike the peer channels above, these take the renderer's COMPOSITE session
+  // key (`name@peerId`) and split it here with peer-shell's wireSeatFor. One
+  // splitter, in one place: an (id, name) pair passed separately can be
+  // mismatched by a caller, and the seat that reaches the wire must be the bare
+  // name — an `@` arriving at the far side fails its grammar, becomes null, and
+  // null is the key of the SEATLESS WORKSPACE SHELL.
+  if (enableDrawerServices) {
+    const peerSeat = (key) => {
+      const w = wireSeatFor(key);
+      if (!w) return null;
+      const conn = getPeerManager() && getPeerManager().get(w.peerId);
+      return conn ? { conn, seat: w.name } : null;
+    };
+    handle('peer:wtermOpen', (_e, key) => new Promise((resolve) => {
+      const t = peerSeat(key);
+      if (!t) return resolve({ ok: false, error: 'no such peer session' });
+      t.conn.wtermOpen(t.seat, resolve);
+    }));
+    handle('peer:wtermResize', (_e, key, cols, rows) => new Promise((resolve) => {
+      const t = peerSeat(key);
+      if (!t) return resolve({ ok: false, error: 'no such peer session' });
+      t.conn.wtermResize(t.seat, cols, rows, resolve);
+    }));
+    handle('peer:wtermClose', (_e, key) => new Promise((resolve) => {
+      const t = peerSeat(key);
+      if (!t) return resolve({ ok: false, error: 'no such peer session' });
+      t.conn.wtermClose(t.seat, resolve);
+    }));
+    // Fire-and-forget, same shape as peer:input and for the same reason: a
+    // keystroke that waits for a reply makes typing feel like the network.
+    on('peer:wtermInput', (_e, key, data) => {
+      const t = peerSeat(key);
+      if (t) t.conn.wtermInput(t.seat, String(data ?? ''), () => {});
+    });
+  }
 
   handle('defaults:setToolDeny', (_e, list) => {
     agentDefaults.setDefaultDeny(Array.isArray(list) ? list : []);

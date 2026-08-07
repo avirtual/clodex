@@ -42,6 +42,11 @@ function fakePty() {
 function mk(over = {}) {
   const sent = [];
   const spawn = over.spawn || fakePty();
+  // What a PEER watching a seat is told about its shell ending. Collected by
+  // default rather than opt-in: this is the only channel that distinguishes a
+  // shell that ended from a stream that went quiet, and a test that forgot to
+  // wire it would read a silent end as correct.
+  const ended = [];
   const w = createDrawerPtys({
     spawn,
     // `onSend` makes send RE-ENTRANT: the ordering claims below are only
@@ -62,10 +67,11 @@ function mk(over = {}) {
     // not-a-session test below), so the wiring tests exercise the same one
     // engine.js wires rather than a stand-in that could drift from it.
     makeMarkParser: over.makeMarkParser || require('../term-marks').createMarkParser,
+    onShellEnd: over.onShellEnd || ((seat, why) => ended.push([seat, why])),
     env: { PATH: '/usr/bin' },
     log: { info() {}, warn() {}, error() {} },
   });
-  return { w, sent, spawn };
+  return { w, sent, spawn, ended };
 }
 
 test('spawn: a real login shell in the workspace cwd', () => {
@@ -440,6 +446,48 @@ test('killSeat escalates to SIGKILL like every other end-of-shell path', () => {
   assert.strictEqual(timers[0].ms, 5000);
   timers[0].fn();
   assert.deepStrictEqual(kills, [[1000, 'SIGKILL']]);
+});
+
+// A shell killed by its WINDOW closing (main.js's win 'closed' → kill) is the
+// one end a peer cannot infer: no exit frame, no close frame, the output just
+// stops. And the announcement cannot ride the PTY's own onExit, because both
+// kill paths delete the record first and that handler's identity guard then
+// returns before reaching it.
+test('the window kill tells a watching peer, once per seat', () => {
+  const { w, ended, spawn } = mk();
+  w.spawn('ws-1', 'alpha', {});
+  w.spawn('ws-1', 'beta', {});
+  w.spawn('ws-2', 'gamma', {});
+  assert.deepStrictEqual(ended, [], 'ENTER: nothing was announced by the spawns');
+
+  w.kill('ws-1');
+  assert.deepStrictEqual(ended.slice().sort(), [['alpha', 'closed'], ['beta', 'closed']],
+    'both seats in the window were announced, and neither was the other window\'s');
+
+  // The SIGHUP lands and the fake shell exits afterwards, as a real one would.
+  // The record is gone, so the identity guard stops the second announcement —
+  // a peer that is told twice reconnects into the gap between them.
+  spawn.spawned[0].exit(0);
+  assert.strictEqual(ended.length, 2, 'the late exit did not announce a second time');
+});
+
+test('killSeat tells a watching peer about that seat only', () => {
+  const { w, ended } = mk();
+  w.spawn('ws-1', 'alpha', {});
+  w.spawn('ws-1', 'beta', {});
+
+  w.killSeat('ws-1', 'alpha');
+  assert.deepStrictEqual(ended, [['alpha', 'closed']], 'one seat ended, one announcement');
+});
+
+// The seatless workspace shell has no seat to name, so there is nobody to tell:
+// a peer terminal is per-seat by construction. Guarded rather than sent as a
+// null, which the serving side would route to... the seatless shell.
+test('the seatless shell announces nothing', () => {
+  const { w, ended } = mk();
+  w.spawn('ws-1', null, {});
+  w.kill('ws-1');
+  assert.deepStrictEqual(ended, [], 'no seat, no announcement');
 });
 
 test('a seat name cannot alias another pair through the key separator', () => {

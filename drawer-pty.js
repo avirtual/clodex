@@ -26,7 +26,7 @@
 //
 // A seatless key is still valid and is the workspace-wide shell: the drawer
 // opened with no session selected has nowhere else to belong.
-function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser, onExecResult, vetCommand, execTimeoutMs }) {
+function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser, onExecResult, vetCommand, execTimeoutMs, onOutput, onShellEnd }) {
   const ptys = new Map(); // key(windowId, seat) -> { proc, scrollback, cols, rows, windowId, seat }
 
   // NUL joins the two halves because it is the one byte neither can contain: a
@@ -163,6 +163,18 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       // would be written into whichever terminal happens to be mounted — the
       // scrollbacks would interleave and neither would be recoverable.
       send(windowId, 'wterm:data', data, rec.seat, rec.seq);
+      // A second consumer of the SAME bytes, for a peer watching this seat's
+      // terminal over the wire. Fed from here rather than from a copy of the
+      // scrollback so the two views cannot diverge: they are one shell, which is
+      // the whole safety property of the peer terminal (a separate hidden PTY
+      // for a remote party IS the silent remote shell).
+      //
+      // "One shell" is a claim about the BYTES and nothing more — it does not
+      // say a local tab is showing them. Whether one can be is decided
+      // upstream, by remote-wiring's `wtermOpen` refusing a workspace with no
+      // window; this line would happily feed a peer a shell nobody here can see.
+      // Isolated because a wire that throws must not break the local tab.
+      if (onOutput && rec.seat) { try { onOutput(rec.seat, data); } catch {} }
     });
 
     proc.onExit(({ exitCode }) => {
@@ -180,6 +192,9 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       // the shell died, and a record still in the map hands back the corpse.
       ptys.delete(key);
       send(windowId, 'wterm:data', `\r\n\x1b[2m[shell exited: ${exitCode}]\x1b[0m\r\n`, rec.seat);
+      // A peer watching this seat is told the shell ended, not left staring at a
+      // stream that has simply gone quiet.
+      if (onShellEnd && rec.seat) { try { onShellEnd(rec.seat, exitCode); } catch {} }
     });
 
     return rec;
@@ -241,6 +256,16 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // became a loop: three call sites now end a shell, and an escalation that
   // exists at only some of them is the leak it was written to prevent.
   function endShell(rec) {
+    // A peer watching this seat is told, and this is the only place that can
+    // tell them: both callers delete the record before getting here, so when
+    // the PTY's own onExit fires it hits the identity guard and returns before
+    // its onShellEnd — the peer would otherwise be left with a stream that
+    // simply stops. Same guard is why this cannot double-announce.
+    //
+    // 'closed' rather than an exit code because there was no exit: the operator
+    // closed the window or the seat, which is a different thing from a shell
+    // that ended on its own, and the consumer renders whatever it is given.
+    if (onShellEnd && rec.seat) { try { onShellEnd(rec.seat, 'closed'); } catch {} }
     // Read the pid BEFORE anything else — the escalation below runs five
     // seconds later, when nothing else can resolve this proc.
     const pid = rec.proc.pid;
@@ -276,6 +301,18 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       return { ok: true, fresh: !had, scrollback: rec.scrollback, cols: rec.cols, rows: rec.rows, seat: rec.seat, seq: rec.seq };
     },
 
+    // RAW KEYSTROKES, arbitrated by nothing. The busy/pending machinery below
+    // belongs to exec() alone: it serialises COMMANDS, which have a settled
+    // beginning and end, and it cannot cover this path because a keystroke has
+    // neither — half a line is a legitimate thing to send.
+    //
+    // Since t219 there can be two typists on one shell: the local operator's
+    // tab and a peer's. Their bytes interleave, and a peer's `ls` can land
+    // inside a half-typed local line. That cost is ACCEPTED, not overlooked —
+    // it is the price of the shared-PTY ruling, which exists so a remote shell
+    // is visible in a tab the operator already has rather than hidden in a
+    // second PTY nobody is watching. Do not "fix" it by giving the peer its own
+    // shell; that trades a visible annoyance for an invisible exposure.
     write(windowId, seat, data) {
       const rec = ptys.get(keyFor(windowId, seat));
       if (!rec || typeof data !== 'string') return false;

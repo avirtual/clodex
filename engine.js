@@ -1324,6 +1324,10 @@ const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
   getUiSettings: () => uiSettings,
   getWorkspaces: () => workspaces,
   getRemoteServer: () => remoteServer,
+  // A getter because drawerPtys is built below this call, and because it is
+  // null outright on a host with drawer services off — the peer terminal must
+  // inherit that refusal rather than route around it.
+  getDrawerPtys: () => drawerPtys,
   setRemoteServer: (v) => { remoteServer = v; },
   setRemoteError: (v) => { remoteError = v; },
   readRemoteEnvToken: () => readRemoteEnvToken(userDataPath),
@@ -1428,6 +1432,13 @@ const drawerPtys = enableDrawerServices ? createDrawerPtys({
   // would leave the agent waiting for a turn that never comes, which is the
   // failure this whole path was built to prevent.
   vetCommand: vetTermCommand,
+  // The peer-terminal fan-out (t219). The SAME bytes the local tab receives,
+  // pushed to any peer watching this seat — one shell, two viewers, which is
+  // what makes a remote shell visible instead of hidden. Cheap no-ops when no
+  // peer is attached (the server drops them when its stream set is empty), and
+  // absent entirely on a host with the remote wire off.
+  onOutput: (seat, data) => { if (remoteServer) remoteServer.pushWtermOutput(seat, data); },
+  onShellEnd: (seat, exitCode) => { if (remoteServer) remoteServer.pushWtermExit(seat, exitCode); },
   onExecResult: (seat, res) => {
     // Worded to fit EVERY branch, not just `ok`: a timeout followed by a window
     // close would otherwise render "closed before the command reported back …

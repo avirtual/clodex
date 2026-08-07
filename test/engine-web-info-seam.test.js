@@ -35,7 +35,11 @@ function engineRemoteOptions(seams) {
   let opts = null;
   remoteMod.RemoteServer = function (o) {
     opts = o;
-    return { start: () => Promise.resolve(), stop() {}, port: 0, notifySessions() {} };
+    // setWtermCallbacks is reconciled on every sync (t219): the peer-terminal
+    // grant is a live toggle, so the fake needs it. Added to the FAKE rather
+    // than guarded with a typeof at the call site — a real server missing the
+    // method is a wiring break worth crashing on.
+    return { start: () => Promise.resolve(), stop() {}, port: 0, notifySessions() {}, setWtermCallbacks() {} };
   };
   process.env.CLODEX_REMOTE_ENABLE = '1';
   try {
@@ -86,7 +90,11 @@ function captureRemoteOptions(extraDeps) {
   let opts = null;
   remoteMod.RemoteServer = function (o) {
     opts = o;
-    return { start: () => Promise.resolve(), stop() {}, port: 0, notifySessions() {} };
+    // setWtermCallbacks is reconciled on every sync (t219): the peer-terminal
+    // grant is a live toggle, so the fake needs it. Added to the FAKE rather
+    // than guarded with a typeof at the call site — a real server missing the
+    // method is a wiring break worth crashing on.
+    return { start: () => Promise.resolve(), stop() {}, port: 0, notifySessions() {}, setWtermCallbacks() {} };
   };
   try {
     createRemoteWiring(deps).syncRemoteServer();

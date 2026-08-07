@@ -3186,7 +3186,23 @@ createCtlTab({ host: drawerHost });
 
 // The workbench shell takes the session terminals' theme, read per-mount so a
 // theme switch before first open is picked up.
-createTermTab({ host: drawerHost, xtermTheme: currentXtermTheme, getActiveSession: () => activeSession });
+// getSeatType duplicates the drawerHost dep above rather than being read back
+// off the host: the tab needs the type AND the peer's shell capability
+// together, and a tenant reaching into its host for one of its own inputs is
+// the coupling drawer-host's injection seam exists to avoid.
+// getSeatShellCap: the active seat's peer box advertises `shell`. A non-peer
+// seat answers false and termBackendFor never consults it.
+createTermTab({
+  host: drawerHost,
+  xtermTheme: currentXtermTheme,
+  getActiveSession: () => activeSession,
+  getSeatType: () => (activeSession ? sessionTypeOf(activeSession) : null),
+  getSeatShellCap: () => {
+    const entry = activeSession ? sessions.get(activeSession) : null;
+    const st = entry && entry.peer ? peerStatuses.get(entry.peer.id) : null;
+    return !!(st && st.online && (st.caps || []).includes('shell'));
+  },
+});
 
 createInboxDrawer();
 
@@ -3202,6 +3218,9 @@ const {
   createTerminal, switchSession, removeSession, updateSidebarActive,
   showToast, appendIpcEntry, remeasureReadonlyPeer,
   peerStatuses, peerTunnels, peerWebTunnels, getOurAppVersion: () => ourAppVersion,
+  // Peer state changes the terminal tab's availability without a session
+  // switch, which is the only thing the host re-asks on.
+  syncSeatAvailability: () => drawerHost.syncSeatAvailability(),
   getDeployLineHandlers: () => deployLineHandlers,
   proxyState, ctxPct, ctxTokens, peerFilesCount, filesUnseen,
   applyCtxBadge, applyWarmBadge, renderProxyBar,

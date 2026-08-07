@@ -92,6 +92,42 @@ test('uiSettings: pendingRebootNotice ships null, round-trips, sanitizes, and cl
   } finally { cleanup(); }
 });
 
+// The peer-terminal grant, on the same round-trip as its two neighbours and for
+// the same reason: sanitizePeers is a WHITELIST, so a flag missing from it is
+// dropped on every write. That failure is silent in the worst way — the handler
+// returns ok, the checkbox ticks, the ops log says ENABLED, and the capability
+// never reaches disk. Caught once already for relayAllowed; this is the third
+// flag to need the same pin.
+test('uiSettings: peer shellAllowed survives the sanitize round-trip (presence-encoded)', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    uiSettings.set({ peers: [
+      { id: 'a', label: 'A', url: 'http://a', shellAllowed: true },
+      { id: 'b', label: 'B', url: 'http://b' },
+    ] });
+    let peers = uiSettings.get().peers;
+    assert.strictEqual(peers.find((p) => p.id === 'a').shellAllowed, true,
+      'the grant reaches the store — a whitelist miss strips it while every UI surface reports success');
+    assert.strictEqual('shellAllowed' in peers.find((p) => p.id === 'b'), false,
+      'absent stays absent (the cap is default-deny on absence)');
+    // The clobber path: an unrelated write re-sanitizes the whole peers array.
+    uiSettings.set({ theme: uiSettings.get().theme });
+    peers = uiSettings.get().peers;
+    assert.strictEqual(peers.find((p) => p.id === 'a').shellAllowed, true,
+      'and survives a later unrelated set()');
+    // Revocation deletes the key. Persisting `shellAllowed:false` instead would
+    // be a record that outlives the decision it denies.
+    uiSettings.set({ peers: peers.map((p) => p.id === 'a' ? (({ shellAllowed, ...rest }) => rest)(p) : p) });
+    assert.strictEqual('shellAllowed' in uiSettings.get().peers.find((p) => p.id === 'a'), false,
+      'revocation persists as ABSENT, not shellAllowed:false');
+    // Truthy-but-not-true is not a grant — same strictness as disabled/relayAllowed.
+    uiSettings.set({ peers: [{ id: 'c', label: 'C', url: 'http://c', shellAllowed: 'yes' }] });
+    assert.strictEqual('shellAllowed' in uiSettings.get().peers[0], false,
+      'only a hard === true grants');
+  } finally { cleanup(); }
+});
+
 test('uiSettings: peer relayAllowed + disabled survive the sanitize round-trip (presence-encoded)', () => {
   const { stores, cleanup } = freshStores();
   try {

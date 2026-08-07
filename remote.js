@@ -31,6 +31,7 @@ class RemoteServer {
                 getSessionArgs, setSessionArgs,
                 getSkillCatalog, setSessionSkills,
                 deliverDm, claimDms, listDmOrigins, receiveRoster,
+                wtermOpen, wtermInput, wtermResize, wtermClose, onWtermStreams,
                 token, insecure }) {
     this._port = port;
     this._host = host || '127.0.0.1';
@@ -63,6 +64,22 @@ class RemoteServer {
     this._claimDms = claimDms || null;
     this._listDmOrigins = listDmOrigins || null;
     this._receiveRoster = receiveRoster || null;
+    // The peer terminal (t219). Four callbacks that are passed together or not
+    // at all: remote-wiring supplies them only while some peer holds the grant,
+    // and their ABSENCE is the capability gate — the endpoints 501 and `shell`
+    // drops out of hello. A runtime flag check here would be weaker, because it
+    // can be true while the operator believes it is false.
+    this._wtermOpen = wtermOpen || null;
+    this._wtermInput = wtermInput || null;
+    this._wtermResize = wtermResize || null;
+    this._wtermClose = wtermClose || null;
+    this._wterm = new Map();         // seat -> Set of SSE responses (peer terminal feeds)
+    // Fired whenever that Map's membership changes, with the seats currently
+    // being watched. NOT part of the grant bundle above and deliberately not
+    // gated with it: the indicator has to survive the moment the grant is
+    // revoked, which is exactly when the last stream goes away and the operator
+    // needs to see it go. Absence is an ordinary host with no UI to tell.
+    this._onWtermStreams = onWtermStreams || null;
     this._server = null;
     this._clients = new Set();       // live SSE responses (events feed)
     this._attach = new Map();        // name -> Set of SSE responses (attach feeds)
@@ -74,6 +91,32 @@ class RemoteServer {
     this._gate = makeTokenGate(token);
     this._insecure = !!insecure;
     this._loopback = isLoopbackHost(this._host);
+  }
+
+  // Apply (or withdraw) the peer-terminal grant on a RUNNING server. The
+  // constructor's copy of these callbacks is only the state at startup; the
+  // operator toggles the grant while the box is serving, and a capability with
+  // no live off switch is not a capability.
+  //
+  // ORDER IS THE WHOLE POINT: open streams are closed BEFORE the callbacks are
+  // dropped. Reversed, there is a window in which the handler is gone but a
+  // live shell stream is still writing to a remote party — revoked on paper,
+  // serving in fact. The close carries `revoked` so the consumer reads a
+  // decision rather than a dropped tunnel and stops retrying.
+  //
+  // Withdrawal is keyed on the CALLBACK, never on the bundle: remote-wiring's
+  // no-grant return is a truthy object of four nulls, so `!cbs` would read a
+  // revocation as an ordinary reconcile and null the handlers with the streams
+  // still open. Only the ternary at its call site stands between the two, and a
+  // correctness property one cleanup away from false is not a property.
+  setWtermCallbacks(cbs) {
+    const next = (cbs && cbs.wtermOpen) ? cbs : null;
+    const had = !!this._wtermOpen;
+    if (had && !next) this.dropAllWterm('revoked');
+    this._wtermOpen = (next && next.wtermOpen) || null;
+    this._wtermInput = (next && next.wtermInput) || null;
+    this._wtermResize = (next && next.wtermResize) || null;
+    this._wtermClose = (next && next.wtermClose) || null;
   }
 
   get running() { return !!this._server; }
@@ -101,6 +144,30 @@ class RemoteServer {
               try { res.write(': ping\n\n'); } catch {}
             }
           }
+          // Peer terminals heartbeat too. An idle shell is the NORMAL state of
+          // this stream — an operator opens a terminal and reads it — so
+          // without a ping a tunnel or proxy reaps the connection precisely
+          // when nothing is wrong.
+          for (const set of this._wterm.values()) {
+            for (const res of set) {
+              try { res.write(': ping\n\n'); } catch {}
+            }
+          }
+          // Re-report on the same tick. The membership events are the fast
+          // path, but they only reach the windows that existed when they
+          // fired — a workspace window opened while a peer is already in a
+          // shell would otherwise show nothing until that shell closed. An
+          // indicator whose accuracy depends on when you opened your window is
+          // not one an operator can rely on.
+          //
+          // Convergence runs BOTH ways, because `_notifyWtermStreams` rebuilds
+          // the whole seat list from `_wterm` rather than sending a delta: a
+          // mark the receiver holds for a seat no longer in the set is cleared
+          // by the same message that sets the others (peers-ui's handler
+          // deletes any `data-served-terminal` outside `live`). So a dropped
+          // event self-heals within a heartbeat in either direction, and no
+          // caller has to pair its add with a matching remove.
+          this._notifyWtermStreams();
         }, SSE_HEARTBEAT_MS);
         resolve();
       });
@@ -117,6 +184,8 @@ class RemoteServer {
       for (const res of set) { try { res.end(); } catch {} }
     }
     this._attach.clear();
+    // Reason-carrying, not a bare end: a stopping server is a decision too.
+    this.dropAllWterm('offline');
     this._control.clear();
     for (const p of this._resizePending.values()) clearTimeout(p.timer);
     this._resizePending.clear();
@@ -138,6 +207,25 @@ class RemoteServer {
     for (const name of this._attach.keys()) {
       if (!live.has(name)) this._dropAttach(name);
     }
+    // A peer-terminal stream outlives its seat otherwise, and the seat is what
+    // every local surface hangs on: the mark is a sidebar row attribute, and a
+    // killed or archived session has no row. The peer keeps typing into a live
+    // login shell with nothing on this box able to say so.
+    //
+    // Worse on recovery. The drawer shell is NOT reaped by a kill (only by a
+    // window close and by session:forget), so recreating the same name in the
+    // same workspace hands a surviving stream input rights against the same
+    // still-running shell — with no fresh `wtermOpen`, so the
+    // `peer-terminal-open` chip never fires again for a party that is back
+    // inside it.
+    //
+    // The SHELL is deliberately left running: it is the operator's own, and a
+    // restart-through-kill has to keep whatever is in it. Only the peer's view
+    // of it ends here. Keys are spread because `_closeWterm` deletes from the
+    // Map this iterates.
+    for (const seat of [...this._wterm.keys()]) {
+      if (!live.has(seat)) this.dropWterm(seat, 'closed');
+    }
     this._broadcast('sessions', {});
   }
 
@@ -156,6 +244,82 @@ class RemoteServer {
         if (res.writableLength > ATTACH_MAX_BUFFERED) res.destroy();
       } catch {}
     }
+  }
+
+  // Peer-terminal output. Same shape and the same 4MB rule as pushOutput, and
+  // the rule is not optional here either: a half-open tunnel that keeps
+  // buffering renders a stale terminal as a live one, which on a SHELL means an
+  // operator reading output that no longer describes the box.
+  pushWtermOutput(seat, chunk) {
+    const set = this._wterm.get(seat);
+    if (!set || set.size === 0) return;
+    const b64 = Buffer.isBuffer(chunk) ? chunk.toString('base64') : Buffer.from(chunk).toString('base64');
+    const frame = `event: output\ndata: ${JSON.stringify({ b64 })}\n\n`;
+    for (const res of set) {
+      try {
+        res.write(frame);
+        if (res.writableLength > ATTACH_MAX_BUFFERED) res.destroy();
+      } catch {}
+    }
+  }
+
+  pushWtermExit(seat, exitCode) {
+    this._closeWterm(seat, { event: 'exit', data: { exitCode } });
+  }
+
+  // Ending a peer-terminal stream ALWAYS says why. An end with no reason is
+  // indistinguishable from a dropped tunnel, so the consumer would sit in its
+  // reconnect backoff retrying against a decision — which is exactly what
+  // revocation is. `reason` is a code from peer-shell's vocabulary.
+  dropWterm(seat, reason) {
+    this._closeWterm(seat, { event: 'closed', data: { reason: reason || 'closed' } });
+  }
+
+  // Every open peer-terminal stream, closed with one reason. Used by revocation
+  // and by stop(): a grant that goes away must not leave a live shell stream
+  // behind it.
+  dropAllWterm(reason) {
+    for (const seat of [...this._wterm.keys()]) this.dropWterm(seat, reason);
+  }
+
+  _closeWterm(seat, { event, data }) {
+    const set = this._wterm.get(seat);
+    this._wterm.delete(seat);
+    if (!set) return;
+    const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const res of set) { try { res.write(frame); res.end(); } catch {} }
+    this._notifyWtermStreams();
+  }
+
+  // Which seats a remote party is WATCHING right now. Reported from the one
+  // place that knows — the Map — rather than inferred from opens and closes at
+  // the call sites, because the ways a stream ends are not all call sites: a
+  // socket dropped by the tunnel and a res.destroy() from the 4MB backpressure
+  // rule both arrive as `req.on('close')` and neither passes through an
+  // explicit close. An indicator built from counted opens would leak one every
+  // time either happens, and an indicator that over-reports a live shell is
+  // worse than none — it teaches the operator to ignore it.
+  //
+  // Errors are swallowed: this is a UI signal, and a renderer fault must not
+  // take down a request path on the wire.
+  _notifyWtermStreams() {
+    if (!this._onWtermStreams) return;
+    const seats = [];
+    for (const [seat, set] of this._wterm) if (set.size > 0) seats.push(seat);
+    try { this._onWtermStreams(seats); } catch {}
+  }
+
+  // Is anyone watching this seat? The same question `_notifyWtermStreams`
+  // answers for the UI, asked by the input routes so that what the operator is
+  // shown and what a peer is allowed to do cannot drift apart: one Map, one
+  // membership test, and `_notifyWtermStreams` filters on `size` too — a seat
+  // this refuses must not be a seat the sidebar marks. No path leaves an empty
+  // set in the Map today (the drop handler deletes the key as it empties), so
+  // the size test is belt-and-braces; a path that ever did would otherwise
+  // grant input to a seat with no watcher.
+  _wtermAttached(seat) {
+    const set = this._wterm.get(seat);
+    return !!(set && set.size > 0);
   }
 
   pushTelemetry(name, tele) {
@@ -351,6 +515,7 @@ class RemoteServer {
       if (this._getSessionArgs) caps.push('args');   // remote session config editing — args + skills pairs, ship together under one cap
       if (this._deliverDm) caps.push('dm'); // inbound DM + outbox claim (federation)
       if (this._receiveRoster) caps.push('relay'); // accepts a hub-pushed relay roster (hub-relay federation)
+      if (this._wtermOpen) caps.push('shell'); // peer terminal — present only while a peer holds the grant
       return this._json(res, 200, {
         ok: true, app: 'clodex', host: this._hostLabel,
         version: this._version, caps,
@@ -449,6 +614,125 @@ class RemoteServer {
         const out = this._resizePty(name, cols, rows);
         return this._json(res, out && out.ok ? 200 : 404, out || { ok: false });
       });
+    }
+    // ---- Peer terminal (t219) ----
+    // A shell on THIS box, driven from a peer. Everything below exists only
+    // while remote-wiring passed the callbacks, so a box whose operator never
+    // granted it answers 501 and never advertised `shell` in the first place.
+    //
+    // The seat is the BARE session name: the consumer keys its peer sessions
+    // `name@peerId` and splits before it builds the URL, so the `@` never
+    // arrives here. NAME_RE is the same grammar the local seat resolver uses,
+    // which is what makes a valid wire seat a valid local one.
+    if (req.method === 'GET' && p.startsWith('/api/wterm/')) {
+      if (!this._wtermOpen) return this._json(res, 501, { ok: false, error: 'terminal sharing is not enabled on this box' });
+      const seat = decodeURIComponent(p.slice('/api/wterm/'.length));
+      if (!NAME_RE.test(seat)) return this._json(res, 400, { ok: false, error: 'bad seat' });
+      let info;
+      // `attached` is read BEFORE this stream joins the set, and it is the half
+      // of the announce decision that only the server knows: remote-wiring can
+      // see that the PTY already existed, but not whether anyone was still
+      // watching it. A reconnect after a genuine detach must still announce —
+      // that is a new remote party — so "the shell was already running" alone
+      // would silence a real event.
+      const watched = this._wterm.get(seat);
+      try { info = this._wtermOpen(seat, { attached: !!(watched && watched.size) }); }
+      catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
+      // A refusal that is a CONFIG BIT of this box answers 501, the same as an
+      // absent callback above; only a genuinely missing seat is 404. The
+      // consumer reads the status, not the body — it discards non-200 bodies —
+      // so the status IS the refusal code, and "drawer services are off here"
+      // arriving as 404 would tell the operator to go look for a session that
+      // was never the problem.
+      if (!info || !info.ok) {
+        const config = !!(info && info.code === 'no-services');
+        return this._json(res, config ? 501 : 404, info || { ok: false, error: 'no terminal for that seat' });
+      }
+      this._sseRaw(req, res);
+      let set = this._wterm.get(seat);
+      if (!set) { set = new Set(); this._wterm.set(seat, set); }
+      set.add(res);
+      this._notifyWtermStreams();
+      req.on('close', () => {
+        const cur = this._wterm.get(seat);
+        if (!cur) return;
+        cur.delete(res);
+        if (cur.size === 0) this._wterm.delete(seat);
+        this._notifyWtermStreams();
+      });
+      const hello = {
+        b64: (info.scrollback || Buffer.alloc(0)).toString('base64'),
+        cols: info.cols || 80, rows: info.rows || 24,
+      };
+      try { res.write(`event: replay\ndata: ${JSON.stringify(hello)}\n\n`); } catch {}
+      return undefined;
+    }
+    if (req.method === 'POST' && p.startsWith('/api/wterm-input/')) {
+      if (!this._wtermInput) return this._json(res, 501, { ok: false, error: 'terminal sharing is not enabled on this box' });
+      const seat = decodeURIComponent(p.slice('/api/wterm-input/'.length));
+      if (!NAME_RE.test(seat)) return this._json(res, 400, { ok: false, error: 'bad seat' });
+      return this._readBody(req, res, (body) => {
+        // Re-read the handler HERE, not above. `_readBody` calls back from
+        // `req.on('end')`, which runs outside `_route`'s try/catch, and main.js
+        // rethrows an uncaughtException — so calling a handler that revocation
+        // nulled while the body was in flight crashes the whole app, and a
+        // caller who dribbles bytes chooses how long that window stays open.
+        // Capturing the callback before `_readBody` would close the crash and
+        // reopen the revocation hole: the shell would keep taking keystrokes
+        // after the grant was withdrawn. Both ends must be checked, at the
+        // moment of use.
+        if (!this._wtermInput) return this._json(res, 501, { ok: false, error: 'terminal sharing is not enabled on this box' });
+        // An open stream is a PRECONDITION of remote input, not a decoration
+        // beside it. `_wterm` is the same Map `_notifyWtermStreams` reports
+        // from, so refusing here is what makes the sidebar's mark mean "a peer
+        // can type into this seat" rather than "a peer is looking at it".
+        // Without the check a caller that never opened `/api/wterm/:seat`
+        // reaches the shell anyway: the Map is untouched so no report fires,
+        // and the announce lives in the open path so it never runs. Re-read at
+        // the moment of use for the same reason as the callback above — the
+        // last stream can go away while the body is still arriving.
+        if (!this._wtermAttached(seat)) return this._json(res, 409, { ok: false, error: 'no open terminal stream for that seat' });
+        let msg;
+        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+        // Keystrokes pass through as OPAQUE BYTES and are deliberately not vetted
+        // here: this is a terminal, and a person typing `^C` means it. What IS
+        // vetted, on both ends, is geometry and the seat.
+        const out = this._wtermInput(seat, String(msg.data || ''));
+        return this._json(res, out && out.ok ? 200 : 404, out || { ok: false });
+      });
+    }
+    if (req.method === 'POST' && p.startsWith('/api/wterm-resize/')) {
+      if (!this._wtermResize) return this._json(res, 501, { ok: false, error: 'terminal sharing is not enabled on this box' });
+      const seat = decodeURIComponent(p.slice('/api/wterm-resize/'.length));
+      if (!NAME_RE.test(seat)) return this._json(res, 400, { ok: false, error: 'bad seat' });
+      return this._readBody(req, res, (body) => {
+        // Same deferral, same re-read, same attachment precondition — see
+        // wterm-input above. Geometry is not a keystroke, but a resize reaches
+        // the operator's own shell and moves what is on their screen, so it is
+        // remote input by every measure that matters here.
+        if (!this._wtermResize) return this._json(res, 501, { ok: false, error: 'terminal sharing is not enabled on this box' });
+        if (!this._wtermAttached(seat)) return this._json(res, 409, { ok: false, error: 'no open terminal stream for that seat' });
+        let msg;
+        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+        const cols = parseInt(msg.cols, 10), rows = parseInt(msg.rows, 10);
+        if (!(cols >= 20 && cols <= 500 && rows >= 5 && rows <= 300)) {
+          return this._json(res, 400, { ok: false, error: 'bad dimensions' });
+        }
+        const out = this._wtermResize(seat, cols, rows);
+        return this._json(res, out && out.ok ? 200 : 404, out || { ok: false });
+      });
+    }
+    if (req.method === 'POST' && p.startsWith('/api/wterm-close/')) {
+      if (!this._wtermClose) return this._json(res, 501, { ok: false, error: 'terminal sharing is not enabled on this box' });
+      const seat = decodeURIComponent(p.slice('/api/wterm-close/'.length));
+      if (!NAME_RE.test(seat)) return this._json(res, 400, { ok: false, error: 'bad seat' });
+      // Detach, never kill: the shell belongs to the operator of THIS box and
+      // their own tab is showing it. A remote party closing its view must not
+      // take the local operator's terminal with it.
+      this.dropWterm(seat, 'detached');
+      let out;
+      try { out = this._wtermClose(seat); } catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
+      return this._json(res, 200, out || { ok: true });
     }
     if (req.method === 'POST' && p.startsWith('/api/query/')) {
       if (!this._query) return this._json(res, 501, { ok: false, error: 'query not available' });
@@ -656,7 +940,12 @@ class RemoteServer {
     });
   }
 
-  _sse(req, res) {
+  // SSE headers WITHOUT joining the global events feed. Split out so a
+  // per-stream feed (the peer terminal) does not have to add itself to
+  // `_clients` and immediately remove itself again, which is what the attach
+  // path does and is easy to forget: a stream left in `_clients` receives every
+  // global broadcast as if it were an events subscriber.
+  _sseRaw(req, res) {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-store',
@@ -664,6 +953,10 @@ class RemoteServer {
       'X-Accel-Buffering': 'no',
     });
     res.write(': connected\n\n');
+  }
+
+  _sse(req, res) {
+    this._sseRaw(req, res);
     this._clients.add(res);
     req.on('close', () => this._clients.delete(res));
   }

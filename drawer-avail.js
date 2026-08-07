@@ -31,6 +31,33 @@ function termAvailableFor(type) {
   return type !== 'bash' && type !== 'remote';
 }
 
+// Which SHELL a seat's terminal tab is served by. A separate predicate from
+// termAvailableFor rather than a mode argument on it, because the two answer
+// different questions for different callers and merging them would leak a
+// capability:
+//
+//   termAvailableFor is the AGENT-facing one — session-manager's term intent
+//   handler calls it to decide whether a seat may run a command in its own
+//   terminal. It still excludes `remote` unconditionally, and must keep doing
+//   so: agent-driven exec across a wire is a different authorization question
+//   (the actor is an agent, not the operator who can see the terminal), and a
+//   peer session has no local session-manager record for the intent to reach
+//   anyway. Teaching this function about peer backends is exactly the seam that
+//   would make remote agent exec a one-line addition later.
+//
+//   termBackendFor is the OPERATOR-facing one — the renderer calls it to decide
+//   whether to draw the tab and what to drive it with.
+//
+// `peerHasShell` is the serving box's declared capability, not our wish: a peer
+// that never granted it (or predates it) has no `shell` in its hello, so the
+// tab does not appear rather than appearing and failing.
+function termBackendFor(seat) {
+  const type = seat && seat.type;
+  if (type === 'bash') return null;   // the session IS a shell; locality was never the reason
+  if (type === 'remote') return seat && seat.peerHasShell ? 'peer' : null;
+  return 'local';
+}
+
 // A command line is generous at 2KB and absurd beyond it. The cap is on BYTES,
 // not characters: the PTY is a byte stream and a multi-byte payload that passes
 // a length check can still be four times this on the wire.
@@ -114,4 +141,4 @@ function vetTermCommand(raw) {
   return { ok: true, command: cmd };
 }
 
-module.exports = { termAvailableFor, vetTermCommand, TERM_EXEC_MAX };
+module.exports = { termAvailableFor, termBackendFor, vetTermCommand, TERM_EXEC_MAX };

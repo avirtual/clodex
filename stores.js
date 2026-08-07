@@ -178,6 +178,13 @@ function sanitizePeers(raw, prior) {
       // survives; truthy-but-not-true is dropped.
       ...(p.disabled === true ? { disabled: true } : {}),
       ...(p.relayAllowed === true ? { relayAllowed: true } : {}),
+      // Peer-terminal grant, presence-encoded for the same reason as the two
+      // above: shellCapGranted reads absence as "no grant", and a written
+      // `false` would be a record that survives where a deletion should not.
+      // Omitting it from this whitelist does not disable the feature loudly —
+      // it strips the flag on the way to disk, so the checkbox, the toast and
+      // the ops row all report success over a grant that never persisted.
+      ...(p.shellAllowed === true ? { shellAllowed: true } : {}),
     };
     let token;
     if (typeof p.token === 'string') {

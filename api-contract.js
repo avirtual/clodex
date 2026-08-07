@@ -243,6 +243,7 @@ const API_CONTRACT = [
   { name: 'peerForgetAttached', kind: 'invoke', channel: 'peer:forgetAttached' },
   { name: 'peerSetDisabled', kind: 'invoke', channel: 'peer:setDisabled' },
   { name: 'peerSetRelayAllowed', kind: 'invoke', channel: 'peer:setRelayAllowed' },
+  { name: 'peerSetShellAllowed', kind: 'invoke', channel: 'peer:setShellAllowed' },
   { name: 'peerControlledNames', kind: 'invoke', channel: 'peer:controlledNames' },
   { name: 'peerForgetControlled', kind: 'invoke', channel: 'peer:forgetControlled' },
   { name: 'peerVisible', kind: 'invoke', channel: 'peer:visible' },
@@ -260,6 +261,26 @@ const API_CONTRACT = [
   { name: 'peerSetSessionArgs', kind: 'invoke', channel: 'peer:setSessionArgs' },
   { name: 'peerSkillCatalog', kind: 'invoke', channel: 'peer:skillCatalog' },
   { name: 'peerSetSessionSkills', kind: 'invoke', channel: 'peer:setSessionSkills' },
+  // A terminal tab pointed at a peer seat's shell (t219). These take the
+  // renderer's COMPOSITE `name@peerId` key, unlike every peer row above, which
+  // takes (id, name) separately — the split happens once, in the main-side
+  // handler, so the `@` cannot reach the wire.
+  { name: 'peerWtermOpen', kind: 'invoke', channel: 'peer:wtermOpen' },
+  { name: 'peerWtermResize', kind: 'invoke', channel: 'peer:wtermResize' },
+  { name: 'peerWtermClose', kind: 'invoke', channel: 'peer:wtermClose' },
+  { name: 'peerWtermInput', kind: 'send', channel: 'peer:wtermInput' },
+  { name: 'onPeerWtermReplay', kind: 'on', channel: 'peer-wterm-replay' },
+  { name: 'onPeerWtermData', kind: 'on', channel: 'peer-wterm-data' },
+  { name: 'onPeerWtermExit', kind: 'on', channel: 'peer-wterm-exit' },
+  { name: 'onPeerWtermClosed', kind: 'on', channel: 'peer-wterm-closed' },
+  // The other DIRECTION of t219: seats on THIS box a peer is watching right
+  // now. Not the grant — the grant is a setting and peers-ui reads it from
+  // settings — but live attachment, which is the thing an operator must never
+  // have on their box unannounced.
+  { name: 'onServedTerminals', kind: 'on', channel: 'served-terminals' },
+  // The GRANT changed in some window. Payload-free on purpose: the listener
+  // re-reads settings, so every window derives the chip the same way.
+  { name: 'onPeerShellAllowed', kind: 'on', channel: 'peer-shell-allowed' },
   { name: 'onPeerState', kind: 'on', channel: 'peer-state' },
   { name: 'onPeerActivity', kind: 'on', channel: 'peer-activity' },
   { name: 'onPeerReplay', kind: 'on', channel: 'peer-replay' },

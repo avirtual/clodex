@@ -27,7 +27,12 @@ const { createWebHost } = require('../web-host');
 // service registered as `clodexctl:run` rather than `ctl:run` would sail past
 // every assertion below, so a new drawer service either picks a covered prefix
 // or adds its own here.
-const GATED_PREFIXES = ['ctl:', 'wterm:', 'drawer:'];
+// `peer:wterm` is a PREFIX FRAGMENT, not a namespace, and that is deliberate:
+// the rest of `peer:*` is deliberately ungated (it drives sessions the far side
+// already exposes to attach), while these four open a SHELL on a third machine.
+// A rule of "the peer namespace is gated" would be wrong; a rule of "the peer
+// TERMINAL is gated" is what this string says.
+const GATED_PREFIXES = ['ctl:', 'wterm:', 'drawer:', 'peer:wterm'];
 const silentLog = { info() {}, warn() {}, error() {} };
 
 function mkEngine(seams) {
@@ -103,6 +108,10 @@ test('no ctl:/wterm: channel is registered on the web-host surface', () => {
   // absence below while proving nothing at all.
   assert.ok(registered.size > 100, `registration produced only ${registered.size} channels — capture is broken`);
   assert.ok(registered.has('session:list'), 'ENTER: a known channel registered, so the set is real');
+  // The peer block runs on this surface too — without this, `peer:wterm*`'s
+  // absence below would also be true of a build where the whole peer family
+  // failed to register, which is a different bug wearing the same green.
+  assert.ok(registered.has('peer:input'), 'ENTER: the ungated peer surface registered here too');
 
   const gated = [...registered].filter((ch) => GATED_PREFIXES.some((p) => ch.startsWith(p)));
   assert.deepStrictEqual(gated, [],
@@ -142,6 +151,15 @@ test('the SAME registrar registers ctl:* when the capability is granted', () => 
   // running something on the host.
   assert.ok(registered.has('drawer:armSelection'), 'and the drawer selection hint');
   assert.ok(registered.has('drawer:releaseSelection'), 'and its release');
+  // The peer terminal (t219) — a shell on ANOTHER box, so the strongest member
+  // of the family. Its ungated siblings are the control: `peer:input` proves
+  // the registrar ran the peer block at all, so the four absences above are
+  // about the gate and not about a peer surface that failed to register.
+  assert.ok(registered.has('peer:input'), 'ENTER: the ungated peer surface registered');
+  assert.ok(registered.has('peer:wtermOpen'), 'the desktop path must register the peer terminal');
+  assert.ok(registered.has('peer:wtermInput'), 'and its keystrokes');
+  assert.ok(registered.has('peer:wtermResize'), 'and its SIGWINCH');
+  assert.ok(registered.has('peer:wtermClose'), 'and its detach');
 });
 
 // The SECOND property of the wterm handlers, and the one a comment alone cannot
@@ -250,6 +268,66 @@ test('wterm:* refuse when the sender resolves to no workspace', () => {
   assert.strictEqual(handlers['wterm:write']({}, 'x'), false);
   assert.strictEqual(handlers['wterm:resize']({}, 80, 24), false);
   assert.deepStrictEqual(calls, [], 'nothing reached the pty service at all');
+});
+
+// The peer terminal's own payload property, and the analogue of the two tests
+// above: the renderer hands these handlers a COMPOSITE `name@peerId` key, and
+// what reaches the connection must be the bare seat. An `@` on the wire fails
+// the serving box's grammar, becomes null there, and null is the key of that
+// box's SEATLESS WORKSPACE SHELL — so a passthrough is not a 404, it is every
+// peer row quietly sharing one remote terminal.
+function registerPeerDesktop(conns) {
+  return registerDesktop({
+    getPeerManager: () => ({ get: (id) => conns[id] || null }),
+  });
+}
+
+test('peer:wterm* split the composite key — the @ never reaches the connection', async () => {
+  const calls = [];
+  const conn = {
+    wtermOpen: (seat, cb) => { calls.push(['open', seat]); cb({ ok: true }); },
+    wtermInput: (seat, data, cb) => { calls.push(['input', seat, data]); cb({ ok: true }); },
+    wtermResize: (seat, c, r, cb) => { calls.push(['resize', seat, c, r]); cb({ ok: true }); },
+    wtermClose: (seat, cb) => { calls.push(['close', seat]); cb({ ok: true }); },
+  };
+  const handlers = registerPeerDesktop({ 'peer-1': conn });
+
+  assert.ok(handlers['peer:wtermOpen'], 'ENTER: the peer terminal handlers registered');
+
+  assert.deepStrictEqual(await handlers['peer:wtermOpen']({}, 'bob@peer-1'), { ok: true });
+  handlers['peer:wtermInput']({}, 'bob@peer-1', 'ls\r');
+  assert.deepStrictEqual(await handlers['peer:wtermResize']({}, 'bob@peer-1', 120, 40), { ok: true });
+  assert.deepStrictEqual(await handlers['peer:wtermClose']({}, 'bob@peer-1'), { ok: true });
+
+  assert.deepStrictEqual(calls, [
+    ['open', 'bob'],
+    ['input', 'bob', 'ls\r'],
+    ['resize', 'bob', 120, 40],
+    ['close', 'bob'],
+  ], 'every handler addressed the BARE seat, and the peerId chose the connection');
+});
+
+test('peer:wterm* refuse a key whose seat half fails the wire grammar', async () => {
+  const calls = [];
+  const conn = {
+    wtermOpen: (seat, cb) => { calls.push(seat); cb({ ok: true }); },
+    wtermInput: (seat, data, cb) => { calls.push(seat); cb({ ok: true }); },
+    wtermResize: (seat, c, r, cb) => { calls.push(seat); cb({ ok: true }); },
+    wtermClose: (seat, cb) => { calls.push(seat); cb({ ok: true }); },
+  };
+  const handlers = registerPeerDesktop({ 'peer-1': conn });
+
+  for (const bad of ['bob', '@peer-1', 'bob@', '../etc@peer-1', '..@peer-1', `${'a'.repeat(65)}@peer-1`]) {
+    const res = await handlers['peer:wtermOpen']({}, bad);
+    assert.strictEqual(res.ok, false, `${JSON.stringify(bad)} is refused`);
+  }
+  // An unknown peer id is the same refusal — the key parsed, but it addresses
+  // nothing, and a handler that fell through to a live connection would send a
+  // seat to whichever peer happened to answer.
+  assert.strictEqual((await handlers['peer:wtermOpen']({}, 'bob@peer-NOPE')).ok, false);
+  handlers['peer:wtermInput']({}, 'bob@peer-NOPE', 'rm -rf /\r');
+
+  assert.deepStrictEqual(calls, [], 'nothing reached any peer connection at all');
 });
 
 // createEngine's background timers keep the loop alive; exit once results flush.

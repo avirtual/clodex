@@ -83,7 +83,10 @@ function captureOptions(deps) {
   let opts = null;
   remoteMod.RemoteServer = function (o) {
     opts = o;
-    return { start: () => Promise.resolve(), stop() {}, port: 0, notifySessions() {} };
+    // setWtermCallbacks is reconciled on every sync (t219), so the fake must
+    // answer it. Deliberately not a guard in syncRemoteServer: a real server
+    // that lacked the method would be a wiring break worth crashing on.
+    return { start: () => Promise.resolve(), stop() {}, port: 0, notifySessions() {}, setWtermCallbacks() {} };
   };
   try {
     createRemoteWiring(deps).syncRemoteServer();

@@ -15,6 +15,9 @@ const { withoutPrivilegedIntentsFor } = require('./intent-registry');
 // Env scopes cross the wire on a create body — never trust the client: sanitize
 // server-side (drops invalid/denied/newline keys) before it reaches create().
 const { sanitizeFlat } = require('./env-scopes');
+// The peer-terminal grant (t219). A pure leaf shared with peer-client and the
+// renderer so the three cannot disagree about what the operator granted.
+const { shellCapGranted } = require('./peer-shell');
 
 function createRemoteWiring(deps) {
   const {
@@ -30,7 +33,7 @@ function createRemoteWiring(deps) {
     fetchSessionFiles, fetchFilePeek, fetchFileDiff,
     CLAUDE_TOOLS, getPromptLibrary, getAgentLibrary, getSkillLibrary,
     getPersistence, getUiSettings, getWorkspaces,
-    getRemoteServer, setRemoteServer, setRemoteError,
+    getRemoteServer, setRemoteServer, setRemoteError, getDrawerPtys,
     readRemoteEnvToken, resolveRemoteToken,
     appVersion, isPackaged,
     // The browser frontend's host, or null when this host has none (t30). A
@@ -285,6 +288,17 @@ function createRemoteWiring(deps) {
           manager._setRelayRoster(via, roster);
           log.info('peer', `relay roster from ${via}: ${roster.length} agent(s)`);
         },
+        // ---- Peer terminal (t219) ----
+        // Spread, not four properties: the four are passed TOGETHER or not at
+        // all, and `shell` in the hello is derived from wtermOpen's presence, so
+        // splitting them would let a box advertise a terminal it cannot drive.
+        ...wtermCallbacks(),
+        // Deliberately OUTSIDE the bundle and never reconciled with the grant:
+        // this is the seat indicator, and the moment it matters most is
+        // revocation, when the streams close and the operator must watch the
+        // marks go out. Wired into the grant, it would be nulled before the
+        // final empty report and every seat would stay marked forever.
+        onWtermStreams: (seats) => manager._broadcast('served-terminals', seats),
         hostLabel: SELF_LABEL,
         version: appVersion,
         srcDir: isPackaged() ? null : homeRelativize(__dirname, os.homedir()),
@@ -344,11 +358,114 @@ function createRemoteWiring(deps) {
         },
       }));
     }
+    // Reconciled on EVERY sync, not only at construct: the server outlives a
+    // grant toggle, so a constructor-only wiring would leave the capability
+    // frozen at whatever it was when the box started serving. The setter owns
+    // the close-before-drop ordering.
+    const wterm = wtermCallbacks();
+    getRemoteServer().setWtermCallbacks(wterm.wtermOpen ? wterm : null);
     setRemoteError(null);
     getRemoteServer().start().catch((e) => {
       setRemoteError(e.message);
       setRemoteServer(null);
     });
+  }
+
+  // The four peer-terminal callbacks, or an all-null bundle when nothing grants
+  // it. Returning nulls rather than omitting the keys keeps the shape constant
+  // for the spread at construct; remote.js turns absence into a 501 and a
+  // missing `shell` cap either way.
+  //
+  // The grant is re-read HERE on every call, so a revoked grant cannot be
+  // outlived by a callback captured earlier. Belt to the setter's braces: the
+  // reconcile drops the callbacks, and if one somehow survived, `granted()`
+  // inside each closure refuses anyway.
+  function wtermCallbacks() {
+    const granted = () => shellCapGranted(getUiSettings().get().peers);
+    if (!granted()) return { wtermOpen: null, wtermInput: null, wtermResize: null, wtermClose: null };
+
+    // A peer's terminal is the seat's OWN drawer shell in the window that owns
+    // the seat, never a shell of its own. That is the shared-PTY ruling, and it
+    // is what makes a remote shell visible — but only under a precondition the
+    // ruling does not state and this file has to enforce: that the window
+    // exists. `wtermOpen`'s windowForWorkspace check below is the line that
+    // makes the sentence above true; without it the shell is real and the tab
+    // it is supposed to be visible in is not.
+    const wsFor = (seat) => {
+      const sess = manager.sessions.get(seat);
+      return sess ? sess.workspaceId : null;
+    };
+    const chip = (seat, kind, body) => {
+      manager._broadcast('ipc-message', { ts: Date.now(), from: 'peer', to: seat, kind, body });
+      log.info('peer', body);
+    };
+
+    return {
+      wtermOpen: (seat, ctx) => {
+        if (!granted()) return { ok: false, error: 'terminal sharing is not enabled on this box' };
+        const w = getDrawerPtys && getDrawerPtys();
+        // A host with drawer services off has no terminals to share. The peer
+        // terminal INHERITS that refusal rather than building its own PTY —
+        // routing around it would resurrect the hazard that gate exists for.
+        // `code` picks the HTTP status remote.js answers with, and the status is
+        // what the consumer reads: a config bit of this box is 501, a missing
+        // seat is 404. Without it both arrive as 404 and the remote operator is
+        // sent looking for a session that was never the problem.
+        if (!w) return { ok: false, code: 'no-services', error: 'drawer terminals are unavailable on this box' };
+        const ws = wsFor(seat);
+        if (!ws) return { ok: false, code: 'no-seat', error: 'no such session' };
+        // A session OUTLIVES its window (main.js's `closed` handler kills the
+        // workspace's drawer PTYs and leaves the session), so a live session is
+        // not evidence that anything is on screen. Spawning here would hand a
+        // peer a fresh login shell in a workspace the operator has closed: the
+        // mark is a sidebar row attribute, the row lives only in that
+        // workspace's own window, and engine's `send` no-ops without one — so
+        // the announcement lands nowhere and the heartbeat re-asserts it into
+        // the void. With no windows open at all (normal on macOS, the app lives
+        // in the tray) there is nothing on screen to see it.
+        //
+        // `no-seat` rather than a code of its own: from the consumer's side a
+        // seat whose window is closed is unreachable in the same way a missing
+        // one is, and a distinct code would invite a retry loop against a state
+        // only the local operator can change.
+        if (!manager.windowForWorkspace(ws)) return { ok: false, code: 'no-seat', error: 'no such session' };
+        const out = w.spawn(ws, seat, {});
+        if (!out || !out.ok) return out || { ok: false, error: 'could not open a terminal' };
+        // Never silent — but a flaky tunnel reconnects the SAME viewer to the
+        // SAME shell every few seconds, and an ops log that says "a peer opened
+        // your terminal" twelve times a minute is one the operator stops
+        // reading, which costs exactly the property this row exists for. Both
+        // halves have to be true to call it a reconnect: `out.fresh === false`
+        // says the shell was already running (a resumed one is not a new
+        // exposure), and `ctx.attached` says a stream was still watching it at
+        // the moment this one arrived. A reconnect after a real detach is a new
+        // remote party and still announces.
+        const reconnect = out.fresh === false && !!(ctx && ctx.attached);
+        if (!reconnect) chip(seat, 'peer-terminal-open', `a peer opened the terminal for ${seat}`);
+        return { ok: true, scrollback: Buffer.from(out.scrollback || '', 'utf8'), cols: out.cols, rows: out.rows };
+      },
+      wtermInput: (seat, data) => {
+        if (!granted()) return { ok: false, error: 'terminal sharing is not enabled on this box' };
+        const w = getDrawerPtys && getDrawerPtys();
+        const ws = wsFor(seat);
+        if (!w || !ws) return { ok: false, error: 'no such session' };
+        return w.write(ws, seat, data) ? { ok: true } : { ok: false, error: 'no terminal for that seat' };
+      },
+      wtermResize: (seat, cols, rows) => {
+        if (!granted()) return { ok: false, error: 'terminal sharing is not enabled on this box' };
+        const w = getDrawerPtys && getDrawerPtys();
+        const ws = wsFor(seat);
+        if (!w || !ws) return { ok: false, error: 'no such session' };
+        return w.resize(ws, seat, cols, rows) ? { ok: true } : { ok: false, error: 'no terminal for that seat' };
+      },
+      // Detach only. The shell stays: it is the local operator's, their tab is
+      // showing it, and a remote party closing its view must not close their
+      // terminal.
+      wtermClose: (seat) => {
+        chip(seat, 'peer-terminal-close', `a peer closed its view of the terminal for ${seat}`);
+        return { ok: true };
+      },
+    };
   }
 
   // The RemoteServer reads its operator token only at construct, so a token

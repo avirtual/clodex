@@ -7,6 +7,7 @@ const { RELAY_ENVELOPE_V } = require('./relay-protocol');
 const { withoutExecGrants } = require('./session-args');
 const { makeWatchdog, STALE_MS } = require('./cli/src/sse-guard');
 const { makeSseDecoder, MAX_BUFFER_BYTES } = require('./cli/src/sse-frame');
+const { peerHasShellCap, peerShellRefusal, vetWireResize } = require('./peer-shell');
 
 const HELLO_INTERVAL_MS = 15000;      // offline poll cadence
 const RECONNECT_MIN_MS = 1000;        // attach/events stream backoff
@@ -19,6 +20,23 @@ const RECONNECT_MAX_MS = 20000;
 // tighten this to "decoded a well-formed event" — an idle-but-healthy peer
 // emits only heartbeats and would be pushed into permanent backoff.
 const STABLE_MARGIN_MS = 1000;
+// A peer-terminal stream that never reaches 200 was REFUSED, and the status is
+// the only part of the refusal that survives: the SSE path discards non-200
+// bodies. So the status carries the code, which is why remote.js answers 501 for
+// both of its config-bit refusals (no callback, drawer services off) and reserves
+// 404 for a seat that genuinely is not there.
+// Every row has a real producer on the serving side — a status this table
+// names that nothing answers reads as a documented case and stops anyone
+// looking for the hole where it should be. Anything NOT listed (the
+// fail-closed 503, or a 403 from something between us and the box) falls to
+// 'failed', which is what 401 says too: the row is here because the auth gate
+// genuinely answers it, not because the mapping differs.
+const WTERM_STATUS_CODE = {
+  501: 'off',        // this box does not serve terminals — grant off, or no drawer services
+  404: 'no-seat',    // the box serves them; this seat has none
+  400: 'bad-seat',   // our seat failed the far side's grammar (a bug on this end)
+  401: 'failed',     // _authGate
+};
 const REQUEST_TIMEOUT_MS = 5000;
 const QUERY_TIMEOUT_MS = 20000;
 const OVERFLOW_LOG_INTERVAL_MS = 60000;
@@ -65,6 +83,12 @@ class PeerConnection {
     this._eventsReq = null;
     this._eventsBackoff = RECONNECT_MIN_MS;
     this._attachments = new Map();    // name -> { req, token, wanted, backoff, timer }
+    // seat -> { req, wanted, backoff, timer, opening } for peer TERMINAL feeds.
+    // Deliberately separate from _attachments: an attachment is a view of a
+    // remote AGENT and carries the control token; a wterm is a shell on the same
+    // box with no token at all, and merging the two maps would let a control
+    // release tear down a terminal that never held control.
+    this._wterms = new Map();
     this._stopped = false;
   }
 
@@ -78,6 +102,11 @@ class PeerConnection {
     clearTimeout(this._helloTimer);
     if (this._eventsReq) { try { this._eventsReq.destroy(); } catch {} this._eventsReq = null; }
     for (const name of [...this._attachments.keys()]) this.detach(name);
+    // Local teardown only — no wterm-close POST. The serving side drops its
+    // stream entry on the socket close that _sseAgent.destroy() below causes,
+    // so the round-trip would buy nothing and its reply would arrive at a
+    // connection that is already gone.
+    for (const seat of [...this._wterms.keys()]) this._teardownWterm(seat);
     // Destroy both pools. The SSE agent's .destroy() also reaps any stream
     // whose request was still mid-open (req not yet captured for a per-req
     // destroy), keeping teardown airtight.
@@ -122,13 +151,22 @@ class PeerConnection {
           prev.srcDir !== next.srcDir ||
           webHostKey(prev.webHost) !== webHostKey(next.webHost) ||
           (prev.caps || []).join(',') !== (next.caps || []).join(',');
+        // A grant withdrawn on the far side already closes the streams with a
+        // reason; noticing the cap vanish from hello covers the case where the
+        // box restarted WITHOUT the grant, so no close frame was ever sent and
+        // our backoff would otherwise keep reopening against a 501.
+        const lostShell = prev && peerHasShellCap(prev.caps) && !peerHasShellCap(next.caps);
         this.hello = next;
+        if (lostShell) this._dropAllWterm('revoked');
         this._setOnline(true);
         if (wasOffline) {
           this._refreshSessions();
           this._openEvents();
           for (const [name, att] of this._attachments) {
             if (att.wanted && !att.req) this._openAttach(name, att);
+          }
+          for (const [seat, w] of this._wterms) {
+            if (w.wanted && !w.req) this._openWterm(seat, w);
           }
         } else if (identityChanged) {
           // Stayed online but the identity moved — force the peer-state emission
@@ -326,6 +364,138 @@ class PeerConnection {
     });
   }
 
+// --- peer terminal -------------------------------------------------------
+// A shell on the SERVING box, streamed here. `seat` is the BARE session name:
+// the renderer keys peer sessions `name@peerId` and splits with
+// peer-shell's wireSeatFor before it gets here, so the `@` never reaches a URL.
+
+// Is the far side offering terminals at all? Checked before every wterm call
+// rather than once at open, because a grant can be withdrawn mid-session and
+// the hello loop is where we learn it.
+  _shellRefusal() {
+    if (!this.online) return peerShellRefusal('offline', this.label);
+    if (!peerHasShellCap(this.hello && this.hello.caps)) {
+      return peerShellRefusal('off', this.label);
+    }
+    return null;
+  }
+
+  wtermOpen(seat, cb) {
+    const refusal = this._shellRefusal();
+    if (refusal) return cb({ ok: false, error: refusal });
+    let w = this._wterms.get(seat);
+    if (w && w.wanted) return cb({ ok: true });
+    if (!w) { w = { req: null, opening: false, wanted: true, backoff: RECONNECT_MIN_MS, timer: null }; this._wterms.set(seat, w); }
+    w.wanted = true;
+    this._openWterm(seat, w);
+    return cb({ ok: true });
+  }
+
+  _openWterm(seat, w) {
+    if (w.req || w.opening || !w.wanted || this._stopped) return;
+    w.opening = true;
+    this._sse(`/api/wterm/${encodeURIComponent(seat)}`, {
+      onEvent: (event, data) => {
+        if (event === 'replay') {
+          this._emit('peer-wterm-replay', this.id, seat, {
+            data: Buffer.from(data.b64 || '', 'base64'),
+            cols: data.cols, rows: data.rows,
+          });
+        } else if (event === 'output') {
+          this._emit('peer-wterm-data', this.id, seat, Buffer.from(data.b64 || '', 'base64'));
+        } else if (event === 'exit') {
+          // The shell itself ended on the far side. Stop wanting the stream, or
+          // the close door below reconnects into a seat with no shell.
+          w.wanted = false;
+          this._emit('peer-wterm-exit', this.id, seat, data.exitCode);
+        } else if (event === 'closed') {
+          // A DECISION, not a blip — the serving side always says why. Retrying
+          // against a revocation is what this frame exists to prevent, so the
+          // want is cleared before the close door runs.
+          w.wanted = false;
+          this._emit('peer-wterm-closed', this.id, seat,
+            peerShellRefusal(String((data && data.reason) || 'closed'), this.label));
+        }
+      },
+      onOpen: (req) => { w.opening = false; w.req = req; },
+      onStable: () => { w.backoff = RECONNECT_MIN_MS; },
+      // The serving side said no. Clear `wanted` BEFORE the close door runs, the
+      // same as a `closed` frame and for the same reason: a refusal is a
+      // decision, and reconnecting against it every ≤20s forever is both useless
+      // and a knock on someone else's machine. The STATUS is the code — the body
+      // is discarded by _request's SSE path — so it is mapped here.
+      onRefused: (status) => {
+        w.wanted = false;
+        this._emit('peer-wterm-closed', this.id, seat,
+          peerShellRefusal(WTERM_STATUS_CODE[status] || 'failed', this.label));
+      },
+      onClose: () => {
+        w.opening = false;
+        w.req = null;
+        if (!w.wanted || this._stopped) { this._wterms.delete(seat); return; }
+        const delay = w.backoff;
+        w.backoff = Math.min(w.backoff * 2, RECONNECT_MAX_MS);
+        w.timer = setTimeout(() => { if (this.online) this._openWterm(seat, w); }, delay);
+      },
+    });
+  }
+
+// Keystrokes ride as OPAQUE BYTES — not vetted here and not vetted on the
+// serving side either, deliberately: this is a terminal and a person typing
+// `^C` means it. What IS vetted on both ends is geometry (wtermResize) and,
+// where a caller composes a line rather than typing it, the command text.
+  wtermInput(seat, data, cb) {
+    const refusal = this._shellRefusal();
+    if (refusal) return cb({ ok: false, error: refusal });
+    this._request('POST', `/api/wterm-input/${encodeURIComponent(seat)}`, { data }, (err, body) => {
+      cb(err ? { ok: false, error: err.message } : body || { ok: false });
+    });
+  }
+
+// Vetted HERE and again on the serving side. Not belt-and-braces: the consumer
+// check is a fast local refusal that costs no round-trip, the serving check is
+// the real one because the wire is not trusted — a peer is not obliged to run
+// this code. Removing either is a bug; removing the serving one is a hole.
+  wtermResize(seat, cols, rows, cb) {
+    const refusal = this._shellRefusal();
+    if (refusal) return cb({ ok: false, error: refusal });
+    const vet = vetWireResize(cols, rows);
+    if (!vet.ok) return cb(vet);
+    this._request('POST', `/api/wterm-resize/${encodeURIComponent(seat)}`, { cols: vet.cols, rows: vet.rows }, (err, body) => {
+      cb(err ? { ok: false, error: err.message } : body || { ok: false });
+    });
+  }
+
+// Closes OUR VIEW, and it is term-tab's release edge that calls it — on hide
+// and on a seat switch. The serving side detaches and never kills: it is one
+// shell with two viewers, and the operator of that box has it in their own tab.
+// Turning this into a kill would let a remote party take a local terminal away;
+// drawer-pty's write() carries the rest of that reasoning.
+  wtermClose(seat, cb) {
+    const w = this._wterms.get(seat);
+    this._teardownWterm(seat);
+    if (!w) return cb({ ok: true });
+    if (!this.online) return cb({ ok: true });
+    this._request('POST', `/api/wterm-close/${encodeURIComponent(seat)}`, {}, () => cb({ ok: true }));
+    return undefined;
+  }
+
+  _teardownWterm(seat) {
+    const w = this._wterms.get(seat);
+    if (!w) return;
+    w.wanted = false;
+    clearTimeout(w.timer);
+    if (w.req) { try { w.req.destroy(); } catch {} w.req = null; }
+    this._wterms.delete(seat);
+  }
+
+  _dropAllWterm(reason) {
+    for (const seat of [...this._wterms.keys()]) {
+      this._teardownWterm(seat);
+      this._emit('peer-wterm-closed', this.id, seat, peerShellRefusal(reason, this.label));
+    }
+  }
+
   restart(cb) {
     this._request('POST', '/api/restart', {}, (err, body) => {
       cb(err ? { ok: false, error: err.message } : body || { ok: false });
@@ -454,7 +624,13 @@ class PeerConnection {
 // every chunk (including heartbeat comments) as the only available evidence.
 // On fire we destroy AND walk the close door; the destroy usually raises
 // 'error' which reaches the door too — hence the one-shot guard below.
-  _sse(path, { onEvent, onOpen, onClose, onStable }) {
+  // `onRefused(status)` is optional and only the peer TERMINAL passes it. Without
+  // it a non-200 is indistinguishable from a dropped tunnel, so the caller
+  // reconnects on backoff forever against a box that answered "no" — which is
+  // the opposite of what a refusal means. Attach deliberately does not pass it:
+  // a session that 404s now may exist on the next hello, so retrying is right
+  // there.
+  _sse(path, { onEvent, onOpen, onClose, onStable, onRefused }) {
     let u;
     try { u = new URL(this.url + path); } catch { return onClose(); }
 // Fires onClose at most once: a watchdog destroy also raises a socket error,
@@ -480,7 +656,16 @@ class PeerConnection {
       agent: this._sseAgent,
       headers: { Accept: 'text/event-stream', ...this._authHeaders() },
     }, (res) => {
-      if (res.statusCode !== 200) { req.destroy(); return; }
+      if (res.statusCode !== 200) {
+        // Reported before the destroy so the refusal is recorded before the
+        // close door can run — the door reconnects, which is the one thing a
+        // refusal must not cause. Today either order works, because destroy
+        // raises its error asynchronously and onRefused would still land first;
+        // this ordering is what keeps that timing from being load-bearing.
+        if (onRefused) { try { onRefused(res.statusCode); } catch {} }
+        req.destroy();
+        return;
+      }
       onOpen(req);
       // Armed only once the stream is genuinely live (200 in hand). A request
       // that never gets a response is a CONNECT-time problem, not a half-open

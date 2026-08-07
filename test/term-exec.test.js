@@ -79,6 +79,7 @@ function mk(over = {}) {
   const sent = [];
   const results = [];   // onExecResult — the agent-facing deliveries
   const passive = [];   // onCommand — the operator's reporting firehose
+  const mirrored = [];  // onOutput/onShellEnd — what a peer watching this seat receives
   const timers = [];
 
   const deps = {
@@ -106,11 +107,16 @@ function mk(over = {}) {
     onExecResult: (seat, res) => results.push([seat, res]),
     vetCommand: vetTermCommand,
     execTimeoutMs: over.execTimeoutMs || 120000,
+    // The peer-terminal taps (t219). Captured rather than stubbed to no-ops so
+    // a test can assert that a remote viewer sees the SAME bytes the local tab
+    // does — the shared-shell property the peer terminal rests on.
+    onOutput: (seat, data) => mirrored.push([seat, data]),
+    onShellEnd: (seat, code) => mirrored.push([seat, { exit: code }]),
   };
   assert.deepStrictEqual(Object.keys(deps).sort(), declaredDeps(),
     'the fixture must wire EVERY dep — an unwired one is undefined, which is legal and silent');
 
-  return { w: createDrawerPtys(deps), spawn, sent, results, passive, timers };
+  return { w: createDrawerPtys(deps), spawn, sent, results, passive, mirrored, timers };
 }
 
 // The kill escalation also uses the injected setTimeout, so a test about the

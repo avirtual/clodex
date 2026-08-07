@@ -1328,6 +1328,7 @@ html, body {
 /* Relay-mesh toggle: hidden until the config read resolves (and for a peer whose
    settings we can't read), toggled via .hidden in peers-ui. */
 #peer-info-relay-row.hidden { display: none; }
+#peer-info-shell-row.hidden { display: none; }
 
 /* Lay the (short, single-word) tool/skill checklists out in two columns so the
    popover stays wide-and-short instead of a tall scroll. */
@@ -3961,6 +3962,9 @@ html, body {
    distinguishing a box row from a generic (laptop) peer. Sits between the status
    dot and the name; flex:none so it never squeezes the label. */
 .peer-box-chip { flex: none; font-size: 11px; line-height: 1; color: var(--accent); }
+/* Warm, not accent: this one reports a capability that is OPEN, and it should
+   not read as decoration next to the sandbox chip. */
+.peer-shell-chip { flex: none; font-size: 10px; line-height: 1; color: var(--warn); letter-spacing: -1px; }
 /* peer-state carries the sole margin-left:auto, so it (and the action strip that
    follows it) hug the right edge; when there's no state text the empty span
    still consumes the free space and pushes the icons right. */
@@ -4027,6 +4031,47 @@ html, body {
   content: " [remote]";
   color: var(--accent);
   font-size: 10px;
+}
+
+/* Owner-side flag: a peer is watching this seat's TERMINAL right now (t219).
+   Distinct from [remote] above — that is control of the AGENT, this is a shell
+   — and a seat can carry both at once, so it takes its own slot rather than
+   sharing one. .session-badges::after is the last free pseudo-element on the
+   row: ::before there is the refusal marker, .session-name's two are the ticket
+   dot and [remote], and .session-item::before belongs to attention.
+   Warm, like the peer-header grant chip, because both report an opening. */
+.session-item[data-served-terminal] .session-badges::after {
+  content: "▮_";
+  color: var(--warn);
+  font-size: 10px;
+  letter-spacing: -1px;
+}
+
+/* The row-independent half of the same signal. Styled like #diag-banner rather
+   than like the row glyph: a shell open on this machine that the operator has
+   not noticed is the failure this feature exists to prevent, and a 10px
+   pseudo-element on a row that may not exist cannot carry that. Warm, not
+   error — it is a state to know about, not a fault. */
+#served-terminal-banner {
+  margin: 6px 12px 10px;
+  padding: 8px 10px;
+  background: rgba(240, 173, 78, 0.14);
+  border: 1px solid rgba(240, 173, 78, 0.45);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#served-terminal-banner.hidden { display: none; }
+
+.served-terminal-glyph {
+  color: var(--warn);
+  letter-spacing: -1px;
+  animation: pulse 1.5s ease-in-out infinite;
 }
 
 /* Control strip above the terminal for the active peer session. */

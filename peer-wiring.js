@@ -105,6 +105,15 @@ function createPeerWiring(deps) {
               const [id] = args;
               peerOnlineLog.delete(id);
               log.info('peer', `removed ${id}`);
+            } else if (channel === 'peer-wterm-closed') {
+              // The CONSUMER half of the peer terminal's visibility. The serving
+              // box logs opens and closes at its own wiring; this end logs only
+              // the ending, and only the explained one — a shell we opened on
+              // someone else's machine that stopped because they revoked it is
+              // the event an operator later needs to find, and it is the one a
+              // toast in a closed drawer would have eaten.
+              const [id, seat, why] = args;
+              log.info('peer', `terminal ${seat}@${id} closed: ${why}`);
             }
           } catch { /* logging never breaks the emit fan-out */ }
         },

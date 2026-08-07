@@ -1291,14 +1291,11 @@ body {
 #main.has-proxy-bar.drawer-tall #terminal-container {
   bottom: calc(var(--drawer-tall-h) + 24px);
 }
-#main.drawer-tall #proxy-bar {
-  bottom: var(--drawer-tall-h);
-}
 #proxy-bar {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: var(--drawer-collapsed-h);
+  bottom: 0;
   height: 24px;
   z-index: 5;
   display: flex;
@@ -1316,10 +1313,6 @@ body {
   border-top: 1px solid var(--border);
   white-space: nowrap;
   overflow: hidden;
-  transition: bottom 0.2s ease;
-}
-#main.drawer-expanded #proxy-bar {
-  bottom: var(--drawer-h);
 }
 #proxy-telemetry {
   display: flex;
@@ -1695,6 +1688,9 @@ body {
   display: none;
 }
 #peer-info-relay-row.hidden {
+  display: none;
+}
+#peer-info-shell-row.hidden {
   display: none;
 }
 #popover-tools-list,
@@ -4508,10 +4504,13 @@ body {
   display: flex;
   flex-direction: column;
   z-index: 5;
-  transition: height 0.2s ease;
+  transition: height 0.2s ease, bottom 0.2s ease;
   height: var(--drawer-h);
   max-height: 50%;
   overflow: hidden;
+}
+#main.has-proxy-bar #drawer {
+  bottom: 24px;
 }
 #drawer.tall {
   height: var(--drawer-tall-h);
@@ -4541,6 +4540,7 @@ body {
   align-items: stretch;
   gap: 2px;
   height: 100%;
+  min-width: 0;
 }
 .drawer-tab {
   display: flex;
@@ -4558,6 +4558,9 @@ body {
 }
 .drawer-tab:hover {
   color: var(--text);
+}
+.drawer-tab.unavailable {
+  display: none;
 }
 .drawer-tab.active {
   color: var(--text);
@@ -4601,6 +4604,123 @@ body {
   background: var(--sidebar-hover);
   color: var(--text);
 }
+#drawer-copy:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+#drawer-copy:disabled:hover {
+  background: transparent;
+  color: var(--text-dim);
+}
+#drawer-copy.armed {
+  color: var(--accent);
+}
+#drawer-status {
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 0 6px;
+  white-space: nowrap;
+  min-width: 92px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  text-align: right;
+}
+#drawer-copy,
+#drawer-tall,
+#drawer-toggle,
+#drawer-clipboard {
+  flex-shrink: 0;
+}
+#drawer-clipboard {
+  opacity: 0.4;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+#drawer-clipboard.live {
+  opacity: 1;
+  color: var(--accent);
+}
+#drawer-clipboard-count {
+  font-size: 9px;
+  margin-left: 2px;
+}
+#selection-popover {
+  position: fixed;
+  z-index: 60;
+  width: 460px;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--panel, #1e2127);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+#selection-popover.hidden {
+  display: none;
+}
+#selection-popover-body {
+  padding: 6px 10px 10px;
+}
+.sel-row {
+  border-top: 1px solid var(--border);
+  padding: 8px 0 6px;
+}
+.sel-row:first-child {
+  border-top: none;
+}
+.sel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+}
+.sel-title {
+  color: var(--text);
+  font-weight: 600;
+}
+.sel-meta {
+  color: var(--text-dim);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.sel-text {
+  margin-top: 4px;
+  padding: 5px 7px;
+  background: var(--bg, #16181d);
+  border-radius: 4px;
+  font-family: var(--mono, monospace);
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 132px;
+  overflow-y: auto;
+}
+.sel-note {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.sel-note.warn {
+  color: var(--warn, #d19a66);
+}
+.sel-empty {
+  padding: 10px 2px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.sel-kind-memory .sel-title {
+  color: var(--text-dim);
+}
+#drawer-status.bad {
+  color: var(--danger, #e06c75);
+}
+#drawer-status.armed {
+  color: var(--accent, #61afef);
+}
 #drawer-tall {
   font-size: 12px !important;
 }
@@ -4629,6 +4749,10 @@ body {
 }
 .drawer-pane.active {
   visibility: visible;
+}
+.drawer-pane[data-tab=ctl],
+.drawer-pane[data-tab=term] {
+  background: var(--bg);
 }
 #ipc-log-body {
   flex: 1;
@@ -4998,6 +5122,13 @@ body {
   line-height: 1;
   color: var(--accent);
 }
+.peer-shell-chip {
+  flex: none;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--warn);
+  letter-spacing: -1px;
+}
 .peer-state {
   margin-left: auto;
   font-style: italic;
@@ -5097,6 +5228,33 @@ body {
   content: " [remote]";
   color: var(--accent);
   font-size: 10px;
+}
+.session-item[data-served-terminal] .session-badges::after {
+  content: "\25ae_";
+  color: var(--warn);
+  font-size: 10px;
+  letter-spacing: -1px;
+}
+#served-terminal-banner {
+  margin: 6px 12px 10px;
+  padding: 8px 10px;
+  background: rgba(240, 173, 78, 0.14);
+  border: 1px solid rgba(240, 173, 78, 0.45);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#served-terminal-banner.hidden {
+  display: none;
+}
+.served-terminal-glyph {
+  color: var(--warn);
+  letter-spacing: -1px;
+  animation: pulse 1.5s ease-in-out infinite;
 }
 #peer-bar {
   position: absolute;
@@ -5499,6 +5657,15 @@ body {
       </div>
     </div>
     <div id="session-list"></div>
+    <!-- A peer is in a shell on this box right now (t219). Sits OUTSIDE
+         #session-list on purpose: the per-seat mark rides a row, and a served
+         seat can have no row at all — killed or archived, filtered out, or
+         owned by another window. This one is bound to the served-seat count
+         and to nothing else. -->
+    <div id="served-terminal-banner" class="hidden" data-tip="A peer has a shell open on this machine">
+      <span class="served-terminal-glyph">&#9646;_</span>
+      <span id="served-terminal-text">A peer has a shell open here</span>
+    </div>
     <div id="update-banner" class="hidden" data-tip="Click to view the release">
       <span class="update-dot">●</span>
       <span id="update-text">Update available</span>
@@ -5810,6 +5977,9 @@ body {
       <label id="peer-info-relay-row" class="peer-info-relay-row hidden" title="Let this peer's sessions see and DM sessions on your other relay-enabled peers, routed through this hub. Off by default.">
         <input type="checkbox" id="peer-info-relay"> Relay mesh — allow cross-peer see &amp; DM via this hub
       </label>
+      <label id="peer-info-shell-row" class="peer-info-relay-row hidden" title="Let peers open a terminal on THIS box, sharing the same shell your own Terminal tab shows. Off by default. The peer wire has no per-caller identity, so this enables the capability for anything that can reach your tunnel — not for one peer.">
+        <input type="checkbox" id="peer-info-shell"> Terminal sharing — let peers open a shell on this box
+      </label>
       <div class="popover-actions">
         <button id="peer-info-update" type="button" class="hidden">Update Clodex</button>
         <button id="peer-info-disable" type="button" class="secondary">Disable</button>
@@ -5872,6 +6042,10 @@ body {
       <div class="popover-title"><span>Touched Files — <span id="files-popover-name"></span></span><button type="button" class="popover-close" id="files-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div id="files-popover-body"></div>
     </div>
+    <div id="selection-popover" class="hidden">
+      <div class="popover-title"><span>Riding your next message — <span id="selection-popover-name"></span></span><button type="button" class="popover-close" id="selection-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div id="selection-popover-body"></div>
+    </div>
     <div id="file-peek-overlay" class="hidden">
       <div id="file-peek-modal">
         <div class="popover-title">
@@ -5909,8 +6083,11 @@ body {
       <div id="drawer-header">
         <div id="drawer-tabs"></div>
         <div id="drawer-actions"></div>
+        <span id="drawer-status"></span>
+        <button id="drawer-clipboard" title="What is riding your next message" type="button" aria-label="What is riding your next message">📋<span id="drawer-clipboard-count"></span></button>
+        <button id="drawer-copy" title="Copy the selected text" type="button">Copy</button>
         <button id="drawer-tall" title="Make the panel taller" type="button" aria-pressed="false">⇕</button>
-        <button id="drawer-toggle" title="Toggle panel" type="button">▲</button>
+        <button id="drawer-toggle" title="Toggle panel" type="button">▼</button>
       </div>
       <div id="drawer-panes"></div>
     </div>
@@ -6352,6 +6529,18 @@ body {
           <span>Rank hints with a local embedding model</span>
         </label>
         <span id="prefs-semantic-hints-why" class="prefs-dep-reason"></span>
+        <h5>Send the panel selection</h5>
+        <p class="hint-text">Two ways to hand the agent something from a bottom-panel tab, so you can point at a log line or a command's output without pasting it. <b>Selecting</b> alone is ephemeral: it rides the next request only, says it may be irrelevant, and is gone whether or not it was used — use it or lose it. <b>Copy</b> is a hard copy: it goes into the conversation itself on your next message and stays there, and still copies to your clipboard. Nothing is sent while the panel is collapsed, and any token from your clodexctl contexts is redacted first. Selecting needs wirescope running; Copy works either way. This is a separate decision from memory hints — it forwards whatever you highlighted, not what the agent wrote.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-selection-hints">
+          <span>Send text I select in the panel</span>
+        </label>
+        <h5>Tell the agent what you run in the terminal</h5>
+        <p class="hint-text">Each command you run in a session's Terminal tab is reported to that session's agent: the command line and its exit code, plus the tail of the output when it failed. A command that succeeded sends its line alone, not its output. Nothing is sent for the shared terminal when no session is selected, and nothing is sent while this is off. Reports ride along with your next message rather than interrupting the agent. This adds a small generated startup file to the terminal's shell so it can mark where each command begins and ends; your own <code>.zshrc</code> is sourced normally and is never modified. Requires zsh — another shell simply gets an ordinary terminal. Turning this on or off applies to terminals opened afterwards.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-terminal-reporting">
+          <span>Report the commands I run in a session's terminal</span>
+        </label>
         <div id="ws-logs-block" style="display: none;">
           <h5>Capture logs</h5>
           <p class="hint-text">The proxy keeps per-session request captures on disk to power cost and cache-bust forensics. They accrue over time; clearing collapses old sessions to their billing receipts (cost history is preserved — only the detailed request forensics are removed) and clears the probe-traffic bucket. Active, warm, and recent sessions are never touched.</p>
@@ -6630,6 +6819,11 @@ body {
         { name: "onSessionExit", kind: "on", channel: "session-exit" },
         { name: "onIpcMessage", kind: "on", channel: "ipc-message" },
         { name: "onSessionActivity", kind: "on", channel: "session-activity" },
+        // The seat's queued drawer attachments went out with a submit. The status
+        // line claims a delivery BEFORE it happens (the queue is drained by the CLI's
+        // own hook, which the app cannot observe directly), so this is what makes
+        // that claim stop.
+        { name: "onSelectionSent", kind: "on", channel: "selection-sent" },
         { name: "onPendingCount", kind: "on", channel: "pending-count" },
         { name: "onSessionTicket", kind: "on", channel: "session-ticket" },
         { name: "onSessionAttention", kind: "on", channel: "session-attention" },
@@ -6706,6 +6900,14 @@ body {
         { name: "ctlRun", kind: "invoke", channel: "ctl:run" },
         { name: "ctlContext", kind: "invoke", channel: "ctl:context" },
         { name: "ctlHelp", kind: "invoke", channel: "ctl:help" },
+        // The drawer's selection → wirescope tail hint. Under the SAME gate as the
+        // rest of the drawer family and for a sharper reason than either: it puts
+        // caller-supplied text into an agent's next request, so an ungated
+        // registration is a prompt-injection channel for any authenticated web
+        // connection.
+        { name: "drawerArmSelection", kind: "invoke", channel: "drawer:armSelection" },
+        { name: "drawerReleaseSelection", kind: "invoke", channel: "drawer:releaseSelection" },
+        { name: "drawerInspectSelection", kind: "invoke", channel: "drawer:inspectSelection" },
         // The drawer's terminal tenant (t215), same reasoning.
         { name: "wtermSpawn", kind: "invoke", channel: "wterm:spawn" },
         { name: "wtermWrite", kind: "invoke", channel: "wterm:write" },
@@ -6746,6 +6948,7 @@ body {
         { name: "peerForgetAttached", kind: "invoke", channel: "peer:forgetAttached" },
         { name: "peerSetDisabled", kind: "invoke", channel: "peer:setDisabled" },
         { name: "peerSetRelayAllowed", kind: "invoke", channel: "peer:setRelayAllowed" },
+        { name: "peerSetShellAllowed", kind: "invoke", channel: "peer:setShellAllowed" },
         { name: "peerControlledNames", kind: "invoke", channel: "peer:controlledNames" },
         { name: "peerForgetControlled", kind: "invoke", channel: "peer:forgetControlled" },
         { name: "peerVisible", kind: "invoke", channel: "peer:visible" },
@@ -6763,6 +6966,26 @@ body {
         { name: "peerSetSessionArgs", kind: "invoke", channel: "peer:setSessionArgs" },
         { name: "peerSkillCatalog", kind: "invoke", channel: "peer:skillCatalog" },
         { name: "peerSetSessionSkills", kind: "invoke", channel: "peer:setSessionSkills" },
+        // A terminal tab pointed at a peer seat's shell (t219). These take the
+        // renderer's COMPOSITE `name@peerId` key, unlike every peer row above, which
+        // takes (id, name) separately — the split happens once, in the main-side
+        // handler, so the `@` cannot reach the wire.
+        { name: "peerWtermOpen", kind: "invoke", channel: "peer:wtermOpen" },
+        { name: "peerWtermResize", kind: "invoke", channel: "peer:wtermResize" },
+        { name: "peerWtermClose", kind: "invoke", channel: "peer:wtermClose" },
+        { name: "peerWtermInput", kind: "send", channel: "peer:wtermInput" },
+        { name: "onPeerWtermReplay", kind: "on", channel: "peer-wterm-replay" },
+        { name: "onPeerWtermData", kind: "on", channel: "peer-wterm-data" },
+        { name: "onPeerWtermExit", kind: "on", channel: "peer-wterm-exit" },
+        { name: "onPeerWtermClosed", kind: "on", channel: "peer-wterm-closed" },
+        // The other DIRECTION of t219: seats on THIS box a peer is watching right
+        // now. Not the grant — the grant is a setting and peers-ui reads it from
+        // settings — but live attachment, which is the thing an operator must never
+        // have on their box unannounced.
+        { name: "onServedTerminals", kind: "on", channel: "served-terminals" },
+        // The GRANT changed in some window. Payload-free on purpose: the listener
+        // re-reads settings, so every window derives the chip the same way.
+        { name: "onPeerShellAllowed", kind: "on", channel: "peer-shell-allowed" },
         { name: "onPeerState", kind: "on", channel: "peer-state" },
         { name: "onPeerActivity", kind: "on", channel: "peer-activity" },
         { name: "onPeerReplay", kind: "on", channel: "peer-replay" },
@@ -18566,7 +18789,21 @@ ${i3.join("\n")}
       function pluginsEnabled(env = {}) {
         return String(env.CLODEX_PLUGINS ?? "") !== "0";
       }
+      var PLUGIN_SURFACES = Object.freeze(["desktop", "web"]);
+      var PLUGIN_METHOD_SURFACES = Object.freeze(["desktop", "any"]);
+      var DEFAULT_METHOD_SURFACE = "desktop";
+      function methodSurfaceOf(manifest, method) {
+        const table = manifest && manifest.surfaces;
+        if (!table || typeof table !== "object") return DEFAULT_METHOD_SURFACE;
+        const want = table[String(method)];
+        return want === "any" ? "any" : DEFAULT_METHOD_SURFACE;
+      }
+      function surfaceAllows(callerSurface, requiredSurface) {
+        if (callerSurface === "desktop") return true;
+        return requiredSurface === "any";
+      }
       var NO_SUCH_METHOD = "no such plugin method";
+      var NOT_ON_THIS_SURFACE = "plugin method not available on this surface";
       function errorEnvelope(error) {
         return { ok: false, error };
       }
@@ -18589,7 +18826,13 @@ ${i3.join("\n")}
         HOST_PSEUDO_ID,
         namespaced,
         pluginsEnabled,
+        PLUGIN_SURFACES,
+        PLUGIN_METHOD_SURFACES,
+        DEFAULT_METHOD_SURFACE,
+        methodSurfaceOf,
+        surfaceAllows,
         NO_SUCH_METHOD,
+        NOT_ON_THIS_SURFACE,
         errorEnvelope
       };
     }
@@ -20654,15 +20897,31 @@ ${m[2].replace(/^\r?\n/, "")}`;
   // renderer/drawer-host.js
   var require_drawer_host = __commonJS({
     "renderer/drawer-host.js"(exports, module) {
+      var ARM_DEBOUNCE_MS = 300;
       var TAB_IDS = Object.freeze(["log", "activity", "ctl", "term"]);
       var BADGE_MAX = 99;
-      function createDrawerHost({ refitActiveTerminal }) {
+      function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType = null, onArmChanged = null }) {
+        const armChanged = () => {
+          try {
+            if (onArmChanged) onArmChanged();
+          } catch {
+          }
+        };
+        const seatType = () => {
+          try {
+            return getSeatType ? getSeatType() : null;
+          } catch {
+            return null;
+          }
+        };
         const drawer = document.getElementById("drawer");
         const drawerHeader = document.getElementById("drawer-header");
         const tabsEl = document.getElementById("drawer-tabs");
         const actionsEl = document.getElementById("drawer-actions");
         const toggleBtn = document.getElementById("drawer-toggle");
         const tallBtn = document.getElementById("drawer-tall");
+        const copyBtn = document.getElementById("drawer-copy");
+        const statusEl = document.getElementById("drawer-status");
         const panesEl = document.getElementById("drawer-panes");
         const tenants = /* @__PURE__ */ new Map();
         let activeId = null;
@@ -20730,6 +20989,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           mountIfNeeded(rec);
           clearBadge(rec);
           if (!isCollapsed()) dispatchShow(rec);
+          syncCopy();
         }
         function syncTall() {
           const expanded = !isCollapsed();
@@ -20767,12 +21027,33 @@ ${m[2].replace(/^\r?\n/, "")}`;
               dispatchHide(rec);
             }
           }
+          syncCopy();
           refitSessionTerminal();
         }
         function open(id) {
           if (!tenants.has(id)) return;
           select(id);
           if (isCollapsed()) toggle();
+        }
+        function servesSeat(rec) {
+          if (!rec.def.availableFor) return true;
+          try {
+            return rec.def.availableFor(seatType());
+          } catch {
+            return true;
+          }
+        }
+        function syncSeatAvailability() {
+          let activeLost = false;
+          for (const rec of tenants.values()) {
+            const ok = servesSeat(rec);
+            rec.tabEl.classList.toggle("unavailable", !ok);
+            if (!ok && rec.id === activeId) activeLost = true;
+            if (!ok) clearBadge(rec);
+          }
+          if (!activeLost) return;
+          const next = TAB_IDS.map((id) => tenants.get(id)).find((r) => r && servesSeat(r));
+          if (next) select(next.id);
         }
         function register(def) {
           if (!TAB_IDS.includes(def.id)) throw new Error(`drawer: unknown tab id ${def.id}`);
@@ -20822,13 +21103,18 @@ ${m[2].replace(/^\r?\n/, "")}`;
           tenants.set(def.id, rec);
           const after = TAB_IDS.slice(TAB_IDS.indexOf(def.id) + 1).map((id) => tenants.get(id)).find(Boolean);
           tabsEl.insertBefore(tabEl, after ? after.tabEl : null);
-          if (activeId === null) selectFirst(rec);
-          return function notify(level) {
+          syncSeatAvailability();
+          if (activeId === null && servesSeat(rec)) selectFirst(rec);
+          function notify(level) {
             if (isVisible(rec.id)) return;
             rec.unread++;
             if (level === "attention") rec.attention = true;
             renderBadge(rec);
+          }
+          notify.selectionChanged = () => {
+            if (rec.id === activeId) syncCopy();
           };
+          return notify;
         }
         function selectFirst(rec) {
           activeId = rec.id;
@@ -20837,6 +21123,160 @@ ${m[2].replace(/^\r?\n/, "")}`;
           actionsEl.appendChild(rec.actions);
           mountIfNeeded(rec);
           if (!isCollapsed()) dispatchShow(rec);
+        }
+        function activeSelection() {
+          const rec = tenants.get(activeId);
+          if (!rec || !rec.def.selection) return "";
+          try {
+            return String(rec.def.selection() || "");
+          } catch {
+            return "";
+          }
+        }
+        function bytesLabel(n) {
+          return n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`;
+        }
+        function domSelection(el) {
+          const sel = window.getSelection && window.getSelection();
+          if (!sel || sel.isCollapsed || !sel.rangeCount || !el) return "";
+          for (let i = 0; i < sel.rangeCount; i++) {
+            if (!el.contains(sel.getRangeAt(i).commonAncestorContainer)) return "";
+          }
+          return String(sel);
+        }
+        let statusTimer = null;
+        function stickyText() {
+          const name = activeName();
+          if (name && attachedBy.has(name)) return attachedBy.get(name);
+          return peekOn && peekOn === name ? peekLabel : "";
+        }
+        function paintStatus() {
+          if (!statusEl) return;
+          const sticky = stickyText();
+          statusEl.textContent = sticky;
+          statusEl.classList.toggle("bad", false);
+          statusEl.classList.toggle("armed", !!sticky);
+        }
+        function refreshStatus() {
+          if (!statusTimer) paintStatus();
+        }
+        function flash(msg, failed = false) {
+          if (!statusEl) return;
+          clearTimeout(statusTimer);
+          statusEl.textContent = msg;
+          statusEl.classList.toggle("bad", !!failed);
+          statusEl.classList.remove("armed");
+          statusTimer = setTimeout(() => {
+            statusTimer = null;
+            paintStatus();
+          }, 1600);
+        }
+        function syncCopy() {
+          if (!copyBtn) return;
+          const has = !isCollapsed() && !!activeSelection().trim();
+          copyBtn.disabled = !has;
+          copyBtn.classList.toggle("armed", has);
+          scheduleArm();
+        }
+        let armTimer = null;
+        let peekOn = null;
+        let peekLabel = "";
+        const attachedBy = /* @__PURE__ */ new Map();
+        let armGen = 0;
+        const activeName = () => getActiveSession ? getActiveSession() : null;
+        function releasePeek() {
+          const name = peekOn;
+          armGen++;
+          peekOn = null;
+          peekLabel = "";
+          refreshStatus();
+          if (!name || !window.api.drawerReleaseSelection) return;
+          window.api.drawerReleaseSelection(name).then(armChanged, () => {
+          });
+        }
+        function label(res, fallback) {
+          const size = bytesLabel(res && res.bytes != null ? res.bytes : fallback);
+          return res && res.truncated ? `${size} (truncated)` : size;
+        }
+        async function armPeek() {
+          const name = activeName();
+          const text = activeSelection();
+          if (!name || isCollapsed() || !text.trim()) {
+            releasePeek();
+            return;
+          }
+          if (peekOn && peekOn !== name) releasePeek();
+          if (!window.api.drawerArmSelection) {
+            releasePeek();
+            return;
+          }
+          const gen = ++armGen;
+          peekOn = name;
+          let res;
+          try {
+            res = await window.api.drawerArmSelection(name, { text, tab: activeId, attach: false });
+          } catch {
+            if (gen === armGen) {
+              peekOn = null;
+              peekLabel = "";
+              refreshStatus();
+            }
+            return;
+          }
+          if (gen !== armGen) return;
+          if (res && res.armed) {
+            peekLabel = `riding next \xB7 ${label(res, text.length)}`;
+          } else {
+            peekOn = null;
+            peekLabel = "";
+          }
+          refreshStatus();
+          armChanged();
+        }
+        function scheduleArm() {
+          clearTimeout(armTimer);
+          armTimer = setTimeout(() => {
+            armTimer = null;
+            armPeek();
+          }, ARM_DEBOUNCE_MS);
+        }
+        async function copySelection() {
+          const text = activeSelection();
+          if (isCollapsed() || !text.trim()) {
+            flash("nothing selected", true);
+            return;
+          }
+          const name = activeName();
+          clearTimeout(armTimer);
+          armTimer = null;
+          armGen++;
+          peekOn = null;
+          peekLabel = "";
+          const clip = navigator.clipboard.writeText(text).then(() => null, (e) => e && e.message ? e.message : String(e));
+          const wire = name && window.api.drawerArmSelection ? window.api.drawerArmSelection(name, { text, tab: activeId, attach: true }).catch((e) => ({ armed: false, reason: e && e.message ? e.message : String(e) })) : Promise.resolve({ armed: false, reason: "no active session" });
+          const [clipErr, res] = await Promise.all([clip, wire]);
+          if (clipErr) {
+            flash(`copy failed: ${clipErr}`, true);
+            return;
+          }
+          const clipSize = bytesLabel(text.length);
+          if (res && res.handed) {
+            if (name) attachedBy.set(name, `sending \xB7 ${label(res, text.length)}`);
+            refreshStatus();
+            armChanged();
+            flash(`copied \xB7 ${clipSize} \xB7 sending`);
+            return;
+          }
+          flash(`copied \xB7 ${clipSize} \xB7 not sent (${res && res.reason || "unavailable"})`);
+        }
+        if (copyBtn) {
+          copyBtn.addEventListener("mousedown", (e) => e.preventDefault());
+          copyBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            copySelection();
+          });
+          document.addEventListener("selectionchange", syncCopy);
+          syncCopy();
         }
         function hasFocus() {
           return panesEl.contains(document.activeElement);
@@ -20862,7 +21302,45 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (rec && isVisible(rec.id)) dispatchResize(rec);
         }).observe(panesEl);
         window.api.onRequestOpenIpcLog(() => open("log"));
-        return { register, open, toggle, hasFocus };
+        function onSessionChanged() {
+          clearTimeout(armTimer);
+          armTimer = null;
+          releasePeek();
+          syncSeatAvailability();
+          const active = tenants.get(activeId);
+          if (active && active.shown && active.def.onSeatChanged) {
+            try {
+              active.def.onSeatChanged();
+            } catch {
+            }
+          }
+          refreshStatus();
+        }
+        function forgetSession(name) {
+          if (!name || !attachedBy.delete(name)) return;
+          if (peekOn === name) releasePeek();
+          refreshStatus();
+        }
+        function onSelectionSent(name) {
+          if (!name || !attachedBy.delete(name)) return;
+          refreshStatus();
+          armChanged();
+        }
+        return {
+          register,
+          open,
+          toggle,
+          hasFocus,
+          domSelection,
+          onSessionChanged,
+          forgetSession,
+          onSelectionSent,
+          // Separate from onSessionChanged because that one is deliberately skipped on
+          // the FIRST activation (nothing was armed yet, so there is no peek to
+          // release) — while tab availability must be right for the first seat the
+          // operator lands on, which is the common case at boot.
+          syncSeatAvailability
+        };
       }
       module.exports = { createDrawerHost, TAB_IDS };
     }
@@ -20985,7 +21463,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
           mount,
           onShow() {
             ipcLogBody.scrollTop = ipcLogBody.scrollHeight;
-          }
+          },
+          selection: () => host.domSelection(ipcLogBody)
         });
         window.api.onIpcMessage((msg) => {
           appendIpcEntry(msg);
@@ -21385,9 +21864,10 @@ helper=${d.helperPath}`;
         // Privileged (Task 27) — see PRIVILEGED_INTENTS. Gateable like the rest, but
         // OFF unless explicitly granted (absence does NOT enable it), and an
         // agent-initiated grant is stripped at the mint/wire boundary.
+        { type: "term", label: "Run commands in the seat's terminal (term) \u2014 privileged, off by default" },
         { type: "reboot", label: "Relaunch the app (reboot) \u2014 privileged, off by default" }
       ];
-      var PRIVILEGED_INTENTS = /* @__PURE__ */ new Set(["reboot"]);
+      var PRIVILEGED_INTENTS = /* @__PURE__ */ new Set(["reboot", "term"]);
       var GATEABLE_TYPES = new Set(GATEABLE_INTENTS.map((i) => i.type));
       function intentEnabled(type, intentsList) {
         if (!GATEABLE_TYPES.has(type)) return true;
@@ -22285,11 +22765,33 @@ helper=${d.helperPath}`;
           const hadMeta = !!rec.feed.meta();
           const { appended } = rec.feed.ingest(res.data || {});
           const metaArrived = !hadMeta && !!rec.feed.meta();
+          flushDeferredRender();
           if (!appended && !metaArrived) return;
           const nearBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 40;
-          renderFeed();
-          if (appended || nearBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
+          renderFeedUnlessSelecting(() => {
+            if (appended || nearBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
+          });
         }
+        let renderDeferred = null;
+        function renderFeedUnlessSelecting(after) {
+          if (bodyEl && host.domSelection(bodyEl).trim()) {
+            renderDeferred = after || (() => {
+            });
+            return;
+          }
+          renderDeferred = null;
+          renderFeed();
+          if (after) after();
+        }
+        function flushDeferredRender() {
+          if (!renderDeferred) return;
+          if (bodyEl && host.domSelection(bodyEl).trim()) return;
+          const after = renderDeferred;
+          renderDeferred = null;
+          renderFeed();
+          after();
+        }
+        document.addEventListener("selectionchange", flushDeferredRender);
         function startPolling() {
           gen++;
           fetchDetail();
@@ -22323,6 +22825,7 @@ helper=${d.helperPath}`;
           mount,
           onShow() {
             renderChips();
+            renderDeferred = null;
             renderFeed();
             bodyEl.scrollTop = bodyEl.scrollHeight;
             startPolling();
@@ -22330,7 +22833,8 @@ helper=${d.helperPath}`;
           onHide() {
             stopPolling();
             armBadge();
-          }
+          },
+          selection: () => host.domSelection(bodyEl)
         });
         for (const level of queuedNotifies.splice(0)) notify(level);
         function selectFeed(fk, name, key, label) {
@@ -22428,6 +22932,11 @@ helper=${d.helperPath}`;
           while (history.length > MAX_HISTORY) history.shift();
           running = true;
           inputEl.disabled = true;
+          const startedAt = Date.now();
+          const tick = setInterval(() => {
+            const s = Math.round((Date.now() - startedAt) / 1e3);
+            promptEl.textContent = s >= 10 ? `running ${s}s \u2014 no cancel; --timeout is the ceiling \u276F` : `running ${s}s \u276F`;
+          }, 1e3);
           try {
             const block = await window.api.ctlRun(line);
             pushBlock(block);
@@ -22441,8 +22950,10 @@ helper=${d.helperPath}`;
 `, exitCode: 1, ctx: ctxName, ts: Date.now() });
             notify("attention");
           } finally {
+            clearInterval(tick);
             running = false;
             inputEl.disabled = false;
+            renderPrompt();
             inputEl.focus();
           }
         }
@@ -22471,11 +22982,7 @@ helper=${d.helperPath}`;
           bodyEl.innerHTML = "";
           bodyEl.appendChild(emptyEl);
         }
-        function copyAll() {
-          const text = blocks.map((b) => `$ ${b.command}
-${b.output}`).join("\n");
-          if (text) navigator.clipboard.writeText(text);
-        }
+        const selectionInPane = () => host.domSelection(bodyEl);
         function renderHelp(el, data) {
           if (!data || !data.verbs || !data.verbs.length) {
             el.innerHTML = '<div class="ctl-help-note">Help is unavailable on this surface.</div>';
@@ -22485,7 +22992,8 @@ ${b.output}`).join("\n");
             const usage = v.subs ? `${v.verb} ${v.subs.join("|")} \u2026` : v.usage || v.verb;
             return `<div class="ctl-help-row"><code class="ctl-help-usage">${esc(usage)}</code><span class="ctl-help-sum">${esc(v.summary || "")}</span></div>`;
           }).join("");
-          el.innerHTML = `<div class="ctl-help-sec">These verbs run here</div>${rows}<div class="ctl-help-note">Everything else is refused \u2014 this console is read-only.<br>Type <code>help</code> for the full CLI index, or <code>&lt;verb&gt; --help</code> for one verb (including the ones that will not run here).</div>`;
+          const aliases = Array.isArray(data.ctxAliases) && data.ctxAliases.length ? `<div class="ctl-help-note"><code>${data.ctxAliases.map(esc).join("</code> <code>")}</code> also work without the <code>ctx</code> prefix.</div>` : "";
+          el.innerHTML = `<div class="ctl-help-sec">These verbs run here</div>${rows}${aliases}<div class="ctl-help-note">${esc(data.deferred || "")}<br>A block resolves once, so anything that streams or asks a question belongs in the Terminal tab.<br>Type <code>help</code> for the full CLI index, or <code>&lt;verb&gt; --help</code> for one verb (including the ones that will not run here).</div>`;
         }
         function wireHelpButton(pane, actions) {
           const btn = document.createElement("button");
@@ -22533,7 +23041,7 @@ ${b.output}`).join("\n");
         function mount(pane, actions) {
           pane.innerHTML = `
       <div id="ctl-body">
-        <div id="ctl-empty">clodexctl \u2014 read-only verbs: <code>info</code>, <code>sessions</code>, <code>query</code>, <code>ctx \u2026</code>, <code>args get</code>. Type <code>help</code> for the full index.</div>
+        <div id="ctl-empty">clodexctl against your current context. Press <code>?</code> for what runs here, or type <code>help</code> for the full index.</div>
       </div>
       <div id="ctl-input-row">
         <span id="ctl-prompt">(no context) \u276F</span>
@@ -22571,17 +23079,7 @@ ${b.output}`).join("\n");
             e.stopPropagation();
             clear();
           });
-          const copyBtn = document.createElement("button");
-          copyBtn.type = "button";
-          copyBtn.id = "ctl-copy";
-          copyBtn.title = "Copy every block as text";
-          copyBtn.textContent = "Copy";
-          copyBtn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            copyAll();
-          });
           wireHelpButton(pane, actions);
-          actions.appendChild(copyBtn);
           actions.appendChild(clearBtn);
         }
         function onShow() {
@@ -22601,11 +23099,72 @@ ${b.output}`).join("\n");
           // inert rather than dangerous. The boundary is registration, not this.
           available: () => !window.__CLODEX_WEB__,
           mount,
-          onShow
+          onShow,
+          selection: selectionInPane
         });
         return { open: () => host.open("ctl") };
       }
       module.exports = { createCtlTab, MAX_BLOCKS };
+    }
+  });
+
+  // drawer-avail.js
+  var require_drawer_avail = __commonJS({
+    "drawer-avail.js"(exports, module) {
+      "use strict";
+      function termAvailableFor(type) {
+        return type !== "bash" && type !== "remote";
+      }
+      function termBackendFor(seat) {
+        const type = seat && seat.type;
+        if (type === "bash") return null;
+        if (type === "remote") return seat && seat.peerHasShell ? "peer" : null;
+        return "local";
+      }
+      var TERM_EXEC_MAX = 2048;
+      var CTRL_RE = new RegExp("[\\u0000-\\u001F\\u007F\\u0080-\\u009F\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069\\uFEFF]");
+      var CTRL_WHY = /* @__PURE__ */ new Map([
+        [10, "a newline (LF) \u2014 everything before it would execute immediately"],
+        [13, "a carriage return (CR) \u2014 everything before it would execute immediately"],
+        [27, "an escape (ESC) \u2014 some terminals answer escape sequences by writing to their own stdin, which injects bytes you did not send"],
+        [9, "a tab \u2014 the shell would treat it as a completion request, not whitespace"],
+        [0, "a NUL byte"],
+        // The display-vs-bytes family. Each of these renders as nothing (or reorders
+        // what follows) while still being part of the command the shell runs, so the
+        // line the operator watches is not the line that executes.
+        [8203, "a zero-width space \u2014 invisible, but part of the command the shell would run"],
+        [8204, "a zero-width non-joiner \u2014 invisible, but part of the command the shell would run"],
+        [8205, "a zero-width joiner \u2014 invisible, but part of the command the shell would run"],
+        [8206, "a left-to-right mark \u2014 it changes how the line DISPLAYS without changing what runs"],
+        [8207, "a right-to-left mark \u2014 it changes how the line DISPLAYS without changing what runs"],
+        [8234, "a bidi embedding \u2014 the line your operator SEES would not be the line that runs"],
+        [8235, "a bidi embedding \u2014 the line your operator SEES would not be the line that runs"],
+        [8236, "a bidi override terminator \u2014 the line your operator SEES would not be the line that runs"],
+        [8237, "a bidi override \u2014 the line your operator SEES would not be the line that runs"],
+        [8238, "a bidi override \u2014 the line your operator SEES would not be the line that runs"],
+        [8294, "a bidi isolate \u2014 the line your operator SEES would not be the line that runs"],
+        [8295, "a bidi isolate \u2014 the line your operator SEES would not be the line that runs"],
+        [8296, "a bidi isolate \u2014 the line your operator SEES would not be the line that runs"],
+        [8297, "a bidi isolate terminator \u2014 the line your operator SEES would not be the line that runs"],
+        [65279, "a zero-width no-break space (BOM) \u2014 invisible, but part of the command the shell would run"]
+      ]);
+      function vetTermCommand(raw) {
+        const s = typeof raw === "string" ? raw : "";
+        const cmd = s.trim();
+        if (!cmd) return { ok: false, error: "no command \u2014 [agent:term exec] needs the command on the same line or the lines below it" };
+        const bytes = Buffer.byteLength(cmd, "utf8");
+        if (bytes > TERM_EXEC_MAX) {
+          return { ok: false, error: `command is ${bytes} bytes, over the ${TERM_EXEC_MAX}-byte limit \u2014 put a long command in a script and run that` };
+        }
+        const m = cmd.match(CTRL_RE);
+        if (m) {
+          const code = m[0].charCodeAt(0);
+          const why = CTRL_WHY.get(code) || `a control character (U+${code.toString(16).toUpperCase().padStart(4, "0")})`;
+          return { ok: false, error: `command contains ${why} at position ${m.index} \u2014 rejected, not stripped: silently removing it would run a command you did not write. Send one line.` };
+        }
+        return { ok: true, command: cmd };
+      }
+      module.exports = { termAvailableFor, termBackendFor, vetTermCommand, TERM_EXEC_MAX };
     }
   });
 
@@ -22614,14 +23173,46 @@ ${b.output}`).join("\n");
     "renderer/term-tab.js"(exports, module) {
       var { Terminal } = require_xterm();
       var { FitAddon } = require_addon_fit();
-      function createTermTab({ host, xtermTheme }) {
+      var { termBackendFor } = require_drawer_avail();
+      function createTermTab({ host, xtermTheme, getActiveSession, getSeatType = null, getSeatShellCap = null }) {
+        let seat = null;
+        let pending = null;
         let terminal = null;
         let fitAddon = null;
         let hostEl = null;
         let opened = false;
         let drawn = false;
-        let notify = () => {
-        };
+        let notify = Object.assign(() => {
+        }, { selectionChanged: () => {
+        } });
+        const shellCap = () => !!(getSeatShellCap && getSeatShellCap());
+        const backendNow = () => termBackendFor({
+          type: getSeatType ? getSeatType() : null,
+          peerHasShell: shellCap()
+        });
+        let backend = null;
+        function flushPending(upto) {
+          const held2 = pending || [];
+          pending = null;
+          for (const h of held2) {
+            if (typeof h.seq === "number" && typeof upto === "number" && h.seq <= upto) continue;
+            terminal.write(h.data);
+          }
+        }
+        let held = null;
+        let openGen = 0;
+        let openedOk = false;
+        function releasePeer() {
+          openedOk = false;
+          if (!held) return;
+          const which = held;
+          held = null;
+          try {
+            window.api.peerWtermClose(which).catch(() => {
+            });
+          } catch {
+          }
+        }
         function mount(pane, actions) {
           pane.innerHTML = '<div id="wterm-host"></div>';
           hostEl = pane.querySelector("#wterm-host");
@@ -22635,13 +23226,51 @@ ${b.output}`).join("\n");
           fitAddon = new FitAddon();
           terminal.loadAddon(fitAddon);
           terminal.onData((d) => {
-            window.api.wtermWrite(d);
+            if (backend === "peer") window.api.peerWtermInput(seat, d);
+            else if (backend === "local") window.api.wtermWrite(seat, d);
           });
-          window.api.onWtermData((data) => {
+          window.api.onWtermData((data, from, seq) => {
             if (!terminal) return;
+            if (backend === "peer") return;
+            if (from !== void 0 && (from || null) !== seat) return;
+            if (pending) {
+              pending.push({ data, seq });
+              return;
+            }
             terminal.write(data);
             notify();
           });
+          const mine = (from) => backend === "peer" && seat && String(seat).split("@")[0] === from;
+          window.api.onPeerWtermReplay((_id, from, snap) => {
+            if (!terminal || !mine(from)) return;
+            terminal.write(snap && snap.data ? snap.data : "");
+            flushPending(null);
+            drawn = true;
+          });
+          window.api.onPeerWtermData((_id, from, data) => {
+            if (!terminal || !mine(from)) return;
+            if (pending) {
+              pending.push({ data, seq: null });
+              return;
+            }
+            terminal.write(data);
+            notify();
+          });
+          window.api.onPeerWtermExit((_id, from, code) => {
+            if (!terminal || !mine(from)) return;
+            terminal.write(typeof code === "number" ? `\r
+\x1B[33mthe remote shell exited (${code})\x1B[0m\r
+` : `\r
+\x1B[33mthe remote terminal was closed on that box\x1B[0m\r
+`);
+          });
+          window.api.onPeerWtermClosed((_id, from, why) => {
+            if (!terminal || !mine(from)) return;
+            terminal.write(`\r
+\x1B[31m${why || "the remote terminal closed"}\x1B[0m\r
+`);
+          });
+          terminal.onSelectionChange(() => notify.selectionChanged());
           const clearBtn = document.createElement("button");
           clearBtn.type = "button";
           clearBtn.id = "wterm-clear";
@@ -22659,25 +23288,76 @@ ${b.output}`).join("\n");
             terminal.open(hostEl);
             opened = true;
           }
+          const want = getActiveSession && getActiveSession() || null;
+          if (want !== seat) {
+            releasePeer();
+            seat = want;
+            drawn = false;
+            terminal.reset();
+          }
+          backend = backendNow();
           const dims = fitAddon.proposeDimensions();
-          window.api.wtermSpawn({ cols: dims && dims.cols, rows: dims && dims.rows }).then((res) => {
+          const asked = seat;
+          pending = [];
+          if (!backend) {
+            releasePeer();
+            pending = null;
+            terminal.write("\r\n\x1B[33mno terminal for this session \u2014 the peer is offline, or terminal sharing was turned off on that box\x1B[0m\r\n");
+            return;
+          }
+          if (backend === "peer") {
+            held = seat;
+            const gen = ++openGen;
+            window.api.peerWtermOpen(seat).then((res) => {
+              if (!terminal || asked !== seat) {
+                pending = null;
+                return;
+              }
+              if (!res || !res.ok) {
+                terminal.write(`\r
+\x1B[31m${res && res.error || "failed to open the remote terminal"}\x1B[0m\r
+`);
+                pending = null;
+                if (gen === openGen && !openedOk) held = null;
+              } else {
+                openedOk = true;
+              }
+            }).catch(() => {
+              pending = null;
+              if (asked === seat && gen === openGen && !openedOk) held = null;
+            });
+            terminal.focus();
+            return;
+          }
+          window.api.wtermSpawn({ seat, cols: dims && dims.cols, rows: dims && dims.rows }).then((res) => {
             if (!terminal) return;
+            if (asked !== seat) {
+              pending = null;
+              return;
+            }
             if (!res || !res.ok) {
               terminal.write(`\r
 \x1B[31m${res && res.error || "failed to start a shell"}\x1B[0m\r
 `);
+              pending = null;
               return;
             }
             if (!drawn && !res.fresh && res.scrollback) terminal.write(res.scrollback);
             drawn = true;
+            flushPending(res.seq);
           }).catch(() => {
+            pending = null;
           });
           terminal.focus();
+        }
+        function onHide() {
+          releasePeer();
         }
         function onResize() {
           if (!terminal || !opened) return;
           fitAddon.fit();
-          window.api.wtermResize(terminal.cols, terminal.rows);
+          if (backend === "peer") window.api.peerWtermResize(seat, terminal.cols, terminal.rows);
+          else if (backend === "local") window.api.wtermResize(seat, terminal.cols, terminal.rows);
         }
         notify = host.register({
           id: "term",
@@ -22686,9 +23366,30 @@ ${b.output}`).join("\n");
           // from that host's map (engine's enableDrawerServices gate), so the tab
           // would be inert rather than a remote shell. The boundary is registration.
           available: () => !window.__CLODEX_WEB__,
+          // The seat axis, re-evaluated on every session switch (drawer-host's
+          // `availableFor`). A bash seat already IS a shell, so it never gets a tab;
+          // a peer seat gets one only while that box advertises the `shell` cap.
+          //
+          // The host passes the seat TYPE, but the peer case needs a second fact, so
+          // this reads `getSeatType`/`getSeatShellCap` directly and ignores the
+          // argument. Deliberately NOT routed through termAvailableFor: that one is
+          // the AGENT-facing predicate (session-manager's `[agent:term exec]`), and
+          // teaching it about peer backends would make remote agent exec a one-line
+          // addition. Two predicates, two questions — see drawer-avail.js.
+          availableFor: () => backendNow() !== null,
           mount,
           onShow,
-          onResize
+          onHide,
+          onResize,
+          // Rule 5: the terminal's selected text lives in xterm's model, not the DOM.
+          selection: () => terminal ? terminal.getSelection() : "",
+          // The shell is per-seat, so a switch is a different shell. onShow does the
+          // whole job (clear, re-key, replay) and is idempotent about a seat that did
+          // not actually change, so this is a plain re-entry rather than a second
+          // acquisition path that could drift from it.
+          // The host only calls this on the VISIBLE tenant, so there is no visibility
+          // check here — adding one would duplicate a rule that lives in the host.
+          onSeatChanged: () => onShow()
         });
         return { open: () => host.open("term") };
       }
@@ -22798,6 +23499,9 @@ ${b.output}`).join("\n");
           }
           if (item.dataset.remoteControl) {
             parts.push(`<div class="hovercard-note hc-attn">Remote control: ${esc(item.dataset.remoteControl)}</div>`);
+          }
+          if (item.dataset.servedTerminal) {
+            parts.push('<div class="hovercard-note hc-attn">A peer is watching this seat\u2019s terminal</div>');
           }
           if (type === "remote") parts.push('<div class="hovercard-hint">click to attach</div>');
           else parts.push('<div class="hovercard-hint">double-click the name to rename</div>');
@@ -23920,6 +24624,205 @@ ${b.output}`).join("\n");
         return { openFilesPopover, openFilePeek, isFilesPopoverForKey };
       }
       module.exports = { initFilesPopover };
+    }
+  });
+
+  // renderer/lib/selection-view.js
+  var require_selection_view = __commonJS({
+    "renderer/lib/selection-view.js"(exports, module) {
+      "use strict";
+      var MEMORY_HINT_ID = "memory-context";
+      var PEEK_HINT_ID = "operator-selection";
+      function bytes(n) {
+        if (!Number.isFinite(n)) return "";
+        return n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} kB`;
+      }
+      function remainingS(h) {
+        if (!h || typeof h.ttlS !== "number" || typeof h.ageS !== "number") return null;
+        return Math.max(0, Math.round(h.ttlS - h.ageS));
+      }
+      function fmtLeft(sec) {
+        if (sec == null) return "";
+        if (sec >= 60) return `${Math.round(sec / 60)}m left`;
+        return `${sec}s left`;
+      }
+      function buildRows(data) {
+        if (!data) return { rows: [], note: "No active session." };
+        if (!data.enabled) {
+          return { rows: [], note: 'Sending selected text is off. Preferences \u2192 "Send text I select in the panel".' };
+        }
+        const rows = [];
+        const proxyHints = data.proxy && Array.isArray(data.proxy.hints) ? data.proxy.hints : [];
+        const byId = new Map(proxyHints.map((h) => [h.id, h]));
+        const livePeek = byId.get(PEEK_HINT_ID) || null;
+        const memoPeek = data.local && data.local.peek || null;
+        if (livePeek) {
+          rows.push({
+            kind: "peek",
+            title: "Selected text",
+            text: livePeek.text,
+            meta: [fmtLeft(remainingS(livePeek)), "one-shot"].filter(Boolean).join(" \xB7 "),
+            note: memoPeek ? "" : "Clodex did not think this was armed \u2014 a POST timed out but landed.",
+            warn: !memoPeek
+          });
+        } else if (memoPeek) {
+          rows.push({
+            kind: "peek-gone",
+            title: "Selected text",
+            text: memoPeek.text,
+            meta: "delivered or expired",
+            note: data.proxy && data.proxy.error ? `Could not check the proxy: ${data.proxy.error}` : "The proxy no longer holds this \u2014 it rode a request, or its 2 minutes ran out.",
+            warn: false
+          });
+        }
+        const queued = Array.isArray(data.queued) ? data.queued : [];
+        for (const text of queued) {
+          rows.push({
+            kind: "attach",
+            title: "Copied text",
+            text,
+            meta: "waiting for your next message",
+            note: "",
+            warn: false
+          });
+        }
+        const pending = data.local && data.local.pending || [];
+        if (pending.length !== queued.length) {
+          rows.push({
+            kind: "note",
+            title: "",
+            text: "",
+            meta: "",
+            note: `Clodex queued ${pending.length}, the file holds ${queued.length} \u2014 the hook drains on each message.`,
+            warn: false
+          });
+        }
+        const mem = byId.get(MEMORY_HINT_ID);
+        if (mem) {
+          rows.push({
+            kind: "memory",
+            title: "Memory hint",
+            text: mem.text,
+            meta: [fmtLeft(remainingS(mem)), "one-shot"].filter(Boolean).join(" \xB7 "),
+            note: "",
+            warn: false
+          });
+        }
+        for (const h of proxyHints) {
+          if (h.id === PEEK_HINT_ID || h.id === MEMORY_HINT_ID) continue;
+          rows.push({
+            kind: "other",
+            title: h.id,
+            text: h.text,
+            meta: [fmtLeft(remainingS(h)), h.turnStartOnly ? "turn start" : ""].filter(Boolean).join(" \xB7 "),
+            note: "",
+            warn: false
+          });
+        }
+        if (rows.length) return { rows, note: "" };
+        if (data.proxy && data.proxy.error) {
+          return { rows, note: `Nothing queued. Could not reach the proxy: ${data.proxy.error}` };
+        }
+        if (data.proxy && !data.proxy.routed) {
+          return { rows, note: "Nothing is riding. This session does not route through wirescope, so selecting will not send \u2014 Copy still will." };
+        }
+        return { rows, note: "Nothing is on its way to this agent." };
+      }
+      function liveCount(data) {
+        if (!data || !data.enabled) return 0;
+        const hints = data.proxy && Array.isArray(data.proxy.hints) ? data.proxy.hints.length : 0;
+        const queued = Array.isArray(data.queued) ? data.queued.length : 0;
+        return hints + queued;
+      }
+      module.exports = { buildRows, liveCount, bytes, remainingS, fmtLeft, MEMORY_HINT_ID, PEEK_HINT_ID };
+    }
+  });
+
+  // renderer/popovers/selection-popover.js
+  var require_selection_popover = __commonJS({
+    "renderer/popovers/selection-popover.js"(exports, module) {
+      "use strict";
+      var { esc } = require_format();
+      var { buildRows, liveCount } = require_selection_view();
+      function initSelectionPopover({ getActiveSession }) {
+        const pop = document.getElementById("selection-popover");
+        const nameEl = document.getElementById("selection-popover-name");
+        const body = document.getElementById("selection-popover-body");
+        const btn = document.getElementById("drawer-clipboard");
+        const countEl = document.getElementById("drawer-clipboard-count");
+        if (!pop || !btn) return { openSelectionPopover: () => {
+        }, refreshSelectionBadge: () => {
+        } };
+        function close() {
+          pop.classList.add("hidden");
+          pop.dataset.name = "";
+        }
+        function render(data) {
+          const { rows, note } = buildRows(data);
+          if (!rows.length) return `<div class="sel-empty">${esc(note)}</div>`;
+          return rows.map((r) => {
+            const head = r.title || r.meta ? `<div class="sel-head"><span class="sel-title">${esc(r.title)}</span><span class="sel-meta">${esc(r.meta)}</span></div>` : "";
+            const text = r.text ? `<div class="sel-text">${esc(r.text)}</div>` : "";
+            const n = r.note ? `<div class="sel-note${r.warn ? " warn" : ""}">${esc(r.note)}</div>` : "";
+            return `<div class="sel-row sel-kind-${esc(r.kind)}">${head}${text}${n}</div>`;
+          }).join("");
+        }
+        async function fetchFor(name) {
+          if (!name || !window.api.drawerInspectSelection) return null;
+          try {
+            return await window.api.drawerInspectSelection(name);
+          } catch {
+            return null;
+          }
+        }
+        async function refreshBadge() {
+          const name = getActiveSession ? getActiveSession() : null;
+          if (!name) {
+            btn.classList.remove("live");
+            countEl.textContent = "";
+            return;
+          }
+          const data = await fetchFor(name);
+          if (!data) return;
+          const n = liveCount(data);
+          btn.classList.toggle("live", n > 0);
+          countEl.textContent = n > 0 ? String(n) : "";
+        }
+        async function open() {
+          const name = getActiveSession ? getActiveSession() : null;
+          if (!name) return;
+          if (pop.dataset.name === name && !pop.classList.contains("hidden")) {
+            close();
+            return;
+          }
+          nameEl.textContent = name;
+          pop.dataset.name = name;
+          body.innerHTML = '<div class="sel-empty">Checking\u2026</div>';
+          pop.classList.remove("hidden");
+          const r = btn.getBoundingClientRect();
+          const w = pop.offsetWidth;
+          pop.style.left = `${Math.round(Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)))}px`;
+          const data = await fetchFor(name);
+          if (pop.dataset.name !== name || pop.classList.contains("hidden")) return;
+          body.innerHTML = data ? render(data) : '<div class="sel-empty">Could not read what is queued.</div>';
+          pop.style.top = `${Math.round(Math.max(8, r.top - pop.offsetHeight - 8))}px`;
+          const n = liveCount(data);
+          btn.classList.toggle("live", n > 0);
+          countEl.textContent = n > 0 ? String(n) : "";
+        }
+        btn.addEventListener("click", open);
+        document.addEventListener("mousedown", (e) => {
+          if (pop.classList.contains("hidden")) return;
+          if (pop.contains(e.target) || e.target.closest("#drawer-clipboard")) return;
+          close();
+        });
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Escape" && !pop.classList.contains("hidden")) close();
+        });
+        document.getElementById("selection-popover-close").addEventListener("click", close);
+        return { openSelectionPopover: open, closeSelectionPopover: close, refreshSelectionBadge: refreshBadge };
+      }
+      module.exports = { initSelectionPopover };
     }
   });
 
@@ -25773,6 +26676,30 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
     }
   });
 
+  // renderer/lib/served-banner.js
+  var require_served_banner = __commonJS({
+    "renderer/lib/served-banner.js"(exports, module) {
+      "use strict";
+      function servedBannerView(seats) {
+        const live = Array.isArray(seats) ? [...new Set(seats.map(String))] : [];
+        if (live.length === 0) return { hidden: true, text: "", tip: "" };
+        if (live.length === 1) {
+          return {
+            hidden: false,
+            text: `A peer has a shell open on ${live[0]}`,
+            tip: `A peer is watching ${live[0]}'s terminal on this machine`
+          };
+        }
+        return {
+          hidden: false,
+          text: `Peers have shells open on ${live.length} sessions`,
+          tip: `Peers are watching these terminals on this machine: ${live.join(", ")}`
+        };
+      }
+      module.exports = { servedBannerView };
+    }
+  });
+
   // renderer/peers-ui.js
   var require_peers_ui = __commonJS({
     "renderer/peers-ui.js"(exports, module) {
@@ -25785,6 +26712,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       var { nextVisibleWithName } = require_peer_visibility();
       var { openUrl: sandboxOpenUrl } = require_sandbox_view();
       var { webViewAffordance } = require_peer_web_view();
+      var { servedBannerView } = require_served_banner();
       function initPeersUi({
         sessions,
         sessionList,
@@ -25800,6 +26728,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         peerTunnels,
         peerWebTunnels,
         getOurAppVersion,
+        syncSeatAvailability,
         getDeployLineHandlers,
         proxyState,
         ctxPct,
@@ -25832,6 +26761,27 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         function peerDisplayHost(st) {
           return st && (st.host || st.label) || "peer";
         }
+        let shellAllowedIds = /* @__PURE__ */ new Set();
+        async function refreshShellAllowed() {
+          let s = null;
+          try {
+            s = await window.api.getSettings();
+          } catch {
+            return;
+          }
+          const next = new Set((s && s.peers || []).filter((p) => p && p.shellAllowed).map((p) => String(p.id)));
+          const changed = next.size !== shellAllowedIds.size || [...next].some((x) => !shellAllowedIds.has(x));
+          shellAllowedIds = next;
+          if (changed) renderPeers();
+        }
+        refreshShellAllowed();
+        const reevaluateSeatTabs = () => {
+          if (syncSeatAvailability) syncSeatAvailability();
+        };
+        window.api.onPeerShellAllowed(() => {
+          refreshShellAllowed();
+          reevaluateSeatTabs();
+        });
         let boxIds = /* @__PURE__ */ new Set();
         async function refreshBoxIds() {
           let boxes = [];
@@ -25933,7 +26883,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             const off = st.online ? "" : "disabled";
             const isBox = boxIds.has(id);
             const webView = isBox ? { show: false } : webViewAffordance({ status: st, tunnel: tun, webTunnel: peerWebTunnels.get(id) });
-            header.innerHTML = `<span class="peer-dot ${st.online ? "online" : ""}"></span>` + (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : "") + `<span class="peer-label${nameSev}">${esc(hostLabel)}</span><span class="peer-state">${esc(stateText)}</span><span class="peer-actions">` + (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : "") + (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}\u2019s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : "") + (webView.show ? `<button class="peer-select peer-webview peer-webview-${webView.phase}" data-tip="${esc(webView.tip)}" aria-label="${esc(webView.tip)}" ${webView.enabled ? "" : "disabled"}>&#8599;</button>` : "") + `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button><button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` + (st.online && st.version ? `<button class="peer-select peer-info peer-sev-${sev}" data-tip="Peer identity & version" aria-label="Peer identity">&#9432;</button>` : "") + `</span>`;
+            header.innerHTML = `<span class="peer-dot ${st.online ? "online" : ""}"></span>` + (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : "") + (shellAllowedIds.has(String(id)) ? `<span class="peer-shell-chip" data-tip="Terminal sharing is ON \u2014 peers can open a shell on this box" aria-label="Terminal sharing on">&#9646;_</span>` : "") + `<span class="peer-label${nameSev}">${esc(hostLabel)}</span><span class="peer-state">${esc(stateText)}</span><span class="peer-actions">` + (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : "") + (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}\u2019s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : "") + (webView.show ? `<button class="peer-select peer-webview peer-webview-${webView.phase}" data-tip="${esc(webView.tip)}" aria-label="${esc(webView.tip)}" ${webView.enabled ? "" : "disabled"}>&#8599;</button>` : "") + `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button><button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` + (st.online && st.version ? `<button class="peer-select peer-info peer-sev-${sev}" data-tip="Peer identity & version" aria-label="Peer identity">&#9432;</button>` : "") + `</span>`;
             header.querySelector(".peer-eye").addEventListener("click", (e) => {
               e.stopPropagation();
               openPeerSelectPopover(id, e.currentTarget);
@@ -26430,6 +27380,7 @@ ${detail}` });
           peerStatuses.set(id, status);
           renderPeers();
           renderPeerBar();
+          reevaluateSeatTabs();
           maybeRestorePeer(id);
           if (isNewPeer && !boxIds.has(id)) refreshBoxIds();
         });
@@ -26595,6 +27546,23 @@ ${detail}` });
           if (!el) return;
           if (holder) el.dataset.remoteControl = holder;
           else delete el.dataset.remoteControl;
+        });
+        const servedBanner = document.getElementById("served-terminal-banner");
+        const servedText = document.getElementById("served-terminal-text");
+        window.api.onServedTerminals((seats) => {
+          const live = new Set(Array.isArray(seats) ? seats.map(String) : []);
+          for (const el of sessionList.querySelectorAll("[data-served-terminal]")) {
+            if (!live.has(el.dataset.name)) delete el.dataset.servedTerminal;
+          }
+          for (const seat of live) {
+            const el = sessionList.querySelector(`[data-name="${CSS.escape(seat)}"]`);
+            if (el) el.dataset.servedTerminal = "1";
+          }
+          if (!servedBanner) return;
+          const view = servedBannerView([...live]);
+          if (servedText) servedText.textContent = view.text;
+          servedBanner.dataset.tip = view.tip;
+          servedBanner.classList.toggle("hidden", view.hidden);
         });
         window.api.peerList().then((statuses) => {
           for (const st of statuses || []) {
@@ -26812,6 +27780,8 @@ ${detail}` });
         const peerInfoDisableBtn = document.getElementById("peer-info-disable");
         const peerInfoRelayRow = document.getElementById("peer-info-relay-row");
         const peerInfoRelayCheck = document.getElementById("peer-info-relay");
+        const peerInfoShellRow = document.getElementById("peer-info-shell-row");
+        const peerInfoShellCheck = document.getElementById("peer-info-shell");
         function closePeerInfoPopover() {
           peerInfoPopover.classList.add("hidden");
           peerInfoPopover.dataset.peerId = "";
@@ -26820,6 +27790,8 @@ ${detail}` });
           peerInfoDisableBtn.onclick = null;
           peerInfoRelayRow.classList.add("hidden");
           peerInfoRelayCheck.onchange = null;
+          peerInfoShellRow.classList.add("hidden");
+          peerInfoShellCheck.onchange = null;
         }
         function openPeerInfoPopover(id, anchorBtn) {
           const st = peerStatuses.get(id);
@@ -26865,6 +27837,8 @@ ${detail}` });
           };
           peerInfoRelayRow.classList.add("hidden");
           peerInfoRelayCheck.onchange = null;
+          peerInfoShellRow.classList.add("hidden");
+          peerInfoShellCheck.onchange = null;
           window.api.getSettings().then((s) => {
             if (peerInfoPopover.classList.contains("hidden") || peerInfoPopover.dataset.peerId !== String(id)) return;
             const cfg = (s && s.peers || []).find((p) => String(p.id) === String(id));
@@ -26873,6 +27847,17 @@ ${detail}` });
             peerInfoRelayCheck.onchange = () => {
               window.api.peerSetRelayAllowed(id, peerInfoRelayCheck.checked).catch(() => {
               });
+            };
+            peerInfoShellCheck.checked = !!(cfg && cfg.shellAllowed);
+            peerInfoShellRow.classList.remove("hidden");
+            peerInfoShellCheck.onchange = () => {
+              const on = peerInfoShellCheck.checked;
+              window.api.peerSetShellAllowed(id, on).then(() => refreshShellAllowed()).catch(() => {
+              });
+              showToast(
+                on ? "Terminal sharing ON \u2014 any peer that can reach your tunnel can open a shell here." : "Terminal sharing off \u2014 open remote shells were closed.",
+                { kind: on ? "warm" : "peer-ui" }
+              );
             };
           }).catch(() => {
           });
@@ -27713,6 +28698,7 @@ ${detail}` });
       var { initBustPopover } = require_bust_popover();
       var { initSessionInfoPopover } = require_session_info_popover();
       var { initFilesPopover } = require_files_popover();
+      var { initSelectionPopover } = require_selection_popover();
       var { initChecklistPopovers } = require_checklist_popovers();
       var { initTeamRolesPopover } = require_team_roles_popover();
       var { initContextPopover } = require_context_popover();
@@ -28789,7 +29775,10 @@ ${detail}` });
       function switchSession(name) {
         if (!sessions.has(name)) return;
         if (isSearchOpen()) closeSearch();
+        const wasActive = activeSession;
         activeSession = name;
+        if (wasActive && wasActive !== name) drawerHost.onSessionChanged();
+        else drawerHost.syncSeatAvailability();
         for (const [n, s] of sessions) {
           s.wrapperEl.classList.toggle("visible", n === name);
         }
@@ -28835,6 +29824,7 @@ ${detail}` });
           s.wrapperEl.remove();
           sessions.delete(name);
         }
+        drawerHost.forgetSession(name);
         removeSessionFromSidebar(name);
         updateWindowTitle();
         proxyState.delete(name);
@@ -29839,6 +30829,7 @@ ${detail}` });
           }
         }
       });
+      window.api.onSelectionSent((name) => drawerHost.onSelectionSent(name));
       window.api.onSessionActivity((name, state) => {
         const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         if (!el) return;
@@ -30596,7 +31587,20 @@ Click for live activity`;
         setTimeout(() => el.classList.remove("mention-pulse"), 2e3);
         if (window.__CLODEX_WEB__ && !document.hasFocus()) webNotifier.raise(mentionNotice(name, mtype));
       });
-      var drawerHost = createDrawerHost({ refitActiveTerminal });
+      var refreshSelectionBadge = () => {
+      };
+      var drawerHost = createDrawerHost({
+        refitActiveTerminal,
+        getActiveSession: () => activeSession,
+        // The seat axis for `availableFor`. Routed through sessionTypeOf so the
+        // sidebar's `dataset.type` has exactly one reader.
+        getSeatType: () => activeSession ? sessionTypeOf(activeSession) : null,
+        onArmChanged: () => refreshSelectionBadge()
+      });
+      var { openSelectionPopover, refreshSelectionBadge: doRefreshSelectionBadge } = initSelectionPopover({
+        getActiveSession: () => activeSession
+      });
+      refreshSelectionBadge = doRefreshSelectionBadge;
       var { appendIpcEntry } = createIpcLog({ host: drawerHost });
       var {
         openActivityFeed,
@@ -30604,7 +31608,17 @@ Click for live activity`;
         dropParent: dropActivityFeeds
       } = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS });
       createCtlTab({ host: drawerHost });
-      createTermTab({ host: drawerHost, xtermTheme: currentXtermTheme });
+      createTermTab({
+        host: drawerHost,
+        xtermTheme: currentXtermTheme,
+        getActiveSession: () => activeSession,
+        getSeatType: () => activeSession ? sessionTypeOf(activeSession) : null,
+        getSeatShellCap: () => {
+          const entry = activeSession ? sessions.get(activeSession) : null;
+          const st = entry && entry.peer ? peerStatuses.get(entry.peer.id) : null;
+          return !!(st && st.online && (st.caps || []).includes("shell"));
+        }
+      });
       createInboxDrawer();
       createPotDrawer();
       var {
@@ -30631,6 +31645,9 @@ Click for live activity`;
         peerTunnels,
         peerWebTunnels,
         getOurAppVersion: () => ourAppVersion,
+        // Peer state changes the terminal tab's availability without a session
+        // switch, which is the only thing the host re-asks on.
+        syncSeatAvailability: () => drawerHost.syncSeatAvailability(),
         getDeployLineHandlers: () => deployLineHandlers,
         proxyState,
         ctxPct,
@@ -30928,6 +31945,8 @@ Click for live activity`;
       var prefsCompactOnResume = document.getElementById("prefs-compact-on-resume");
       var prefsContextHints = document.getElementById("prefs-context-hints");
       var prefsSemanticHints = document.getElementById("prefs-semantic-hints");
+      var prefsSelectionHints = document.getElementById("prefs-selection-hints");
+      var prefsTerminalReporting = document.getElementById("prefs-terminal-reporting");
       var prefsDiscoverOnStartup = document.getElementById("prefs-discover-on-startup");
       var prefsToolsRow = document.getElementById("prefs-tools-row");
       var prefsToolsList = document.getElementById("prefs-tools-list");
@@ -32518,6 +33537,8 @@ ${res.stderr}` : "");
         prefsCompactOnResume.checked = !!s.compactOnResume;
         prefsContextHints.checked = !!s.contextHints;
         if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
+        if (prefsSelectionHints) prefsSelectionHints.checked = !!s.selectionHints;
+        if (prefsTerminalReporting) prefsTerminalReporting.checked = !!s.terminalReporting;
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
         restorePrefsGroups();
         applyPrefsGate();
@@ -32561,6 +33582,8 @@ ${res.stderr}` : "");
           compactOnResume: prefsCompactOnResume.checked,
           contextHints: prefsContextHints.checked,
           semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
+          selectionHints: prefsSelectionHints ? prefsSelectionHints.checked : false,
+          terminalReporting: prefsTerminalReporting ? prefsTerminalReporting.checked : false,
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
           remoteEnabled: prefsRemoteEnabled.checked
         });
