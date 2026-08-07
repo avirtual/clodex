@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — The drawer grows up, and terminals get shared
+## Unreleased
+
+## 5.0.0 — 2026-08-07 — The drawer grows up, and terminals get shared
 
 - **Text you select in the drawer can ride along to the agent.** Off by default,
   behind its own preference. With it on, highlighting text in any drawer tab —
