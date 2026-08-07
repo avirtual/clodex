@@ -403,10 +403,15 @@ function createTermTab({ host, xtermTheme, getActiveSession, getSeatType = null,
   notify = host.register({
     id: 'term',
     label: 'Terminal',
-    // A UI nicety only: on the web surface the `wterm:*` handlers are ABSENT
-    // from that host's map (engine's enableDrawerServices gate), so the tab
-    // would be inert rather than a remote shell. The boundary is registration.
-    available: () => !window.__CLODEX_WEB__,
+    // NO `available()` SURFACE AXIS (t227), and its absence is the load-bearing
+    // part of that change rather than a tidy-up. The web host registers the
+    // local `wterm:*` family now — it already serves `session:create`, and a
+    // `type: 'bash'` session is the same shell on the same box. An
+    // environment test here would keep the tab hidden on web no matter what the
+    // host registers, which is exactly how it read before: un-gating the
+    // handlers alone changed nothing an operator could see.
+    // Pinned by test/drawer-services-seam.test.js, because this file is
+    // DOM-bound and has no behavioural test that would notice its return.
     // The seat axis, re-evaluated on every session switch (drawer-host's
     // `availableFor`). A bash seat already IS a shell, so it never gets a tab;
     // a peer seat gets one only while that box advertises the `shell` cap.

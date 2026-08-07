@@ -13,6 +13,26 @@ blocks a release.
 
 ## Unreleased
 
+- **The drawer's terminal now works over the web too.** 5.0.0 said the term tab
+  exists only in the desktop app; that has changed, and the reason it changed is
+  that the restriction never bought anything. A Clodex reached over the web can
+  already open a session of type *bash*, which is a login shell on that same
+  machine started by that same person — so refusing the drawer's terminal
+  refused a tab, not a capability. The two doors now agree.
+
+  Attaching from a browser gives you **the same shell the desktop drawer has**,
+  not a second one: one process per window and seat, and a tab that joins it is
+  handed the scrollback so far, exactly as re-opening the drawer on the desktop
+  is. That is deliberate — the alternative, a blank pane on a live shell, hides
+  a half-typed line or an open pager rather than protecting anything, since the
+  history in question is your own and the machine is the one you are already
+  signed in to.
+
+  Two things deliberately did *not* change. The **ctl console** stays
+  desktop-only: it runs clodexctl verbs, which is a different question from a
+  shell. And a terminal **on a peered machine** stays desktop-only too — that
+  one reaches a third box, which nothing else on the web surface can do.
+
 ## 5.0.0 — 2026-08-07 — The drawer grows up, and terminals get shared
 
 - **Text you select in the drawer can ride along to the agent.** Off by default,

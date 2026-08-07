@@ -50,7 +50,7 @@ function registerIpcHandlers(deps) {
     getUpdateInfo, getReleasesCache,
     getWebTunnelManager, openPeerWeb, closePeerWeb,
     getSandbox, getSandboxManager,
-    enableDrawerServices, getCtlService, getDrawerPtys, workspaceOfSenderStrict,
+    enableDrawerServices, enableLocalTerminal, getCtlService, getDrawerPtys, workspaceOfSenderStrict,
     getPluginHost, surfaceOfSender,
   } = deps;
 
@@ -1166,16 +1166,20 @@ function registerIpcHandlers(deps) {
     if (conn) conn.input(name, String(data ?? ''), () => {});
   });
 
-  // A terminal tab pointed at a PEER seat's shell. Behind the SAME
-  // enableDrawerServices gate as the local `wterm:*` family, in a second block
-  // rather than inside that one so the code sits with its peer relatives.
+  // A terminal tab pointed at a PEER seat's shell. Behind `enableDrawerServices`
+  // — NOT the `enableLocalTerminal` flag its local namesake now uses, and
+  // that difference is the whole point of the split.
+  //
+  // The local family was un-gated for the web surface because a web client can
+  // already spawn `$SHELL` on this box through `session:create`. That argument
+  // stops dead here: no local session channel reaches a THIRD machine, so these
+  // four are the one part of the terminal that a web connection genuinely could
+  // not otherwise have. The web host's connection is bound to a workspace on
+  // THIS box.
   //
   // Gated even though the rest of `peer:*` is not, and the difference is real:
   // every other peer channel drives a session the far side already exposes to
-  // attach, while this one opens a SHELL. The web host's connection is bound to
-  // a workspace on THIS box; handing it a shell on a third machine is not a
-  // capability the desktop gate was written to allow, and un-gating later is a
-  // one-line change if a web surface ever wants it. Covered by
+  // attach, while this one opens a SHELL. Covered by
   // test/drawer-services-seam.test.js's prefix list.
   //
   // Unlike the peer channels above, these take the renderer's COMPOSITE session
@@ -1673,12 +1677,15 @@ function registerIpcHandlers(deps) {
   // the whole boundary: web-host.js runs this same registrar and its invoke
   // frame dispatches any registered channel BY NAME without consulting
   // api-contract, so a `ctl:run` that exists at all is a token-backed verb
-  // runner — and a `wterm:spawn` that exists at all is a remote shell — for any
-  // authenticated web connection. A renderer-side `available()` is chosen by
-  // the client and protects nothing. Do not convert this into a handler that
-  // checks the flag in its body.
+  // runner for any authenticated web connection. A renderer-side `available()`
+  // is chosen by the client and protects nothing. Do not convert this into a
+  // handler that checks the flag in its body.
   //
-  // Pinned by test/drawer-services-seam.test.js (asserts `ctl:`/`wterm:` are
+  // The LOCAL drawer terminal is no longer in this block — it has its own
+  // flag below. The two are separate because their arguments are separate, and
+  // merging them again would re-gate a shell the same host already hands out.
+  //
+  // Pinned by test/drawer-services-seam.test.js (asserts `ctl:`/`drawer:` are
   // ABSENT from the web-host handler map — absent, not present-and-guarded).
   if (enableDrawerServices) {
     handle('ctl:run', async (_e, line) => {
@@ -1729,12 +1736,25 @@ function registerIpcHandlers(deps) {
       await manager.inspectSelection(String(name || ''))
     ));
     handle('drawer:releaseSelection', async (_e, name) => await manager.releaseSelection(String(name || '')));
-    // The workbench terminal, under the SAME gate for a sharper reason: an
-    // unconditionally registered `wterm:spawn` is a remote shell on the host,
-    // for any authenticated web connection, with no verb allowlist in front of
-    // it. The workspace comes from the SENDER, never from the payload — a
-    // caller-supplied window id would let one connection write into another
-    // workspace's shell.
+  }
+
+  // The LOCAL drawer terminal, on its own flag rather than the drawer-service
+  // gate above, because the argument that gates the others does not reach it. A
+  // `wterm:spawn` on this box is `$SHELL` on this box — and any surface that can
+  // reach `session:create` (ungated, no drawer flag) can already spawn a
+  // `type: 'bash'` session, which is the same shell, same machine, same user,
+  // over the ordinary session channels. Gating this one while that door stands
+  // open bought no security, only a missing tab.
+  //
+  // What that argument does NOT cover, and why the split is two flags rather
+  // than deleting the gate:
+  //   `ctl:*` / `drawer:*` above — a verb runner and a read of the operator's
+  //       own screen text, neither of which `session:create` grants.
+  //   `peer:wterm*` below — a shell on a THIRD machine, which no local session
+  //       channel can reach at all.
+  // Both keep `enableDrawerServices`. A host that wants a local terminal is
+  // saying something narrower than a host that wants the drawer's services.
+  if (enableLocalTerminal) {
     // STRICT resolution, unlike every other handler here: the shared helper
     // falls back to the default workspace when the sender's window is gone, so
     // an in-flight keystroke from a closing window would land in a DIFFERENT

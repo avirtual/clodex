@@ -125,14 +125,25 @@ function createEngine({ userDataPath, seams = {}, log }) {
   const pathMergeFailed = !!seams.pathMergeFailed;
   const enableSandbox = seams.enableSandbox !== false;
   // The drawer's service-backed tenants (a clodexctl verb runner over `ctl:*`,
-  // a workbench PTY over `wterm:*`) are DESKTOP-ONLY, and the boundary that
-  // makes them so is this flag, not the renderer. web-host.js registers the
-  // same ipc-handlers map the desktop does and dispatches any registered
-  // channel BY NAME without consulting api-contract, so a handler that exists
-  // is a handler an authenticated web connection can invoke — a token-backed
-  // verb runner and a remote shell. The renderer's `available()` only hides
-  // the tabs. Same shape as enableSandbox: the host opts out at construction.
+  // the selection reads over `drawer:*`, a shell on a peer over `peer:wterm*`)
+  // are DESKTOP-ONLY, and the boundary that makes them so is this flag, not the
+  // renderer. web-host.js registers the same ipc-handlers map the desktop does
+  // and dispatches any registered channel BY NAME without consulting
+  // api-contract, so a handler that exists is a handler an authenticated web
+  // connection can invoke — a token-backed verb runner, a read of the
+  // operator's own screen, a shell on a third machine. The renderer's
+  // `available()` only hides the tabs. Same shape as enableSandbox: the host
+  // opts out at construction.
   const enableDrawerServices = seams.enableDrawerServices !== false;
+  // The LOCAL drawer terminal, split off that flag (t227) because its
+  // argument is different: `wterm:*` spawns `$SHELL` on THIS box, and any
+  // surface that can reach the ungated `session:create` can already spawn a
+  // `type: 'bash'` session — the same shell, same machine, same user. So this
+  // one defaults ON even where the drawer services are declined, and a host
+  // that means to refuse it says so explicitly. It still governs whether the
+  // pty service is constructed at all, so a host that opts out has no shells to
+  // reap.
+  const enableLocalTerminal = seams.enableLocalTerminal !== false;
 
   // The browser frontend's host, for peers that want to REACH it (t30). A
   // GETTER, not a value: web-host.js is started by headless-main.js AFTER
@@ -1384,7 +1395,7 @@ const { createDrawerPtys } = require('./drawer-pty');
 const { buildZshShim, isZsh } = require('./term-shim');
 const { formatCommand, createMarkParser } = require('./term-marks');
 const { stripAnsi } = require('./cli/src/output');
-const drawerPtys = enableDrawerServices ? createDrawerPtys({
+const drawerPtys = enableLocalTerminal ? createDrawerPtys({
   spawn: pty.spawn.bind(pty),
   send: (workspaceId, channel, ...args) => {
     const win = manager.windowForWorkspace(workspaceId);
@@ -1752,6 +1763,7 @@ const toolCache = createToolCache({ whichBin });
     getSandbox: (boxId) => (sandboxManager ? sandboxManager.get(boxId) : null),
     getSandboxManager: () => sandboxManager,
     enableDrawerServices,
+    enableLocalTerminal,
     getCtlService: () => ctlService,
     getDrawerPtys: () => drawerPtys,
     getPluginHost: () => pluginHost,

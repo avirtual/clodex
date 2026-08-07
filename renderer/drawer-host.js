@@ -254,7 +254,10 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   // UI nicety the client controls and NOT a security boundary: a tenant backed
   // by IPC is kept off the web surface by its handlers being absent from that
   // host's map at REGISTRATION (engine's enableDrawerServices seam), because
-  // web-host dispatches any registered channel by name.
+  // web-host dispatches any registered channel by name. Which is also why a
+  // tenant whose handlers the web host DOES register must not carry an
+  // `available()` web test: the term tab had one, and it kept the tab hidden
+  // after the handlers arrived (t227).
   // `availableFor(type)` is the SEAT axis, and it is separate from `available()`
   // on purpose: `available()` answers "can this environment ever serve this
   // tab?" and is therefore correct to evaluate once, while this one changes

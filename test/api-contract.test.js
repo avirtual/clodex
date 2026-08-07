@@ -72,7 +72,9 @@ const PINNED_NAMES = [
   'peerSessionArgs', 'peerSetSessionArgs', 'peerSkillCatalog', 'peerSetSessionSkills',
   // Peer terminal (t219). The four calls take the composite `name@peerId` key;
   // the four listeners carry the bare seat back, since that is what the wire
-  // used. Registered behind enableDrawerServices like the local wterm family.
+  // used. Registered behind enableDrawerServices — and since t227 that is NO
+  // LONGER the same gate the local wterm family uses: this one opens a shell on
+  // a third machine, which no local session channel can reach.
   'peerWtermOpen', 'peerWtermResize', 'peerWtermClose', 'peerWtermInput',
   'onPeerWtermReplay', 'onPeerWtermData', 'onPeerWtermExit', 'onPeerWtermClosed',
   // The serving side of the same feature: which of OUR seats a peer is watching.
@@ -140,6 +142,10 @@ const PINNED_NAMES = [
   // map has neither). So the web build binds `ctlRun` to a channel with no
   // handler behind it, deliberately.
   'ctlRun', 'ctlContext', 'ctlHelp',
+  // These four ARE reachable on both hosts (t227) — the exception to the
+  // paragraph above, not another instance of it. Their gate is
+  // `enableLocalTerminal`, which the web host grants, because a web client
+  // can already spawn the same shell through `session:create`.
   'wtermSpawn', 'wtermWrite', 'wtermResize', 'onWtermData',
   // The drawer selection as a wirescope tail hint. Same gated-registration
   // story as the two families above, with a sharper reason for the gate: this

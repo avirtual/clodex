@@ -203,7 +203,12 @@ const API_CONTRACT = [
   { name: 'drawerArmSelection', kind: 'invoke', channel: 'drawer:armSelection' },
   { name: 'drawerReleaseSelection', kind: 'invoke', channel: 'drawer:releaseSelection' },
   { name: 'drawerInspectSelection', kind: 'invoke', channel: 'drawer:inspectSelection' },
-  // The drawer's terminal tenant (t215), same reasoning.
+  // The drawer's terminal tenant (t215). NOT the same reasoning as the rows
+  // above, since t227: these four have handlers on BOTH surfaces. `wterm:spawn`
+  // is `$SHELL` on the host the caller is already talking to, which
+  // `session:create` (ungated, no drawer flag) also hands out as a `type:
+  // 'bash'` session — so the gate protected a tab, not a capability. Their seam
+  // is `enableLocalTerminal`.
   { name: 'wtermSpawn', kind: 'invoke', channel: 'wterm:spawn' },
   { name: 'wtermWrite', kind: 'invoke', channel: 'wterm:write' },
   { name: 'wtermResize', kind: 'invoke', channel: 'wterm:resize' },
