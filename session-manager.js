@@ -127,6 +127,23 @@ function humanizeAge(ms) {
 // Mirrored in scripts/clodex-team.js (the exec listing) — see _taskList.
 const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
 
+// Sharpens the near-miss bounce for the one core verb whose argument sits
+// OUTSIDE the brackets. `term`'s neighbours in the grammar block — remind, task,
+// team — all take theirs inside, so `[agent:term exec pwd]` is a grammar
+// confusion rather than a typo, and the generic bounce actively confirms the
+// wrong reading: its valid-intents list NAMES `term`, so the seat concludes the
+// verb was fine and hunts for a fault elsewhere.
+//
+// Names the correct form and stops there. It must never reconstruct and run
+// what the line probably meant: that would execute something nobody wrote,
+// which is worse than the bounce it replaces — the same rule the control-char
+// vetting already follows. Reveals nothing gated either, since the bounce lists
+// `term` for every seat whether or not it holds the grant.
+function nearMissFormHint(text) {
+  if (!/^\[agent:term[\s\]]/.test(String(text || ''))) return '';
+  return 'The term intent takes its command AFTER the closing bracket — `[agent:term exec] <command>`, not inside it. ';
+}
+
 const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
 const RECENT_DONE_CAP = 10;
 const RECENT_DONE_LABEL = `${RECENT_DONE_MS / (60 * 60 * 1000)}h`;
@@ -2813,6 +2830,7 @@ function createSessionManager(deps) {
           const grants = getPersistence().get(senderName)?.pluginGrants;
           this._injectText(session,
             `[agent:?] unrecognized intent \`${intent.text}\`${more} — nothing was done. `
+            + nearMissFormHint(intent.text)
             + `Valid intents: ${validIntentNames(grants).join(', ')}. `
             + 'To quote an intent literally, put it in a ``` code fence or escape it as \\[agent:…].', { parkable: true });
         }
@@ -3456,7 +3474,7 @@ function createSessionManager(deps) {
       });
     }
 
-    // `[agent:term exec <cmd>]` — run one command on the agent's OWN terminal
+    // `[agent:term exec] <cmd>` — run one command on the agent's OWN terminal
     // tab, where the operator can watch it happen, and report the result back to
     // that agent alone.
     //

@@ -137,7 +137,13 @@ const GRAMMAR_LINES = [
   // only for a seat explicitly granted it, and IPC_PROMPT above does NOT carry
   // it — adding it there would break both byte-pins, since neither passes a
   // privileged grant.
-  { type: 'term', text: `  [agent:term exec <command>]      Run ONE command in your own terminal tab, where your operator can watch it (privileged, operator-granted). The command is the rest of the line — no quoting or escaping, and it must be a single line with no control characters. The result does not come back in this turn: it arrives later as a [terminal] line carrying the command, its exit code and its output, so this costs you a turn per command and is for the ones your operator wants to SEE, not for ordinary work your own shell tool does better. Refused, with the reason, if your terminal is busy, has a full-screen program open, is not open at all, or cannot report results back. One command at a time: wait for the result before sending another.` },
+  // The command sits OUTSIDE the brackets, and the rendered form must show that:
+  // parseTerm's `(\S+)` admits one whitespace-free token before the `]`, so the
+  // bracket-argumented spelling this line used to carry (`[agent:term exec
+  // <command>]`) does not match the row at all. Neighbouring lines legitimately
+  // take arguments inside the brackets (remind, task, team), which is exactly
+  // what makes the wrong spelling here read as plausible.
+  { type: 'term', text: `  [agent:term exec] <command>      Run ONE command in your own terminal tab, where your operator can watch it (privileged, operator-granted). The command is the rest of the line, AFTER the closing bracket — no quoting or escaping, and it must be a single line with no control characters. The result does not come back in this turn: it arrives later as a [terminal] line carrying the command, its exit code and its output, so this costs you a turn per command and is for the ones your operator wants to SEE, not for ordinary work your own shell tool does better. Refused, with the reason, if your terminal is busy, has a full-screen program open, is not open at all, or cannot report results back. One command at a time: wait for the result before sending another.` },
   // reboot is PRIVILEGED (intent-catalog PRIVILEGED_INTENTS) — off unless the
   // operator explicitly granted it, so intentEnabled('reboot', …) is false for
   // BOTH byte-pinned calls (absent list and the all-NON-privileged list) and this

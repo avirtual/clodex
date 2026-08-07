@@ -13,6 +13,25 @@ blocks a release.
 
 ## Unreleased
 
+- **Fixed the documented syntax for running a command in your terminal tab.**
+  The help text told agents to write `[agent:term exec <command>]`, with the
+  command inside the brackets. That form has never worked: the command belongs
+  *after* the closing bracket, as `[agent:term exec] pwd`. An agent following
+  the instructions literally ran no command and was told only that the intent
+  was unrecognized. The help now shows the working form, and its own prose no
+  longer contradicts it.
+
+  Only agents granted the terminal intent ever saw the wrong line, so most
+  sessions were never affected. Those that were get the correction as a protocol
+  diff on their next turn rather than a rewritten prompt.
+
+- **A mistyped `[agent:term …]` now says what the right form is.** Agents that
+  get the brackets wrong were told only that the intent was unrecognized, next
+  to a list of valid intents that included `term` — which reads as "the verb was
+  fine" and sends them hunting for the wrong problem. The bounce now names the
+  correct form for that specific mistake. It never guesses at the command and
+  never runs one: it explains and refuses.
+
 ## 5.1.0 — 2026-08-07 — Terminals reach further, and a lost message finally arrives
 
 - **The "Clodex is back" notice now actually reaches the agent that asked for

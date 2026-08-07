@@ -5,6 +5,7 @@ const assert = require('node:assert');
 
 const { IPC_PROMPT, buildIpcPrompt } = require('../ipc-prompt');
 const { GATEABLE_INTENTS, PRIVILEGED_INTENTS } = require('../intent-catalog');
+const { parseIntent } = require('../intent-scanner');
 
 // PRIVILEGED intents (reboot) are EXCLUDED here on purpose: under the `null`
 // allowlist intentEnabled('reboot', null) is false, so IPC_PROMPT is
@@ -147,6 +148,78 @@ test('reboot line renders ONLY for a seat whose intents explicitly grant reboot'
   // is WHY both pins still equal IPC_PROMPT.
   assert.ok(!buildIpcPrompt(null).includes(line), 'default seat: no reboot line (null pin holds)');
   assert.ok(!buildIpcPrompt(ALL_GATEABLE).includes(line), 'all-non-privileged seat: no reboot line (fork-drift pin holds)');
+});
+
+// ── term: the rendered form must be a form the parser accepts ────────────────
+// t232. The line documented `[agent:term exec <command>]` for its whole life,
+// which parseTerm cannot match: its `(\S+)` admits ONE whitespace-free token
+// before the `]`, so `exec <command>` never reaches the bracket. A seat that
+// read the line literally emitted a line that did not fire. The bug is not that
+// angle-bracket notation is wrong in general — remind/task/team genuinely take
+// arguments inside the brackets — it is that term's argument is the BODY, and
+// the identical notation for two grammars is what made it plausible.
+
+test('term grammar line: the documented form parses as a term intent', () => {
+  const p = buildIpcPrompt(['term', ...ALL_GATEABLE]);
+  const line = p.split('\n').find((l) => l.trim().startsWith('[agent:term'));
+  assert.ok(line, 'ENTER: a granted seat renders a term grammar line at all');
+  const parsed = parseIntent(line);
+  // Whole object: `sub` alone would pass on a line whose BODY silently became
+  // the help prose, which is the shape a bracket-argumented form produces.
+  assert.deepStrictEqual(
+    parseIntent('[agent:term exec] pwd'),
+    { type: 'term', sub: 'exec', body: 'pwd' },
+    'ENTER: the form the line now teaches is the form the parser takes',
+  );
+  assert.ok(parsed, `the rendered term line must parse, got null for: ${line.trim().slice(0, 60)}`);
+  assert.strictEqual(parsed.type, 'term');
+  assert.strictEqual(parsed.sub, 'exec');
+});
+
+test('term grammar line: the old bracket-argumented spelling is gone from the prompt', () => {
+  const p = buildIpcPrompt(['term', ...ALL_GATEABLE]);
+  assert.ok(!p.includes('[agent:term exec <command>]'),
+    'the spelling that does not parse must not be taught');
+  assert.ok(p.includes('[agent:term exec] <command>'), 'the parsing form is what renders');
+  // The prose half was already correct and disagreed with its own syntax line;
+  // the two must not drift apart again.
+  assert.ok(p.includes('The command is the rest of the line, AFTER the closing bracket'),
+    'prose states where the command goes, agreeing with the syntax line above it');
+});
+
+// The generalisation of the bug, and the reason this is a test rather than a
+// one-line fix: EVERY rendered grammar line is a form some seat will copy
+// literally. A line that cannot parse teaches an emission that does nothing.
+// Placeholders are substituted with realistic literals — an unsubstituted
+// `<command>` is itself a legal body, so leaving them in would let the very bug
+// this pins slip through.
+test('every rendered grammar line parses, with its placeholders filled in', () => {
+  const p = buildIpcPrompt(['term', 'reboot', ...ALL_GATEABLE]);
+  const fill = (l) => l
+    .replace('<command>', 'pwd')
+    .replace('<text>', 'a fact')
+    .replace('<id|query>', 'mem-1')
+    .replace('<id>', 'mem-1')
+    .replace('<interval>', '30m')
+    .replace('TARGET', 'bob')
+    .replace('PATH', '/tmp/a.md')
+    .replace('name:X', 'name:x')
+    .replace('cwd:Y', 'cwd:/tmp')
+    .replace('template:Y', 'template:tpl')
+    .replace('[reason]', 'why');
+  // The grammar block is `  [agent:…]` at two-space indent; prose paragraphs
+  // that MENTION an intent are not indented that way and are not forms.
+  // A run of 2+ spaces ends the FORM and starts its aligned description — which
+  // a seat does not copy, and which is trailing junk to the bare-only verbs
+  // (who/name/file/spawn are `\s*$`-anchored and would fail on it).
+  const forms = p.split('\n').filter((l) => /^ {2}\[agent:/.test(l))
+    .map((l) => l.trim().split(/\s{2,}/)[0]);
+  assert.ok(forms.length >= 15, `ENTER: the grammar block was found (got ${forms.length} lines)`);
+  assert.ok(forms.includes('[agent:term exec] <command>'),
+    'ENTER: the term form survived the split — this test exists for that row');
+  const bad = forms.filter((f) => !parseIntent(fill(f)));
+  assert.deepStrictEqual(bad, [],
+    'each of these renders a form the parser rejects — a seat copying it emits nothing');
 });
 
 // ── exec: a synthesized section keyed on the granted command-id allowlist ─────

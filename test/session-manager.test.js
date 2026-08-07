@@ -7186,6 +7186,74 @@ test('unknown: never injects into a bash session', async () => {
   assert.strictEqual(broadcasts.length, 1, 'still visible in the ipc log');
 });
 
+// ── t232: the term near-miss gets a FORM hint, not just the verb list ─────────
+// The generic bounce is actively misleading for this one line. `[agent:term exec
+// pwd]` fails on the GRAMMAR (the command belongs after the bracket), yet the
+// bounce answers with a valid-intents list that NAMES `term` — so the seat reads
+// "the verb was fine" and looks for a different fault. Every other near-miss is
+// a bad verb, where that list IS the answer.
+
+test('t232: a bracket-argumented term near-miss is told where the command goes', async () => {
+  const { m, injected } = mkBounce();
+  // The exact line the old help text taught, through the real scanner: it must
+  // still reach the bounce as an `unknown`, or the hint below is unreachable.
+  const found = m._extractIntents('[agent:term exec pwd]');
+  assert.deepStrictEqual(found, [{ type: 'unknown', text: '[agent:term exec pwd]', more: 0 }],
+    'ENTER: the documented-but-unparseable form arrives as a near-miss');
+  await m._handleIntent('a', found[0]);
+  assert.strictEqual(injected.length, 1);
+  assert.match(injected[0], /AFTER the closing bracket/, 'names the grammar fault, not just the verb');
+  assert.match(injected[0], /\[agent:term exec\] <command>/, 'and names the form that works');
+  // Still the full generic bounce underneath — the hint is an insert, not a
+  // replacement, so a seat that got here by some OTHER mistake keeps the list.
+  assert.match(injected[0], /Valid intents:.*\bterm\b/);
+  assert.match(injected[0], /escape it as \\\[agent:/);
+});
+
+test('t232: the form hint fires ONLY for term — other near-misses are unchanged', async () => {
+  const { m, injected } = mkBounce();
+  for (const text of ['[agent:rebot]', '[agent:termite exec] x', '[agent:dm]', '[agent:terminal]']) {
+    await m._handleIntent('a', { type: 'unknown', text, more: 0 });
+  }
+  assert.strictEqual(injected.length, 4, 'ENTER: all four bounced');
+  const withHint = injected.filter((t) => /AFTER the closing bracket/.test(t));
+  // `termite`/`terminal` are the interesting rows: a prefix match on `term`
+  // alone would hand a term-specific hint to a seat that never wrote term.
+  assert.deepStrictEqual(withHint, [], 'no non-term near-miss gets the term hint');
+});
+
+test('t232: the hint never reconstructs or runs what the line probably meant', async () => {
+  const termRuns = [];
+  const { m, injected } = mkBounce();
+  m._handleTermIntent = (...a) => { termRuns.push(a); };
+  await m._handleIntent('a', { type: 'unknown', text: '[agent:term exec rm -rf /tmp/x]', more: 0 });
+  assert.strictEqual(injected.length, 1, 'ENTER: it bounced');
+  assert.deepStrictEqual(termRuns, [], 'a near-miss must never execute the command it resembles');
+  // The payload appears EXACTLY once, and only inside the pre-existing verbatim
+  // quote of the line the seat wrote. The hint half must stay a fixed string:
+  // re-emitting `[agent:term exec] rm -rf /tmp/x` as a "did you mean" would hand
+  // the seat a runnable line nobody authored, one paste from running.
+  const hint = injected[0].slice(injected[0].indexOf('nothing was done.'));
+  assert.ok(!hint.includes('rm -rf'), 'the hint names the FORM, never the seat\'s payload');
+  assert.strictEqual(injected[0].split('rm -rf').length - 1, 1, 'quoted once, as the offending line');
+});
+
+// The false-positive half, and the one that matters most: agents quote intents
+// in prose constantly (this ticket is about documenting one). A hint that fired
+// on a fenced example or an escape would train seats to ignore the channel. Both
+// guards are inherited from the near-miss path rather than newly built, which is
+// exactly why they need a pin here — nothing in the new code re-states them.
+test('t232: a fenced or escaped term example produces no bounce at all', async () => {
+  const { m, injected } = mkBounce();
+  const fenced = m._extractIntents('```\n[agent:term exec pwd]\n```');
+  assert.deepStrictEqual(fenced, [], 'a fenced example is a quote, not a near-miss');
+  const escaped = m._extractIntents('\\[agent:term exec pwd]');
+  assert.deepStrictEqual(escaped, [], 'an escaped example is a quote too');
+  // And nothing reached the seat by either route.
+  for (const i of [...fenced, ...escaped]) await m._handleIntent('a', i);
+  assert.deepStrictEqual(injected, []);
+});
+
 test('dm: a target that exists nowhere bounces to the sender instead of vanishing', async () => {
   const { m, injected, broadcasts } = mkBounce();
   await m._handleIntent('a', { type: 'dm', target: 'nosuch', body: 'hello?' });
