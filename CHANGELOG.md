@@ -54,6 +54,20 @@ blocks a release.
   forever. A command that outruns the two minutes is *not* cancelled; it keeps
   running and its output arrives when it finishes.
 
+  Two things it is careful about, both cases where the terminal is yours and the
+  agent arrived mid-thought. If you had half a command typed at the prompt, that
+  line is cleared first, so your fragment can never end up joined onto the
+  agent's command and run — including under vi keybindings, where clearing the
+  line takes a different keystroke. And if you started something a fraction of a
+  second before the agent's command arrived, the agent is told the terminal
+  reported a *different* command finishing rather than being handed your result
+  as if it were its own.
+
+  The command itself must be plain text: anything invisible in it — a control
+  character, a zero-width space, a right-to-left override — is refused rather
+  than quietly removed, because the whole point is that the line you watch is the
+  line that runs.
+
   Reporting must be on for this to work, since it is the same completion marks
   that carry the result back. If it is off, or your shell is not zsh, or the tab
   was opened before you turned reporting on, the agent is told which of those it

@@ -44,12 +44,22 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // anything (see execTimedOut) — it is a deadline on the SILENCE, not on the
   // command.
   const EXEC_TIMEOUT = execTimeoutMs || 120000;
-  // Ctrl-U, from a code point rather than a literal byte in this source: a raw
-  // control character is invisible, does not reliably survive reformatting or an
-  // editor that sanitizes on save, and its loss would be silent — the write
-  // would simply stop clearing the line. Same reason drawer-avail builds its
-  // detector pattern from a string.
+  // Ctrl-U then Ctrl-K, from code points rather than literal bytes in this
+  // source: a raw control character is invisible, does not reliably survive
+  // reformatting or an editor that sanitizes on save, and its loss would be
+  // silent — the write would simply stop clearing the line. Same reason
+  // drawer-avail builds its detector pattern from a string.
+  //
+  // BOTH are needed, and one is not a belt-and-braces duplicate of the other.
+  // `^U` is kill-whole-line only in the EMACS keymap; zsh selects `viins`
+  // automatically when $VISUAL or $EDITOR ends in vi/vim (no `bindkey -v`
+  // required), and there `^U` is vi-kill-line, which kills back to where insert
+  // mode was last entered — anything after the cursor, and anything before the
+  // insert point, survives. `^K` is kill-line in emacs and vi-kill-eol in viins,
+  // so the pair clears both directions in both keymaps and the second is a
+  // harmless no-op after a successful first.
   const KILL_LINE = String.fromCharCode(0x15);
+  const KILL_EOL = String.fromCharCode(0x0b);
   const ENTER = String.fromCharCode(0x0d);
 
   function shellFor() {
@@ -120,12 +130,21 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     rec.marks = (onCommand && makeMarkParser && seat)
       ? makeMarkParser({
         onCommand: (c) => {
+          // Whose command this was, decided BEFORE settle clears the record.
+          // A command that is ours is delivered as the exec answer and NOT also
+          // pushed to the passive reporter — both feed the same selection queue,
+          // so reporting it twice hands the agent its own command as a short
+          // unasked-for report and again with output.
+          const mine = !!rec.pending && !foreignRecord(rec.pending, c);
           // The pending exec is settled FIRST and independently of passive
           // reporting: the agent asked for this one, so it is delivered even
           // when reporting is switched off (that pref governs the firehose the
           // operator rejected, not an answer to a question).
           settle(rec, { status: 'ok', record: c });
-          try { onCommand(seat, c); } catch {}
+          // A FOREIGN command still belongs in the firehose. It is the
+          // operator's own work, and suppressing it because it happened to
+          // settle our pending record would lose a real passive report.
+          if (!mine) { try { onCommand(seat, c); } catch {} }
         },
         // Abandonment has no passive consumer — a command the operator Ctrl-C'd
         // is not news to report, it is only news to whoever was waiting on it.
@@ -188,11 +207,34 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     if (!p) return false;
     rec.pending = null;
     if (!onExecResult) return true;
+    // A D mark for a command that is not the one we typed. Ordinary, not exotic:
+    // the operator presses Enter on `vim` at T and the shell's C mark reaches us
+    // at T+ε (a PTY round trip), so an exec arriving inside that window sees
+    // isBusy() false — correctly, nothing has told us yet — writes, and its bytes
+    // land in vim's stdin. When vim exits, its D would otherwise be handed to the
+    // agent as the answer to a command that never ran. No pre-check can close
+    // that window, which is why it is caught HERE.
+    //
+    // A differing command is ALWAYS foreign, never a legitimate edit: the whole
+    // line is written as one string, so the operator has no opportunity to edit
+    // ours before it runs. We still settle (the always-answer invariant is what
+    // this module exists for) — we just refuse to claim it as our result.
+    const mismatch = foreignRecord(p, outcome && outcome.record);
     // `late` distinguishes "here is your output" from "here is the output of the
     // command I already told you had outrun its deadline" — the agent has by now
     // reported the timeout upstream and needs to know this supersedes it.
-    try { onExecResult(rec.seat, { ...outcome, command: p.command, late: !!p.timedOut }); } catch {}
+    const res = { ...outcome, command: p.command, late: !!p.timedOut };
+    if (mismatch) res.mismatch = true;
+    try { onExecResult(rec.seat, res); } catch {}
     return true;
+  }
+
+  // Did the shell report a DIFFERENT command finishing than the one we typed?
+  // An empty reported command is not foreign, it is unknown — a C payload whose
+  // base64 did not decode — and that already has an honest answer downstream.
+  function foreignRecord(p, record) {
+    const reported = String((record && record.command) || '').trim();
+    return !!reported && reported !== p.command;
   }
 
   // Kill one shell, with the SIGHUP→SIGKILL escalation. Factored out when kill()
@@ -263,6 +305,15 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       // No marks ⇒ no D ⇒ nothing would ever tell the agent this finished. Firing
       // blind and hoping is worse than refusing: the command would still RUN.
       if (!rec.shimmed || !rec.marks) return { ok: false, code: 'no-marks' };
+      // A pending command that outran its deadline AND left the terminal idle
+      // never got an ending and never will — its bytes were swallowed by
+      // something that emits no marks. Without this the record stays set for the
+      // life of the shell and every later exec answers `pending`, wedging the
+      // seat's terminal permanently. The busy check below still protects the case
+      // where the command really is still running.
+      if (rec.pending && rec.pending.timedOut && !rec.marks.isBusy()) {
+        settle(rec, { status: 'lost' });
+      }
       // A command of MINE is still outstanding. Distinct from `busy` on purpose —
       // between the write and the C mark the parser is not capturing yet, so a
       // second exec in the same turn passes a busy check and would type over the
@@ -275,11 +326,12 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       const p = { command: vet.command, timedOut: false };
       rec.pending = p;
       try {
-        // Ctrl-U first. `isBusy()` false says no command is RUNNING; it says
-        // nothing about the line editor, which may hold a half-typed line the
-        // operator walked away from — appending to that would run their fragment
-        // plus our command as one line.
-        rec.proc.write(KILL_LINE + vet.command + ENTER);
+        // Clear the line in both directions FIRST. `isBusy()` false says no
+        // command is RUNNING; it says nothing about the line editor, which may
+        // hold a half-typed line the operator walked away from — appending to
+        // that would run their fragment plus our command as one line, and the C
+        // mark would report the COMBINED line as if it were ours.
+        rec.proc.write(KILL_LINE + KILL_EOL + vet.command + ENTER);
       } catch (e) {
         rec.pending = null;
         return { ok: false, code: 'write-failed', error: String((e && e.message) || e) };

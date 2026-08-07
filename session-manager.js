@@ -3380,7 +3380,11 @@ function createSessionManager(deps) {
       // make bash sessions intent-capable, or give a peer a local session
       // record, and this becomes the only thing standing between them and a
       // shell they should not have.
-      if (termAvailableFor && !termAvailableFor(session.type)) {
+      // No truthiness guard on the dep. An unwired termAvailableFor must throw
+      // here rather than skip the check — the same posture termExec gets from
+      // its host stand-in above, where the fallback ANSWERS instead of silently
+      // doing nothing.
+      if (!termAvailableFor(session.type)) {
         reply(`a ${session.type} session has no terminal tab of its own, so there is nothing to run a command in`);
         return;
       }

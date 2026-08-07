@@ -49,6 +49,13 @@ function parseIntentLegacy(rawLine) {
   const fileMatch = cleaned.match(/^\[agent:file\s+(\S+)\s+(.+?)\]\s*$/);
   if (fileMatch) return { type: 'file', sub: fileMatch[1].toLowerCase(), path: fileMatch[2].trim() };
 
+  // Worth stating so nobody reads the differential as evidence the shipped regex
+  // is CORRECT: this block is a byte copy of parseTerm, so the two can only
+  // disagree about chain ORDER, never about the pattern. And the order claim is
+  // weak here too — `^\[agent:term` and `^\[agent:exec` are disjoint anchored
+  // prefixes, so the "order-sensitive pair" in the corpus below cannot actually
+  // be broken by moving either row. The real coverage for term parsing is the
+  // corpus itself and the raw-body tests further down.
   const termMatch = cleaned.match(/^\[agent:term\s+(\S+)\]\s*(.*)/s);
   if (termMatch) return { type: 'term', sub: termMatch[1].toLowerCase(), body: termMatch[2] };
 
@@ -589,4 +596,54 @@ test('P5 — a collision identifies the holder, so the refusal is actionable (t2
     assert.strictEqual(err.heldBy, 'git-branches', 'the HOLDER, not the caller');
     assert.match(err.message, /already registered by plugin "git-branches"/);
   });
+});
+
+// --- t222: the raw (un-ANSI-stripped) body ------------------------------------
+// The scanner strips ANSI before any row parses. For every other verb that is a
+// convenience; for `term` the body is EXECUTED, so a strip silently rewrites the
+// command and then runs the rewrite — the exact outcome "rejected, not stripped"
+// exists to prevent. parseWithRegistry therefore carries the uncleaned line as an
+// optional second argument, which only parseTerm reads.
+
+test('t222 — parseTerm takes its BODY from the raw line, escapes intact', () => {
+  // Built from a code point: a raw ESC in this source is invisible and would not
+  // survive reformatting, turning the assertion into one about ordinary text.
+  const ESC = String.fromCharCode(0x1b);
+  const raw = `[agent:term exec] echo a${ESC}[Kb`;
+  const cleaned = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+  assert.strictEqual(cleaned, '[agent:term exec] echo ab',
+    'ENTER: the strip really does rewrite this command into a different one');
+
+  const out = registry.parseWithRegistry(cleaned, raw);
+  assert.strictEqual(out.type, 'term');
+  assert.strictEqual(out.body, `echo a${ESC}[Kb`,
+    'the vetter must see the escape — it is what makes this a refusal instead of a silent rewrite');
+});
+
+test('t222 — the raw line is only trusted when it parses to the same verb and sub', () => {
+  const ESC = String.fromCharCode(0x1b);
+  // An escape inside the BRACKETS is what made the line parse at all: the raw
+  // form does not match, so the cleaned body is the only honest answer and the
+  // intent must not be lost.
+  const raw = `[agent:term${ESC}[0m exec] ls`;
+  const cleaned = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+  assert.strictEqual(registry.parseWithRegistry(cleaned, raw).body, 'ls');
+
+  // A raw line naming a DIFFERENT sub cannot redirect the verb either.
+  const out = registry.parseWithRegistry('[agent:term exec] ls', '[agent:term status] ls');
+  assert.strictEqual(out.sub, 'exec', 'the cleaned line decides the sub');
+  assert.strictEqual(out.body, 'ls');
+});
+
+test('t222 — the second argument is optional, and no other verb reads it', () => {
+  // A one-argument call is still the contract (test/plugin-scope.test.js makes
+  // one), and a row that started reading `raw` would change behaviour for every
+  // caller that does not pass it.
+  assert.deepStrictEqual(registry.parseWithRegistry('[agent:term exec] ls'),
+    { type: 'term', sub: 'exec', body: 'ls' });
+  // Same line, a raw form that differs everywhere: every non-term verb ignores it.
+  assert.deepStrictEqual(registry.parseWithRegistry('[agent:dm bob] hi', '[agent:dm zed] DIFFERENT'),
+    { type: 'dm', target: 'bob', urgent: false, body: 'hi' });
+  assert.deepStrictEqual(registry.parseWithRegistry('[agent:exec c] {}', '[agent:exec other] {"x":1}'),
+    { type: 'exec', cmd: 'c', body: '{}' });
 });

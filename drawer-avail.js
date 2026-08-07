@@ -43,7 +43,13 @@ const TERM_EXEC_MAX = 2048;
 // the reviewer reads a line that looks correct. This form is nine printable
 // characters that cannot degrade. (plugins/plugin-api.md §4 documents the same
 // hazard for the plugin-side oneLine.)
-const CTRL_RE = new RegExp('[\\u0000-\\u001F\\u007F]');
+// The class runs past C0/DEL for a reason the rest of the vetting does not
+// cover. None of the additions can split one write into two — they are here
+// because this feature's entire premise is that the operator SEES the command
+// run, and a bidi override or an invisible space makes the line they watch
+// differ from the line that executes. That is the one attack their eyes cannot
+// catch, so it is refused rather than trusted to be noticed.
+const CTRL_RE = new RegExp('[\\u0000-\\u001F\\u007F\\u0080-\\u009F\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069\\uFEFF]');
 
 // What each control byte would actually DO if it reached the shell, which is why
 // this rejects rather than strips: a stripped `rm -rf /\nyes` becomes a
@@ -55,6 +61,24 @@ const CTRL_WHY = new Map([
   [0x1b, 'an escape (ESC) \u2014 some terminals answer escape sequences by writing to their own stdin, which injects bytes you did not send'],
   [0x09, 'a tab \u2014 the shell would treat it as a completion request, not whitespace'],
   [0x00, 'a NUL byte'],
+  // The display-vs-bytes family. Each of these renders as nothing (or reorders
+  // what follows) while still being part of the command the shell runs, so the
+  // line the operator watches is not the line that executes.
+  [0x200b, 'a zero-width space — invisible, but part of the command the shell would run'],
+  [0x200c, 'a zero-width non-joiner — invisible, but part of the command the shell would run'],
+  [0x200d, 'a zero-width joiner — invisible, but part of the command the shell would run'],
+  [0x200e, 'a left-to-right mark — it changes how the line DISPLAYS without changing what runs'],
+  [0x200f, 'a right-to-left mark — it changes how the line DISPLAYS without changing what runs'],
+  [0x202a, 'a bidi embedding — the line your operator SEES would not be the line that runs'],
+  [0x202b, 'a bidi embedding — the line your operator SEES would not be the line that runs'],
+  [0x202c, 'a bidi override terminator — the line your operator SEES would not be the line that runs'],
+  [0x202d, 'a bidi override — the line your operator SEES would not be the line that runs'],
+  [0x202e, 'a bidi override — the line your operator SEES would not be the line that runs'],
+  [0x2066, 'a bidi isolate — the line your operator SEES would not be the line that runs'],
+  [0x2067, 'a bidi isolate — the line your operator SEES would not be the line that runs'],
+  [0x2068, 'a bidi isolate — the line your operator SEES would not be the line that runs'],
+  [0x2069, 'a bidi isolate terminator — the line your operator SEES would not be the line that runs'],
+  [0xfeff, 'a zero-width no-break space (BOM) — invisible, but part of the command the shell would run'],
 ]);
 
 // Vet the payload of `[agent:term exec]`. Pure: no shell, no filesystem, no

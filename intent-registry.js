@@ -56,9 +56,28 @@ function parseExec(cleaned) {
 // need an escaping scheme the agent has to get right on every command. The body
 // takes the line verbatim and drawer-avail's vetTermCommand is what refuses the
 // bytes that must not reach a PTY.
-function parseTerm(cleaned) {
-  const m = cleaned.match(/^\[agent:term\s+(\S+)\]\s*(.*)/s);
-  return m ? { type: 'term', sub: m[1].toLowerCase(), body: m[2] } : null;
+// The BODY is taken from the uncleaned line when one is available, and that is
+// the whole reason this row reads a second argument. The scanner strips ANSI
+// before any row parses, so `[agent:term exec] echo a<ESC>[Kb` would otherwise
+// reach vetTermCommand as `echo ab` — a command the agent did not write, quietly
+// rewritten and then RUN, which is exactly what "rejected, not stripped" exists
+// to prevent. Vetting sees the escape and refuses it instead.
+//
+// Guarded by re-parsing: the raw line is only trusted when it yields the same
+// verb and sub, so a decorator or an escape sitting inside the BRACKETS (where
+// the strip is what made the line parse at all) falls back to the cleaned body
+// rather than losing the intent.
+function parseTerm(cleaned, raw) {
+  const RE = /^\[agent:term\s+(\S+)\]\s*(.*)/s;
+  const m = cleaned.match(RE);
+  if (!m) return null;
+  const sub = m[1].toLowerCase();
+  let body = m[2];
+  if (typeof raw === 'string' && raw !== cleaned) {
+    const rm = raw.match(RE);
+    if (rm && rm[1].toLowerCase() === sub) body = rm[2];
+  }
+  return { type: 'term', sub, body };
 }
 
 function parseRemind(cleaned) {
@@ -297,13 +316,18 @@ function visiblePluginRows(grants) {
 
 // R-INT-1: the parse walk. Core rows first, ALWAYS — a plugin can never shadow
 // a core verb even before P5's collision check fires.
-function parseWithRegistry(cleaned) {
+// `raw` is the same line with the decorator prefix stripped but the ANSI
+// sequences still IN it, and it is optional: every row but `term` ignores it and
+// a one-argument call still parses. It exists because the shell's ANSI strip
+// runs before any row sees the line, which for a verb whose body is executed
+// would silently REWRITE the command rather than refuse it — see parseTerm.
+function parseWithRegistry(cleaned, raw) {
   for (const r of CORE_ROWS) {
-    const out = r.parse(cleaned);
+    const out = r.parse(cleaned, raw);
     if (out) return out;
   }
   for (const r of pluginRows) {
-    const out = r.parse(cleaned);
+    const out = r.parse(cleaned, raw);
     if (out) return out;
   }
   return null;
@@ -375,7 +399,7 @@ function pluginGrammarLines(intentsList, grants) {
 // `end` stays last.
 const CORE_VALID_INTENT_NAMES = [
   'dm', 'resend', 'who', 'name', 'context', 'memory', 'spawn', 'file', 'exec',
-  'remind', 'notify-user', 'team-review', 'review-done', 'task', 'reboot',
+  'remind', 'notify-user', 'team-review', 'review-done', 'task', 'term', 'reboot',
 ];
 
 // Feeds the near-miss bounce, which is user-visible text: naming a verb here

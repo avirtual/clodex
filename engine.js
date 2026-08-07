@@ -1429,9 +1429,18 @@ const drawerPtys = enableDrawerServices ? createDrawerPtys({
   // failure this whole path was built to prevent.
   vetCommand: vetTermCommand,
   onExecResult: (seat, res) => {
-    const late = res.late ? '\n(this is the command reported as still running above — it has now finished)' : '';
+    // Worded to fit EVERY branch, not just `ok`: a timeout followed by a window
+    // close would otherwise render "closed before the command reported back …
+    // it has now finished".
+    const late = res.late ? '\n(this supersedes the still-running notice above)' : '';
     let text;
-    if (res.status === 'ok') {
+    if (res.mismatch) {
+      // The shell reported a DIFFERENT command finishing than the one we sent.
+      // Its output is deliberately NOT rendered: that output is the operator's
+      // own work, and the firehose is the thing they rejected.
+      const ran = (res.record && res.record.command) || 'something else';
+      text = `[terminal] ${res.command}\nthe terminal reported \`${ran}\` finishing instead — that was already running when your command arrived. Yours may never have run, or may still be queued behind it. Look at the terminal before sending it again.`;
+    } else if (res.status === 'ok') {
       text = formatCommand(res.record, { stripAnsi, always: true })
         // formatCommand returns null for a record whose command line did not
         // survive; the agent still asked, so it still gets an answer.
@@ -1440,6 +1449,10 @@ const drawerPtys = enableDrawerServices ? createDrawerPtys({
       text = `[terminal] ${res.command}\nabandoned — a new prompt appeared before it finished, so it was interrupted (Ctrl-C) or the shell reset. There is no exit code. Its output was not captured; look at the terminal, or ask your operator.`;
     } else if (res.status === 'timeout') {
       text = `[terminal] ${res.command}\nstill running after ${Math.round(res.afterMs / 1000)}s. NOT cancelled — it is still going, and you will get its output when it finishes. Do not run it again.`;
+    } else if (res.status === 'lost') {
+      // A timed-out command whose ending never arrived, cleared out of the way
+      // so the seat's terminal is usable again.
+      text = `[terminal] ${res.command}\nno ending was ever reported for it, and the terminal is idle again — whether it ran is unknown. The terminal is free for another command.`;
     } else if (res.status === 'shell-exit') {
       text = `[terminal] ${res.command}\nthe terminal's shell exited (${res.exitCode}) before the command reported back. Whether it ran is unknown.`;
     } else {

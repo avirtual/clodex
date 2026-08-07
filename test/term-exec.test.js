@@ -27,6 +27,7 @@ const { vetTermCommand } = require('../drawer-avail');
 // and its loss turns an assertion about the write into an assertion about a
 // slightly different string that still passes for the wrong reason.
 const CTRL_U = String.fromCharCode(0x15);
+const CTRL_K = String.fromCharCode(0x0b);
 const CR = String.fromCharCode(0x0d);
 const LF = String.fromCharCode(0x0a);
 const ESC = String.fromCharCode(0x1b);
@@ -212,7 +213,7 @@ test('a second exec in the same turn is refused as PENDING, not busy', () => {
     'ENTER: the parser is not capturing yet — a busy check alone would let the second through');
 
   assert.deepStrictEqual(w.exec('ws-1', 'alice', 'second'), { ok: false, code: 'pending', running: 'first' });
-  assert.deepStrictEqual(spawn.spawned[0].written, [`${CTRL_U}first${CR}`], 'only the first command was typed');
+  assert.deepStrictEqual(spawn.spawned[0].written, [`${CTRL_U}${CTRL_K}first${CR}`], 'only the first command was typed');
   assert.deepStrictEqual(results, [], 'and the refusal did not settle the first');
 });
 
@@ -232,7 +233,7 @@ test('a write that throws is reported, and leaves the seat able to try again', (
 
 // ── the accepted write ──────────────────────────────────────────────────────
 
-test('an accepted command is typed as kill-line + command + Enter', () => {
+test('an accepted command is typed as kill-line + kill-to-EOL + command + Enter', () => {
   const { w, spawn } = mk();
   w.spawn('ws-1', 'alice', {});
   const r = w.exec('ws-1', 'alice', '  git status  ');
@@ -240,10 +241,15 @@ test('an accepted command is typed as kill-line + command + Enter', () => {
   // Trimmed by the vetter, and the TRIMMED text is what the caller is told ran —
   // it is also what the pending record and every later message quote.
   assert.deepStrictEqual(r, { ok: true, command: 'git status' });
-  // Ctrl-U first: isBusy() false says no command is RUNNING, and says nothing
-  // about a half-typed line the operator walked away from. Appending to `rm -rf `
-  // would run their fragment and our command as one line.
-  assert.deepStrictEqual(spawn.spawned[0].written, [`${CTRL_U}git status${CR}`]);
+  // Both kills, in this order, and neither is redundant. isBusy() false says no
+  // command is RUNNING, and says nothing about a half-typed line the operator
+  // walked away from — appending to `rm -rf ` would run their fragment and our
+  // command as one line. `^U` alone does not clear it: under zsh's viins keymap
+  // (selected automatically when $EDITOR ends in vi/vim) `^U` is vi-kill-line,
+  // which spares everything after the cursor, so a leftover TAIL would survive
+  // and execute concatenated after our command. `^K` clears the other direction
+  // in both keymaps and is a no-op after a successful `^U`.
+  assert.deepStrictEqual(spawn.spawned[0].written, [`${CTRL_U}${CTRL_K}git status${CR}`]);
   assert.deepStrictEqual(w._execState('ws-1', 'alice'), {
     shimmed: true, busy: false, pending: 'git status', timedOut: false,
   });
@@ -256,7 +262,7 @@ test('exec addresses one seat only', () => {
   w.exec('ws-1', 'bob', 'whoami');
 
   assert.deepStrictEqual(spawn.spawned[0].written, [], "alice's shell was untouched");
-  assert.deepStrictEqual(spawn.spawned[1].written, [`${CTRL_U}whoami${CR}`]);
+  assert.deepStrictEqual(spawn.spawned[1].written, [`${CTRL_U}${CTRL_K}whoami${CR}`]);
 });
 
 // ── the endings ─────────────────────────────────────────────────────────────
@@ -274,13 +280,77 @@ test('the D mark settles the exec with the command that actually ran', () => {
     command: 'npm test',
     late: false,
   }]);
-  // `record.command` is what the SHELL reported, which is why it is carried
-  // separately from the command we asked for: the operator can edit a line
-  // before it runs, and the record is the honest one.
+  // `record.command` is what the SHELL reported, carried separately from the
+  // command we asked for so the two can be COMPARED — see the mismatch tests
+  // below. They agree here, which is the ordinary case.
   assert.strictEqual(w._execState('ws-1', 'alice').pending, null, 'the pending record is cleared');
-  // Passive reporting is unaffected — the two consumers are independent, and the
-  // exec delivery must not swallow the operator's firehose or vice versa.
-  assert.strictEqual(passive.length, 1, 'the passive reporter still saw it');
+  // Deliberately inverted: the passive reporter does NOT also see our own
+  // command. Both paths append to the same selection queue, so reporting it
+  // twice would hand the agent its own command once as a short unasked-for
+  // report and once with output. A FOREIGN command still reaches it — the test
+  // below pins that half, and the two together are the whole rule.
+  assert.strictEqual(passive.length, 0, 'the agent is not told about its own command twice');
+});
+
+test('a command the agent did NOT ask for still reaches the passive reporter', () => {
+  // The other half of the de-duplication above. Suppressing every command while
+  // an exec is pending would lose a real report about the operator's own work.
+  const { w, spawn, passive } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'npm test');
+  spawn.spawned[0].emit(`${C('vim')}x\n${D(0)}`);
+
+  assert.strictEqual(passive.length, 1, 'ENTER: the foreign command was reported');
+  assert.strictEqual(passive[0][1].command, 'vim');
+});
+
+// ── a foreign D ─────────────────────────────────────────────────────────────
+
+test('a D for a DIFFERENT command is not passed off as our result', () => {
+  // The residual PTY-latency window, which no pre-check can close: the operator
+  // pressed Enter on `vim` at T and its C mark reaches us at T+ε, so an exec
+  // arriving inside that window sees isBusy() false — correctly, nothing has
+  // told us yet — and its bytes land in vim's stdin. When vim exits, its D would
+  // otherwise be handed to the agent as the answer to `npm test`: plausible,
+  // confident, and about a command that never ran.
+  const { w, spawn, results } = mk();
+  w.spawn('ws-1', 'alice', {});
+  assert.strictEqual(w.exec('ws-1', 'alice', 'npm test').ok, true,
+    'ENTER: the exec was accepted — the C mark had not arrived yet');
+  spawn.spawned[0].emit(`${C('vim')}~\n${D(0)}`);
+
+  assert.strictEqual(results.length, 1, 'it still settles — an unanswered agent is the worse failure');
+  const res = results[0][1];
+  assert.strictEqual(res.mismatch, true, 'and it is flagged as somebody else’s command');
+  assert.notStrictEqual(res.status, undefined);
+  assert.strictEqual(res.command, 'npm test', 'the command we asked for');
+  assert.strictEqual(res.record.command, 'vim', 'and the one that actually finished');
+});
+
+test('a matching D carries no mismatch flag', () => {
+  // The control for the test above: `mismatch` must be absent, not merely
+  // falsy-by-accident, or every ordinary result would render the warning.
+  const { w, spawn, results } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'npm test');
+  spawn.spawned[0].emit(`${C('npm test')}ok\n${D(0)}`);
+
+  assert.strictEqual(results.length, 1, 'ENTER: it settled');
+  assert.ok(!('mismatch' in results[0][1]), 'an ordinary result says nothing about a mismatch');
+});
+
+test('a command the shell could not name falls through, it is not called foreign', () => {
+  // A C mark carrying no payload leaves record.command empty. That is UNKNOWN,
+  // not foreign — engine.js already has an honest answer for it, and flagging a
+  // mismatch would tell the agent something false about which command ran.
+  const { w, spawn, results } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'npm test');
+  spawn.spawned[0].emit(`${ESC}]133;C${BEL}out\n${D(0)}`);
+
+  assert.strictEqual(results.length, 1, 'ENTER: it settled');
+  assert.strictEqual(results[0][1].record.command, '', 'ENTER: the shell named no command');
+  assert.ok(!('mismatch' in results[0][1]), 'unknown is not a mismatch');
 });
 
 test('a passive reporter that throws cannot swallow the exec answer', () => {
@@ -334,7 +404,12 @@ test('an abandon with no exec pending disturbs nothing', () => {
   // owed a message; a delivery here would be noise in the agent's context.
   const { w, spawn, results } = mk();
   w.spawn('ws-1', 'alice', {});
-  spawn.spawned[0].emit(`${C('their own thing')}x\n${A}`);
+  spawn.spawned[0].emit(`${C('their own thing')}x\n`);
+  // The assertion below is an ABSENCE, which is also true of a feed that never
+  // parsed at all. This proves the parser reached the state the test is about.
+  assert.strictEqual(w._execState('ws-1', 'alice').busy, true,
+    'ENTER: a command really was open when the abandon arrived');
+  spawn.spawned[0].emit(A);
   assert.deepStrictEqual(results, []);
 });
 
@@ -488,6 +563,45 @@ test('a stale deadline cannot time out the command that replaced it', () => {
   assert.deepStrictEqual(w._execState('ws-1', 'alice'), {
     shimmed: true, busy: false, pending: 'second', timedOut: false,
   }, "the second command's own deadline is untouched");
+});
+
+test('a timed-out command whose ending never came does not wedge the seat', () => {
+  // Nothing but D/abandon/exit clears `pending`, so a command whose bytes were
+  // swallowed by something that emits no marks would leave it set for the life
+  // of the shell — and every later exec would answer `pending` forever. Once the
+  // deadline has passed AND the terminal is idle, the old command is written off
+  // so the seat can use its terminal again.
+  const { w, spawn, results, timers } = mk({ execTimeoutMs: 30000 });
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'swallowed');
+  execTimers(timers)[0].fn();
+  assert.strictEqual(results.length, 1, 'ENTER: the deadline notice went out');
+  assert.strictEqual(w._execState('ws-1', 'alice').timedOut, true, 'ENTER: and the record survived it');
+
+  assert.deepStrictEqual(w.exec('ws-1', 'alice', 'next'), { ok: true, command: 'next' });
+  assert.strictEqual(results.length, 2, 'the abandoned record was written off, not silently dropped');
+  assert.deepStrictEqual(results[1], ['alice', {
+    status: 'lost', command: 'swallowed', late: true,
+  }]);
+  assert.strictEqual(w._execState('ws-1', 'alice').pending, 'next');
+});
+
+test('a timed-out command that is still RUNNING is not written off', () => {
+  // The control for the test above. `lost` is reachable only when the terminal
+  // is idle; a command that really is still going must keep refusing, or we
+  // would type a second command into the first one's stdin.
+  const { w, spawn, results, timers } = mk({ execTimeoutMs: 30000 });
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'sleep 900');
+  spawn.spawned[0].emit(C('sleep 900'));
+  execTimers(timers)[0].fn();
+  assert.strictEqual(w._execState('ws-1', 'alice').busy, true, 'ENTER: the terminal is genuinely held');
+
+  assert.deepStrictEqual(w.exec('ws-1', 'alice', 'next'),
+    { ok: false, code: 'pending', running: 'sleep 900' });
+  assert.strictEqual(results.length, 1, 'nothing was written off');
+  assert.deepStrictEqual(spawn.spawned[0].written, [`${CTRL_U}${CTRL_K}sleep 900${CR}`],
+    'and nothing was typed into the running command');
 });
 
 test('_execState answers null for a shell that does not exist', () => {

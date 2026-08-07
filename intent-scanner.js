@@ -16,11 +16,14 @@ const { parseWithRegistry } = require('./intent-registry');
 const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07/g;
 const PREFIX_CHARS = new Set(' \t\u2B24\u25CF\u2022\u25B6\u25B7\u25BA\u25B9\u25CB\u25CF\u25C9\u25CE\u25C6\u25C7\u25A0\u25A1\u25AA\u25AB\u2605\u2606\u2192\u27F6\u2500\u2501\u00B7\u2023\u2219\u226B\u00BB');
 
-function cleanLine(line) {
-  line = line.replace(ANSI_RE, '');
+function stripDecorators(line) {
   let i = 0;
   while (i < line.length && PREFIX_CHARS.has(line[i])) i++;
   return line.slice(i);
+}
+
+function cleanLine(line) {
+  return stripDecorators(line.replace(ANSI_RE, ''));
 }
 
 function parseIntent(rawLine) {
@@ -48,7 +51,12 @@ function parseIntent(rawLine) {
   // Every actual VERB lives in intent-registry.js — core rows in the order
   // this chain used to run them, then plugin rows. See that file's header for
   // why the table exists and which laws it enforces.
-  return parseWithRegistry(cleaned);
+  //
+  // The second argument is the same line with the ANSI still in it. Only a row
+  // whose body is EXECUTED reads it (parseTerm): for everything else the strip
+  // is a convenience, but for a shell command it would rewrite the payload and
+  // run the rewrite, which is what the vetter refuses to let happen.
+  return parseWithRegistry(cleaned, stripDecorators(rawLine).trim());
 }
 
 // Fenced code blocks are QUOTES. A markdown fence only RENDERS as a quoted

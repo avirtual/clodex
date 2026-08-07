@@ -58,6 +58,11 @@ function mk(overrides = {}) {
     // so an unset seam renders "NaN minutes" — a sentence no user can ever see, which
     // every assertion about that bounce would still pass against.
     MSG_MAX_AGE: 1800,
+    // Real pure leaf, and deliberately NOT guarded for truthiness at the call
+    // site: _handleTermIntent asks it whether the seat has a terminal at all, so
+    // an unwired seam must throw rather than wave every session type through to
+    // a shell it should not reach.
+    termAvailableFor: require('../drawer-avail').termAvailableFor,
     ...overrides,
   };
   const SessionManager = createSessionManager(deps);
@@ -775,6 +780,28 @@ test('t218 a denied term reports the loss but writes nothing', async () => {
   assert.match(f.last(), /Your term body \(8 bytes\) was NOT saved/, 'but the loss is announced');
 });
 
+test('t222 a seat with no terminal of its own is refused before any exec is attempted', () => {
+  // The type guard in _handleTermIntent cannot fire through the intent switch
+  // today — that path requires `agentType`, which only claude/codex have, and a
+  // peer has no local session record at all. The guard stays because the reason
+  // is an accident of two OTHER decisions (make bash sessions intent-capable, or
+  // give a peer a local record, and this becomes the only thing between them and
+  // a shell), and this test is what keeps it live code rather than something a
+  // future reader deletes as unreachable. _handleTermIntent is directly callable,
+  // so the guard is testable even while the route to it is closed.
+  const calls = [];
+  const injected = [];
+  const m = mk({ termExec: (...a) => { calls.push(a); return { ok: true, command: 'x' }; } });
+  m._injectText = (s, text) => injected.push(text);
+  m._broadcast = () => {};
+
+  m._handleTermIntent({ name: 'x', type: 'bash', agentType: null, workspaceId: 'ws' }, 'exec', 'ls');
+
+  assert.deepStrictEqual(calls, [], 'the refusal happens BEFORE the terminal is asked to run anything');
+  assert.strictEqual(injected.length, 1, 'ENTER: the agent was answered');
+  assert.match(injected[0], /a bash session has no terminal tab of its own/);
+});
+
 // The five bodiless gateable verbs. The spec asks that a spill on these be
 // IMPOSSIBLE rather than merely unreached, so this walks the catalogue against the
 // grammar table instead of listing verbs by hand — a verb that gains a body later
@@ -943,7 +970,12 @@ test('near-miss bounce: the WHOLE valid-intents string is pinned, byte for byte'
   assert.strictEqual(
     injected[0],
     '[agent:?] unrecognized intent `[agent:rebot]` (+2 more unrecognized [agent:…] lines this turn) — nothing was done. '
-    + 'Valid intents: dm, resend, who, name, context, memory, spawn, file, exec, remind, notify-user, team-review, review-done, task, reboot, end. '
+    // `term` sits beside `reboot` at the end: both are privileged, and the list
+    // is the same for every seat because it names what the GRAMMAR has, not what
+    // this seat was granted. Omitting a granted verb here is the defect that put
+    // term in it — a seat that typos `[agent:term exex]` would be handed a list
+    // missing the one verb it can actually use.
+    + 'Valid intents: dm, resend, who, name, context, memory, spawn, file, exec, remind, notify-user, team-review, review-done, task, term, reboot, end. '
     + 'To quote an intent literally, put it in a ``` code fence or escape it as \\[agent:…].',
   );
 });

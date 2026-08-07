@@ -112,6 +112,55 @@ test('an unnamed control byte still gets a specific, actionable refusal', () => 
   assert.match(del.error, /U\+007F/);
 });
 
+test('a bidi override is refused — it makes the watched line differ from the run one', () => {
+  // Not a byte-splitter like LF, and refused for a different reason: this
+  // feature's whole premise is that the operator SEES the command run. A bidi
+  // override reorders the display without changing what executes, which is the
+  // one class their eyes cannot catch.
+  const r = vetTermCommand(`echo ok${ch(0x202e)} ; rm -rf /tmp/x`);
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /bidi override/);
+  assert.match(r.error, /U\+202E|SEES/);
+
+  const iso = vetTermCommand(`ls${ch(0x2066)}x`);
+  assert.strictEqual(iso.ok, false);
+  assert.match(iso.error, /bidi isolate/);
+});
+
+test('invisible characters are refused — zero-width, BOM, and the C1 range', () => {
+  // Each renders as nothing while still being part of the command the shell
+  // runs, so the line the operator reads is not the line that executes.
+  const zwsp = vetTermCommand(`np${ch(0x200b)}m test`);
+  assert.strictEqual(zwsp.ok, false);
+  assert.match(zwsp.error, /zero-width space/);
+
+  const bom = vetTermCommand(`npm${ch(0xfeff)} test`);
+  assert.strictEqual(bom.ok, false);
+  assert.match(bom.error, /no-break space/);
+
+  // A LEADING one is trimmed instead, because String.trim() counts U+FEFF as
+  // whitespace and runs first. That is the honest outcome and not a hole: what
+  // is removed is removed from the ends, so the line that runs is still the line
+  // the operator reads. Pinned because it looks like an inconsistency otherwise.
+  assert.deepStrictEqual(vetTermCommand(`${ch(0xfeff)}npm test`),
+    { ok: true, command: 'npm test' });
+
+  // C1 has no named entry, so it must reach the generic branch rather than pass.
+  const c1 = vetTermCommand(`ls${ch(0x0085)}x`);
+  assert.strictEqual(c1.ok, false);
+  assert.match(c1.error, /U\+0085/);
+});
+
+test('ordinary non-ASCII is NOT swept up by the invisible-character class', () => {
+  // The control for the two tests above. A class written one code point too wide
+  // would refuse every accented path and emoji, and the refusal would look
+  // principled — so the passing case is asserted, not assumed.
+  assert.deepStrictEqual(vetTermCommand('grep café ./notes'),
+    { ok: true, command: 'grep café ./notes' });
+  assert.strictEqual(vetTermCommand('echo "日本語 ok"').ok, true);
+  assert.strictEqual(vetTermCommand('echo "→ ✓"').ok, true);
+});
+
 test('the refusal SAYS it rejected rather than stripped', () => {
   // The distinction is the whole reason this refuses: a stripped `echo a\nrm -rf /`
   // becomes a different command that still runs, and the agent is never told its
