@@ -74,14 +74,19 @@ test('uiSettings: pendingRebootNotice ships null, round-trips, sanitizes, and cl
     // Fresh install: no notice armed.
     assert.strictEqual(uiSettings.get().pendingRebootNotice, null);
     // Arming persists the full shape and survives an unrelated save.
-    uiSettings.set({ pendingRebootNotice: { name: 'clodex', at: 1234567890, reason: 'nightly' } });
-    assert.deepStrictEqual(uiSettings.get().pendingRebootNotice, { name: 'clodex', at: 1234567890, reason: 'nightly' });
+    // `attempts` (t229) is part of the persisted shape: it is the only durable
+    // bound on how many times a notice may be re-offered, so a round-trip that
+    // dropped it would silently make the retry unbounded.
+    uiSettings.set({ pendingRebootNotice: { name: 'clodex', at: 1234567890, reason: 'nightly', attempts: 2 } });
+    assert.deepStrictEqual(uiSettings.get().pendingRebootNotice, { name: 'clodex', at: 1234567890, reason: 'nightly', attempts: 2 });
     uiSettings.set({ theme: uiSettings.get().theme }); // unrelated write
-    assert.deepStrictEqual(uiSettings.get().pendingRebootNotice, { name: 'clodex', at: 1234567890, reason: 'nightly' });
+    assert.deepStrictEqual(uiSettings.get().pendingRebootNotice, { name: 'clodex', at: 1234567890, reason: 'nightly', attempts: 2 });
     // A malformed at/reason is coerced (finite ms | 0, string | ''); a nameless
     // value is rejected to null.
-    uiSettings.set({ pendingRebootNotice: { name: 'x', at: 'soon', reason: 42 } });
-    assert.deepStrictEqual(uiSettings.get().pendingRebootNotice, { name: 'x', at: 0, reason: '' });
+    // A malformed/absent attempts coerces to 0 — never NaN, which would compare
+    // false against the ceiling forever and re-announce on every launch.
+    uiSettings.set({ pendingRebootNotice: { name: 'x', at: 'soon', reason: 42, attempts: 'lots' } });
+    assert.deepStrictEqual(uiSettings.get().pendingRebootNotice, { name: 'x', at: 0, reason: '', attempts: 0 });
     uiSettings.set({ pendingRebootNotice: { at: 5 } }); // no name
     assert.strictEqual(uiSettings.get().pendingRebootNotice, null);
     // Explicit null is a real clear (one-shot), not "keep".

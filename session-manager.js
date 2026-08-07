@@ -5,6 +5,22 @@ const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
 
 const REBOOT_NOTICE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
+// Retry-with-a-ceiling, NOT confirmed delivery — the distinction is the whole
+// reason this exists. Nothing in the stack acknowledges an injected message:
+// InjectQueue ends at a fire-and-forget pty.write, so "the notice was parked"
+// and "the notice arrived" are not the same claim and no layer here can tell
+// them apart. Reading the first as the second is what let the notice go
+// undelivered seven times while the log said it was handled. So the notice is
+// re-offered a bounded number of times and then given up on, deliberately.
+//
+// The delays are measured, not round: a resumed seat produced nothing for 105s
+// while a 41MB transcript re-rendered, and both existing margins
+// (BOOT_DRAIN_SETTLE_MS 750ms, INJECT_BOOT_MAXWAIT 20s) sit far inside that.
+// So the first retry clears the boot cap and the second clears the observed
+// re-render.
+const REBOOT_NOTICE_RETRY_DELAYS = [30 * 1000, 120 * 1000];
+const REBOOT_NOTICE_MAX_ATTEMPTS = 3;
+
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { mergeSessionEnv, sanitizeFlat } = require('./env-scopes');
 const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX } = require('./proxy-util');
@@ -2207,6 +2223,7 @@ function createSessionManager(deps) {
       clearTimeout(s._bootDrainTimer);
       clearTimeout(s._replayFallbackTimer);
       clearTimeout(s._parkedDrainFallbackTimer);
+      clearTimeout(s._rebootNoticeRetryTimer);
       // Drops the pending debounce timer with it — a hint armed after the PTY
       // died would ride the next session under the same name. The offer
       // cooldown goes too: a retired seat's name is reused by its replacement,
@@ -2615,7 +2632,11 @@ function createSessionManager(deps) {
           try { if (isDraftOpen(session)) return null; } catch { return null; }
           let texts = [];
           try { texts = drainPending(PENDING_DIR, session.name, `idle.${process.pid}`, this._bornFor(session.name)); } catch { return null; }
-          return texts.length ? texts.join('\n\n') : null;   // hook already drained
+          if (!texts.length) {
+            log.debug('inject', `idle drain for ${session.name} claimed nothing — hook already drained it`);
+            return null;
+          }
+          return texts.join('\n\n');
         },
       });
     }
@@ -2632,12 +2653,19 @@ function createSessionManager(deps) {
       if (!session || session.agentType !== 'claude' || session._dead) return;
       try { if (isDraftOpen(session)) return; } catch { return; } // don't splice an open draft
       if (!hasActivePending(PENDING_DIR, session.name)) return;    // nothing active — leave passives parked
+      // Every bail here is a park that stays on disk EXCEPT the last one, where the
+      // claim already succeeded and came back empty. Saying which is the difference
+      // between "deferred" and "someone else took it", and the silence over both is
+      // why a lost boot-window delivery left no evidence across seven reboots.
       const produce = () => {
         if (session._dead) return null;
         try { if (isDraftOpen(session)) return null; } catch { return null; }
         let texts = [];
         try { texts = drainPending(PENDING_DIR, session.name, `boot.${process.pid}`, this._bornFor(session.name)); } catch { return null; }
-        if (!texts.length) return null;                 // hook/idle already claimed it
+        if (!texts.length) {
+          log.debug('inject', `boot-ready drain for ${session.name} claimed nothing — another drainer won or every entry failed the born check`);
+          return null;
+        }
         return texts.join('\n\n');
       };
       this._injectQueueFor(session).enqueue('', { produce });
@@ -3115,6 +3143,26 @@ function createSessionManager(deps) {
         try { store.set({ pendingRebootNotice: null }); }
         catch (e) { log.error('intent', `reboot notice clear failed: ${e.message}`); }
       };
+
+      // Both bounds are checked BEFORE attempting, not only after a throw. The old
+      // code reached its stale-drop solely through retainOrExpire, so a notice that
+      // never threw could not expire — and once the retry below makes retention the
+      // normal outcome rather than the error path, an unchecked notice would be
+      // re-offered at every launch for as long as it existed. Age is the outer
+      // bound; attempts is the one that actually ends a doomed notice.
+      const priorAttempts = Number.isFinite(notice.attempts) && notice.attempts > 0 ? notice.attempts : 0;
+      const noticeAge = Number.isFinite(notice.at) && notice.at ? Date.now() - notice.at : Infinity;
+      if (noticeAge > REBOOT_NOTICE_MAX_AGE) {
+        log.info('intent', `reboot notice for ${notice.name} DROPPED (stale >7d, ${priorAttempts} attempts)`);
+        clear();
+        return;
+      }
+      if (priorAttempts >= REBOOT_NOTICE_MAX_ATTEMPTS) {
+        log.warn('intent', `reboot notice for ${notice.name} GIVEN UP after ${priorAttempts} attempts — never confirmed reaching the seat`);
+        clear();
+        return;
+      }
+
       const retainOrExpire = (why) => {
         const at = Number.isFinite(notice.at) ? notice.at : 0;
         const age = at ? Date.now() - at : Infinity;
@@ -3138,7 +3186,17 @@ function createSessionManager(deps) {
             const finalText = this._buildDeliveryText(target, 'reboot', body, 'dm');
             parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq(), null, false, this._bornFor(notice.name));
             this._armParkCap(target);
-            log.info('intent', `reboot notice parked for ${notice.name} (live claude — boot-safe, cap armed)`);
+            // Park is a promise to deliver, not a receipt — so this branch does NOT
+            // clear(). The settings copy is the only durable one, and clearing it
+            // here destroyed it while the parked file was still undelivered: a
+            // drain claims destructively (the claim renames the dir away) and its
+            // pty.write can then evaporate into a booting CLI, leaving no copy
+            // anywhere and no trace that anything was lost. Retention is what makes
+            // a retry possible at all; the ceiling below is what keeps at-least-once
+            // from becoming forever.
+            this._armRebootNoticeRetry(target, notice);
+            log.info('intent', `reboot notice parked for ${notice.name} (live claude — boot-safe, cap armed; retry armed, attempt ${(Number.isFinite(notice.attempts) ? notice.attempts : 0) + 1}/${REBOOT_NOTICE_MAX_ATTEMPTS})`);
+            return;
           } else {
             this._deliverMessage(notice.name, 'reboot', body, 'dm');
             log.info('intent', `reboot notice delivered to ${notice.name} (live codex)`);
@@ -3163,6 +3221,58 @@ function createSessionManager(deps) {
       } catch (e) {
         retainOrExpire(`park failed: ${e.message}`);
       }
+    }
+
+    // Re-offer the notice WITHIN this launch. The cross-launch retry (the notice
+    // surviving in settings) is only the backstop for a crash between park and
+    // delivery: a copy arriving at the next launch answers a question nobody is
+    // still asking, because by then something else has woken the agent — which is
+    // exactly how this defect stayed invisible.
+    //
+    // The liveness test is deliberately NOT _armParkedDrainFallback's
+    // fs.existsSync on the park file. That timer is the right shape against "the
+    // drain never fired" and blind to the failure here: the drain DID fire, the
+    // file is gone, and the write vanished — which existsSync reads as success.
+    //
+    // What is observable is that the seat took a turn after the park. A turn means
+    // the CLI processed input, which is the closest this layer gets to delivery.
+    // It is inference, not confirmation: a turn the operator caused would satisfy
+    // it too. That costs at most one duplicate notice — self-dating, one line, and
+    // by ruling the safe direction — whereas trusting the claim costs the message.
+    _armRebootNoticeRetry(target, notice) {
+      const attempt = (Number.isFinite(notice.attempts) && notice.attempts > 0 ? notice.attempts : 0) + 1;
+      const store = getUiSettings && getUiSettings();
+      if (store) {
+        try { store.set({ pendingRebootNotice: { ...notice, attempts: attempt } }); }
+        catch (e) { log.error('intent', `reboot notice attempt-stamp failed: ${e.message}`); }
+      }
+      const parkedAt = Date.now();
+      const delay = REBOOT_NOTICE_RETRY_DELAYS[attempt - 1];
+      if (delay == null || attempt >= REBOOT_NOTICE_MAX_ATTEMPTS) return;
+      clearTimeout(target._rebootNoticeRetryTimer);
+      // Held as a named function so a test can run the retry on demand rather than
+      // waiting out a 30s/120s wall-clock delay or reaching into Node's Timeout
+      // internals. The delay itself is asserted separately from the behaviour.
+      const fire = () => {
+        target._rebootNoticeRetryTimer = null;
+        if (target._dead) return;
+        // A turn since the park is the delivered-enough signal; clear and stop.
+        const stop = target.lastMainStop;
+        const turned = !!(stop && !stop.seeded && Number.isFinite(stop.ts) && stop.ts > parkedAt);
+        if (turned) {
+          if (store) {
+            try { store.set({ pendingRebootNotice: null }); }
+            catch (e) { log.error('intent', `reboot notice clear failed: ${e.message}`); }
+          }
+          log.info('intent', `reboot notice for ${target.name} presumed delivered (seat took a turn) — cleared after ${attempt} attempt(s)`);
+          return;
+        }
+        log.warn('intent', `reboot notice for ${target.name} unconfirmed ${Math.round((Date.now() - parkedAt) / 1000)}s after park (no turn since) — re-offering, attempt ${attempt + 1}/${REBOOT_NOTICE_MAX_ATTEMPTS}`);
+        this.maybeDeliverRebootNotice();
+      };
+      target._rebootNoticeRetryFire = fire;
+      target._rebootNoticeRetryDelay = delay;
+      target._rebootNoticeRetryTimer = setTimeout(fire, delay);
     }
 
     _handleRemindIntent(session, spec, body) {
@@ -5265,7 +5375,14 @@ function createSessionManager(deps) {
       // line; the drain may legitimately yield fewer (another drainer won, a born
       // mismatch restored one), which costs an over-count in a log, never a message.
       const count = countPending(PENDING_DIR, target.name);
-      if (!count) return { ok: true, count: 0 };
+      // Logged BEFORE the early return, which is where it has to be: with the
+      // return first, a cap firing on an already-empty mailbox was silent and
+      // indistinguishable from a cap that never fired at all. That absence was
+      // read as evidence the timer was broken, and it could not have been.
+      if (!count) {
+        log.debug('inject', `${kind} for ${target.name} — nothing parked (already drained elsewhere)`);
+        return { ok: true, count: 0 };
+      }
       const plural = count === 1 ? 'y' : 'ies';
       const body = kind === 'park-cap'
         ? `park cap fired (${INJECT_QUIET_MAXWAIT / 1000}s, no submit) — injecting ${count} parked deliver${plural}`

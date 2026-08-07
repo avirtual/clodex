@@ -1071,11 +1071,22 @@ function mkNotice({ notice, live = false, persisted = null, deliverThrows = fals
     getPersistence: () => ({ list: () => [], get: (n) => (n === (notice && notice.name) ? persisted : null) }),
     parkDelivery: (_dir, name, text) => { if (parkThrows) throw new Error('park boom'); parks.push({ name, text }); },
     PENDING_DIR: '/tmp/pending-x',
-    log: { info: () => {}, error: () => {} },
+    log: { info: () => {}, error: () => {}, warn: () => {}, debug: () => {} },
   });
   m._deliverMessage = (name, sender, body) => { if (deliverThrows) throw new Error('inject boom'); delivered.push({ name, sender, body }); };
   if (live) m.sessions.set(notice.name, { name: notice.name, agentType: 'claude', workspaceId: 'ws1' });
-  return { m, state, delivered, parks };
+  // A live claude park arms two REAL timers (the park cap and the t229 in-launch
+  // retry). Left running they fire after the test has ended, against a torn-down
+  // fixture — which surfaces as an uncaughtException attributed to whichever test
+  // is running at the time, and holds the runner open for the full timeout. So
+  // every mkNotice test disarms; the ones asserting a timer exists do it by hand.
+  const disarm = () => {
+    const s = m.sessions.get(notice && notice.name);
+    if (!s) return;
+    clearTimeout(s._parkCapTimer);
+    clearTimeout(s._rebootNoticeRetryTimer);
+  };
+  return { m, state, delivered, parks, disarm };
 }
 
 test('reboot notice: a LIVE CLAUDE requester gets the notice PARKED (boot-safe), then the flag clears', () => {
@@ -1098,16 +1109,25 @@ test('reboot notice: a LIVE CLAUDE requester gets the notice PARKED (boot-safe),
   assert.match(parks[0].text, /^\[agent:from reboot\] notice: Clodex restarted and is running again \(reboot requested at .+: nightly\)\.$/);
   assert.doesNotMatch(parks[0].text, /relaunch complete/);
   assert.doesNotMatch(parks[0].text, /does not grant/);
-  assert.strictEqual(state.pendingRebootNotice, null, 'one-shot flag cleared');
+  // t229: the flag deliberately SURVIVES the park. A park is a promise to deliver,
+  // and clearing here destroyed the only durable copy while the parked file was
+  // still undelivered — the loss this ticket exists to fix. It clears on a
+  // presumed-delivered turn, the attempt ceiling, or the 7d bound, never on park.
+  assert.ok(state.pendingRebootNotice, 'notice RETAINED on park — clearing here is the t229 defect');
+  assert.strictEqual(state.pendingRebootNotice.attempts, 1, 'first attempt stamped, so the ceiling can be reached');
   // T30 round 2 (field): a park alone strands on a seat that stays idle — every
   // drain trigger needs the seat to earn a turn. The starvation cap must be
   // armed so a forced drain lands within INJECT_QUIET_MAXWAIT.
   assert.ok(m.sessions.get('a')._parkCapTimer, 'starvation cap armed for the parked notice');
   clearTimeout(m.sessions.get('a')._parkCapTimer);
+  // t229: the in-launch retry is armed alongside the cap — it is the primary
+  // delivery path, the cap only forces the queue. Cleared for the same reason.
+  assert.ok(m.sessions.get('a')._rebootNoticeRetryTimer, 'in-launch retry armed for the parked notice');
+  clearTimeout(m.sessions.get('a')._rebootNoticeRetryTimer);
 });
 
 test('reboot notice: a LIVE CODEX requester keeps the active inject (no passive store to park into)', () => {
-  const { m, state, delivered, parks } = mkNotice({
+  const { m, state, delivered, parks, disarm } = mkNotice({
     notice: { name: 'a', at: Date.now(), reason: '' }, live: true,
   });
   // Flip the live seat to codex: it has no pending store, so a park would never
@@ -1120,6 +1140,7 @@ test('reboot notice: a LIVE CODEX requester keeps the active inject (no passive 
   assert.match(delivered[0].body, /^notice: Clodex restarted and is running again \(reboot requested at /);
   assert.strictEqual(parks.length, 0, 'not parked — codex has no passive drain');
   assert.strictEqual(state.pendingRebootNotice, null, 'flag cleared');
+  disarm();
 });
 
 test('reboot notice: an OFFLINE-but-resumable requester is PARKED by name, flag clears', () => {
@@ -1220,7 +1241,7 @@ test('reboot notice: a FAILED-restore seat is resumable, not gone → parked + c
 test('reboot notice: the echoed reason is de-newlined and capped (~200 chars)', () => {
   // Live claude parks → read the parked text (the reason sanitize/cap is identical
   // on both the park and active-deliver paths; it happens before the body is built).
-  const { m, parks } = mkNotice({
+  const { m, parks, disarm } = mkNotice({
     notice: { name: 'a', at: Date.now(), reason: 'line one\nline two\t' + 'x'.repeat(400) }, live: true,
   });
   m.maybeDeliverRebootNotice();
@@ -1231,7 +1252,161 @@ test('reboot notice: the echoed reason is de-newlined and capped (~200 chars)', 
   // can't swallow the capture.
   const reason = text.match(/reboot requested at \S+: (.*)\)\.$/)[1];
   assert.ok(reason.length <= 200, `reason capped (${reason.length})`);
+  disarm();
 });
+
+// ── t229: the READ side of the notice — retry-with-a-ceiling ────────────────
+// Nothing pinned this before, which is why the notice shipped undelivered seven
+// times while the WRITE-side tests above stayed green. The failure was: park →
+// clear() → a drain claims destructively → its pty.write evaporates into a
+// booting CLI → no copy anywhere. So these pin the retention, the ceiling, and
+// the presumed-delivered signal, not the parking.
+
+// Drive the armed retry without waiting on the wall clock: grab the timer's
+// callback off the session and invoke it. Asserting the timer EXISTS first is
+// what keeps this from silently testing nothing if the arm is ever dropped.
+function fireRebootRetry(m, name) {
+  const s = m.sessions.get(name);
+  assert.ok(s && s._rebootNoticeRetryTimer, 'a retry was armed to fire');
+  clearTimeout(s._rebootNoticeRetryTimer);
+  s._rebootNoticeRetryFire();
+}
+
+test('t229 reboot notice: a park does NOT clear the notice — the durable copy survives for a retry', () => {
+  const { m, state, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: the notice really was parked (otherwise retention proves nothing)');
+  assert.ok(state.pendingRebootNotice, 'the settings copy survives the park');
+  assert.strictEqual(state.pendingRebootNotice.name, 'a', 'and it is still the same notice');
+  assert.strictEqual(state.pendingRebootNotice.attempts, 1, 'stamped as attempt 1');
+  disarm();
+});
+
+test('t229 reboot notice: a seat that takes a TURN after the park is presumed delivered → cleared', () => {
+  const { m, state, parks } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: parked');
+  assert.ok(state.pendingRebootNotice, 'ENTER: retained, so the clear below is the retry deciding');
+  // A real wire turn stop, after the park. `seeded:false` matters — the spawn
+  // seeds a synthetic stop, and treating that as a turn would clear every notice
+  // instantly without anything having been delivered.
+  m.sessions.get('a').lastMainStop = { isTurn: true, ts: Date.now() + 1000, seeded: false };
+  fireRebootRetry(m, 'a');
+  assert.strictEqual(state.pendingRebootNotice, null, 'cleared once the seat demonstrably processed input');
+  assert.strictEqual(parks.length, 1, 'and NOT re-parked — one delivery, not two');
+});
+
+test('t229 reboot notice: the SEEDED spawn stop is not a turn (it would clear every notice for free)', () => {
+  const { m, state, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: parked');
+  // create() seeds exactly this shape at spawn time; it predates any delivery.
+  m.sessions.get('a').lastMainStop = { isTurn: true, ts: Date.now() + 1000, seeded: true };
+  fireRebootRetry(m, 'a');
+  assert.ok(state.pendingRebootNotice, 'a seeded stop proves nothing — the notice is re-offered, not cleared');
+  assert.strictEqual(parks.length, 2, 're-parked for a second attempt');
+  disarm();
+});
+
+test('t229 reboot notice: no turn since the park → re-offered WITHIN the launch (the primary path)', () => {
+  const { m, state, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: first park');
+  assert.strictEqual(state.pendingRebootNotice.attempts, 1);
+  fireRebootRetry(m, 'a');   // no lastMainStop at all — the seat never woke
+  assert.strictEqual(parks.length, 2, 'the notice is parked AGAIN in the same launch');
+  assert.strictEqual(state.pendingRebootNotice.attempts, 2, 'attempt count advanced');
+  disarm();
+});
+
+test('t229 reboot notice: the ceiling ENDS it — 3 attempts, then cleared, never a 4th', () => {
+  const { m, state, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  m.maybeDeliverRebootNotice();          // attempt 1
+  fireRebootRetry(m, 'a');               // → attempt 2
+  assert.strictEqual(state.pendingRebootNotice.attempts, 2, 'ENTER: reached attempt 2 with the notice still live');
+  fireRebootRetry(m, 'a');               // → attempt 3
+  assert.strictEqual(parks.length, 3, 'three delivery attempts made');
+  // Attempt 3 is the last: no further retry is armed, so the in-launch chain stops.
+  assert.strictEqual(m.sessions.get('a')._rebootNoticeRetryTimer, null,
+    'no 4th retry armed — the in-launch chain terminates at the ceiling');
+  // The next LAUNCH finds attempts at the ceiling and gives up rather than
+  // re-announcing forever. This is the bound that makes at-least-once safe.
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(state.pendingRebootNotice, null, 'given up and cleared at the ceiling');
+  assert.strictEqual(parks.length, 3, 'and it did NOT park a fourth time');
+  disarm();
+});
+
+test('t229 reboot notice: the retry delays clear the measured boot window, not a round number', () => {
+  // Measured on the reboot that produced this ticket: a resumed seat emitted
+  // nothing for 105s while a 41MB transcript re-rendered, and the two existing
+  // margins (BOOT_DRAIN_SETTLE_MS 750ms, INJECT_BOOT_MAXWAIT 20s) both sit inside
+  // that. A retry landing inside the window would be swallowed the same way the
+  // original delivery was, so these are the ONE thing about the retry that must
+  // not drift back to something tidy.
+  const { m, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  m.maybeDeliverRebootNotice();
+  const first = m.sessions.get('a')._rebootNoticeRetryDelay;
+  assert.ok(first > 20_000, `first retry (${first}ms) must clear the 20s boot-readiness cap`);
+  fireRebootRetry(m, 'a');
+  const second = m.sessions.get('a')._rebootNoticeRetryDelay;
+  assert.ok(second > 105_000, `second retry (${second}ms) must clear the measured 105s re-render`);
+  disarm();
+});
+
+test('t229 reboot notice: a >7d notice is dropped BEFORE any attempt (age bound needs no throw)', () => {
+  const eightDays = Date.now() - 8 * 24 * 60 * 60 * 1000;
+  const { m, state, parks } = mkNotice({
+    notice: { name: 'a', at: eightDays, reason: 'x' }, live: true,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 0, 'nothing parked — the stale notice never reached a delivery path');
+  assert.strictEqual(state.pendingRebootNotice, null, 'dropped');
+});
+
+test('t229 reboot notice: retention is CLAUDE-park-specific — codex still clears on its active deliver', () => {
+  // The codex branch delivers synchronously through _deliverMessage; there is no
+  // park to lose, so retaining there would re-announce on a path that works.
+  const { m, state, delivered } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: '' }, live: true,
+  });
+  m.sessions.get('a').agentType = 'codex';
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(delivered.length, 1, 'ENTER: actively delivered');
+  assert.strictEqual(state.pendingRebootNotice, null, 'cleared — this path has a real delivery');
+});
+
+test('t229 reboot notice: the attempts stamp survives a REAL settings round-trip (else the ceiling is unbounded)', () => {
+  // The counter is the ONLY durable bound on re-announcement, and it crosses a
+  // sanitizer that rebuilds the notice field by field. A dropped `attempts` would
+  // reset to 0 on every write, so the "capped at 3" guarantee would never be
+  // reached and a permanently-undeliverable notice would announce forever. Driven
+  // through the real store (not the private sanitizer) so the persisted shape is
+  // what's asserted.
+  const userData = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-ui-'));
+  const registryDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-reg-'));
+  const { uiSettings } = initStoresReal(userData, { log: { info() {}, warn() {}, error() {} }, registryDir });
+  uiSettings.set({ pendingRebootNotice: { name: 'a', at: 123, reason: 'r', attempts: 2 } });
+  assert.strictEqual(uiSettings.get().pendingRebootNotice.attempts, 2, 'the stamp survives the write');
+  uiSettings.set({ pendingRebootNotice: { name: 'a', at: 123, reason: 'r' } });
+  assert.strictEqual(uiSettings.get().pendingRebootNotice.attempts, 0,
+    'a pre-upgrade notice with no stamp reads as 0, not NaN or undefined');
+  fsReal.rmSync(userData, { recursive: true, force: true });
+  fsReal.rmSync(registryDir, { recursive: true, force: true });
+});
+
 
 test('gate: exec enabled → passes the coarse gate, reaching the per-command grant', async () => {
   const { m, injected } = mkGate(['exec']);
@@ -1558,7 +1733,7 @@ function mkPark(overrides = {}) {
     // construction rather than by luck.
     INJECT_BOOT_MAXWAIT: 60_000,
     findProjectRoot: () => null, // teams: default = no project anywhere; retire tests override
-    log: { info: () => {}, warn: () => {}, error: () => {} },
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     ...overrides,
   });
   // Models the QUEUE: a producer is evaluated at WRITE time. The real queue
@@ -1627,6 +1802,57 @@ test('_drainPendingAtIdle: exactly-once — a second drain (hook already claimed
   m._drainPendingAtIdle(session);            // first claim wins
   m._drainPendingAtIdle(session);            // dir gone → ENOENT → [] → no-op
   assert.deepStrictEqual(injected, ['[agent:from x] hi'], 'delivered once, not twice');
+});
+
+// t229: the second drain above is the claim-without-delivery shape in miniature —
+// the gate saw mail, the destructive claim came back empty because another drainer
+// won. In the field that silence is what hid a lost reboot notice for seven
+// restarts: nothing anywhere recorded that a claim had yielded nothing.
+test('t229 _drainPendingAtIdle: an empty claim is LOGGED, not silent', () => {
+  const debugs = [];
+  const { m, PENDING_DIR, injected } = mkPark({
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: (_s, msg) => debugs.push(msg) },
+  });
+  parkDelivery(PENDING_DIR, 'a', '[agent:from x] hi', '1');
+  const session = { name: 'a', agentType: 'claude' };
+  m._drainPendingAtIdle(session);
+  assert.deepStrictEqual(injected, ['[agent:from x] hi'], 'ENTER: the first drain really delivered');
+  assert.deepStrictEqual(debugs, [], 'ENTER: and said nothing, because it claimed something');
+  // Re-park, then let a competitor claim it before this drain's producer runs.
+  parkDelivery(PENDING_DIR, 'a', '[agent:from x] second', '2');
+  m._injectText = (_s, _t, opts) => {
+    drainPending(PENDING_DIR, 'a', 'competitor');   // wins between gate and produce
+    if (opts && typeof opts.produce === 'function') opts.produce();
+  };
+  m._drainPendingAtIdle(session);
+  assert.ok(debugs.some((d) => /idle drain for a claimed nothing/.test(d)),
+    'the empty claim is recorded — without it a lost delivery leaves no trace');
+});
+
+// Same claim-without-delivery shape on the BOOT-READY drain. It is a separate
+// code path with its own copy of the guard (it enqueues on the InjectQueue
+// directly rather than through _injectText), and a duplicated guard needs its
+// own test — one copy's coverage says nothing about the other's.
+test('t229 _drainPendingAtBootReady: an empty claim is LOGGED, not silent', () => {
+  const debugs = [];
+  const { m, PENDING_DIR } = mkPark({
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: (_s, msg) => debugs.push(msg) },
+  });
+  const session = { name: 'a', agentType: 'claude' };
+  // Stand in for the real queue: run the producer at write time, which is where
+  // the destructive claim happens — and let a competitor win first.
+  const produced = [];
+  m._injectQueueFor = () => ({ enqueue: (_t, opts) => {
+    drainPending(PENDING_DIR, 'a', 'competitor');
+    produced.push(opts && typeof opts.produce === 'function' ? opts.produce() : _t);
+  } });
+  parkDelivery(PENDING_DIR, 'a', '[agent:from reboot] notice: Clodex restarted', '1');
+  assert.strictEqual(hasActivePending(PENDING_DIR, 'a'), true,
+    'ENTER: active mail is parked, so the drain gets past its gate to the producer');
+  m._drainPendingAtBootReady(session);
+  assert.deepStrictEqual(produced, [null], 'ENTER: the producer ran and claimed nothing');
+  assert.ok(debugs.some((d) => /boot-ready drain for a claimed nothing/.test(d)),
+    'the empty claim is recorded — this is the exact silence that hid the lost notice');
 });
 
 test('_drainPendingAtIdle: a passive-only store is left parked (no turn generated)', () => {
@@ -1799,6 +2025,37 @@ test('_cleanup does NOT delete the pending store — a restart must not destroy 
   m._cleanup('a');
   assert.ok(hasPending(PENDING_DIR, 'a'),
     'parked DMs must survive _cleanup even with _userKilled set: restart routes through kill() too, so gating the rm on that flag deleted undelivered mail on an ordinary restart — the zero-loss violation this store exists to prevent. Stale mail for a RECREATED name is refused at drain time by the born stamp instead, which also covers the exits this rm never fired on.');
+});
+
+// A timer surviving _cleanup fires against a dead seat: its callback re-enters
+// the manager with a session that is gone from the map, and the reboot-notice
+// retry would re-park mail for a name that no longer has a reader. The list is
+// asserted whole rather than one entry deep — a NEW timer added to the class and
+// forgotten here is exactly the leak this catches, and per-timer assertions all
+// pass while saying nothing about the one nobody added.
+test('_cleanup disarms every timer the session owns (a fired timer on a dead seat re-enters the manager)', () => {
+  const { m } = mkPark({
+    registry: { unregister: () => {} },
+    cleanupClaudeHook: () => {}, cleanupSkillPlugin: () => {},
+    path: pathReal, fs: fsReal,
+  });
+  const TIMER_FIELDS = [
+    '_injectHoldTimer', '_injectFlushRetry', '_compactValveTimer', '_postClearValveTimer',
+    '_parkCapTimer', '_bootSettleTimer', '_bootDrainTimer', '_replayFallbackTimer',
+    '_parkedDrainFallbackTimer', '_rebootNoticeRetryTimer',
+  ];
+  const fired = [];
+  const s = { name: 'a', agentType: 'claude' };
+  for (const f of TIMER_FIELDS) s[f] = setTimeout(() => fired.push(f), 5);
+  m.sessions.set('a', s);
+  // ENTER: every field really holds a live timer, or the absence below is vacuous.
+  assert.strictEqual(TIMER_FIELDS.filter((f) => s[f]).length, TIMER_FIELDS.length,
+    'ENTER: all timers armed before _cleanup');
+  m._cleanup('a');
+  return new Promise((resolve) => setTimeout(() => {
+    assert.deepStrictEqual(fired, [], 'no timer survived _cleanup to fire against the dead seat');
+    resolve();
+  }, 40));
 });
 
 test('_onIncoming: an unknown delivery value falls through to the normal path (old-core compat shape)', () => {
@@ -6695,7 +6952,7 @@ function mkFlush(overrides = {}) {
   const drained = [];
   const m = mk({
     PENDING_DIR: '/tmp/pending-test',
-    log: { warn() {}, info() {}, error() {} },
+    log: { warn() {}, info() {}, error() {}, debug() {} },
     drainPending: (root, name, tag) => { drained.push({ name, tag }); return overrides._texts || []; },
     // The pre-count is non-destructive and must agree with what the stubbed drain
     // would yield; the real fn would read the (nonexistent) PENDING_DIR as 0.
@@ -6768,6 +7025,24 @@ test('_flushParkedNow: empty claim (another drainer won) is a no-op returning co
   const target = { name: 'a', agentType: 'claude' };
   assert.deepStrictEqual(m._flushParkedNow(target, 'cap.1', 'park-cap'), { ok: true, count: 0 });
   assert.strictEqual(m._injected.length, 0);
+});
+
+// t229: the same no-op must SAY so. This is not log-prose pedantry — the early
+// return sat above the only log call, so a park cap firing on an already-empty
+// mailbox produced zero output and was indistinguishable from a cap that never
+// fired at all. That absence was then read as proof the timer was broken, and it
+// could not have been: nothing it could do would have printed anything.
+test('t229 _flushParkedNow: an empty claim is LOGGED — silence here was read as a dead timer for four days', () => {
+  const debugs = [];
+  const m = mkFlush({
+    _texts: [],
+    log: { warn() {}, info() {}, error() {}, debug: (_scope, msg) => debugs.push(msg) },
+  });
+  const target = { name: 'a', agentType: 'claude' };
+  assert.deepStrictEqual(m._flushParkedNow(target, 'cap.1', 'park-cap'), { ok: true, count: 0 },
+    'ENTER: this is the empty-claim path, not a delivery');
+  assert.strictEqual(debugs.length, 1, 'the empty cap fire is recorded, not silent');
+  assert.match(debugs[0], /park-cap for a/, 'and names the seat and the kind that fired');
 });
 
 // --- hub relay: _relayClaimedDm ------------------------------------------
@@ -7054,7 +7329,7 @@ function mkOnDataProbe(overrides = {}) {
     lastTranscriptWrite: () => null,
     pty: fakePty,
     os: osReal,
-    log: { info: () => {}, warn: () => {}, error: () => {} },
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     // T35 gate deps (mk() omits them) — a real InjectQueue for the end-to-end drain.
     InjectQueue: require('../inject-queue').InjectQueue,
     INJECT_BOOT_MAXWAIT: 20_000,

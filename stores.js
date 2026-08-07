@@ -279,12 +279,17 @@ function sanitizeBoxes(rawBoxes) {
   return out;
 }
 
+// `attempts` is the retry ceiling's ONLY durable counter, so it has to survive
+// this round-trip: the notice is re-written to settings after each delivery
+// attempt, and a sanitizer that dropped the field would reset the count to 0
+// every time and turn a bounded retry into an unbounded one.
 function sanitizeRebootNotice(v) {
   if (!v || typeof v !== 'object' || typeof v.name !== 'string' || !v.name) return null;
   return {
     name: v.name,
     at: Number.isFinite(v.at) ? v.at : 0,
     reason: (typeof v.reason === 'string' ? v.reason : '').slice(0, 500),
+    attempts: Number.isFinite(v.attempts) && v.attempts > 0 ? Math.floor(v.attempts) : 0,
   };
 }
 

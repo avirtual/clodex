@@ -13,6 +13,34 @@ blocks a release.
 
 ## Unreleased
 
+- **The "Clodex is back" notice now actually reaches the agent that asked for
+  the reboot.** An agent that restarts Clodex makes itself inert in the process,
+  so it gets told when the app is running again. That notice has existed for a
+  while and had never once been delivered — seven restarts, seven log lines
+  saying it was handled, nothing arriving.
+
+  The cause was a promise being mistaken for a receipt. The notice was handed to
+  the message store for the restarted agent and then deleted from disk in the
+  same breath, as though handing it over were the same as it landing. It isn't:
+  the agent's CLI is still redrawing a long conversation at that moment, and a
+  message delivered into that window can vanish with no copy left anywhere. Now
+  the notice is kept until the agent demonstrably takes a turn, and re-offered
+  in the meantime — twice, spaced to clear the startup window, then given up on.
+  Worst case you see the same one-line notice twice; it carries its own
+  timestamp, so a late duplicate reads as harmless. Notices older than 7 days
+  are still dropped rather than delivered.
+
+  To be plain about what this is: nothing in the stack can confirm a message was
+  received, so this is a bounded retry, not a guarantee. It is labelled that way
+  in the code too, because reading "handed over" as "delivered" is the exact
+  mistake that hid this for seven restarts.
+
+- **Deliveries that go missing now say so.** Several paths could claim a queued
+  message off disk and then fail to deliver it, leaving no trace in the log —
+  which is why the bug above survived as long as it did. Those paths now record
+  when a claim comes up empty. This is diagnostic only; nothing changes about
+  what gets delivered.
+
 - **`[agent:term exec]` works on bash now, not just zsh.** Until now an agent
   asking to run something in your terminal was refused outright unless your
   shell was zsh — bash could be typed into, but nothing could tell the agent
