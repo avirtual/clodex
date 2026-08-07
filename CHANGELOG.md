@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Terminals reach further, and a lost message finally arrives
 
 - **The "Clodex is back" notice now actually reaches the agent that asked for
   the reboot.** An agent that restarts Clodex makes itself inert in the process,
