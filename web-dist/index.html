@@ -23156,7 +23156,7 @@ helper=${d.helperPath}`;
       function vetTermCommand(raw) {
         const s = typeof raw === "string" ? raw : "";
         const cmd = s.trim();
-        if (!cmd) return { ok: false, error: "no command \u2014 [agent:term exec] needs the command on the same line or the lines below it" };
+        if (!cmd) return { ok: false, error: "no command \u2014 [agent:term exec] needs the command on the SAME line, after the closing bracket" };
         const bytes = Buffer.byteLength(cmd, "utf8");
         if (bytes > TERM_EXEC_MAX) {
           return { ok: false, error: `command is ${bytes} bytes, over the ${TERM_EXEC_MAX}-byte limit \u2014 put a long command in a script and run that` };
