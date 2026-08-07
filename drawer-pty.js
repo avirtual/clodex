@@ -44,23 +44,32 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // anything (see execTimedOut) — it is a deadline on the SILENCE, not on the
   // command.
   const EXEC_TIMEOUT = execTimeoutMs || 120000;
-  // Ctrl-U then Ctrl-K, from code points rather than literal bytes in this
-  // source: a raw control character is invisible, does not reliably survive
-  // reformatting or an editor that sanitizes on save, and its loss would be
-  // silent — the write would simply stop clearing the line. Same reason
-  // drawer-avail builds its detector pattern from a string.
+  // From a code point rather than a literal byte in this source: a raw control
+  // character is invisible, does not reliably survive reformatting or an editor
+  // that sanitizes on save, and its loss would be silent — the write would
+  // simply stop clearing the line. Same reason drawer-avail builds its detector
+  // pattern from a string.
   //
-  // BOTH are needed, and one is not a belt-and-braces duplicate of the other.
-  // `^U` is kill-whole-line only in the EMACS keymap; zsh selects `viins`
-  // automatically when $VISUAL or $EDITOR ends in vi/vim (no `bindkey -v`
-  // required), and there `^U` is vi-kill-line, which kills back to where insert
-  // mode was last entered — anything after the cursor, and anything before the
-  // insert point, survives. `^K` is kill-line in emacs and vi-kill-eol in viins,
-  // so the pair clears both directions in both keymaps and the second is a
-  // harmless no-op after a successful first.
-  const KILL_LINE = String.fromCharCode(0x15);
-  const KILL_EOL = String.fromCharCode(0x0b);
+  // Abandon whatever is on the line before typing. NOT a line-editor kill:
+  // ^U/^K are emacs-keymap BINDINGS, and under `bindkey -v` zsh binds ^K to
+  // self-insert, so 0x0b was typed as a literal `^K` in front of the command and
+  // the shell ran `^Kls`. Measured, twice independently, against real zsh and
+  // bash in both keymaps. ^U alone looks like it survives vi mode but only when
+  // the cursor sits at end of line — viins `vi-kill-line` kills BACKWARD, so a
+  // draft the operator left with the cursor mid-line keeps its tail. 0x03 is a
+  // signal the tty layer handles, not a binding, so it is keymap-independent and
+  // cursor-independent. The prompt it redraws is safe here: exec() only writes
+  // when `isBusy()` is false, and term-marks treats an A mark while not
+  // capturing, and a D with no preceding C, as nothing to report.
+  const ABANDON_LINE = String.fromCharCode(0x03);
   const ENTER = String.fromCharCode(0x0d);
+  // How long to wait for the shell to answer the ^C before typing anyway. Not a
+  // tuned latency: the shell normally answers in a millisecond or two and the
+  // command goes out then. This is the fallback for a shell that says NOTHING —
+  // ^C on an empty line under a prompt that does not redraw — where waiting
+  // forever would be a command that never runs and an agent that never hears
+  // back. Overshooting costs a slow command; undershooting reopens the race.
+  const ABANDON_ACK_MS = 250;
 
   function shellFor() {
     // $SHELL, then the platform default. A login shell (`-l`) is deliberate:
@@ -154,6 +163,11 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     ptys.set(key, rec);
 
     proc.onData((data) => {
+      // The shell has spoken, so its post-SIGINT input flush is behind us and the
+      // command is safe to type. Runs BEFORE the mark parser is fed: this is a
+      // raw-byte acknowledgement and must not depend on marks, which a shell
+      // spawned without the shim never emits at all.
+      if (rec.execArm) { const arm = rec.execArm; rec.execArm = null; arm(); }
       if (rec.marks) { try { rec.marks.feed(data); } catch {} }
       rec.scrollback += data;
       rec.seq += 1;
@@ -221,6 +235,13 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     const p = rec.pending;
     if (!p) return false;
     rec.pending = null;
+    // Nothing clears the pending exec's ARM here, deliberately, and the same
+    // reasoning the deadline timer uses above applies: it is identity-checked at
+    // the point of use (`rec.pending !== p`), which covers what a clear here
+    // cannot — the 250ms fallback closure captured by an ALREADY-DISPATCHED
+    // timer, which survives any amount of clearing and would otherwise type a
+    // settled command onto a later one's line. Clearing as well was measured
+    // redundant: with the identity check in place, removing it kills no test.
     if (!onExecResult) return true;
     // A D mark for a command that is not the one we typed. Ordinary, not exotic:
     // the operator presses Enter on `vim` at T and the shell's C mark reaches us
@@ -363,16 +384,49 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       const p = { command: vet.command, timedOut: false };
       rec.pending = p;
       try {
-        // Clear the line in both directions FIRST. `isBusy()` false says no
-        // command is RUNNING; it says nothing about the line editor, which may
-        // hold a half-typed line the operator walked away from — appending to
-        // that would run their fragment plus our command as one line, and the C
-        // mark would report the COMBINED line as if it were ours.
-        rec.proc.write(KILL_LINE + KILL_EOL + vet.command + ENTER);
+        // Abandon the line FIRST. `isBusy()` false says no command is RUNNING;
+        // it says nothing about the line editor, which may hold a half-typed
+        // line the operator walked away from — appending to that would run their
+        // fragment plus our command as one line, and the C mark would report the
+        // COMBINED line as if it were ours.
+        //
+        // TWO WRITES, and they must not be merged. ^C is a SIGNAL, not an
+        // in-band byte: bash discards its pending input when SIGINT lands, so
+        // anything sharing this write can be swallowed with it — measured at 3
+        // failures in 72 under load, and what came out was `cho: command not
+        // found`, i.e. a TRUNCATED command that still runs. That is worse than
+        // the keymap bug this replaced, which at least failed loudly. The shell
+        // emitting anything at all is the acknowledgement that its flush is
+        // done; a timer would be a guess about a machine under unknown load.
+        rec.proc.write(ABANDON_LINE);
       } catch (e) {
         rec.pending = null;
         return { ok: false, code: 'write-failed', error: String((e && e.message) || e) };
       }
+      // The command is typed from the shell's next output, or from a deadline if
+      // the shell says nothing (a ^C on an already-empty line with no prompt
+      // redraw). `settled` makes the two paths exclusive — whichever runs first
+      // owns the write, so a shell that answers just as the deadline fires does
+      // not get the command twice.
+      let armed = false;
+      const typeCommand = () => {
+        if (armed) return;
+        armed = true;
+        // The command belongs to the exec that STARTED it. By now `pending` may
+        // hold a later one (a window kill settled ours and a new command came
+        // in), and typing then would put our bytes on a line the current waiter
+        // will claim as its own result.
+        if (rec.pending !== p) return;
+        try {
+          rec.proc.write(vet.command + ENTER);
+        } catch (e) {
+          // The failure has to reach the waiter: exec() has already returned ok
+          // by this point, so returning an error here would reach nobody.
+          settle(rec, { status: 'write-failed', reason: String((e && e.message) || e) });
+        }
+      };
+      rec.execArm = typeCommand;
+      later(typeCommand, ABANDON_ACK_MS);
 
       const timer = later(() => {
         // Identity, not a cleared handle: by now this record may hold a LATER

@@ -114,9 +114,9 @@ blocks a release.
 
   Two things it is careful about, both cases where the terminal is yours and the
   agent arrived mid-thought. If you had half a command typed at the prompt, that
-  line is cleared first, so your fragment can never end up joined onto the
-  agent's command and run — including under vi keybindings, where clearing the
-  line takes a different keystroke. And if you started something a fraction of a
+  line is abandoned first — the same Ctrl-C you would press yourself — so your
+  fragment can never end up joined onto the agent's command and run, whichever
+  keybindings you use. And if you started something a fraction of a
   second before the agent's command arrived, the agent is told the terminal
   reported a *different* command finishing rather than being handed your result
   as if it were its own.

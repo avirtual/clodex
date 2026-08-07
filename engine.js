@@ -1466,13 +1466,49 @@ const drawerPtys = enableDrawerServices ? createDrawerPtys({
       text = `[terminal] ${res.command}\nno ending was ever reported for it, and the terminal is idle again — whether it ran is unknown. The terminal is free for another command.`;
     } else if (res.status === 'shell-exit') {
       text = `[terminal] ${res.command}\nthe terminal's shell exited (${res.exitCode}) before the command reported back. Whether it ran is unknown.`;
+    } else if (res.status === 'write-failed') {
+      // Distinct from the catch-all below, which says "before the command
+      // reported back" — that would be a lie here. The line was abandoned and
+      // the command was never typed, so NOTHING ran and a retry is safe. That
+      // certainty is the whole value of the message.
+      text = `[terminal] ${res.command}\nthe terminal did not accept it (${res.reason}). It was never typed, so nothing ran — you can send it again.`;
     } else {
       text = `[terminal] ${res.command}\n${res.reason || 'the terminal went away'} before the command reported back. Whether it ran is unknown.`;
     }
-    queueForSeat(seat, `${text}${late}`);
+    deliverExecResult(seat, `${text}${late}`);
   },
   log,
 }) : null;
+
+// An agent-requested command's result, delivered as an URGENT dm rather than
+// appended to the selection queue.
+//
+// The queue is drained by the UserPromptSubmit hook, which fires only when the
+// OPERATOR types — so a result sat there until a human happened to send the seat
+// a message, and the agent that asked could not act on what it asked for. The dm
+// path is what every other unsolicited input already uses: it shows in the IPC
+// log as a message in a queue, and urgent means the seat is woken rather than
+// waiting for a turn that may never come.
+//
+// Urgent is correct here specifically because the agent ASKED: it is blocked on
+// this answer, so there is no turn to protect from interruption — the opposite
+// of the idle-peer case the hold exists for. The one hold urgent does NOT
+// override is the permission dialog, and that is right: injection ends with
+// Enter, which would answer the dialog.
+//
+// The queue write REMAINS as a fallback for exactly the cases the dm cannot
+// reach — a held delivery, a dead seat, a throw. Dropping it would trade a late
+// result for a lost one; the passive onCommand firehose above still uses the
+// queue alone, because nobody is waiting on it.
+function deliverExecResult(seat, text) {
+  try {
+    const r = manager._gatedDeliver(seat, 'terminal', text, true);
+    if (r && (r.queued || r.parked)) return;
+  } catch (e) {
+    log.warn('term', `exec result dm failed for ${seat}: ${(e && e.message) || e}`);
+  }
+  queueForSeat(seat, text);
+}
 
 // The seat's existing selection queue: a line-delimited file the CLI's
 // UserPromptSubmit hook drains and claims by rename. Both terminal paths append

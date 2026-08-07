@@ -26,12 +26,25 @@ const { vetTermCommand } = require('../drawer-avail');
 // control character in a test file is invisible, does not survive reformatting,
 // and its loss turns an assertion about the write into an assertion about a
 // slightly different string that still passes for the wrong reason.
-const CTRL_U = String.fromCharCode(0x15);
-const CTRL_K = String.fromCharCode(0x0b);
+// These assertions can only confirm that the bytes we chose are the bytes we
+// send — `spawn` here records writes and has no line editor, so it agrees with
+// ANY prefix. It cannot tell you the shell obeys it, and for four rounds it
+// happily pinned a sequence a vi-mode zsh typed out as literal text. What the
+// prefix has to survive is pinned against a real shell in
+// term-exec-keymap.test.js; keep both, they answer different questions.
+const CTRL_C = String.fromCharCode(0x03);
 const CR = String.fromCharCode(0x0d);
 const LF = String.fromCharCode(0x0a);
 const ESC = String.fromCharCode(0x1b);
 const BEL = String.fromCharCode(0x07);
+
+// A real shell answers the abandon signal — a prompt redraw, at minimum — and
+// drawer-pty types the command only once it has, because SIGINT discards input
+// that shares its write. The fake emits nothing on its own, so tests drive that
+// acknowledgement here. Deliberately NOT automatic inside `write()`: a fixture
+// that acked itself would make the two-write split untestable, and the split is
+// the whole fix.
+const ackAbandon = (proc) => proc.emit(`${CR}${LF}$ `);
 
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 const A = `${ESC}]133;A${BEL}`;
@@ -121,7 +134,14 @@ function mk(over = {}) {
 
 // The kill escalation also uses the injected setTimeout, so a test about the
 // exec deadline must not read timers[0] and hope.
-const execTimers = (timers) => timers.filter((t) => t.ms !== 5000);
+// The deadline timers, by EXCLUDING the two known others (the 5s kill
+// escalation and the 250ms abandon-ack fallback) rather than by taking [0].
+// Positional indexing broke silently when the ack timer was added — it is armed
+// first, so `[0]` became the wrong timer and tests asserting a timeout were
+// firing an arm instead. Every caller below indexes into this, so a pattern that
+// admits an extra row does not fail here; it fails somewhere downstream that
+// looks unrelated.
+const execTimers = (timers) => timers.filter((t) => t.ms !== 5000 && t.ms !== 250);
 
 // ── refusals ────────────────────────────────────────────────────────────────
 // Every one is checked INSIDE exec() rather than by a caller reading a status
@@ -215,12 +235,128 @@ test('a second exec in the same turn is refused as PENDING, not busy', () => {
   const { w, spawn, results } = mk();
   w.spawn('ws-1', 'alice', {});
   assert.strictEqual(w.exec('ws-1', 'alice', 'first').ok, true, 'ENTER: the first was accepted');
+  ackAbandon(spawn.spawned[0]);
   assert.strictEqual(w._execState('ws-1', 'alice').busy, false,
     'ENTER: the parser is not capturing yet — a busy check alone would let the second through');
 
   assert.deepStrictEqual(w.exec('ws-1', 'alice', 'second'), { ok: false, code: 'pending', running: 'first' });
-  assert.deepStrictEqual(spawn.spawned[0].written, [`${CTRL_U}${CTRL_K}first${CR}`], 'only the first command was typed');
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `first${CR}`], 'only the first command was typed');
   assert.deepStrictEqual(results, [], 'and the refusal did not settle the first');
+});
+
+// ── the abandon/type split ──────────────────────────────────────────────────
+// ^C is a SIGNAL, and a shell discards pending input when SIGINT lands. Bytes
+// sharing that write can go with it: measured against real bash at 3 failures in
+// 72 under load, producing `cho: command not found` — a truncated command that
+// still RUNS. `rm -rf ./buil` is a valid command, not an error, which is why
+// this is pinned harder than the keymap choice it replaced.
+
+test('the command is not typed until the shell has answered the abandon', () => {
+  const { w, spawn, results } = mk();
+  w.spawn('ws-1', 'alice', {});
+  assert.strictEqual(w.exec('ws-1', 'alice', 'ls').ok, true, 'ENTER: accepted');
+
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C],
+    'only the abandon has gone out — the command is still held back');
+  assert.strictEqual(w._execState('ws-1', 'alice').pending, 'ls',
+    'ENTER: and it is pending, so a second exec is still refused while we wait');
+
+  ackAbandon(spawn.spawned[0]);
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`],
+    'the shell spoke, so the command follows as its own write');
+  assert.deepStrictEqual(results, [], 'and typing it settles nothing on its own');
+});
+
+test('a shell that answers nothing still gets its command, on the fallback', () => {
+  // ^C on an already-empty line under a prompt that does not redraw. Waiting
+  // forever would be a command that never runs and an agent that never hears
+  // back — the one outcome this module exists to prevent.
+  const { w, spawn, timers } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C], 'ENTER: still held back');
+
+  const arm = timers.filter((t) => t.ms === 250);
+  assert.strictEqual(arm.length, 1, 'ENTER: a fallback was armed');
+  arm[0].fn();
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`]);
+});
+
+test('the command is typed exactly once when the shell answers AND the fallback fires', () => {
+  const { w, spawn, timers } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+  ackAbandon(spawn.spawned[0]);
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`], 'ENTER: the ack typed it');
+
+  timers.filter((t) => t.ms === 250)[0].fn();
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`],
+    'the late fallback is a no-op — a second copy would run the command twice');
+
+  // Nor does any LATER byte retype it: the arm is consumed, not merely guarded.
+  spawn.spawned[0].emit('unrelated output');
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`]);
+});
+
+test('a command settled before it was typed is never typed', () => {
+  // The window closes between the abandon and the ack. Without this the arm
+  // fires into a shell whose waiter has already been told the command is over —
+  // and after a same-seat respawn, onto a fresh shell's command line.
+  const { w, spawn, results } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C], 'ENTER: not yet typed');
+
+  w.killSeat('ws-1', 'alice');
+  assert.strictEqual(results.length, 1, 'ENTER: the waiter was answered by the kill');
+
+  ackAbandon(spawn.spawned[0]);
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C],
+    'the settled command was never typed');
+  assert.strictEqual(results.length, 1, 'and nothing was delivered twice');
+});
+
+test('a stale fallback cannot type its command onto a LATER command line', () => {
+  // The case a clear-on-settle cannot reach, which is why the arm is identity
+  // checked at the point of use instead: this timer was already dispatched, so
+  // its closure exists whatever the record now holds. It fires after the first
+  // command has ended and a second is mid-abandon — typing here would put `one`
+  // on `two`'s line, and `two`'s waiter would receive `one`'s output as its
+  // answer.
+  const { w, spawn, results, timers } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'one');
+  const staleArm = timers.filter((t) => t.ms === 250)[0];
+  assert.ok(staleArm, 'ENTER: the first command armed a fallback');
+
+  ackAbandon(spawn.spawned[0]);
+  spawn.spawned[0].emit(C('one'));
+  spawn.spawned[0].emit(D(0));
+  assert.strictEqual(results.length, 1, 'ENTER: the first command is over');
+
+  assert.strictEqual(w.exec('ws-1', 'alice', 'two').ok, true, 'ENTER: a second was accepted');
+  const written = spawn.spawned[0].written.length;
+  staleArm.fn();
+  assert.strictEqual(spawn.spawned[0].written.length, written,
+    'the stale fallback wrote nothing');
+  assert.deepStrictEqual(spawn.spawned[0].written.slice(-2), [`one${CR}`, CTRL_C],
+    'the last writes are the first command and the second abandon — no `one` after it');
+});
+
+test('a throw when the command is typed reaches the waiter', () => {
+  // exec() has already returned `ok` by then, so a thrown write here would
+  // otherwise be a command the agent is told is running and never hears about.
+  const { w, spawn, results } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+  spawn.spawned[0].throwOnWrite = 'EIO';
+  ackAbandon(spawn.spawned[0]);
+
+  assert.strictEqual(results.length, 1, 'ENTER: the waiter was answered');
+  assert.strictEqual(results[0][1].status, 'write-failed');
+  assert.match(results[0][1].reason, /EIO/);
+  assert.strictEqual(w._execState('ws-1', 'alice').pending, null,
+    'and the seat is usable again rather than wedged on a command that never ran');
 });
 
 test('a write that throws is reported, and leaves the seat able to try again', () => {
@@ -247,15 +383,17 @@ test('an accepted command is typed as kill-line + kill-to-EOL + command + Enter'
   // Trimmed by the vetter, and the TRIMMED text is what the caller is told ran —
   // it is also what the pending record and every later message quote.
   assert.deepStrictEqual(r, { ok: true, command: 'git status' });
-  // Both kills, in this order, and neither is redundant. isBusy() false says no
-  // command is RUNNING, and says nothing about a half-typed line the operator
-  // walked away from — appending to `rm -rf ` would run their fragment and our
-  // command as one line. `^U` alone does not clear it: under zsh's viins keymap
-  // (selected automatically when $EDITOR ends in vi/vim) `^U` is vi-kill-line,
-  // which spares everything after the cursor, so a leftover TAIL would survive
-  // and execute concatenated after our command. `^K` clears the other direction
-  // in both keymaps and is a no-op after a successful `^U`.
-  assert.deepStrictEqual(spawn.spawned[0].written, [`${CTRL_U}${CTRL_K}git status${CR}`]);
+  // TWO writes, and the split is the assertion. isBusy() false says no command
+  // is RUNNING, and says nothing about a half-typed line the operator walked
+  // away from — appending to `rm -rf ` would run their fragment and our command
+  // as one line. The abandon goes out alone and the command follows only once
+  // the shell has answered, because SIGINT discards input arriving with it: a
+  // single write drops the command's first byte under load, which runs a
+  // DIFFERENT command rather than failing. Which bytes clear the line under
+  // which keymap is pinned against real shells in term-exec-keymap.test.js —
+  // this fixture records writes and cannot tell you.
+  ackAbandon(spawn.spawned[0]);
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `git status${CR}`]);
   assert.deepStrictEqual(w._execState('ws-1', 'alice'), {
     shimmed: true, busy: false, pending: 'git status', timedOut: false,
   });
@@ -266,9 +404,10 @@ test('exec addresses one seat only', () => {
   w.spawn('ws-1', 'alice', {});
   w.spawn('ws-1', 'bob', {});
   w.exec('ws-1', 'bob', 'whoami');
+  ackAbandon(spawn.spawned[1]);
 
   assert.deepStrictEqual(spawn.spawned[0].written, [], "alice's shell was untouched");
-  assert.deepStrictEqual(spawn.spawned[1].written, [`${CTRL_U}${CTRL_K}whoami${CR}`]);
+  assert.deepStrictEqual(spawn.spawned[1].written, [CTRL_C, `whoami${CR}`]);
 });
 
 // ── the endings ─────────────────────────────────────────────────────────────
@@ -606,7 +745,10 @@ test('a timed-out command that is still RUNNING is not written off', () => {
   assert.deepStrictEqual(w.exec('ws-1', 'alice', 'next'),
     { ok: false, code: 'pending', running: 'sleep 900' });
   assert.strictEqual(results.length, 1, 'nothing was written off');
-  assert.deepStrictEqual(spawn.spawned[0].written, [`${CTRL_U}${CTRL_K}sleep 900${CR}`],
+  // Two entries, not one: the abandon and the command are separate writes. The
+  // C mark at the top of this test doubles as the shell's acknowledgement, so
+  // no explicit ackAbandon is needed here.
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `sleep 900${CR}`],
     'and nothing was typed into the running command');
 });
 
