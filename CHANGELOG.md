@@ -57,10 +57,13 @@ blocks a release.
 
 - **More commands are reported by name on Linux terminals.** Where the shell
   skipped a history entry only because the command repeated one, Clodex can now
-  say what ran instead of reporting it unnamed. Commands hidden from history on
-  purpose — typed with a leading space, or with history switched off — stay
-  unnamed, deliberately: guessing there would attach an unrelated command's name
-  to output the operator meant to keep out of the record.
+  say what ran instead of reporting it unnamed. Where a command was kept out of
+  the history on purpose, it stays unnamed, deliberately — guessing there would
+  attach an unrelated command's name to output the operator meant to keep out of
+  the record. That covers a shell with history switched off, a command typed with
+  a leading space on a shell set up to skip those, and any shell with a
+  `HISTIGNORE` pattern list, where there is no way to tell whether a given
+  command was one of the skipped ones.
 
 ## 5.1.1 — 2026-08-07
 

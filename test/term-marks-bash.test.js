@@ -245,6 +245,25 @@ test('a command typed by the operator is reported passively', opts, async () => 
   });
 });
 
+// AN OPERATOR PROFILE RUNNING `set -u` MAKES EVERY BARE EXPANSION IN THE HOOK
+// FATAL, and the failure is silent in the worst way: the abort happens before
+// __clodex_preexec's printf, so no C mark is emitted, no command is ever framed,
+// and every exec ends timeout -> lost rather than refusing. `set -u` is common
+// enough in a careful operator's profile to be worth the shell this costs.
+//
+// The passive path is the observation point rather than exec's: exec would prove
+// the same thing by waiting out its 120s timeout, and a test that measures a
+// deadline is a test that costs one on every green run.
+test("an operator's `set -u` does not silence the marks", opts, async () => {
+  await withShell(async ({ passive, proc }) => {
+    proc().write('echo strict_mode\r');
+    const got = await waitFor(() => passive.length > 0);
+    assert.ok(got, 'a bare ${HISTCONTROL}, ${HISTIGNORE} or ${PS0} here emits no mark at all');
+    assert.strictEqual(passive[passive.length - 1].command, 'echo strict_mode',
+      'and the command is still named');
+  }, { profile: 'set -u\n' });
+});
+
 // THE v5.1.x DEFECT, and it is a real shell's behaviour rather than ours: a
 // command bash declines to add to history leaves the history NUMBER unchanged,
 // and the guard read that as "we do not know what ran". Reproduced in
@@ -309,6 +328,34 @@ test('a shell with history off does not borrow an old entry as the command name'
   } finally {
     try { fs.rmSync(hist, { force: true }); } catch {}
   }
+});
+
+// HISTIGNORE IS A THIRD, INDEPENDENT SUPPRESSION CAUSE, and the reason it needs
+// a test of its own is that `hc` cannot see it: it is not a HISTCONTROL token, so
+// the two exclusions beside it both read as "not suppressed" and the guard names
+// the PREVIOUS entry. HISTCONTROL is unset here deliberately, to leave HISTIGNORE
+// as the only possible cause of what is measured.
+//
+// Downstream that borrowed name is worse than an empty one: foreignRecord vets
+// ours-vs-operator by comparing the reported text, so the agent would be told
+// `pwd` finished instead and its own command may never have run — a confident
+// lie — while the firehose published this output under `pwd`.
+//
+// A PRIOR NAMED COMMAND is what makes the borrow observable at all. The harness
+// gives every shell an empty HISTFILE, and an empty history names nothing either
+// way — which is exactly how the `-o history` case survived a green suite until
+// its history file was seeded.
+test('a command skipped by HISTIGNORE does not borrow the previous entry', opts, async () => {
+  await withShell(async ({ exec }) => {
+    const prior = await exec('pwd');
+    assert.strictEqual(prior.record.command, 'pwd',
+      'ENTER: this shell names commands normally, so there IS a name available to borrow');
+    const res = await exec('echo now');
+    assert.strictEqual(res.record.command, '',
+      'HISTIGNORE matches the command TEXT, which PS0 does not have — so it cannot be named');
+    assert.strictEqual(res.record.exitCode, 0, 'the exit code is still right');
+    assert.match(res.record.output, /now/, 'and the output is still captured');
+  }, { profile: "unset HISTCONTROL\nHISTIGNORE='echo*'\n" });
 });
 
 // What the AGENT ends up being told when the shell genuinely cannot name it.

@@ -353,6 +353,35 @@ test('an unchanged history number still names the command, except where the last
     'ignoreboth is ignorespace too, so it cannot be told from a dup');
   assert.ok(!/\$hc != \*:ignoredups:\*/.test(guard),
     'ignoredups is the case this fix EXISTS to name — excluding it would restore the defect');
+  // THE SHAPE OF THE GUARD, not just its tokens. `||` -> `&&` restores the
+  // original defect exactly, and the grouping parens are what keep the
+  // suppression tests subordinate to the number test — without them the
+  // exclusions apply to a genuinely NEW entry too and every space-free command
+  // on an ignorespace shell goes unnamed. Neither mutant changes a token, so
+  // both slip past the assertions above; the real-bash tests that would catch
+  // them SKIP on a stock macOS box (bash 3.2), which is most of this team's
+  // machines.
+  assert.match(guard, /\$n != "\$__clodex_hist" \|\| \(/,
+    'the suppression exclusions are an ALTERNATIVE to a new number, and are grouped');
+});
+
+// HISTIGNORE IS NOT A HISTCONTROL TOKEN — it is a third, independent reason bash
+// declines to add a line, and `hc` cannot see it. Measured on bash 5.3 with
+// HISTCONTROL unset: `HISTIGNORE='ls*'` took the history number 2 -> 3 across
+// `pwd`, a skipped `ls -la`, and `echo hi`.
+//
+// It must fall back to unnamed for a reason the other two do not share: its
+// patterns match the command's TEXT, which is precisely what is unavailable at
+// PS0, so there is no way to ask whether THIS command was the skipped one. A
+// borrowed name here is worse than silence — foreignRecord compares the reported
+// text, so the agent is told its command may never have run while the firehose
+// publishes its output under the previous command's name.
+test('any HISTIGNORE at all falls back to an unnamed command', () => {
+  const { body } = bash();
+  const m = body.match(/^\s*if \[\[ -n \$n[^\n]*$/m);
+  assert.ok(m, 'ENTER: the preexec guard line was found');
+  assert.match(m[0], /-z \$\{HISTIGNORE:-\}/,
+    'its patterns match text we do not have, so no HISTIGNORE shell can be named safely');
 });
 
 // Not conservatism: ignorespace and `set +o history` are how an operator hides a
@@ -372,8 +401,25 @@ test('a shell with history switched off names nothing at all', () => {
 // shell that had no such setting.
 test('the HISTCONTROL tokens are matched colon-delimited, not as substrings', () => {
   const { body } = bash();
-  assert.match(body, /hc=":\$\{HISTCONTROL\}:"/,
+  assert.match(body, /hc=":\$\{HISTCONTROL:-\}:"/,
     'the wrapping colons are what make the first and last tokens matchable');
+});
+
+// An operator profile running `set -u` makes a bare expansion of an unset
+// variable FATAL, and both of these are unset by default. Inside the function
+// that aborts __clodex_preexec before its printf, so no C mark is emitted at all
+// and every exec ends timeout -> lost — the feature fails silently rather than
+// refusing. PS0's own expansion is on the same footing: the assignment runs at
+// rc time, where an abort takes the PROMPT_COMMAND prepend down with it.
+test('every expansion in the hook survives an operator set -u', () => {
+  const { body } = bash();
+  assert.ok(!/\$\{HISTCONTROL\}/.test(body), 'HISTCONTROL is unset on plenty of shells');
+  assert.ok(!/\$\{HISTIGNORE\}/.test(body), 'and so is HISTIGNORE');
+  const ps0 = body.match(/^\s*PS0=.*$/gm) || [];
+  assert.strictEqual(ps0.length, 2, 'ENTER: both PS0 branches were found');
+  for (const line of ps0) {
+    assert.match(line, /"\\?\$\{PS0:-\}"/, `PS0 is unset by default: ${line}`);
+  }
 });
 
 test('the bash hooks only run in an interactive shell, and only once', () => {

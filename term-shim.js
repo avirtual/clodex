@@ -208,24 +208,37 @@ function bashSupport({ shell, probeVersion }) {
 // why the number is tracked: when a line is not added, a naive read reports the
 // PREVIOUS command's text — measured, `echo first` was reported twice.
 //
-// WHY THE NUMBER ALONE IS NOT THE RULE. An unchanged number has two causes that
-// need opposite answers, and treating them alike made every REPEATED command
-// unnamed on a stock ubuntu — which sets HISTCONTROL=ignoreboth in its default
-// ~/.bashrc, reached through the profile this rc sources. Measured in
+// WHY THE NUMBER ALONE IS NOT THE RULE. An unchanged number has causes that need
+// opposite answers, and treating them alike made every REPEATED command unnamed
+// on a stock ubuntu — which sets HISTCONTROL=ignoreboth in its default ~/.bashrc,
+// reached through the profile this rc sources. Measured in
 // ghcr.io/avirtual/clodex:5.1.1: a second `pwd` reported an empty payload, and
 // clearing HISTCONTROL in the same shell reported it correctly.
 //
-//   ignoredups / erasedups — the entry was suppressed BECAUSE it equals the last
-//   one, so the last one IS the command. Naming it is correct.
+//   ignoredups — the entry was suppressed BECAUSE it equals the last one, so the
+//   last one IS the command. Naming it is correct. erasedups reaches the same
+//   number by the other route: the entry IS added and an older duplicate is
+//   deleted, so the count comes out unchanged — and again the last entry is this
+//   command.
 //   ignorespace, and history switched off — the last entry is some earlier,
 //   unrelated command. Naming it would attribute this command's output to that
 //   one.
 //
-// The two are indistinguishable at this point, so `ignoreboth` (both at once)
-// must stay silent. That asymmetry is deliberate rather than conservative:
-// ignorespace and `set +o history` are how an operator hides a command with a
-// secret in it, and a stale label on THAT output is the one wrong answer worth
-// paying an unnamed command to avoid.
+// Those are indistinguishable at this point, so `ignoreboth` (ignoredups and
+// ignorespace at once) must stay silent. That asymmetry is deliberate rather
+// than conservative: ignorespace and `set +o history` are how an operator hides
+// a command with a secret in it, and a stale label on THAT output is the one
+// wrong answer worth paying an unnamed command to avoid.
+//
+// HISTIGNORE IS A THIRD CAUSE, CHECKED SEPARATELY, and it is not a HISTCONTROL
+// token — measured on bash 5.3 with HISTCONTROL unset, `HISTIGNORE='ls*'` took
+// the number from 2 to 3 across `pwd`, a skipped `ls -la`, and `echo hi`. Its
+// patterns match the command's TEXT, which is exactly what is unavailable here,
+// so there is no way to ask whether THIS command was the skipped one. Any
+// HISTIGNORE at all therefore falls back to unnamed: reading a suppressed
+// `ls -la` as the previous `pwd` is worse than saying nothing, because the exec
+// path's foreignRecord compares the reported text and would tell the agent its
+// command may never have run while publishing its output under the wrong name.
 //
 // An EMPTY payload still says "we do not know what ran" — term-marks treats an
 // unnamed record as a real command with an unknown line, and formatCommand's
@@ -257,11 +270,11 @@ if [[ $- == *i* && -z \${__clodex_installed:-} ]]; then
     return $s
   }
   __clodex_preexec() {
-    local h n line b='' hc=":\${HISTCONTROL}:"
+    local h n line b='' hc=":\${HISTCONTROL:-}:"
     h=$(HISTTIMEFORMAT= builtin history 1 2>/dev/null)
     h=\${h#"\${h%%[![:space:]]*}"}
     n=\${h%%[[:space:]]*}
-    if [[ -n $n && -o history ]] && [[ $n != "$__clodex_hist" || ( $hc != *:ignorespace:* && $hc != *:ignoreboth:* ) ]]; then
+    if [[ -n $n && -o history ]] && [[ $n != "$__clodex_hist" || ( -z \${HISTIGNORE:-} && $hc != *:ignorespace:* && $hc != *:ignoreboth:* ) ]]; then
       __clodex_hist=$n
       line=\${h#*[[:space:]]}
       line=\${line#"\${line%%[![:space:]]*}"}
@@ -275,10 +288,16 @@ if [[ $- == *i* && -z \${__clodex_installed:-} ]]; then
   # literal SOH and STX and sent to the terminal — measured, two stray control
   # bytes landed at the head of every captured command's output. Nothing needs
   # them here: PS0 is never measured for cursor placement.
+  #
+  # EVERY EXPANSION IN THIS BLOCK IS :- DEFAULTED, including PS0's own, because an
+  # operator profile running "set -u" turns an unset one into a fatal error: in
+  # the function that would abort __clodex_preexec before its printf, so no C mark
+  # is ever emitted and every exec ends timeout -> lost. PS0 is unset by default.
+  # (No backticks in this file's shell comments — it is a JS template literal.)
   if shopt -q promptvars; then
-    PS0='$(__clodex_preexec)'"\${PS0}"
+    PS0='$(__clodex_preexec)'"\${PS0:-}"
   else
-    PS0='\\e]133;C;\\a'"\${PS0}"
+    PS0='\\e]133;C;\\a'"\${PS0:-}"
   fi
   PROMPT_COMMAND="__clodex_precmd\${PROMPT_COMMAND:+; \$PROMPT_COMMAND}"
 fi
