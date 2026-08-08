@@ -1,8 +1,20 @@
 # Clodex
 
-Run a fleet of coding agents — **Cl**aude Code and C**odex** sessions on your Mac, on any Linux box you can ssh to, and on cloud instances you can't — and actually *see* their work: what each agent is doing right now, what it costs, what's in its context window, which files it's touching, and who spawned whom. Every session is a real terminal. Agents message each other, spawn each other (locally or across machines), and manage their own context; you watch and steer from one sidebar, a browser tab, or a terminal (`clodexctl`).
+**A visual manager for fleets of coding agents.** Run **Cl**aude Code and C**odex** sessions on your Mac, on any Linux box you can ssh to, and on cloud instances you can't — and actually *see* their work: what each agent is doing right now, what it costs, what's in its context window, which files it's touching, and who spawned whom. Every session is a real terminal. Agents message each other, spawn each other (locally or across machines), and manage their own context; you watch and steer from one sidebar, a browser tab, or a terminal (`clodexctl`).
 
 <img src="./docs/screenshot.png" align="right" width="208" alt="The Clodex sidebar: local agent sessions with live context and cache-warmth badges, a subagent child row with its own cost, and two peered machines contributing remote sessions">
+
+[Install](#install) · [Feature tour](#feature-tour) · [clodexctl](#clodexctl-the-fleet-from-a-terminal) · [Plugins](plugins/) · [How it works](#how-it-works)
+
+## Why
+
+One agent needs a terminal. Five need a control plane.
+
+Past the first couple of sessions the questions stop being *"what did it say?"* and start being operational: which of these is actually working right now, which is quietly burning tokens, which one is blocked on a permission dialog I never saw, whose context is about to fall over, and which of them spawned this thing I don't recognise. A grid of terminals answers none of that — every one of those answers is buried in scrollback you'd have to be watching at the time.
+
+Clodex keeps them as real terminals and puts the operational layer around them: live context and activity on every tab, a message bus so agents can hand work to each other, and the same sidebar whether the session is on this Mac or on a server three time zones away. Route a session through the [wirescope](#wire-telemetry-wirescope) proxy and it also reports wire-accurate cost, prompt-cache warmth, and the subagent tree underneath it.
+
+**Why not just tmux?** Multiplexing was never the hard part. tmux will happily give you nine panes; what it won't tell you is which pane is idle versus thinking, that pane 4 has been sitting on a permission prompt for twenty minutes, or that pane 7 is a subagent pane 2 spawned. Clodex is not a nicer multiplexer — the terminals are the easy half, and the fleet view is the point.
 
 ## Feature tour
 
