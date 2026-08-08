@@ -1,5 +1,10 @@
 # Clodex
 
+[![Release](https://img.shields.io/github/v/release/avirtual/clodex?color=6c5ce7)](https://github.com/avirtual/clodex/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/avirtual/clodex/total?color=00b894)](https://github.com/avirtual/clodex/releases)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20arm64%20%C2%B7%20Linux%20headless-lightgrey)](#install)
+
 **A visual manager for fleets of coding agents.** Run **Cl**aude Code and C**odex** sessions on your Mac, on any Linux box you can ssh to, and on cloud instances you can't — and actually *see* their work: what each agent is doing right now, what it costs, what's in its context window, which files it's touching, and who spawned whom. Every session is a real terminal. Agents message each other, spawn each other (locally or across machines), and manage their own context; you watch and steer from one sidebar, a browser tab, or a terminal (`clodexctl`).
 
 <img src="./docs/screenshot.png" align="right" width="208" alt="The Clodex sidebar: local agent sessions with live context and cache-warmth badges, a subagent child row with its own cost, and two peered machines contributing remote sessions">
@@ -15,6 +20,21 @@ Past the first couple of sessions the questions stop being *"what did it say?"* 
 Clodex keeps them as real terminals and puts the operational layer around them: live context and activity on every tab, a message bus so agents can hand work to each other, and the same sidebar whether the session is on this Mac or on a server three time zones away. Route a session through the [wirescope](#wire-telemetry-wirescope) proxy and it also reports wire-accurate cost, prompt-cache warmth, and the subagent tree underneath it.
 
 **Why not just tmux?** Multiplexing was never the hard part. tmux will happily give you nine panes; what it won't tell you is which pane is idle versus thinking, that pane 4 has been sitting on a permission prompt for twenty minutes, or that pane 7 is a subagent pane 2 spawned. Clodex is not a nicer multiplexer — the terminals are the easy half, and the fleet view is the point.
+
+## Install
+
+Download `Clodex-x.y.z-arm64.dmg` from [Releases](https://github.com/avirtual/clodex/releases/latest) and drag **Clodex** to Applications.
+
+First launch: right-click `Clodex.app` → **Open**. If macOS says the app is damaged, run `xattr -cr /Applications/Clodex.app` — the app is ad-hoc signed, not notarized.
+
+**Requirements** — Apple Silicon Mac, macOS 12+ (Intel and Linux [build from source](#building-from-source); Linux servers run the headless engine). Plus whichever CLIs you want to drive: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` in PATH) and/or [Codex](https://github.com/openai/codex) (`codex` in PATH).
+
+```bash
+# Put the same fleet in your terminal (no Electron, no app required):
+git clone https://github.com/avirtual/clodex && npm i -g ./clodex/cli
+clodexctl ctx import    # adopts every node the GUI already knows
+clodexctl sessions
+```
 
 ## Feature tour
 
@@ -120,18 +140,6 @@ Route a session's API traffic through [wirescope](https://github.com/avirtual/wi
 - **Autocompact** — a heavy idle session compacts itself in the last stretch of cache warmth instead of going cold at full size.
 
 Sessions route via `ANTHROPIC_BASE_URL` (Claude) / `openai_base_url` (Codex); set a default in Preferences or override per session. The telemetry bar only appears for routed sessions.
-
-## Install
-
-Download `Clodex-x.y.z-arm64.dmg` from [Releases](https://github.com/avirtual/clodex/releases) and drag **Clodex** to Applications. Apple Silicon only — Intel Macs build from source (below).
-
-First launch: right-click `Clodex.app` → **Open**. If macOS says the app is damaged, run `xattr -cr /Applications/Clodex.app`.
-
-## Requirements
-
-- Apple Silicon Mac, macOS 12 or later (Intel / Linux: build from source; Linux servers run the headless engine)
-- [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (`claude` in PATH) — for Claude sessions
-- [Codex CLI](https://github.com/openai/codex) (`codex` in PATH) — for Codex sessions
 
 ## Usage
 
