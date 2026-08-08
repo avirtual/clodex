@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — your terminal, on your terms
+## Unreleased
+
+## 5.2.0 — 2026-08-08 — your terminal, on your terms
 
 - **The terminal reporting checkbox is now three choices.** It used to decide
   two unrelated things at once: whether the agent could run a command in your
