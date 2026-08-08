@@ -60,7 +60,10 @@ const DEFAULT_UI_SETTINGS = {
   contextHints: false,
   semanticHints: false,
   selectionHints: false,
-  terminalReporting: false,
+  // New installs get the capability WITHOUT the firehose. Existing ones never
+  // reach this value for this key — sanitizeTerminalReports resolves an absent
+  // key to 'off' rather than falling through to the default.
+  terminalReports: 'asked',
   discoverOnStartup: false,
   recentCwds: [],
   disableClaudeDesignMcp: false,
@@ -291,6 +294,30 @@ function sanitizeRebootNotice(v) {
     reason: (typeof v.reason === 'string' ? v.reason : '').slice(0, 500),
     attempts: Number.isFinite(v.attempts) && v.attempts > 0 ? Math.floor(v.attempts) : 0,
   };
+}
+
+// Terminal reporting is a TRI-STATE because the old boolean conflated two
+// independent things: whether the shell emits OSC 133 marks at all (capability
+// — `[agent:term exec]` cannot answer without them) and whether the operator's
+// own commands are pushed to the agent unasked (disclosure). "Let the agent run
+// a command, but stop narrating everything I type" was unexpressable, and is
+// almost certainly what most operators want.
+const TERMINAL_REPORTS = ['off', 'asked', 'all'];
+
+// The upgrade path, and the one place a version bump could hand an agent a
+// capability nobody enabled. Both directions are deliberate:
+//   true  -> 'all'  — they had the firehose and keep it.
+//   false -> 'off'  — NOT 'asked'. They declined the capability too, as far as
+//     anyone can tell from a boolean, and granting a privileged one during an
+//     upgrade they did not ask for is the wrong default even when it is
+//     probably what they want. One control, one click, once.
+// A settings file carrying NEITHER key predates the feature entirely and lands
+// on 'off' for the same reason — `_load`'s per-key fallback to the DEFAULT
+// would otherwise let the new 'asked' default in through the other door.
+function sanitizeTerminalReports(raw) {
+  if (TERMINAL_REPORTS.includes(raw?.terminalReports)) return raw.terminalReports;
+  if (typeof raw?.terminalReporting === 'boolean') return raw.terminalReporting ? 'all' : 'off';
+  return 'off';
 }
 
 function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
@@ -1161,7 +1188,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           contextHints: typeof raw?.contextHints === 'boolean' ? raw.contextHints : DEFAULT_UI_SETTINGS.contextHints,
           semanticHints: typeof raw?.semanticHints === 'boolean' ? raw.semanticHints : DEFAULT_UI_SETTINGS.semanticHints,
           selectionHints: typeof raw?.selectionHints === 'boolean' ? raw.selectionHints : DEFAULT_UI_SETTINGS.selectionHints,
-          terminalReporting: typeof raw?.terminalReporting === 'boolean' ? raw.terminalReporting : DEFAULT_UI_SETTINGS.terminalReporting,
+          terminalReports: sanitizeTerminalReports(raw),
           discoverOnStartup: typeof raw?.discoverOnStartup === 'boolean' ? raw.discoverOnStartup : DEFAULT_UI_SETTINGS.discoverOnStartup,
           recentCwds: Array.isArray(raw?.recentCwds) ? raw.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : DEFAULT_UI_SETTINGS.recentCwds,
           disableClaudeDesignMcp: typeof raw?.disableClaudeDesignMcp === 'boolean' ? raw.disableClaudeDesignMcp : DEFAULT_UI_SETTINGS.disableClaudeDesignMcp,
@@ -1198,7 +1225,11 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         contextHints: partial?.contextHints ?? cur.contextHints,
         semanticHints: partial?.semanticHints ?? cur.semanticHints,
         selectionHints: partial?.selectionHints ?? cur.selectionHints,
-        terminalReporting: partial?.terminalReporting ?? cur.terminalReporting,
+        // Validated on the way IN, not just on the way out: an unrecognised
+        // string written here would read back as itself, and every gate
+        // downstream compares against a literal — so `'On'` would silently mean
+        // neither 'all' nor 'off' and disclosure would depend on a typo.
+        terminalReports: TERMINAL_REPORTS.includes(partial?.terminalReports) ? partial.terminalReports : cur.terminalReports,
         discoverOnStartup: partial?.discoverOnStartup ?? cur.discoverOnStartup,
         recentCwds: Array.isArray(partial?.recentCwds) ? partial.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : cur.recentCwds,
         disableClaudeDesignMcp: partial?.disableClaudeDesignMcp ?? cur.disableClaudeDesignMcp,

@@ -3551,7 +3551,7 @@ const prefsCompactOnResume = document.getElementById('prefs-compact-on-resume');
 const prefsContextHints = document.getElementById('prefs-context-hints');
 const prefsSemanticHints = document.getElementById('prefs-semantic-hints');
 const prefsSelectionHints = document.getElementById('prefs-selection-hints');
-const prefsTerminalReporting = document.getElementById('prefs-terminal-reporting');
+const prefsTerminalReports = document.getElementById('prefs-terminal-reports');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
 const prefsToolsList = document.getElementById('prefs-tools-list');
@@ -5159,6 +5159,26 @@ function applyPrefsGate() {
 prefsProxyEnabled.addEventListener('change', applyPrefsGate);
 prefsContextHints.addEventListener('change', applyPrefsGate);
 
+const TERMINAL_REPORTS = ['off', 'asked', 'all'];
+
+// The dialog's read of the tri-state. Falls back to 'off' rather than to the
+// store's 'asked' default: this runs on whatever settings:get returned, and a
+// value this function cannot recognise must not be redrawn as the state that
+// grants the agent a capability. Save then writes back what is displayed.
+function setTerminalReports(value) {
+  if (!prefsTerminalReports) return;
+  const want = TERMINAL_REPORTS.includes(value) ? value : 'off';
+  for (const el of prefsTerminalReports.querySelectorAll('input[type="radio"]')) {
+    el.checked = el.value === want;
+  }
+}
+
+function readTerminalReports() {
+  if (!prefsTerminalReports) return 'off';
+  const picked = prefsTerminalReports.querySelector('input[type="radio"]:checked');
+  return picked && TERMINAL_REPORTS.includes(picked.value) ? picked.value : 'off';
+}
+
 async function openPrefs() {
   const s = await window.api.getSettings();
   renderPrefsCheckboxes(prefsClaudeBox, s.claudeComponents, s.statusline.claude, CLAUDE_LABELS);
@@ -5170,7 +5190,7 @@ async function openPrefs() {
   prefsContextHints.checked = !!s.contextHints;
   if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
   if (prefsSelectionHints) prefsSelectionHints.checked = !!s.selectionHints;
-  if (prefsTerminalReporting) prefsTerminalReporting.checked = !!s.terminalReporting;
+  setTerminalReports(s.terminalReports);
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
   applyPrefsGate();
@@ -5215,7 +5235,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     contextHints: prefsContextHints.checked,
     semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
     selectionHints: prefsSelectionHints ? prefsSelectionHints.checked : false,
-    terminalReporting: prefsTerminalReporting ? prefsTerminalReporting.checked : false,
+    terminalReports: readTerminalReports(),
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     remoteEnabled: prefsRemoteEnabled.checked,
   });

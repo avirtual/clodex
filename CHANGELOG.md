@@ -11,7 +11,33 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — terminal results that used to be thrown away
+## Unreleased — your terminal, on your terms
+
+- **The terminal reporting checkbox is now three choices.** It used to decide
+  two unrelated things at once: whether the agent could run a command in your
+  Terminal tab at all, and whether it was told about every command *you* ran
+  there. Wanting the first without the second — let it run something when you
+  ask, but stop narrating your own work — was not expressible, so the only way
+  to stop the stream was to switch the whole feature off.
+
+  In Settings the choices are now **Off** (no marks; the agent cannot run a
+  command there either, since it would never learn one had finished), **Only
+  what the agent asks for**, and **Everything I run too**. Existing setups keep
+  what they had: the box ticked becomes "everything", unticked becomes "off".
+  Nothing is switched on for you.
+
+- **Switching the stream off now takes effect at once, and takes your queued
+  commands with it.** Reports wait for your next message rather than
+  interrupting the agent, so switching off used to leave the last few commands
+  sitting in the queue — and the next thing you typed sent them anyway. Those
+  pending reports are now discarded, and the change applies to terminals
+  already open rather than the next one. Reports already merged into a
+  conversation cannot be recalled, and Settings says so.
+
+  Also stated plainly there: terminal reports are sent **verbatim** — a command
+  line carrying a token, a password in a URL or an `Authorization` header goes
+  as written. The redaction mentioned for panel selections applies to that
+  feature only, which the wording no longer leaves ambiguous.
 
 - **A terminal command whose result the shell could not label is no longer
   discarded.** Running `[agent:term exec] pwd` twice in a row answered "finished,

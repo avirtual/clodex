@@ -511,15 +511,41 @@ test('a passive reporter that throws cannot swallow the exec answer', () => {
   assert.strictEqual(results[0][1].status, 'ok');
 });
 
-test('an exec answer is delivered even when a reporting pref would drop it', () => {
-  // engine.js gates the PASSIVE path on the terminalReporting pref and does not
-  // gate this one. The claim pinned here is the seam that makes that possible:
-  // the two callbacks are separate, so exec is not reachable from the pref.
+test('a passive reporter that drops everything is not on the exec answer\'s path', () => {
+  // The two callbacks are separate, so a reporter that discards every record
+  // cannot reach the answer an agent asked for.
+  //
+  // RENAMED (t235). This was "an exec answer is delivered even when a reporting
+  // pref would drop it", which named a state it could not enter: `mk()` wires a
+  // `shimEnv` that always returns a shim, so pref-off was unreachable from here
+  // and the test proved nothing about the pref. Worse, the claim was FALSE —
+  // engine's pref-off shimEnv returns null, `rec.shimmed` is false, and
+  // `exec()` refuses with `no-marks` before any of this runs. The real
+  // pref-off behaviour is the test below; this one keeps the callback-
+  // separation claim it actually did pin, under a name that says so.
   const { w, spawn, results } = mk({ onCommand: () => {} });
   w.spawn('ws-1', 'alice', {});
   w.exec('ws-1', 'alice', 'ls');
   spawn.spawned[0].emit(`${C('ls')}x\n${D(0)}`);
   assert.strictEqual(results.length, 1);
+});
+
+test('no shim (the `off` state) refuses the exec instead of running it blind', () => {
+  // What engine's `off` gate actually produces: `shimEnv` returns null, so the
+  // shell is born unshimmed and there is no D mark to settle on. Refusing is
+  // the only honest answer — the command would still RUN, and the agent would
+  // wait forever for an ending nothing can send.
+  const { w, spawn, results, passive } = mk({ shimEnv: () => null });
+  w.spawn('ws-1', 'alice', {});
+
+  const r = w.exec('ws-1', 'alice', 'ls');
+  assert.deepStrictEqual(r, { ok: false, code: 'no-marks' });
+  // Nothing was typed: a refusal that still wrote the line would run the
+  // command unobserved, which is the outcome the refusal exists to prevent.
+  assert.deepStrictEqual(spawn.spawned[0].written, [],
+    'ENTER: the shell really was spawned, and nothing was written to it');
+  assert.strictEqual(results.length, 0, 'a refusal is the answer; no settle follows');
+  assert.deepStrictEqual(passive, [], 'and an unshimmed shell reports nothing passively');
 });
 
 test('an abandoned command is reported as abandoned, not left hanging', () => {

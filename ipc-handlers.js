@@ -51,6 +51,7 @@ function registerIpcHandlers(deps) {
     getWebTunnelManager, openPeerWeb, closePeerWeb,
     getSandbox, getSandboxManager,
     enableDrawerServices, enableLocalTerminal, getCtlService, getDrawerPtys, workspaceOfSenderStrict,
+    syncTerminalReports,
     getPluginHost, surfaceOfSender,
   } = deps;
 
@@ -715,7 +716,7 @@ function registerIpcHandlers(deps) {
       contextHints: s.contextHints,
       semanticHints: s.semanticHints,
       selectionHints: s.selectionHints,
-      terminalReporting: s.terminalReporting,
+      terminalReports: s.terminalReports,
       discoverOnStartup: s.discoverOnStartup,
       theme: s.theme,
       sidebarWidth: s.sidebarWidth,
@@ -730,7 +731,16 @@ function registerIpcHandlers(deps) {
     };
   });
   handle('settings:set', (_e, partial) => {
+    // Read BEFORE the write: the revocation below is a transition, and the only
+    // place the previous value still exists is here.
+    const prevTerminalReports = uiSettings.get().terminalReports;
     const next = uiSettings.set(partial);
+    // No truthiness guard on the dep, matching the posture the term intent
+    // takes: an unwired revocation must throw here rather than skip silently.
+    // This is the transition that withdraws undrained reports, and a `typeof`
+    // check turns forgetting to inject it into the queue quietly never being
+    // swept — the precise failure a surviving mutant already found once.
+    syncTerminalReports(prevTerminalReports);
     rebuildAllStatusScripts(manager);
     if (wirescope.autoStartWanted()) wirescope.start().catch(() => {});
     else wirescope.stop();

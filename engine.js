@@ -1391,6 +1391,9 @@ const ctlService = enableDrawerServices ? createCtlService({}) : null;
 // resolves per workspace through the manager rather than being captured, so a
 // terminal spawned after the operator opens sessions lands in the directory
 // they are actually working in.
+// Marks a queued row as a PASSIVE terminal report — the one class of queued
+// text the operator can still withdraw by switching the firehose off.
+const PASSIVE_TERM_KIND = 'terminal-passive';
 const { createDrawerPtys } = require('./drawer-pty');
 const { buildTermShim, unsupportedShellReason } = require('./term-shim');
 const { formatCommand, createMarkParser } = require('./term-marks');
@@ -1409,12 +1412,18 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
   // seat. Gated on the pref at SPAWN time, which is coarse on purpose: a shell
   // already running keeps whatever startup it was born with, and toggling the
   // pref governs the next shell rather than reaching into a live one.
+  //
+  // This gate is CAPABILITY — marks make a command's boundaries and exit code
+  // knowable, and knowable is not disclosed. It must stay distinct from the
+  // disclosure gate on onCommand below: a shimmed shell that reports nothing to
+  // anyone leaks nothing, and merging the two back into one condition is exactly
+  // the conflation t235 exists to undo.
   // Injected rather than required inside drawer-pty: that module takes every
   // dependency this way, and its own test pins the absence of any require as
   // the thing keeping a workbench terminal out of the session machinery.
   makeMarkParser: createMarkParser,
   shimEnv: (seat) => {
-    if (!seat || !uiSettings.get().terminalReporting) return null;
+    if (!seat || uiSettings.get().terminalReports === 'off') return null;
     return buildTermShim({
       dir: pathFor(REGISTRY_DIR, seat, 'termShim'),
       shell: process.env.SHELL,
@@ -1426,11 +1435,22 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
   // line-delimited file drained by the UserPromptSubmit hook, already claimed by
   // rename, and already consume-once — every property this needs. A second
   // mechanism would be a second set of the same bugs.
+  //
+  // This gate is DISCLOSURE, and it is read per command rather than at spawn —
+  // which is what makes switching the firehose off bite a LIVE shell instead of
+  // the next one. Only the capability gate above is spawn-bound, so the control
+  // that matters for privacy is the instant one.
   onCommand: (seat, rec) => {
-    if (!uiSettings.get().terminalReporting) return;
+    if (uiSettings.get().terminalReports !== 'all') return;
     const text = formatCommand(rec, { stripAnsi });
     if (!text) return;
-    queueForSeat(seat, text);
+    // Tagged so switching the firehose off can withdraw exactly these rows from
+    // the undrained queue. The same file carries the operator's own Copy
+    // attachments and the exec-answer fallback, and neither is the operator's to
+    // lose when they decline the firehose — an untagged sweep would take all
+    // three. Readers ignore the extra key: both cli-hooks' drain script and
+    // readQueue below select `o.text`.
+    queueForSeat(seat, text, PASSIVE_TERM_KIND);
   },
   // The framing rules for a command the AGENT asked for, which is a different
   // product from the passive report above and differs from it twice: it is not
@@ -1527,10 +1547,65 @@ function deliverExecResult(seat, text) {
 // UserPromptSubmit hook drains and claims by rename. Both terminal paths append
 // through this one helper so a second delivery mechanism (with a second set of
 // the same bugs) never appears.
-function queueForSeat(seat, text) {
+// `kind` is written only for the passive firehose (PASSIVE_TERM_KIND). An
+// untagged row is anything the operator or the agent asked for, and
+// dropPassiveTermReports leaves those alone.
+function queueForSeat(seat, text, kind) {
   try {
-    fs.appendFileSync(pathFor(REGISTRY_DIR, seat, 'selection'), `${JSON.stringify({ text })}\n`);
+    const row = kind ? { text, kind } : { text };
+    fs.appendFileSync(pathFor(REGISTRY_DIR, seat, 'selection'), `${JSON.stringify(row)}\n`);
   } catch {}
+}
+
+// The only revocation the firehose has. A report sits in the seat's queue file
+// until the operator's NEXT message drains it, so switching the stream off has
+// to take the undrained rows with it — otherwise the operator flips the control
+// and the very next thing they type ships the last five commands anyway, which
+// is the control failing in the exact moment they reached for it. Past the drain
+// the text is transcript-resident and unrecoverable; the UI says so.
+//
+// Rewrite-in-place rather than rename-and-replace: the CLI's drain hook claims
+// this file by rename, so a claim landing mid-write reads the pre-drop bytes at
+// worst — the same at-least-once outcome the queue already has. Losing an
+// operator's Copy attachment to a clever swap would be the worse trade.
+function dropPassiveTermReports(seats) {
+  for (const seat of seats) {
+    const file = pathFor(REGISTRY_DIR, seat, 'selection');
+    try {
+      const raw = fs.readFileSync(file, 'utf8');
+      const kept = [];
+      let dropped = 0;
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue;
+        // An UNPARSEABLE row is kept. It is not ours to judge, and dropping what
+        // we cannot read would make a corrupt line an amplifier for this sweep.
+        let o = null;
+        try { o = JSON.parse(line); } catch { kept.push(line); continue; }
+        if (o && o.kind === PASSIVE_TERM_KIND) { dropped += 1; continue; }
+        kept.push(line);
+      }
+      if (!dropped) continue;
+      if (kept.length) fs.writeFileSync(file, `${kept.join('\n')}\n`);
+      else fs.rmSync(file, { force: true });
+      log.info('term', `dropped ${dropped} undrained terminal report(s) for ${seat}`);
+    } catch {}
+  }
+}
+
+// Called after a settings write, with the value from BEFORE it. Only the
+// `all` → anything transition revokes: switching the firehose ON has nothing to
+// withdraw, and a write that left the state alone must not sweep a queue the
+// operator never asked to change.
+//
+// The seat set is the live sessions. A seat's run dir — and with it the queue
+// file — is removed when its session exits, so a name absent from that map has
+// no undrained row to drop.
+function syncTerminalReports(prev) {
+  if (prev !== 'all') return;
+  if (uiSettings.get().terminalReports === 'all') return;
+  let seats = [];
+  try { seats = [...manager.sessions.keys()]; } catch { return; }
+  dropPassiveTermReports(seats);
 }
 
 // Why an agent's terminal command cannot be reported on, stated so the OPERATOR
@@ -1545,8 +1620,17 @@ function queueForSeat(seat, text) {
 function termShimDiagnosis() {
   const shellReason = unsupportedShellReason({ shell: process.env.SHELL });
   if (shellReason) return shellReason;
-  if (!uiSettings.get().terminalReporting) {
+  const reports = uiSettings.get().terminalReports;
+  if (reports === 'off') {
     return 'terminal reporting is switched off in Settings, so the shell emits no completion marks';
+  }
+  // Unreachable while 'asked' is live — that state builds the shim, so a shell
+  // born under it HAS marks. It is here for the shell born under 'off' and
+  // asked about after the operator switched to 'asked': the reopen advice below
+  // is right, but a message naming the checkbox they just ticked would send
+  // them back to Settings to tick it again.
+  if (reports === 'asked') {
+    return 'this shell was opened while terminal reporting was off — close the terminal tab and reopen it';
   }
   return 'this shell was opened before terminal reporting was switched on — close the terminal tab and reopen it';
 }
@@ -1769,6 +1853,7 @@ const toolCache = createToolCache({ whichBin });
     getSandboxManager: () => sandboxManager,
     enableDrawerServices,
     enableLocalTerminal,
+    syncTerminalReports,
     getCtlService: () => ctlService,
     getDrawerPtys: () => drawerPtys,
     getPluginHost: () => pluginHost,
