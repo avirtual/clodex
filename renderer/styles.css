@@ -1328,7 +1328,6 @@ html, body {
 /* Relay-mesh toggle: hidden until the config read resolves (and for a peer whose
    settings we can't read), toggled via .hidden in peers-ui. */
 #peer-info-relay-row.hidden { display: none; }
-#peer-info-shell-row.hidden { display: none; }
 
 /* Lay the (short, single-word) tool/skill checklists out in two columns so the
    popover stays wide-and-short instead of a tall scroll. */
@@ -3970,6 +3969,14 @@ html, body {
 /* Warm, not accent: this one reports a capability that is OPEN, and it should
    not read as decoration next to the sandbox chip. */
 .peer-shell-chip { flex: none; font-size: 10px; line-height: 1; color: var(--warn); letter-spacing: -1px; }
+/* The same chip in the sidebar header, where the box-wide grant now shows.
+   no-drag because #sidebar-header is a drag region and a tooltip on a draggable
+   element never gets its hover. */
+#shell-share-chip { -webkit-app-region: no-drag; align-self: center; margin-right: 6px; font-size: 12px; cursor: default; }
+/* There is no generic `.hidden` rule (see the top of this file). Without this
+   per-id one the chip renders ALWAYS-VISIBLE — and this indicator's wrong
+   direction is exactly "says sharing is on when it is off". */
+#shell-share-chip.hidden { display: none; }
 /* peer-state carries the sole margin-left:auto, so it (and the action strip that
    follows it) hug the right edge; when there's no state text the empty span
    still consumes the free space and pushes the icons right. */

@@ -36,25 +36,23 @@ function initPeersUi({
 
   function peerDisplayHost(st) { return (st && (st.host || st.label)) || 'peer'; }
 
-  // Peers whose record carries the terminal-sharing grant. Read from SETTINGS,
-  // not from any peer's hello: this is what THIS box serves, and a peer cannot
-  // be asked whether we let it in.
+  // Does THIS box serve peer terminals? Read from SETTINGS, not from any peer's
+  // hello: it is what we serve, and a peer cannot be asked whether we let it in.
   //
   // The persistent indicator ruling 2 asked for. A toast is missed and a chip
-  // scrolls away; this sits in the header for as long as the grant does, which
-  // is the property that matters — an operator must never have a shell open on
-  // their box that nothing on screen mentions.
-  let shellAllowedIds = new Set();
+  // scrolls away; this sits in the sidebar header for as long as the grant
+  // does, which is the property that matters — an operator must never have a
+  // shell open on their box that nothing on screen mentions. It is in the
+  // HEADER rather than on the peer rows because the grant is box-wide: a
+  // serving-only box has no peer rows to draw it on.
+  const shellShareChip = document.getElementById('shell-share-chip');
   async function refreshShellAllowed() {
     let s = null;
     try { s = await window.api.getSettings(); } catch { return; }
-    const next = new Set(((s && s.peers) || []).filter((p) => p && p.shellAllowed).map((p) => String(p.id)));
-    const changed = next.size !== shellAllowedIds.size || [...next].some((x) => !shellAllowedIds.has(x));
-    shellAllowedIds = next;
-    if (changed) renderPeers();
+    if (shellShareChip) shellShareChip.classList.toggle('hidden', !(s && s.peerShellEnabled));
   }
   refreshShellAllowed();
-  // The toggle lives in one window's popover but the grant is box-wide, so
+  // The toggle lives in one window's prefs dialog but the grant is box-wide, so
   // every OTHER window has to re-read it. Without this the chip is a boot-time
   // snapshot: a window open since before the grant was turned on says "off"
   // over a box that is serving shells. The attachment mark self-heals on the
@@ -164,8 +162,6 @@ function initPeersUi({
         : webViewAffordance({ status: st, tunnel: tun, webTunnel: peerWebTunnels.get(id) });
       header.innerHTML = `<span class="peer-dot ${st.online ? 'online' : ''}"></span>` +
         (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : '') +
-        (shellAllowedIds.has(String(id))
-          ? `<span class="peer-shell-chip" data-tip="Terminal sharing is ON — peers can open a shell on this box" aria-label="Terminal sharing on">&#9646;_</span>` : '') +
         `<span class="peer-label${nameSev}">${esc(hostLabel)}</span>` +
         `<span class="peer-state">${esc(stateText)}</span>` +
         `<span class="peer-actions">` +
@@ -1190,8 +1186,6 @@ function initPeersUi({
   const peerInfoDisableBtn = document.getElementById('peer-info-disable');
   const peerInfoRelayRow = document.getElementById('peer-info-relay-row');
   const peerInfoRelayCheck = document.getElementById('peer-info-relay');
-  const peerInfoShellRow = document.getElementById('peer-info-shell-row');
-  const peerInfoShellCheck = document.getElementById('peer-info-shell');
 
   function closePeerInfoPopover() {
     peerInfoPopover.classList.add('hidden');
@@ -1201,8 +1195,6 @@ function initPeersUi({
     peerInfoDisableBtn.onclick = null;
     peerInfoRelayRow.classList.add('hidden');
     peerInfoRelayCheck.onchange = null;
-    peerInfoShellRow.classList.add('hidden');
-    peerInfoShellCheck.onchange = null;
   }
 
   function openPeerInfoPopover(id, anchorBtn) {
@@ -1245,8 +1237,6 @@ function initPeersUi({
     // it from config, not from peerStatuses.
     peerInfoRelayRow.classList.add('hidden');
     peerInfoRelayCheck.onchange = null;
-    peerInfoShellRow.classList.add('hidden');
-    peerInfoShellCheck.onchange = null;
     window.api.getSettings().then((s) => {
       if (peerInfoPopover.classList.contains('hidden') || peerInfoPopover.dataset.peerId !== String(id)) return;
       const cfg = ((s && s.peers) || []).find((p) => String(p.id) === String(id));
@@ -1255,23 +1245,10 @@ function initPeersUi({
       peerInfoRelayCheck.onchange = () => {
         window.api.peerSetRelayAllowed(id, peerInfoRelayCheck.checked).catch(() => {});
       };
-      // Terminal sharing, same read-from-config shape: it is OUR setting about
-      // what this box serves, not something the peer's hello reports.
-      peerInfoShellCheck.checked = !!(cfg && cfg.shellAllowed);
-      peerInfoShellRow.classList.remove('hidden');
-      peerInfoShellCheck.onchange = () => {
-        const on = peerInfoShellCheck.checked;
-        window.api.peerSetShellAllowed(id, on)
-          .then(() => refreshShellAllowed())
-          .catch(() => {});
-        // Named at the moment of the decision rather than only in a tooltip: a
-        // per-peer checkbox that is box-wide in effect is the one thing about
-        // this feature an operator can reasonably get wrong.
-        showToast(on
-          ? 'Terminal sharing ON — any peer that can reach your tunnel can open a shell here.'
-          : 'Terminal sharing off — open remote shells were closed.',
-        { kind: on ? 'warm' : 'peer-ui' });
-      };
+      // No terminal-sharing row here: it is one box-wide serving setting, and
+      // it lives in Preferences with the other things this box serves. Drawn
+      // per peer it would read as a per-peer permission, which is the one thing
+      // about this feature an operator can reasonably get wrong.
     }).catch(() => {});
     if (!boxIds.has(id) && st.online && updateApplies(sev)) {
       window.api.peerDeployConfig(id).then((cfg) => {

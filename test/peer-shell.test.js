@@ -15,26 +15,46 @@ const { termBackendFor, termAvailableFor } = require('../drawer-avail');
 // when it should be true hides the feature, true when it should be false opens
 // a shell endpoint on a box whose operator never agreed.
 
-test('no peers, no grant', () => {
-  assert.strictEqual(shellCapGranted([]), false);
+test('no setting, no grant', () => {
+  assert.strictEqual(shellCapGranted({}), false);
   assert.strictEqual(shellCapGranted(null), false);
   assert.strictEqual(shellCapGranted(undefined), false);
 });
 
-test('a peers list with the toggle off is not a grant', () => {
-  assert.strictEqual(shellCapGranted([{ id: 'a' }, { id: 'b', shellAllowed: false }]), false);
+test('the setting turned off is not a grant', () => {
+  assert.strictEqual(shellCapGranted({ peerShellEnabled: false }), false);
 });
 
-test('ONE granted peer registers the handlers — the grant is box-wide in effect', () => {
+test('the box-wide setting registers the handlers for every caller', () => {
   // Not a bug being pinned, a documented limit: the serving handler cannot tell
-  // which peer is calling (no cryptographic caller identity on this wire), so a
-  // single grant is what decides registration. A future reader who "fixes" this
+  // which peer is calling (no cryptographic caller identity on this wire), so
+  // one switch is what decides registration. A future reader who "fixes" this
   // to be per-call needs a caller identity first, and there isn't one.
-  assert.strictEqual(shellCapGranted([{ id: 'a' }, { id: 'b', shellAllowed: true }]), true);
+  assert.strictEqual(shellCapGranted({ peerShellEnabled: true }), true);
 });
 
-test('a junk peers list cannot crash the grant check', () => {
-  assert.strictEqual(shellCapGranted([null, undefined, 0, 'x']), false);
+// The flag NEVER comes back from an outbound peer record. It used to live there
+// and a serving-only box therefore could not grant it at all (no record to
+// carry it) — the whole point of t239. A reader restoring the old read would
+// re-break exactly the box the fix was for.
+test('a peer record carrying the OLD per-peer flag grants nothing', () => {
+  assert.strictEqual(shellCapGranted({ peers: [{ id: 'a', shellAllowed: true }] }), false,
+    'the grant is a top-level serving setting, not something an outbound record can turn on');
+  assert.strictEqual(shellCapGranted([{ id: 'a', shellAllowed: true }]), false,
+    'and handing it the peers ARRAY — the old call shape — is not a grant either');
+});
+
+// Only a hard `=== true`. The store writes booleans, but a hand-edited settings
+// file is the input here, and a truthy string on this key would open a shell
+// endpoint on the strength of a typo.
+test('truthy is not a grant', () => {
+  assert.strictEqual(shellCapGranted({ peerShellEnabled: 'yes' }), false);
+  assert.strictEqual(shellCapGranted({ peerShellEnabled: 1 }), false);
+});
+
+test('junk settings cannot crash the grant check', () => {
+  assert.strictEqual(shellCapGranted(0), false);
+  assert.strictEqual(shellCapGranted('x'), false);
 });
 
 test('the capability is read from what the box ADVERTISED, never assumed', () => {

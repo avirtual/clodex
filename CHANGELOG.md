@@ -13,6 +13,26 @@ blocks a release.
 
 ## Unreleased
 
+- **Terminal sharing moved to Settings, and now works on a box with no peers of
+  its own.** The switch that lets a peer open a terminal on your machine used to
+  live on each peer's info popover — but the thing it controls is one box-wide
+  capability, not a per-peer permission, so a box that only *serves* (a server
+  deployment with nothing dialled out from it) had no peer row to put the
+  checkbox on and could never turn it on at all. That was the reported symptom:
+  the peer's sessions show up, bash sessions open fine, and the Terminal tab
+  never appears.
+
+  It is now a single checkbox in **Settings ▸ Phone access ▸ Terminal sharing**,
+  beside the other things this box serves. If any peer had it ticked before, the
+  box keeps serving; if none did, it stays off — an upgrade never switches this
+  on or off for you. The "sharing is on" indicator moved with it, from the peer
+  row to the sidebar header, so it is still on screen without opening anything.
+
+  Settings now also says what the switch actually exposes: a peer does not get a
+  shell of its own, it attaches to the same drawer shell your Terminal tab
+  shows, is handed its scrollback, and can type into it while you are. Turning
+  it off still closes any remote shell already open.
+
 ## 5.2.0 — 2026-08-08 — your terminal, on your terms
 
 - **The terminal reporting checkbox is now three choices.** It used to decide

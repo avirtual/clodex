@@ -16,16 +16,23 @@
 // enableDrawerServices makes for the web host.
 const SHELL_CAP = 'shell';
 
-// Does ANY configured peer hold the grant? This drives whether remote-wiring
-// passes the serving callbacks at all, which is what puts `shell` in hello.
+// Does this box serve peer terminals at all? This drives whether remote-wiring
+// passes the serving callbacks, which is what puts `shell` in hello.
+//
+// Takes the WHOLE settings object, not the peers array. The grant used to live
+// on each outbound peer record, which made it unreachable on a serving-only box
+// — there was no record to carry it, and adding a dial-out nobody wanted was
+// the only way to tick the box. It is a serving-side setting and it now sits
+// with the other serving-side settings.
 //
 // The honest limit, and it must not be overstated anywhere downstream:
-// `shellAllowed` is an OPERATOR-INTENT RECORD AND A UI AFFORDANCE, NOT AN
+// `peerShellEnabled` is AN OPERATOR-INTENT RECORD AND A UI AFFORDANCE, NOT AN
 // ENFORCEMENT BOUNDARY. The peer wire has no cryptographic caller identity —
 // dmOrigins and the relay gate match a caller-ASSERTED label, and the tunnel is
 // the trust boundary (docs/peering.md §1). So the serving handler cannot tell
-// which peer is calling, and one grant registers the handlers for anything that
-// can reach the port. Per-peer here means per-configured-peer-RECORD.
+// which peer is calling: the grant registers the handlers for anything that can
+// reach the port. Box-wide is what it always was in effect; per-peer was the
+// storage, never the semantics.
 //
 // That is a deliberate ruling, not an oversight: the enforcement a per-grant
 // secret would buy is against a caller already inside the tunnel, who can
@@ -33,8 +40,14 @@ const SHELL_CAP = 'shell';
 // caller-supplied cwd). A second token tier guarding a door that is open beside
 // it is cost without a property. If the tunnel ever stops being the boundary,
 // this toggle becomes enforceable for free.
-function shellCapGranted(peers) {
-  return (Array.isArray(peers) ? peers : []).some((p) => !!(p && p.shellAllowed));
+//
+// What the `create` cap does NOT cover, and why this consent is separate rather
+// than folded into it: `create` spawns a caller its own fresh PTY, while a peer
+// terminal attaches to the operator's OWN drawer shell and is handed its
+// scrollback (remote-wiring's wtermOpen). The delta is not privilege, it is
+// observation of the operator.
+function shellCapGranted(settings) {
+  return !!(settings && settings.peerShellEnabled === true);
 }
 
 function peerHasShellCap(caps) {

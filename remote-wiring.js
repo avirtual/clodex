@@ -381,7 +381,7 @@ function createRemoteWiring(deps) {
   // reconcile drops the callbacks, and if one somehow survived, `granted()`
   // inside each closure refuses anyway.
   function wtermCallbacks() {
-    const granted = () => shellCapGranted(getUiSettings().get().peers);
+    const granted = () => shellCapGranted(getUiSettings().get());
     if (!granted()) return { wtermOpen: null, wtermInput: null, wtermResize: null, wtermClose: null };
 
     // A peer's terminal is the seat's OWN drawer shell in the window that owns

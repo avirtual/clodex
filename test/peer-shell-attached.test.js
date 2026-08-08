@@ -403,7 +403,7 @@ test('a recreated seat cannot be resumed by the old stream', async () => {
 // stand-in that cannot answer "no" tests the check the same way an absent
 // method does: `manager.windowForWorkspace` missing entirely would throw here,
 // but a version that always says yes passes whether the check exists or not.
-function wiringFixture({ spawnFresh, peers, windowOpen = true } = {}) {
+function wiringFixture({ spawnFresh, granted = true, windowOpen = true } = {}) {
   const rows = [];
   const windows = new Map(windowOpen ? [['ws1', { id: 'win1' }]] : []);
   const manager = {
@@ -440,7 +440,10 @@ function wiringFixture({ spawnFresh, peers, windowOpen = true } = {}) {
     getPersistence: () => ({ get: () => undefined }),
     getUiSettings: () => ({ get: () => ({
       remoteEnabled: true, remotePort: 0,
-      peers: peers || [{ id: 'a', label: 'Thinkpad', url: 'http://a', shellAllowed: true }],
+      // The grant is a top-level serving setting, and deliberately NOT derived
+      // from the peers list: this fixture has no peer records at all, which is
+      // the serving-only shape that could not grant it before t239.
+      peerShellEnabled: granted, peers: [],
     }) }),
     getWorkspaces: () => ({ get: () => ({}) }),
     getDrawerPtys: () => drawerPtys,

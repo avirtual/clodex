@@ -722,6 +722,12 @@ function registerIpcHandlers(deps) {
       sidebarWidth: s.sidebarWidth,
       remoteEnabled: s.remoteEnabled,
       remotePort: s.remotePort,
+      // This object is an explicit WHITELIST, not a spread: a serving-side flag
+      // the renderer reads has to be named here or it arrives `undefined`, and
+      // `!!undefined` is indistinguishable from a real "off" at every consumer.
+      // For this key that reads as "sharing is off" on a box that is serving —
+      // the one direction the indicator must never be wrong in.
+      peerShellEnabled: s.peerShellEnabled,
       remoteHasToken: typeof hasRemoteToken === 'function' ? hasRemoteToken() : false,
       // Peer auth token is WRITE-ONLY (remote-auth-plan.md [internal design doc, not in this repo] §4): the renderer
       // sees only a `hasToken` boolean, never the value. The Peers dialog saves
@@ -1065,27 +1071,27 @@ function registerIpcHandlers(deps) {
     log.info('peer', `${rec.label || id} relay ${on ? 'allowed' : 'disallowed'}`);
     return { ok: true };
   });
-  // The peer-terminal grant. Stored per peer RECORD, but the capability it
-  // registers is box-wide in effect — the wire has no cryptographic caller
-  // identity, so the serving handler cannot tell which peer is calling (see
-  // peer-shell.js). syncRemoteServer is what makes the toggle take effect: it
-  // re-derives the wterm callbacks, and dropping them closes open streams
-  // first, so turning this off ends shells that are already running.
-  handle('peer:setShellAllowed', (_e, id, on) => {
-    const peers = (uiSettings.get().peers || []).map((p) => ({ ...p }));
-    const rec = peers.find((p) => String(p.id) === String(id));
-    if (!rec) return { ok: false, error: 'no such peer' };
-    if (on) rec.shellAllowed = true; else delete rec.shellAllowed;
-    uiSettings.set({ peers });
-    // Every window, not just the one that toggled: the grant is box-wide in
-    // effect and the header chip is the standing statement that it is on. A
-    // window that missed the change goes on showing "off" over a box that
-    // serves shells, which is the one direction this indicator must never be
-    // wrong in. Carries no payload — the renderer re-reads settings, so there
-    // is one derivation of the chip rather than a delta that can drift.
+  // The peer-terminal grant: ONE box-wide serving setting, taking no peer id.
+  // The wire has no cryptographic caller identity, so the serving handler
+  // cannot tell which peer is calling (see peer-shell.js) — a per-peer record
+  // was storage that never matched the semantics, and it left a serving-only
+  // box with nowhere to put the flag.
+  //
+  // syncRemoteServer is what makes the toggle take effect: it re-derives the
+  // wterm callbacks, and dropping them closes open streams first, so turning
+  // this off ends shells that are already running. Not bookkeeping — without
+  // it a revocation is on paper only until the next restart.
+  handle('peer:setShellAllowed', (_e, on) => {
+    uiSettings.set({ peerShellEnabled: !!on });
+    // Every window, not just the one that toggled: the header chip is the
+    // standing statement that the grant is on, and a window that missed the
+    // change goes on showing "off" over a box that serves shells — the one
+    // direction this indicator must never be wrong in. Carries no payload; the
+    // renderer re-reads settings, so there is one derivation of the chip rather
+    // than a delta that can drift.
     manager._broadcast('peer-shell-allowed');
     syncRemoteServer();
-    log.info('peer', `${rec.label || id} terminal sharing ${on ? 'ENABLED' : 'revoked'}`);
+    log.info('peer', `terminal sharing ${on ? 'ENABLED' : 'revoked'}`);
     return { ok: true };
   });
   handle('peer:visible', () => uiSettings.get().peerVisible || {});

@@ -71,6 +71,10 @@ const DEFAULT_UI_SETTINGS = {
   sidebarWidth: 220,
   remoteEnabled: false,
   remotePort: 7900,
+  // Serve peer terminals. Unlike terminalReports there is no second door: the
+  // absent-key answer below is the migration's `false`, so a new install and a
+  // settings file without the key agree by construction.
+  peerShellEnabled: false,
   peers: [],
   // Auto-reattach of peer tabs across app restarts: { [peerId]: [name, ...] }.
   // Kept OUTSIDE the peers array on purpose — the prefs dialog rebuilds that
@@ -181,13 +185,11 @@ function sanitizePeers(raw, prior) {
       // survives; truthy-but-not-true is dropped.
       ...(p.disabled === true ? { disabled: true } : {}),
       ...(p.relayAllowed === true ? { relayAllowed: true } : {}),
-      // Peer-terminal grant, presence-encoded for the same reason as the two
-      // above: shellCapGranted reads absence as "no grant", and a written
-      // `false` would be a record that survives where a deletion should not.
-      // Omitting it from this whitelist does not disable the feature loudly —
-      // it strips the flag on the way to disk, so the checkbox, the toast and
-      // the ops row all report success over a grant that never persisted.
-      ...(p.shellAllowed === true ? { shellAllowed: true } : {}),
+      // No `shellAllowed` here on purpose: the peer-terminal grant is a
+      // SERVING-side setting (top-level `peerShellEnabled`) and never belonged
+      // on an outbound record. legacyShellGrant below reads the raw input for
+      // it once, on upgrade; putting it back in this whitelist would give the
+      // flag two homes that disagree.
     };
     let token;
     if (typeof p.token === 'string') {
@@ -200,6 +202,21 @@ function sanitizePeers(raw, prior) {
     out.push(entry);
   }
   return out;
+}
+
+// UPGRADE PATH for the peer-terminal grant, which used to live as
+// `shellAllowed` on individual outbound peer records and is now the top-level
+// `peerShellEnabled`. A version bump must never grant a capability the operator
+// did not enable, nor revoke one they did — so any record that carried it means
+// the box was serving and keeps serving, and no record means it does not start.
+//
+// MUST BE HANDED THE RAW `peers` INPUT, never the output of sanitizePeers:
+// `shellAllowed` is no longer in that whitelist, so the sanitized array has
+// already lost the flag. Reading it there silently revokes every upgrading
+// box's grant, and the suite stays green because both halves live in this file
+// and the wrong order reads as correct.
+function legacyShellGrant(rawPeers) {
+  return (Array.isArray(rawPeers) ? rawPeers : []).some((p) => !!(p && p.shellAllowed === true));
 }
 
 // Shared shape for the per-peer name maps (peerAttached, peerVisible): a plain
@@ -1173,6 +1190,11 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       try {
         const raw = JSON.parse(fs.readFileSync(UI_SETTINGS_FILE, 'utf-8'));
         warnUiSettingsMode();
+        // Bound BEFORE the object literal so the migration below cannot reach
+        // it by accident: `peerShellEnabled` must read `raw.peers`, and having
+        // the sanitized array under a different name is what makes the wrong
+        // read a visible substitution rather than an invisible one.
+        const peers = sanitizePeers(raw?.peers) ?? DEFAULT_UI_SETTINGS.peers;
         return {
           statusline: {
             claude: Array.isArray(raw?.statusline?.claude) ? raw.statusline.claude : DEFAULT_UI_SETTINGS.statusline.claude,
@@ -1196,7 +1218,18 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           sidebarWidth: clampSidebarWidth(raw?.sidebarWidth),
           remoteEnabled: typeof raw?.remoteEnabled === 'boolean' ? raw.remoteEnabled : DEFAULT_UI_SETTINGS.remoteEnabled,
           remotePort: Number.isInteger(raw?.remotePort) ? raw.remotePort : DEFAULT_UI_SETTINGS.remotePort,
-          peers: sanitizePeers(raw?.peers) ?? DEFAULT_UI_SETTINGS.peers,
+          // `raw.peers`, NOT `peers` — see legacyShellGrant. The sanitized
+          // array no longer carries `shellAllowed`.
+          //
+          // Keyed on the key's PRESENCE, not on its type: a junk value must
+          // resolve to `false`, never fall through to the legacy source. "This
+          // value is malformed, so go ask the old storage" is a rule that means
+          // nothing today (shellCapGranted demands `=== true`) and would mean
+          // something the first time a reader relaxes that.
+          peerShellEnabled: (raw && typeof raw === 'object' && 'peerShellEnabled' in raw)
+            ? raw.peerShellEnabled === true
+            : legacyShellGrant(raw?.peers),
+          peers,
           peerAttached: sanitizePeerAttached(raw?.peerAttached) ?? {},
           peerVisible: sanitizePeerVisible(raw?.peerVisible) ?? {},
           peerControlled: sanitizePeerControlled(raw?.peerControlled) ?? {},
@@ -1237,6 +1270,10 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         sidebarWidth: clampSidebarWidth(partial?.sidebarWidth ?? cur.sidebarWidth),
         remoteEnabled: partial?.remoteEnabled ?? cur.remoteEnabled,
         remotePort: Number.isInteger(partial?.remotePort) ? partial.remotePort : cur.remotePort,
+        // Booleans only: `cur` already carries the migrated value, so a junk
+        // partial must not be able to write a non-boolean that reads back as
+        // itself and makes the grant depend on truthiness.
+        peerShellEnabled: typeof partial?.peerShellEnabled === 'boolean' ? partial.peerShellEnabled : cur.peerShellEnabled,
         peers: sanitizePeers(partial?.peers, cur.peers) ?? cur.peers,
         peerAttached: sanitizePeerAttached(partial?.peerAttached) ?? cur.peerAttached,
         peerVisible: sanitizePeerVisible(partial?.peerVisible) ?? cur.peerVisible,

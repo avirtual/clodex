@@ -3570,6 +3570,7 @@ const prefsRemoteToken = document.getElementById('prefs-remote-token');
 const prefsRemoteTokenSave = document.getElementById('prefs-remote-token-save');
 const prefsRemoteTokenClear = document.getElementById('prefs-remote-token-clear');
 const prefsRemoteTokenState = document.getElementById('prefs-remote-token-state');
+const prefsPeerShell = document.getElementById('prefs-peer-shell');
 
 const prefsEnvScope = document.getElementById('prefs-env-scope');
 const prefsEnvList = document.getElementById('prefs-env-list');
@@ -5195,6 +5196,7 @@ async function openPrefs() {
   restorePrefsGroups();
   applyPrefsGate();
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
+  if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
   prefsRemoteToken.value = '';
   renderRemoteTokenState(!!s.remoteHasToken);
   if (prefsEnvScope) prefsEnvScope.value = 'global';
@@ -5242,6 +5244,49 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
   await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
   closePrefs();
 });
+
+// Applies ON CHANGE, not on Save, and deliberately does not ride the
+// setSettings batch above. `peer:setShellAllowed` is what re-derives the wterm
+// callbacks (which is what CLOSES shells a peer already has open), tells every
+// other window, and writes the ops row; a plain settings write does none of
+// that, so a revocation batched to Save would be on paper only. Immediate apply
+// is already this group's contract — the token buttons beside it save on click.
+if (prefsPeerShell) {
+  prefsPeerShell.addEventListener('change', async () => {
+    const on = prefsPeerShell.checked;
+    // The toast is claimed only on `ok === true`, and the box reverts otherwise.
+    // A failed invoke that still said "open remote shells were closed" would
+    // tell the operator a revocation happened while the box kept serving.
+    let res = null;
+    try { res = await window.api.peerSetShellAllowed(on); } catch { res = null; }
+    if (!res || res.ok !== true) {
+      prefsPeerShell.checked = !on;
+      showToast(on
+        ? 'Could not turn terminal sharing on — it is still off.'
+        : 'Could not turn terminal sharing off — this box is STILL serving shells.',
+      { kind: 'warn' });
+      return;
+    }
+    // Named at the moment of the decision rather than only in the hint text:
+    // that this is one switch for every peer, and that it shares the operator's
+    // own shell, is the pair of facts about this feature that can be got wrong.
+    showToast(on
+      ? 'Terminal sharing ON — any peer that can reach your tunnel can open a shell here.'
+      : 'Terminal sharing off — open remote shells were closed.',
+    { kind: on ? 'warm' : 'peer-ui' });
+  });
+  // The grant is box-wide, so another window (or the web surface) can change it
+  // under an open Prefs dialog. The header chip self-heals on this broadcast;
+  // without this the checkbox is a snapshot from the moment the dialog opened,
+  // and ticking a stale box re-sends a value that is already set.
+  window.api.onPeerShellAllowed(async () => {
+    if (prefsOverlay.classList.contains('hidden')) return;
+    try {
+      const s = await window.api.getSettings();
+      prefsPeerShell.checked = !!(s && s.peerShellEnabled);
+    } catch {}
+  });
+}
 
 prefsRemoteTokenSave.addEventListener('click', () => {
   const v = prefsRemoteToken.value.trim();

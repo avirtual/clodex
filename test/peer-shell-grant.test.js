@@ -1,14 +1,16 @@
 'use strict';
 
-// The peer-terminal GRANT and its ops-log ending — the two node-testable pieces
-// of the feature's operator-visibility surface. (The chip, the toast and the
-// checkbox are DOM-bound; documented in the design note, not tested here.)
+// The peer-terminal GRANT and its ops-log ending — the node-testable pieces of
+// the feature's operator-visibility surface. (The chip, the toast and the
+// checkbox cannot be CLICKED here; §4 pins that they exist and are wired, which
+// is the failure a move actually causes.)
 //
-//   1. ipc `peer:setShellAllowed`: writes the per-peer record AND calls
-//      syncRemoteServer. The sync is not bookkeeping — remote-wiring re-derives
-//      the wterm callbacks from it, and dropping them runs dropAllWterm BEFORE
-//      the handlers go null. A handler that persisted without syncing would
-//      revoke on paper while a live shell kept serving until the next restart.
+//   1. ipc `peer:setShellAllowed`: writes the box-wide serving setting AND
+//      calls syncRemoteServer. The sync is not bookkeeping — remote-wiring
+//      re-derives the wterm callbacks from it, and dropping them runs
+//      dropAllWterm BEFORE the handlers go null. A handler that persisted
+//      without syncing would revoke on paper while a live shell kept serving
+//      until the next restart.
 //   2. RemoteServer.setWtermCallbacks: the serving side of the same off switch,
 //      where the ORDER is the property — streams closed before the handlers go
 //      null, or the grant is revoked on paper and serving in fact.
@@ -25,9 +27,9 @@ const { shellCapGranted } = require('../peer-shell');
 // --- ipc harness. Same shape as peer-disable.test.js: registration rides the
 // injected handle/on seams, and only the deps peer:setShellAllowed touches are
 // real — registration never runs the other bodies.
-function shellAllowedFixture(peers) {
+function shellAllowedFixture(initial) {
   const handlers = new Map();
-  const store = { peers: peers || [{ id: 'a', label: 'Thinkpad', url: 'http://a' }] };
+  const store = { peerShellEnabled: false, peers: [{ id: 'a', label: 'Thinkpad', url: 'http://a' }], ...initial };
   const calls = { set: [], sync: 0, log: [], broadcast: [] };
   const { registerIpcHandlers } = require('../ipc-handlers');
   registerIpcHandlers({
@@ -37,6 +39,9 @@ function shellAllowedFixture(peers) {
       get: () => store,
       set: (patch) => { calls.set.push(patch); Object.assign(store, patch); return store; },
     },
+    // Only `settings:get` needs these, and only to be callable — the values are
+    // never asserted here.
+    agentDefaults: { getDefaultDeny: () => [] },
     syncRemoteServer: () => { calls.sync += 1; },
     // The grant is box-wide but the toggle lives in one window's popover, so
     // the other windows learn about it here. Recorded with the ORDER against
@@ -44,18 +49,59 @@ function shellAllowedFixture(peers) {
     manager: { _broadcast: (ch, ...args) => calls.broadcast.push([ch, ...args, `sync:${calls.sync}`]) },
     log: { info: (...a) => calls.log.push(a), error() {} },
   });
-  return { handler: handlers.get('peer:setShellAllowed'), store, calls };
+  return { handler: handlers.get('peer:setShellAllowed'), handlers, store, calls };
 }
+
+// THE IPC PROJECTION. `settings:get` builds an explicit whitelist object rather
+// than spreading the settings, so a serving-side key the renderer reads has to
+// be named there or it arrives `undefined` — and `!!undefined` is a perfectly
+// ordinary "off" at every consumer. That shipped once on this very key: the
+// store had it, the renderer read it, and nothing in between carried it, so the
+// chip stayed hidden on a serving box and Prefs painted the switch unticked.
+//
+// Driven through the HANDLER, not by grepping the source: the store tests go
+// straight to uiSettings and the renderer checks read source text, so this
+// crossing is the one place neither of them looks.
+test('settings:get carries the peer-shell grant to the renderer', () => {
+  const { handlers } = shellAllowedFixture({ peerShellEnabled: true, peers: [] });
+  const get = handlers.get('settings:get');
+  assert.strictEqual(typeof get, 'function', 'ENTER: settings:get is registered');
+  const s = get({});
+  assert.strictEqual(s.remoteEnabled, undefined,
+    'ENTER: this stub store has no remoteEnabled, so a passing assertion below is not a spread');
+  assert.strictEqual(s.peerShellEnabled, true,
+    'the renderer can see the grant — omitted, it reads as undefined and every surface says "off"');
+});
+
+test('settings:get reports a revoked grant as false, not as absent', () => {
+  const { handlers } = shellAllowedFixture({ peerShellEnabled: false });
+  const s = handlers.get('settings:get')({});
+  assert.strictEqual('peerShellEnabled' in s, true, 'the key is projected in BOTH states');
+  assert.strictEqual(s.peerShellEnabled, false);
+});
+
+// The write and the read are separate seams, and the failure that shipped was a
+// working write with no read. Round-trip them through the two handlers.
+test('the grant the setter writes is the grant settings:get hands back', () => {
+  const { handler, handlers } = shellAllowedFixture();
+  assert.strictEqual(handlers.get('settings:get')({}).peerShellEnabled, false, 'ENTER: off to begin with');
+  handler({}, true);
+  assert.strictEqual(handlers.get('settings:get')({}).peerShellEnabled, true,
+    'the toggle is visible to the window that has to draw the indicator');
+  handler({}, false);
+  assert.strictEqual(handlers.get('settings:get')({}).peerShellEnabled, false);
+});
 
 test('peer:setShellAllowed(on) records the grant and re-syncs the remote server', () => {
   const { handler, store, calls } = shellAllowedFixture();
   assert.strictEqual(typeof handler, 'function', 'ENTER: peer:setShellAllowed handler registered');
-  const res = handler({}, 'a', true);
+  const res = handler({}, true);
   assert.deepStrictEqual(res, { ok: true });
-  assert.strictEqual(store.peers[0].shellAllowed, true, 'record carries the grant');
-  assert.strictEqual(calls.set.length, 1, 'persisted once');
+  assert.strictEqual(store.peerShellEnabled, true, 'the serving setting carries the grant');
+  assert.deepStrictEqual(calls.set, [{ peerShellEnabled: true }],
+    'persisted once, and as the top-level setting — not onto a peer record');
   assert.strictEqual(calls.sync, 1, 'syncRemoteServer ran — the callbacks are re-derived from settings');
-  assert.match(calls.log.at(-1)[1], /Thinkpad terminal sharing ENABLED/, 'ops row names the box');
+  assert.match(calls.log.at(-1)[1], /terminal sharing ENABLED/, 'the ops log records it');
 });
 
 // The setter is UNGATED (it writes a setting on this box) but its effect is a
@@ -64,50 +110,59 @@ test('peer:setShellAllowed(on) records the grant and re-syncs the remote server'
 // alone would stay green if the handler wrote `shellEnabled` or `'true'`.
 test('the field the handler writes is the field the cap leaf reads', () => {
   const { handler, store } = shellAllowedFixture();
-  assert.strictEqual(shellCapGranted(store.peers), false, 'ENTER: no grant before the click');
-  handler({}, 'a', true);
-  assert.strictEqual(shellCapGranted(store.peers), true, 'the grant reaches the cap decision');
-  handler({}, 'a', false);
-  assert.strictEqual(shellCapGranted(store.peers), false, 'and the revocation does too');
+  assert.strictEqual(shellCapGranted(store), false, 'ENTER: no grant before the click');
+  handler({}, true);
+  assert.strictEqual(shellCapGranted(store), true, 'the grant reaches the cap decision');
+  handler({}, false);
+  assert.strictEqual(shellCapGranted(store), false, 'and the revocation does too');
 });
 
-test('peer:setShellAllowed(off) DELETES the flag and re-syncs — the sync is what closes open streams', () => {
+// The whole reason for the move: the grant has to be reachable on a box with no
+// outbound peers at all, which is what a serving-only deployment looks like.
+// The old shape computed `.some()` over an empty array and could never be true.
+test('a box with NO peer records can still grant — the defect t239 fixed', () => {
+  const { handler, store } = shellAllowedFixture({ peers: [] });
+  assert.deepStrictEqual(store.peers, [], 'ENTER: nothing to dial out to, the serving-only case');
+  assert.deepStrictEqual(handler({}, true), { ok: true }, 'no peer id needed, and no record to reject it');
+  assert.strictEqual(shellCapGranted(store), true, 'the box serves — under the old per-record shape it could not');
+});
+
+test('peer:setShellAllowed(off) writes false and re-syncs — the sync is what closes open streams', () => {
   const { handler, store, calls } = shellAllowedFixture();
-  handler({}, 'a', true);
-  const res = handler({}, 'a', false);
+  handler({}, true);
+  const res = handler({}, false);
   assert.deepStrictEqual(res, { ok: true });
-  assert.strictEqual('shellAllowed' in store.peers[0], false, 'revoked records carry no leftover flag');
+  assert.strictEqual(store.peerShellEnabled, false, 'the box stops serving');
   assert.strictEqual(calls.sync, 2, 'revocation syncs too — without it the shells stay served');
   assert.match(calls.log.at(-1)[1], /terminal sharing revoked/, 'the revocation is in the ops log too');
 });
 
-// A grant on one peer is box-wide in effect (the cap is a server capability, not
-// a per-caller one) — but the RECORD is still per-peer, and a setter that wrote
-// the flag onto the wrong record, or onto all of them, would leave the operator
-// unable to revoke the one they meant.
-test('the grant lands on the addressed record only', () => {
-  const peers = [{ id: 'a', label: 'A', url: 'http://a' }, { id: 'b', label: 'B', url: 'http://b' }];
-  const { handler, store } = shellAllowedFixture(peers);
-  handler({}, 'b', true);
-  assert.deepStrictEqual(
-    store.peers.map((p) => [p.id, !!p.shellAllowed]),
-    [['a', false], ['b', true]],
-    'only b granted',
-  );
+// The handler is the ONE writer of this key, so a non-boolean reaching the
+// store from a renderer that passed something odd would make the grant depend
+// on truthiness at every reader instead of at this one point.
+test('the persisted value is a boolean, whatever the caller passed', () => {
+  const { handler, store, calls } = shellAllowedFixture();
+  handler({}, 'yes');
+  assert.strictEqual(store.peerShellEnabled, true, 'coerced, not stored raw');
+  assert.deepStrictEqual(calls.set.at(-1), { peerShellEnabled: true });
+  handler({}, undefined);
+  assert.strictEqual(store.peerShellEnabled, false);
 });
 
-test('peer:setShellAllowed on an unknown id changes nothing and never syncs', () => {
-  const { handler, calls } = shellAllowedFixture();
-  const res = handler({}, 'nope', true);
-  assert.strictEqual(res.ok, false);
-  assert.strictEqual(calls.set.length, 0, 'nothing persisted');
-  assert.strictEqual(calls.sync, 0, 'no re-derive on a write that did not happen');
-  assert.deepStrictEqual(calls.broadcast, [], 'and no window was told about a change that did not happen');
+// It takes no id, and it must not start taking one back: a stray first argument
+// is the grant value under the OLD signature, so a handler that still read
+// `(_e, id, on)` would silently treat a peer id as the boolean and turn sharing
+// ON for every call.
+test('the setter takes no peer id — the box-wide switch is the whole argument list', () => {
+  const { handler, store } = shellAllowedFixture();
+  handler({}, false, true);
+  assert.strictEqual(store.peerShellEnabled, false,
+    'the FIRST argument is the switch; a trailing one is ignored, not obeyed');
 });
 
-// Every window, not only the one holding the popover. The grant is box-wide in
-// effect, and the header chip is a standing statement that it is on — a window
-// that missed the change goes on saying "off" over a box that serves shells.
+// Every window, not only the one holding the prefs dialog. The header chip is a
+// standing statement that the grant is on — a window that missed the change
+// goes on saying "off" over a box that serves shells.
 // Payload-free by design: the renderer re-reads settings, so the chip has one
 // derivation rather than a delta that can drift out of step.
 //
@@ -119,10 +174,10 @@ test('peer:setShellAllowed on an unknown id changes nothing and never syncs', ()
 // claim about code that does not depend on it.
 test('the grant change is announced to every window, before the re-derive', () => {
   const { handler, calls } = shellAllowedFixture();
-  handler({}, 'a', true);
+  handler({}, true);
   assert.deepStrictEqual(calls.broadcast, [['peer-shell-allowed', 'sync:0']],
     'broadcast once, with no payload, and BEFORE syncRemoteServer ran');
-  handler({}, 'a', false);
+  handler({}, false);
   assert.deepStrictEqual(calls.broadcast.map((b) => b[0]), ['peer-shell-allowed', 'peer-shell-allowed'],
     'the revocation is announced too — a chip stuck ON is the dangerous direction');
 });
@@ -275,4 +330,65 @@ test('the consumer logs the terminal ENDING only — not its replay, data or exi
   assert.strictEqual(logged.length, before, 'and none of them wrote an ops row');
   emit('peer-wterm-closed', 'p1', 'bob', 'why');
   assert.strictEqual(logged.length, before + 1, 'only the ending does');
+});
+
+// --- the operator-visible surface, statically ------------------------------
+// None of it can be clicked from node. What CAN be checked is that the four
+// properties the ruling names still have somewhere to live — and a move is
+// exactly the change that quietly drops one. Each of these went missing at
+// least once while t239 was being written.
+
+const RENDERER_DIR = require('node:path').join(__dirname, '..', 'renderer');
+const readRenderer = (f) => require('node:fs').readFileSync(require('node:path').join(RENDERER_DIR, f), 'utf8');
+
+test('the ON indicator is visible WITHOUT opening a dialog', () => {
+  const html = readRenderer('index.html');
+  const header = html.slice(html.indexOf('<div id="sidebar-header"'), html.indexOf('<div id="sidebar-filterbar"'));
+  assert.ok(header.length > 0, 'ENTER: the sidebar header markup was found');
+  assert.match(header, /id="shell-share-chip"/,
+    'the chip lives in the always-on-screen sidebar header, not inside a dialog or a popover');
+  // Not on the peer rows any more: box-wide, and a serving-only box has none.
+  assert.doesNotMatch(readRenderer('peers-ui.js'), /peer-shell-chip"/,
+    'the per-row chip is gone — one home for a box-wide flag');
+  assert.match(readRenderer('peers-ui.js'), /shell-share-chip/,
+    'and peers-ui drives the header one instead');
+});
+
+test('the checkbox lives with the other box-wide serving settings', () => {
+  const html = readRenderer('index.html');
+  const phone = html.slice(html.indexOf('data-group="phone"'), html.indexOf('data-group="discovery"'));
+  assert.ok(phone.includes('prefs-remote-enabled'), 'ENTER: this really is the serving group');
+  assert.match(phone, /id="prefs-peer-shell"/, 'the grant is a prefs control now');
+  assert.doesNotMatch(html, /id="peer-info-shell"/, 'and no longer a per-peer popover row');
+});
+
+// The toast has to name the exposure in plain words, and the checkbox has to
+// apply through the IPC — a version that only rode the prefs Save batch would
+// write the setting without the sync that closes live shells.
+test('the toggle applies through the IPC and says what it exposes', () => {
+  const js = readRenderer('renderer.js');
+  assert.match(js, /prefsPeerShell\.addEventListener\('change'/,
+    'applied on change, not batched into Save — Save does not run syncRemoteServer');
+  assert.match(js, /window\.api\.peerSetShellAllowed\(on\)/, 'through the dedicated handler');
+  assert.doesNotMatch(js, /peerShellEnabled:\s*prefsPeerShell/,
+    'and NOT also written by the setSettings batch, which would be a second door');
+  assert.match(js, /can open a shell here/, 'the warm toast names the exposure in plain words');
+  assert.match(js, /open remote shells were closed/, 'and the revocation says what it ended');
+  // A swallowed rejection under an unconditional toast tells the operator a
+  // revocation happened while the box is still serving — the worst sentence
+  // this feature can print.
+  assert.match(js, /res\.ok !== true/, 'success is claimed only on ok === true');
+  assert.match(js, /STILL serving shells/, 'and a failed revocation says the box is still serving');
+});
+
+// The chip is a standing statement, so every window has to re-derive it when
+// another window flips the switch.
+test('every window re-reads the grant when it changes', () => {
+  assert.match(readRenderer('peers-ui.js'), /onPeerShellAllowed\(\(\) => \{ refreshShellAllowed\(\)/,
+    'the broadcast the handler sends is what repaints a window that did not toggle it');
+  // The chip self-heals on that broadcast; an OPEN Prefs dialog does not, and a
+  // stale checkbox is a switch that re-sends the value already set instead of
+  // the revocation the operator meant.
+  assert.match(readRenderer('renderer.js'), /onPeerShellAllowed\(async \(\) => \{/,
+    'the prefs checkbox subscribes too');
 });

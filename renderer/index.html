@@ -31,6 +31,12 @@
         <span class="app-brand">Clodex</span>
         <span class="workspace-name" id="workspace-name" data-tip="Double-click to rename workspace">Workspace</span>
       </div>
+      <!-- The dialog-free "terminal sharing is ON" indicator. An operator must
+           never have a peer able to watch their shell with nothing on screen
+           saying so, and a toast is missed. Lives here rather than on the peer
+           rows because the grant is one box-wide switch — drawn per row it
+           would repeat itself, and a serving-only box has no rows at all. -->
+      <span id="shell-share-chip" class="peer-shell-chip hidden" data-tip="Terminal sharing is ON — peers can open a shell on this box" aria-label="Terminal sharing on">&#9646;_</span>
       <div id="sidebar-toolbar">
         <button id="btn-new" data-tip="New session (Cmd+T)">+</button>
         <button id="btn-new-sandbox" data-tip="New sandbox">&#9635;</button>
@@ -387,9 +393,6 @@
       <div id="peer-info-body" class="peer-info-body"></div>
       <label id="peer-info-relay-row" class="peer-info-relay-row hidden" title="Let this peer's sessions see and DM sessions on your other relay-enabled peers, routed through this hub. Off by default.">
         <input type="checkbox" id="peer-info-relay"> Relay mesh — allow cross-peer see &amp; DM via this hub
-      </label>
-      <label id="peer-info-shell-row" class="peer-info-relay-row hidden" title="Let peers open a terminal on THIS box, sharing the same shell your own Terminal tab shows. Off by default. The peer wire has no per-caller identity, so this enables the capability for anything that can reach your tunnel — not for one peer.">
-        <input type="checkbox" id="peer-info-shell"> Terminal sharing — let peers open a shell on this box
       </label>
       <div class="popover-actions">
         <button id="peer-info-update" type="button" class="hidden">Update Clodex</button>
@@ -990,6 +993,12 @@
           <button id="prefs-remote-token-clear" class="secondary" type="button" style="flex: none;">Clear</button>
         </div>
         <span id="prefs-remote-token-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
+        <h5 style="margin-top: 14px;">Terminal sharing</h5>
+        <p class="hint-text">Lets a peer that can reach your tunnel open a terminal on <b>this</b> box. Not a shell of its own — it attaches to the same drawer shell your own Terminal tab shows, is handed its scrollback, and can type into it while you are. The peer wire has no per-caller identity, so this is one switch for every peer, not a per-peer permission. Turning it off closes any remote shell that is already open.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-peer-shell">
+          <span>Let peers open a terminal on this box</span>
+        </label>
       </details>
       <details class="prefs-group" data-group="discovery">
         <summary><h4>Session discovery</h4><span class="prefs-group-sub">Adopt Claude/Codex sessions started outside Clodex</span></summary>

@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { initStores } = require('../stores');
+const { shellCapGranted } = require('../peer-shell');
 
 // Fresh temp userData + registry dirs, and a stores bundle over them. Seeding is
 // disabled here (resourcesDir → a path that doesn't exist) so the shipped library
@@ -97,39 +98,101 @@ test('uiSettings: pendingRebootNotice ships null, round-trips, sanitizes, and cl
   } finally { cleanup(); }
 });
 
-// The peer-terminal grant, on the same round-trip as its two neighbours and for
-// the same reason: sanitizePeers is a WHITELIST, so a flag missing from it is
-// dropped on every write. That failure is silent in the worst way — the handler
-// returns ok, the checkbox ticks, the ops log says ENABLED, and the capability
-// never reaches disk. Caught once already for relayAllowed; this is the third
-// flag to need the same pin.
-test('uiSettings: peer shellAllowed survives the sanitize round-trip (presence-encoded)', () => {
-  const { stores, cleanup } = freshStores();
+// The peer-terminal grant used to live as `shellAllowed` on each outbound peer
+// record; t239 moved it to the top-level `peerShellEnabled` because a
+// serving-only box has no record to carry it. These four pin the UPGRADE, which
+// is the part that can go wrong silently: a version bump must never grant a
+// capability the operator did not enable, nor revoke one they did.
+//
+// Written as a RAW settings FILE rather than through set(): the migration reads
+// `raw.peers`, and only a file that predates the change can contain the old
+// flag at all — set() strips it, which is exactly the trap the ordering hazard
+// describes.
+function writeRawSettings(userData, obj) {
+  fs.writeFileSync(path.join(userData, 'ui-settings.json'), JSON.stringify(obj));
+}
+
+test('uiSettings: an upgrading box that granted the peer terminal KEEPS serving', () => {
+  const { userData, stores, cleanup } = freshStores();
+  try {
+    writeRawSettings(userData, {
+      theme: 'midnight',
+      peers: [
+        { id: 'a', label: 'A', url: 'http://a' },
+        { id: 'b', label: 'B', url: 'http://b', shellAllowed: true },
+      ],
+    });
+    const s = stores.uiSettings.get();
+    assert.strictEqual(s.theme, 'midnight', 'ENTER: the settings file really was read');
+    assert.strictEqual(s.peers.length, 2, 'ENTER: both peer records survived the sanitizer');
+    assert.strictEqual('shellAllowed' in s.peers[1], false,
+      'ENTER: the sanitized array has ALREADY lost the flag — so the migration cannot be reading it there');
+    assert.strictEqual(s.peerShellEnabled, true,
+      'the grant carried over; reading the sanitized peers instead silently revokes every upgrading box');
+    assert.strictEqual(shellCapGranted(s), true, 'and the box still advertises the cap');
+  } finally { cleanup(); }
+});
+
+test('uiSettings: an upgrading box that never granted it does NOT start serving', () => {
+  const { userData, stores, cleanup } = freshStores();
+  try {
+    writeRawSettings(userData, { peers: [{ id: 'a', label: 'A', url: 'http://a' }] });
+    const s = stores.uiSettings.get();
+    assert.strictEqual(s.peers.length, 1, 'ENTER: the peer record was read');
+    assert.strictEqual(s.peerShellEnabled, false, 'a version bump does not open a shell endpoint');
+    assert.strictEqual(shellCapGranted(s), false);
+  } finally { cleanup(); }
+});
+
+// A file that has BOTH keys is the state right after an upgrade-then-revoke:
+// the top-level key is written, and the stale per-record flag is still in the
+// file until the next peers write re-sanitizes it away. The explicit setting has
+// to win, or the revocation is undone on every launch.
+test('uiSettings: an explicit peerShellEnabled beats a leftover per-record flag', () => {
+  const { userData, stores, cleanup } = freshStores();
+  try {
+    writeRawSettings(userData, {
+      peerShellEnabled: false,
+      peers: [{ id: 'a', label: 'A', url: 'http://a', shellAllowed: true }],
+    });
+    assert.strictEqual(stores.uiSettings.get().peerShellEnabled, false,
+      'the operator revoked it; a stale record must not resurrect the grant');
+    writeRawSettings(userData, { peerShellEnabled: true, peers: [] });
+    assert.strictEqual(stores.uiSettings.get().peerShellEnabled, true,
+      'and a serving-only box with no peers at all is served by the same key');
+    // A junk value resolves to `false` on the key's PRESENCE, and must NOT fall
+    // through to the legacy per-record source. "Malformed, so consult the old
+    // storage" is a rule that would start meaning something the day a reader
+    // relaxes shellCapGranted's `=== true`.
+    writeRawSettings(userData, {
+      peerShellEnabled: 'yes',
+      peers: [{ id: 'a', label: 'A', url: 'http://a', shellAllowed: true }],
+    });
+    assert.strictEqual(stores.uiSettings.get().peerShellEnabled, false,
+      'junk is off, not a re-read of the flag this key replaced');
+  } finally { cleanup(); }
+});
+
+test('uiSettings: the grant round-trips, and is never written back onto a peer record', () => {
+  const { userData, stores, cleanup } = freshStores();
   try {
     const { uiSettings } = stores;
-    uiSettings.set({ peers: [
-      { id: 'a', label: 'A', url: 'http://a', shellAllowed: true },
-      { id: 'b', label: 'B', url: 'http://b' },
-    ] });
-    let peers = uiSettings.get().peers;
-    assert.strictEqual(peers.find((p) => p.id === 'a').shellAllowed, true,
-      'the grant reaches the store — a whitelist miss strips it while every UI surface reports success');
-    assert.strictEqual('shellAllowed' in peers.find((p) => p.id === 'b'), false,
-      'absent stays absent (the cap is default-deny on absence)');
-    // The clobber path: an unrelated write re-sanitizes the whole peers array.
+    assert.strictEqual(uiSettings.get().peerShellEnabled, false, 'ENTER: a fresh install does not serve');
+    uiSettings.set({ peerShellEnabled: true, peers: [{ id: 'a', label: 'A', url: 'http://a', shellAllowed: true }] });
+    const s = uiSettings.get();
+    assert.strictEqual(s.peerShellEnabled, true);
+    assert.strictEqual(s.peers.length, 1, 'ENTER: the peer was persisted');
+    assert.strictEqual('shellAllowed' in s.peers[0], false,
+      'the old per-record flag is not in the whitelist — one home for the grant, not two that disagree');
+    // The clobber path: an unrelated write must not disturb it.
     uiSettings.set({ theme: uiSettings.get().theme });
-    peers = uiSettings.get().peers;
-    assert.strictEqual(peers.find((p) => p.id === 'a').shellAllowed, true,
-      'and survives a later unrelated set()');
-    // Revocation deletes the key. Persisting `shellAllowed:false` instead would
-    // be a record that outlives the decision it denies.
-    uiSettings.set({ peers: peers.map((p) => p.id === 'a' ? (({ shellAllowed, ...rest }) => rest)(p) : p) });
-    assert.strictEqual('shellAllowed' in uiSettings.get().peers.find((p) => p.id === 'a'), false,
-      'revocation persists as ABSENT, not shellAllowed:false');
-    // Truthy-but-not-true is not a grant — same strictness as disabled/relayAllowed.
-    uiSettings.set({ peers: [{ id: 'c', label: 'C', url: 'http://c', shellAllowed: 'yes' }] });
-    assert.strictEqual('shellAllowed' in uiSettings.get().peers[0], false,
-      'only a hard === true grants');
+    assert.strictEqual(uiSettings.get().peerShellEnabled, true, 'and survives a later unrelated set()');
+    // Only a boolean can move it; junk keeps the current value rather than
+    // landing a truthy string that every reader then interprets for itself.
+    uiSettings.set({ peerShellEnabled: 'no' });
+    assert.strictEqual(uiSettings.get().peerShellEnabled, true, 'a non-boolean is not a revocation');
+    uiSettings.set({ peerShellEnabled: false });
+    assert.strictEqual(uiSettings.get().peerShellEnabled, false);
   } finally { cleanup(); }
 });
 

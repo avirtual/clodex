@@ -1690,9 +1690,6 @@ body {
 #peer-info-relay-row.hidden {
   display: none;
 }
-#peer-info-shell-row.hidden {
-  display: none;
-}
 #popover-tools-list,
 #popover-skills-list,
 #popover-inject-skills-list,
@@ -5145,6 +5142,16 @@ body {
   color: var(--warn);
   letter-spacing: -1px;
 }
+#shell-share-chip {
+  -webkit-app-region: no-drag;
+  align-self: center;
+  margin-right: 6px;
+  font-size: 12px;
+  cursor: default;
+}
+#shell-share-chip.hidden {
+  display: none;
+}
 .peer-state {
   margin-left: auto;
   font-style: italic;
@@ -5636,6 +5643,12 @@ body {
         <span class="app-brand">Clodex</span>
         <span class="workspace-name" id="workspace-name" data-tip="Double-click to rename workspace">Workspace</span>
       </div>
+      <!-- The dialog-free "terminal sharing is ON" indicator. An operator must
+           never have a peer able to watch their shell with nothing on screen
+           saying so, and a toast is missed. Lives here rather than on the peer
+           rows because the grant is one box-wide switch — drawn per row it
+           would repeat itself, and a serving-only box has no rows at all. -->
+      <span id="shell-share-chip" class="peer-shell-chip hidden" data-tip="Terminal sharing is ON — peers can open a shell on this box" aria-label="Terminal sharing on">&#9646;_</span>
       <div id="sidebar-toolbar">
         <button id="btn-new" data-tip="New session (Cmd+T)">+</button>
         <button id="btn-new-sandbox" data-tip="New sandbox">&#9635;</button>
@@ -5992,9 +6005,6 @@ body {
       <div id="peer-info-body" class="peer-info-body"></div>
       <label id="peer-info-relay-row" class="peer-info-relay-row hidden" title="Let this peer's sessions see and DM sessions on your other relay-enabled peers, routed through this hub. Off by default.">
         <input type="checkbox" id="peer-info-relay"> Relay mesh — allow cross-peer see &amp; DM via this hub
-      </label>
-      <label id="peer-info-shell-row" class="peer-info-relay-row hidden" title="Let peers open a terminal on THIS box, sharing the same shell your own Terminal tab shows. Off by default. The peer wire has no per-caller identity, so this enables the capability for anything that can reach your tunnel — not for one peer.">
-        <input type="checkbox" id="peer-info-shell"> Terminal sharing — let peers open a shell on this box
       </label>
       <div class="popover-actions">
         <button id="peer-info-update" type="button" class="hidden">Update Clodex</button>
@@ -6595,6 +6605,12 @@ body {
           <button id="prefs-remote-token-clear" class="secondary" type="button" style="flex: none;">Clear</button>
         </div>
         <span id="prefs-remote-token-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
+        <h5 style="margin-top: 14px;">Terminal sharing</h5>
+        <p class="hint-text">Lets a peer that can reach your tunnel open a terminal on <b>this</b> box. Not a shell of its own — it attaches to the same drawer shell your own Terminal tab shows, is handed its scrollback, and can type into it while you are. The peer wire has no per-caller identity, so this is one switch for every peer, not a per-peer permission. Turning it off closes any remote shell that is already open.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-peer-shell">
+          <span>Let peers open a terminal on this box</span>
+        </label>
       </details>
       <details class="prefs-group" data-group="discovery">
         <summary><h4>Session discovery</h4><span class="prefs-group-sub">Adopt Claude/Codex sessions started outside Clodex</span></summary>
@@ -26789,7 +26805,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         function peerDisplayHost(st) {
           return st && (st.host || st.label) || "peer";
         }
-        let shellAllowedIds = /* @__PURE__ */ new Set();
+        const shellShareChip = document.getElementById("shell-share-chip");
         async function refreshShellAllowed() {
           let s = null;
           try {
@@ -26797,10 +26813,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
           } catch {
             return;
           }
-          const next = new Set((s && s.peers || []).filter((p) => p && p.shellAllowed).map((p) => String(p.id)));
-          const changed = next.size !== shellAllowedIds.size || [...next].some((x) => !shellAllowedIds.has(x));
-          shellAllowedIds = next;
-          if (changed) renderPeers();
+          if (shellShareChip) shellShareChip.classList.toggle("hidden", !(s && s.peerShellEnabled));
         }
         refreshShellAllowed();
         const reevaluateSeatTabs = () => {
@@ -26911,7 +26924,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             const off = st.online ? "" : "disabled";
             const isBox = boxIds.has(id);
             const webView = isBox ? { show: false } : webViewAffordance({ status: st, tunnel: tun, webTunnel: peerWebTunnels.get(id) });
-            header.innerHTML = `<span class="peer-dot ${st.online ? "online" : ""}"></span>` + (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : "") + (shellAllowedIds.has(String(id)) ? `<span class="peer-shell-chip" data-tip="Terminal sharing is ON \u2014 peers can open a shell on this box" aria-label="Terminal sharing on">&#9646;_</span>` : "") + `<span class="peer-label${nameSev}">${esc(hostLabel)}</span><span class="peer-state">${esc(stateText)}</span><span class="peer-actions">` + (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : "") + (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}\u2019s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : "") + (webView.show ? `<button class="peer-select peer-webview peer-webview-${webView.phase}" data-tip="${esc(webView.tip)}" aria-label="${esc(webView.tip)}" ${webView.enabled ? "" : "disabled"}>&#8599;</button>` : "") + `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button><button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` + (st.online && st.version ? `<button class="peer-select peer-info peer-sev-${sev}" data-tip="Peer identity & version" aria-label="Peer identity">&#9432;</button>` : "") + `</span>`;
+            header.innerHTML = `<span class="peer-dot ${st.online ? "online" : ""}"></span>` + (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : "") + `<span class="peer-label${nameSev}">${esc(hostLabel)}</span><span class="peer-state">${esc(stateText)}</span><span class="peer-actions">` + (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : "") + (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}\u2019s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : "") + (webView.show ? `<button class="peer-select peer-webview peer-webview-${webView.phase}" data-tip="${esc(webView.tip)}" aria-label="${esc(webView.tip)}" ${webView.enabled ? "" : "disabled"}>&#8599;</button>` : "") + `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button><button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` + (st.online && st.version ? `<button class="peer-select peer-info peer-sev-${sev}" data-tip="Peer identity & version" aria-label="Peer identity">&#9432;</button>` : "") + `</span>`;
             header.querySelector(".peer-eye").addEventListener("click", (e) => {
               e.stopPropagation();
               openPeerSelectPopover(id, e.currentTarget);
@@ -27808,8 +27821,6 @@ ${detail}` });
         const peerInfoDisableBtn = document.getElementById("peer-info-disable");
         const peerInfoRelayRow = document.getElementById("peer-info-relay-row");
         const peerInfoRelayCheck = document.getElementById("peer-info-relay");
-        const peerInfoShellRow = document.getElementById("peer-info-shell-row");
-        const peerInfoShellCheck = document.getElementById("peer-info-shell");
         function closePeerInfoPopover() {
           peerInfoPopover.classList.add("hidden");
           peerInfoPopover.dataset.peerId = "";
@@ -27818,8 +27829,6 @@ ${detail}` });
           peerInfoDisableBtn.onclick = null;
           peerInfoRelayRow.classList.add("hidden");
           peerInfoRelayCheck.onchange = null;
-          peerInfoShellRow.classList.add("hidden");
-          peerInfoShellCheck.onchange = null;
         }
         function openPeerInfoPopover(id, anchorBtn) {
           const st = peerStatuses.get(id);
@@ -27865,8 +27874,6 @@ ${detail}` });
           };
           peerInfoRelayRow.classList.add("hidden");
           peerInfoRelayCheck.onchange = null;
-          peerInfoShellRow.classList.add("hidden");
-          peerInfoShellCheck.onchange = null;
           window.api.getSettings().then((s) => {
             if (peerInfoPopover.classList.contains("hidden") || peerInfoPopover.dataset.peerId !== String(id)) return;
             const cfg = (s && s.peers || []).find((p) => String(p.id) === String(id));
@@ -27875,17 +27882,6 @@ ${detail}` });
             peerInfoRelayCheck.onchange = () => {
               window.api.peerSetRelayAllowed(id, peerInfoRelayCheck.checked).catch(() => {
               });
-            };
-            peerInfoShellCheck.checked = !!(cfg && cfg.shellAllowed);
-            peerInfoShellRow.classList.remove("hidden");
-            peerInfoShellCheck.onchange = () => {
-              const on = peerInfoShellCheck.checked;
-              window.api.peerSetShellAllowed(id, on).then(() => refreshShellAllowed()).catch(() => {
-              });
-              showToast(
-                on ? "Terminal sharing ON \u2014 any peer that can reach your tunnel can open a shell here." : "Terminal sharing off \u2014 open remote shells were closed.",
-                { kind: on ? "warm" : "peer-ui" }
-              );
             };
           }).catch(() => {
           });
@@ -31993,6 +31989,7 @@ Click for live activity`;
       var prefsRemoteTokenSave = document.getElementById("prefs-remote-token-save");
       var prefsRemoteTokenClear = document.getElementById("prefs-remote-token-clear");
       var prefsRemoteTokenState = document.getElementById("prefs-remote-token-state");
+      var prefsPeerShell = document.getElementById("prefs-peer-shell");
       var prefsEnvScope = document.getElementById("prefs-env-scope");
       var prefsEnvList = document.getElementById("prefs-env-list");
       var prefsEnvKey = document.getElementById("prefs-env-key");
@@ -33584,6 +33581,7 @@ ${res.stderr}` : "");
         restorePrefsGroups();
         applyPrefsGate();
         prefsRemoteEnabled.checked = !!s.remoteEnabled;
+        if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
         prefsRemoteToken.value = "";
         renderRemoteTokenState(!!s.remoteHasToken);
         if (prefsEnvScope) prefsEnvScope.value = "global";
@@ -33631,6 +33629,37 @@ ${res.stderr}` : "");
         await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
         closePrefs();
       });
+      if (prefsPeerShell) {
+        prefsPeerShell.addEventListener("change", async () => {
+          const on = prefsPeerShell.checked;
+          let res = null;
+          try {
+            res = await window.api.peerSetShellAllowed(on);
+          } catch {
+            res = null;
+          }
+          if (!res || res.ok !== true) {
+            prefsPeerShell.checked = !on;
+            showToast(
+              on ? "Could not turn terminal sharing on \u2014 it is still off." : "Could not turn terminal sharing off \u2014 this box is STILL serving shells.",
+              { kind: "warn" }
+            );
+            return;
+          }
+          showToast(
+            on ? "Terminal sharing ON \u2014 any peer that can reach your tunnel can open a shell here." : "Terminal sharing off \u2014 open remote shells were closed.",
+            { kind: on ? "warm" : "peer-ui" }
+          );
+        });
+        window.api.onPeerShellAllowed(async () => {
+          if (prefsOverlay.classList.contains("hidden")) return;
+          try {
+            const s = await window.api.getSettings();
+            prefsPeerShell.checked = !!(s && s.peerShellEnabled);
+          } catch {
+          }
+        });
+      }
       prefsRemoteTokenSave.addEventListener("click", () => {
         const v = prefsRemoteToken.value.trim();
         if (!v) {

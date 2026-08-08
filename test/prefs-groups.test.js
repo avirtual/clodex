@@ -32,7 +32,7 @@ const CONTROLS = [
   'ws-logs-block', 'ws-logs-size', 'ws-logs-age', 'ws-logs-clear-btn',
   'prefs-remote-enabled', 'remote-dot', 'remote-status-text',
   'prefs-remote-token', 'prefs-remote-token-save', 'prefs-remote-token-clear',
-  'prefs-remote-token-state',
+  'prefs-remote-token-state', 'prefs-peer-shell',
   'prefs-env-scope', 'prefs-env-list', 'prefs-env-key', 'prefs-env-value',
   'prefs-env-secret', 'prefs-env-add', 'prefs-env-state',
   'prefs-discover-on-startup', 'prefs-disable-design-mcp',
