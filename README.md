@@ -1,15 +1,25 @@
+<div align="center">
+
+<img src="./build/icon-1024.png" width="120" alt="Clodex">
+
 # Clodex
+
+**A visual manager for fleets of coding agents.**
 
 [![Release](https://img.shields.io/github/v/release/avirtual/clodex?color=6c5ce7)](https://github.com/avirtual/clodex/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/avirtual/clodex/total?color=00b894)](https://github.com/avirtual/clodex/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20arm64%20%C2%B7%20Linux%20headless-lightgrey)](#install)
 
-**A visual manager for fleets of coding agents.** Run **Cl**aude Code and C**odex** sessions on your Mac, on any Linux box you can ssh to, and on cloud instances you can't — and actually *see* their work: what each agent is doing right now, what it costs, what's in its context window, which files it's touching, and who spawned whom. Every session is a real terminal. Agents message each other, spawn each other (locally or across machines), and manage their own context; you watch and steer from one sidebar, a browser tab, or a terminal (`clodexctl`).
-
-<img src="./docs/screenshot.png" align="right" width="208" alt="The Clodex sidebar: local agent sessions with live context and cache-warmth badges, a subagent child row with its own cost, and two peered machines contributing remote sessions">
-
 [Install](#install) · [Feature tour](#feature-tour) · [clodexctl](#clodexctl-the-fleet-from-a-terminal) · [Plugins](plugins/) · [How it works](#how-it-works)
+
+</div>
+
+Run **Cl**aude Code and C**odex** sessions on your Mac, on any Linux box you can ssh to, and on cloud instances you can't — and actually *see* their work: what each agent is doing right now, what it costs, what's in its context window, which files it's touching, and who spawned whom. Every session is a real terminal. Agents message each other, spawn each other (locally or across machines), and manage their own context; you watch and steer from one sidebar, a browser tab, or a terminal (`clodexctl`).
+
+<img src="./docs/screenshot.png" align="right" width="228" alt="The Clodex sidebar: agent sessions grouped by project with live context and cache-warmth badges, a peered machine contributing remote sessions, and the drawer buttons for inbox, memories, tickets and workbench">
+
+*Above: the sidebar alone — sessions grouped by project, live context percentages, cache warmth, a peered box's sessions inline, and unread-inbox count. The rest of the window is the session's real terminal, with the wire-telemetry bar under it.*
 
 ## Why
 
