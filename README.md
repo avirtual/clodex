@@ -17,9 +17,9 @@
 
 Run **Cl**aude Code and C**odex** sessions on your Mac, on any Linux box you can ssh to, and on cloud instances you can't — and actually *see* their work: what each agent is doing right now, what it costs, what's in its context window, which files it's touching, and who spawned whom. Every session is a real terminal. Agents message each other, spawn each other (locally or across machines), and manage their own context; you watch and steer from one sidebar, a browser tab, or a terminal (`clodexctl`).
 
-<img src="./docs/screenshot.png" align="right" width="228" alt="The Clodex sidebar: agent sessions grouped by project with live context and cache-warmth badges, a peered machine contributing remote sessions, and the drawer buttons for inbox, memories, tickets and workbench">
+<img src="./docs/screenshot-app.png" width="100%" alt="Clodex: sidebar of agent sessions grouped by project with live context and cache-warmth badges, a peered machine contributing remote sessions, a full-height terminal, and the IPC Traffic drawer showing agents messaging each other">
 
-*Above: the sidebar alone — sessions grouped by project, live context percentages, cache warmth, a peered box's sessions inline, and unread-inbox count. The rest of the window is the session's real terminal, with the wire-telemetry bar under it.*
+*One operator, several agents, nothing staged. Left: sessions grouped by project with live context percentages and cache warmth, a peered box (`TEST`) contributing its sessions inline, unread inbox. Centre: the session as a real terminal. Bottom: the IPC bus — this lead dispatching a code review to a reviewer it spawned, the verdict coming back, the seat retiring, a test run reporting green, and an agent on an unrelated project filing a morning digest. The bar under the terminal is wire telemetry: model, context, turn, spend, cache state.*
 
 ## Why
 
@@ -39,11 +39,24 @@ First launch: right-click `Clodex.app` → **Open**. If macOS says the app is da
 
 **Requirements** — Apple Silicon Mac, macOS 12+ (Intel and Linux [build from source](#building-from-source); Linux servers run the headless engine). Plus whichever CLIs you want to drive: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` in PATH) and/or [Codex](https://github.com/openai/codex) (`codex` in PATH).
 
+**`clodexctl`** drives the same fleet from a terminal — no Electron, no app required (Node 20+):
+
 ```bash
-# Put the same fleet in your terminal (no Electron, no app required):
 git clone https://github.com/avirtual/clodex && npm i -g ./clodex/cli
-clodexctl ctx import    # adopts every node the GUI already knows
+```
+
+Already running the desktop app? Adopt everything it knows in one step:
+
+```bash
+clodexctl ctx import      # adopts every node the GUI already knows
+clodexctl ctx use local   # or any name ctx import printed
 clodexctl sessions
+```
+
+No app on this box? Point it at a node directly instead:
+
+```bash
+clodexctl ctx add prod --url https://box:8787 --token <T> && clodexctl sessions
 ```
 
 ## Feature tour
@@ -132,10 +145,10 @@ Every deployed node also serves the **full Clodex GUI in a browser** — sidebar
 
 ### Plugins: extend it yourself
 
-Clodex loads plugins in process, and the API is **frozen at `hostApi "1"`** — a directory with a manifest and up to two halves: an engine half (plain Node, filesystem and session access, can contribute an `[agent:…]` verb) and a renderer half (DOM, one per window, seven named UI slots — status-bar actions and segments, a sidebar footer button, a session row badge, a session-menu provider, a settings panel on its Manage Plugins row, a full-window overlay). The two shipped plugins are written against the same contract you get: a git-branch badge and the Workbench (Files, Source Control, Worktrees).
+Clodex loads plugins in process, and the API is **frozen at `hostApi "1"`** — a directory with a manifest and up to two halves: an engine half (plain Node, filesystem and session access, can contribute an `[agent:…]` verb) and a renderer half (DOM, one per window, seven named UI slots — status-bar actions and segments, a sidebar footer button, a session row badge, a session-menu provider, a settings panel on its Manage Plugins row, a full-window overlay). The shipped plugins are written against the same contract you get: a git-branch badge, the Workbench (Files, Source Control, Worktrees), and read-only viewers for memories and tickets.
 
 - **Your plugins live outside the app** — drop a directory in `~/.clodex/plugins/` and it is discovered alongside the built-in ones, untouched by updates. Manage Plugins reveals the folder, re-scans without a restart, and is one checkbox per plugin; `CLODEX_PLUGINS=0` skips the system entirely.
-- **Start here** — [`plugins/`](plugins/) is the launchpad: `node plugins/tools/scaffold.js my-plugin` writes a valid one and `node plugins/tools/verify.js` runs it against the real loader, so the first plugin is an implementation task rather than a discovery task. [`plugins/plugin-api.md`](plugins/plugin-api.md) is the contract, and [`plugins/plugin-sources.md`](plugins/plugin-sources.md) covers where plugins come from — precedence, shadowing, and trust. No sandbox: an engine half runs with the app's privileges, so the API is a contract, not containment.
+- **Start here** — [`plugins/`](plugins/) is the launchpad: `node plugins/tools/scaffold.js my-plugin` writes a valid one and `node plugins/tools/verify.js plugins/my-plugin` runs it against the real loader, so the first plugin is an implementation task rather than a discovery task. [`plugins/plugin-api.md`](plugins/plugin-api.md) is the contract, and [`plugins/plugin-sources.md`](plugins/plugin-sources.md) covers where plugins come from — precedence, shadowing, and trust. No sandbox: an engine half runs with the app's privileges, so the API is a contract, not containment.
 
 ### Wire telemetry (wirescope)
 
