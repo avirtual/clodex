@@ -32,16 +32,22 @@
 //                        never existed flat, but stays sweepable)
 //     selection.jsonl    queued drawer ATTACHMENTS awaiting the next submit
 //     selection.sh       attachment drain hook (same defensive posture)
+//     notices.sh         deferred-notice drain hook (same defensive posture;
+//                        the QUEUE it drains is at the shared root below)
 //     zsh/               generated ZDOTDIR for the drawer terminal's OSC 133
 //                        shim — a DIRECTORY, unlike every other kind
 //
-// 23 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
+// 24 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
 // move: messages/ (HARD — --add-dir scope + IPC_PROMPT teaching + historical
 // spill pointers), pending/ (parked DMs — pending.sh RELOCATES but its BODY
 // still targets ~/.clodex/pending/<name>/), promptcache/ (the frozen system
 // prompt + its delta staging — ipcdelta.sh RELOCATES here but its BODY targets
 // ~/.clodex/promptcache/<name>/; this dir MUST outlive the run dir, which is
 // rm -rf'd on every exit, or the resume it exists to serve would find it gone),
+// notices/ (the deferred-notice queue — notices.sh RELOCATES but its BODY
+// targets ~/.clodex/notices/<name>/queue.jsonl, and for the same reason: a
+// notice is typically enqueued at the spawn AFTER the exit that rm -rf'd the
+// run dir, and must survive the next one too),
 // agents/, skills/, library/,
 // plugins/ (the BYO plugin root — plugins/plugin-sources.md §3; deliberately NOT a
 // KIND, since it is shared rather than per-agent, and constructed at the engine
@@ -85,6 +91,7 @@ const KINDS = {
   ipcdeltaScript: 'ipcdelta.sh',
   selection: 'selection.jsonl',
   selectionScript: 'selection.sh',
+  noticeScript: 'notices.sh',
   // The ONE kind that is a DIRECTORY, not a file: zsh reads a whole set of
   // startup files from $ZDOTDIR, so the shim has to be a dir to redirect it.
   // The legacy sweep's rmSync is non-recursive and would refuse it, which is
@@ -129,6 +136,7 @@ const LEGACY_SUFFIXES = {
   ipcdeltaScript: '-ipcdelta.sh',
   selection: '-selection.jsonl',
   selectionScript: '-selection.sh',
+  noticeScript: '-notices.sh',
   termShim: '-zsh',
 };
 

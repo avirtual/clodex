@@ -69,6 +69,13 @@ const SCANNED_MODULES = [
   // object — so the forward scan says something real: a name it reached for in
   // session-manager's scope instead of taking by injection would show up here.
   'ipc-prompt-cache.js',
+  // The deferred-notice queue (t240). Same shape and the same reason as the
+  // prompt cache above: a pure fs/string leaf, injected into session-manager
+  // and required DIRECTLY by cli-hooks for the horizon constant it interpolates
+  // into the generated drain. That direct require is the interesting half — it
+  // is what keeps one copy of the number, and it only works while this stays
+  // electron-free, which is what the forward scan holds.
+  'notice-queue.js',
   // Contextual hint arming (t139). hint-arm.js takes its retriever, composer,
   // load lookup and proxy calls by injection, and session-manager reaches for
   // none of its internals — the reverse scan is what keeps the retriever seam

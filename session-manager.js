@@ -299,6 +299,14 @@ function createSessionManager(deps) {
     bakePrompt,
     promptCacheDir,
     readCache,
+    enqueueNotice,
+    versionNoticeFor,
+    clearNotices,
+    // The running app's version, injected like every other host fact. A
+    // getter-free constant is enough: the app cannot upgrade itself
+    // mid-process, so the value a seat is compared against is fixed for the
+    // life of this manager by construction.
+    appVersion,
     diagSummary,
     diagWarning,
     draftChunkSignal,
@@ -1053,7 +1061,39 @@ function createSessionManager(deps) {
           if (resumeId && !mint && !hookInstalled) {
             warnings.push(`This session's own --settings replaces Clodex's hooks, so the IPC protocol-change channel isn't installed. Its system prompt will be regenerated on every resume instead of frozen — correct, but it re-reads the whole prompt each time.`);
           }
-          const baked = bakePrompt(REGISTRY_DIR, name, realIpc, !!resumeId && !mint && hookInstalled);
+          const reuse = !!resumeId && !mint && hookInstalled;
+          const baked = bakePrompt(REGISTRY_DIR, name, realIpc, reuse);
+          // First producer on the notice queue (notice-queue.js). Gated on the
+          // SAME `reuse` as the freeze above, and every clause earns its place
+          // for the same reason it does there: no conversation to inform
+          // (!resumeId) or a fresh one built against this very host, a MINT
+          // adopting a dead namesake's record (whose version says nothing about
+          // THIS conversation), or no drain installed to deliver it.
+          //
+          // Per-session HERE rather than a fan-out at app startup: a fan-out
+          // only reaches sessions that exist when it runs, so a seat archived
+          // now and unarchived in three weeks would learn nothing. This
+          // comparison runs at the seat's own spawn, which covers archived and
+          // restored sessions with no extra path.
+          //
+          // A record with no version at all (written by a build before this
+          // existed) yields no notice: versionNoticeFor needs both sides, and
+          // inventing a floor would announce an upgrade we cannot describe. The
+          // upsert below records the running version, so the NEXT one is real.
+          //
+          // The else is the boundary side, exactly as bakePrompt clears its own
+          // staging when reuse is false. The producer guard above is not enough
+          // on its own: it sits on the producer while an undrained notice sits
+          // on the consumer, so a mint would still be DELIVERED whatever the
+          // dead namesake enqueued before it died.
+          try {
+            if (reuse) {
+              const notice = versionNoticeFor(existingEntry && existingEntry.appVersion, appVersion);
+              if (notice) enqueueNotice(REGISTRY_DIR, name, notice);
+            } else {
+              clearNotices(REGISTRY_DIR, name);
+            }
+          } catch { /* an advisory must never block a spawn */ }
           // ensureDir here so the write never depends on hook-setup ordering
           // having created the dir first — the same invariant, and the same
           // idiom, as the socket bind's ensureDir below. It is load-bearing on
@@ -1313,6 +1353,18 @@ function createSessionManager(deps) {
         name, type, cwd,
         extraArgs,
         createdAt,
+        // The version this seat is running under AS OF THIS SPAWN — the
+        // baseline the next spawn compares against to decide whether it owes a
+        // "Clodex was upgraded" notice (notice-queue.js). Written for every
+        // type, not just claude: the record outlives the agent type it was
+        // written under, and a value that is only sometimes present is a
+        // baseline whose absence means two different things.
+        //
+        // Unconditional, and it must stay so. This is the ADVANCE half of an
+        // edge-triggered comparison: the read above happens before this line,
+        // so omitting the write on any path leaves the old version on the
+        // record and every subsequent resume re-enqueues the same notice.
+        appVersion,
         sessionId: resumeId || null,
         workspaceId,
         systemPrompt: systemPromptBody || null,

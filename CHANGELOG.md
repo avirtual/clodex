@@ -13,6 +13,24 @@ blocks a release.
 
 ## Unreleased
 
+- **A resumed agent is now told when Clodex was upgraded underneath it.** An
+  agent's system prompt is written once, when its conversation starts, and
+  rewriting it later would re-bill the whole conversation — so a session you
+  resume after updating Clodex carries the prompt it was born with. Until now it
+  learned about the new version only if the prompt's own text had changed, which
+  most releases don't do: an intent that kept its name but changed its arguments
+  would just quietly keep being used the old way.
+
+  Such a session now receives one line at its next message, naming the version
+  it was last running under and the one it is running under now, and saying the
+  running app wins where the two disagree. Sessions started fresh get nothing —
+  they are already current. Nothing is sent for an upgrade that happened before
+  this feature existed, since there is no record of what to compare against; the
+  first resume establishes the baseline and the next upgrade is announced.
+
+  Underneath it is a general per-session notice queue, so future one-off
+  advisories that are in no rush can ride the same channel.
+
 ## 5.3.0 — 2026-08-08 — a switch the serving box can actually reach
 
 - **Terminal sharing moved to Settings, and now works on a box with no peers of

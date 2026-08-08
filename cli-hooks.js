@@ -7,6 +7,10 @@ const { composeDigest } = require('./memory-store');
 const { renderClaudeStatusScript } = require('./statusline');
 const { CLAUDE_TOOLS } = require('./catalogs');
 const { denyAgentRules } = require('./agents-util');
+// The horizon is interpolated into the generated drain, so the constant beside
+// its reasoning stays the single source — a second literal in a template string
+// is exactly the copy that drifts the first time either is touched.
+const { NOTICE_MAX_AGE_MS } = require('./notice-queue');
 
 // `composeRoster` is injected rather than imported: this module must stay
 // electron-free and free of session state, and resolving a team needs both a cwd
@@ -321,6 +325,55 @@ if (texts.length) {
 JSEOF
 `, { mode: 0o700 });
 
+    // Deferred notices (notice-queue.js): facts a resumed conversation was not
+    // born knowing. A SEPARATE mechanism from the ipcdelta drain below, and it
+    // stays separate — this queue is at-most-once (claim, read, drop) while the
+    // delta is at-least-once, and one drain serving both would silently
+    // downgrade the delta. Claude concatenates every hook's additionalContext,
+    // so emitting both on one submit already works without merging them.
+    //
+    // The QUEUE is at the shared ~/.clodex/notices/<name>/ root for the same
+    // reason promptcache/ is: a notice outlives the run dir this function's
+    // cleanup rm -rf's, and the resume it serves is on the far side of that.
+    //
+    // Claim-by-rename before reading, like the selection drain: a producer
+    // appending mid-drain writes a fresh file and is delivered next turn rather
+    // than being consumed unread. The age horizon is applied HERE, not at
+    // enqueue — see the constants in notice-queue.js.
+    const noticeQueuePath = path.join(REGISTRY_DIR, 'notices', name, 'queue.jsonl');
+    const noticeScriptPath = pathFor(REGISTRY_DIR, name, 'noticeScript');
+    fs.writeFileSync(noticeScriptPath, `#!/bin/bash
+[ -s "${noticeQueuePath}" ] || exit 0
+${INTERP} - "${noticeQueuePath}" <<'JSEOF'
+const fs = require('fs');
+const src = process.argv[2];
+const claim = src + '.' + process.pid;
+try { fs.renameSync(src, claim); } catch (e) { process.exit(0); }
+const MAX_AGE_MS = ${NOTICE_MAX_AGE_MS};
+const now = Date.now();
+let texts = [];
+try {
+  for (const line of fs.readFileSync(claim, 'utf8').split('\\n')) {
+    if (!line.trim()) continue;
+    try {
+      const o = JSON.parse(line);
+      if (!o || !o.text) continue;
+      // Stale advisories are DROPPED, not delivered late: a seat dormant across
+      // a fortnight of releases is better told nothing than told about the
+      // third-to-last one.
+      if (typeof o.at === 'number' && now - o.at > MAX_AGE_MS) continue;
+      texts.push(o.text);
+    } catch (e) {}
+  }
+} catch (e) {}
+try { fs.rmSync(claim, { force: true }); } catch (e) {}
+if (texts.length) {
+  console.log(JSON.stringify({ hookSpecificOutput: {
+    hookEventName: "UserPromptSubmit", additionalContext: texts.join('\\n\\n') } }));
+}
+JSEOF
+`, { mode: 0o700 });
+
     // ORDER IS THE MECHANISM: emit delta.md, THEN rename next.md over
     // notified.md, then drop delta.md. The baseline advance is last, so a crash
     // re-delivers the same diff next turn; at-least-once is deliberate.
@@ -363,6 +416,12 @@ JSEOF
             { type: 'command', command: ackScriptPath },
             { type: 'command', command: pendingScriptPath },
             { type: 'command', command: selectionScriptPath },
+            // After ipcdelta, deliberately: a prompt change can alter what the
+            // intents below it MEAN, and the notice is a fact about the host
+            // rather than a change to the grammar. Not under PostToolUse — like
+            // selection, this is turn-boundary content, and draining it
+            // mid-loop would land it between two tool calls.
+            { type: 'command', command: noticeScriptPath },
             { type: 'command', command: ctxwarnScriptPath },
           ]
         }],
