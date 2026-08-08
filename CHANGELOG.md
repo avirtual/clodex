@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — a switch the serving box can actually reach
 
 - **Terminal sharing moved to Settings, and now works on a box with no peers of
   its own.** The switch that lets a peer open a terminal on your machine used to
