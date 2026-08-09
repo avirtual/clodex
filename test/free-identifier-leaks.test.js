@@ -1,5 +1,5 @@
 // Regression guard for the M3/M4 class of bug: an extracted module referencing
-// a main.js module-scope identifier that was never injected through its deps
+// a COORDINATOR-scope identifier that was never injected through its deps
 // object / factory params. Those are free identifiers — a ReferenceError at
 // runtime — and they only explode when the code path runs. Three real escapes
 // motivated this: the five cli-hooks fns missing from SessionManager's deps
@@ -9,12 +9,20 @@
 // the tick's .catch(() => {}) ate the ReferenceError). All shipped green
 // through the unit suite because their paths need a PTY / live proxy.
 //
-// Heuristic static scan, not a parser: collect main.js's module-scope names,
-// collect the module's own definitions (functions, classes, consts, deps
-// destructures, function/factory params), strip comments/strings/object keys,
-// and flag any identifier the module uses that only main.js defines.
-// Imperfect stripping means a small per-module whitelist; every entry must be
-// justified inline.
+// Heuristic static scan, not a parser: collect the COORDINATOR SCOPE's
+// module-scope names, collect the module's own definitions (functions, classes,
+// consts, deps destructures, function/factory params), strip
+// comments/strings/object keys, and flag any identifier the module uses that
+// only the coordinator scope defines. Imperfect stripping means a small
+// per-module whitelist; every entry must be justified inline.
+//
+// THE COORDINATOR SCOPE IS TWO FILES, NOT ONE (see MAIN_SCOPE below). The
+// 2026-07 engine extraction moved the wiring out of main.js into engine.js, so
+// a scan pointed at main.js alone measures the file the coordinator moved OUT
+// of — which is what this gate did from that extraction until 2026-08, issuing
+// green on 57 assertions that could not see a single moved name. Both files are
+// scanned, and a scope file appearing in one of the lists below is scanned
+// against the REST of the scope, never against itself.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -23,8 +31,17 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 
-// Every module extracted from main.js. New extraction phases MUST add their
-// modules here (M5: ipc-handlers, remote-wiring, peer-wiring, app-menus).
+// The coordinator scope the modules below are measured against. main.js was the
+// whole of it until the engine extraction; engine.js now assembles the
+// electron-free module graph and main.js is a thin Electron adapter that still
+// hosts names of its own. A module reaching for a name from EITHER is the same
+// escape, so the forward scan unions both scopes rather than picking one —
+// keeping main.js's coverage and adding back everything the extraction moved.
+const MAIN_SCOPE = ['main.js', 'engine.js'];
+
+// Every module extracted from main.js OR from the engine scope it became. New
+// extraction phases MUST add their modules here (M5: ipc-handlers,
+// remote-wiring, peer-wiring, app-menus).
 const SCANNED_MODULES = [
   'dev-reload.js',
   'session-manager.js',
@@ -100,6 +117,11 @@ const SCANNED_MODULES = [
   // node:fs with its fs seams injected, so it stays testable without a daemon
   // and without a real corpus.
   'vector-store.js',
+  // Both a SCOPE file (MAIN_SCOPE) and a scanned module. It is scanned against
+  // the rest of the scope — main.js — and never against itself: a file's own
+  // names are all in its own defs, so a self-scan is empty by construction and
+  // passes vacuously. main.js is the right question for it anyway, since
+  // engine.js is what was extracted FROM main.js.
   'engine.js',
   'headless-main.js',
   'sandbox.js',
@@ -255,7 +277,17 @@ const RENDERER_SCANNED_MODULES = [
 ];
 
 // Justified survivors of imperfect stripping. Format: module -> Set of names.
-const WHITELIST = {};
+const WHITELIST = {
+  // `isAlive` is engine.js's (`:524`, destructured off createAgentTransport), so
+  // it entered this scan the moment engine.js joined MAIN_SCOPE. But
+  // plugin-host-engine.js does not REFERENCE it: `:208` is `isAlive() {`, an
+  // object-literal method shorthand on the frozen handle sessionHandle() returns,
+  // and the only other hit (`:117`) is a comment. The lexer drops `key:` object
+  // keys but not method shorthand, and ownDefinitions' param matcher reads the
+  // shorthand's empty parameter list without adding the method name to defs — so
+  // a definition reads as a use. Nothing to inject; the module is clean.
+  'plugin-host-engine.js': new Set(['isAlive']),
+};
 
 function moduleScopeNames(src) {
   const names = new Set();
@@ -394,10 +426,31 @@ function stripCommentsStringsAndKeys(src) {
     .replace(/([{,]\s*)\w+\s*:/g, '$1');
 }
 
-function findLeaks(moduleFile, scopeFile = 'main.js') {
-  const scopeSrc = fs.readFileSync(path.join(ROOT, scopeFile), 'utf8');
+// Which scope files a given module is actually measured against. A scope file
+// that is ALSO a scanned module (engine.js) drops out of its own scope: every
+// name a file defines is in its own defs, so the intersection findLeaks takes is
+// empty by construction and the assertion passes without asking anything. That
+// vacuous pass is the failure mode this whole ticket is about, so an empty
+// residue THROWS rather than reporting a clean scan.
+function scopesFor(moduleFile, scopeFiles) {
+  const files = (Array.isArray(scopeFiles) ? scopeFiles : [scopeFiles])
+    .filter((f) => f !== moduleFile);
+  if (!files.length) {
+    throw new Error(
+      `${moduleFile} has no scope file left to scan against (its only scope is itself). ` +
+      'A self-scan is vacuous — give it a scope that does not include it, or drop it from the list.',
+    );
+  }
+  return files;
+}
+
+function findLeaks(moduleFile, scopeFiles = MAIN_SCOPE) {
+  const scopeNames = new Set();
+  for (const scopeFile of scopesFor(moduleFile, scopeFiles)) {
+    const scopeSrc = fs.readFileSync(path.join(ROOT, scopeFile), 'utf8');
+    for (const n of moduleScopeNames(scopeSrc)) scopeNames.add(n);
+  }
   const modSrc = fs.readFileSync(path.join(ROOT, moduleFile), 'utf8');
-  const scopeNames = moduleScopeNames(scopeSrc);
   const defs = ownDefinitions(modSrc);
   const wl = WHITELIST[moduleFile] || new Set();
   const used = new Set(stripCommentsStringsAndKeys(modSrc).match(/\b[a-zA-Z_$][\w$]*\b/g) || []);
@@ -405,21 +458,27 @@ function findLeaks(moduleFile, scopeFile = 'main.js') {
 }
 
 for (const mod of SCANNED_MODULES) {
-  test(`${mod} references no main.js-only identifiers`, () => {
-    const leaks = findLeaks(mod);
+  // The scopes go in the test NAME: the gate's result is an ABSENCE, and a scan
+  // against 28 names and a scan against 400 print the same "no leaks". Naming
+  // the scope is what makes a repointed gate visible in the output instead of
+  // silently identical to the broken one.
+  const scopes = scopesFor(mod, MAIN_SCOPE);
+  test(`${mod} references no ${scopes.join('+')}-only identifiers`, () => {
+    const leaks = findLeaks(mod, MAIN_SCOPE);
     assert.deepStrictEqual(
       leaks, [],
-      `free identifiers leaked from main.js scope (add to deps + destructure): ${leaks.join(', ')}`,
+      `free identifiers leaked from ${scopes.join('+')} scope (add to deps + destructure): ${leaks.join(', ')}`,
     );
   });
 }
 
 for (const mod of RENDERER_SCANNED_MODULES) {
-  test(`${mod} references no renderer.js-only identifiers`, () => {
+  const scopes = scopesFor(mod, RENDERER_SCOPE);
+  test(`${mod} references no ${scopes.join('+')}-only identifiers`, () => {
     const leaks = findLeaks(mod, RENDERER_SCOPE);
     assert.deepStrictEqual(
       leaks, [],
-      `free identifiers leaked from renderer.js scope (add to init params + destructure): ${leaks.join(', ')}`,
+      `free identifiers leaked from ${scopes.join('+')} scope (add to init params + destructure): ${leaks.join(', ')}`,
     );
   });
 }
@@ -569,7 +628,11 @@ function danglingRefs(scopeFile) {
   return [...used].filter((n) => !defs.has(n) && !AMBIENT.has(n)).sort();
 }
 
-for (const scope of ['renderer/renderer.js', 'main.js']) {
+// engine.js is here for the same reason it is in MAIN_SCOPE: it holds the
+// coordinator names now, so it is the file an extraction most plausibly leaves a
+// dangling caller in. It was absent from this list entirely — the reverse half
+// of F013.
+for (const scope of ['renderer/renderer.js', 'main.js', 'engine.js']) {
   test(`${scope} references no names that moved out of its scope`, () => {
     const dangling = danglingRefs(scope);
     assert.deepStrictEqual(
