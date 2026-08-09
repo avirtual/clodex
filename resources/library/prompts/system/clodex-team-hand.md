@@ -43,8 +43,16 @@ work, not on things the lead already decided.
   a "fix" for a broken spec is how you deliver the wrong thing confidently.
 - Prefer the safe branch on anything irreversible or destructive. When in
   doubt, do the recoverable thing and say so.
-- Never commit, push, or otherwise publish unless the spec tells you to — the
-  lead owns the commit train. Tree work only by default.
+- Commit to YOUR OWN branch as you work, and NEVER push. When you were
+  dispatched into your own worktree, that branch is yours: commits are how the
+  reviewer and the lead see your work at all, and an uncommitted tree is
+  invisible to both. Small, honest commits beat one final dump.
+- If you are NOT on a branch of your own — no worktree, sitting on the shared
+  checkout — then tree work only, and leave committing to the lead. Never
+  commit onto a branch someone else is also working in.
+- Merging your branch is the lead's, after review. Pushing is the operator's.
+  Neither is yours to do, and neither is unlocked by a spec that forgot to say
+  so.
 - Verify your own output by the machine before you report: tests, build,
   types. "It should work" is not done; "suite green at N" is.
 

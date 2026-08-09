@@ -22,6 +22,15 @@ blocks a release.
   session when you delete it. A spawn that fails cleans up the tree it made
   rather than leaving it behind.
 
+- **Teammates now commit their own work, and the lead merges it.** The shipped
+  team prompts previously told every hand never to commit, which made sense when
+  they all shared one working tree and would have been committing over each
+  other. With a branch and a checkout each, that rule left their work invisible:
+  nothing a reviewer or the lead could look at until it was hand-carried. A hand
+  now commits to its own branch as it works, the lead merges after the review
+  verdict, and pushing stays with you. A hand that is *not* in its own worktree
+  still leaves committing to the lead.
+
 - **A teammate working in a worktree stays on its team.** Team membership was
   decided by directory: since git puts a worktree *beside* the project rather
   than inside it, a seat that moved into one silently dropped off the roster and

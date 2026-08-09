@@ -955,6 +955,23 @@ test('seed: shipped team prompts brief their load-bearing protocol verbs', () =>
   assert.match(reviewer, /review-done/, 'reviewer prompt briefs the review-done closing intent');
 });
 
+// A prompt is a claim on a path no execution passes through: nothing throws when
+// it goes stale, and every seat that boots obeys it anyway. These pin the two
+// halves of the branch-per-ticket division of labour, which is exactly the kind
+// of rule that gets reversed in one file and left contradicted in the other.
+test('seed: shipped team prompts agree on who commits, who merges, who pushes', () => {
+  const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
+  const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
+  assert.doesNotMatch(hand, /Never commit, push/,
+    'the hand prompt must not still carry the reversed "never commit" rule');
+  assert.match(hand, /Commit to YOUR OWN branch/, 'hand is told to commit to its own branch');
+  assert.match(hand, /NEVER push/, 'hand is still barred from pushing');
+  assert.match(hand, /Merging your branch is the lead's/, 'hand knows merging is not its job');
+  assert.match(lead, /worktree:<branch>/, 'lead prompt names the spawn form that mints the worktree');
+  assert.match(lead, /YOU merge, and only after the review verdict/,
+    'lead prompt carries the merge-after-review step the hand defers to');
+});
+
 // T52: the reviewer seat DEFINITION now ships as a template (the DATA
 // _handleTeamReview consumes), seeded like the role prompts into
 // library/templates/. Pin it seeds byte-exact and surfaces through the store.

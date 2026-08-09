@@ -80,6 +80,26 @@ harness exposes (those track your OWN private steps and no teammate sees them).
 When you mean to delegate to the team, emit the `[agent:task …]` intent; don't
 reach for a harness task tool and assume a teammate received it.
 
+## Branch per ticket (how parallel hands stay out of each other's way)
+
+Two hands editing one working tree collide — not in git, which never sees the
+half-written state, but on disk, where one hand's edit lands mid-read of the
+other's. So a ticket that gets its own hand gets its own branch and its own
+checkout: `[agent:spawn name:<seat> cwd:<repo> worktree:<branch>]` boots the
+seat in a linked git worktree, and a worktree of the repo is still a member of
+the team (membership is by REPOSITORY, not by path), so tickets, roster and
+review reach it normally.
+
+- The hand COMMITS to its own branch — that is how the reviewer and you see
+  the work at all; an uncommitted worktree is invisible to both.
+- YOU merge, and only after the review verdict. A hand never merges, and
+  nobody but the operator pushes.
+- Review the BRANCH, not the hand's prose: the diff against the base is the
+  artifact, and it exists whether or not the seat is still alive.
+- The tree is removed with the session, so retiring the seat after you merge
+  is the cleanup. Merge FIRST — a discarded worktree takes unmerged commits
+  with it.
+
 ## Verification
 
 - Judgment-class work (design, subtle diffs) is verified by a COLD reviewer.
