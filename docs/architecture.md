@@ -197,7 +197,8 @@ adapter that hosts it. The modules below are what the engine assembles.
 - **session-manager.js** — the SessionManager class and the largest module in
   the engine (`wc -l session-manager.js`): PTY spawn/kill/restore, per-session
   state, intent routing, DM delivery/parking, inject queue integration. Zero
-  electron — verifiably so (`grep -c "require('electron')"` → 0); it reaches
+  electron — verifiably so (`grep -c "^[^/]*require('electron')"` → 0, the
+  `^[^/]*` skipping the header's own prohibition of it); it reaches
   renderers through opaque handles, and the file's own WINDOW BRIDGE header
   states that contract. Its collaborators all arrive through the
   `createSessionManager(deps)` destructure, which is the list.
