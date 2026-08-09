@@ -68,6 +68,16 @@ blocks a release.
   retry budget reset on every attempt, so the backoff never grew past its first
   step and the give-up path was never reached.
 
+- **A workspace holding only archived sessions no longer looks empty.** The
+  workspace rows in the Window and tray menus counted running sessions only, so
+  a workspace whose seats were all archived showed no session count at all —
+  the same way a genuinely empty one does. Choosing Delete Workspace… from that
+  row then warned you about deleting the sessions the label had just implied
+  were not there. Rows now count both, naming the running subset when the two
+  differ ("3 sessions (1 running)"), and the delete confirmation counts both
+  populations at click time rather than reusing a number captured when the menu
+  was built — a tray menu can sit open for minutes.
+
 ## 5.3.0 — 2026-08-08 — a switch the serving box can actually reach
 
 - **Terminal sharing moved to Settings, and now works on a box with no peers of

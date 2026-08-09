@@ -38,14 +38,29 @@ const PROJECT_ROOT = process.cwd();
 const BASH_SUBCOMMAND_HEADS = new Set(['git', 'npm', 'node', 'npx']);
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
+// A flag consuming the NEXT token swallows a following flag as its operand:
+// `--agent --json` bound "--json" as the agent name and dropped the flag, so
+// the run reported on a nonexistent agent instead of erroring. Same shape as
+// embed-basket's F011; harmless here only because this script reads.
+// `--top` reached its own error via parseInt('--json') === NaN, which the
+// positive-integer check below already caught — the value was validated, the
+// token was not.
+function needsValue(flag, v) {
+  if (v === undefined || v.startsWith('-')) {
+    console.error(`${flag} needs a value`);
+    process.exit(1);
+  }
+  return v;
+}
+
 function parseArgs(argv) {
   const opts = { top: 10, json: false, agent: null, dir: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') opts.json = true;
-    else if (a === '--top') opts.top = parseInt(argv[++i], 10);
-    else if (a === '--agent') opts.agent = argv[++i];
-    else if (a === '--dir') opts.dir = argv[++i];
+    else if (a === '--top') opts.top = parseInt(needsValue(a, argv[++i]), 10);
+    else if (a === '--agent') opts.agent = needsValue(a, argv[++i]);
+    else if (a === '--dir') opts.dir = needsValue(a, argv[++i]);
     else if (a === '--help' || a === '-h') {
       console.log('Usage: transcript-stats.js [--top N] [--json] [--agent NAME] [--dir PATH]');
       process.exit(0);

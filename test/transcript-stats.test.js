@@ -106,3 +106,27 @@ test('transcript-stats --agent filters and human output renders', () => {
   const all = run([]);
   assert.match(all, /every-session tax/);
 });
+
+// A value-taking flag must reject a FLAG as its operand, not bind it. Before
+// this, `--agent --json` bound "--json" as the agent name and dropped the
+// flag: the run reported on an agent that cannot exist, in human format, and
+// exited 0. Same shape as embed-basket's F011, where the swallowed flag was
+// --dry-run and the cost was a real write.
+test('transcript-stats: a flag is not a valid operand for a value-taking flag', () => {
+  for (const args of [['--agent', '--json'], ['--top', '--json'], ['--dir', '--json'], ['--agent']]) {
+    let err = null;
+    try {
+      execFileSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', stdio: 'pipe' });
+    } catch (e) { err = e; }
+    assert.ok(err, `${args.join(' ')} should have exited nonzero`);
+    assert.strictEqual(err.status, 1, `${args.join(' ')} exit status`);
+    assert.match(err.stderr, /needs a value/, `${args.join(' ')} stderr`);
+  }
+});
+
+// CONTROL: the guard must reject flags, not operands. Without this, a parser
+// that refused every value would pass the test above and be entirely broken.
+test('transcript-stats: a real operand still parses', () => {
+  const text = run(['--top', '3']);
+  assert.match(text, /every-session tax/);
+});
