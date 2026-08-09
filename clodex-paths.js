@@ -25,10 +25,7 @@
 //     acks               memory-mutation ack queue         (was {name}-acks)
 //     acks.sh            ack drain hook                    (was {name}-acks.sh)
 //     pending.sh         parked-DM drain hook              (was {name}-pending.sh)
-//     file-heat.json     boiling-pot per-file heat counters (new in run/; the
-//                        legacy suffix below is defensive — no flat build ever
-//                        wrote it, but keeping every kind sweepable is the invariant)
-//     ipcdelta.sh        IPC-prompt-delta drain hook (same defensive posture:
+//     ipcdelta.sh        IPC-prompt-delta drain hook (defensive legacy posture:
 //                        never existed flat, but stays sweepable)
 //     selection.jsonl    queued drawer ATTACHMENTS awaiting the next submit
 //     selection.sh       attachment drain hook (same defensive posture)
@@ -37,7 +34,7 @@
 //     zsh/               generated ZDOTDIR for the drawer terminal's OSC 133
 //                        shim — a DIRECTORY, unlike every other kind
 //
-// 24 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
+// 23 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
 // move: messages/ (HARD — --add-dir scope + IPC_PROMPT teaching + historical
 // spill pointers), pending/ (parked DMs — pending.sh RELOCATES but its BODY
 // still targets ~/.clodex/pending/<name>/), promptcache/ (the frozen system
@@ -48,6 +45,11 @@
 // targets ~/.clodex/notices/<name>/queue.jsonl, and for the same reason: a
 // notice is typically enqueued at the spawn AFTER the exit that rm -rf'd the
 // run dir, and must survive the next one too),
+// heat/ (the boiling pot's per-agent file-heat counters —
+// ~/.clodex/heat/<name>/file-heat.json; it WAS a KIND under run/, which meant its
+// 14-day rolling window was truncated to "since this seat last started" by the
+// same rm -rf, so it moved out here with the other three. file-heat.js's header
+// carries the reasoning),
 // agents/, skills/, library/,
 // plugins/ (the BYO plugin root — plugins/plugin-sources.md §3; deliberately NOT a
 // KIND, since it is shared rather than per-agent, and constructed at the engine
@@ -87,7 +89,6 @@ const KINDS = {
   acks: 'acks',
   acksScript: 'acks.sh',
   pendingScript: 'pending.sh',
-  fileHeat: 'file-heat.json',
   ipcdeltaScript: 'ipcdelta.sh',
   selection: 'selection.jsonl',
   selectionScript: 'selection.sh',
@@ -132,7 +133,6 @@ const LEGACY_SUFFIXES = {
   acks: '-acks',
   acksScript: '-acks.sh',
   pendingScript: '-pending.sh',
-  fileHeat: '-file-heat.json',
   ipcdeltaScript: '-ipcdelta.sh',
   selection: '-selection.jsonl',
   selectionScript: '-selection.sh',

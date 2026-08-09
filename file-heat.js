@@ -1,6 +1,6 @@
 // file-heat.js — the boiling pot's tier-1 producer (boiling-pot-plan.md [internal design doc, not in this repo]).
 // Per-file read/edit heat, day-bucketed, N-day rolling, persisted as ONE json
-// per agent at run/<name>/file-heat.json. Pure leaf + a thin factory: the record/
+// per agent at heat/<name>/file-heat.json. Pure leaf + a thin factory: the record/
 // prune/aggregate/estimate math is electron-free and I/O-free (unit-tested against
 // plain objects); the factory adds lazy load, debounced atomic flush (fs-util),
 // and fs.promises.stat for the byte weight. NOT in the leak-scanner SCANNED lists
@@ -15,10 +15,37 @@
 // classifies as redundancy — tier 1 never attempts redundancy (that needs the
 // request bodies; redundantReads/redundantTokens stay null here, filled by the
 // wirescope-linked tier 2, sinceCompact all-or-nothing).
+//
+// WHERE THE FILE LIVES, and why not under run/<name>/. cleanupClaudeHook rm -rf's
+// that dir and _cleanup calls it on EVERY exit path — kill, restart, archive,
+// app quit — so heat written under run/ survived only until the seat next
+// stopped, and a "14-day rolling window" that a restart resets to empty is a
+// window in name only. So this mirrors promptcache/, pending/ and notices/
+// exactly: the DATA sits at ~/.clodex/heat/<name>/file-heat.json, outside the
+// swept dir. clodex-paths.js's header carries the same list and is the
+// authority; heat is per-agent DATA at a shared root, so — like those three, and
+// per plugins/plugin-sources.md ("It does NOT get registered in clodex-paths.js")
+// — it earns a line in that header's shared list and NO `KINDS` entry, because
+// `pathFor` builds run/<name>/<kind> and must not lie about what it builds.
+//
+// The cost of sitting outside run/<name>/ is that nothing sweeps this dir: a
+// permanently deleted seat leaves its heat behind. That is bounded and mostly
+// wanted — the aggregator drops day buckets outside the keepDays window, so a
+// dead seat's file ages out of every reading on its own, and until it does, the
+// carriage it records genuinely happened.
 'use strict';
 
 const fsp = require('fs').promises;
+const path = require('path');
 const { atomicWriteFileSync, readJsonSafe } = require('./fs-util');
+
+// The per-agent heat dir + file under the shared ~/.clodex root. Single-sourced
+// here (not in clodex-paths) exactly as noticeDir/promptCacheDir are, and used by
+// BOTH readers — session-manager's potSnapshot and the materialized pot CLI — so
+// the two can never drift onto different paths. `path` is a builtin, so this adds
+// nothing to pot-cli.js's materialized closure (test/pot-cli-closure.test.js).
+function heatDir(root, name) { return path.join(root, 'heat', name); }
+function heatPath(root, name) { return path.join(heatDir(root, name), 'file-heat.json'); }
 
 // Token weight is a RANKING estimate, never a billing number: bytes/4 for a whole
 // file, a line-slice approximation when the Read carried offset/limit. The Read
@@ -174,8 +201,8 @@ function foldRedundancy(rows, potFiles) {
 
 // ── Factory ─────────────────────────────────────────────────────────────────
 // Per-agent recorder: lazy load, debounced atomic flush, async stat for the byte
-// weight. `filePath` is the resolved run/<name>/file-heat.json (caller uses
-// clodex-paths.pathFor). Injected seams keep it unit-testable with no real FS.
+// weight. `filePath` is the resolved heat/<name>/file-heat.json (caller uses
+// heatPath above). Injected seams keep it unit-testable with no real FS.
 function createFileHeat(deps = {}) {
   const filePath = deps.filePath;
   const now = deps.now || Date.now;
@@ -245,7 +272,7 @@ function createFileHeat(deps = {}) {
 }
 
 module.exports = {
-  createFileHeat,
+  createFileHeat, heatDir, heatPath,
   // pure leaf surface (exported for the tier-1 tests + the read-time aggregator)
   dateKey, estimateReadTokens, rangeSig, emptyState, normalizeState,
   recordInto, pruneDays, aggregateStates, foldRedundancy,

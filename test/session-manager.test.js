@@ -5730,6 +5730,18 @@ test('_roleInUse: matches live + persisted seats and role-addressed open tickets
   assert.deepStrictEqual(free, { seats: [], tickets: [] }, 'a role with nothing referencing it is free');
 });
 
+test('_roleInUse: an unhyphenated numbered seat (team-runner2) BLOCKS the role — the fail-close guard must see it (F008)', () => {
+  // The blast radius of the seat-name defect, at the guard that exists to fail
+  // closed. `team-runner2` is a seat filling `runner`; while matchSeatRole
+  // derived `runner2` from it, the role read as FREE and could be removed or
+  // renamed out from under a live seat — the opposite of what this guard is for.
+  const persisted = [{ name: 'team-runner3', archivedAt: 1 }];
+  const f = mkTeamMut({ getPersistence: () => ({ list: () => persisted, get: (n) => persisted.find((e) => e.name === n) || null }) });
+  f.seat('team-runner2');
+  const used = f.m._roleInUse(f.team, 'runner');
+  assert.deepStrictEqual(used.seats.sort(), ['team-runner2', 'team-runner3'], 'live AND persisted unhyphenated seats block');
+});
+
 test('_roleInUse: a persistence read error FAILS CLOSED — blocks with a reason (C5)', () => {
   const f = mkTeamMut({ getPersistence: () => ({ list: () => { throw new Error('store unreadable'); } }) });
   const used = f.m._roleInUse(f.team, 'runner');

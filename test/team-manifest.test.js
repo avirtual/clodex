@@ -248,6 +248,38 @@ test('matchSeatRole: lead seat, <team>-<role> convention, -N suffix, non-member'
   assert.strictEqual(matchSeatRole(team, ''), null);
 });
 
+// F008. The test above ENUMERATES seat-name forms, and the enumeration reads as
+// coverage — but `<team>-<role>N` (no hyphen) is not in it, and that was the
+// form that resolved to nothing while looking perfectly conventional. What the
+// suffix rule structurally EXCLUDES is the question; these are the exclusions.
+test('matchSeatRole: a numeric suffix strips with or without a separator, and an exact role name wins (F008)', () => {
+  const team = teamFixture();
+  assert.strictEqual(matchSeatRole(team, 'shop-hand2'), 'hand');    // the form that used to vanish
+  assert.strictEqual(matchSeatRole(team, 'shop-hand12'), 'hand');
+  assert.strictEqual(matchSeatRole(team, 'shop-hand_4'), 'hand');
+  assert.strictEqual(matchSeatRole(team, 'shop-hand-3'), 'hand');   // the form that already worked, unbroken
+
+  // A NON-numeric tail names a different thing. Resolution must not guess: the
+  // `-wire` scheme was proposed as the workaround for this very bug and has the
+  // identical defect, which is worth pinning so it stays a null and not a
+  // surprise `hand`.
+  assert.strictEqual(matchSeatRole(team, 'shop-hand-wire'), null);
+  assert.strictEqual(matchSeatRole(team, 'shop-2'), null);          // digits only: no key left
+
+  // A role may legitimately end in a digit. Stripping first would resolve its
+  // own seat to a DIFFERENT role, which is worse than not resolving at all.
+  const digitRole = teamFixture();
+  digitRole.roles.hand2 = { template: null, standing: null, prompt: null, instantiate: 'session', ephemeral: false, brief: null };
+  assert.strictEqual(matchSeatRole(digitRole, 'shop-hand2'), 'hand2');
+  assert.strictEqual(matchSeatRole(digitRole, 'shop-hand2-2'), 'hand2');
+  assert.strictEqual(matchSeatRole(digitRole, 'shop-hand3'), 'hand');
+
+  // Roles come from JSON.parse, so the roles object carries Object's prototype:
+  // a membership test that walks it would hand back a role that is a function.
+  assert.strictEqual(matchSeatRole(team, 'shop-toString'), null);
+  assert.strictEqual(matchSeatRole(team, 'shop-constructor'), null);
+});
+
 test('formatTeamBlock: shrunk identity block with role match (lead seat)', () => {
   const block = formatTeamBlock(teamFixture(), 'boss');
   assert.match(block, /^# Team$/m);
@@ -505,6 +537,36 @@ test('addRole (C4/MF2) rejects a template that is not a bare library-template NA
   // A bare NAME is accepted.
   const team = tm.addRole('shop', 'runner', { template: 'fable-lead', brief: 'r' });
   assert.strictEqual(team.roles.runner.template, 'fable-lead');
+});
+
+// F008 defect 2. `tools` is enforced on ONE role — the cold reviewer — and is
+// inert everywhere else. That was true, undocumented and unpinned, so a manifest
+// could grant itself a restriction nothing applied. These pin the scope in both
+// directions: the reviewer keeps its allowlist, and the front door refuses to
+// write one anywhere else.
+test('addRole REFUSES tools on a non-reviewer role, and the reviewer keeps its allowlist', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+
+  assert.throws(
+    () => tm.addRole('shop', 'runner', { brief: 'a runner', tools: ['Read'] }),
+    /cannot declare tools/,
+    'a tools allowlist nothing enforces must not be storable',
+  );
+  // And the refusal is total — no half-written role left behind.
+  const onDisk = JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf-8'));
+  assert.ok(!('runner' in onDisk.roles), 'the refused role was not written');
+
+  // Without tools the same role is fine — the bounce is about the field, not the role.
+  const team = tm.addRole('shop', 'runner', { brief: 'a runner' });
+  assert.strictEqual(team.roles.runner.tools, null);
+
+  // The scaffolded reviewer — the one role whose tools IS read (session-manager
+  // intersects it with REVIEWER_TOOL_CAP) — keeps its allowlist.
+  assert.ok(Array.isArray(team.roles.reviewer.tools) && team.roles.reviewer.tools.length > 0,
+    'the reviewer allowlist survives, because it is the one that is enforced');
 });
 
 // --- setRole / removeRole / renameRole: T29 Layer A metadata mutators -------
