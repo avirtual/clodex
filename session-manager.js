@@ -4702,6 +4702,104 @@ function createSessionManager(deps) {
       return `${off}. Your ${label} body (${body.length} bytes) was NOT saved and exists only in your own turn`;
     }
 
+    // The role def for a ticket that should get its OWN branch + seat, or null.
+    // Deliberately narrow: only a ROLE-addressed ticket qualifies. A ticket the
+    // lead addressed to a SEAT names a session that already exists and already
+    // has a cwd — a session's cwd is fixed at PTY spawn, so there is no
+    // expressible "move that seat into a worktree".
+    _ticketWorktreeRole(team, assignee) {
+      if (!team || !assignee || !team.roles) return null;
+      if (!Object.prototype.hasOwnProperty.call(team.roles, assignee)) return null;
+      const def = team.roles[assignee];
+      if (!def || def.worktree !== true) return null;
+      if (def.instantiate === 'subagent') return null; // no seat to spawn into
+      if (assignee === 'lead' || assignee === 'reviewer') return null;
+      return def;
+    }
+
+    // `<team>-<role>-<n>` from the ticket id, which is what keeps matchSeatRole
+    // working: it strips a trailing `[-_]?\d+`, so the seat still resolves to its
+    // role. A taken name is NOT worked around with a second numbering scheme —
+    // that would produce a name matchSeatRole cannot decompose.
+    _mintTicketSeat(team, roleKey, ticket) {
+      const n = String(ticket.id).replace(/^t/, '');
+      const name = `${team.name}-${roleKey}-${n}`;
+      if (!AGENT_NAME_RE.test(name)) return { ok: false, error: `seat name "${name}" is not name-legal` };
+      if (this.sessions.has(name) || getPersistence().get(name)) return { ok: false, error: `seat name "${name}" is taken` };
+      const slug = String(ticket.title || '').toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
+      return { ok: true, name, branch: slug ? `${ticket.id}-${slug}` : String(ticket.id) };
+    }
+
+    // Mint the worktree, spawn the seat, then hand it the spec. Async and
+    // fire-and-forget like the other spawn paths: the ticket record is already
+    // saved, so a crash here loses the seat, never the ticket.
+    _spawnTicketSeat(opener, team, teamDir, ticket, roleKey, def, seat) {
+      const reply = (msg) => this._injectText(opener, `[agent:task] ${msg}`, { parkable: true });
+      // Reserved SYNCHRONOUSLY, before any await: two tickets opened in one lead
+      // turn both run their taken-name check above before either create() lands,
+      // and the persistence stub is what makes the second one see the first.
+      getPersistence().upsert({ name: seat.name, ephemeral: true });
+      // Un-pin the ticket back to its role. Reloaded from the store rather than
+      // mutating the caller's array: this runs after the caller returned, so that
+      // array may no longer be what is on disk.
+      const unpin = () => {
+        try {
+          const all = ticketsStore.load(teamDir);
+          const t = all.find((x) => x.id === ticket.id);
+          if (!t) return;
+          t.assignee = roleKey;
+          delete t.role;
+          ticketsStore.save(teamDir, all);
+        } catch { /* best-effort — the reply below is the operator-visible half */ }
+      };
+      setImmediate(async () => {
+        let wt = null;
+        try {
+          const r = await gitWorktree.createWorktree(team.root, seat.branch);
+          if (!r || !r.ok) {
+            // NO fallback to team.root. The spec was written for an isolated
+            // checkout; spawning in the shared one would have the hand commit
+            // onto whatever branch the operator happens to have checked out.
+            getPersistence().remove(seat.name);
+            unpin();
+            reply(`ticket ${ticket.id}: worktree "${seat.branch}" could not be created (${(r && r.error) || 'unknown'}) — no seat spawned, ticket left assigned to "${roleKey}"`);
+            return;
+          }
+          wt = { path: r.path, branch: r.branch };
+          const leadArgs = (getPersistence().get(opener.name)?.extraArgs) || [];
+          const postureArgs = leadArgs.includes('--dangerously-skip-permissions')
+            ? ['--dangerously-skip-permissions'] : [];
+          await this.create(
+            seat.name, def.type || opener.type || 'claude', r.path, postureArgs, null,
+            opener.workspaceId || DEFAULT_WORKSPACE_ID, null, false, opener.proxy ?? null,
+            [], [], [], [], [], def.prompt || null, [], [], null, null, true,
+          );
+          try { getPersistence().setWorktree(seat.name, wt); } catch { /* best-effort */ }
+          this._sendToSession(seat.name, 'session:context-action', {
+            action: 'reattach', name: seat.name, type: (this.sessions.get(seat.name) || {}).agentType || null,
+            cwd: r.path, backend: (this.sessions.get(seat.name) || {}).backend || null,
+            noWire: !!(this.sessions.get(seat.name) || {}).noWire,
+          });
+          const d = this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true);
+          this._broadcast('ipc-message', {
+            type: 'task', from: opener.name, to: seat.name, body: `ticket ${ticket.id} → ${seat.name} @ ${r.path}`,
+          });
+          log.info('intent', `ticket ${ticket.id} spawned ${seat.name} (${roleKey}) on branch ${r.branch} @ ${r.path}`);
+          reply(`ticket ${ticket.id} → ${seat.name} on branch ${r.branch}${this._ticketDeliverySuffix(d, seat.name)}`);
+        } catch (err) {
+          if (!this.sessions.has(seat.name)) getPersistence().remove(seat.name);
+          if (wt) {
+            const rm = await gitWorktree.removeWorktree(wt.path).catch(() => ({ ok: false }));
+            log.info('worktree', `${rm && rm.ok ? 'removed' : 'ORPHANED'} ${wt.path} after failed ticket spawn of ${seat.name}`);
+          }
+          unpin();
+          log.error('intent', `ticket ${ticket.id} seat ${seat.name} failed: ${err.message}`);
+          reply(`ticket ${ticket.id}: seat ${seat.name} failed to spawn (${err.message}) — ticket left assigned to "${roleKey}"`);
+        }
+      });
+    }
+
     _taskAdd(session, team, teamDir, intent, reply) {
       // Read before the permission check, not after: a non-lead's spec is the longest
       // payload any ticket verb carries, and the check below is the one rejection in
@@ -4728,8 +4826,36 @@ function createSessionManager(deps) {
       };
       const taskDir = extractTaskDir(spec);
       if (taskDir) ticket.taskDir = taskDir;
+      // Branch-per-ticket: an opted-in ROLE gets its own branch, its own worktree
+      // and its own seat. The ticket is re-pinned from the role to that seat name
+      // BEFORE the save, because _ticketAssigneeSeat resolves a role to the FIRST
+      // live seat holding it — leaving it role-assigned would route the NEXT
+      // ticket to this one's seat, sitting in the wrong branch's checkout, which
+      // is the collision the worktree exists to prevent. It also makes the seat
+      // one-shot by construction: _openTicketsFor matches seat-or-role, so a
+      // seat-pinned ticket set leaves _advanceSeat nothing to hand a retired seat.
+      const wtDef = (assignee && !parked) ? this._ticketWorktreeRole(team, assignee) : null;
+      let seat = null;
+      if (wtDef) {
+        const minted = this._mintTicketSeat(team, assignee, ticket);
+        if (minted.ok) {
+          seat = minted;
+          ticket.role = assignee;   // the role survives the re-pin, for the roster and reconcile
+          ticket.assignee = seat.name;
+        }
+        // A mint failure is NOT fatal to the ticket: it stays role-assigned and
+        // takes the ordinary delivery path below, which reaches a live seat if
+        // one exists and reports "no live seat" if not.
+      }
       tickets.push(ticket);
       ticketsStore.save(teamDir, tickets);
+      if (seat) {
+        this._spawnTicketSeat(session, team, teamDir, ticket, assignee, wtDef, seat);
+        this._reconcileTickets(team, teamDir);
+        log.info('intent', `task add by ${session.name} → ${ticket.id} (${assignee} → seat ${seat.name}, branch ${seat.branch})`);
+        reply(`ticket ${ticket.id} → spawning ${seat.name} in a worktree on branch ${seat.branch}`);
+        return;
+      }
       let suffix = '';
       // Parking is the whole point of the flag: the assignee is RECORDED and the
       // spec is deliberately NOT delivered, so filing who a ticket is for stops

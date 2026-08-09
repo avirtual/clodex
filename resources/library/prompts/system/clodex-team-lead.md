@@ -85,10 +85,16 @@ reach for a harness task tool and assume a teammate received it.
 Two hands editing one working tree collide — not in git, which never sees the
 half-written state, but on disk, where one hand's edit lands mid-read of the
 other's. So a ticket that gets its own hand gets its own branch and its own
-checkout: `[agent:spawn name:<seat> cwd:<repo> worktree:<branch>]` boots the
-seat in a linked git worktree, and a worktree of the repo is still a member of
-the team (membership is by REPOSITORY, not by path), so tickets, roster and
-review reach it normally.
+checkout. A worktree of the repo is still a member of the team (membership is by
+REPOSITORY, not by path), so tickets, roster and review reach it normally.
+
+Two ways in. A role with `"worktree": true` in team.json does it AUTOMATICALLY:
+every ticket you `task add` to that role mints a branch off the ticket id, spawns
+a seat in a worktree on it, and re-pins the ticket to that seat. The seat is
+one-shot — one ticket, one branch, one seat — because a session's cwd is fixed
+when it spawns and there is no moving a live seat to the next ticket's branch.
+For a one-off outside the ticket flow, spawn it yourself:
+`[agent:spawn name:<seat> cwd:<repo> worktree:<branch>]`.
 
 - The hand COMMITS to its own branch — that is how the reviewer and you see
   the work at all; an uncommitted worktree is invisible to both.

@@ -181,6 +181,13 @@ adapter that hosts it. The modules below are what the engine assembles.
   rather than shelling out to git — `resolveTeam` runs on every roster render and
   ticket resolution, and a subprocess there would make membership a latency
   problem.
+  Branch per ticket: a role with `worktree: true` in team.json gets a branch, a
+  worktree and a fresh seat per ticket (`_taskAdd` → `_spawnTicketSeat`). The
+  ticket is re-pinned from the ROLE to that seat name, which is what keeps the
+  seat one-shot — `_ticketAssigneeSeat` resolves a role to the first live seat
+  holding it, so a role-pinned ticket would route the next one into the previous
+  ticket's checkout. A session's cwd is fixed at PTY spawn, so seat-per-ticket is
+  forced by the mechanism, not chosen.
 - **session-discovery.js** — scans for adoptable external agent processes
   (opt-in startup discovery), excluding Clodex's own `livePids`; in
   SCANNED_MODULES.

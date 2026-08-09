@@ -22,6 +22,17 @@ blocks a release.
   session when you delete it. A spawn that fails cleans up the tree it made
   rather than leaving it behind.
 
+- **A team role can now get a branch and a checkout per ticket, automatically.**
+  Set `"worktree": true` on a role in its `team.json` and every ticket the lead
+  opens for that role mints a branch named after the ticket, spawns a teammate in
+  its own worktree on that branch, and points the ticket at that teammate rather
+  than the role. One ticket, one branch, one teammate — so several can run at
+  once without sharing a working tree, and the branch is there to review and
+  merge whether or not the teammate is still alive. Roles are opted out by
+  default, so existing teams work exactly as before. If the worktree cannot be
+  created the ticket is still opened and stays with the role — it never quietly
+  falls back to the shared checkout.
+
 - **Teammates now commit their own work, and the lead merges it.** The shipped
   team prompts previously told every hand never to commit, which made sense when
   they all shared one working tree and would have been committing over each

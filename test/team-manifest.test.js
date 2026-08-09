@@ -170,6 +170,39 @@ test('loadManifest carries optional role tools + type through the shape (default
   assert.strictEqual(m.watchdogMs, 600000, 'watchdogMs override carried');
 });
 
+// Whole-object, not a field probe: normalizeRoleDef builds the def every
+// downstream consumer reads, so a field that silently stops being emitted (or
+// arrives undefined rather than false) reads as "not opted in" at every call
+// site — indistinguishable from a real opt-out.
+test('loadManifest: role worktree opt-in normalizes to a boolean, default false', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  mkTeam(home, 'shop', {
+    root, lead: 'lead',
+    roles: {
+      lead: {},
+      hand: { instantiate: 'session', worktree: true },
+      helper: { instantiate: 'session' },
+    },
+  });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const m = tm.loadManifest('shop');
+  assert.deepStrictEqual(m.roles.hand, {
+    template: null, standing: null, prompt: null, instantiate: 'session',
+    ephemeral: false, brief: null, tools: null, type: null, worktree: true,
+  }, 'opted-in role def in full');
+  assert.deepStrictEqual(m.roles.helper, {
+    template: null, standing: null, prompt: null, instantiate: 'session',
+    ephemeral: false, brief: null, tools: null, type: null, worktree: false,
+  }, 'absent worktree is FALSE, not undefined — undefined reads as opted-out at every consumer');
+  // A non-boolean is a loud manifest error, not a truthy opt-in: `worktree: "no"`
+  // must never enable the thing it plainly denies.
+  const home2 = mkHome();
+  mkTeam(home2, 'shop', { root, lead: 'lead', roles: { lead: {}, hand: { worktree: 'no' } } });
+  assert.throws(() => createTeamManifest({ fs, clodexHome: home2 }).loadManifest('shop'),
+    /worktree must be a boolean/);
+});
+
 test('loadManifest rejects bad shapes with pointed errors', () => {
   const home = mkHome();
   const tm = createTeamManifest({ fs, clodexHome: home });

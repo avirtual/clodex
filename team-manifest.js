@@ -68,6 +68,9 @@ function normalizeRoleDef(roleName, def, file) {
   if (def.type != null && typeof def.type !== 'string') {
     throw new Error(`role "${roleName}" type must be a string (${file})`);
   }
+  if (def.worktree != null && typeof def.worktree !== 'boolean') {
+    throw new Error(`role "${roleName}" worktree must be a boolean (${file})`);
+  }
   return {
     template: def.template ?? null,
     standing: def.standing ?? null,
@@ -98,6 +101,15 @@ function normalizeRoleDef(roleName, def, file) {
     // inert, documented, and refused at the front door.
     tools: def.tools ?? null,
     type: def.type ?? null,
+    // Opt in to branch-per-ticket: a ticket dispatched to this role mints its own
+    // branch, spawns a seat in a git worktree on it, and re-pins the ticket from
+    // the ROLE to that seat. Unlike `tools`, this one is enforced — session-manager
+    // reads it on the dispatch path — so addRole is allowed to write it.
+    //
+    // Per-role and per-team on purpose, not a flag on `task add`: the lead would
+    // have to remember it on every dispatch, and the one dispatch that forgets
+    // lands a hand in the shared checkout holding a spec that assumes isolation.
+    worktree: def.worktree === true,
   };
 }
 

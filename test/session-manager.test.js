@@ -8889,3 +8889,142 @@ test('spawn worktree: a bare `worktree:` is refused, never a silent unisolated s
   assert.ok(m._replies.some((r) => /worktree: needs a branch name/.test(r)));
   fsReal.rmSync(root, { recursive: true, force: true });
 });
+
+// --- branch per ticket: an opted-in role gets its own branch, worktree and seat ---
+// The rung above the spawn intent: the lead writes a ticket, and the isolation is
+// arranged for it. Real git, because the whole mechanism is git's linked-worktree
+// on-disk shape.
+
+function mkTicketWt(repo, roleExtra = {}) {
+  const teamDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-twt-'));
+  const team = {
+    name: 'team', root: repo, lead: 'lead', watchdogMs: null,
+    file: pathReal.join(teamDir, 'team.json'),
+    roles: {
+      lead: { instantiate: 'session', brief: 'the lead', worktree: false },
+      hand: { instantiate: 'session', brief: 'the hand', worktree: true, ...roleExtra },
+      reviewer: { instantiate: 'subagent', brief: 'the reviewer', worktree: false },
+    },
+  };
+  const upserted = [];
+  const removed = [];
+  const worktreeSet = [];
+  const m = mkPark({
+    fs: fsReal, path: pathReal, os: osReal, countPending: countPendingReal,
+    AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
+    resolveTeam: (cwd) => (cwd && cwd.startsWith(repo) ? team : null),
+    findProjectRoot: (cwd) => (cwd && cwd.startsWith(repo) ? repo : null),
+    gitWorktree: require('../git-worktree'),
+    getPersistence: () => ({
+      list: () => [],
+      get: (n) => (upserted.includes(n) ? { name: n } : (n === 'lead' ? { extraArgs: [] } : null)),
+      upsert: (e) => upserted.push(e.name),
+      remove: (n) => removed.push(n),
+      setWorktree: (name, wt) => worktreeSet.push({ name, wt }),
+      setStripLevel: () => {}, setAutoCompact: () => {},
+    }),
+    getTemplates: () => ({ list: () => [] }),
+    ensureDir: () => {},
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+  }).m;
+  const gated = [];
+  m._gatedDeliver = (target, sender, body) => { gated.push({ target, sender, body }); return { queued: true }; };
+  m._broadcast = () => {};
+  m._sendToSession = () => {};
+  const seat = (name, cwd = repo) => {
+    m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle' });
+    return m.sessions.get(name);
+  };
+  return { m, team, teamDir, seat, gated, upserted, removed, worktreeSet,
+    load: () => tstore.load(teamDir), one: (id) => tstore.load(teamDir).find((t) => t.id === id) };
+}
+
+test('task add: an opted-in role mints a branch, a worktree and a seat, and the ticket pins to the SEAT', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  let createdCwd = 'UNSET';
+  let createdName = null;
+  f.m.create = async (...args) => { createdName = args[0]; createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget\ndetail' });
+  await until(() => createdCwd !== 'UNSET' || f.gated.length);
+
+  // ENTER: without this every assertion below reads as "not the shared repo",
+  // which is trivially true of a dispatch that never spawned anything.
+  assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: create() must have been reached');
+  assert.strictEqual(createdName, 'team-hand-1', 'seat name carries the ticket number');
+  assert.notStrictEqual(createdCwd, repo, 'the seat must NOT boot in the shared checkout');
+  assert.ok(fsReal.lstatSync(pathReal.join(createdCwd, '.git')).isFile(),
+    'cwd must be a linked worktree (a .git FILE)');
+
+  const head = require('node:child_process')
+    .execFileSync('git', ['-C', createdCwd, 'rev-parse', '--abbrev-ref', 'HEAD'], { stdio: 'pipe' })
+    .toString().trim();
+  assert.strictEqual(head, 't1-build-the-widget', 'branch is named from the ticket id + title slug');
+
+  // The re-pin. Left on the ROLE, _ticketAssigneeSeat would route the NEXT
+  // ticket to this seat, in the wrong branch's checkout.
+  const t = f.one('t1');
+  assert.strictEqual(t.assignee, 'team-hand-1', 'ticket pins to the SEAT, not the role');
+  assert.strictEqual(t.role, 'hand', 'the originating role is preserved');
+  assert.deepStrictEqual(f.worktreeSet, [{ name: 'team-hand-1', wt: { path: createdCwd, branch: 't1-build-the-widget' } }],
+    'the worktree is recorded, or Delete Session… cannot remove it');
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand-1', sender: 'clodex-team', body: '[ticket t1] build the widget\ndetail' }],
+    'the spec reaches the new seat');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+test('task add: a role WITHOUT the opt-in keeps the old role-assigned path', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo, { worktree: false });
+  let created = false;
+  f.m.create = async () => { created = true; return { name: 'x' }; };
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'ordinary work' });
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created, false, 'no seat is spawned for a role that did not opt in');
+  const t = f.one('t1');
+  assert.strictEqual(t.assignee, 'hand', 'ticket stays role-assigned');
+  assert.strictEqual(t.role, undefined, 'no role field is written on the unopted path');
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] ordinary work' }],
+    'the existing live seat receives the spec as before');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+test('task add: a parked ticket for an opted-in role spawns nothing', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  let created = false;
+  f.m.create = async () => { created = true; return { name: 'x' }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'later work' });
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created, false, 'parking means recorded-not-started — including the worktree');
+  const t = f.one('t1');
+  assert.strictEqual(t.assignee, 'hand', 'a parked ticket stays on the role until it is assigned');
+  assert.strictEqual(t.parked, true);
+  assert.deepStrictEqual(f.gated, [], 'ENTER: parking must not have delivered a spec either');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+test('task add: a worktree that cannot be created leaves the ticket on the role, unspawned', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  let created = false;
+  f.m.create = async () => { created = true; return { name: 'x' }; };
+  // A branch name git will refuse. The fallback under test is the DANGEROUS one:
+  // spawning in the shared checkout would have the hand commit onto whatever
+  // branch the operator has checked out.
+  f.m._mintTicketSeat = (team, role, ticket) => ({ ok: true, name: 'team-hand-1', branch: 'bad..name' });
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'doomed work' });
+  await until(() => f.removed.includes('team-hand-1'));
+
+  assert.strictEqual(created, false, 'NO fallback into the shared checkout');
+  const t = f.one('t1');
+  assert.strictEqual(t.assignee, 'hand', 'the ticket is un-pinned back to the role');
+  assert.strictEqual(t.role, undefined, 'the stale role field is cleared with the pin');
+  assert.ok(f.removed.includes('team-hand-1'), 'the reserved seat name is released');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
