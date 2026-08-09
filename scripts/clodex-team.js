@@ -237,20 +237,14 @@ function staleHostLineFor(host) {
 // its own caller's vocabulary (intent syntax there, payload syntax here). Which
 // tickets appear, in which section, and the counts — that is the parity.
 //
-// SCOPE OF THAT PARITY: it is over what this FUNCTION RENDERS, not over what an
-// exec caller receives. The dispatcher delivers only the LAST stderr line, and
-// then slices it to 200 chars. So an agent running
-// [agent:exec clodex-team] {"action":"tickets"} gets the tail line and nothing
-// else — no head, no rows, no recent section. That has been true of this
-// listing since t80; the rows below are written for a reader who can see the
-// whole string, which today means the terminal and the test suite.
-//
-// The last-line rule is pinned by the test named
-//   _handleExecIntent: replyStderr:true → clean exit + stderr injects the tail back
-// THE 200-CHAR SLICE IS PINNED BY NOTHING — that test's stderr is far under the
-// limit, and no test in the suite feeds the dispatcher a line long enough to be
-// cut. Stated separately because a reader would otherwise take both halves as
-// guarded.
+// An exec caller receives this listing WHOLE only because the def opts into a
+// widened reply (`replyMaxBytes` in resources/library/exec/clodex-team.json);
+// the dispatcher's default is the last stderr line sliced to 200 chars, which
+// for a board is the footer and nothing else. So the rows below are written for
+// a reader who sees the whole string, and that is only true while the def keeps
+// its cap above what this renders — `filter: "all"` already exceeds it and comes
+// back clamped: head rows, a dropped-lines note, and this function's LAST line,
+// which is why the counts belong there and the stale notice ahead of them.
 //
 // Cited by NAME, not by line: this comment carried a line range for exactly one
 // commit before the range pointed at unrelated code (t105).
@@ -295,8 +289,8 @@ function doTickets(payload) {
       + ' — ask for filter "done", "cancelled" or "all")'
     : '';
   const head = filter === 'open' ? `team ${team.name} tickets` : `team ${team.name} tickets [${filter}]`;
-      // Stale notice goes BEFORE the tail: only the last stderr line reaches the
-      // exec caller, and appending the notice cost them the counts instead.
+      // Stale notice goes BEFORE the tail so the counts stay last: the clamp
+      // retains the final line, so the counts survive a board that overflows.
   const stale = staleHostLine();
   if (!shown.length) {
     say(closed.length

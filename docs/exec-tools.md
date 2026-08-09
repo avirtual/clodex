@@ -13,7 +13,13 @@ An operator-registered exec command (`~/.clodex/library/exec/<cmd>.json`) is a
 wholly from the registry (the agent's JSON payload never reaches argv, so
 injection is structurally impossible), the payload arrives on STDIN, stdout is
 dropped, and the launcher is SIGKILLed at the entry's `timeoutMs`. Feedback to
-the agent is one line via `replyStderr`.
+the agent is one line via `replyStderr` — the LAST stderr line, sliced to 200
+chars, which suits a digest and destroys a listing. A command whose answer is
+irreducibly multi-line (a ticket board, one error per bad file) opts into a
+wider reply with `replyMaxBytes`: whole lines from the TOP of stderr up to that
+budget, plus a `(+N more lines dropped …)` note when it overflows. Opt-in per
+def, because the default is what keeps a chatty command from billing its
+progress log into the caller's prompt on every call.
 
 That makes exec an excellent **control plane** and a useless **data plane** —
 which is the exact split most "tools" want. The trick, for any tool that
@@ -129,9 +135,17 @@ registry `~/.clodex/library/exec/clodex-team.json`.
   repos.
 - `retire` (command → silent success): delivers a `team-retire` envelope to
   the TARGET's own socket. The core (`_handleTeamRetire`) authorizes —
-  requester running, same team root, no self-retire — then archives
-  (resumable), tells the owning window to keep an archived row, and confirms
-  to the requester PASSIVELY. Refusals wake the requester as loud DMs.
+  requester running, same team root, no self-retire — then disposes of the
+  seat by its ROLE: a seat whose role is marked `ephemeral: true` in
+  `team.json`, **or whose name matches no role at all**, is discarded (killed,
+  record dropped, name immediately reusable); a seat filling a named
+  non-ephemeral role is archived (resumable, and the name stays taken). It
+  tells the owning window either way and confirms to the requester PASSIVELY;
+  refusals wake the requester as loud DMs.
+- `tickets` (query → replies): the team's ticket board, `filter` one of
+  `open` (default) / `done` / `cancelled` / `all`. This is the one command
+  whose answer does not fit a line, so its def carries `replyMaxBytes`; a
+  large enough board still comes back head-clamped with a dropped-lines note.
 - Spawn has no verb on purpose: `[agent:spawn name:X template:Y]` already
   exists; duplicating it here would be ceremony.
 

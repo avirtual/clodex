@@ -18,6 +18,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const { parseAndValidate } = require('../exec-schema');
 
@@ -175,6 +176,75 @@ test('exec-def cannot express start XOR or stop-needs-id — the script is their
     'and refuse a start with both — silently preferring one would spawn a watcher on the wrong source');
   assert.match(SRC, /if \(!p\.id\) die\('stop needs an id'\)/,
     'and refuse a stop with no id, since `required` is a flat list and adding id there breaks list/start');
+});
+
+// TRAVERSAL. `agent` and `id` are both joined into paths (monitors/<agent>/,
+// <id>.json, <id>.log) and cleanupState UNLINKS what they resolve to, so a
+// payload that gets a `..` through chooses where this tool writes and deletes.
+// The schema's maxLength constrains length, never characters — so the script's
+// own guard is the enforcement, and it must hold when the script is run
+// standalone as well as through the dispatcher.
+const cpMon = require('child_process');
+const launchMon = (home, payload) => new Promise((resolve) => {
+  const ch = cpMon.spawn(process.execPath, [SCRIPT], {
+    env: { ...process.env, CLODEX_HOME: home },
+    stdio: ['pipe', 'ignore', 'pipe'],
+  });
+  let err = '';
+  ch.stderr.on('data', (d) => { err += d.toString(); });
+  ch.on('exit', (code) => resolve({ code, err: err.trim() }));
+  ch.stdin.end(JSON.stringify(payload));
+});
+
+test('launcher refuses a traversing agent or id before touching the filesystem', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mon-'));
+  // A file OUTSIDE the monitors tree that a traversal would reach. `list`
+  // cleans up dead monitors, so it unlinks on the path it is handed.
+  const outside = path.join(home, 'precious.json');
+  fs.writeFileSync(outside, JSON.stringify({ pid: 999999 }));
+  fs.mkdirSync(path.join(home, 'monitors', 'x'), { recursive: true });
+
+  // Each row asserts the GUARD's own message, not just a nonzero exit. Several
+  // of these exit 1 on the unguarded script too — via a downstream ENOENT after
+  // the bad path was already built — so an exit-code-only assertion would pass
+  // against the defect it exists to pin.
+  const AGENT_DIE = /agent \(your own name\) is required/;
+  const ID_DIE = /id must be a plain monitor id/;
+  for (const [payload, expected, why] of [
+    [{ action: 'list', agent: '../..' }, AGENT_DIE, 'agent escapes the monitors dir'],
+    [{ action: 'list', agent: 'a/../../b' }, AGENT_DIE, 'agent carries a path separator'],
+    [{ action: 'list', agent: '.' }, AGENT_DIE, 'a dot-only agent resolves to the parent dir'],
+    [{ action: 'list', agent: 5 }, AGENT_DIE, 'a non-string agent coerces through .test()'],
+    [{ action: 'stop', agent: 'x', id: '../../precious' }, ID_DIE, 'id escapes and cleanupState unlinks'],
+    [{ action: 'stop', agent: 'x', id: '.' }, ID_DIE, 'a dot-only id'],
+    [{ action: 'stop', agent: 'x', id: 7 }, ID_DIE, 'a non-string id'],
+  ]) {
+    const r = await launchMon(home, payload);
+    assert.strictEqual(r.code, 1, `must refuse: ${why} — got exit ${r.code} (${r.err})`);
+    assert.match(r.err, expected,
+      `refusal must come from the guard, not a downstream ENOENT: ${why}`);
+  }
+  assert.strictEqual(fs.existsSync(outside), true, 'nothing outside the monitors tree was unlinked');
+
+  // ENTER: the guard is not simply refusing everything — the legitimate shapes
+  // still pass it. A seat may be named `.hidden` (the session-name rule admits a
+  // leading dot), which is exactly why `agent` is NOT typed `filename`.
+  for (const agent of ['clodex-hand', '.hidden', 'a.b_c-d']) {
+    const r = await launchMon(home, { action: 'list', agent });
+    assert.strictEqual(r.code, 0, `must accept the legitimate name ${agent}: ${r.err}`);
+  }
+});
+
+test('the traversal guard is DECLARED for id and hand-written for agent, deliberately', () => {
+  // `id` is a plain token with no session-name exception, so it rides the
+  // declarative `filename` type — the whole point of that type existing.
+  assert.deepStrictEqual(EXEC_DEF.schema.properties.id, { type: 'filename' },
+    'id must be gated by the schema, not only by the script');
+  // `agent` cannot: `filename` rejects a leading dot and `.hidden` is a legal
+  // session name, so typing it filename would lock that seat out of the tool.
+  assert.strictEqual(EXEC_DEF.schema.properties.agent.type, 'string');
+  assert.match(SRC, /\/\^\(\?!\\\.\+\$\)\[a-zA-Z0-9\._-\]\{1,64\}\$\/\.test\(agent\)/,
+    'the script carries the session-name literal for agent — the only guard that field gets');
 });
 
 // The def's own envelope, asserted whole. These four are read by the dispatcher

@@ -372,6 +372,7 @@ function createSessionManager(deps) {
     isDigested,
     isDraftOpen,
     isFilenameToken,
+    clampReplyBody,
     isHumanPtyInput,
     withoutPrivilegedIntentsFor,
     isInjectInFlight,
@@ -3579,22 +3580,52 @@ function createSessionManager(deps) {
           fail(`spawn failed (${e.message})`);
           return;
         }
+        // The collector keeps the HEAD of stderr and drops the overflow, so its
+        // cap must clear the reply budget or the clamp's input would be smaller
+        // than its output. The 1024 is SLACK, not a data budget — nothing
+        // between the budget and the cap is ever delivered — and a cut sets
+        // stderrTruncated, so the loss is reported rather than silent.
+        const replyMax = (typeof entry.replyMaxBytes === 'number' && entry.replyMaxBytes > 0)
+          ? Math.floor(entry.replyMaxBytes) : 0;
+        const stderrCap = Math.max(2000, replyMax + 1024);
+        // A host that never passes the dep still replies, narrowly, instead of
+        // throwing inside the exit handler where the failure is swallowed whole.
+        const clamp = clampReplyBody
+          || ((s, n) => String(s == null ? '' : s).trim().slice(0, n));
         let done = false;
         let stderr = '';
+        let stderrTruncated = false;
         const finish = (fn) => { if (done) return; done = true; clearTimeout(timer); fn(); };
         const timer = setTimeout(() => {
           try { child.kill('SIGKILL'); } catch {}
           finish(() => fail(`timed out after ${timeoutMs}ms`));
         }, timeoutMs);
-        if (child.stderr) child.stderr.on('data', (d) => { if (stderr.length < 2000) stderr += d.toString(); });
+        if (child.stderr) {
+          // setEncoding, not d.toString(): a chunk boundary inside a multi-byte
+          // sequence yields U+FFFD mid-row, and every ticket row carries an
+          // em-dash. Multi-chunk collection is the norm on the widened path.
+          if (typeof child.stderr.setEncoding === 'function') child.stderr.setEncoding('utf8');
+          child.stderr.on('data', (d) => {
+            if (stderr.length < stderrCap) stderr += d.toString();
+            else stderrTruncated = true;   // makes the clamp's count honest
+          });
+        }
         child.on('error', (e) => finish(() => fail(`run failed (${e.message})`)));
         child.on('exit', (code, signal) => finish(() => {
           if (code === 0) {
-            const tail = entry.replyStderr === true ? (stderr.trim().split('\n').pop() || '') : '';
-            if (tail) {
-              reply(`${cmd}: ${tail.slice(0, 200)}`);
+            // A widened def (replyMaxBytes) returns stderr from the TOP, not the
+            // last line: its output is a listing whose first rows are the answer
+            // (a ticket board, one error per bad file), and the last line of a
+            // listing is its footer. The narrow default keeps taking the last
+            // line — those commands end with their digest.
+            const body = entry.replyStderr !== true ? ''
+              : replyMax ? clamp(stderr, replyMax, { truncated: stderrTruncated })
+                : (stderr.trim().split('\n').pop() || '').slice(0, 200);
+            if (body) {
+              reply(`${cmd}: ${body}`);
               log.info('intent', `exec ${cmd} by ${who}: ok (stderr replied)`);
-              this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `ok: ${tail.slice(0, 200)}` });
+              const shown = body.length > 200 ? `${body.slice(0, 200)}…` : body;
+              this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `ok: ${shown}` });
             } else {
               log.info('intent', `exec ${cmd} by ${who}: ok`);
               this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: 'ok' });

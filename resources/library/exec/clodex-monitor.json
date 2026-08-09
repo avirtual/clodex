@@ -25,7 +25,7 @@
       "description": { "type": "string", "maxLength": 200 },
       "persistent": { "type": "boolean" },
       "timeout_ms": { "type": "number", "minimum": 1000, "maximum": 3600000 },
-      "id": { "type": "string", "maxLength": 40 }
+      "id": { "type": "filename" }
     }
   }
 }

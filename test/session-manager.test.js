@@ -5816,7 +5816,11 @@ test('spawn template: a file missing "type" errors, no spawn', async () => {
 // silent-success asymmetry, stdin payload delivery, and the argv-injection
 // invariant (payload never contributes to argv).
 const cpReal = require('child_process');
-const { isFilenameToken: isFilenameTokenReal, parseAndValidate: parseAndValidateReal } = require('../exec-schema');
+const {
+  isFilenameToken: isFilenameTokenReal,
+  parseAndValidate: parseAndValidateReal,
+  clampReplyBody: clampReplyBodyReal,
+} = require('../exec-schema');
 
 function mkExec({ grants = [], entry = null, cmd = 'bridge-reply' } = {}) {
   const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-exec-'));
@@ -5827,6 +5831,7 @@ function mkExec({ grants = [], entry = null, cmd = 'bridge-reply' } = {}) {
   const m = mk({
     REGISTRY_DIR, fs: fsReal, path: pathReal, os: osReal,
     childProcess: cpReal, isFilenameToken: isFilenameTokenReal, parseAndValidate: parseAndValidateReal,
+    clampReplyBody: clampReplyBodyReal,
     getPersistence: () => persistence,
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });
@@ -5920,6 +5925,136 @@ test('_handleExecIntent: replyStderr:true → clean exit + stderr injects the ta
   assert.strictEqual(replies.at(-1), '[agent:exec] bridge-reply: 811/811 green');
   // The broadcast reflects that a reply was sent (not the bare silent 'ok').
   assert.strictEqual(ipc.at(-1).body, 'ok: 811/811 green');
+});
+
+// A multi-line listing (ticket board, one error per file) cannot survive the
+// default last-line reply: what arrives is the footer, and a footer reads like
+// a complete answer. These pin the widened channel and, just as importantly,
+// that opting in is the ONLY way to get it.
+test('_handleExecIntent: replyMaxBytes widens the reply to the whole listing', async () => {
+  const board = ['team x tickets:', 't1 [open] a', 't2 [open] b', '(2 open)'];
+  const entry = {
+    argv: ['/bin/sh', '-c', `cat >/dev/null; printf '%s\\n' ${board.map((l) => `'${l}'`).join(' ')} 1>&2`],
+    replyStderr: true, replyMaxBytes: 4000, schema: { type: 'object' },
+  };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  await waitFor(() => replies.length > 0);
+  // ENTER: without the fix this is the footer alone, which still matches a
+  // loose /2 open/ — so assert the WHOLE body, head row included.
+  assert.strictEqual(replies.at(-1), `[agent:exec] bridge-reply: ${board.join('\n')}`);
+});
+
+test('_handleExecIntent: a def WITHOUT replyMaxBytes still gets the last line only', async () => {
+  const entry = {
+    argv: ['/bin/sh', '-c', "cat >/dev/null; printf 'head\\nmiddle\\n811/811 green\\n' 1>&2"],
+    replyStderr: true, schema: { type: 'object' },
+  };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  await waitFor(() => replies.length > 0);
+  assert.strictEqual(replies.at(-1), '[agent:exec] bridge-reply: 811/811 green',
+    'widening must be opt-in per def — every existing command keeps its one-line digest');
+});
+
+test('_handleExecIntent: replyMaxBytes overflow is clamped at a line break and SAYS so', async () => {
+  // 40 rows of 20 bytes against a 200-byte cap: the cut lands mid-listing.
+  const rows = Array.from({ length: 40 }, (_, i) => `t${String(i).padStart(3, '0')} [open] row${i}`);
+  const entry = {
+    argv: ['/bin/sh', '-c', `cat >/dev/null; printf '%s\\n' ${rows.map((l) => `'${l}'`).join(' ')} 1>&2`],
+    replyStderr: true, replyMaxBytes: 200, schema: { type: 'object' },
+  };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  await waitFor(() => replies.length > 0);
+  const body = replies.at(-1).replace('[agent:exec] bridge-reply: ', '');
+  const lines = body.split('\n');
+  assert.strictEqual(lines[0], rows[0], 'ENTER: kept from the TOP — the first row is the answer');
+  // Note second-to-last, final line retained: head rows, the loss, the footer.
+  assert.match(lines.at(-2), /^\(\+\d+ more lines dropped at the 200-byte reply cap\)$/,
+    'a silent cut would read as a complete board');
+  assert.strictEqual(lines.at(-1), rows.at(-1), 'the last rendered line survives the clamp');
+  // Every retained row is whole: a mid-line cut yields a truncated row that is
+  // indistinguishable from a real one.
+  for (const l of [...lines.slice(0, -2), lines.at(-1)]) {
+    assert.ok(rows.includes(l), `whole row: ${JSON.stringify(l)}`);
+  }
+});
+
+test('_handleExecIntent: the stderr COLLECTOR cap clears the widened reply budget', async () => {
+  // The collector keeps the head of stderr and drops the rest. A def asking for
+  // more than the collector holds would be cut at collection, before clamping,
+  // and get a short answer with no dropped-lines note — silently truncated.
+  // Sized to land BETWEEN the budget and the collector cap (5000 < ~5460 <
+  // 6024): the clamp must do the trimming, the collector must not have gotten
+  // there first. If the cap did not clear the budget, the reply would come back
+  // far short of what was asked for.
+  const rows = Array.from({ length: 260 }, (_, i) => `row-${String(i).padStart(4, '0')}-xxxxxxxxxx`);
+  const entry = {
+    argv: ['/bin/sh', '-c', `cat >/dev/null; printf '%s\\n' "$@" 1>&2`, 'sh', ...rows],
+    replyStderr: true, replyMaxBytes: 5000, schema: { type: 'object' },
+  };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  await waitFor(() => replies.length > 0);
+  const body = replies.at(-1).replace('[agent:exec] bridge-reply: ', '');
+  assert.ok(body.length > 4000, `reply got ${body.length}B of the 5000B asked for — collector cut it short`);
+  // The BUDGET note, not the truncation one: reaching the "or more" wording here
+  // would mean the collector clipped the input and the cap failed its job.
+  assert.match(body.split('\n').at(-2), /^\(\+\d+ more lines dropped at the 5000-byte reply cap\)$/);
+});
+
+test('_handleExecIntent: a count computed over TRUNCATED stderr says "or more"', async () => {
+  // The clamp counts what survived COLLECTION, not what the command printed. On
+  // output that outruns the collector, a bare count is not merely imprecise — it
+  // is a completeness claim that is wrong by an unbounded factor, which is the
+  // exact failure this whole feature exists to fix, one layer down. Measured on
+  // the real path before the fix: 2000 rows reported as 347 dropped when 1800
+  // were.
+  const rows = Array.from({ length: 2000 }, (_, i) => `row-${String(i).padStart(4, '0')}-${'x'.repeat(20)}`);
+  const entry = {
+    argv: ['/bin/sh', '-c', `cat >/dev/null; printf '%s\\n' "$@" 1>&2`, 'sh', ...rows],
+    replyStderr: true, replyMaxBytes: 6000, schema: { type: 'object' },
+  };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  await waitFor(() => replies.length > 0);
+  const lines = replies.at(-1).replace('[agent:exec] bridge-reply: ', '').split('\n');
+  const note = lines.at(-1);
+  assert.match(note, /or more lines dropped — output also outran the collector/,
+    `a bare count here would be a false accounting; got ${JSON.stringify(note)}`);
+  // ENTER: the collector really was outrun — otherwise this asserts the wording
+  // of a branch the test never entered.
+  const kept = lines.length - 1;
+  assert.ok(kept > 0 && kept < rows.length / 2,
+    `ENTER: kept ${kept} of ${rows.length} — the run must have overflowed both cap and collector`);
+  // No retained footer on a truncated body: the last line held is the tail of a
+  // fragment, and presenting it as the command's footer would invent one.
+  assert.strictEqual(note, lines.at(-1));
+});
+
+test('_handleExecIntent: a clamp that fits keeps the listing FOOTER, not just the head', async () => {
+  // A listing's accounting is its last line — counts, a stale-host notice. A
+  // pure head-clamp always drops exactly that half.
+  const rows = Array.from({ length: 60 }, (_, i) => `t${String(i).padStart(3, '0')} [open] row`);
+  const footer = '(200 done, 33 cancelled — ask for another filter)';
+  const all = [...rows, footer];
+  const entry = {
+    argv: ['/bin/sh', '-c', `cat >/dev/null; printf '%s\\n' "$@" 1>&2`, 'sh', ...all],
+    replyStderr: true, replyMaxBytes: 400, schema: { type: 'object' },
+  };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  await waitFor(() => replies.length > 0);
+  const lines = replies.at(-1).replace('[agent:exec] bridge-reply: ', '').split('\n');
+  assert.strictEqual(lines[0], rows[0], 'the answer still leads');
+  assert.strictEqual(lines.at(-1), footer, 'the footer survives the clamp');
+  assert.match(lines.at(-2), /^\(\+\d+ more lines dropped at the 400-byte reply cap\)$/);
+  // ENTER: rows really were dropped between the head and the footer.
+  assert.ok(lines.length < all.length, `ENTER: clamped ${lines.length} of ${all.length + 1}`);
+  const dropped = Number(lines.at(-2).match(/\+(\d+)/)[1]);
+  assert.strictEqual(dropped, rows.length - (lines.length - 2),
+    'the count must equal the rows actually withheld');
 });
 
 test('_handleExecIntent: replyStderr:true + EMPTY stderr → still silent success', async () => {

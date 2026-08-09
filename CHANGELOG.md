@@ -13,6 +13,23 @@ blocks a release.
 
 ## Unreleased
 
+- **An agent asking for its team's ticket board now receives the board.** A
+  registered exec command replies to the agent with the last line of what it
+  printed, which is the right answer for a command that reports a single verdict
+  and the wrong one for a listing — the agent that asked for its tickets got the
+  footer ("200 done, 33 cancelled") and no rows, and nothing about the reply said
+  a board had been dropped. A command whose answer is genuinely several lines can
+  now say so in its definition (`replyMaxBytes`) and have those lines delivered,
+  with an explicit note when there were more than the budget allowed. Commands
+  that report one line are unchanged.
+
+- **A malformed monitor request can no longer write outside its own directory.**
+  `clodex-monitor` used the agent name and monitor id from the request as
+  directory and file names without checking them, so a request naming a path
+  instead of a name could reach elsewhere on disk — including the file cleanup
+  removes. Both are now checked, by the same rule the rest of the app uses for
+  session names.
+
 - **A resumed agent is now told when Clodex was upgraded underneath it.** An
   agent's system prompt is written once, when its conversation starts, and
   rewriting it later would re-bill the whole conversation — so a session you

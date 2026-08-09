@@ -177,7 +177,8 @@ const REPLIES_LINE = `Replies arrive later as separate \`[agent:from SENDER]\` m
 //      because most commands take no fields it read as confirmed until it wasn't.
 //   3. "Output returns in your input" — stdout is DROPPED; a clean exit is
 //      silent unless the def sets replyStderr, and then it is one 200-char line
-//      of stderr (session-manager _handleExecIntent).
+//      of stderr — or, if the def also sets replyMaxBytes, whole lines from the
+//      top of stderr up to that budget (session-manager _handleExecIntent).
 // Payload forms are DERIVED from each def's schema by exec-schema.commandLines —
 // never hand-written per command, or they rot the moment a schema changes.
 function execSection(execCommands) {

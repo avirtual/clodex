@@ -5,7 +5,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  DEFAULT_MAX_BYTES, FILENAME_RE, isFilenameToken,
+  DEFAULT_MAX_BYTES, FILENAME_RE, isFilenameToken, clampReplyBody,
   validateAgainstSchema, validateExecDef, parseAndValidate,
   typeToken, payloadForm, commandLines,
 } = require('../exec-schema');
@@ -67,6 +67,65 @@ test('validateExecDef: replyStderr must be boolean if present (truthy strings re
   assert.strictEqual(validateExecDef(str, 'c').ok, false);
   const num = goodDef(); num.replyStderr = 1;
   assert.strictEqual(validateExecDef(num, 'c').ok, false);
+});
+
+test('validateExecDef: replyMaxBytes must be a positive number if present', () => {
+  const on = goodDef(); on.replyMaxBytes = 6000;
+  assert.deepStrictEqual(validateExecDef(on, 'c'), { ok: true });
+  for (const bad of ['6000', 0, -1, true, null]) {
+    const d = goodDef(); d.replyMaxBytes = bad;
+    assert.strictEqual(validateExecDef(d, 'c').ok, false, `rejects ${JSON.stringify(bad)}`);
+  }
+});
+
+test('clampReplyBody: under the cap returns the whole trimmed body', () => {
+  assert.strictEqual(clampReplyBody('a\nb\nc\n', 100), 'a\nb\nc');
+  assert.strictEqual(clampReplyBody('', 100), '');
+  assert.strictEqual(clampReplyBody(null, 100), '');
+});
+
+test('clampReplyBody: over the cap keeps WHOLE lines from the top, the footer, and names the loss', () => {
+  const rows = Array.from({ length: 20 }, (_, i) => `row-${i}`);
+  const out = clampReplyBody(rows.join('\n'), 30);
+  const lines = out.split('\n');
+  // Shape: head rows, the loss note, then the ORIGINAL last line. A listing's
+  // accounting lives in its footer, which a pure head-clamp always drops.
+  const footer = lines.pop();
+  const note = lines.pop();
+  assert.strictEqual(footer, rows.at(-1));
+  assert.match(note, /^\(\+\d+ more lines dropped at the 30-byte reply cap\)$/);
+  // Every kept line is intact, and they are the FIRST ones — a listing's answer
+  // is its head, and a partial trailing row would read as a real row.
+  assert.deepStrictEqual(lines, rows.slice(0, lines.length));
+  assert.ok(lines.length > 0 && lines.length < rows.length - 1, `clamped to ${lines.length} of ${rows.length}`);
+  // The note may push past the cap; the DATA (head + footer) must not.
+  assert.ok([...lines, footer].join('\n').length <= 30);
+  // The count must equal what was actually withheld, not merely be present.
+  assert.strictEqual(Number(note.match(/\+(\d+)/)[1]), rows.length - 1 - lines.length);
+});
+
+test('clampReplyBody: a TRUNCATED body says "or more" and invents no footer', () => {
+  // The caller's collector already dropped output, so the count here is over a
+  // fragment: a bare number would be a completeness claim wrong by an unbounded
+  // factor, and the last line held is a fragment's tail, not the real footer.
+  const rows = Array.from({ length: 20 }, (_, i) => `row-${i}`);
+  const out = clampReplyBody(rows.join('\n'), 30, { truncated: true });
+  const lines = out.split('\n');
+  assert.match(lines.at(-1), /^\(\+\d+ or more lines dropped — output also outran the collector\)$/);
+  assert.deepStrictEqual(lines.slice(0, -1), rows.slice(0, lines.length - 1));
+});
+
+test('clampReplyBody: truncated is reported even when the body FITS the cap', () => {
+  // The fits-the-cap fast path would otherwise return a fragment verbatim, with
+  // nothing saying the command printed more than this.
+  const out = clampReplyBody('a\nb\nc', 1000, { truncated: true });
+  assert.match(out.split('\n').at(-1), /or more lines dropped — output also outran the collector/);
+  assert.strictEqual(clampReplyBody('a\nb\nc', 1000), 'a\nb\nc', 'untruncated still returns verbatim');
+});
+
+test('clampReplyBody: a single line longer than the whole cap is hard-sliced, marked', () => {
+  const out = clampReplyBody('x'.repeat(500), 50);
+  assert.strictEqual(out, `${'x'.repeat(50)}…`);
 });
 
 test('validateExecDef: requires an object schema (type: object)', () => {

@@ -15,6 +15,12 @@
 //      for EVERY command, instead of being hand-coded in each wrapper. This is
 //      what keeps a payload from choosing WHERE a command writes (it may only
 //      choose the name-within-the-registry-fixed-dir).
+//      NOT usable for a field carrying a SESSION name: the session-name rule
+//      (`AGENT_NAME_RE`) admits a leading dot and this one does not, so typing
+//      such a field `filename` locks a legitimately-named `.hidden` seat out of
+//      the command. Those fields guard against the session-name literal in the
+//      wrapper script instead, which is also what makes the guard hold when the
+//      script is run standalone rather than through the dispatcher.
 // The payload NEVER contributes to argv — that rule lives in the dispatcher
 // (session-manager `_handleExecIntent`); here we only vet the DATA.
 
@@ -30,6 +36,50 @@ const FILENAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
 function isFilenameToken(v) {
   return typeof v === 'string' && FILENAME_RE.test(v) && !v.startsWith('.');
+}
+
+// Clamp a widened (replyMaxBytes) stderr body to a whole number of LINES from
+// the top, and say so when anything was dropped. Cutting mid-line would hand a
+// seat a truncated final row that is indistinguishable from a real one, and a
+// silent cut is worse still: the listing looks complete and the seat acts on a
+// board whose tail it never saw. Falls back to a hard slice for a single line
+// longer than the whole budget, which is a malformed command, not a listing.
+//
+// `truncated` says the CALLER's collector already dropped output before we saw
+// it. Both things it controls are load-bearing:
+//   * the count here is over what SURVIVED collection, so without this flag the
+//     note under-reports by an unbounded factor and reads as a full accounting.
+//     Measured: 2000 rows through a 7024-byte collector reported 347 dropped
+//     when 1800 were. A wrong number is worse than no number — it is the same
+//     "looks complete" failure this whole function exists to prevent.
+//   * the retained footer below is only the real footer if collection was
+//     complete. On a cut, the last line we hold is the tail of a FRAGMENT.
+function clampReplyBody(stderr, maxBytes, { truncated = false } = {}) {
+  const text = String(stderr == null ? '' : stderr).trim();
+  if (!text) return '';
+  if (!truncated && text.length <= maxBytes) return text;
+  const lines = text.split('\n');
+  // A listing's answer is its head and its accounting is its LAST line (counts,
+  // a verdict, a stale-host notice) — the half a pure head-clamp always drops.
+  // Keeping both collapses the head/tail choice into one rule an author cannot
+  // get backwards: the answer, then what was lost, then the footer.
+  const footer = (!truncated && lines.length > 1) ? lines[lines.length - 1] : null;
+  const body = footer ? lines.slice(0, -1) : lines;
+  const budget = footer ? maxBytes - footer.length - 1 : maxBytes;
+  const kept = [];
+  let used = 0;
+  for (const line of body) {
+    const cost = used ? line.length + 1 : line.length;
+    if (used + cost > budget) break;
+    kept.push(line);
+    used += cost;
+  }
+  if (!kept.length) return `${text.slice(0, maxBytes)}…`;
+  const missing = body.length - kept.length;
+  const note = truncated
+    ? `(+${missing} or more lines dropped — output also outran the collector)`
+    : `(+${missing} more lines dropped at the ${maxBytes}-byte reply cap)`;
+  return [...kept, note, ...(footer ? [footer] : [])].join('\n');
 }
 
 // Validate an already-parsed value against a schema node. Returns
@@ -152,6 +202,16 @@ function validateExecDef(entry, name) {
   // Strictly boolean so a truthy string can't silently flip a command chatty.
   if ('replyStderr' in entry && typeof entry.replyStderr !== 'boolean') {
     return { ok: false, error: 'replyStderr: must be a boolean' };
+  }
+  // Widens the success reply from the last stderr LINE to the last N BYTES of
+  // stderr, line breaks intact. Opt-in per def because the default exists for
+  // token economy: a command that logs progress to stderr would otherwise start
+  // billing all of it into the caller's prompt on every call. Set it only where
+  // the output is irreducibly multi-line (a ticket board, one error per bad
+  // file) — a digest that already fits one line must not.
+  if ('replyMaxBytes' in entry
+      && !(typeof entry.replyMaxBytes === 'number' && entry.replyMaxBytes > 0)) {
+    return { ok: false, error: 'replyMaxBytes: must be a positive number' };
   }
   // Optional one-line prose rendered into the granted seat's EXEC prompt section
   // (t81): what the command is for, so an agent can pick one without firing it to
@@ -282,6 +342,7 @@ module.exports = {
   DEFAULT_MAX_BYTES,
   FILENAME_RE,
   isFilenameToken,
+  clampReplyBody,
   validateAgainstSchema,
   validateExecDef,
   parseAndValidate,

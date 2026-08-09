@@ -4,6 +4,7 @@
   "timeoutMs": 10000,
   "maxBytes": 4096,
   "replyStderr": true,
+  "replyMaxBytes": 12000,
   "schema": {
     "type": "object",
     "additionalProperties": false,

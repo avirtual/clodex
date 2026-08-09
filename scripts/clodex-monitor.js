@@ -323,8 +323,18 @@ async function runLauncher() {
   let p;
   try { p = JSON.parse(raw || '{}'); } catch { die('payload is not valid JSON'); return; }
 
+  // `agent` and `id` both become PATH SEGMENTS (monitorsDir/statePath/logPath),
+  // so a payload naming `../..` would choose where this tool writes and what
+  // cleanupState unlinks. The schema's maxLength does not constrain the
+  // characters, and this script also runs standalone, so the guard lives here.
+  // Same literal as clodex-team.js and the core's session-name rule — a seat
+  // legitimately named `.hidden` must still be able to monitor.
+  // typeof BEFORE the regex: `.test()` coerces, so a numeric agent would pass
+  // and then throw inside path.join — a stack trace on the standalone path,
+  // where die() is the only thing the caller ever sees.
   const agent = p.agent;
-  if (!agent || typeof agent !== 'string') die('agent (your own name) is required');
+  if (typeof agent !== 'string' || !/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(agent)) die('agent (your own name) is required');
+  if ('id' in p && (typeof p.id !== 'string' || !/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$/.test(p.id))) die('id must be a plain monitor id');
   const action = p.action;
 
   if (action === 'list') {
