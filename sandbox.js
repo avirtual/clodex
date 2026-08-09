@@ -85,8 +85,18 @@ function defaultMountTarget(hostPath) {
   return path.posix.join(MOUNT_TARGET_ROOT, path.basename(hostPath));
 }
 
+// True when either container target equals or nests under the other — in BOTH
+// directions, because a user bind that CONTAINS a reserved path shadows it just
+// as surely as one nested inside it.
+// The parent's separator is appended only when it is not already there. Without
+// that, `/` built the prefix `'//'`, which no reserved path starts with, so the
+// single target that dominates all four — root — was the one value this guard
+// admitted. Every enumerated reserved path was refused correctly; the value that
+// is not a member but a prefix of every member was not.
 function mountTargetsConflict(a, b) {
-  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+  if (a === b) return true;
+  const under = (child, parent) => child.startsWith(parent.endsWith('/') ? parent : `${parent}/`);
+  return under(a, b) || under(b, a);
 }
 
 function normalizeMounts(rawMounts) {
@@ -154,6 +164,32 @@ function translatePath({ hostPath, workDir, mounts }) {
   return { reachable: false };
 }
 
+// YAML double-quoted escapes for the C0 controls that have one. Anything else
+// in that range falls back to `\xNN`, which is also valid double-quoted YAML.
+const YAML_ESCAPES = {
+  '\0': '\\0', '\b': '\\b', '\t': '\\t', '\n': '\\n',
+  '\v': '\\v', '\f': '\\f', '\r': '\\r', '\x1b': '\\e',
+};
+
+// Emit `value` as a YAML double-quoted scalar that parses back to `value`
+// EXACTLY. Double-quoted (not single) because only that style can express
+// control characters at all.
+//
+// The two characters that must be escaped are the two the style is built from:
+// a bare `"` closes the scalar early (`/tmp/a"b` produced `- "/tmp/a"b:/x"`,
+// which is not the path and may not even parse), and a bare `\` is read as the
+// start of an escape sequence — `\b` silently becomes a backspace, `\U` is a
+// parse error. A raw newline is worse than either: it splits one volume entry
+// across two lines, so the second half is parsed as its own list item.
+// Everything else — spaces, `#`, `:`, leading specials — needs no escape and
+// survives verbatim, which is what the quoting was there for in the first place.
+function yamlQuote(value) {
+  const escaped = String(value)
+    .replace(/[\\"]/g, (c) => `\\${c}`)
+    .replace(/[\x00-\x1f\x7f]/g, (c) => YAML_ESCAPES[c] || `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
+  return `"${escaped}"`;
+}
+
 function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname }) {
   // The container hostname IS the engine's SELF_LABEL on the peer wire, so it must
   // be UNIQUE per managed box or two boxes would both self-identify as 'sandbox'
@@ -188,21 +224,24 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   L.push(`      CLODEX_WIRESCOPE_PUBLIC_URL: "\${CLODEX_WIRESCOPE_PUBLIC_URL:-http://localhost:${ports.wirescope}}"`);
   if (authEnvFile) {
     L.push('    env_file:');
-    L.push(`      - "${authEnvFile}"`);
+    L.push(`      - ${yamlQuote(authEnvFile)}`);
   }
   L.push('    volumes:');
   L.push('      - clodex-data:/data');
   L.push('      - clodex-dot:/home/clodex/.clodex');
   if (libDir) {
     for (const d of LIBRARY_MOUNT_DIRS) {
-      L.push(`      - "${path.join(libDir, d)}:/home/clodex/.clodex/${d}:ro"`);
+      L.push(`      - ${yamlQuote(`${path.join(libDir, d)}:/home/clodex/.clodex/${d}:ro`)}`);
     }
   }
   L.push('      - claude-auth:/home/clodex/.claude');
   if (workDir) {
-    // Double-quoted: a host path with YAML-special chars (`#` truncates, leading
-    // specials can change the node type) must survive verbatim as the source.
-    L.push(`      - "${workDir}:/home/clodex/work"`);
+    // Quoted via yamlQuote, not by hand: a host path with YAML-special chars
+    // (`#` truncates, leading specials can change the node type) survives
+    // verbatim as the source — and the quoting style's OWN characters (`"`,
+    // `\`, newline) are escaped rather than assumed absent, which is exactly
+    // the case hand-rolled quotes get wrong.
+    L.push(`      - ${yamlQuote(`${workDir}:/home/clodex/work`)}`);
   } else {
     L.push('      - clodex-work:/home/clodex/work');
   }
@@ -212,7 +251,7 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   const resolvedMounts = normalizeMounts(mounts);
   if (resolvedMounts.error) throw new Error(resolvedMounts.error);
   for (const mnt of resolvedMounts.mounts) {
-    L.push(`      - "${mnt.host}:${mnt.container}${mnt.ro ? ':ro' : ''}"`);
+    L.push(`      - ${yamlQuote(`${mnt.host}:${mnt.container}${mnt.ro ? ':ro' : ''}`)}`);
   }
   L.push('    init: true');
   L.push('    restart: always');

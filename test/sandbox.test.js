@@ -236,6 +236,59 @@ test('generateCompose: a mount source with spaces/# is double-quoted verbatim', 
   assert.match(yaml, /- "\/Users\/me\/My Notes #2:\/home\/clodex\/notes"/);
 });
 
+// The test above is right about the characters its author tried. These are the
+// characters the QUOTING STYLE ITSELF makes special, which is the class a
+// "double-quoted, so it survives verbatim" claim cannot cover by construction:
+// a bare `"` closes the scalar early, a bare `\` opens an escape sequence (`\b`
+// silently becomes a backspace), and a raw newline ends the list item. Pinned as
+// exact bytes because the shipped defect looked quoted.
+test('generateCompose: a mount source containing `"`, `\\` or a newline stays one valid entry', () => {
+  const cases = [
+    ['/tmp/a"b', '      - "/tmp/a\\"b:/home/clodex/x"'],
+    ['/tmp/a\\b', '      - "/tmp/a\\\\b:/home/clodex/x"'],
+    ['/tmp/a\nb', '      - "/tmp/a\\nb:/home/clodex/x"'],
+    ['/tmp/a\tb', '      - "/tmp/a\\tb:/home/clodex/x"'],
+  ];
+  for (const [host, expected] of cases) {
+    const yaml = generateCompose({
+      image: DEV_IMAGE, ports: PORTS, workDir: null, authEnvFile: null,
+      mounts: [{ host, container: '/home/clodex/x' }],
+    });
+    assert.ok(yaml.split('\n').includes(expected),
+      `${JSON.stringify(host)} → expected the line ${JSON.stringify(expected)}`);
+  }
+});
+
+// Every path interpolated into the document goes through the same quoting, so
+// the assertion is made once over all four sites at once: a newline in ANY of
+// them must not add a line, because a split entry is parsed as its own list
+// item (or as a stray scalar under `volumes:`).
+test('generateCompose: a newline in any interpolated path cannot split the document', () => {
+  const args = { image: DEV_IMAGE, ports: PORTS };
+  const hostile = generateCompose({
+    ...args,
+    workDir: '/tmp/work"dir\nA', authEnvFile: '/tmp/auth"env\nB',
+    libDir: '/tmp/lib"dir\nC', mounts: [{ host: '/tmp/m"nt\nD', container: '/home/clodex/x' }],
+  });
+  const plain = generateCompose({
+    ...args,
+    workDir: '/tmp/workdir', authEnvFile: '/tmp/authenv',
+    libDir: '/tmp/libdir', mounts: [{ host: '/tmp/mnt', container: '/home/clodex/x' }],
+  });
+  assert.strictEqual(hostile.split('\n').length, plain.split('\n').length,
+    'a path containing a newline added lines to the compose document');
+
+  // …and the volumes block in particular holds only list items, never a
+  // fragment left behind by a broken entry.
+  const lines = hostile.split('\n');
+  const block = [];
+  for (let i = lines.indexOf('    volumes:') + 1; i < lines.length && lines[i].startsWith('      '); i++) {
+    block.push(lines[i]);
+  }
+  assert.ok(block.length >= 5, `the volumes block did not form: ${block.length} lines`);
+  for (const l of block) assert.match(l, /^ {6}- /, `orphan line under volumes: ${JSON.stringify(l)}`);
+});
+
 test('generateCompose: a mount shadowing a reserved path THROWS (no broken box)', () => {
   for (const target of ['/home/clodex/work', '/home/clodex/.clodex', '/home/clodex/.clodex/run', '/home/clodex', '/data', '/home/clodex/.claude']) {
     assert.throws(() => generateCompose({
@@ -290,6 +343,29 @@ test('normalizeMounts: reserved-path shadow is refused in both nesting direction
   assert.match(normalizeMounts([{ host: '/h', container: '/home/clodex' }]).error, /shadow/);
   // Exact reserved path.
   assert.match(normalizeMounts([{ host: '/h', container: '/data' }]).error, /shadow/);
+});
+
+// The enumerations elsewhere in this file can only ever check MEMBERS of
+// RESERVED_MOUNT_TARGETS and paths that visibly nest under one. What they
+// structurally exclude is the class of targets that DOMINATE the whole set — a
+// target does not have to resemble any reserved path to shadow all four, and
+// `/` is that class's extreme. It was the one value the guard admitted, because
+// the old prefix test built `'//'` and nothing starts with that. A seventh
+// entry in the enumeration could never have caught this; the defect lives in
+// what the enumeration leaves out, not in what it lists.
+test('normalizeMounts: a target that DOMINATES the reserved set is refused, root included', () => {
+  for (const target of ['/', '/home', '/home/clodex']) {
+    const r = normalizeMounts([{ host: '/h', container: target }]);
+    assert.match(r.error || '', /shadow/, `target ${target} must be refused`);
+  }
+  // A trailing slash names the same target and must not be a way around it.
+  assert.match(normalizeMounts([{ host: '/h', container: '/data/' }]).error || '', /shadow/);
+  // The control that stops "refuse everything" from passing this test: a shared
+  // string prefix is not containment, so /homework does not shadow /home/*.
+  assert.deepStrictEqual(
+    normalizeMounts([{ host: '/h', container: '/homework' }]).mounts,
+    [{ host: '/h', container: '/homework', ro: false }],
+  );
 });
 
 // ── translatePath: host folder → container path (M6a New Session picker) ─────
