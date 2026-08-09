@@ -1572,6 +1572,13 @@ async function restoreHostCatalogs() {
   // dropdown/append checklist keep showing the box's prompts labeled as host's.
   // A selected box-only prompt ref falls back to (CLI default), gracefully.
   await refreshSystemPromptDropdown();
+  // The skill-lib cache has the identical exposure and is NOT gracefully
+  // degrading: populateChecklistsFromCatalogs seeds it from the box, and a
+  // ticked box-only skill is skipped at spawn without a word, so the operator
+  // is told nothing. refreshNewSessionSkills does not cover this one — that
+  // renders the per-cwd availability list, a different cache from the inject
+  // library.
+  await refreshNewSessionInjectSkills();
 }
 
 async function loadPromptLib() {

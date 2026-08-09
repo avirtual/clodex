@@ -477,3 +477,59 @@ test('the selection drain skips an unparseable line and delivers the rest', () =
   assert.match(ctx, /GOOD ONE/, 'ENTER: the drain ran and delivered');
   assert.match(ctx, /GOOD TWO/, 'the line after the corrupt one still arrived');
 });
+
+// F010's second body. The module-side park/drain routes its restore through
+// fs-util's atomicWriteFileSync, whose header names the load-bearing half: it
+// fsyncs the temp file AND the parent dir, because a rename is only durable
+// once the directory entry reaches disk. The GENERATED script reimplements the
+// same protocol inline in a heredoc and got the rename without either fsync,
+// so the fix landed in one copy of a two-copy protocol.
+//
+// Why it matters here specifically and not at the other write-then-rename sites
+// in this file: restore_parked is the AT-MOST-ONCE path. The drain claims the
+// whole directory by renaming it away before reading a byte, so a restore that
+// is lost leaves the message nowhere at all. The delta/notified writes are
+// deliberately at-least-once — a lost rename there re-delivers the same diff
+// next turn, which is why they are left alone rather than fsynced for symmetry.
+//
+// Asserted against the generated SOURCE because an fsync has no observable
+// behaviour: it cannot be detected from the outside without instrumenting fs,
+// which is exactly why it went missing in one copy and stayed missing.
+test('the generated pending script fsyncs its restore, like the store it mirrors', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('fsync1', null, null, [], [], [], null, 2000);
+  const src = fs.readFileSync(pathFor(REGISTRY_DIR, 'fsync1', 'pendingScript'), 'utf-8');
+
+  // ENTER: the restore must be present at all. Without this the two assertions
+  // below hold vacuously over a script that no longer restores anything — the
+  // failure mode that would silently destroy a successor's mail.
+  assert.match(src, /function restore_parked/, 'ENTER: the generated script has no restore_parked');
+
+  const body = src.slice(src.indexOf('function restore_parked'));
+  const end = body.indexOf('\n}');
+  const restore = body.slice(0, end);
+
+  assert.match(restore, /fsyncSync/, 'the restore must fsync — an unsynced rename can be lost entirely');
+  // The DIRECTORY fsync specifically: fsyncing only the temp file's contents
+  // leaves the rename itself unflushed, which is the precise gap fs-util's
+  // header calls out. Matching openSync on the DIR variable is what separates
+  // the two.
+  assert.match(restore, /openSync\(d\b/, 'the parent directory must be opened and fsynced, not just the temp file');
+  const syncs = restore.match(/fsyncSync/g) || [];
+  assert.strictEqual(syncs.length, 2, `expected both fsyncs (contents + parent dir), found ${syncs.length}`);
+});
+
+test('CONTROL: the at-least-once writes are deliberately NOT fsynced', () => {
+  // Without this, the test above reads as "fsync everything", and the next
+  // reader adds one to the delta advance — where a durable rename would convert
+  // a re-delivered diff into a dropped one. The asymmetry IS the design.
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('fsync2');
+  const delta = fs.readFileSync(pathFor(REGISTRY_DIR, 'fsync2', 'ipcdeltaScript'), 'utf-8');
+
+  assert.match(delta, /renameSync/, 'ENTER: the delta script must still advance by rename');
+  assert.ok(!/fsyncSync/.test(delta),
+    'the baseline advance is at-least-once by design: a lost rename re-delivers the diff, a durable one cannot be undone');
+});

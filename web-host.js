@@ -343,7 +343,18 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
       send: (frame) => { try { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(frame)); } catch (err) { log.error('web', `send: ${err.message}`); } },
       pushEvent: (channel, args) => conn.send({ t: 'event', channel, args: args.map(encodeBuffers) }),
     };
-    conn.senderToken = { sender: { send: (channel, ...args) => conn.pushEvent(channel, args), conn } };
+    // isDestroyed is part of the sender shape, not an Electron detail a handler
+    // may skip: a streaming handler guards every push with it, and a sender
+    // missing it throws on the FIRST line into a catch that drops the stream
+    // silently. handleFor's window-shaped sender answers it too; both senders
+    // this file hands out must, or the two hosts diverge on liveness alone.
+    conn.senderToken = {
+      sender: {
+        send: (channel, ...args) => conn.pushEvent(channel, args),
+        isDestroyed: () => ws.readyState !== ws.OPEN,
+        conn,
+      },
+    };
     conns.add(conn);
     ws.on('message', (raw) => {
       let frame; try { frame = JSON.parse(raw); } catch { return; }

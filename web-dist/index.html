@@ -30147,6 +30147,7 @@ ${detail}` });
       async function restoreHostCatalogs() {
         populateHostCatalogs(dialogHostSettings, dialogHostAgentLib);
         await refreshSystemPromptDropdown();
+        await refreshNewSessionInjectSkills();
       }
       async function loadPromptLib() {
         const all = await window.api.listPrompts();

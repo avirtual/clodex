@@ -372,3 +372,77 @@ test('menu round-trip: click closures stay server-side and fire on pick (not sho
     c.close();
   } finally { host.close(); }
 });
+
+// A streaming handler guards each push with `wc.isDestroyed()` — the Electron
+// liveness check. The web host's sender token omitted it, so the guard threw on
+// the FIRST line into the handler's catch and every subsequent line with it: a
+// 15-minute deploy streamed nothing and then returned a verdict. handleFor's
+// window-shaped sender answered isDestroyed all along, which is what made this a
+// seam between two senders from the same file rather than a missing feature.
+test('sender token answers isDestroyed, so an isDestroyed-guarded stream delivers', async () => {
+  const thrown = [];
+  const registerHandlers = (deps) => {
+    // Verbatim shape of the peer:deploy progress push, guard included.
+    deps.handle('stream', (e) => {
+      const wc = e.sender;
+      let delivered = 0;
+      for (const line of ['a', 'b', 'c']) {
+        try { if (!wc.isDestroyed()) { wc.send('stream-line', line); delivered++; } }
+        catch (err) { thrown.push(err.message); }
+      }
+      return { delivered };
+    });
+  };
+  const { host, port } = await startHost({ registerHandlers });
+  try {
+    const c = connect(port);
+    await helloWelcome(c, { workspaceId: 'default' });
+    c.send({ t: 'invoke', id: 1, channel: 'stream', args: [] });
+
+    // Bounded on purpose: the regression this pins DROPS the lines, and a bare
+    // `until` would hang the suite instead of failing it. A test that cannot
+    // fail in bounded time is not a regression pin.
+    const lines = [];
+    for (let i = 0; i < 3; i++) {
+      const ev = await Promise.race([
+        c.until((m) => m.t === 'event' && m.channel === 'stream-line'),
+        new Promise((r) => setTimeout(() => r(null), 2000)),
+      ]);
+      assert.ok(ev, `line ${i} never arrived: the isDestroyed guard threw and the stream was dropped`);
+      lines.push(ev.args[0]);
+    }
+
+    // ENTER: the guard must have been REACHED and passed. Asserting only that
+    // nothing threw would hold just as well over a handler that never ran.
+    assert.deepEqual(thrown, [], `guard threw: ${thrown[0]}`);
+    assert.deepEqual(lines, ['a', 'b', 'c'], 'every guarded line must reach the tab');
+
+    const reply = await c.until((m) => m.t === 'reply' && m.id === 1);
+    assert.deepEqual(reply.value, { delivered: 3 });
+    c.close();
+  } finally { host.close(); }
+});
+
+test('sender token reports isDestroyed once its socket is gone', async () => {
+  // The CONTROL. A token answering `false` unconditionally would satisfy the
+  // test above while making the guard meaningless — the point of isDestroyed is
+  // that it becomes true, so a handler still streaming after a tab closes stops.
+  let captured = null;
+  const registerHandlers = (deps) => {
+    deps.handle('capture', (e) => { captured = e.sender; return { ok: true }; });
+  };
+  const { host, port } = await startHost({ registerHandlers });
+  try {
+    const c = connect(port);
+    await helloWelcome(c, { workspaceId: 'default' });
+    c.send({ t: 'invoke', id: 1, channel: 'capture', args: [] });
+    await c.until((m) => m.t === 'reply' && m.id === 1);
+
+    assert.ok(captured, 'ENTER: handler never ran, so no sender was captured');
+    assert.equal(captured.isDestroyed(), false, 'a live socket is not destroyed');
+
+    c.close();
+    await c.closed();
+    assert.ok(await poll(() => captured.isDestroyed() === true), 'a closed socket must report destroyed');
+  } finally { host.close(); }
+});

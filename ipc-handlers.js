@@ -955,10 +955,19 @@ function registerIpcHandlers(deps) {
     const preamble =
       `export PORT=${shellEsc(port)} REPO_URL=${shellEsc(repoUrl)} BRANCH=${shellEsc(branch)}${srcExport}\n`;
     const wc = e.sender;
+    // The catch cannot stay bare: it fires per line, so a sender defect drops
+    // EVERY line of a 15-minute deploy and reports nothing. Logged once — a
+    // per-line log would bury the run it is meant to explain.
+    let lineDropLogged = false;
     try {
       const res = await sshRun(sshHost, preamble + script, {
         timeoutMs: 15 * 60 * 1000,       // a cold clone+install+rebuild can be minutes
-        onLine: (line) => { try { if (!wc.isDestroyed()) wc.send('peer-deploy-line', sshHost, line); } catch {} },
+        onLine: (line) => {
+          try { if (!wc.isDestroyed()) wc.send('peer-deploy-line', sshHost, line); }
+          catch (err) {
+            if (!lineDropLogged) { lineDropLogged = true; log.error('peer', `deploy progress dropped: ${err.message}`); }
+          }
+        },
       });
       return {
         ok: res.code === 0,

@@ -1,13 +1,21 @@
 #!/usr/bin/env node
 // Contextual memory hints, end to end, outside the app: score the user's draft
 // against an agent's memory units and arm the best match as an ephemeral tail
-// hint. Exists so the loop can be exercised against a live agent before any of
-// it is wired into pty-input.
+// hint. The loop IS wired into pty-input now, so this exists to answer what the
+// app would do with a given draft — which is why the ranker is imported from
+// hint-retrieve rather than reproduced here.
 //
 // usage: hint-probe.js <agent> "<draft text>" [--proxy=URL] [--route=GLOB]
 //                      [--dry-run] [--max=N] [--loaded=id,id]
 
 const { createMemoryStore } = require('../memory-store');
+// The ranker is IMPORTED, never copied. A probe whose job is to answer "what
+// would the app do with this draft" is worthless the moment its copy drifts,
+// and it had: this file carried MIN_SCORE=2, tuned at N=4, while production
+// derives the floor from corpus size because at N=179 a single rare term scores
+// 5.19 on its own and clears any small constant. The probe was reporting armed
+// hints the app would have rejected.
+const { rank, compose, unitsAsRecords } = require('../hint-retrieve');
 const { execFileSync } = require('child_process');
 const path = require('path');
 const os = require('os');
@@ -15,75 +23,7 @@ const os = require('os');
 const MEMORY_ROOT = process.env.CLODEX_MEMORY_ROOT
   || path.join(os.homedir(), '.clodex', 'library', 'memory');
 
-// The ranker takes records, not memory units: {id, text, tags, scope, source}.
-// Memories are the first source, not the only intended one — project facts and
-// docs are meant to feed the same ranker, so nothing below may reach for a
-// memory-store API.
-function unitsAsRecords(units) {
-  return units.map((u) => ({
-    id: u.id, text: u.body, tags: u.tags || '', scope: u.scope || '', source: 'memory',
-  }));
-}
-
-// A hint costs tail budget on a request the user is already paying for, so the
-// bar is "clearly about this", not "shares a word with this".
-const MIN_SCORE = 2;
 const TTL_S = 180;
-
-// Terms that co-occur with everything in an agent's store carry no signal;
-// matching on them surfaces a random unit with high confidence.
-const STOP = new Set(('a an and are as at be but by for from had has have how i if in into is it its me my '
-  + 'not of on or our so that the their them then there these they this to was we were what when where which '
-  + 'who why will with you your do does did can could should would about get got make made just like now new '
-  + 'more most some any all one two been being over under out up down no yes than also very much many via per')
-  .split(' '));
-
-function terms(text) {
-  return String(text || '')
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((w) => w.length > 2 && !STOP.has(w));
-}
-
-// scope and tags are the curated topic labels — the shortest path from a
-// question's subject to a record about it, and they cost nothing to index.
-// Omitting them made "tell me about the family" miss a record whose scope is
-// literally `family`.
-function haystack(rec) {
-  return `${rec.text} ${rec.tags} ${rec.scope}`;
-}
-
-// Document frequency: a term in half the store cannot discriminate between
-// units, so weight by rarity rather than counting raw hits.
-function score(queryTerms, rec, df, total) {
-  const body = new Set(terms(haystack(rec)));
-  let s = 0;
-  const hits = [];
-  for (const q of new Set(queryTerms)) {
-    if (!body.has(q)) continue;
-    const n = df.get(q) || 1;
-    const w = Math.log(1 + total / n);
-    if (w < 0.35) continue; // present in most units — no discrimination
-    s += w;
-    hits.push(q);
-  }
-  return { score: s, hits };
-}
-
-function rank(records, draft, { loaded = new Set(), max = 1 } = {}) {
-  const q = terms(draft);
-  if (!q.length) return [];
-  const df = new Map();
-  for (const r of records) {
-    for (const t of new Set(terms(haystack(r)))) df.set(t, (df.get(t) || 0) + 1);
-  }
-  return records
-    .filter((r) => !loaded.has(r.id))
-    .map((r) => ({ unit: r, ...score(q, r, df, records.length) }))
-    .filter((r) => r.score >= MIN_SCORE)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, max);
-}
 
 // Lexical ranking cannot answer "son" -> a record scoped `family`: the two
 // share no characters, and stemming does not close a semantic gap. Ask a fast
@@ -116,26 +56,6 @@ function withinTopics(records, topics) {
     if (want.has(r.scope)) return true;
     return String(r.tags).split(',').map((s) => s.trim()).some((t) => want.has(t));
   });
-}
-
-// Two shapes by size. A short unit rides in full because reading it costs less
-// than the round trip to fetch it; a long one is offered by title so the model
-// spends the tokens only if it wants them.
-const FULL_BODY_CAP = 700;
-
-function compose(results) {
-  const parts = ['This may relate to what the user is asking. If it does not, ignore it.'];
-  for (const r of results) {
-    const b = String(r.unit.text || '').trim();
-    if (b.length <= FULL_BODY_CAP) {
-      parts.push(`\n${r.unit.id}:\n${b}`);
-    } else {
-      const title = b.split('\n')[0].slice(0, 180);
-      parts.push(`\n${r.unit.id}: ${title}...`
-        + `\n(truncated — emit [agent:memory recall] ${r.unit.id} on its own line to load it in full)`);
-    }
-  }
-  return parts.join('\n');
 }
 
 async function main() {
@@ -172,7 +92,10 @@ async function main() {
   }
 
   const max = Number(flags.get('max') || 1);
-  let results = rank(pool, draft, { loaded, max });
+  // exclude/limit, and a flattened record carrying `evidence` — the production
+  // ranker's shape, adopted here rather than adapted back, so this prints what
+  // the app would actually do.
+  let results = rank(pool, draft, { exclude: loaded, limit: max });
   // A topic verdict is a stronger relevance signal than word overlap, so it
   // must not be overridden by the lexical floor that exists only to filter an
   // unfiltered corpus. Without this, the semantic pass finds the right record
@@ -180,11 +103,15 @@ async function main() {
   // the exact failure the pass was added to fix.
   if (flags.get('semantic') && !results.length && pool.length) {
     results = pool.filter((r) => !loaded.has(r.id)).slice(0, max)
-      .map((r) => ({ unit: r, score: 0, hits: ['topic match only'] }));
+      .map((r) => ({ ...r, confidence: 0, evidence: { score: 0, hits: ['topic match only'], corpus: pool.length, floor: 0, coverage: 0 } }));
     console.log('  (no lexical overlap — carried on the topic verdict alone)');
   }
   if (!results.length) { console.log('no match above threshold — nothing armed (correct outcome for an unrelated draft)'); return; }
-  for (const r of results) console.log(`  match ${r.unit.id}  score=${r.score.toFixed(2)}  on [${r.hits.join(', ')}]`);
+  for (const r of results) {
+    const ev = r.evidence || {};
+    console.log(`  match ${r.id}  score=${(ev.score || 0).toFixed(2)}  floor=${(ev.floor || 0).toFixed(2)}`
+      + `  coverage=${(ev.coverage || 0).toFixed(2)}  conf=${r.confidence}  on [${(ev.hits || []).join(', ')}]`);
+  }
 
   const text = compose(results);
   console.log(`\n--- hint text (${text.length} chars) ---\n${text}\n---`);
