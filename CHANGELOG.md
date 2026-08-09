@@ -31,6 +31,43 @@ blocks a release.
   Underneath it is a general per-session notice queue, so future one-off
   advisories that are in no rush can ride the same channel.
 
+- **A peer reached over `https://` is now actually encrypted.** Clodex has
+  always accepted an `https://` peer URL, and the command-line client always
+  dialled it properly — but the app's own peer connection dialled every peer in
+  plain HTTP regardless, while sending your peer token on each request. If you
+  run a peer over TLS, that token was going over the wire in the clear. It now
+  dials TLS for `https://` URLs, on port 443 unless you name another.
+
+  One consequence to know about before you update: a peer whose certificate is
+  self-signed or issued by a private CA will now fail to connect rather than
+  quietly falling back to an unencrypted connection. That is the point of the
+  fix, but it is a real change if that describes your setup.
+
+- **Agents whose names begin with `_`, `.` or `-` can reach the network again.**
+  Such a name has always been legal to create, and the session looked completely
+  healthy — but the request router rejected it, so every request that agent made
+  failed and it never reached Anthropic at all. The router now accepts the same
+  names the app lets you create. Paths like `..` stay refused.
+
+- **A container mount at `/` is refused instead of silently shadowing
+  everything.** The sandbox checks that your mounts do not collide with the
+  directories it manages, and every specific one was caught correctly — but `/`
+  itself slipped through the check and took precedence over all of them.
+
+- **Host paths with unusual characters no longer corrupt the sandbox config.** A
+  directory containing a quote, a backslash or a newline produced a broken
+  container definition; a Windows-style path could stop it loading entirely.
+
+- **The new-session directory suggestions no longer span workspaces.** The
+  "popular" list was built from every session on the machine, so it could
+  suggest — and reveal — directories belonging to a different workspace. It now
+  reflects only the workspace you are in, which does mean a shorter list.
+
+- **A dropped streaming connection now gives up instead of retrying forever.**
+  If reconnecting succeeded but the handler setting it up kept failing, the
+  retry budget reset on every attempt, so the backoff never grew past its first
+  step and the give-up path was never reached.
+
 ## 5.3.0 — 2026-08-08 — a switch the serving box can actually reach
 
 - **Terminal sharing moved to Settings, and now works on a box with no peers of
