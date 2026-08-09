@@ -56,14 +56,27 @@ const TEAMS_DIR = path.join(CLODEX_HOME, 'teams');
 const AGENT_NAME_RE = /You are the clodex agent named '([^']+)'/;
 const FILE_PATH_TOOLS = new Set(['Read', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
+// A flag consuming the NEXT token swallows a following flag as its operand:
+// `--project --json` bound "--json" as the path and dropped the flag, and a
+// trailing `--project` bound undefined and crashed inside path.resolve with a
+// TypeError naming an argument the caller never passed. Same shape as
+// embed-basket's F011; harmless here only because these scripts read.
+function needsValue(flag, v) {
+  if (v === undefined || v.startsWith('-')) {
+    console.error(`${flag} needs a value`);
+    process.exit(1);
+  }
+  return v;
+}
+
 function parseArgs(argv) {
   const opts = { project: process.cwd(), team: null, dir: null, json: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') opts.json = true;
-    else if (a === '--project') opts.project = argv[++i];
-    else if (a === '--team') opts.team = argv[++i];
-    else if (a === '--dir') opts.dir = argv[++i];
+    else if (a === '--project') opts.project = needsValue(a, argv[++i]);
+    else if (a === '--team') opts.team = needsValue(a, argv[++i]);
+    else if (a === '--dir') opts.dir = needsValue(a, argv[++i]);
     else if (a === '--help' || a === '-h') {
       console.log('Usage: task-ledger.js [--project PATH] [--team NAME] [--dir PATH] [--json]');
       process.exit(0);

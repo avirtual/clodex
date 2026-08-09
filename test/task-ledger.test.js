@@ -145,3 +145,28 @@ test('task-ledger --help exits 0', () => {
   const text = execFileSync(process.execPath, [SCRIPT, '--help'], { encoding: 'utf8' });
   assert.match(text, /Usage: task-ledger\.js/);
 });
+
+// A value-taking flag must reject a FLAG as its operand. Before this,
+// `--project --json` bound "--json" as the project path and dropped the flag,
+// and a trailing `--project` bound undefined and died inside path.resolve with
+// a TypeError naming an argument the caller never passed.
+test('task-ledger: a flag is not a valid operand for a value-taking flag', () => {
+  for (const args of [['--project', '--json'], ['--team', '--json'], ['--dir', '--json'], ['--project']]) {
+    let err = null;
+    try {
+      execFileSync(process.execPath, [SCRIPT, ...args], {
+        encoding: 'utf8', stdio: 'pipe', env: { ...process.env, CLODEX_HOME: HOME },
+      });
+    } catch (e) { err = e; }
+    assert.ok(err, `${args.join(' ')} should have exited nonzero`);
+    assert.strictEqual(err.status, 1, `${args.join(' ')} exit status`);
+    assert.match(err.stderr, /needs a value/, `${args.join(' ')} stderr`);
+    assert.ok(!/TypeError/.test(err.stderr), `${args.join(' ')} must not surface a raw TypeError`);
+  }
+});
+
+// CONTROL: the guard must reject flags, not operands.
+test('task-ledger: a real operand still parses', () => {
+  const out = JSON.parse(run(['--team', 'proj', '--json']));
+  assert.strictEqual(out.team, 'proj');
+});

@@ -27,6 +27,22 @@ const { app, BrowserWindow, Menu, Tray, dialog, shell, nativeImage } = require('
 // preserved: their transcripts stay on disk, and dropping the record is what
 // makes them adoptable again through Discover Sessions… (discovery excludes
 // tracked sessionIds, and the record is what makes an id tracked).
+// The workspace-row suffix in the Window menu, counting BOTH populations for
+// the same reason the confirm copy does: a workspace holding only archived
+// seats read as bare (no suffix at all), then its delete dialog warned about
+// losing them. The two numbers are disjoint by construction —
+// savedForWorkspace excludes anything in the live map — so they sum.
+function workspaceCountSuffix(running, saved) {
+  const total = running + saved;
+  if (total === 0) return '';
+  const s = total === 1 ? '' : 's';
+  // Only the running count needs qualifying, and only when it is not the whole
+  // story: "3 sessions (1 running)" tells the operator which ones a click reaches.
+  return saved > 0 && running > 0
+    ? ` — ${total} session${s} (${running} running)`
+    : ` — ${total} session${s}`;
+}
+
 function deleteWorkspaceDetail(running, saved) {
   const s = (n) => (n === 1 ? '' : 's');
   if (running > 0 && saved > 0) {
@@ -163,7 +179,7 @@ function createAppMenus(deps) {
           const isOpen = !!getManager().windowForWorkspace(ws.id);
           const indicator = isOpen ? '●' : '○';
           const wsSessions = sessions.filter(s => s.workspaceId === ws.id).length;
-          const suffix = wsSessions > 0 ? ` — ${wsSessions} session${wsSessions === 1 ? '' : 's'}` : '';
+          const suffix = workspaceCountSuffix(wsSessions, getManager().savedForWorkspace(ws.id).length);
           return {
             label: `${indicator}  ${ws.name || ws.id}${suffix}`,
             submenu: [
@@ -189,17 +205,20 @@ function createAppMenus(deps) {
               {
                 label: 'Delete Workspace…',
                 click: async () => {
-                  // Counted at CLICK time, not with the menu template: a tray
-                  // menu can sit built for minutes, and this count is the one
-                  // that decides whether the dialog calls a total loss "empty".
+                  // BOTH counted at CLICK time, not with the menu template: a
+                  // tray menu can sit built for minutes, and these are the
+                  // numbers that decide whether the dialog calls a total loss
+                  // "empty". The label above may legitimately be stale; the
+                  // sentence above a destructive button may not.
                   const wsSaved = getManager().savedForWorkspace(ws.id).length;
+                  const wsRunning = getManager().listForWorkspace(ws.id).length;
                   const result = await dialog.showMessageBox({
                     type: 'warning',
                     buttons: ['Delete', 'Cancel'],
                     defaultId: 1,
                     cancelId: 1,
                     message: `Delete workspace "${ws.name || ws.id}"?`,
-                    detail: deleteWorkspaceDetail(wsSessions, wsSaved),
+                    detail: deleteWorkspaceDetail(wsRunning, wsSaved),
                   });
                   if (result.response !== 0) return;
                   getManager().purgeWorkspace(ws.id);
@@ -662,10 +681,10 @@ function createAppMenus(deps) {
         for (const ws of all) {
           const isOpen = !!getManager().windowForWorkspace(ws.id);
           const indicator = isOpen ? '●' : '○';
-          const sessionCount = getManager().listForWorkspace(ws.id).length;
-          const countSuffix = sessionCount > 0
-            ? ` — ${sessionCount} session${sessionCount === 1 ? '' : 's'}`
-            : '';
+          const countSuffix = workspaceCountSuffix(
+            getManager().listForWorkspace(ws.id).length,
+            getManager().savedForWorkspace(ws.id).length,
+          );
           wsMenu.submenu.push({
             label: `${indicator}  ${ws.name || ws.id}${countSuffix}`,
             submenu: [
@@ -700,15 +719,16 @@ function createAppMenus(deps) {
                 label: 'Delete Workspace…',
                 click: async () => {
                   const parent = BrowserWindow.getFocusedWindow();
-                  // Click-time, for the same reason as the tray copy above.
+                  // Both click-time, for the same reason as the tray copy above.
                   const savedCount = getManager().savedForWorkspace(ws.id).length;
+                  const runningCount = getManager().listForWorkspace(ws.id).length;
                   const result = await dialog.showMessageBox(parent, {
                     type: 'warning',
                     buttons: ['Delete', 'Cancel'],
                     defaultId: 1,
                     cancelId: 1,
                     message: `Delete workspace "${ws.name || ws.id}"?`,
-                    detail: deleteWorkspaceDetail(sessionCount, savedCount),
+                    detail: deleteWorkspaceDetail(runningCount, savedCount),
                   });
                   if (result.response !== 0) return;
                   getManager().purgeWorkspace(ws.id);
@@ -826,4 +846,4 @@ function createAppMenus(deps) {
   };
 }
 
-module.exports = { createAppMenus, deleteWorkspaceDetail };
+module.exports = { createAppMenus, deleteWorkspaceDetail, workspaceCountSuffix };
