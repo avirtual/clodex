@@ -222,6 +222,66 @@ test('openGuarded: a throw from onOpen is a retryable drop', async () => {
   assert.strictEqual(client.conns.length, 2);
 });
 
+// The INTERACTION of the two tests above it. Each of them is true and passes:
+// one drives a single onOpen throw and pins waits==[1000], the other pins that a
+// good reconnect resets the budget. Neither composes them, and the defect lived
+// exactly in that gap — the reset ran on the bare 200, so a REPEATEDLY failing
+// onOpen re-armed the budget on every cycle and the documented 3-attempt
+// schedule could never exhaust. One failure is indistinguishable between the
+// broken and the fixed code; it takes the second and third to tell them apart.
+test('openGuarded: a REPEATEDLY failing onOpen exhausts the budget (does not loop at the floor)', async () => {
+  const client = fakeClient();
+  const clk = fakeTimers();
+  const waits = [];
+  let gaveUp = null;
+  G.openGuarded(client, '/api/events', 'x', {
+    onOpen: () => { throw new Error('re-acquire failed'); },
+    onGiveUp: (e) => { gaveUp = e; },
+    timers: clk.timers,
+    wait: instantWait(waits),
+  });
+  // Drive onOpen on each connection as it appears, up to one more than the
+  // budget. A fixed guard runs out after backoff.length reconnects; the broken
+  // one happily produces a 5th, 6th, … connection at 1000ms forever.
+  for (let i = 0; i < 5 && client.conns.length > i; i++) {
+    client.conns[i].cbs.onOpen();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+  }
+  assert.deepStrictEqual(waits, [1000, 2000, 4000],
+    'backoff must advance across consecutive onOpen failures, not pin at the floor');
+  assert.strictEqual(client.conns.length, 4, '3 reconnects then give up');
+  assert.ok(gaveUp, 'onGiveUp must fire once the budget is spent');
+  assert.strictEqual(gaveUp.exitCode, EXIT.CONNECT);
+  assert.match(gaveUp.message, /reconnect attempts failed/);
+});
+
+// The other half of the same seam: a failing onOpen must not POISON the budget
+// either. One failure, then a healthy reconnect, then a later unrelated drop
+// starts over at 1000ms — the reset still happens, it just now waits for onOpen
+// to succeed before it does.
+test('openGuarded: a successful onOpen after a failure still resets the budget', async () => {
+  const client = fakeClient();
+  const clk = fakeTimers();
+  const waits = [];
+  let fail = true;
+  G.openGuarded(client, '/api/events', 'x', {
+    onOpen: () => { if (fail) throw new Error('re-acquire failed'); },
+    onGiveUp: () => {}, timers: clk.timers, wait: instantWait(waits),
+  });
+  client.conns[0].cbs.onOpen();                 // fails → attempt 1, wait 1000
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  fail = false;
+  client.conns[1].cbs.onOpen();                 // succeeds → budget cleared
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  client.conns[1].cbs.onError(new CliError(EXIT.CONNECT, 'dropped'));
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(waits, [1000, 1000],
+    'the drop after a good onOpen starts a fresh budget, not backoff[1]');
+});
+
 test('openGuarded: close() during a backoff wait clears the pending timer (no leak past detach)', async () => {
   // No injected `wait` → the DEFAULT backoff sleep runs on the (fake) clock, so
   // its timer handle is real and trackable. Detaching mid-backoff must clear it,

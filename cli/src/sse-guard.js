@@ -55,7 +55,9 @@ function defaultWait(ms, timers = { setTimeout }, onHandle) {
 //   timers, wait        — injectable for tests.
 //
 // A successful (re)connect resets the attempt counter, so an unrelated later
-// drop gets a fresh set of tries. Returns { close() } — an idempotent,
+// drop gets a fresh set of tries. "Successful" means the 200 AND `onOpen`
+// returning without throwing — a connect whose onOpen fails has not earned a
+// fresh budget, or the budget could never be spent. Returns { close() } — an idempotent,
 // user-initiated teardown that suppresses further reconnects and callbacks.
 function openGuarded(client, pathAndQuery, verb, opts = {}) {
   const {
@@ -115,10 +117,23 @@ function openGuarded(client, pathAndQuery, verb, opts = {}) {
     stream = client.openEventStream(pathAndQuery, verb, {
       onChunk: () => { if (watchdog) watchdog.pet(); },
       onOpen: () => {
-        // A live connect clears the retry budget; run the consumer's onOpen and
-        // treat any throw/rejection as a retryable drop.
-        attempt = 0;
-        Promise.resolve().then(() => onOpen && onOpen()).catch((e) => handleDrop(e instanceof CliError ? e : new CliError(EXIT.CONNECT, `reconnect setup failed: ${e.message}`)));
+        // The retry budget clears only once the connect is known GOOD, and with
+        // a consumer onOpen "good" is not the 200 — it is the 200 plus that
+        // callback succeeding. Clearing on the bare 200 (the pre-fix shape) let
+        // a consistently-failing onOpen re-arm the budget on every cycle: the
+        // throw routes to handleDrop, which takes attempt from 0 to 1, so the
+        // `attempt > backoff.length` test at :104 is never reached and the
+        // schedule stays pinned at backoff[0] forever. Measured before the fix:
+        // 12 onOpen failures → 13 reconnects, all at 1000ms, onGiveUp silent.
+        //
+        // With NO consumer onOpen there is nothing further to be good, so the
+        // 200 is the whole of it and the reset stays synchronous — deferring it
+        // to a microtask there would mean a drop arriving in the same tick as
+        // the open was charged against the PREVIOUS connect's budget.
+        if (!onOpen) { attempt = 0; return; }
+        Promise.resolve().then(() => onOpen())
+          .then(() => { attempt = 0; })
+          .catch((e) => handleDrop(e instanceof CliError ? e : new CliError(EXIT.CONNECT, `reconnect setup failed: ${e.message}`)));
       },
       onEvent: (name, data) => { if (!closed && !settled && onEvent) onEvent(name, data); },
       onError: (e) => handleDrop(e),
