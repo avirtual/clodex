@@ -2,6 +2,7 @@
 'use strict';
 
 const http = require('http');
+const https = require('https');
 const { URL } = require('url');
 const { RELAY_ENVELOPE_V } = require('./relay-protocol');
 const { withoutExecGrants } = require('./session-args');
@@ -49,6 +50,44 @@ function webHostKey(w) {
   return w ? `${w.port}:${w.tokenGated ? 1 : 0}` : '';
 }
 
+// The scheme half of a dial, in ONE place, exported so it can be tested without
+// a socket. Every request this module makes — control requests and the SSE
+// streams alike — carries `Authorization: Bearer <token>`, so the module used to
+// hand the operator's token to a cleartext socket whenever the peer was
+// configured with an https:// URL: `http.request` unconditionally, and
+// `port: u.port || 80` for good measure, so even a scheme-only https URL went to
+// the cleartext port (F001).
+//
+// The acceptance half was never in doubt — peer-import.js:59 admits https://
+// explicitly, peer-deploy.js:214 classifies it as a url, and
+// test/peer-deploy.test.js:277 pins that. The CLI's own client against the same
+// wire got it right (cli/src/client.js:105). Two first-party clients, one wire,
+// and only one of them kept TLS — because acceptance and dialling were tested in
+// different files and the SEAM between them was owned by nothing. It is owned by
+// test/peer-url-seam.test.js now.
+//
+// Ports: 443 for https, 80 for http, matching what a browser would do with the
+// same URL. Returns the request options both dial sites need, so neither can
+// drift from the other again.
+function dialOptions(baseUrl, path = '') {
+  const u = new URL(baseUrl + path);
+  const secure = u.protocol === 'https:';
+  return {
+    secure,
+    hostname: u.hostname,
+    port: u.port ? Number(u.port) : (secure ? 443 : 80),
+    path: u.pathname + u.search,
+  };
+}
+
+// Whether a peer's base URL is TLS, for picking the socket-pool class up front.
+// Defensive rather than assertive: a base URL that will not parse is not a
+// reason to throw in a constructor — every dial through it will fail on its own
+// try/catch, and treating it as plaintext changes nothing about that.
+function isSecureBase(raw) {
+  try { return new URL(raw).protocol === 'https:'; } catch { return false; }
+}
+
 class PeerConnection {
   constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, staleMs, timers, sseMaxBufferBytes }) {
     this.id = id;
@@ -74,8 +113,16 @@ class PeerConnection {
 // starve request traffic (hello/control/input/resize/query) — control acquires
 // then queue inside the agent and land minutes late. Streams get their own
 // uncapped, un-pooled agent.
-    this._reqAgent = new http.Agent({ keepAlive: true, maxSockets: 8 });
-    this._sseAgent = new http.Agent({ keepAlive: false, maxSockets: Infinity });
+// Scheme-matched pools. Node's ClientRequest refuses an agent whose `protocol`
+// differs from the request module's, so this is not cosmetic: swapping
+// http.request for https.request without swapping the agent throws
+// ERR_INVALID_PROTOCOL and the peer never connects at all. Fixed for the
+// connection's lifetime for the same reason the token is — a URL change is a
+// peer restart (PeerManager.sync), never a mutation of a live connection.
+    this._secure = isSecureBase(this.url);
+    const Agent = this._secure ? https.Agent : http.Agent;
+    this._reqAgent = new Agent({ keepAlive: true, maxSockets: 8 });
+    this._sseAgent = new Agent({ keepAlive: false, maxSockets: Infinity });
     this.online = false;
     this.hello = null;                // { host, version, caps, platform, srcDir }
     this.sessions = [];               // last fetched session list
@@ -593,12 +640,12 @@ class PeerConnection {
   }
 
   _request(method, path, payload, cb, timeout = REQUEST_TIMEOUT_MS) {
-    let u;
-    try { u = new URL(this.url + path); } catch (e) { return cb(e); }
+    let d;
+    try { d = dialOptions(this.url, path); } catch (e) { return cb(e); }
     const body = payload ? JSON.stringify(payload) : null;
-    const req = http.request({
-      hostname: u.hostname, port: u.port || 80,
-      path: u.pathname + u.search, method,
+    const req = (d.secure ? https : http).request({
+      hostname: d.hostname, port: d.port,
+      path: d.path, method,
       agent: this._reqAgent, timeout,
       headers: {
         ...(body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {}),
@@ -631,8 +678,8 @@ class PeerConnection {
   // a session that 404s now may exist on the next hello, so retrying is right
   // there.
   _sse(path, { onEvent, onOpen, onClose, onStable, onRefused }) {
-    let u;
-    try { u = new URL(this.url + path); } catch { return onClose(); }
+    let d;
+    try { d = dialOptions(this.url, path); } catch { return onClose(); }
 // Fires onClose at most once: a watchdog destroy also raises a socket error,
 // and two onCloses would schedule two reconnects — two live streams for one
 // attachment. Also stops the timer so teardown leaves nothing armed.
@@ -650,9 +697,9 @@ class PeerConnection {
       if (stableTimer != null) { this._timers.clearTimeout(stableTimer); stableTimer = null; }
       onClose();
     };
-    const req = http.request({
-      hostname: u.hostname, port: u.port || 80,
-      path: u.pathname + u.search, method: 'GET',
+    const req = (d.secure ? https : http).request({
+      hostname: d.hostname, port: d.port,
+      path: d.path, method: 'GET',
       agent: this._sseAgent,
       headers: { Accept: 'text/event-stream', ...this._authHeaders() },
     }, (res) => {
@@ -769,4 +816,4 @@ class PeerManager {
   get(id) { return this._peers.get(String(id)) || null; }
 }
 
-module.exports = { PeerManager, PeerConnection };
+module.exports = { PeerManager, PeerConnection, dialOptions };

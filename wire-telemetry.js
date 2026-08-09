@@ -1,14 +1,33 @@
 'use strict';
 
-// W2 step-4 telemetry bridge — DARK phase (CLODEX_WIRE_SHADOW only).
+// W2 step-4 telemetry bridge — PARTIALLY LIVE. Read this before trusting the
+// numbers on screen to a poll.
 //
 // Shapes the in-process wire's turn.completed receipts into the same payload
 // shapeProxyRecord (proxy-util.js) builds from a /_status poll, and diffs the
-// two every time ProxyPoller emits — ProxyPoller stays the LIVE source; this
-// module renders nothing. The diff stream is the evidence for the reviewer's
-// cutover condition (CLODEUX-PLAN.md): est cost within 1%, warmth verdicts
-// exact. Once live-shadow validation passes, the cutover commit points the
-// renderer at payload() and the 9 poll-era guards die (w2-glue-inventory.md [internal design doc, not in this repo]).
+// two every time ProxyPoller emits. ProxyPoller is still the source of the
+// payload's SHAPE and cadence — but this module is no longer dark on either
+// count that matters:
+//
+//   - `seedLifetime` runs UNCONDITIONALLY (wirescope-proxy.js:321), on every
+//     poll emit, gated by nothing.
+//   - `overlay` rewrites the payload the renderer receives whenever
+//     WIRE_TELEMETRY_LIVE is set (wirescope-proxy.js:323-325), and that flag
+//     DEFAULTS ON: engine.js:264-266 reads CLODEX_WIRE_TELEMETRY, and absent it
+//     falls back to WIRE_SHADOW, which is itself `!== '0'`. So the operator's
+//     live cost display carries this module's numbers unless someone has
+//     explicitly set CLODEX_WIRE_TELEMETRY=0 or CLODEX_WIRE_SHADOW=0.
+//
+// This header used to say "DARK phase (CLODEX_WIRE_SHADOW only)" and "this
+// module renders nothing", describing a phase the code had already left (F004,
+// second finding). Whoever changes the default again: change this paragraph in
+// the same commit — the contract below is what makes a telemetry bug merely a
+// missing diff line, and it is load-bearing precisely because the module is on.
+//
+// The diff stream remains the evidence for the reviewer's cutover condition
+// (CLODEUX-PLAN.md): est cost within 1%, warmth verdicts exact. The remaining
+// cutover work is pointing the renderer at payload() outright and retiring the
+// 9 poll-era guards (w2-glue-inventory.md [internal design doc, not in this repo]).
 //
 // Contract with the wire (fable's, wire/proxy.js header):
 //   - consume events only; NOTHING here may touch the client byte path.
