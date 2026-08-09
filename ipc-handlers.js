@@ -170,10 +170,14 @@ function registerIpcHandlers(deps) {
     try { return { ok: true, ...(await gitWorktree.repoInfo(cwd)) }; }
     catch (e) { return { ok: false, error: e.message, isRepo: false, branches: [] }; }
   });
-  handle('session:cwdSuggestions', () => {
+  // Scoped, not global: `popular` is built from directory paths, so an unscoped
+  // list would hand a web-host connection bound to one workspace the cwds of
+  // every other one. See the rule at `session:list` below — this handler was the
+  // violation of it, registered thirty lines above where it is stated.
+  handle('session:cwdSuggestions', (e) => {
     const recent = Array.isArray(uiSettings.get().recentCwds) ? uiSettings.get().recentCwds : [];
     const counts = new Map();
-    for (const s of manager.list()) {
+    for (const s of manager.listForWorkspace(workspaceOfSender(e))) {
       if (!s.cwd) continue;
       counts.set(s.cwd, (counts.get(s.cwd) || 0) + 1);
     }
@@ -206,6 +210,23 @@ function registerIpcHandlers(deps) {
   // `manager.list()` handler hands an authenticated connection every workspace's
   // sessions when it is bound to one. In-process callers (app-menus.js) use
   // `getManager().list()` directly and need no channel.
+  //
+  // That rule is now OWNED BY A TEST rather than by this paragraph:
+  // test/ipc-unscoped-listing.test.js runs the one-line grep this comment
+  // effectively specifies — no `manager.list()` anywhere in the registration
+  // source — and pins `session:cwdSuggestions` to the sender's workspace. It
+  // lived here as prose, with the violating handler registered THIRTY LINES
+  // ABOVE it, until F012. A comment that names its own violating pattern is one
+  // grep away from being executable, and the gap is where that sat.
+  //
+  // One channel below is deliberately global and is NOT a lapse:
+  // `session:reservedNames` unions `manager.sessions.keys()` with
+  // `persistence.list()` because session names are keyed GLOBALLY — a
+  // reservation check scoped to one workspace would hand out a name that then
+  // fails to create. It returns names only, no cwds and no session state. Read
+  // the rule above as covering the session LISTING, which is the mechanism it
+  // describes; the name NAMESPACE is global by construction and cannot be
+  // scoped without breaking creation.
   handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));
   handle('session:reservedNames', () => {
     const names = new Set(manager.sessions.keys());
