@@ -25,12 +25,17 @@ function initPluginHost({
 // scopes existed did — so the default is today's behaviour, not a refusal.
   pluginReachesSession,
 } = {}) {
-  // Only the three PER-SESSION slots consult this. The window-global three
-  // (footerButton, settings.section, surfaces.overlay) deliberately do not: a
-  // sidebar footer button belongs to the window, not to whichever session
-  // happens to be active, and hiding it on session switch would make the
-  // chrome flicker with no coherent meaning. Scope governs what a plugin sees
-  // OF a session, and those three see none of it.
+  // Only the PER-SESSION slots consult this — statusActions, statusSegments,
+  // rowBadges, menuProviders; the `reaches(` call sites below are the list, and
+  // are the reason this says no number. (It said "the three PER-SESSION slots"
+  // while there were four. A comment that counts its own siblings goes stale
+  // the next time one is added, which is precisely when nobody rereads it.)
+  //
+  // The window-global slots — footerButtons, settingsSections, overlays —
+  // deliberately do not: a sidebar footer button belongs to the window, not to
+  // whichever session happens to be active, and hiding it on session switch
+  // would make the chrome flicker with no coherent meaning. Scope governs what
+  // a plugin sees OF a session, and those see none of it.
   function reaches(pluginId, sessionName) {
     if (typeof pluginReachesSession !== 'function') return true;
     if (!sessionName) return true;

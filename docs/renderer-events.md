@@ -1,14 +1,19 @@
 # Renderer event push surface — the other half of the browser contract
 
 The contract map for every event the main process pushes at a renderer.
-`preload.js` invoke/send is the request half of `window.api` (165 endpoints);
+`preload.js` invoke/send is the request half of `window.api` (196 endpoints);
 THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (45 channels). This doc maps each to its emission point, its
+`preload.js` (58 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
+
+Both counts above are derived from `api-contract.js` row kinds and are pinned
+by `test/renderer-events-figures.test.js` — they are the only two figures in
+this doc another document quotes, so they are held by a test rather than by a
+reader's goodwill. If that test fails, this sentence is what to update.
 
 ## The interception model (why Phase 2 forces no new seam work)
 

@@ -126,7 +126,7 @@ adapter that hosts it. The modules below are what the engine assembles.
 - **transcript.js** — JSONL transcript → markdown/messages rendering.
 - **catalogs.js** — static shared constants (CLAUDE_TOOLS, THEME_KEYS,
   AGENT_NAME_RE, DEFAULT_WORKSPACE_ID, …).
-- **stores.js** — `initStores(userDataPath, …)` builds all eight persistence
+- **stores.js** — `initStores(userDataPath, …)` builds every persistence
   stores (sessions/workspaces/templates/prompts/agent+skill libraries/
   defaults/ui-settings). Paths derive inside the factory, post-whenReady by
   construction.
@@ -139,7 +139,9 @@ adapter that hosts it. The modules below are what the engine assembles.
   Unix-socket (`run/<name>/agent.sock`) transport; discovery iterates
   `run/*/agent.json`.
 - **clodex-paths.js** — the per-agent runtime path grammar under `~/.clodex`:
-  `pathFor(root, name, kind)` / `runDirFor(root, name)` over 18 artifact kinds,
+  `pathFor(root, name, kind)` / `runDirFor(root, name)` over the artifact kinds
+  in `KINDS` (`clodex-paths.js`; count them with
+  `node -e "console.log(Object.keys(require('./clodex-paths').KINDS).length)"`),
   the single source every mint site routes through. Pure leaf (no I/O, like
   scope-util); NOT in the leak-scanner lists. Shared dirs (`messages/`,
   `pending/`, `agents/`, `skills/`, …) stay at the root and are outside the
@@ -167,7 +169,8 @@ adapter that hosts it. The modules below are what the engine assembles.
   `wire-totals.json` across a name's whole `sessionIds` history for the
   monotonic per-agent total, and STREAMS the transcript for compact boundaries
   (70MB/157ms — a sync read is ~10x that and copies the file into memory).
-  Never merges the four cost scopes. Electron-free; in SCANNED_MODULES.
+  Never merges the cost scopes (`session-info.js` names them and says why they
+  are not interchangeable). Electron-free; in SCANNED_MODULES.
 - **git-worktree.js** — stdlib-only git worktree ops (create/remove/repoInfo/
   defaultBranch) behind the New-Session worktree option and the delete flow's
   awaited `removeWorktree`. `execFile`, never a shell; in SCANNED_MODULES.
@@ -191,10 +194,15 @@ adapter that hosts it. The modules below are what the engine assembles.
 - **wirescope-supervisor.js** — wirescope process supervision.
 - **update-checker.js** — GitHub release poller (data layer only; main.js
   keeps the notify/banner side effects).
-- **session-manager.js** (~2.3k lines) — the SessionManager class: PTY
-  spawn/kill/restore, per-session state, intent routing, DM delivery/
-  parking, inject queue integration. Zero electron; ~80 injected deps.
-- **app-menus.js** — tray + application menu builders (11 fns).
+- **session-manager.js** — the SessionManager class and the largest module in
+  the engine (`wc -l session-manager.js`): PTY spawn/kill/restore, per-session
+  state, intent routing, DM delivery/parking, inject queue integration. Zero
+  electron — verifiably so (`grep -c "require('electron')"` → 0); it reaches
+  renderers through opaque handles, and the file's own WINDOW BRIDGE header
+  states that contract. Its collaborators all arrive through the
+  `createSessionManager(deps)` destructure, which is the list.
+- **app-menus.js** — tray + application menu builders (the `createAppMenus`
+  return is the list).
 - **remote-wiring.js** — RemoteServer construction/reconciliation
   (`syncRemoteServer`).
 - **peer-wiring.js** — PeerManager + TunnelManager reconciliation and
@@ -259,10 +267,10 @@ adapter that hosts it. The modules below are what the engine assembles.
 
 - **renderer/lib/** — pure-ish leaves: `constants.js`, `format.js`
   (string formatters, unit-tested), `render-html.js` (DOM-string builders),
-  `checklists.js` (render/collect checklist pairs; owns five library
+  `checklists.js` (render/collect checklist pairs; owns the library
   caches behind setters), `session-actions.js` (the type→entries mapping for
   the consolidated `⚙ session ▾` menu, unit-tested), `session-info-view.js`
-  (the ⓘ panel's rows as data — pure so the four cost scopes and their labels
+  (the ⓘ panel's rows as data — pure so the cost scopes and their labels
   are unit-testable; the 07-15 three-scopes ruling is pinned there),
   `subagent-policy.js` (`classifySubagent` — live/done/drop is POLICY, there is
   no wire signal for it, and the sidebar child rows and the drawer's Activity
@@ -275,7 +283,8 @@ adapter that hosts it. The modules below are what the engine assembles.
   `#main` layout contract and pane swapping; tenants register with
   `{id, label, available, mount, onShow, onHide, onResize}` and get a
   `notify(level)` back. Tab ids are frozen: `log`, `activity`, `ctl`, `term`.
-  Its header comment carries four rules a tenant author must not re-derive),
+  Its header comment carries the numbered rules a tenant author must not
+  re-derive),
   `ipc-log.js` (the `log` tenant: rows + export only),
   `activity-tab.js` (the `activity` tenant, and the seam between the two owners:
   the CHIPS are wirescope's, off the free 5s `session-proxy` payload, and the FEED
@@ -295,21 +304,28 @@ adapter that hosts it. The modules below are what the engine assembles.
   (the sidebar row's ⓘ — anchored to the ROW, so it opens for a session that
   isn't active, and off `window.api.sessionInfo` rather than the data seam
   since it reads local persistence; peer rows build their own markup and
-  deliberately have no ⓘ), plus two that are NOT on
-  the data seam by design: `checklist-popovers.js` (tools/skills/agents/**intents**
+  deliberately have no ⓘ), plus the ones that are NOT on the data seam by
+  design — grep the directory for `popoverApi` and the misses are the list:
+  `checklist-popovers.js` (tools/skills/agents/**intents**
   — local config editors, direct `window.api`; tools/agents suppressed for
   peers, but **skills takes an optional peer `source`** so the same popover
   edits a peer session's skills over the wire under the `args` cap; the intents
   popover applies IMMEDIATELY — the fire-time gate re-reads persistence — with an
-  optional restart only to refresh the seat's prompt) and
+  optional restart only to refresh the seat's prompt),
   `session-menus.js` (warm/strip/history dropdowns + the consolidated
-  `⚙ session ▾` launcher menu — local action menus).
+  `⚙ session ▾` launcher menu — local action menus), and
+  `team-roles-popover.js` (the team manifest is a file, not session state, so
+  it goes direct rather than through the local-vs-peer seam).
+  `selection-popover.js` also lives here but is the drawer's 📋 inspector on
+  `window.api.drawerInspectSelection`, a different subsystem, not a seam bypass.
 - **renderer/peers-ui.js** — the peer runtime: sidebar peer rows, peer bar,
-  control + type-to-take, the 13 peer event subscriptions, restore sweep,
+  control + type-to-take, the peer event subscriptions
+  (`grep -cE "api\.on[A-Za-z]+\(" renderer/peers-ui.js`), restore sweep,
   visibility/control maps, `PEER_UI_KINDS`, and the peer-select/peer-info
-  popovers. Six back-exports to core (`typeToTakeControl`, `renderPeerBar`,
-  `forgetControlMirror`, `openPeerSession`, `peerDisplayHost`,
-  `peerHideFromList`).
+  popovers. Back-exports to core — the `initPeersUi` return, which is the list:
+  `typeToTakeControl`, `renderPeerBar`, `forgetControlMirror`,
+  `openPeerSession`, `peerDisplayHost`, `peerHideFromList`,
+  `ensurePeerSessionVisible`, `openPeerArgs`.
 
 ## Tests
 

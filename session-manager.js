@@ -1,3 +1,40 @@
+// session-manager.js — the SessionManager class: PTY spawn/kill/restore,
+// per-session state, intent routing, DM delivery and parking, inject queue.
+//
+// ─── WINDOW BRIDGE / opaque-handle contract ─────────────────────────────────
+//
+// This file never imports electron. It reaches renderers through exactly one
+// map — `this.windows`, workspaceId → handle — filled by `registerWindow()`,
+// emptied by `unregisterWindow()`, and read only by `windowForWorkspace()`,
+// `windowForSession()`, `workspaceForWindow()` and `allLiveWindows()`.
+// `_sendToSession()` and `_broadcast()` are the routine exits; the one direct
+// use of a handle is the `[agent:file view]` path, which needs show + focus +
+// send on a single handle.
+//
+// A handle is an OPAQUE OBJECT. Everything here touches exactly five methods:
+//
+//   .webContents.send(channel, ...args)   _sendToSession, _broadcast, file-view
+//   .isDestroyed()                        windowForWorkspace, allLiveWindows
+//   .isFocused()                          the notify/attention focus gate
+//   .show() / .focus()                    the [agent:file view] path only
+//
+// …plus reference identity: `workspaceForWindow()` compares handles with `===`,
+// so a handle must be the same object at register time and at lookup time.
+//
+// The contract is this small on purpose, because it already has two
+// implementations: real Electron BrowserWindows (`main.js`) and plain objects
+// backed by a WebSocket connection (`web-host.js`, `handleFor`, a five-key
+// literal). `headless-main.js` runs this engine in a process with no electron
+// in it at all.
+//
+// So do not `require('electron')` here, and do not reach into a handle for
+// anything outside that list — no `BrowserWindow.fromWebContents`, no
+// `instanceof`, no geometry, no `webContents` member other than `.send`. Every
+// one of those works under Electron and is undefined under the web host, so it
+// fails only at runtime and only for browser clients. Widening the contract
+// means widening `handleFor` to match, in the same change.
+//
+// The bridge is covered by test/session-manager.test.js with fake handles.
 
 const NOTIFY_USER_MAX_BYTES = 16 * 1024;
 
