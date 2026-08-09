@@ -227,12 +227,28 @@ const born_self = process.argv[5] ? Number(process.argv[5]) : null;
 // Put a claimed entry back under its original basename (seq order + resend id
 // survive), write-then-rename like parkDelivery. Best-effort: a failed restore
 // must not abort the drain and lose the rest of the batch.
+// The fsyncs are INLINED rather than required from fs-util: this script runs
+// standalone out of the run dir, with no path back into an app that may be
+// asar-packed. It is the same sequence atomicWriteFileSync performs, and the
+// DIRECTORY fsync is the load-bearing half -- without it the rename itself can
+// be lost on a crash, putting the message nowhere: the claim already renamed
+// the original away, so an unrestored parked message is GONE, not stale.
 function restore_parked(base, raw) {
   const tmp = path.join(d, '.' + base + '.tmp');
   try {
     fs.mkdirSync(d, { recursive: true });
-    fs.writeFileSync(tmp, raw);
+    let fd;
+    try {
+      fd = fs.openSync(tmp, 'w', 0o600);
+      fs.writeSync(fd, raw);
+      fs.fsyncSync(fd);
+    } finally {
+      if (fd !== undefined) { try { fs.closeSync(fd); } catch (e3) {} }
+    }
     fs.renameSync(tmp, path.join(d, base));
+    let dfd;
+    try { dfd = fs.openSync(d, 'r'); fs.fsyncSync(dfd); } catch (e4) {}
+    finally { if (dfd !== undefined) { try { fs.closeSync(dfd); } catch (e5) {} } }
   } catch (e) {
     try { fs.rmSync(tmp, { force: true }); } catch (e2) {}
   }
