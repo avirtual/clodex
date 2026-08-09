@@ -25,8 +25,10 @@ blocks a release.
 - **A team role can now get a branch and a checkout per ticket, automatically.**
   Set `"worktree": true` on a role in its `team.json` and every ticket the lead
   opens for that role mints a branch named after the ticket, spawns a teammate in
-  its own worktree on that branch, and points the ticket at that teammate rather
-  than the role. One ticket, one branch, one teammate — so several can run at
+  its own branch, and points the ticket at that teammate rather
+  than the role. The teammate starts in the project as usual and is told where
+  its worktree is, at the top of the ticket. One ticket, one branch, one
+  teammate — so several can run at
   once without sharing a working tree, and the branch is there to review and
   merge whether or not the teammate is still alive. Roles are opted out by
   default, so existing teams work exactly as before. If the worktree cannot be

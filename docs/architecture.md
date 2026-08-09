@@ -186,8 +186,14 @@ adapter that hosts it. The modules below are what the engine assembles.
   ticket is re-pinned from the ROLE to that seat name, which is what keeps the
   seat one-shot — `_ticketAssigneeSeat` resolves a role to the first live seat
   holding it, so a role-pinned ticket would route the next one into the previous
-  ticket's checkout. A session's cwd is fixed at PTY spawn, so seat-per-ticket is
-  forced by the mechanism, not chosen.
+  ticket's checkout.
+  The ticket seat's cwd is the REPO, not its worktree: it is TOLD the path by the
+  `WORK IN:` line `_deliverTicketSpec` prepends, and cd's there itself. Booting it
+  in the tree would bind its transcript, project root and team block to a checkout
+  that is deleted with the session. The path is stored on the TICKET
+  (`ticket.worktree`) so a replay can re-tell a respawned seat. The
+  `[agent:spawn worktree:]` path is the other shape — there the seat's cwd IS the
+  worktree, which is why membership is by repo.
 - **session-discovery.js** — scans for adoptable external agent processes
   (opt-in startup discovery), excluding Clodex's own `livePids`; in
   SCANNED_MODULES.

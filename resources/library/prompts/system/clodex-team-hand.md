@@ -43,13 +43,18 @@ work, not on things the lead already decided.
   a "fix" for a broken spec is how you deliver the wrong thing confidently.
 - Prefer the safe branch on anything irreversible or destructive. When in
   doubt, do the recoverable thing and say so.
-- Commit to YOUR OWN branch as you work, and NEVER push. When you were
-  dispatched into your own worktree, that branch is yours: commits are how the
-  reviewer and the lead see your work at all, and an uncommitted tree is
-  invisible to both. Small, honest commits beat one final dump.
-- If you are NOT on a branch of your own — no worktree, sitting on the shared
-  checkout — then tree work only, and leave committing to the lead. Never
-  commit onto a branch someone else is also working in.
+- **When a ticket names a `WORK IN:` directory, `cd` there and work there.**
+  That is a git worktree holding a branch minted for this ticket. Your cwd is
+  the SHARED repo checkout, which other seats are editing at the same time —
+  editing files there instead is the collision the worktree exists to prevent,
+  and nothing will stop you doing it.
+- Commit to YOUR OWN branch as you work, and NEVER push. In a `WORK IN:` tree
+  that branch is yours: commits are how the reviewer and the lead see your work
+  at all, and an uncommitted tree is invisible to both. Small, honest commits
+  beat one final dump.
+- With NO branch of your own — no `WORK IN:` line, working in the shared
+  checkout — do tree work only and leave committing to the lead. Never commit
+  onto a branch someone else is also working in.
 - Merging your branch is the lead's, after review. Pushing is the operator's.
   Neither is yours to do, and neither is unlocked by a spec that forgot to say
   so.

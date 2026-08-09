@@ -85,16 +85,18 @@ reach for a harness task tool and assume a teammate received it.
 Two hands editing one working tree collide — not in git, which never sees the
 half-written state, but on disk, where one hand's edit lands mid-read of the
 other's. So a ticket that gets its own hand gets its own branch and its own
-checkout. A worktree of the repo is still a member of the team (membership is by
-REPOSITORY, not by path), so tickets, roster and review reach it normally.
+checkout.
 
-Two ways in. A role with `"worktree": true` in team.json does it AUTOMATICALLY:
-every ticket you `task add` to that role mints a branch off the ticket id, spawns
-a seat in a worktree on it, and re-pins the ticket to that seat. The seat is
-one-shot — one ticket, one branch, one seat — because a session's cwd is fixed
-when it spawns and there is no moving a live seat to the next ticket's branch.
-For a one-off outside the ticket flow, spawn it yourself:
-`[agent:spawn name:<seat> cwd:<repo> worktree:<branch>]`.
+A role with `"worktree": true` in team.json does it automatically: every ticket
+you `task add` to that role mints a branch off the ticket id, creates a worktree
+on it, spawns a seat, and re-pins the ticket to that seat. The seat's cwd stays
+the shared REPO — it is TOLD where its tree is, by a `WORK IN:` line at the head
+of the spec, and goes there itself. One ticket, one branch, one seat.
+
+For a one-off outside the ticket flow, spawn a seat that LIVES in the worktree:
+`[agent:spawn name:<seat> cwd:<repo> worktree:<branch>]`. That is the other
+shape, and it is why membership is by REPOSITORY and not by path — a seat whose
+cwd IS a worktree is still on the team.
 
 - The hand COMMITS to its own branch — that is how the reviewer and you see
   the work at all; an uncommitted worktree is invisible to both.
@@ -105,6 +107,9 @@ For a one-off outside the ticket flow, spawn it yourself:
 - The tree is removed with the session, so retiring the seat after you merge
   is the cleanup. Merge FIRST — a discarded worktree takes unmerged commits
   with it.
+- A ticket seat that dies is replaceable and its work is not lost: the branch
+  and the tree outlive it, and the `WORK IN:` line is redelivered with the spec
+  on a replay. Respawn onto the same ticket rather than starting a new branch.
 
 ## Verification
 

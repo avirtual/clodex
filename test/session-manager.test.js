@@ -8953,12 +8953,18 @@ test('task add: an opted-in role mints a branch, a worktree and a seat, and the 
   // which is trivially true of a dispatch that never spawned anything.
   assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: create() must have been reached');
   assert.strictEqual(createdName, 'team-hand-1', 'seat name carries the ticket number');
-  assert.notStrictEqual(createdCwd, repo, 'the seat must NOT boot in the shared checkout');
-  assert.ok(fsReal.lstatSync(pathReal.join(createdCwd, '.git')).isFile(),
-    'cwd must be a linked worktree (a .git FILE)');
+  // The seat boots in the SHARED repo and is TOLD where its tree is. Booting it in
+  // the worktree would bind its transcript, project root and team block to a
+  // checkout that is removed when the ticket's session is deleted.
+  assert.strictEqual(createdCwd, repo, 'the seat boots in the repo, not in the worktree');
 
+  // The worktree still exists, on its branch, beside the repo — the seat just is
+  // not living in it.
+  const wtPath = f.worktreeSet.length ? f.worktreeSet[0].wt.path : null;
+  assert.ok(wtPath && fsReal.lstatSync(pathReal.join(wtPath, '.git')).isFile(),
+    'ENTER: a linked worktree (a .git FILE) must have been created, or the rest asserts nothing');
   const head = require('node:child_process')
-    .execFileSync('git', ['-C', createdCwd, 'rev-parse', '--abbrev-ref', 'HEAD'], { stdio: 'pipe' })
+    .execFileSync('git', ['-C', wtPath, 'rev-parse', '--abbrev-ref', 'HEAD'], { stdio: 'pipe' })
     .toString().trim();
   assert.strictEqual(head, 't1-build-the-widget', 'branch is named from the ticket id + title slug');
 
@@ -8967,10 +8973,19 @@ test('task add: an opted-in role mints a branch, a worktree and a seat, and the 
   const t = f.one('t1');
   assert.strictEqual(t.assignee, 'team-hand-1', 'ticket pins to the SEAT, not the role');
   assert.strictEqual(t.role, 'hand', 'the originating role is preserved');
-  assert.deepStrictEqual(f.worktreeSet, [{ name: 'team-hand-1', wt: { path: createdCwd, branch: 't1-build-the-widget' } }],
+  assert.deepStrictEqual(f.worktreeSet, [{ name: 'team-hand-1', wt: { path: wtPath, branch: 't1-build-the-widget' } }],
     'the worktree is recorded, or Delete Session… cannot remove it');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand-1', sender: 'clodex-team', body: '[ticket t1] build the widget\ndetail' }],
-    'the spec reaches the new seat');
+  assert.strictEqual(t.worktree.path, wtPath, 'the ticket carries the tree, so a REPLAY can re-tell a respawned seat');
+
+  // The seat cannot find a tree it is not told about: git puts it BESIDE the repo,
+  // which is nowhere the seat would look from its cwd.
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery to assert on');
+  assert.strictEqual(f.gated[0].target, 'team-hand-1');
+  assert.match(f.gated[0].body, new RegExp(`WORK IN: ${wtPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `),
+    'the spec must name the worktree path — the seat boots in the repo and would otherwise edit the shared tree');
+  assert.match(f.gated[0].body, /branch t1-build-the-widget/, 'and its branch');
+  assert.ok(f.gated[0].body.endsWith('build the widget\ndetail'),
+    'the spec text itself still arrives, after the location line');
 
   fsReal.rmSync(root, { recursive: true, force: true });
 });

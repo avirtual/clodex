@@ -4466,11 +4466,20 @@ function createSessionManager(deps) {
           + `started, do the task as specified below; if it is PARTIALLY done, do NOT restart it — report what `
           + `you found and ask how to proceed.\n`
         : `[ticket ${ticket.id}] `;
+      // A ticket with its own worktree: the seat's cwd is the REPO, so the tree is
+      // somewhere it would not otherwise look (git puts a worktree BESIDE the repo).
+      // Rides the spec on every delivery INCLUDING a replay — a respawned seat needs
+      // the location as much as the first incarnation did, and it has no memory of it.
+      const wtLine = (ticket && ticket.worktree && ticket.worktree.path)
+        ? `WORK IN: ${ticket.worktree.path} (git worktree, branch ${ticket.worktree.branch}) — cd there first. `
+          + `That tree is yours for this ticket: commit to ${ticket.worktree.branch} as you go, never push, and do not merge it. `
+          + `Your cwd is the shared repo checkout; editing files there instead would collide with the other seats working in it.\n`
+        : '';
       // The marker also rides the pointer line: this head is ~490 chars, so head+spec
       // spills for all but the shortest specs, and a spilled body announces itself
       // only as "Message (N bytes) attached". A seat must know this is a REPLAY
       // before it opens the file, not after.
-      const r = this._gatedDeliver(seat, fromName, `${head}${specText}`, urgent,
+      const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${specText}`, urgent,
         replay ? `[ticket ${ticket.id} REPLAY]` : '');
       if (!r || r.error) return { undelivered: true };
       if (r.parked) return { parked: r.parked, reason: r.reason || null };
@@ -4767,18 +4776,33 @@ function createSessionManager(deps) {
             return;
           }
           wt = { path: r.path, branch: r.branch };
+          // Recorded on the TICKET, which is what _deliverTicketSpec reads to tell
+          // the seat where to work. On the ticket rather than only on the session
+          // because the spec is redelivered on a replay, and a seat that comes back
+          // after a respawn needs the location as much as the first one did.
+          try {
+            const all = ticketsStore.load(teamDir);
+            const rec = all.find((x) => x.id === ticket.id);
+            if (rec) { rec.worktree = wt; ticketsStore.save(teamDir, all); }
+            ticket.worktree = wt;
+          } catch { /* best-effort — the spec below still carries it from `ticket` */ }
           const leadArgs = (getPersistence().get(opener.name)?.extraArgs) || [];
           const postureArgs = leadArgs.includes('--dangerously-skip-permissions')
             ? ['--dangerously-skip-permissions'] : [];
+          // cwd is the REPO, not the worktree. The seat is TOLD where its tree is
+          // (the spec head below) and goes there itself. Booting it in the worktree
+          // instead would bind the seat's whole identity — transcript, project root,
+          // team block, recent-cwd — to one branch's checkout, and that checkout is
+          // removed when the ticket's session is deleted.
           await this.create(
-            seat.name, def.type || opener.type || 'claude', r.path, postureArgs, null,
+            seat.name, def.type || opener.type || 'claude', team.root, postureArgs, null,
             opener.workspaceId || DEFAULT_WORKSPACE_ID, null, false, opener.proxy ?? null,
             [], [], [], [], [], def.prompt || null, [], [], null, null, true,
           );
           try { getPersistence().setWorktree(seat.name, wt); } catch { /* best-effort */ }
           this._sendToSession(seat.name, 'session:context-action', {
             action: 'reattach', name: seat.name, type: (this.sessions.get(seat.name) || {}).agentType || null,
-            cwd: r.path, backend: (this.sessions.get(seat.name) || {}).backend || null,
+            cwd: team.root, backend: (this.sessions.get(seat.name) || {}).backend || null,
             noWire: !!(this.sessions.get(seat.name) || {}).noWire,
           });
           const d = this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true);
