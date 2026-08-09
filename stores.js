@@ -89,6 +89,14 @@ const DEFAULT_UI_SETTINGS = {
   plugins: {},
 };
 
+// Every read of a default that a caller could MUTATE goes through here. `get()`
+// hands its result to callers that edit it in place (the prefs dialog collects a
+// settings object, edits, and writes it back), so handing out the module
+// singleton or one of its nested arrays lets one caller's edit become the
+// process-wide default for every later read — including reads by code that never
+// touched settings. Pure JSON data, so the round-trip is the whole clone.
+function defaultUiSettings() { return JSON.parse(JSON.stringify(DEFAULT_UI_SETTINGS)); }
+
 // Shape-only, by design (see DEFAULT_UI_SETTINGS.plugins). Anything that isn't
 // an object collapses to {} — a corrupt value must not make every plugin
 // setting unreadable. Non-string entries in `enabled` are dropped rather than
@@ -1194,12 +1202,12 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         // it by accident: `peerShellEnabled` must read `raw.peers`, and having
         // the sanitized array under a different name is what makes the wrong
         // read a visible substitution rather than an invisible one.
-        const peers = sanitizePeers(raw?.peers) ?? DEFAULT_UI_SETTINGS.peers;
+        const peers = sanitizePeers(raw?.peers) ?? defaultUiSettings().peers;
         return {
           statusline: {
-            claude: Array.isArray(raw?.statusline?.claude) ? raw.statusline.claude : DEFAULT_UI_SETTINGS.statusline.claude,
+            claude: Array.isArray(raw?.statusline?.claude) ? raw.statusline.claude : defaultUiSettings().statusline.claude,
             claudeCommand: typeof raw?.statusline?.claudeCommand === 'string' ? raw.statusline.claudeCommand : '',
-            codex: Array.isArray(raw?.statusline?.codex) ? raw.statusline.codex : DEFAULT_UI_SETTINGS.statusline.codex,
+            codex: Array.isArray(raw?.statusline?.codex) ? raw.statusline.codex : defaultUiSettings().statusline.codex,
           },
           proxyEnabled: typeof raw?.proxyEnabled === 'boolean' ? raw.proxyEnabled : DEFAULT_UI_SETTINGS.proxyEnabled,
           proxyUrl: typeof raw?.proxyUrl === 'string' ? raw.proxyUrl : DEFAULT_UI_SETTINGS.proxyUrl,
@@ -1212,7 +1220,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           selectionHints: typeof raw?.selectionHints === 'boolean' ? raw.selectionHints : DEFAULT_UI_SETTINGS.selectionHints,
           terminalReports: sanitizeTerminalReports(raw),
           discoverOnStartup: typeof raw?.discoverOnStartup === 'boolean' ? raw.discoverOnStartup : DEFAULT_UI_SETTINGS.discoverOnStartup,
-          recentCwds: Array.isArray(raw?.recentCwds) ? raw.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : DEFAULT_UI_SETTINGS.recentCwds,
+          recentCwds: Array.isArray(raw?.recentCwds) ? raw.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : defaultUiSettings().recentCwds,
           disableClaudeDesignMcp: typeof raw?.disableClaudeDesignMcp === 'boolean' ? raw.disableClaudeDesignMcp : DEFAULT_UI_SETTINGS.disableClaudeDesignMcp,
           theme: THEME_KEYS.includes(raw?.theme) ? raw.theme : DEFAULT_UI_SETTINGS.theme,
           sidebarWidth: clampSidebarWidth(raw?.sidebarWidth),
@@ -1233,12 +1241,12 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           peerAttached: sanitizePeerAttached(raw?.peerAttached) ?? {},
           peerVisible: sanitizePeerVisible(raw?.peerVisible) ?? {},
           peerControlled: sanitizePeerControlled(raw?.peerControlled) ?? {},
-          boxes: sanitizeBoxes(raw?.boxes) ?? DEFAULT_UI_SETTINGS.boxes,
+          boxes: sanitizeBoxes(raw?.boxes) ?? defaultUiSettings().boxes,
           lastRebootAt: Number.isFinite(raw?.lastRebootAt) ? raw.lastRebootAt : DEFAULT_UI_SETTINGS.lastRebootAt,
           pendingRebootNotice: sanitizeRebootNotice(raw?.pendingRebootNotice),
-          plugins: sanitizePlugins(raw?.plugins) ?? { ...DEFAULT_UI_SETTINGS.plugins },
+          plugins: sanitizePlugins(raw?.plugins) ?? defaultUiSettings().plugins,
         };
-      } catch { return DEFAULT_UI_SETTINGS; }
+      } catch { return defaultUiSettings(); }
     },
     get() { return this._load(); },
     set(partial) {

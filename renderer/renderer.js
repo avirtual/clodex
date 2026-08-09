@@ -5573,8 +5573,10 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     if (typeof entry.pendingCount === 'number') applyPendingBadge(entry.name, entry.pendingCount);
     if (!firstHealthy) firstHealthy = entry.name;
   }
+  // Only a session with a terminal is switchable, and archived/failed entries
+  // never get one — so the target is the first entry that built one, not
+  // restored[0], which is commonly archived.
   if (firstHealthy) switchSession(firstHealthy);
-  switchSession(restored[0].name);
   initSidebarView();
 })();
 

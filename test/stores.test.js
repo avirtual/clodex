@@ -53,6 +53,48 @@ test('persistence: setSessionId accumulates a dedup move-to-end history', () => 
   } finally { cleanup(); }
 });
 
+// get() hands its result to callers that edit it in place, so a default returned
+// by reference outlives the caller that mutated it: the corruption lands on a
+// LATER read, in code that never touched settings, with nothing linking the two.
+test('uiSettings: get() never hands out the module default by reference', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    const a = uiSettings.get();
+    // ENTER: a fresh install must actually be reading defaults here — against a
+    // settings file with these keys stored, the mutations below prove nothing.
+    assert.deepStrictEqual(a.recentCwds, [], 'ENTER: fresh install reads the default recentCwds');
+    assert.deepStrictEqual(a.plugins, {}, 'ENTER: fresh install reads the default plugins');
+    assert.ok(Array.isArray(a.statusline.claude) && a.statusline.claude.length > 0,
+      'ENTER: fresh install reads the default claude statusline');
+    const claudeLen = a.statusline.claude.length;
+    a.recentCwds.push('/tmp/poison');
+    a.plugins.poison = true;
+    a.statusline.claude.push('poison');
+    a.boxes.push({ id: 'poison' });
+    const b = uiSettings.get();
+    assert.deepStrictEqual(b.recentCwds, [], 'a later read is unaffected by an earlier caller mutation');
+    assert.deepStrictEqual(b.plugins, {}, 'nested plugins object is not shared');
+    assert.strictEqual(b.statusline.claude.length, claudeLen, 'nested statusline array is not shared');
+    assert.ok(!b.boxes.some((x) => x && x.id === 'poison'), 'nested boxes array is not shared');
+  } finally { cleanup(); }
+});
+
+test('uiSettings: a corrupt settings file yields a fresh default object each read', () => {
+  const { stores, cleanup, userData } = freshStores();
+  try {
+    // The catch path — the one that used to `return DEFAULT_UI_SETTINGS` outright.
+    fs.writeFileSync(path.join(userData, 'ui-settings.json'), '{ not json');
+    const a = stores.uiSettings.get();
+    assert.deepStrictEqual(a.recentCwds, [], 'ENTER: the corrupt file must fall through to defaults');
+    a.recentCwds.push('/tmp/poison');
+    a.theme = 'poison';
+    const b = stores.uiSettings.get();
+    assert.deepStrictEqual(b.recentCwds, [], 'catch path does not hand out the shared default');
+    assert.notStrictEqual(b.theme, 'poison');
+  } finally { cleanup(); }
+});
+
 test('uiSettings: reboot rate-limit stamp ships at 0 and round-trips (Task 27)', () => {
   const { stores, cleanup } = freshStores();
   try {

@@ -33949,7 +33949,6 @@ ${res.stderr}` : "");
           if (!firstHealthy) firstHealthy = entry.name;
         }
         if (firstHealthy) switchSession(firstHealthy);
-        switchSession(restored[0].name);
         initSidebarView();
       })();
       (async function maybeDiscoverOnStartup() {
