@@ -5,6 +5,7 @@
 
 const path = require('path');
 const os = require('os');
+const { ensureDir, atomicWriteFileSync } = require('./fs-util');
 
 const TEAM_FILE = 'team.json';
 const ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
@@ -74,6 +75,27 @@ function normalizeRoleDef(roleName, def, file) {
     instantiate: inst,
     ephemeral: def.ephemeral === true,
     brief: def.brief ?? null,
+    // SCOPE OF `tools`, stated because it was believed to be wider (F008).
+    // The ONLY consumer of a role's tools is the cold-reviewer spawn in
+    // session-manager.js, which intersects it with REVIEWER_TOOL_CAP and inverts
+    // the result into disabledTools. Every other role carries the field and
+    // NOTHING reads it: `tools: ['Read']` on a `hand` restricts that hand by
+    // exactly nothing.
+    //
+    // Why the scope is real and not an oversight to widen casually: disabledTools
+    // is enforced through the claude settings hook (setupClaudeHook), and codex
+    // ignores a denylist entirely. The reviewer path can rely on it only because
+    // it FORCES type claude — a choke point an arbitrary role does not have, so
+    // enforcing tools generally would produce a cap that silently evaporates on
+    // any codex seat. That is a fail-open dressed as a restriction, which is the
+    // same defect this comment exists to stop, one layer down.
+    //
+    // So the field stays reviewer-scoped, and addRole below REFUSES to write it
+    // on any other role rather than storing a restriction nobody applies. A
+    // hand-authored manifest that already carries one still LOADS (throwing here
+    // would take the whole team layer down: every caller resolves teams inside a
+    // best-effort catch, so a hard failure reads as "no team" everywhere) — it is
+    // inert, documented, and refused at the front door.
     tools: def.tools ?? null,
     type: def.type ?? null,
   };
@@ -83,17 +105,22 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   const home = clodexHome || defaultClodexHome();
   const teamsDir = path.join(home, 'teams');
 
+  // Routed through fs-util's atomicWriteFileSync, not a local write+rename
+  // (F010). The pair here was the same shape but WITHOUT the fsyncs: the rename
+  // was atomic, so no reader ever saw a half file, but neither the bytes nor the
+  // directory entry were durable — a power loss after the rename could leave a
+  // team.json that names roles whose contents never reached the disk. fs-util is
+  // the audited choke point every other JSON store already uses, and it fsyncs
+  // both.
+  //
+  // The durability primitive is deliberately NOT taken from the injected `fs`:
+  // it is a single audited implementation, not a seam a caller gets to vary, and
+  // every caller (engine.js and every test) injects the real fs anyway. The dir
+  // is still created 0700 first — atomicWriteFileSync's own mkdir carries no
+  // mode, and ~/.clodex/teams/<name>/ must not widen to the umask default.
   function atomicWrite(file, data) {
-    const dir = path.dirname(file);
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const tmp = path.join(dir, `.${path.basename(file)}.tmp.${process.pid}.${Date.now()}`);
-    fs.writeFileSync(tmp, data, { mode: 0o600 });
-    try {
-      fs.renameSync(tmp, file);
-    } catch (e) {
-      try { fs.unlinkSync(tmp); } catch {}
-      throw e;
-    }
+    ensureDir(path.dirname(file));
+    atomicWriteFileSync(file, data);
   }
 
   function listTeams() {
@@ -247,6 +274,16 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (RESERVED_ROLE_KEYS.has(roleName) && !existing) {
       throw new Error(`the "${roleName}" role is operator-owned topology; add it via the app, not an intent/mutator (${team.file})`);
     }
+    // `tools` is enforced ONLY on the reviewer (see normalizeRoleDef). Writing it
+    // on any other role stores a restriction nothing applies — a knob that reads
+    // as a grant of safety and grants none, which is worse than its absence
+    // because it is written down and believed (F008). Refused, not stripped:
+    // setRole drops authority-bearing fields silently by spec, but that is an
+    // EDIT of an existing role, where the field was never promised; here the
+    // caller is defining the role and must not walk away thinking it capped one.
+    if (!RESERVED_ROLE_KEYS.has(roleName) && normalized.tools) {
+      throw new Error(`role "${roleName}" cannot declare tools — a tools allowlist is only enforced for the reviewer role; use a template's disabledTools to restrict a seat (${team.file})`);
+    }
     if (existing) {
       if (JSON.stringify(existing) === JSON.stringify(normalized)) return team; // no-op
       throw new Error(`role "${roleName}" already exists on team "${teamName}" with a different definition`);
@@ -350,13 +387,39 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   };
 }
 
+// Seat name → role. Two forms answer: the lead SEAT, and `<team>-<role>` with an
+// optional numeric collision suffix.
+//
+// THE SUFFIX IS NOT ONLY `-N` (F008). The old strip was `/-\d+$/` — a hyphen
+// REQUIRED before the digits — so `shop-hand2` derived the key `hand2`, matched
+// no role, and resolved to null. That is not cosmetic: every team verb resolves
+// its target through this function, so an unresolved seat cannot be ticketed and
+// cannot be retired, and `_roleInUse` (session-manager.js) — a guard built to
+// fail CLOSED — does not see the seat filling the role it is about to let you
+// remove. The numbered form is the obvious way to make several seats of one
+// role, which is exactly why it must not be the form that silently fails.
+//
+// EXACT MATCH WINS, before any stripping: a role may legitimately be named with
+// a trailing digit (`hand2`), and a seat named for it must resolve to it rather
+// than to `hand`. The old code had the same hazard for a role named `hand-2`.
+//
+// Only DIGIT suffixes strip. `shop-hand-wire` still resolves to nothing unless a
+// role of that name exists — a non-numeric tail names a different thing, and
+// waving it through to `hand` would make role resolution guess.
 function matchSeatRole(team, seatName) {
   if (!team || !seatName || !team.roles) return null;
   if (seatName === team.lead) return 'lead' in team.roles ? 'lead' : null;
   const prefix = `${team.name}-`;
   if (!seatName.startsWith(prefix)) return null;
-  const key = seatName.slice(prefix.length).replace(/-\d+$/, '');
-  return key in team.roles ? key : null;
+  // hasOwnProperty, not `in`: `in` walks the prototype, so a seat named
+  // `<team>-toString` would otherwise "resolve" to a role that is Object's
+  // method. The old code had this on its single lookup; adding a second lookup
+  // without fixing it would have widened it.
+  const has = (k) => Object.prototype.hasOwnProperty.call(team.roles, k);
+  const suffix = seatName.slice(prefix.length);
+  if (has(suffix)) return suffix;
+  const key = suffix.replace(/[-_]?\d+$/, '');
+  return key && has(key) ? key : null;
 }
 
 // The exec runner requires a payload on every call and this schema requires

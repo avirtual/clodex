@@ -20,7 +20,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { aggregateStates, normalizeState } = require('./file-heat');
+const { aggregateStates, normalizeState, heatPath } = require('./file-heat');
 const { readJsonSafe } = require('./fs-util');
 
 // Root = ~/.clodex. When materialized to ~/.clodex/bin/, the parent dir is the
@@ -30,13 +30,16 @@ function resolveRoot() {
   return path.resolve(__dirname, '..');
 }
 
-// Load every per-agent heat file under run/<name>/file-heat.json.
+// Load every per-agent heat file under heat/<name>/file-heat.json. Through
+// file-heat.js's own heatPath, never a hand-joined path: this CLI and the
+// drawer's potSnapshot must read the same location, and a second spelling here
+// is exactly the drift that would make the two disagree silently.
 function loadStates(root) {
   const states = [];
   let names = [];
-  try { names = fs.readdirSync(path.join(root, 'run')); } catch { return states; }
+  try { names = fs.readdirSync(path.join(root, 'heat')); } catch { return states; }
   for (const name of names) {
-    const raw = readJsonSafe(path.join(root, 'run', name, 'file-heat.json'));
+    const raw = readJsonSafe(heatPath(root, name));
     if (raw) states.push(normalizeState(raw));
   }
   return states;

@@ -10,6 +10,19 @@
 
 const fs = require('fs');
 const path = require('path');
+const { atomicWriteFileSync } = require('./fs-util');
+
+// TWO JOBS WEAR `renameSync` IN THIS FILE, and only one of them is a write.
+//   * PUBLISH (parkDelivery, restoreParked) — a temp file renamed into place so
+//     a reader never sees a partial message. That is a crash-safe WRITE, and it
+//     now routes through fs-util's atomicWriteFileSync like every other store
+//     (F010): the local pairs were atomic but unsynced, so a power loss could
+//     leave a zero-length message file that a drain then discards as corrupt.
+//   * CLAIM (drainPending's dir rename, claimParkedById's file rename) — a
+//     rename used as a LOCK, not as a write. It is the at-most-once delivery
+//     protocol: whoever renames first owns what was there. Those two must stay
+//     bare renames; routing them through a write primitive would replace the
+//     claim with a copy and deliver the same message twice.
 
 function agentDir(root, name) { return path.join(root, name); }
 
@@ -41,22 +54,19 @@ function parkDelivery(root, name, text, seq, id = null, passive = false, born = 
       // parkFileHasId collisions because minted resend ids are 5 or 10 base36
       // chars, never the 7-char literal "passive". Passive parks take no id.
   const base = passive ? `${seq}.passive.json` : (id ? `${seq}.${id}.json` : `${seq}.json`);
-  const tmp = path.join(dir, `.${base}.tmp`);
   const fin = path.join(dir, base);
   const payload = JSON.stringify(Object.assign({ text }, id ? { id } : null,
     typeof born === 'number' ? { born } : null));
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(tmp, payload);
   try {
-    fs.renameSync(tmp, fin);
+    atomicWriteFileSync(fin, payload);
   } catch (e) {
-    if (e && e.code === 'ENOENT') {
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(tmp, payload);
-      fs.renameSync(tmp, fin);
-    } else {
-      throw e;
-    }
+    // The retry is not defensive padding: a concurrent drain CLAIMS by renaming
+    // the whole dir away, so the dir can vanish between the write's own mkdir
+    // and its rename. atomicWriteFileSync mkdirs again on the second call, so
+    // one more attempt is all this needs — and a park that loses this race
+    // twice would be a message silently dropped.
+    if (e && e.code === 'ENOENT') atomicWriteFileSync(fin, payload);
+    else throw e;
   }
   return base;
 }
@@ -103,14 +113,9 @@ function drainPending(root, name, claimTag, expectedBorn = null) {
 // Restore under the ORIGINAL basename so seq order and the resend handle survive.
 // Best-effort: a throwing restore would lose every other message in the batch.
 function restoreParked(dir, base, raw) {
-  const tmp = path.join(dir, `.${base}.tmp`);
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(tmp, raw);
-    fs.renameSync(tmp, path.join(dir, base));
-  } catch {
-    try { fs.rmSync(tmp, { force: true }); } catch {}
-  }
+  // atomicWriteFileSync creates the dir and removes its own temp if the rename
+  // fails, so the swallow is all that is left of the old cleanup branch.
+  try { atomicWriteFileSync(path.join(dir, base), raw); } catch { /* best-effort */ }
 }
 
 function hasActivePending(root, name) {

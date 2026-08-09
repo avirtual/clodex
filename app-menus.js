@@ -17,6 +17,33 @@
 
 const { app, BrowserWindow, Menu, Tray, dialog, shell, nativeImage } = require('electron');
 
+// The Delete Workspace… confirm copy, shared by the tray menu and the Window
+// menu because both fire the same teardown (F005). It takes BOTH populations:
+// `running` (the live map) and `saved` (the workspace's archived /
+// saved-but-not-running records, which the live map cannot see). The old copy
+// counted only the first, so a workspace holding ten archived conversations and
+// nothing running read "This removes the empty workspace record" — the exact
+// case where the deletion costs the most. Saved seats are deleted, not
+// preserved: their transcripts stay on disk, and dropping the record is what
+// makes them adoptable again through Discover Sessions… (discovery excludes
+// tracked sessionIds, and the record is what makes an id tracked).
+function deleteWorkspaceDetail(running, saved) {
+  const s = (n) => (n === 1 ? '' : 's');
+  if (running > 0 && saved > 0) {
+    return `This will kill ${running} running session${s(running)} and delete ${saved} archived or saved session${s(saved)}, `
+      + 'then remove the workspace. Transcripts stay on disk — recent ones can be re-adopted with Discover Sessions….';
+  }
+  if (saved > 0) {
+    return `This workspace is not empty: it holds ${saved} archived or saved session${s(saved)}, which this deletes along with `
+      + 'the workspace record. Transcripts stay on disk — recent ones can be re-adopted with Discover Sessions….';
+  }
+  if (running > 0) {
+    return `This will kill ${running} running session${s(running)} and remove the workspace. `
+      + 'Conversation transcripts on disk are preserved and can be resumed in a new workspace.';
+  }
+  return 'This removes the empty workspace record. No sessions will be affected.';
+}
+
 function createAppMenus(deps) {
   const {
     // value deps
@@ -162,18 +189,20 @@ function createAppMenus(deps) {
               {
                 label: 'Delete Workspace…',
                 click: async () => {
+                  // Counted at CLICK time, not with the menu template: a tray
+                  // menu can sit built for minutes, and this count is the one
+                  // that decides whether the dialog calls a total loss "empty".
+                  const wsSaved = getManager().savedForWorkspace(ws.id).length;
                   const result = await dialog.showMessageBox({
                     type: 'warning',
                     buttons: ['Delete', 'Cancel'],
                     defaultId: 1,
                     cancelId: 1,
                     message: `Delete workspace "${ws.name || ws.id}"?`,
-                    detail: wsSessions > 0
-                      ? `This will kill ${wsSessions} running session${wsSessions === 1 ? '' : 's'} and remove the workspace.`
-                      : 'This removes the empty workspace record.',
+                    detail: deleteWorkspaceDetail(wsSessions, wsSaved),
                   });
                   if (result.response !== 0) return;
-                  for (const s of getManager().listForWorkspace(ws.id)) getManager().kill(s.name);
+                  getManager().purgeWorkspace(ws.id);
                   getWorkspaces().remove(ws.id);
                   // Clean this workspace's env-scope entry so no secret husk survives
                   // the workspace it belonged to (T46). Best-effort.
@@ -671,18 +700,18 @@ function createAppMenus(deps) {
                 label: 'Delete Workspace…',
                 click: async () => {
                   const parent = BrowserWindow.getFocusedWindow();
+                  // Click-time, for the same reason as the tray copy above.
+                  const savedCount = getManager().savedForWorkspace(ws.id).length;
                   const result = await dialog.showMessageBox(parent, {
                     type: 'warning',
                     buttons: ['Delete', 'Cancel'],
                     defaultId: 1,
                     cancelId: 1,
                     message: `Delete workspace "${ws.name || ws.id}"?`,
-                    detail: sessionCount > 0
-                      ? `This will kill ${sessionCount} running session${sessionCount === 1 ? '' : 's'} and remove the workspace. Conversation transcripts on disk are preserved and can be resumed in a new workspace.`
-                      : 'This removes the empty workspace record. No sessions will be affected.',
+                    detail: deleteWorkspaceDetail(sessionCount, savedCount),
                   });
                   if (result.response !== 0) return;
-                  for (const s of getManager().listForWorkspace(ws.id)) getManager().kill(s.name);
+                  getManager().purgeWorkspace(ws.id);
                   getWorkspaces().remove(ws.id);
                   // Clean this workspace's env-scope entry so no secret husk survives
                   // the workspace it belonged to (T46). Best-effort.
@@ -797,4 +826,4 @@ function createAppMenus(deps) {
   };
 }
 
-module.exports = { createAppMenus };
+module.exports = { createAppMenus, deleteWorkspaceDetail };

@@ -28,7 +28,7 @@ const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk,
 } = require('./relay-protocol');
-const { createFileHeat, aggregateStates, normalizeState, foldRedundancy } = require('./file-heat');
+const { createFileHeat, aggregateStates, normalizeState, foldRedundancy, heatPath } = require('./file-heat');
 const { readJsonSafe } = require('./fs-util');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
 const { CLAUDE_TOOLS } = require('./catalogs');
@@ -2210,6 +2210,47 @@ function createSessionManager(deps) {
       return this.list().filter(s => s.workspaceId === workspaceId);
     }
 
+    // WORKSPACE TEARDOWN RUNS OVER PERSISTENCE, NOT OVER THE LIVE MAP (F005).
+    // listForWorkspace above filters list(), which maps `this.sessions` — the
+    // live map. An archived session is never spawned by design
+    // (session-restore.js), so it is never in that map: killing what
+    // listForWorkspace returns and then dropping the workspace record leaves
+    // persistence rows carrying a workspaceId no window will ever carry again.
+    // Those rows are then unreachable from every surface — every IPC listing is
+    // workspace-scoped, and discovery excludes any conversation whose sessionId
+    // is in trackedSessionIds(), which unions in the orphan itself. The
+    // conversation is stranded by the very record that was meant to keep it.
+    // Hence the two methods below: one to SEE that population, one to reap it.
+
+    // The rows a workspace holds that listForWorkspace cannot see: archived, or
+    // saved-but-not-running. This is the count the confirm dialog needs — it is
+    // exactly the population whose total loss the dialog used to call "empty".
+    savedForWorkspace(workspaceId) {
+      return getPersistence().listForWorkspace(workspaceId).filter(e => e && e.name && !this.sessions.has(e.name));
+    }
+
+    // Kill the live seats, then drop every persisted row still pointing at the
+    // workspace. Order matters only for economy: kill() removes its own record
+    // synchronously (nothing awaits before it), so the second pass sees only
+    // what the first could not reach. clearHintForRecord before remove, for the
+    // reason sweepReviewerGraveyard does it — dropping the record is the last
+    // moment the seat's proxy route id is knowable and the hint table has no TTL.
+    purgeWorkspace(workspaceId) {
+      const killed = [];
+      for (const s of this.listForWorkspace(workspaceId)) { killed.push(s.name); this.kill(s.name); }
+      const dropped = [];
+      for (const e of getPersistence().listForWorkspace(workspaceId)) {
+        if (!e || !e.name) continue;
+        this.clearHintForRecord(e.name);
+        getPersistence().remove(e.name);
+        dropped.push(e.name);
+      }
+      if (dropped.length) {
+        log.info('session', `workspace ${workspaceId}: dropped ${dropped.length} saved/archived record(s): ${dropped.join(', ')}`);
+      }
+      return { killed, dropped };
+    }
+
     livePids() {
       const pids = new Set();
       for (const s of this.sessions.values()) {
@@ -2404,7 +2445,10 @@ function createSessionManager(deps) {
 
     _fileHeatFor(session) {
       if (!session.fileHeat) {
-        session.fileHeat = createFileHeat({ filePath: pathFor(REGISTRY_DIR, session.name, 'fileHeat') });
+        // heat/<name>/, NOT run/<name>/: _cleanup below rm -rf's the run dir on
+        // every exit path, which would truncate the 14-day window to this seat's
+        // current life. file-heat.js's header carries the full reasoning.
+        session.fileHeat = createFileHeat({ filePath: heatPath(REGISTRY_DIR, session.name) });
       }
       return session.fileHeat;
     }
@@ -2429,11 +2473,15 @@ function createSessionManager(deps) {
         for (const s of this.sessions.values()) {
           if (s.fileHeat) { try { s.fileHeat.flush(); } catch {} }
         }
+        // Enumerated from heat/, not run/: heat outlives the run dir by design,
+        // so a seat that is currently stopped still contributes its window — and
+        // a seat deleted for good ages out on its own when its last day bucket
+        // falls outside keepDays.
         let names = [];
-        try { names = fs.readdirSync(path.join(REGISTRY_DIR, 'run')); } catch {}
+        try { names = fs.readdirSync(path.join(REGISTRY_DIR, 'heat')); } catch {}
         const states = [];
         for (const name of names) {
-          const raw = readJsonSafe(pathFor(REGISTRY_DIR, name, 'fileHeat'));
+          const raw = readJsonSafe(heatPath(REGISTRY_DIR, name));
           if (raw) states.push(normalizeState(raw));
         }
         snap = aggregateStates(states, { topN: Number.isInteger(topN) && topN > 0 ? topN : 10 });

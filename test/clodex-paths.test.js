@@ -27,12 +27,23 @@ test('pathFor: the three bare forms are unsuffixed', () => {
   assert.strictEqual(path.basename(pathFor(ROOT, 'a', 'socket')), 'agent.sock');
 });
 
-test('pathFor: 24 per-agent kinds are defined', () => {
-  assert.strictEqual(Object.keys(KINDS).length, 24);
+test('pathFor: 23 per-agent kinds are defined', () => {
+  assert.strictEqual(Object.keys(KINDS).length, 23);
   // every kind has a matching legacy suffix (the sweep depends on the pairing) —
-  // file-heat.json and ipcdelta.sh have no flat ancestor but keep a defensive
-  // suffix so the invariant (every kind sweepable) holds.
+  // ipcdelta.sh has no flat ancestor but keeps a defensive suffix so the
+  // invariant (every kind sweepable) holds.
   assert.deepStrictEqual(Object.keys(KINDS).sort(), Object.keys(LEGACY_SUFFIXES).sort());
+});
+
+test('fileHeat is NOT a kind — heat lives outside the rm -rf`d run dir (F003)', () => {
+  // The run dir is destroyed on every exit path, so anything with a window
+  // longer than one session cannot be a kind. `pathFor` must refuse the name
+  // rather than hand back a path that would be swept: a caller that still
+  // reaches for the old grammar fails loud instead of silently writing into the
+  // dir the fix moved the data out of.
+  assert.ok(!('fileHeat' in KINDS));
+  assert.ok(!('fileHeat' in LEGACY_SUFFIXES));
+  assert.throws(() => pathFor(ROOT, 'a', 'fileHeat'), /unknown kind 'fileHeat'/);
 });
 
 test('pathFor: unknown kind throws (typo fails loud, not a stray file)', () => {
