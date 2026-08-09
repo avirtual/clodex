@@ -2,6 +2,7 @@
 const http = require('http');
 const https = require('https');
 const { PROXY_AGENT_PREFIX, pickProxyRecord, shapeProxyRecord, shouldAutoCompact, autoCompactDecision, AUTO_COMPACT } = require('./proxy-util');
+const { isInjectInFlight } = require('./inject-queue');
 
 const PROXY_POLL_INTERVAL = 5000; // ms
 const PROXY_HTTP_TIMEOUT = 4000;  // ms — default; keeps polling/handshake snappy
@@ -406,6 +407,18 @@ function createProxyPoller({
         }
         const cmd = (getContextCommands()[s.type] || {}).compact;
         if (!cmd) return;
+        // The same in-flight check the [agent:context compact] intent makes. This
+        // path cannot lean on the inject hold for it: bypassHold (below) is what
+        // stops a bare slash command being queue-joined, and it skips the
+        // compact-window hold on the way past. A second /compact inside the first
+        // collides ("Connection closed mid-response") and stomps its continuation
+        // — and unlike the intent, nothing here is a person who can retry.
+        if (isInjectInFlight({
+          pending: s._compactPending, guard: s._compactGuard, continuation: s._compactContinuation,
+        })) {
+          log.warn('autocompact', `${s.name} skipped — a compact is already in flight`);
+          return;
+        }
         this.autoCompacted.set(s.name, Date.now());
         s._lastAcSuppressReason = null;   // fired — reset so the next near-miss logs
         log.info('autocompact', `${s.name} fired → ${cmd} (~${Math.round(payload.context.inputTokens / 1000)}k ctx, warmth ${decision.remaining_s}s/band ${decision.band}s)`);
