@@ -106,7 +106,8 @@ to respawn the session later (bash included — restored as a fresh shell).
 **Per-agent runtime dir.** Everything one agent generates lives under
 `~/.clodex/run/<name>/` with UNSUFFIXED names (`hook.sh`, `hook.json`,
 `transcript.jsonl`, `agent.json`, `agent.sock`, `statusline.sh`, `attn.jsonl`,
-`acks`, `pending.sh`, `ctx`, `ctxwarn`, `append-prompt.md`, … — 18 kinds).
+`acks`, `pending.sh`, `ctx`, `ctxwarn`, `append-prompt.md`, … — the keys of
+`KINDS` in `clodex-paths.js`).
 `clodex-paths.js` (`pathFor` / `runDirFor`) is the single source of that
 grammar; every mint site routes through it, and cleanup drops the whole
 `run/<name>/` dir. SHARED state stays at the `~/.clodex` root and never moves:
@@ -220,11 +221,15 @@ agents" reports).
 
 ## 5. Persistence (stores.js)
 
-`initStores(userDataPath, {log, registryDir})` builds all eight stores in
+`initStores(userDataPath, {log, registryDir})` builds every store in
 `app.whenReady()` — paths derive inside the factory, so nothing can read
-them too early. Six JSON stores under userData (sessions, templates,
-workspaces, agent-defaults, ui-settings + migration-only prompts.json);
-three markdown libraries under `~/.clodex/` (prompt/agent/skill libraries).
+them too early; the `initStores` return is the list. JSON stores under
+userData, derived by
+`grep -n "path.join(userDataPath, '" stores.js`: sessions, workspaces,
+agent-defaults, ui-settings, reminders, notifications, env-scopes, plus
+migration-only prompts.json and templates.json. Three markdown libraries
+under `~/.clodex/` (prompt/agent/skill libraries — `execLibrary` is the
+fourth library object but is JSON, not markdown).
 
 sessions.json entries carry the full respawn recipe (type/cwd/extraArgs/
 sessionId/workspaceId/prompt refs/proxy tri-state/agents/deny/tools/skills)

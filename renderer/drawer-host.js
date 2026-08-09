@@ -11,8 +11,11 @@
 // dimensions to the owner. One implementation means the peer rules cannot drift
 // out of this file's sight again.
 //
-// Four rules here exist for tenants that do not exist yet, and each is the
-// kind of mistake that is cheap now and a contract migration later:
+// The numbered rules below exist for tenants that do not exist yet, and each is
+// the kind of mistake that is cheap now and a contract migration later. They are
+// deliberately NOT counted here: this comment said "four" on 2026-08-05 and rule
+// 5 landed on 2026-08-06, and docs/architecture.md had already copied the four.
+// A self-count is the one number guaranteed to go stale in its own file.
 //
 //   1. NOTHING in the drawer's subtree is ever hidden with `display:none` —
 //      not the panes, not their ancestor on collapse. Collapse is height-only

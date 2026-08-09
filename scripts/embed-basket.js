@@ -28,13 +28,53 @@ const DIMS = 768; // nomic-embed-text
 // per embed this is roughly every 3 seconds.
 const FLUSH_EVERY = 200;
 
+const USAGE = 'usage: embed-basket.js [--limit N] [--file PATH] [--dry-run] [--compact]';
+
+// The cap must not fail OPEN, which is what made a typo here expensive.
+//
+// `--limit --dry-run` used to bind `--dry-run` as --limit's operand, and the two
+// consequences landed together: `Number('--dry-run')` is NaN, and `n >= NaN` is
+// false for every n, so the cap below stopped capping instead of erroring —
+// while `out.dry` never became true. The command typed to PREVIEW a bounded run
+// performed an unbounded real one, six minutes of embedding against a live
+// daemon.
+//
+// Rejecting the dashy operand is therefore only half the fix: `--limit abc` and
+// a trailing `--limit` reach the identical NaN with no dashy token involved. So
+// the VALUE is validated, not just the token carrying it — the cap is only ever
+// Infinity (unset, explicit) or a positive integer, never NaN.
+//
+// This is the rule `cli/src/args.js:62` already applies to the shipped CLI. It
+// is restated rather than required because this script's entire dependency
+// surface is three node builtins and two repo modules, and args.js pulls in the
+// CliError/EXIT machinery to express an exit code a dev script does not have.
+// The threshold differs deliberately: args.js rejects only `--`-prefixed values
+// because it has passthrough flags where `-x` is a legitimate operand; this
+// parser has none, so a single dash is rejected too and `--limit -5` cannot
+// silently bind.
+function needsValue(flag, v) {
+  if (v === undefined || v.startsWith('-')) throw new Error(`${flag} needs a value\n${USAGE}`);
+  return v;
+}
+
+function positiveInt(flag, v) {
+  if (!/^\d+$/.test(v) || Number(v) < 1) {
+    throw new Error(`${flag} needs a positive integer, got ${JSON.stringify(v)}\n${USAGE}`);
+  }
+  return Number(v);
+}
+
 function parseArgs(argv) {
   const out = { limit: Infinity, file: BASKET, dry: false, compact: false };
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--limit') out.limit = Number(argv[++i]);
-    else if (argv[i] === '--file') out.file = argv[++i];
-    else if (argv[i] === '--dry-run') out.dry = true;
-    else if (argv[i] === '--compact') out.compact = true;
+    const a = argv[i];
+    if (a === '--limit') out.limit = positiveInt(a, needsValue(a, argv[++i]));
+    else if (a === '--file') out.file = needsValue(a, argv[++i]);
+    else if (a === '--dry-run') out.dry = true;
+    else if (a === '--compact') out.compact = true;
+    // An unrecognised token was silently ignored, which meant `--dryrun` — the
+    // same plausible typo, one character shorter — also performed a real run.
+    else throw new Error(`unknown argument: ${a}\n${USAGE}`);
   }
   return out;
 }
@@ -137,4 +177,7 @@ if (require.main === module) {
   main().catch((e) => { console.error(e.message); process.exit(1); });
 }
 
-module.exports = { asRecord, readBasket };
+// parseArgs is exported for the tests: it guards a write that costs six minutes
+// against a live daemon, and until it was exported the only way to reach it was
+// to perform that write.
+module.exports = { asRecord, readBasket, parseArgs };

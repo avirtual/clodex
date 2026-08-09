@@ -157,9 +157,10 @@ Self-contained island; peer terminals live in the core sessions Map keyed
   today) render immediately only when that peer tab is active; otherwise a
   click-to-open toast — the intrusiveness gate that stops a remote agent
   slamming a modal over your work.
-- Six back-exports to core: `typeToTakeControl`, `renderPeerBar`,
-  `forgetControlMirror`, `openPeerSession`, `peerDisplayHost`,
-  `peerHideFromList`.
+- Back-exports to core — the `initPeersUi` return, which is the list:
+  `typeToTakeControl`, `renderPeerBar`, `forgetControlMirror`,
+  `openPeerSession`, `peerDisplayHost`, `peerHideFromList`,
+  `ensurePeerSessionVisible`, `openPeerArgs`.
 
 ## 7. Deploy wizard (peer-deploy.js + ssh-run.js)
 
