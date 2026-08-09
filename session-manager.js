@@ -92,6 +92,15 @@ const REVIEWER_ENV_ALLOWLIST = new Set([
   'CLODEX_DISABLE_IPC_PROMPT',
   'CLODEX_SPAWNER_HINT',
 ]);
+// Sender labels the MANAGER writes on system-originated deliveries; no agent is
+// on the other end of any of them. They must never collect the "(reply: …)"
+// trailer, and reachability is the wrong test for that: session names are a
+// global namespace, so an unrelated seat that happens to be called `team` makes
+// `team` look answerable and every seat on the box gets told to reply to it.
+// Observed live — team roster/delta notices taught seats to dm a real session
+// named `team` in another workspace, which received the replies as nonsense.
+// Keep in sync with the senderName literals at the _deliver* call sites.
+const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 'reboot', 'clodex']);
 const DEFAULT_REVIEWER_TEMPLATE = 'clodex-team-reviewer';
 const REVIEWER_FALLBACK = {
   systemPromptFile: 'clodex-team-reviewer',
@@ -5407,7 +5416,11 @@ function createSessionManager(deps) {
       // for a real intent. Emitted only when the path it advertises exists on BOTH
       // ends: the receiver's `dm` intent is enabled AND the sender is dm-reachable
       // right now — otherwise it teaches a reply address that silently drops.
+      // The SYSTEM_SENDERS check must come BEFORE reachability, not lean on it:
+      // reachability asks "is a session called this?", which is true by accident
+      // the moment someone names a seat `team`.
       const trailer = (mtype === 'dm'
+          && !SYSTEM_SENDERS.has(senderName)
           && intentEnabled('dm', getPersistence().get(target.name)?.intents)
           && this._isDmReachable(senderName))
         ? `(reply: start a line with [agent:dm ${senderName}], close the body with a bare [agent:end] line)`

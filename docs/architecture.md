@@ -330,7 +330,8 @@ adapter that hosts it. The modules below are what the engine assembles.
 
 ## Tests
 
-Plain `node --test` (480 at the end of the refactor). Notable guards:
+Plain `node --test` (`ls test/*.test.js | wc -l` for the file count; the runner
+prints the assertion total). Notable guards:
 
 - `test/free-identifier-leaks.test.js` — the two-directional extraction
   gate described above; its scanner self-tests pin the lexer classes that

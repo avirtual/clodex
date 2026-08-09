@@ -7156,6 +7156,31 @@ test('_buildDeliveryText trailer: present only when sender reachable AND receive
   assert.doesNotMatch(m4._buildDeliveryText(target, 'a', 'unit body', 'memory'), RE);
 });
 
+test('_buildDeliveryText: a system sender gets no trailer even when a REAL session owns that name', () => {
+  const target = { name: 'rcv', agentType: 'claude' };
+  const RE = /\(reply: start a line with \[agent:dm .+?\], close the body with a bare \[agent:end\] line\)/;
+
+  // The live-observed bug: team roster/delta notices ride senderName 'team', and
+  // session names are one global namespace, so an unrelated agent named `team` in
+  // ANOTHER workspace made the sender look answerable. Every seat was then told to
+  // reply to it, and that agent received the replies as nonsense. Reachability is
+  // true here on purpose — this pins the guard, not the absence of a session.
+  for (const sender of ['team', 'clodex-team', 'reminder', 'memory', 'reboot', 'clodex']) {
+    const m = mkReach();
+    m.sessions.set(sender, { name: sender, agentType: 'claude' });
+    assert.strictEqual(m._isDmReachable(sender), true,
+      `ENTER: a live session named "${sender}" must be reachable, or this case never reaches the guard`);
+    assert.doesNotMatch(m._buildDeliveryText(target, sender, 'roster', 'dm'), RE,
+      `system sender "${sender}" must never advertise a reply address`);
+  }
+
+  // The guard is a fixed set, not a blanket mute: an ordinary sender whose name
+  // merely CONTAINS a system label still gets its trailer.
+  const m2 = mkReach();
+  m2.sessions.set('team-lead', { name: 'team-lead', agentType: 'claude' });
+  assert.match(m2._buildDeliveryText(target, 'team-lead', 'hi', 'dm'), RE);
+});
+
 // --- flushPending / _flushParkedNow (operator parked-DM flush) ----------------
 // PTY-free: drainPending is a spy (records the claim tag), _injectText is stubbed
 // so we don't build a real InjectQueue. Covers the three flushPending verdicts
