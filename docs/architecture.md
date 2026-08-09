@@ -172,8 +172,15 @@ adapter that hosts it. The modules below are what the engine assembles.
   Never merges the cost scopes (`session-info.js` names them and says why they
   are not interchangeable). Electron-free; in SCANNED_MODULES.
 - **git-worktree.js** — stdlib-only git worktree ops (create/remove/repoInfo/
-  defaultBranch) behind the New-Session worktree option and the delete flow's
-  awaited `removeWorktree`. `execFile`, never a shell; in SCANNED_MODULES.
+  defaultBranch) behind the New-Session worktree option, `[agent:spawn
+  worktree:<branch>]`, and the delete flow's awaited `removeWorktree`.
+  `execFile`, never a shell; in SCANNED_MODULES.
+  Team membership is a REPO, not a path: `team-manifest.js`'s `cwdInProject`
+  accepts a worktree of the root as a member, so seats in sibling worktrees stay
+  on the roster and stay ticket-addressable. It reads the worktree's `.git` FILE
+  rather than shelling out to git — `resolveTeam` runs on every roster render and
+  ticket resolution, and a subprocess there would make membership a latency
+  problem.
 - **session-discovery.js** — scans for adoptable external agent processes
   (opt-in startup discovery), excluding Clodex's own `livePids`; in
   SCANNED_MODULES.

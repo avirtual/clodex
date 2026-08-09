@@ -363,6 +363,7 @@ function createSessionManager(deps) {
     ensureDir,
     execBodyCap,
     findProjectRoot,
+    gitWorktree,
     resolveTeam,
     addRole,
     setRole,
@@ -3979,6 +3980,16 @@ function createSessionManager(deps) {
         return;
       }
       const cwd = path.resolve(rawCwd.replace(/^~(?=$|\/)/, os.homedir()));
+      // `worktree:<branch>` spawns the seat in its own `git worktree` on that
+      // branch, off the repo containing cwd. The branch name is validated inside
+      // createWorktree (it reaches git argv), so this only rejects the empty form
+      // — a bare `worktree:` that parsed to nothing must not spawn a NORMAL seat
+      // silently, which is the isolation the caller asked for going missing.
+      const branch = (intent.worktree || '').trim() || null;
+      if (intent.worktree != null && !branch) {
+        reply('error: worktree: needs a branch name — [agent:spawn name:X cwd:Y worktree:<branch>]');
+        return;
+      }
       const type = tpl ? (tpl.type || 'claude') : (spawner.type || 'claude');
       const workspaceId = spawner.workspaceId || DEFAULT_WORKSPACE_ID;
 
@@ -4016,10 +4027,28 @@ function createSessionManager(deps) {
       }
 
       setImmediate(async () => {
+        // Declared OUTSIDE the try: the catch below removes the worktree, and a
+        // binding scoped to the try is invisible there.
+        let wt = null;
+        let spawnCwd = cwd;
         try {
-          ensureDir(cwd); // self-contained: mkdir the cwd if absent — no external tool
+          if (branch) {
+            // BEFORE create(), never after: the seat must boot with the worktree as
+            // its cwd. Retrofitting one onto a live session would leave the PTY,
+            // the hook's transcript symlink and the prompt's team block all built
+            // against the old path.
+            const r = await gitWorktree.createWorktree(cwd, branch);
+            if (!r || !r.ok) {
+              reply(`error: worktree "${branch}": ${(r && r.error) || 'could not be created'} — nothing spawned`);
+              return;
+            }
+            wt = { path: r.path, branch: r.branch };
+            spawnCwd = r.path;
+          } else {
+            ensureDir(cwd); // self-contained: mkdir the cwd if absent — no external tool
+          }
           await this.create(
-            name, type, cwd, childArgs, null, workspaceId,
+            name, type, spawnCwd, childArgs, null, workspaceId,
             null, false, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles,
             Array.isArray(tpl && tpl.execCommands) ? tpl.execCommands : [],
             // `[]` intents (everything gated) is a real value that must apply; an
@@ -4038,21 +4067,34 @@ function createSessionManager(deps) {
             // outright, never pointed somewhere the template chose.
             (tpl && tpl.noWire) === true,
           );
+          // AFTER create(), which is what mints the persistence entry: setWorktree
+          // silently no-ops when no entry exists, so recording it earlier would
+          // write nothing and leave Delete Session… unable to offer the removal.
+          if (wt) {
+            try { getPersistence().setWorktree(name, wt); } catch { /* best-effort */ }
+          }
           if (tpl) {
             if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
             if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
           }
           this._sendToSession(name, 'session:context-action', {
-            action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
+            action: 'reattach', name, type, cwd: spawnCwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
           });
+          const where = wt ? `${spawnCwd} (worktree, branch ${wt.branch})` : spawnCwd;
           this._broadcast('ipc-message', {
-            type: 'spawn', from: spawner.name, to: name, body: `spawn → ${name} @ ${cwd}` + (tpl ? ` (template ${tplLabel})` : ''),
+            type: 'spawn', from: spawner.name, to: name, body: `spawn → ${name} @ ${where}` + (tpl ? ` (template ${tplLabel})` : ''),
           });
-          log.info('intent', `spawn by ${spawner.name} → ${name} (${type}) @ ${cwd}` + (tpl ? ` via template "${tplLabel}"` : ''));
-          reply(`ok: spawned "${name}" (${type}) @ ${cwd}` + (tpl ? ` via template "${tplLabel}"` : '')
+          log.info('intent', `spawn by ${spawner.name} → ${name} (${type}) @ ${where}` + (tpl ? ` via template "${tplLabel}"` : ''));
+          reply(`ok: spawned "${name}" (${type}) @ ${where}` + (tpl ? ` via template "${tplLabel}"` : '')
             + (envDropped.length ? ` — env keys not allowed, dropped: ${envDropped.join(', ')}` : ''));
         } catch (err) {
           log.error('intent', `spawn by ${spawner.name} → ${name} failed: ${err.message}`);
+          // The worktree outlives a failed spawn otherwise: create() threw, so no
+          // session record exists and nothing on the UI can offer to remove it.
+          if (wt) {
+            const r = await gitWorktree.removeWorktree(wt.path).catch(() => ({ ok: false }));
+            log.info('worktree', `${r && r.ok ? 'removed' : 'ORPHANED'} ${wt.path} after failed spawn of ${name}`);
+          }
           reply(`error: ${err.message}`);
         }
       });

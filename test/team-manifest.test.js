@@ -220,6 +220,73 @@ test('cwdInProject: membership is root-or-under, not prefix-string', () => {
   assert.ok(!tm.cwdInProject('/a/b', null));
 });
 
+// --- worktree membership -----------------------------------------------------
+// A team is a REPOSITORY, not a path. git's default worktree location is a
+// SIBLING of the repo (`<repo>/../<repo>-<branch>`), so pure path containment
+// excluded every worktree — a seat working in one fell off its team, and the
+// lead saw "no live seat yet", a timing message for a membership fault.
+// Real git is required (not a fixture) because the thing under test is the exact
+// on-disk shape git writes: a `.git` FILE holding `gitdir: <main>/.git/worktrees/<id>`.
+
+const { execFileSync } = require('child_process');
+
+function mkRepoWithWorktree() {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-team-'));
+  // Real paths: macOS /tmp is a symlink to /private/tmp, and git writes the
+  // RESOLVED path into the .git file. Comparing against the unresolved one would
+  // fail for a reason that has nothing to do with membership.
+  const root = fs.realpathSync(base);
+  const repo = path.join(root, 'repo');
+  fs.mkdirSync(repo);
+  const g = (...args) => execFileSync('git', ['-C', repo, ...args], {
+    stdio: 'pipe',
+    env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
+  });
+  g('init', '-q');
+  g('commit', '-q', '--allow-empty', '-m', 'init');
+  g('worktree', 'add', '-q', path.join(root, 'wt-a'), '-b', 'feat-a');
+  return { root, repo, worktree: path.join(root, 'wt-a') };
+}
+
+test('cwdInProject: a git worktree of the repo is ON the team, and a foreign repo is not', () => {
+  const { root, repo, worktree } = mkRepoWithWorktree();
+  const tm = createTeamManifest({ fs, clodexHome: mkHome() });
+
+  // ENTER: the fixture must have produced git's linked-worktree shape (a .git
+  // FILE, not a dir). If git ever changed this, every assertion below would still
+  // pass for the wrong reason — the walk would find nothing and fall through.
+  assert.ok(fs.lstatSync(path.join(worktree, '.git')).isFile(),
+    'ENTER: linked worktree must carry a .git FILE — the fixture built the wrong shape');
+
+  assert.ok(tm.cwdInProject(worktree, repo), 'a worktree of the repo is on the team');
+  const deep = path.join(worktree, 'deep', 'er');
+  fs.mkdirSync(deep, { recursive: true });
+  assert.ok(tm.cwdInProject(deep, repo), 'a SUBDIR of a worktree resolves too');
+
+  // The negatives are what keep this from being "return true": the worktree's own
+  // parent holds both trees, and an unrelated repo must not join by proximity.
+  assert.ok(!tm.cwdInProject(root, repo), 'the shared parent is not a member');
+  assert.ok(!tm.cwdInProject(worktree, path.join(root, 'other-repo')),
+    'a worktree does not join a DIFFERENT repo that merely sits nearby');
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('cwdInProject: a plain directory containing a .git FILE does not smuggle membership', () => {
+  const tm = createTeamManifest({ fs, clodexHome: mkHome() });
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wt-fake-')));
+  const repo = path.join(root, 'repo');
+  const impostor = path.join(root, 'impostor');
+  fs.mkdirSync(repo); fs.mkdirSync(impostor);
+  // A `.git` file whose gitdir is NOT under .git/worktrees/ — a submodule points
+  // this way. It must not resolve to a main checkout.
+  fs.writeFileSync(path.join(impostor, '.git'), `gitdir: ${path.join(repo, '.git', 'modules', 'x')}\n`);
+  assert.ok(!tm.cwdInProject(impostor, repo), 'a submodule-shaped .git file is not a worktree');
+  fs.writeFileSync(path.join(impostor, '.git'), 'not a gitdir line at all\n');
+  assert.ok(!tm.cwdInProject(impostor, repo), 'an unparseable .git file resolves to nothing');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 // --- spawn-time team context (matchSeatRole + formatTeamBlock) --------------
 // The pure pieces behind session-manager's spawn-time injection, ROLE-KEYED
 // schema: bind a seat to its role (the lead SEAT → `lead` role; other seats via

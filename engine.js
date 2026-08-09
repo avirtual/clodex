@@ -875,6 +875,7 @@ const SessionManager = createSessionManager({
     ensureDir,
     execBodyCap: DEFAULT_MAX_BYTES, // exec JSON-terminator capture cap (session-manager)
     findProjectRoot,
+    gitWorktree,
     resolveTeam,
     createTeam,
     addRole,

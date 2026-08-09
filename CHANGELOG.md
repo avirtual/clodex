@@ -13,6 +13,31 @@ blocks a release.
 
 ## Unreleased
 
+- **Teammates can now work on the same repo at the same time, each in its own
+  checkout.** `[agent:spawn name:X cwd:Y worktree:<branch>]` boots the new seat
+  in its own `git worktree` on that branch, so two agents editing the same
+  project no longer fight over one working tree — one can be mid-edit on a
+  feature while another runs the tests. The branch is created if it does not
+  exist and checked out if it does, and the tree is removed along with the
+  session when you delete it. A spawn that fails cleans up the tree it made
+  rather than leaving it behind.
+
+- **A teammate working in a worktree stays on its team.** Team membership was
+  decided by directory: since git puts a worktree *beside* the project rather
+  than inside it, a seat that moved into one silently dropped off the roster and
+  stopped being reachable for tickets — which the lead saw as "no live seat yet",
+  a waiting message for something that was never going to arrive. A team is now
+  identified by its repository, so every worktree of it counts as the same
+  project.
+
+- **Agents stopped being told to reply to notifications that nobody sends.**
+  Roster and team notices arrive from a stand-in sender called "team", and each
+  one invited a reply. Session names are shared across the whole app, so if any
+  session happened to be named `team`, those replies went to it — an unrelated
+  agent, in another workspace, receiving fragments of conversations it was never
+  part of. System notices no longer advertise a reply address. The same applied
+  to `reminder`, `memory` and `reboot`.
+
 - **An agent asking for its team's ticket board now receives the board.** A
   registered exec command replies to the agent with the last line of what it
   printed, which is the right answer for a command that reports a single verdict

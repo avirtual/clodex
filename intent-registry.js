@@ -153,11 +153,13 @@ function parseSpawn(cleaned) {
   const nameM = argstr.match(/\bname:(\S+)/);
   const cwdM = argstr.match(/\bcwd:(\S+)/);
   const tplM = argstr.match(/\btemplate:(\S+)/);
+  const wtM = argstr.match(/\bworktree:(\S+)/);
   return {
     type: 'spawn',
     name: nameM ? nameM[1] : null,
     cwd: cwdM ? cwdM[1] : null,
     template: tplM ? tplM[1] : null,
+    worktree: wtM ? wtM[1] : null,
   };
 }
 

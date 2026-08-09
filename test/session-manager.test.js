@@ -8750,3 +8750,142 @@ test('t188: a replayed turn fires a repeated exec ONCE, and the DEDUPER is what 
     if (m._holdKeeper) m._holdKeeper.stop();
   }
 });
+
+// --- spawn into a git worktree ------------------------------------------------
+// `worktree:<branch>` is what makes several seats able to edit one repo at once.
+// Real git, because the payload is git's own on-disk layout: the seat must boot
+// with the WORKTREE as its cwd (not the repo), and the tree must be recorded on
+// the session so Delete Session… can offer to remove it.
+
+// git runs as a child process; the spawn path is async past it, so tests wait on
+// the observable effect rather than a fixed number of microtask ticks.
+async function until(cond, ms = 5000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    if (cond()) return true;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return false;
+}
+
+function mkGitRepo() {
+  const root = fsReal.realpathSync(fsReal.mkdtempSync(path.join(os.tmpdir(), 'sm-wt-')));
+  const repo = path.join(root, 'repo');
+  fsReal.mkdirSync(repo);
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  require('node:child_process').execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'pipe', env });
+  require('node:child_process').execFileSync('git', ['-C', repo, 'commit', '-q', '--allow-empty', '-m', 'init'], { stdio: 'pipe', env });
+  return { root, repo };
+}
+
+function mkWtManager(repo, overrides = {}) {
+  const worktreeSet = [];
+  const m = mk({
+    AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
+    getPersistence: () => ({
+      list: () => [],
+      get: (n) => (n === 'child' ? null : { extraArgs: [] }),
+      setWorktree: (name, wt) => worktreeSet.push({ name, wt }),
+    }),
+    getTemplates: () => ({ list: () => [] }),
+    gitWorktree: require('../git-worktree'),
+    ensureDir: () => {},
+    os: require('node:os'),
+    path: require('node:path'),
+    log: { info: () => {}, error: () => {} },
+    ...overrides,
+  });
+  m._injectText = (_s, msg) => { m._replies.push(msg); };
+  m._replies = [];
+  m._broadcast = () => {};
+  m._sendToSession = () => {};
+  m._worktreeSet = worktreeSet;
+  return m;
+}
+
+test('spawn worktree: the seat boots IN the worktree, on its branch, recorded for cleanup', async () => {
+  const { root, repo } = mkGitRepo();
+  const m = mkWtManager(repo);
+  let createdCwd = 'UNSET';
+  m.create = async (...args) => { createdCwd = args[2]; return { name: args[0] }; };
+  const spawner = { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: repo };
+  m.sessions.set('a', spawner);
+
+  m._handleSpawnIntent(spawner, { name: 'child', cwd: repo, worktree: 't999' });
+  // git runs in a child process, so setImmediate ticks do not cover it — poll.
+  await until(() => createdCwd !== 'UNSET' || m._replies.length);
+
+  // ENTER: the spawn must have got past worktree creation. Without this, a failed
+  // create leaves createdCwd UNSET and every assertion below reads as "not the
+  // repo", which is trivially true of a spawn that never happened.
+  assert.notStrictEqual(createdCwd, 'UNSET',
+    `ENTER: create() was never reached — replies: ${JSON.stringify(m._replies)}`);
+  assert.notStrictEqual(createdCwd, repo, 'the seat must NOT boot in the shared repo');
+  assert.ok(fsReal.lstatSync(path.join(createdCwd, '.git')).isFile(),
+    'cwd must be a linked worktree (a .git FILE), not a fresh clone or the repo');
+
+  // The branch is checked out in that tree, and the tree is recorded on the session.
+  const head = require('node:child_process')
+    .execFileSync('git', ['-C', createdCwd, 'rev-parse', '--abbrev-ref', 'HEAD'], { stdio: 'pipe' })
+    .toString().trim();
+  assert.strictEqual(head, 't999');
+  assert.deepStrictEqual(m._worktreeSet, [{ name: 'child', wt: { path: createdCwd, branch: 't999' } }],
+    'the worktree must be recorded on the session, or Delete Session… cannot remove it');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+test('spawn worktree: a seat in the worktree still resolves onto the repo team', async () => {
+  const { root, repo } = mkGitRepo();
+  const m = mkWtManager(repo);
+  let createdCwd = null;
+  m.create = async (...args) => { createdCwd = args[2]; return { name: args[0] }; };
+  const spawner = { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: repo };
+  m.sessions.set('a', spawner);
+  m._handleSpawnIntent(spawner, { name: 'child', cwd: repo, worktree: 't998' });
+  await until(() => createdCwd !== null || m._replies.length);
+  assert.ok(createdCwd && createdCwd !== repo, 'ENTER: worktree spawn must have happened');
+
+  // The whole point of the membership change: without it the seat is invisible to
+  // the roster and every ticket resolves to "no live seat".
+  const { createTeamManifest } = require('../team-manifest');
+  const tm = createTeamManifest({ fs: fsReal, clodexHome: path.join(root, 'home') });
+  assert.ok(tm.cwdInProject(createdCwd, repo),
+    'a seat in the worktree must still be a member of the repo team');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+test('spawn worktree: a failed create() removes the tree instead of stranding it', async () => {
+  const { root, repo } = mkGitRepo();
+  const m = mkWtManager(repo);
+  let attempted = null;
+  m.create = async (...args) => { attempted = args[2]; throw new Error('boom'); };
+  const spawner = { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: repo };
+  m.sessions.set('a', spawner);
+  m._handleSpawnIntent(spawner, { name: 'child', cwd: repo, worktree: 't997' });
+  await until(() => m._replies.some((r) => /error: boom/.test(r)));
+
+  assert.ok(attempted && attempted !== repo, 'ENTER: a worktree must have been created and handed to create()');
+  assert.ok(!fsReal.existsSync(attempted),
+    'the worktree must be removed when the spawn fails — nothing else can offer to');
+  assert.ok(m._replies.some((r) => /error: boom/.test(r)), 'the failure is reported to the spawner');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+test('spawn worktree: a bare `worktree:` is refused, never a silent unisolated spawn', async () => {
+  const { root, repo } = mkGitRepo();
+  const m = mkWtManager(repo);
+  let created = false;
+  m.create = async () => { created = true; return { name: 'child' }; };
+  const spawner = { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: repo };
+  m.sessions.set('a', spawner);
+  // The parser yields worktree:'' for a bare `worktree:` — the isolation the
+  // caller asked for must not evaporate into a normal seat.
+  m._handleSpawnIntent(spawner, { name: 'child', cwd: repo, worktree: '' });
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created, false, 'no seat may be spawned without the requested isolation');
+  assert.ok(m._replies.some((r) => /worktree: needs a branch name/.test(r)));
+  fsReal.rmSync(root, { recursive: true, force: true });
+});

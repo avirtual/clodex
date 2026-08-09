@@ -87,23 +87,37 @@ test('parseIntent: memory sub-command carries body', () => {
 
 test('parseIntent: spawn parses name + cwd in any order', () => {
   assert.deepStrictEqual(parseIntent('[agent:spawn name:worker cwd:/tmp/x]'),
-    { type: 'spawn', name: 'worker', cwd: '/tmp/x', template: null });
+    { type: 'spawn', name: 'worker', cwd: '/tmp/x', template: null, worktree: null });
   assert.deepStrictEqual(parseIntent('[agent:spawn cwd:/tmp/x name:worker]'),
-    { type: 'spawn', name: 'worker', cwd: '/tmp/x', template: null });
+    { type: 'spawn', name: 'worker', cwd: '/tmp/x', template: null, worktree: null });
   assert.deepStrictEqual(parseIntent('[agent:spawn name:solo]'),
-    { type: 'spawn', name: 'solo', cwd: null, template: null });
+    { type: 'spawn', name: 'solo', cwd: null, template: null, worktree: null });
 });
 
 test('parseIntent: spawn parses optional template: ref, with or without cwd', () => {
   // template + cwd (cwd overrides the template's).
   assert.deepStrictEqual(parseIntent('[agent:spawn name:t2 cwd:/tmp/y template:trader-seat]'),
-    { type: 'spawn', name: 't2', cwd: '/tmp/y', template: 'trader-seat' });
+    { type: 'spawn', name: 't2', cwd: '/tmp/y', template: 'trader-seat', worktree: null });
   // template alone (cwd comes from the template at apply time).
   assert.deepStrictEqual(parseIntent('[agent:spawn name:t2 template:trader-seat]'),
-    { type: 'spawn', name: 't2', cwd: null, template: 'trader-seat' });
+    { type: 'spawn', name: 't2', cwd: null, template: 'trader-seat', worktree: null });
   // order-independent.
   assert.deepStrictEqual(parseIntent('[agent:spawn template:seat name:t2]'),
-    { type: 'spawn', name: 't2', cwd: null, template: 'seat' });
+    { type: 'spawn', name: 't2', cwd: null, template: 'seat', worktree: null });
+});
+
+test('parseIntent: spawn parses worktree:<branch>, order-independent and branch-shaped', () => {
+  assert.deepStrictEqual(parseIntent('[agent:spawn name:h1 cwd:/tmp/x worktree:t272]'),
+    { type: 'spawn', name: 'h1', cwd: '/tmp/x', template: null, worktree: 't272' });
+  assert.deepStrictEqual(parseIntent('[agent:spawn worktree:feature/a name:h1 cwd:/tmp/x]'),
+    { type: 'spawn', name: 'h1', cwd: '/tmp/x', template: null, worktree: 'feature/a' });
+  // Combines with template — a role seat gets both its config and its own tree.
+  assert.deepStrictEqual(parseIntent('[agent:spawn name:h1 template:hand worktree:t272]'),
+    { type: 'spawn', name: 'h1', cwd: null, template: 'hand', worktree: 't272' });
+  // A bare `worktree:` yields no branch. It must not read as "no worktree wanted"
+  // downstream — the handler rejects it rather than spawning an unisolated seat.
+  assert.deepStrictEqual(parseIntent('[agent:spawn name:h1 cwd:/tmp/x worktree:]'),
+    { type: 'spawn', name: 'h1', cwd: '/tmp/x', template: null, worktree: null });
 });
 
 test('parseIntent: file view/open with spaces in path', () => {

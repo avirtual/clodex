@@ -122,11 +122,13 @@ function parseIntentLegacy(rawLine) {
     const nameM = argstr.match(/\bname:(\S+)/);
     const cwdM = argstr.match(/\bcwd:(\S+)/);
     const tplM = argstr.match(/\btemplate:(\S+)/);
+    const wtM = argstr.match(/\bworktree:(\S+)/);
     return {
       type: 'spawn',
       name: nameM ? nameM[1] : null,
       cwd: cwdM ? cwdM[1] : null,
       template: tplM ? tplM[1] : null,
+      worktree: wtM ? wtM[1] : null,
     };
   }
 
@@ -213,6 +215,8 @@ const ADVERSARIAL = [
   '[agent:team watchdog abc]', '[agent:team watchdog]', '[agent:team foo]',
   '[agent:team]', '[agent:team-reviewer]',
   '[agent:spawn name:x cwd:/a]', '[agent:spawn name:x cwd:/a template:t]',
+  '[agent:spawn name:x cwd:/a worktree:b]', '[agent:spawn worktree:feature/b name:x cwd:/a]',
+  '[agent:spawn name:x cwd:/a worktree:]',
   '[agent:spawn]', '[agent:spawn junk]', '[agent:spawn name:x cwd:/a] trailing',
   '[agent:unknownverb]', '[agent:]', '[agent:', '[agent:dm',
   '• [agent:who]', '  [agent:who]', '─ [agent:dm bob] hi',

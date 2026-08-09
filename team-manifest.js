@@ -191,10 +191,65 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return { name, root: path.resolve(root), lead, roles, file, watchdogMs };
   }
 
-  function cwdInProject(cwd, root) {
-    if (!cwd || !root) return false;
+  function containsPath(root, cwd) {
     const rel = path.relative(path.resolve(root), path.resolve(cwd));
     return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  }
+
+  // The checkout a linked git worktree belongs to, or null. A linked worktree's
+  // `.git` is a FILE reading `gitdir: <main>/.git/worktrees/<id>`, so the main
+  // checkout is derivable with one read — no `git` subprocess, which is what makes
+  // this safe to call from resolveTeam. That matters: resolveTeam runs on every
+  // roster render and every ticket resolution, and spawning a process there would
+  // turn team membership into a latency problem.
+  //
+  // Deliberately NOT clodex- or even git-specific in its effect: the rule this
+  // encodes is "a team is a repository, not a path", so any tool that lays out
+  // sibling checkouts the way git does resolves onto the same team.
+  const WORKTREE_MARKER = `${path.sep}.git${path.sep}worktrees${path.sep}`;
+  function mainCheckoutOf(cwd) {
+    let dir = path.resolve(cwd);
+    // Bounded walk: a worktree's root is an ancestor of the agent's cwd, but an
+    // unbounded loop on a symlink cycle would hang the caller.
+    for (let i = 0; i < 64; i++) {
+      let raw;
+      try {
+        const st = fs.lstatSync(path.join(dir, '.git'));
+        // A directory `.git` is the MAIN checkout, which containsPath already
+        // handled — returning it here would be a no-op at best and would mask a
+        // genuine miss at worst.
+        if (!st.isFile()) return null;
+        raw = fs.readFileSync(path.join(dir, '.git'), 'utf-8');
+      } catch {
+        const up = path.dirname(dir);
+        if (up === dir) return null;
+        dir = up;
+        continue;
+      }
+      const m = /^\s*gitdir:\s*(.+?)\s*$/m.exec(raw);
+      if (!m) return null;
+      const gitdir = path.resolve(dir, m[1]);
+      const at = gitdir.indexOf(WORKTREE_MARKER);
+      if (at < 0) return null;   // a `.git` file that is not a linked worktree
+      // Slice ENDS at the marker: the marker leads with the separator, so the
+      // prefix is exactly the main checkout with no trailing slash to strip.
+      return gitdir.slice(0, at);
+    }
+    return null;
+  }
+
+  // A cwd belongs to a project when it sits under the project root, OR when it is
+  // a git worktree of the checkout at that root. Path containment alone was the
+  // rule, and it silently excluded worktrees: git's own default puts one at
+  // `<repo>/../<repo>-<branch>`, a SIBLING of the root, so a seat working in one
+  // fell off its team — no roster entry, and `_ticketAssigneeSeat` returned null,
+  // which surfaces to the lead as "no live seat yet" (a timing message for a
+  // membership fault). Worktree isolation is unusable without this.
+  function cwdInProject(cwd, root) {
+    if (!cwd || !root) return false;
+    if (containsPath(root, cwd)) return true;
+    const main = mainCheckoutOf(cwd);
+    return main ? containsPath(root, main) : false;
   }
 
   // Deepest root wins: a containing pair is always ancestor/descendant, so the
