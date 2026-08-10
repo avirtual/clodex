@@ -369,7 +369,9 @@ adapter that hosts it. The modules below are what the engine assembles.
   `term-search.js`, `banners.js`, `themes.js`, `library-drawers.js`
   (prompts/agents/skills drawers),
   `inbox-drawer.js` (operator inbox for `[agent:notify-user]` notes +
-  the sidebar-footer unread badge; self-contained, no core deps).
+  the sidebar-footer unread badge; no core state, but takes `openFilePeek`
+  and `showToast` by injection so a link in a note lands in the same peek
+  modal and toasts the same miss a path click in the terminal does).
 - **renderer/popovers/** — the popover family behind `popoverApi`:
   `report-panel.js`, `context-popover.js`, `cost-popover.js`,
   `bust-popover.js`, `files-popover.js` (also exports `openFilePeek` +

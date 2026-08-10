@@ -61,7 +61,10 @@ function createInboxDrawer({ openFilePeek, showToast }) {
     body.className = 'inbox-body';
     for (const span of scanLinks(note.body)) {
       if (span.kind === 'url') {
-        const a = document.createElement('a');
+        // A <button>, not an <a>: an anchor without href is not focusable, and
+        // an href here would be a real navigation target in a nodeIntegration
+        // renderer. Both link kinds being buttons keeps Tab order complete.
+        const a = document.createElement('button');
         a.className = 'inbox-link';
         a.textContent = span.text;
         // No scheme gate here: scanLinks already dropped everything that is not

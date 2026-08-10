@@ -4261,8 +4261,6 @@ body {
   color: var(--accent);
   cursor: pointer;
   text-decoration: underline;
-}
-.inbox-path {
   border: 0;
   background: none;
   padding: 0;
@@ -19837,7 +19835,6 @@ ${i3.join("\n")}
           marks.push({ start: u.index, end: u.index + u[0].length, span: { kind: "url", text: u[0] } });
         }
         for (const h of scanPaths(text)) {
-          if (marks.some((m) => h.start < m.end && m.start < h.end)) continue;
           marks.push({
             start: h.start,
             end: h.end,
@@ -19848,6 +19845,7 @@ ${i3.join("\n")}
         const out = [];
         let at = 0;
         for (const m of marks) {
+          if (m.start < at) continue;
           if (m.start > at) out.push({ kind: "text", text: text.slice(at, m.start) });
           out.push(m.span);
           at = m.end;
@@ -21592,7 +21590,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           body.className = "inbox-body";
           for (const span of scanLinks(note.body)) {
             if (span.kind === "url") {
-              const a = document.createElement("a");
+              const a = document.createElement("button");
               a.className = "inbox-link";
               a.textContent = span.text;
               a.addEventListener("click", () => window.api.openExternal(span.text));

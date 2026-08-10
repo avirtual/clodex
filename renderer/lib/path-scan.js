@@ -89,13 +89,6 @@ function scanLinks(text) {
     marks.push({ start: u.index, end: u.index + u[0].length, span: { kind: 'url', text: u[0] } });
   }
   for (const h of scanPaths(text)) {
-    // Unreachable with today's regexes (scanPaths already drops anything
-    // starting inside a URL, and a path match cannot cross a `://`). Kept
-    // because the gap-fill below assumes marks never overlap: two that did
-    // would push a span whose text was already consumed, corrupting the body
-    // rather than failing. Widening EXTENSIONS or URL_RE is what would make
-    // that reachable, and it would be silent.
-    if (marks.some((m) => h.start < m.end && m.start < h.end)) continue;
     marks.push({
       start: h.start,
       end: h.end,
@@ -107,6 +100,9 @@ function scanLinks(text) {
   const out = [];
   let at = 0;
   for (const m of marks) {
+    // Source-agnostic overlap drop: a mark starting inside one already emitted
+    // would push text already consumed, corrupting the body instead of failing.
+    if (m.start < at) continue;
     if (m.start > at) out.push({ kind: 'text', text: text.slice(at, m.start) });
     out.push(m.span);
     at = m.end;

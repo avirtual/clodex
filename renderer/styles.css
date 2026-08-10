@@ -3043,17 +3043,15 @@ html, body {
 
 .inbox-item.unread .inbox-body { color: var(--text); }
 
+/* Both are <button>: an <a> without href is not keyboard-focusable, so Tab
+   would reach paths and skip URLs in the same body. The reset is what stops the
+   UA's chrome from breaking the run of text they sit in (font and color are not
+   inherited by buttons). */
 .inbox-link,
 .inbox-path {
   color: var(--accent);
   cursor: pointer;
   text-decoration: underline;
-}
-
-/* inbox-path is a <button> so the row's click-to-mark-read still reaches it;
-   the reset is what stops the UA's chrome from breaking the run of text it
-   sits in (font/color are not inherited by buttons). */
-.inbox-path {
   border: 0;
   background: none;
   padding: 0;
