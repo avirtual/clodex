@@ -136,10 +136,20 @@ losing to another holder sheds the stale claim without a retry loop.
 Self-contained island; peer terminals live in the core sessions Map keyed
 `name@peerId` (`@` can't occur in local names). Highlights:
 
-- Header per peer: online dot, state text, version-severity name tint
-  (only when the peer is behind us), icon strip — ＋ new session (create
-  cap), ↻ restart Clodex, ◎ visibility popover (works offline), ⓘ identity
-  popover (version/platform/caps/age + Update + Disable).
+- Header per peer: fold caret, online dot, state text, version-severity name
+  tint (only when the peer is behind us), hidden-row count while collapsed,
+  icon strip — ＋ new session (create cap), ↻ restart Clodex, ◎ visibility
+  popover (works offline), ⓘ identity popover (version/platform/caps/age +
+  Update + Pause). Right-click menu: new session, restart, rebuild (boxes),
+  update, Pause. Pause is enabled offline too — the ⓘ button that used to be
+  the only entry point renders solely when `online && version`.
+- **Fold state**: `view.expandedPeers` in the WORKSPACE record, via
+  `workspace:setView` — so it is per-workspace, and the merge in
+  `workspaces.setView` keeps it clear of the sidebar view keys renderer.js
+  owns. It lists the EXPANDED peers: absence reads as collapsed, so a new
+  workspace (and a newly seen peer in an old one) starts folded. Ids of peers
+  that no longer exist are not pruned. Note the local sidebar's
+  `collapsedGroups` is deliberately session-lived and NOT persisted.
 - **Restore sweep**: `peerRestorePending` is one-shot per name — seeded at
   startup from persisted `peerAttached` (and re-seeded on re-enable),
   consumed as sessions arrive, expired names forgotten after a settle

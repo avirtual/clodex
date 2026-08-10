@@ -224,6 +224,11 @@ const RENDERER_SCANNED_MODULES = [
   // read by peers-ui, which is DOM-bound and untested, and this one is the ONLY
   // surface for a served seat whose row is filtered or collapsed out of sight.
   'renderer/lib/served-banner.js',
+  // The peer-header fold defaulting (t276). Same shape as the two above: a pure
+  // leaf read by peers-ui, which is DOM-bound and untested, and the whole point
+  // of the leaf is that its absence-means-collapsed rule is reachable by a unit
+  // test at all.
+  'renderer/lib/peer-collapse.js',
   // Read by BOTH renderer.js (terminal link provider) and files-popover.js
   // (peek linkify), so a reach for a renderer.js name would break one caller
   // and not the other.

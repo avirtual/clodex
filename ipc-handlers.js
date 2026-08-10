@@ -1566,6 +1566,14 @@ function registerIpcHandlers(deps) {
         }),
       });
     }
+    // Enabled offline as well as online. The only other way to pause a peer is
+    // the ⓘ popover, whose button renders solely when `online && version` — so
+    // an offline or version-less peer had no pause at all before this item.
+    template.push({ type: 'separator' });
+    template.push({
+      label: `Pause ${label || 'peer'}`,
+      click: () => e.sender.send('peer:context-action', { action: 'pause', id, name: label }),
+    });
     popupMenu(template, e);
   });
 

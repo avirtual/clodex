@@ -1119,6 +1119,58 @@ test('workspaces: setOpen round-trips true, clears to an ABSENT key', () => {
   } finally { cleanup(); }
 });
 
+// The peer-header fold (t276) rides workspace:setView rather than a store of
+// its own, so what this pins is that setView's MERGE is what makes that safe:
+// peers-ui writes only `expandedPeers` and renderer.js writes only the sidebar
+// keys, and neither may erase the other. A setView that assigned instead of
+// merging would lose the folds on the next sidebar filter change.
+test('workspaces: setView merges expandedPeers alongside the sidebar view, absence reads as collapsed', () => {
+  const { stores, cleanup } = freshStores();
+  const { isPeerExpanded } = require('../renderer/lib/peer-collapse');
+  try {
+    stores.workspaces.list(); // seed default
+    stores.workspaces.upsert({ id: 'w2', name: 'Second' });
+
+    // A workspace nobody has folded anything in has no view at all — and every
+    // peer in it must read collapsed. This is the defaulting rule the feature
+    // rests on, at the persistence layer.
+    const fresh = stores.workspaces.get('w2');
+    assert.ok(!('view' in fresh) || !fresh.view.expandedPeers);
+    assert.strictEqual(isPeerExpanded((fresh.view || {}).expandedPeers, 'peer-a'), false);
+
+    // renderer.js writes the sidebar view; peers-ui writes only its one key.
+    stores.workspaces.setView('default', { group: 'project', sort: 'recency' });
+    stores.workspaces.setView('default', { expandedPeers: ['peer-a'] });
+    assert.deepStrictEqual(stores.workspaces.get('default').view, {
+      group: 'project', sort: 'recency', expandedPeers: ['peer-a'],
+    });
+    // ENTER: the expanded peer really round-tripped — the collapsed assertions
+    // in this test are absences and would all hold over an empty view.
+    assert.strictEqual(isPeerExpanded(stores.workspaces.get('default').view.expandedPeers, 'peer-a'), true);
+    // A peer that appears for the first time in this already-configured
+    // workspace is still collapsed.
+    assert.strictEqual(isPeerExpanded(stores.workspaces.get('default').view.expandedPeers, 'peer-b'), false);
+
+    // A later sidebar-filter write must not drop the folds.
+    stores.workspaces.setView('default', { group: 'none', sort: 'name', status: 'all' });
+    assert.deepStrictEqual(stores.workspaces.get('default').view, {
+      group: 'none', sort: 'name', status: 'all', expandedPeers: ['peer-a'],
+    });
+
+    // Fold state is per-workspace: w2 is untouched by everything above.
+    assert.strictEqual(isPeerExpanded(((stores.workspaces.get('w2') || {}).view || {}).expandedPeers, 'peer-a'), false);
+
+    // Collapsing the last expanded peer persists an empty list, which reads the
+    // same as never having stored one.
+    stores.workspaces.setView('default', { expandedPeers: [] });
+    assert.deepStrictEqual(stores.workspaces.get('default').view.expandedPeers, []);
+    assert.strictEqual(isPeerExpanded(stores.workspaces.get('default').view.expandedPeers, 'peer-a'), false);
+
+    // Unknown id is a no-op, not a throw.
+    stores.workspaces.setView('ghost', { expandedPeers: ['peer-a'] });
+  } finally { cleanup(); }
+});
+
 test('workspaces: setZoomFactor persists non-1 factors, 1.0 clears to an ABSENT key', () => {
   const { stores, cleanup } = freshStores();
   try {

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Clodex</title>
   <style>
-/* node_modules/@xterm/xterm/css/xterm.css */
+/* ../wb-wrap-ui/node_modules/@xterm/xterm/css/xterm.css */
 .xterm {
   cursor: text;
   position: relative;
@@ -5113,6 +5113,20 @@ body {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   user-select: none;
+  cursor: pointer;
+}
+.peer-caret {
+  display: inline-block;
+  width: 10px;
+  flex: none;
+  transition: transform 0.12s ease;
+}
+.peer-header.collapsed .peer-caret {
+  transform: rotate(-90deg);
+}
+.peer-count {
+  opacity: 0.7;
+  font-weight: 600;
 }
 .peer-label {
   font-weight: 600;
@@ -5239,6 +5253,7 @@ body {
 }
 .peer-header-disabled {
   opacity: 0.5;
+  cursor: default;
 }
 .session-item.peer-offline {
   opacity: 0.5;
@@ -6008,7 +6023,7 @@ body {
       </label>
       <div class="popover-actions">
         <button id="peer-info-update" type="button" class="hidden">Update Clodex</button>
-        <button id="peer-info-disable" type="button" class="secondary">Disable</button>
+        <button id="peer-info-disable" type="button" class="secondary">Pause</button>
         <button id="peer-info-popover-done" class="secondary" type="button">Close</button>
       </div>
     </div>
@@ -9568,9 +9583,9 @@ body {
     }
   });
 
-  // node_modules/@xterm/xterm/lib/xterm.js
+  // ../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js
   var require_xterm = __commonJS({
-    "node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
       !(function(e, t) {
         if ("object" == typeof exports && "object" == typeof module) module.exports = t();
         else if ("function" == typeof define && define.amd) define([], t);
@@ -15627,9 +15642,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-fit/lib/addon-fit.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js
   var require_addon_fit = __commonJS({
-    "node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.FitAddon = t() : e.FitAddon = t();
       })(self, (() => (() => {
@@ -15663,9 +15678,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-search/lib/addon-search.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js
   var require_addon_search = __commonJS({
-    "node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.SearchAddon = t() : e.SearchAddon = t();
       })(globalThis, (() => (() => {
@@ -18624,9 +18639,9 @@ ${i3.join("\n")}
     }
   });
 
-  // node_modules/@xterm/addon-web-links/lib/addon-web-links.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js
   var require_addon_web_links = __commonJS({
-    "node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.WebLinksAddon = t() : e.WebLinksAddon = t();
       })(self, (() => (() => {
@@ -26733,6 +26748,21 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
     }
   });
 
+  // renderer/lib/peer-collapse.js
+  var require_peer_collapse = __commonJS({
+    "renderer/lib/peer-collapse.js"(exports, module) {
+      function isPeerExpanded(expanded, id) {
+        return Array.isArray(expanded) && expanded.indexOf(String(id)) !== -1;
+      }
+      function togglePeerExpanded(expanded, id) {
+        const key = String(id);
+        const cur = (Array.isArray(expanded) ? expanded : []).filter((x) => typeof x === "string");
+        return cur.indexOf(key) === -1 ? [...cur, key] : cur.filter((x) => x !== key);
+      }
+      module.exports = { isPeerExpanded, togglePeerExpanded };
+    }
+  });
+
   // renderer/lib/served-banner.js
   var require_served_banner = __commonJS({
     "renderer/lib/served-banner.js"(exports, module) {
@@ -26769,6 +26799,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       var { nextVisibleWithName } = require_peer_visibility();
       var { openUrl: sandboxOpenUrl } = require_sandbox_view();
       var { webViewAffordance } = require_peer_web_view();
+      var { isPeerExpanded, togglePeerExpanded } = require_peer_collapse();
       var { servedBannerView } = require_served_banner();
       function initPeersUi({
         sessions,
@@ -26808,6 +26839,20 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         const peerBar = document.getElementById("peer-bar");
         let peerVisibleMap = {};
         const disabledPeers = /* @__PURE__ */ new Map();
+        let expandedPeers = [];
+        window.api.getSidebarView().then((res) => {
+          const view = res && res.ok && res.view;
+          if (!view || !Array.isArray(view.expandedPeers)) return;
+          expandedPeers = view.expandedPeers.slice();
+          renderPeers();
+        }).catch(() => {
+        });
+        function togglePeerFold(id) {
+          expandedPeers = togglePeerExpanded(expandedPeers, id);
+          window.api.setSidebarView({ expandedPeers }).catch(() => {
+          });
+          renderPeers();
+        }
         function peerNameVisible(id, name) {
           const sel = peerVisibleMap[id];
           return !Array.isArray(sel) || sel.includes(name);
@@ -26916,8 +26961,10 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         function renderPeers() {
           sessionList.querySelectorAll("[data-peer-ui]").forEach((el) => el.remove());
           for (const [id, st] of peerStatuses) {
+            const rows = (st.online ? (st.sessions || []).map((s) => ({ name: s.name, cwd: s.cwd, activity: s.activity, stats: s.stats })) : [...sessions.entries()].filter(([, e]) => e.peer && e.peer.id === id).map(([, e]) => ({ name: e.peer.name, cwd: "", activity: "idle" }))).filter((s) => peerNameVisible(id, s.name) || sessions.has(peerKey(id, s.name)));
+            const expanded = isPeerExpanded(expandedPeers, id);
             const header = document.createElement("div");
-            header.className = "peer-header";
+            header.className = "peer-header" + (expanded ? "" : " collapsed");
             header.dataset.peerUi = "1";
             const tun = peerTunnels.get(id);
             let stateText = st.online ? "" : "offline";
@@ -26937,7 +26984,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             const off = st.online ? "" : "disabled";
             const isBox = boxIds.has(id);
             const webView = isBox ? { show: false } : webViewAffordance({ status: st, tunnel: tun, webTunnel: peerWebTunnels.get(id) });
-            header.innerHTML = `<span class="peer-dot ${st.online ? "online" : ""}"></span>` + (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : "") + `<span class="peer-label${nameSev}">${esc(hostLabel)}</span><span class="peer-state">${esc(stateText)}</span><span class="peer-actions">` + (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : "") + (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}\u2019s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : "") + (webView.show ? `<button class="peer-select peer-webview peer-webview-${webView.phase}" data-tip="${esc(webView.tip)}" aria-label="${esc(webView.tip)}" ${webView.enabled ? "" : "disabled"}>&#8599;</button>` : "") + `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button><button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` + (st.online && st.version ? `<button class="peer-select peer-info peer-sev-${sev}" data-tip="Peer identity & version" aria-label="Peer identity">&#9432;</button>` : "") + `</span>`;
+            header.innerHTML = `<span class="peer-caret">&#9662;</span><span class="peer-dot ${st.online ? "online" : ""}"></span>` + (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : "") + `<span class="peer-label${nameSev}">${esc(hostLabel)}</span>` + (!expanded && rows.length ? `<span class="peer-count">${rows.length}</span>` : "") + `<span class="peer-state">${esc(stateText)}</span><span class="peer-actions">` + (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : "") + (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}\u2019s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : "") + (webView.show ? `<button class="peer-select peer-webview peer-webview-${webView.phase}" data-tip="${esc(webView.tip)}" aria-label="${esc(webView.tip)}" ${webView.enabled ? "" : "disabled"}>&#8599;</button>` : "") + `<button class="peer-select peer-restart" data-tip="Restart Clodex on ${esc(hostLabel)}" aria-label="Restart Clodex on ${esc(hostLabel)}" ${off}>&#8635;</button><button class="peer-select peer-eye" data-tip="Choose which sessions to show" aria-label="Choose which sessions to show">&#9678;</button>` + (st.online && st.version ? `<button class="peer-select peer-info peer-sev-${sev}" data-tip="Peer identity & version" aria-label="Peer identity">&#9432;</button>` : "") + `</span>`;
             header.querySelector(".peer-eye").addEventListener("click", (e) => {
               e.stopPropagation();
               openPeerSelectPopover(id, e.currentTarget);
@@ -26977,13 +27024,16 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
                 sev
               });
             });
+            header.addEventListener("click", () => {
+              togglePeerFold(id);
+            });
             sessionList.appendChild(header);
-            const rows = (st.online ? (st.sessions || []).map((s) => ({ name: s.name, cwd: s.cwd, activity: s.activity, stats: s.stats })) : [...sessions.entries()].filter(([, e]) => e.peer && e.peer.id === id).map(([, e]) => ({ name: e.peer.name, cwd: "", activity: "idle" }))).filter((s) => peerNameVisible(id, s.name) || sessions.has(peerKey(id, s.name)));
             for (const s of rows) {
               const key = peerKey(id, s.name);
               const item = document.createElement("div");
               item.className = "session-item peer-item" + (st.online ? "" : " peer-offline");
               item.dataset.peerUi = "1";
+              if (!expanded) item.style.display = "none";
               item.dataset.name = key;
               item.dataset.activity = s.activity || "idle";
               if (sessions.has(key)) item.classList.add("attached");
@@ -27288,6 +27338,9 @@ ${detail}` });
               break;
             case "rebuild":
               await rebuildBox(id, name || "sandbox");
+              break;
+            case "pause":
+              disablePeer(id, name || "peer");
               break;
             case "newSession":
               openPeerSessionDialog(id, name || "peer");
