@@ -9514,6 +9514,12 @@ test('task assign: a seat that spawned then failed onto a REUSED tree takes the 
   // what makes a second pointer a collision rather than a fresh write.
   f.archiveSeat('team-hand-1');
 
+  // ENTER: the whole test is "two records named one tree". If the archived record
+  // ever stopped naming it, `naming` would be ['team-builder-1'] and every
+  // assertion below would pass without a collision ever existing.
+  assert.ok(f.worktreeSet.some((w) => w.name === 'team-hand-1' && w.wt && w.wt.path === tree.path),
+    'ENTER: the archived record must still NAME the tree, or there is no collision to detect');
+
   const replies = [];
   f.m._injectText = (t, msg) => { replies.push(msg); return { queued: true }; };
   f.m.create = async (...args) => { f.seat(args[0], args[2]); throw new Error('boom'); };

@@ -4826,7 +4826,11 @@ function createSessionManager(deps) {
         try {
           const all = ticketsStore.load(teamDir);
           const t = all.find((x) => x.id === ticket.id);
-          if (!t || !t.worktree) return;
+          // Memory follows disk even on the early return. The catch's un-pin reads
+          // `ticket.worktree` in memory while unpin() and this reload from the
+          // store, so a save that threw earlier would leave the two disagreeing —
+          // and the guard would skip an un-pin the on-disk state calls for.
+          if (!t || !t.worktree) { delete ticket.worktree; return; }
           delete t.worktree;
           ticketsStore.save(teamDir, all);
           delete ticket.worktree;
@@ -4982,13 +4986,21 @@ function createSessionManager(deps) {
           // does not run — so un-pinning here would leave a role-assigned ticket
           // still naming an occupied tree, which is the misroute this guards.
           // The tree test is the predicate, not a proxy for it: `!reused && !live`
-          // coincides with it today only because clearTicketTree() above runs on
-          // exactly that path. A future throw reaching here with `wt === null` and
-          // a ticket that still names a tree would un-pin one naming a LIVE tree,
-          // which is the misroute this guards. Read the ticket itself instead.
-          if (!reused && !live && !(ticket.worktree && ticket.worktree.path)) unpin();
+          // coincides with it on every path a CAUGHT throw takes today, only
+          // because clearTicketTree() above runs on exactly that path. A throw
+          // reaching here with `wt === null` and a ticket that still names a tree
+          // would un-pin one naming a LIVE tree — the misroute this guards. Read
+          // the ticket itself instead.
+          const unpinned = !reused && !live && !(ticket.worktree && ticket.worktree.path);
+          if (unpinned) unpin();
           log.error('intent', `ticket ${ticket.id} seat ${seat.name} failed: ${err.message}`);
-          reply(`ticket ${ticket.id}: seat ${seat.name} failed to spawn (${err.message}) — ticket left assigned to "${roleKey}"`);
+          // Branched on the predicate rather than asserting the un-pin happened:
+          // it is now skipped in more states than it used to be, and the commonest
+          // failure (create() seats, a later step throws) keeps the pin while this
+          // line used to say the ticket had gone back to the role.
+          reply(unpinned
+            ? `ticket ${ticket.id}: seat ${seat.name} failed to spawn (${err.message}) — ticket left assigned to "${roleKey}"`
+            : `ticket ${ticket.id}: seat ${seat.name} failed to spawn (${err.message}) — the ticket stays pinned to "${seat.name}", whose tree is kept; re-assign it to retry`);
         }
       });
     }

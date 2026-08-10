@@ -228,8 +228,10 @@ adapter that hosts it. The modules below are what the engine assembles.
   is in it, so the un-pin is skipped for that case too — as it is on the
   `createWorktree`-failure exit, which is reached with the ticket still naming the
   tree `_existingTicketTree` rejected — and that exit tests the ticket's tree
-  itself rather than `!reused && !live`, which only coincides with it while
-  `clearTicketTree()` runs on exactly that path. A live seat's record must NAME its
+  itself rather than `!reused && !live`, which coincides with it only on the paths
+  a CAUGHT throw takes today, and only while `clearTicketTree()` runs on exactly
+  that path. Both failure replies branch on the predicate rather than asserting the
+  un-pin: it is skipped in more states than the un-pin used to be. A live seat's record must NAME its
   tree or `_ticketTreeHolder` cannot see the occupancy and `session:kill` orphans
   the checkout, so the claim runs straight after `create()` and again in the catch
   — `create()` can seat the session and then throw. Both go through one
