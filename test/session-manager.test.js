@@ -9039,6 +9039,60 @@ test('task add: the ticket branch forks from the lead\'s HEAD, not the default b
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
+// Releasing a parked ticket is the OTHER dispatch path, and it is the documented
+// one for filing work ahead of time. Without the mint here, `task add park` +
+// `assign` quietly opts a role OUT of its own worktree: the hand lands in the
+// shared checkout holding a spec written for an isolated tree.
+test('task assign: releasing a parked ticket mints the worktree and seat too', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  let createdCwd = 'UNSET';
+  let createdName = null;
+  f.m.create = async (...args) => { createdName = args[0]; createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'deferred work\ndetail' });
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(createdCwd, 'UNSET', 'ENTER: parking must not have spawned anything yet');
+
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
+  await until(() => createdCwd !== 'UNSET' || f.gated.length);
+
+  assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: the release must have reached create()');
+  assert.strictEqual(createdName, 'team-hand-1', 'the released ticket gets its own seat');
+  assert.strictEqual(createdCwd, repo, 'the seat boots in the repo, like every other ticket seat');
+  const wtPath = f.worktreeSet.length ? f.worktreeSet[0].wt.path : null;
+  assert.ok(wtPath && fsReal.lstatSync(pathReal.join(wtPath, '.git')).isFile(),
+    'a linked worktree must exist, or the release opted the role out of its branch');
+  const t = f.one('t1');
+  assert.strictEqual(t.assignee, 'team-hand-1', 'ticket pins to the seat on release, not the role');
+  assert.strictEqual(t.role, 'hand', 'the originating role is preserved');
+  assert.strictEqual(t.parked, undefined, 'release unparks');
+  const body = f.gated.map((g) => g.body).join('\n');
+  assert.match(body, new RegExp(`WORK IN: ${wtPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `),
+    'the spec must name the tree — the seat boots in the repo and would otherwise edit the shared one');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+test('task assign: a ticket whose seat is still live is not given a second worktree', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  let creates = 0;
+  f.m.create = async (...args) => { creates += 1; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the work' });
+  await until(() => creates > 0 || f.gated.length);
+  assert.strictEqual(creates, 1, 'ENTER: the first dispatch must have spawned the seat');
+  const treesAfterAdd = f.worktreeSet.length;
+
+  // Re-assigning to the same role, with the ticket's seat still live. The seat
+  // name is derived from the ticket id, so the mint refuses a name already taken.
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
+  for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(creates, 1, 'no second seat for a ticket that already has one');
+  assert.strictEqual(f.worktreeSet.length, treesAfterAdd, 'and no second worktree');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
 test('task add: a parked ticket for an opted-in role spawns nothing', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);

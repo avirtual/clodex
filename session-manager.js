@@ -4929,6 +4929,24 @@ function createSessionManager(deps) {
       // delivered yet still invisible to advance, replay and the badge.
       const wasParked = !!ticket.parked;
       delete ticket.parked;
+      // Assign is the OTHER dispatch path, so it mints like _taskAdd: releasing a
+      // parked ticket for an opted-in role must still get its own branch, or the
+      // documented park-then-release flow silently opts the role out and the hand
+      // works in the shared checkout holding a spec written for an isolated tree.
+      const wtDef = this._ticketWorktreeRole(team, assignee);
+      if (wtDef) {
+        const minted = this._mintTicketSeat(team, assignee, ticket);
+        if (minted.ok) {
+          ticket.role = assignee;
+          ticket.assignee = minted.name;
+          ticketsStore.save(teamDir, tickets);
+          this._spawnTicketSeat(session, team, teamDir, ticket, assignee, wtDef, minted);
+          this._reconcileTickets(team, teamDir);
+          log.info('intent', `task assign by ${session.name}: ${ticket.id} → seat ${minted.name}, branch ${minted.branch}`);
+          reply(`ticket ${ticket.id} → spawning ${minted.name} in a worktree on branch ${minted.branch}`);
+          return;
+        }
+      }
       ticketsStore.save(teamDir, tickets);
       const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
       const suffix = this._ticketDeliverySuffix(d, assignee);

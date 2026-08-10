@@ -182,7 +182,9 @@ adapter that hosts it. The modules below are what the engine assembles.
   ticket resolution, and a subprocess there would make membership a latency
   problem.
   Branch per ticket: a role with `worktree: true` in team.json gets a branch, a
-  worktree and a fresh seat per ticket (`_taskAdd` → `_spawnTicketSeat`). The
+  worktree and a fresh seat per ticket. BOTH dispatch paths mint — `_taskAdd`
+  and `_taskAssign` (releasing a parked ticket), each via `_spawnTicketSeat`;
+  minting in only one silently opts the role out on the other. The
   ticket is re-pinned from the ROLE to that seat name, which is what keeps the
   seat one-shot — `_ticketAssigneeSeat` resolves a role to the first live seat
   holding it, so a role-pinned ticket would route the next one into the previous
