@@ -11,7 +11,17 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — v5.5.0 loaded no sessions; upgrade straight past it
+
+- **Fixes a v5.5.0 regression that left the sidebar empty.** 5.5.0 moved the
+  file peek and report panel to the document root so they would stop opening
+  behind the inbox drawer. They landed after the tag that loads the interface,
+  which runs while the page is still being read, so both were missing at the
+  moment the code that wires them looked for them. That threw, and the throw
+  stopped the rest of the interface from starting — no session list, no agents.
+  Only 5.5.0 is affected; 5.4.0 and earlier are fine, and the stacking fix that
+  release shipped is unchanged and still works. If you installed 5.5.0, replace
+  it with this build.
 
 ## 5.5.0 — 2026-08-11 — notes you can click, folders you can browse
 
