@@ -45,6 +45,14 @@ const BOX_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 // the sanitizer drops it too (creation already rejects it). M6b P3.
 const RESERVED_BOX_IDS = new Set(['host']);
 
+// Adding a key here is not enough — several hand-maintained lists repeat it,
+// unchecked. Always `uiSettings._load`, or the persisted value is dropped on
+// every read, including the one `set` merges onto, so the next unrelated save
+// erases it; always `uiSettings.set`, or the key is unwritable and every save
+// reverts it. Only if the renderer reads it via `getSettings`: the
+// `settings:get` whitelist in ipc-handlers.js, where an omission arrives as
+// undefined and reads as off. Only if Preferences' Save writes it: both halves
+// of `openPrefs`.
 const DEFAULT_UI_SETTINGS = {
   statusline: {
     claude: ['model', 'context', 'cost', 'cwd'],
