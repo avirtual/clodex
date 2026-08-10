@@ -1014,6 +1014,19 @@ test('seed: shipped team prompts agree on who commits, who merges, who pushes', 
     'lead prompt carries the merge-after-review step the hand defers to');
 });
 
+// The base-commit check is a PAIR: the lead cites the commit, the hand acts on
+// the mismatch. Either half alone is inert — a citation nobody checks, or a
+// check with nothing to check against.
+test('seed: shipped team prompts pair the spec base-commit check', () => {
+  const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
+  const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
+  assert.match(hand, /merge-base --is-ancestor/, 'hand is given the check to run');
+  assert.match(hand, /Stop and tell the lead/,
+    'and told to stop — the failure mode is treating the mismatch as drift and working on');
+  assert.match(lead, /Cite the commit your spec was written against/,
+    'lead is told to supply the commit the hand checks against');
+});
+
 // T52: the reviewer seat DEFINITION now ships as a template (the DATA
 // _handleTeamReview consumes), seeded like the role prompts into
 // library/templates/. Pin it seeds byte-exact and surfaces through the store.

@@ -9007,6 +9007,38 @@ test('task add: a role WITHOUT the opt-in keeps the old role-assigned path', asy
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
+test('task add: the ticket branch forks from the lead\'s HEAD, not the default branch', async () => {
+  const { root, repo } = mkGitRepo();
+  const git = (...a) => require('node:child_process')
+    .execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe', env: { ...process.env,
+      GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } })
+    .toString().trim();
+  // HEAD ahead of the repo's default branch — the everyday state of a lead with
+  // unpushed commits, which is exactly when the spec cites symbols the default
+  // branch does not have yet.
+  git('checkout', '-q', '-b', 'work');
+  git('commit', '-q', '--allow-empty', '-m', 'unpushed');
+  const headSha = git('rev-parse', 'HEAD');
+  const defaultSha = git('rev-parse', 'master');
+  assert.notStrictEqual(headSha, defaultSha, 'ENTER: HEAD must actually be ahead, or this asserts nothing');
+
+  const f = mkTicketWt(repo);
+  let createdCwd = 'UNSET';
+  f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'work on it' });
+  await until(() => createdCwd !== 'UNSET' || f.gated.length);
+  assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: create() must have been reached');
+
+  const wtPath = f.worktreeSet.length ? f.worktreeSet[0].wt.path : null;
+  assert.ok(wtPath, 'ENTER: a worktree must have been created');
+  const wtSha = require('node:child_process')
+    .execFileSync('git', ['-C', wtPath, 'rev-parse', 'HEAD'], { stdio: 'pipe' }).toString().trim();
+  assert.strictEqual(wtSha, headSha,
+    'the hand must get the tree the ticket was written against; forking from the default branch hands it a stale checkout and merging it back reverts the unpushed commits');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
 test('task add: a parked ticket for an opted-in role spawns nothing', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);

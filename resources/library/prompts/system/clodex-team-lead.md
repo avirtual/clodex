@@ -107,6 +107,11 @@ cwd IS a worktree is still on the team.
 - The tree is removed with the session, so retiring the seat after you merge
   is the cleanup. Merge FIRST — a discarded worktree takes unmerged commits
   with it.
+- Cite the commit your spec was written against, and tell the hand to stop if it
+  is not an ancestor of its worktree HEAD. That mismatch means the tree is not
+  the one you described — symbols in the spec may not exist yet, and merging the
+  branch back would revert whatever the base was missing. A hand reads it as
+  line-number drift and works on regardless unless the spec says otherwise.
 - A ticket seat that dies is replaceable and its work is not lost: the branch
   and the tree outlive it, and the `WORK IN:` line is redelivered with the spec
   on a replay. Respawn onto the same ticket rather than starting a new branch.

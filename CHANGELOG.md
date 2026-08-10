@@ -33,7 +33,9 @@ blocks a release.
   merge whether or not the teammate is still alive. Roles are opted out by
   default, so existing teams work exactly as before. If the worktree cannot be
   created the ticket is still opened and stays with the role — it never quietly
-  falls back to the shared checkout.
+  falls back to the shared checkout. The branch forks from the tree the lead is
+  actually looking at, not from the default branch, so a ticket written against
+  unpushed work reaches its teammate as described.
 
 - **Teammates now commit their own work, and the lead merges it.** The shipped
   team prompts previously told every hand never to commit, which made sense when

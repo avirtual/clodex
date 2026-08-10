@@ -48,6 +48,10 @@ work, not on things the lead already decided.
   the SHARED repo checkout, which other seats are editing at the same time —
   editing files there instead is the collision the worktree exists to prevent,
   and nothing will stop you doing it.
+- If the spec cites a commit, check it is an ancestor of your tree's HEAD before
+  you write anything (`git merge-base --is-ancestor <cited> HEAD`). A NO is not
+  line-number drift you can work around by matching symbols instead: it means
+  your checkout is not the tree the spec describes. Stop and tell the lead.
 - Commit to YOUR OWN branch as you work, and NEVER push. In a `WORK IN:` tree
   that branch is yours: commits are how the reviewer and the lead see your work
   at all, and an uncommitted tree is invisible to both. Small, honest commits

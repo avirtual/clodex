@@ -4765,7 +4765,12 @@ function createSessionManager(deps) {
       setImmediate(async () => {
         let wt = null;
         try {
-          const r = await gitWorktree.createWorktree(team.root, seat.branch);
+          // base HEAD, not the default branch: a ticket is written against the
+          // tree the lead is looking at, which routinely has unpushed commits.
+          // Forking from origin/HEAD instead hands the seat a stale checkout in
+          // which the spec's symbols may not exist, and merging that branch back
+          // would revert everything the lead had not pushed.
+          const r = await gitWorktree.createWorktree(team.root, seat.branch, { base: 'HEAD' });
           if (!r || !r.ok) {
             // NO fallback to team.root. The spec was written for an isolated
             // checkout; spawning in the shared one would have the hand commit
