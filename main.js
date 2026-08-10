@@ -42,6 +42,10 @@ const pathMergeFailed = fixPathFromLoginShell();
 // sessions. app.relaunch() then carries the clean env forward.
 require('./claude-env').scrubInheritedClaudeMarkers(process.env);
 
+// Set this BEFORE engine.shutdown() on every quit path. Shutdown closes the
+// windows, and `win.on('closed')` reads this flag to decide whether the close
+// was explicit: still false there and quit drops each workspace from the restore
+// set, collapsing the next launch to a single window.
 let appQuitting = false;
 
 // Last-resort net for node-pty. Its native layer (and internal socket teardown)
