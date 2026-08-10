@@ -189,6 +189,14 @@ adapter that hosts it. The modules below are what the engine assembles.
   seat one-shot — `_ticketAssigneeSeat` resolves a role to the first live seat
   holding it, so a role-pinned ticket would route the next one into the previous
   ticket's checkout.
+  A ticket that already HAS a tree never mints a second one: the seat name derives
+  from the ticket id, so `_mintTicketSeat` returns `taken` with that name.
+  `_taskAssign` splits the two readings of taken — still the ticket's own live
+  seat means re-send the spec to it, un-pinning would hand THIS ticket's tree to
+  another ticket's hand; the seat gone means respawn onto the surviving tree, which
+  `_existingTicketTree` re-verifies against `git worktree list` before reuse (the
+  record outlives a tree removed by hand). A reused tree is never rolled back on a
+  failed spawn — it holds the previous seat's commits.
   The ticket seat's cwd is the REPO, not its worktree: it is TOLD the path by the
   `WORK IN:` line `_deliverTicketSpec` prepends, and cd's there itself. Booting it
   in the tree would bind its transcript, project root and team block to a checkout

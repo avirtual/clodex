@@ -4734,10 +4734,32 @@ function createSessionManager(deps) {
       const n = String(ticket.id).replace(/^t/, '');
       const name = `${team.name}-${roleKey}-${n}`;
       if (!AGENT_NAME_RE.test(name)) return { ok: false, error: `seat name "${name}" is not name-legal` };
-      if (this.sessions.has(name) || getPersistence().get(name)) return { ok: false, error: `seat name "${name}" is taken` };
+      // `name` rides the REFUSAL too: the name is derived, so a caller holding a
+      // ticket that already has a seat has no other way to learn which one without
+      // re-deriving it, and a second copy of this rule is how the two drift.
+      if (this.sessions.has(name) || getPersistence().get(name)) return { ok: false, taken: true, name, error: `seat name "${name}" is taken` };
       const slug = String(ticket.title || '').toLowerCase()
         .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
       return { ok: true, name, branch: slug ? `${ticket.id}-${slug}` : String(ticket.id) };
+    }
+
+    // The ticket's tree, when it still exists — a seat dies, its tree does not.
+    // Read from git rather than from the record alone: the record survives a tree
+    // the operator removed by hand, and reusing a path that is no longer a
+    // registered worktree would spawn the seat into a bare directory.
+    async _existingTicketTree(team, ticket) {
+      const wt = ticket && ticket.worktree;
+      if (!wt || !wt.path || !wt.branch) return null;
+      let listed;
+      try { listed = await gitWorktree.listWorktrees(team.root); } catch { return null; }
+      if (!listed || !listed.ok) return null;
+      // git prints realpath'd paths; the record carries the path as created, which
+      // on macOS keeps the /tmp → /private/tmp symlink. Compare canonically or the
+      // match silently fails and every reuse mints a second tree.
+      const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+      const want = real(wt.path);
+      const hit = listed.worktrees.find((e) => e.path && !e.isMain && e.branch === wt.branch && real(e.path) === want);
+      return hit ? { path: wt.path, branch: wt.branch } : null;
     }
 
     // Mint the worktree, spawn the seat, then hand it the spec. Async and
@@ -4764,23 +4786,31 @@ function createSessionManager(deps) {
       };
       setImmediate(async () => {
         let wt = null;
+        // A REUSED tree is not this spawn's to destroy: it carries the commits the
+        // previous seat left on the branch, which are the only thing that survived
+        // it. Only a tree this spawn created is rolled back below.
+        let reused = false;
         try {
-          // base HEAD, not the default branch: a ticket is written against the
-          // tree the lead is looking at, which routinely has unpushed commits.
-          // Forking from origin/HEAD instead hands the seat a stale checkout in
-          // which the spec's symbols may not exist, and merging that branch back
-          // would revert everything the lead had not pushed.
-          const r = await gitWorktree.createWorktree(team.root, seat.branch, { base: 'HEAD' });
-          if (!r || !r.ok) {
-            // NO fallback to team.root. The spec was written for an isolated
-            // checkout; spawning in the shared one would have the hand commit
-            // onto whatever branch the operator happens to have checked out.
-            getPersistence().remove(seat.name);
-            unpin();
-            reply(`ticket ${ticket.id}: worktree "${seat.branch}" could not be created (${(r && r.error) || 'unknown'}) — no seat spawned, ticket left assigned to "${roleKey}"`);
-            return;
+          const existing = await this._existingTicketTree(team, ticket);
+          if (existing) { wt = existing; reused = true; }
+          else {
+            // base HEAD, not the default branch: a ticket is written against the
+            // tree the lead is looking at, which routinely has unpushed commits.
+            // Forking from origin/HEAD instead hands the seat a stale checkout in
+            // which the spec's symbols may not exist, and merging that branch back
+            // would revert everything the lead had not pushed.
+            const r = await gitWorktree.createWorktree(team.root, seat.branch, { base: 'HEAD' });
+            if (!r || !r.ok) {
+              // NO fallback to team.root. The spec was written for an isolated
+              // checkout; spawning in the shared one would have the hand commit
+              // onto whatever branch the operator happens to have checked out.
+              getPersistence().remove(seat.name);
+              unpin();
+              reply(`ticket ${ticket.id}: worktree "${seat.branch}" could not be created (${(r && r.error) || 'unknown'}) — no seat spawned, ticket left assigned to "${roleKey}"`);
+              return;
+            }
+            wt = { path: r.path, branch: r.branch };
           }
-          wt = { path: r.path, branch: r.branch };
           // Recorded on the TICKET, which is what _deliverTicketSpec reads to tell
           // the seat where to work. On the ticket rather than only on the session
           // because the spec is redelivered on a replay, and a seat that comes back
@@ -4812,13 +4842,13 @@ function createSessionManager(deps) {
           });
           const d = this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true);
           this._broadcast('ipc-message', {
-            type: 'task', from: opener.name, to: seat.name, body: `ticket ${ticket.id} → ${seat.name} @ ${r.path}`,
+            type: 'task', from: opener.name, to: seat.name, body: `ticket ${ticket.id} → ${seat.name} @ ${wt.path}`,
           });
-          log.info('intent', `ticket ${ticket.id} spawned ${seat.name} (${roleKey}) on branch ${r.branch} @ ${r.path}`);
-          reply(`ticket ${ticket.id} → ${seat.name} on branch ${r.branch}${this._ticketDeliverySuffix(d, seat.name)}`);
+          log.info('intent', `ticket ${ticket.id} ${reused ? 'respawned' : 'spawned'} ${seat.name} (${roleKey}) on branch ${wt.branch} @ ${wt.path}`);
+          reply(`ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name)}`);
         } catch (err) {
           if (!this.sessions.has(seat.name)) getPersistence().remove(seat.name);
-          if (wt) {
+          if (wt && !reused) {
             const rm = await gitWorktree.removeWorktree(wt.path).catch(() => ({ ok: false }));
             log.info('worktree', `${rm && rm.ok ? 'removed' : 'ORPHANED'} ${wt.path} after failed ticket spawn of ${seat.name}`);
           }
@@ -4914,7 +4944,18 @@ function createSessionManager(deps) {
       const assignee = this._resolveAssignee(team, intent.who);
       if (!assignee) { reply(`error: "${intent.who}" is neither a team role nor a live seat on ${team.name}`); return; }
       const prev = ticket.assignee;
-      const reassigning = prev != null && prev !== assignee;
+      // Assign is the OTHER dispatch path, so it mints like _taskAdd: releasing a
+      // parked ticket for an opted-in role must still get its own branch, or the
+      // documented park-then-release flow silently opts the role out and the hand
+      // works in the shared checkout holding a spec written for an isolated tree.
+      const wtDef = this._ticketWorktreeRole(team, assignee);
+      const minted = wtDef ? this._mintTicketSeat(team, assignee, ticket) : null;
+      // The seat name is DERIVED from the ticket id, so "taken" by the ticket's
+      // CURRENT assignee means its own seat is still live: assigning to the role is
+      // how a lead re-sends a spec, and it is not a move. Resolved above the notice
+      // below, which would otherwise tell the hand its ticket went elsewhere.
+      const ownSeat = (minted && minted.taken && minted.name === prev) ? prev : null;
+      const reassigning = !ownSeat && prev != null && prev !== assignee;
       if (reassigning) {
         const oldSeat = this._ticketAssigneeSeat(team, { assignee: prev });
         if (oldSeat && oldSeat !== team.lead) {
@@ -4929,13 +4970,20 @@ function createSessionManager(deps) {
       // delivered yet still invisible to advance, replay and the badge.
       const wasParked = !!ticket.parked;
       delete ticket.parked;
-      // Assign is the OTHER dispatch path, so it mints like _taskAdd: releasing a
-      // parked ticket for an opted-in role must still get its own branch, or the
-      // documented park-then-release flow silently opts the role out and the hand
-      // works in the shared checkout holding a spec written for an isolated tree.
-      const wtDef = this._ticketWorktreeRole(team, assignee);
+      // Stay pinned to the live seat. Un-pinning would route the spec, and the
+      // WORK IN: line naming THIS ticket's tree, to whichever seat answers for the
+      // role first — another ticket's hand, mid-work in a different branch.
+      if (ownSeat) {
+        ticket.assignee = ownSeat;
+        ticketsStore.save(teamDir, tickets);
+        const d2 = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
+        this._reconcileTickets(team, teamDir);
+        this._broadcast('ipc-message', { type: 'task', from: session.name, to: ownSeat, body: `ticket ${ticket.id} re-sent` });
+        log.info('intent', `task assign by ${session.name}: ${ticket.id} re-sent to its own seat ${ownSeat}`);
+        reply(`ticket ${ticket.id} → ${ownSeat} (its own seat, spec re-sent)${this._ticketDeliverySuffix(d2, ownSeat)}`);
+        return;
+      }
       if (wtDef) {
-        const minted = this._mintTicketSeat(team, assignee, ticket);
         if (minted.ok) {
           ticket.role = assignee;
           ticket.assignee = minted.name;

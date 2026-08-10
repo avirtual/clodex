@@ -38,6 +38,16 @@ blocks a release.
   unpushed work reaches its teammate as described. Filing a ticket ahead of time
   and releasing it later gets the same treatment as opening one directly.
 
+- **Re-assigning a ticket that already has a checkout does the right thing
+  either way.** Assigning it back to its role while its teammate is still working
+  now just re-sends the spec to that teammate, instead of handing the ticket —
+  and the location of its checkout — to whichever teammate answered for the role
+  first, who was mid-work in a different branch. And if the teammate is gone, the
+  same command brings up a replacement on the *existing* checkout, so the commits
+  it left on the branch are still there; previously the ticket came back
+  unassigned with a git error. A checkout removed by hand is noticed and a fresh
+  one is made.
+
 - **Teammates now commit their own work, and the lead merges it.** The shipped
   team prompts previously told every hand never to commit, which made sense when
   they all shared one working tree and would have been committing over each

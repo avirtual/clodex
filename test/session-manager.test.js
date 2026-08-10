@@ -9093,6 +9093,70 @@ test('task assign: a ticket whose seat is still live is not given a second workt
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
+// Re-assigning a worktree ticket to its OWN role is the shape a lead reaches for
+// to re-deliver a spec, and it is where the mint's two halves come apart: the
+// re-pin is what keeps a ticket bound to the seat holding its tree, so a path
+// that un-pins without minting hands the tree to whoever answers for the role.
+test('task assign: re-assigning a live worktree ticket to its role keeps it on its own seat', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job two' });
+  await until(() => f.m.sessions.has('team-hand-2'));
+  assert.strictEqual(f.one('t2').assignee, 'team-hand-2', 'ENTER: t2 must be pinned to its own seat first');
+
+  f.gated.length = 0;
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't2', body: '' });
+  for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r));
+
+  const t = f.one('t2');
+  assert.strictEqual(t.assignee, 'team-hand-2', 'the ticket stays pinned to the seat that holds its tree');
+  assert.strictEqual(t.role, 'hand', 'and keeps its role');
+  // The damage un-pinning does: _ticketAssigneeSeat resolves a role to the FIRST
+  // live seat, so t2's spec — carrying t2's WORK IN: path — would be delivered to
+  // t1's hand, which is mid-work in a different branch's checkout.
+  assert.deepStrictEqual(f.gated.map((g) => g.target), ['team-hand-2'],
+    'the spec goes to its own seat, never to another ticket\'s hand');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// A ticket seat that dies is replaceable and its tree outlives it, so re-assigning
+// is the documented recovery. It must ATTACH to the existing tree: minting a
+// second one fails on git's own branch-in-use guard, and that failure un-pins the
+// ticket, which is the recovery leaving the ticket worse than it found it.
+test('task assign: a ticket whose seat died respawns onto its EXISTING tree', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  let createdCwd = null;
+  f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  const tree = f.one('t1').worktree;
+  assert.ok(tree && tree.path, 'ENTER: the first dispatch must have made a tree to respawn onto');
+
+  // The seat dies. `hand` is ephemeral, so retire discarded its record too.
+  f.m.sessions.delete('team-hand-1');
+  f.upserted.splice(f.upserted.indexOf('team-hand-1'), 1);
+  createdCwd = null;
+  f.gated.length = 0;
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
+  await until(() => createdCwd || f.removed.length);
+
+  assert.strictEqual(createdCwd, repo, 'ENTER: a replacement seat must have been spawned');
+  const t = f.one('t1');
+  assert.strictEqual(t.assignee, 'team-hand-1', 'the replacement takes the ticket back');
+  assert.deepStrictEqual(t.worktree, tree, 'on the SAME tree — its commits are the work that survived');
+  assert.deepStrictEqual(f.removed, [], 'no seat name is released — nothing failed');
+  const body = f.gated.map((g) => g.body).join('\n');
+  assert.match(body, new RegExp(`WORK IN: ${tree.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `),
+    'and it is told where that tree is — a replacement has no memory of it');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
 test('task add: a parked ticket for an opted-in role spawns nothing', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);
