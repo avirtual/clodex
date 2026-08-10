@@ -25993,6 +25993,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           warmMenu.className = "warm-menu";
           const items = ['<div class="warm-menu-label">Keep cache warm for</div>'];
           for (const h of [1, 4, 8]) items.push(`<button class="warm-item" data-hours="${h}">${h} hours</button>`);
+          if (proxyState.get(getActiveSession())?.payload?.holdSource === "wire") {
+            items.push('<button class="warm-item" data-act="always">Always (until stopped)</button>');
+          }
           if (held) items.push('<button class="warm-item warm-stop" data-act="off">Stop keeping warm</button>');
           const acOn = proxyState.get(getActiveSession())?.payload?.autoCompact !== false;
           items.push('<div class="warm-menu-label">When cache is about to cool</div>');
@@ -26008,6 +26011,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               const st = proxyState.get(name);
               if (st && st.payload) st.payload.autoCompact = !acOn;
             } else if (item.dataset.act === "off") await doWarmHold(name, { off: true });
+            else if (item.dataset.act === "always") await doWarmHold(name, { always: true });
             else await doWarmHold(name, { hours: Number(item.dataset.hours) });
           });
           document.body.appendChild(warmMenu);
@@ -26027,14 +26031,18 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             if (!r2.ok) alert("Disarm hold failed: " + r2.error);
             return;
           }
-          const hours = opts.hours;
-          if (!confirm(`Keep "${name}" prompt cache warm for ${hours}h?
+          const always = !!opts.always;
+          const hours = always ? 0 : opts.hours;
+          const ask = always ? `Keep "${name}" prompt cache warm ALWAYS?
 
-The proxy auto-pings to refresh the cache until ${hours}h after the last turn; each ping costs ~1 token.`)) return;
-          let r = await holdApi(name, hours, false);
+No deadline: it keeps pinging (~1 token each) whenever the cache nears expiry, and re-arms itself after an app restart, until you stop it. It still stops on its own if two pings fail in a row (usually expired credentials).` : `Keep "${name}" prompt cache warm for ${hours}h?
+
+The proxy auto-pings to refresh the cache until ${hours}h after the last turn; each ping costs ~1 token.`;
+          if (!confirm(ask)) return;
+          let r = await holdApi(name, hours, false, always);
           if (r.ok && !r.armed && r.skipped) {
             if (confirm(`Proxy declined (${r.skipped}): the cache prefix isn't warm yet, so there's nothing to keep warm. Force the hold anyway?`)) {
-              r = await holdApi(name, hours, true);
+              r = await holdApi(name, hours, true, always);
             } else return;
           }
           if (!r.ok) alert("Hold failed: " + r.error);
@@ -31222,12 +31230,13 @@ ${detail}` });
         let holdHtml = "";
         if (p.capabilities && p.capabilities.hold) {
           if (actionable && p.hold) {
+            const always = !!p.hold.always;
             const untilS = typeof p.hold.until === "number" ? p.hold.until : null;
             const remH = untilS != null ? Math.max(0, (untilS - Date.now() / 1e3) / 3600) : null;
             const remTxt = remH == null ? "" : remH < 1 ? ` ~${Math.round(remH * 60)}m` : ` ~${remH.toFixed(1)}h`;
             const pending = p.pingable === false;
-            const label = pending ? "\u{1F512} armed" : `\u{1F512} held${remTxt}`;
-            const tip = pending ? "Armed \u2014 starts keeping warm after the next turn. Click to change or stop." : "Keeping cache warm. Click to change or stop.";
+            const label = pending ? "\u{1F512} armed" : always ? "\u{1F512} held always" : `\u{1F512} held${remTxt}`;
+            const tip = pending ? "Armed \u2014 starts keeping warm after the next turn. Click to change or stop." : always ? "Keeping cache warm indefinitely \u2014 no deadline, and it re-arms itself after a restart. Click to change or stop." : "Keeping cache warm. Click to change or stop.";
             holdHtml = `<button class="px-hold" data-act="warm-menu" data-held="1" data-tip="${tip}">${label}</button>`;
           } else if (actionable) {
             holdHtml = `<button class="px-hold" data-act="warm-menu" data-tip="Keep prompt cache warm">\u{1F525} keep warm</button>`;

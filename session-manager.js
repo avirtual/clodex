@@ -623,7 +623,7 @@ function createSessionManager(deps) {
               try {
                 const p = getPersistence();
                 const rec = p.list().find((x) => x.name === t.agent);
-                const plan = rearmPlan(rec && rec.holdUntil, Date.now());
+                const plan = rearmPlan(rec && rec.holdUntil, Date.now(), !!(rec && rec.keepWarmAlways));
                 if (!plan) {
                   s._holdRearmed = true; // nothing persisted — stop re-checking this spawn
                 } else if (plan.clear) {
@@ -631,12 +631,20 @@ function createSessionManager(deps) {
                   s._holdRearmed = true;
                   log.info('keepwarm', `disarmed ${t.agent} (expired before re-arm)`);
                 } else if (plan.arm && s.sessionId) {
-                  const r = this._holdKeeper.arm(s.sessionId, plan.hours);
-                  if (r && r.armed && r.until) {
+                  const r = plan.always
+                    ? this._holdKeeper.arm(s.sessionId, 0, { always: true })
+                    : this._holdKeeper.arm(s.sessionId, plan.hours);
+                  // A perpetual re-arm has no `until` to write back; the seat flag
+                  // in persistence is already the whole truth for it.
+                  if (r && r.armed && (r.always || r.until)) {
                     s._holdRearmed = true;
-                    p.setHoldUntil(t.agent, Math.round(r.until * 1000)); // clamped truth
-                    log.info('keepwarm', `re-armed ${t.agent} ${plan.hours.toFixed(2)}h remaining ` +
-                      `until ${new Date(r.until * 1000).toISOString()}`);
+                    if (r.always) {
+                      log.info('keepwarm', `re-armed ${t.agent} perpetually (seat property)`);
+                    } else {
+                      p.setHoldUntil(t.agent, Math.round(r.until * 1000)); // clamped truth
+                      log.info('keepwarm', `re-armed ${t.agent} ${plan.hours.toFixed(2)}h remaining ` +
+                        `until ${new Date(r.until * 1000).toISOString()}`);
+                    }
                   }
                 }
               } catch (e) {
@@ -763,7 +771,15 @@ function createSessionManager(deps) {
         if (ev.event === 'disarmed') {
           if (ev.cause === 'off') return;
           const name = this._nameForWireSession(ev.session);
-          if (ev.cause === 'failures' && name) getPersistence().setHoldUntil(name, null);
+          // A failure disarm must clear the PERPETUAL flag too, not just the
+          // deadline. maxFailures is the only bound on retrying against a
+          // credential nothing in-process can refresh; leaving the seat property
+          // set would re-arm it on the next restart and burn the same two pings
+          // again, forever — which is the waste the 2-strike disarm exists to stop.
+          if (ev.cause === 'failures' && name) {
+            getPersistence().setHoldUntil(name, null);
+            getPersistence().setKeepWarmAlways(name, false);
+          }
           log.info('keepwarm', `disarmed ${name || ev.session} (${ev.cause || 'unknown'}` +
             `${ev.pings != null ? `, ${ev.pings} pings` : ''})`);
         } else if (ev.event === 'ping' && ev.result && ev.result.ok === false && !ev.result.skipped) {

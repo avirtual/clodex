@@ -209,7 +209,13 @@ test('payload: hold/pingable are shaped off the HoldKeeper, poll-parity field na
   wt.noteTurn(mainTurn());
   const p = wt.payload('alice');
   assert.strictEqual(p.pingable, true);
-  assert.deepStrictEqual(p.hold, { until: 1000, hours: 4, pings: 2, last_result: 'warmed' });
+  assert.deepStrictEqual(p.hold, { until: 1000, hours: 4, pings: 2, last_result: 'warmed', always: false });
+  // A perpetual hold reaches the renderer as always:true with NO deadline — the
+  // fire button branches on this to avoid rendering a countdown to null.
+  const perp = { until: null, always: true, armedAt: 900, hours: null, pings: 2, failures: 0, lastPingTs: 990, lastResult: 'warmed' };
+  const wtp = new WireTelemetry({ hold: holdStub('sid-1', perp) });
+  wtp.noteTurn(mainTurn());
+  assert.deepStrictEqual(wtp.payload('alice').hold, { until: null, hours: null, pings: 2, last_result: 'warmed', always: true });
   // Broken keeper degrades hold alone — cost keeps flowing.
   const broken = new WireTelemetry({ hold: { entry: () => { throw new Error('dead'); }, holds: () => { throw new Error('dead'); } } });
   broken.noteTurn(mainTurn());

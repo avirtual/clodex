@@ -34,6 +34,15 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
     warmMenu.className = 'warm-menu';
     const items = ['<div class="warm-menu-label">Keep cache warm for</div>'];
     for (const h of [1, 4, 8]) items.push(`<button class="warm-item" data-hours="${h}">${h} hours</button>`);
+    // "Always" is a different KIND of choice from a duration (a sticky seat
+    // property, not a window), so it travels as its own data-act — smuggling a
+    // magic number through data-hours would be clamped to maxHours by the keeper.
+    // Offered only when the in-process wire owns the hold: the external proxy's
+    // /_hold has no perpetual mode and would read the hours=0 we send with it as
+    // a DISARM.
+    if (proxyState.get(getActiveSession())?.payload?.holdSource === 'wire') {
+      items.push('<button class="warm-item" data-act="always">Always (until stopped)</button>');
+    }
     if (held) items.push('<button class="warm-item warm-stop" data-act="off">Stop keeping warm</button>');
     // Auto-compact-before-cold lives here because it's the OTHER answer to the
     // same moment as keep-warm: the cache is about to expire. Default on; the
@@ -53,6 +62,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
         const st = proxyState.get(name);
         if (st && st.payload) st.payload.autoCompact = !acOn;
       } else if (item.dataset.act === 'off') await doWarmHold(name, { off: true });
+      else if (item.dataset.act === 'always') await doWarmHold(name, { always: true });
       else await doWarmHold(name, { hours: Number(item.dataset.hours) });
     });
     document.body.appendChild(warmMenu);
@@ -81,12 +91,16 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
       if (!r.ok) alert('Disarm hold failed: ' + r.error);
       return;
     }
-    const hours = opts.hours;
-    if (!confirm(`Keep "${name}" prompt cache warm for ${hours}h?\n\nThe proxy auto-pings to refresh the cache until ${hours}h after the last turn; each ping costs ~1 token.`)) return;
-    let r = await holdApi(name, hours, false);
+    const always = !!opts.always;
+    const hours = always ? 0 : opts.hours;
+    const ask = always
+      ? `Keep "${name}" prompt cache warm ALWAYS?\n\nNo deadline: it keeps pinging (~1 token each) whenever the cache nears expiry, and re-arms itself after an app restart, until you stop it. It still stops on its own if two pings fail in a row (usually expired credentials).`
+      : `Keep "${name}" prompt cache warm for ${hours}h?\n\nThe proxy auto-pings to refresh the cache until ${hours}h after the last turn; each ping costs ~1 token.`;
+    if (!confirm(ask)) return;
+    let r = await holdApi(name, hours, false, always);
     if (r.ok && !r.armed && r.skipped) {
       if (confirm(`Proxy declined (${r.skipped}): the cache prefix isn't warm yet, so there's nothing to keep warm. Force the hold anyway?`)) {
-        r = await holdApi(name, hours, true);
+        r = await holdApi(name, hours, true, always);
       } else return;
     }
     if (!r.ok) alert('Hold failed: ' + r.error);

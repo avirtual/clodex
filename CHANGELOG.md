@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- **Keep-warm can now be set to "Always" on a session that should never go
+  cold.** The fire button's menu gains an Always option next to 1/4/8 hours.
+  Unlike a duration it is a property of the seat, not a one-off arming: it has
+  no deadline, and it re-arms itself when you restart Clodex, so a lead agent
+  stays warm through an absence longer than you planned for. It still stops on
+  its own if two pings fail in a row — normally expired credentials, which
+  Clodex cannot refresh for you — and stopping it clears the setting, so it
+  will not quietly start again on the next launch. Picking a duration afterwards
+  replaces it. The button reads "held always" rather than counting down to a
+  deadline that does not exist. Available on sessions whose keep-warm is handled
+  in-process; sessions routed through an external proxy keep the 1/4/8 choices.
+
 ## 5.4.0 — 2026-08-10 — A branch and a checkout for every teammate
 
 - **Teammates can now work on the same repo at the same time, each in its own

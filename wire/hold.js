@@ -67,11 +67,23 @@ function holdDecision(hold, hasEntry, warmthQ, now, caps = {}) {
   const maxPings = caps.maxPings ?? DEFAULTS.maxPings;
   const maxFailures = caps.maxFailures ?? DEFAULTS.maxFailures;
   const margin = caps.marginSeconds ?? DEFAULTS.marginSeconds;
+  // A perpetual hold (arm(..., {always:true})) opts out of the two SELF-BOUNDING
+  // limits and keeps the third. It must stay pure: `always` rides the hold
+  // object, never module state, or this stops being offline-testable.
+  //   - deadline: an always hold has until:null, so an unguarded `now > null`
+  //     would disarm it on the first tick.
+  //   - ping budget: this is the limit that actually bites. maxPings is per
+  //     ANCHOR and every organic turn resets it (noteRequest), so on an active
+  //     session it is never reached — which is why an infinite hold looks fine
+  //     in testing and dies after ~a day on the IDLE session it exists for.
+  //   - failures: KEPT. Nothing in-process can refresh an expired OAuth (see
+  //     header), so this is the only thing bounding a perpetual retry loop
+  //     against a dead credential. Do not add `always` to this branch.
   // Third element is a stable machine-readable `cause` (the disarm emits carry
   // it so persistence-clearing keys on it, never on the human `reason` text —
   // rewording a message must not silently break holdUntil-clearing).
-  if (now > hold.until) return ['disarm', 'hold period over', 'expired'];
-  if (hold.pings >= maxPings) return ['disarm', `max pings (${maxPings}) reached`, 'max-pings'];
+  if (!hold.always && now > hold.until) return ['disarm', 'hold period over', 'expired'];
+  if (!hold.always && hold.pings >= maxPings) return ['disarm', `max pings (${maxPings}) reached`, 'max-pings'];
   if (hold.failures >= maxFailures) {
     return ['disarm', `${hold.failures} consecutive ping failures (stale credentials?)`, 'failures'];
   }
@@ -82,15 +94,21 @@ function holdDecision(hold, hasEntry, warmthQ, now, caps = {}) {
   return ['ping', 'due'];
 }
 
-// PURE re-arm planning for a persisted hold INTENT (holdUntil, epoch ms) seen
-// on a session's first main-line turn after an app restart. The keeper itself
-// is in-memory by design (header), so the intent — not the last-request bytes
-// — is what survives on the sessions.json record. Returns:
+// PURE re-arm planning for a persisted hold INTENT seen on a session's first
+// main-line turn after an app restart. The keeper itself is in-memory by design
+// (header), so the intent — not the last-request bytes — is what survives on the
+// sessions.json record. Returns:
+//   { arm: true, always: true }  the seat is perpetual (keepWarmAlways) → re-arm
+//                         with no deadline
 //   { arm: true, hours }  re-arm the keeper for the REMAINING window (arm()
 //                         re-clamps against maxHours on its own, so no clamp here)
 //   { clear: true }       the persisted deadline already lapsed → drop the field
 //   null                  nothing persisted (no hold to restore) → no-op
-function rearmPlan(holdUntil, nowMs) {
+// `always` is checked FIRST and independently of holdUntil: a perpetual seat has
+// no deadline to store, so it arrives here with holdUntil undefined and the
+// `> 0` guard below would read it as "nothing persisted".
+function rearmPlan(holdUntil, nowMs, always = false) {
+  if (always) return { arm: true, always: true };
   if (!(holdUntil > 0)) return null;
   if (holdUntil <= nowMs) return { clear: true };
   return { arm: true, hours: (holdUntil - nowMs) / 3600e3 };
@@ -156,7 +174,10 @@ class HoldKeeper extends EventEmitter {
     }
     const hold = this._holds.get(sessionId);
     if (hold) {
-      hold.until = now + hold.hours * 3600;
+      // A perpetual hold has hours:null — recomputing `until` here would make it
+      // NaN, and NaN > x is false, so the expired branch would silently stop
+      // firing for every hold that later became non-perpetual.
+      if (!hold.always) hold.until = now + hold.hours * 3600;
       hold.pings = 0;
       hold.failures = 0;
       this.emit('hold', { session: sessionId, event: 're-anchored', until: hold.until });
@@ -251,10 +272,14 @@ class HoldKeeper extends EventEmitter {
   // nothing that would re-establish a cold cache, so arming a non-warm
   // prefix declines — { armed:false, skipped:<state> } — unless force.
   // hours <= 0 disarms (the Python 'off' spelling).
-  arm(sessionId, hours, { force = false } = {}) {
+  // always:true arms a PERPETUAL hold — no deadline, no ping budget, failure
+  // disarm kept (holdDecision says why). `hours` is ignored on that path rather
+  // than set to a large number: maxHours clamps every finite value, so a
+  // sentinel duration would silently come back out as 12h.
+  arm(sessionId, hours, { force = false, always = false } = {}) {
     if (!sessionId) return { armed: false, reason: 'no_session' };
-    if (!(hours > 0)) return this.disarm(sessionId);
-    hours = Math.min(hours, this.maxHours);
+    if (!always && !(hours > 0)) return this.disarm(sessionId);
+    hours = always ? null : Math.min(hours, this.maxHours);
     const entry = this._entries.get(sessionId);
     const wq = this.warmth.query({ session: sessionId });
     if (!wq.warm && !force) {
@@ -264,11 +289,14 @@ class HoldKeeper extends EventEmitter {
           'ping it back at the write premium. Declined (force to arm anyway).' };
     }
     const now = this._now();
-    const hold = { until: now + hours * 3600, armedAt: now, hours,
+    // until:null (not a far-future sentinel) is the honest encoding of "no
+    // deadline": every downstream `until > 0` guard then declines to persist or
+    // render a timestamp that would be read back as a real one.
+    const hold = { until: always ? null : now + hours * 3600, always, armedAt: now, hours,
       pings: 0, failures: 0, lastPingTs: null, lastResult: null };
     this._holds.set(sessionId, hold);
-    this.emit('hold', { session: sessionId, event: 'armed', hours, until: hold.until });
-    return { armed: true, session: sessionId, hours, until: hold.until,
+    this.emit('hold', { session: sessionId, event: 'armed', hours, always, until: hold.until });
+    return { armed: true, session: sessionId, hours, always, until: hold.until,
       warmth: wq, pingable: !!entry };
   }
 

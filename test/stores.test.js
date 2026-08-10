@@ -349,6 +349,35 @@ test('persistence: setHoldUntil round-trips and clears to an ABSENT key', () => 
   } finally { cleanup(); }
 });
 
+test('persistence: setKeepWarmAlways is a seat flag independent of holdUntil', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', workspaceId: 'default' });
+    assert.strictEqual('keepWarmAlways' in stores.persistence.get('a'), false);
+    // Arm perpetually: a boolean, never a sentinel deadline — rearmPlan and the
+    // renderer both read holdUntil as a real timestamp.
+    stores.persistence.setKeepWarmAlways('a', true);
+    assert.strictEqual(stores.persistence.get('a').keepWarmAlways, true);
+    assert.strictEqual('holdUntil' in stores.persistence.get('a'), false);
+    // Survives an unrelated upsert — this is what makes it a SEAT property and
+    // not a per-run arming.
+    stores.persistence.upsert({ name: 'a', label: 'x' });
+    assert.strictEqual(stores.persistence.get('a').keepWarmAlways, true);
+    // The two fields are independent; setting a deadline does not clear the flag
+    // (the ipc handler owns that mutual exclusion, not the store).
+    stores.persistence.setHoldUntil('a', 1_700_000_000_000);
+    assert.strictEqual(stores.persistence.get('a').keepWarmAlways, true);
+    assert.strictEqual(stores.persistence.get('a').holdUntil, 1_700_000_000_000);
+    // Clearing leaves an ABSENT key, no stale `false` to be re-read as intent.
+    stores.persistence.setKeepWarmAlways('a', false);
+    assert.strictEqual('keepWarmAlways' in stores.persistence.get('a'), false);
+    assert.strictEqual(stores.persistence.get('a').holdUntil, 1_700_000_000_000);
+    // No-op on an unknown name (never creates an entry).
+    stores.persistence.setKeepWarmAlways('ghost', true);
+    assert.strictEqual(stores.persistence.get('ghost'), null);
+  } finally { cleanup(); }
+});
+
 test('persistence: setRosterSent stamps a one-time marker that survives upserts', () => {
   const { stores, cleanup } = freshStores();
   try {

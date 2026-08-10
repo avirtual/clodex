@@ -2759,12 +2759,19 @@ function buildProxyExtras(p) {
       // `until` re-anchors to the last real turn, so this slides forward as the
       // session is used — it's "stays warm ~N more hours if idle", not a fixed
       // countdown. pingable=false → armed but waiting for the next turn to fire.
+      // A perpetual hold has no deadline: it must never borrow the countdown
+      // branch, which would render `until` (null) as a remaining time.
+      const always = !!p.hold.always;
       const untilS = typeof p.hold.until === 'number' ? p.hold.until : null;
       const remH = untilS != null ? Math.max(0, (untilS - Date.now() / 1000) / 3600) : null;
       const remTxt = remH == null ? '' : (remH < 1 ? ` ~${Math.round(remH * 60)}m` : ` ~${remH.toFixed(1)}h`);
       const pending = p.pingable === false;
-      const label = pending ? '🔒 armed' : `🔒 held${remTxt}`;
-      const tip = pending ? 'Armed — starts keeping warm after the next turn. Click to change or stop.' : 'Keeping cache warm. Click to change or stop.';
+      const label = pending ? '🔒 armed' : (always ? '🔒 held always' : `🔒 held${remTxt}`);
+      const tip = pending
+        ? 'Armed — starts keeping warm after the next turn. Click to change or stop.'
+        : (always
+          ? 'Keeping cache warm indefinitely — no deadline, and it re-arms itself after a restart. Click to change or stop.'
+          : 'Keeping cache warm. Click to change or stop.');
       holdHtml = `<button class="px-hold" data-act="warm-menu" data-held="1" data-tip="${tip}">${label}</button>`;
     } else if (actionable) {
       holdHtml = `<button class="px-hold" data-act="warm-menu" data-tip="Keep prompt cache warm">🔥 keep warm</button>`;
