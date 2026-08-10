@@ -8927,8 +8927,18 @@ function mkTicketWt(repo, roleExtra = {}) {
       get: (n) => (upserted.includes(n)
         ? { name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) }
         : (n === 'lead' ? { extraArgs: [] } : null)),
-      upsert: (e) => upserted.push(e.name),
-      remove: (n) => { removed.push(n); wtByName.delete(n); },
+      // Dedupe: the real store keys by name, so a name pushed twice would appear
+      // twice in list() and be cleared twice by the pointer scan.
+      upsert: (e) => { if (!upserted.includes(e.name)) upserted.push(e.name); },
+      // Splices `upserted` as well as clearing the tree, mirroring the real store:
+      // a get()/list() that keeps reporting a removed record makes the respawn path
+      // (which re-enters through _mintTicketSeat's taken check) unrepresentable.
+      remove: (n) => {
+        removed.push(n);
+        wtByName.delete(n);
+        const i = upserted.indexOf(n);
+        if (i >= 0) upserted.splice(i, 1);
+      },
       // Mirrors the real store, which DELETES the key for a null worktree rather
       // than storing one — a stub that kept it would leave the cleared seat still
       // looking like the tree's holder.
@@ -8954,6 +8964,16 @@ function mkTicketWt(repo, roleExtra = {}) {
   // difference between them is load-bearing: archive KEEPS the persistence record
   // (so the derived seat name stays taken), kill drops it. A test that only ever
   // models the kill shape cannot reach the archived-seat path at all.
+  // A live seat whose record names a tree this run did not mint — the shape of a
+  // record written by session:markWorktree, by the spawn intent, or carried in
+  // from a previous app run. The pointer scan defends against exactly these, and
+  // a fixture that can only hold records it minted itself cannot represent one.
+  const seatWithTree = (name, wt) => {
+    const s = seat(name);
+    if (!upserted.includes(name)) upserted.push(name);
+    wtByName.set(name, wt);
+    return s;
+  };
   const archiveSeat = (name) => { m.sessions.delete(name); };
   const killSeat = (name) => {
     m.sessions.delete(name);
@@ -8961,7 +8981,7 @@ function mkTicketWt(repo, roleExtra = {}) {
     if (i >= 0) upserted.splice(i, 1);
     wtByName.delete(name);
   };
-  return { m, team, teamDir, seat, gated, upserted, removed, worktreeSet, archiveSeat, killSeat,
+  return { m, team, teamDir, seat, seatWithTree, gated, upserted, removed, worktreeSet, archiveSeat, killSeat,
     load: () => tstore.load(teamDir), one: (id) => tstore.load(teamDir).find((t) => t.id === id) };
 }
 
@@ -9276,7 +9296,7 @@ test('task assign: a tree still held by a live seat is never handed to a second 
   assert.strictEqual(said.length, 1, 'ENTER: exactly one reply to assert on');
   // Not just the NAME: the taken-but-not-live reply also carries it, so a bare
   // name match cannot tell the occupancy refusal from the archived-seat one.
-  assert.match(said[0], /is held by|Nothing was changed/, 'the OCCUPANCY refusal, not the archived-seat reply');
+  assert.match(said[0], /is held by/, 'the OCCUPANCY refusal, not the archived-seat reply');
   assert.match(said[0], /team-hand-1/, 'and it names who holds the tree');
   assert.deepStrictEqual(f.worktreeSet.map((w) => w.name), ['team-hand-1'],
     'and no second tree is recorded either');
@@ -9345,7 +9365,7 @@ test('task assign: a NON-worktree destination is refused too while the tree is h
   assert.strictEqual(said.length, 1, 'ENTER: exactly one reply to assert on');
   // Not just the NAME: the taken-but-not-live reply also carries it, so a bare
   // name match cannot tell the occupancy refusal from the archived-seat one.
-  assert.match(said[0], /is held by|Nothing was changed/, 'the OCCUPANCY refusal, not the archived-seat reply');
+  assert.match(said[0], /is held by/, 'the OCCUPANCY refusal, not the archived-seat reply');
   assert.match(said[0], /team-hand-1/, 'and it names who holds the tree');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
@@ -9464,6 +9484,88 @@ test('task add: a seat that spawned then failed keeps its pin, its tree and its 
     'stays pinned to the seat: role-assigned with a live tree replays this ticket into every other hand');
   assert.ok(fsReal.existsSync(t.worktree.path), 'the tree is kept — a live seat is sitting in it');
   assert.ok(!f.removed.includes('team-hand-1'), 'and its record is kept for the same reason');
+  // The kept record has to NAME the kept tree. _ticketTreeHolder reads occupancy
+  // off the record, so a live seat whose record has no worktree is invisible to
+  // it; session:kill also reads entry.worktree to remove the tree, and without it
+  // the checkout is orphaned when the session is deleted.
+  assert.ok(f.worktreeSet.some((w) => w.name === 'team-hand-1' && w.wt && w.wt.path === t.worktree.path),
+    'the kept tree is RECORDED on the kept record, or nothing can see the seat is in it');
+  assert.strictEqual(f.m._ticketTreeHolder(t.worktree.path), 'team-hand-1',
+    'and the occupancy gate resolves it — this is what a second spawn is refused on');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The createWorktree-failure exit is the catch's sibling and needs the same
+// invariant. Reaching it means the RECORDED tree was rejected (locked, or held)
+// and the fresh one failed too — so the ticket still names a real tree, and
+// un-pinning it hands that tree's WORK IN: line to every seat filling the role.
+test('task assign: a failed worktree leaves a ticket that still names a tree pinned', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', worktree: true };
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  const tree = f.one('t1').worktree;
+  f.archiveSeat('team-hand-1');
+
+  // The recorded tree is rejected (git reports it locked), and the replacement
+  // cannot be made either — git refuses the branch, already checked out at `tree`.
+  f.m._existingTicketTree = async () => null;
+  const gw = require('../git-worktree');
+  const orig = gw.createWorktree;
+  gw.createWorktree = async () => ({ ok: false, error: 'already checked out' });
+  try {
+    f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'builder', id: 't1', body: '' });
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  } finally { gw.createWorktree = orig; }
+
+  const t = f.one('t1');
+  // ENTER: without a surviving tree pointer the un-pin would be harmless and this
+  // asserts nothing.
+  assert.ok(t.worktree && t.worktree.path === tree.path,
+    'ENTER: the ticket must still name the tree nothing cleared');
+  assert.notStrictEqual(t.assignee, 'builder', 'not handed to the role — its tree would replay into every seat filling it');
+  assert.notStrictEqual(t.assignee, 'hand', 'and not back to the original role either');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The pointer scan compares canonically. Every path in the other tests is minted
+// by createWorktree itself, so a raw === would pass them identically and the
+// realpathSync would be untested — a record written through another route can
+// name the same tree through a symlinked prefix.
+test('task assign: a record naming the tree through a symlink is cleared too', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', worktree: true };
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  const tree = f.one('t1').worktree;
+
+  // A second record naming the SAME tree through a symlinked parent — the shape a
+  // record written by session:markWorktree or carried across a restart can take.
+  const link = pathReal.join(root, 'link-to-repo-parent');
+  fsReal.symlinkSync(pathReal.dirname(tree.path), link);
+  const aliased = pathReal.join(link, pathReal.basename(tree.path));
+  assert.notStrictEqual(aliased, tree.path, 'ENTER: the alias must differ as a STRING, or nothing distinguishes the compares');
+  assert.strictEqual(fsReal.realpathSync(aliased), fsReal.realpathSync(tree.path),
+    'ENTER: and must resolve to the same tree, or it is not an alias at all');
+  // Recorded but NOT live: a live holder would make _ticketTreeHolder refuse the
+  // reuse outright, and the scan under test would never be reached.
+  f.seatWithTree('ghost', { path: aliased, branch: tree.branch });
+  f.archiveSeat('ghost');
+
+  f.archiveSeat('team-hand-1');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'builder', id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-builder-1'));
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+
+  const cleared = f.worktreeSet.filter((w) => !w.wt).map((w) => w.name);
+  assert.ok(cleared.includes('ghost'),
+    'the aliased pointer is cleared — a raw string compare would skip it and leave two records on one tree');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 

@@ -225,7 +225,12 @@ adapter that hosts it. The modules below are what the engine assembles.
   ticket is not un-pinned there either — a role-assigned ticket carrying a live
   `WORK IN:` pointer replays into every seat filling that role. The same holds when
   `create()` succeeded and a later step threw: the tree is kept because a live seat
-  is in it, so the un-pin is skipped for that case too.
+  is in it, so the un-pin is skipped for that case too — as it is on the
+  `createWorktree`-failure exit, which is reached with the ticket still naming the
+  tree `_existingTicketTree` rejected. A live seat's record must NAME its tree or
+  `_ticketTreeHolder` cannot see the occupancy and `session:kill` orphans the
+  checkout, so the pointer is written straight after `create()` and again in the
+  catch — `create()` can seat the session and then throw.
   The ticket seat's cwd is the REPO, not its worktree: it is TOLD the path by the
   `WORK IN:` line `_deliverTicketSpec` prepends, and cd's there itself. Booting it
   in the tree would bind its transcript, project root and team block to a checkout

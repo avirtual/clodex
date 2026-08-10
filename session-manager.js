@@ -4853,8 +4853,15 @@ function createSessionManager(deps) {
               // checkout; spawning in the shared one would have the hand commit
               // onto whatever branch the operator happens to have checked out.
               getPersistence().remove(seat.name);
-              unpin();
-              reply(`ticket ${ticket.id}: worktree "${seat.branch}" could not be created (${(r && r.error) || 'unknown'}) — no seat spawned, ticket left assigned to "${roleKey}"`);
+              // Same invariant as the catch below: un-pin ONLY when the ticket has
+              // no tree to point at. Reaching here means _existingTicketTree
+              // rejected the recorded tree (locked, or held) and the fresh one
+              // failed too — so `ticket.worktree` still names a real tree that
+              // nothing has cleared, and a role-assigned ticket carrying a live
+              // WORK IN: pointer is replayed into every seat filling that role.
+              const pinned = !!(ticket.worktree && ticket.worktree.path);
+              if (!pinned) unpin();
+              reply(`ticket ${ticket.id}: worktree "${seat.branch}" could not be created (${(r && r.error) || 'unknown'}) — no seat spawned, ticket left assigned to "${pinned ? ticket.assignee || roleKey : roleKey}"`);
               return;
             }
             wt = { path: r.path, branch: r.branch };
@@ -4882,6 +4889,13 @@ function createSessionManager(deps) {
             opener.workspaceId || DEFAULT_WORKSPACE_ID, null, false, opener.proxy ?? null,
             [], [], [], [], [], def.prompt || null, [], [], null, null, true,
           );
+          // FIRST, before the scan below and before anything else that can throw.
+          // Between create() and this line the seat is live in a tree no record
+          // names, and _ticketTreeHolder reads occupancy off the RECORD — so it is
+          // blind to it, and session:kill (which reads entry.worktree to remove the
+          // tree) orphans the checkout forever. A throw anywhere in that window
+          // used to leave exactly that state.
+          try { getPersistence().setWorktree(seat.name, wt); } catch { /* best-effort */ }
           // One tree, one record. Another record naming this path — it survives
           // archive, natural exit and a non-ephemeral retire — is a live hazard:
           // session:kill reads the tree off whichever record it is deleting, so
@@ -4910,7 +4924,6 @@ function createSessionManager(deps) {
               }
             }
           } catch { /* best-effort */ }
-          try { getPersistence().setWorktree(seat.name, wt); } catch { /* best-effort */ }
           this._sendToSession(seat.name, 'session:context-action', {
             action: 'reattach', name: seat.name, type: (this.sessions.get(seat.name) || {}).agentType || null,
             cwd: team.root, backend: (this.sessions.get(seat.name) || {}).backend || null,
@@ -4925,6 +4938,12 @@ function createSessionManager(deps) {
         } catch (err) {
           const live = this.sessions.has(seat.name);
           if (!live) getPersistence().remove(seat.name);
+          // create() itself can seat the session and THEN throw, so the hoisted
+          // setWorktree above may never have run. A live seat whose record does not
+          // name its tree is invisible to _ticketTreeHolder (which reads occupancy
+          // off the record) and its checkout is orphaned by session:kill, which
+          // reads entry.worktree to know what to remove. Record it here too.
+          if (live && wt) { try { getPersistence().setWorktree(seat.name, wt); } catch { /* best-effort */ } }
           // `live` gates the tree removal for the same reason it gates the record
           // drop: create() may have succeeded and a later step thrown, and a seat
           // that exists is sitting in this tree.
