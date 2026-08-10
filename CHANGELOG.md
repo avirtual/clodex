@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — v5.5.0 loaded no sessions; upgrade straight past it
+## Unreleased
+
+## 5.5.1 — 2026-08-11 — v5.5.0 loaded no sessions; upgrade straight past it
 
 - **Fixes a v5.5.0 regression that left the sidebar empty.** 5.5.0 moved the
   file peek and report panel to the document root so they would stop opening
