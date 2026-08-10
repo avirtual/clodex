@@ -61,8 +61,9 @@ async function createWorktree(cwd, branch, opts = null) {
   // A worktree whose directory was deleted by hand keeps its admin entry, and git
   // refuses to check the branch out again while that entry stands ("already used
   // by worktree at <gone path>"). Prune first so a removal outside Clodex does not
-  // permanently block the branch. Only entries whose directory is missing are
-  // dropped, so a live worktree is never touched.
+  // permanently block the branch. Only entries git can no longer resolve to a
+  // working tree are dropped, so a live worktree is never touched, and a `locked`
+  // one is exempt whatever its state.
   await git(repo, ['worktree', 'prune']);
 
   // Does the branch already exist locally? (verify quietly, no output.)

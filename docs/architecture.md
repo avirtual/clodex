@@ -206,7 +206,16 @@ adapter that hosts it. The modules below are what the engine assembles.
   forever. `_ticketTreeHolder` is the occupancy gate git used to provide by
   refusing one branch two checkouts: moving a ticket to a DIFFERENT worktree role
   keeps the tree while changing the derived name, so reuse would otherwise spawn a
-  second seat into a checkout the first is still editing. A reused tree is never
+  second seat into a checkout the first is still editing. That gate keys off the
+  TICKET's tree, not the destination's role — a plain role, a name-addressed seat,
+  lead and reviewer all receive the ticket's `WORK IN:` line just the same — and it
+  runs with the taken-but-not-live refusal ABOVE the reassign notice and above every
+  field `_taskAssign` writes: below them a refusal has already told the holder its
+  ticket moved, cleared `parked`, and pushed `lastActivityAt` past the watchdog's
+  one nudge, while replying that nothing changed. Reuse also MOVES the record's
+  worktree pointer off the previous seat: `session:kill` reads the tree off whatever
+  record it deletes, so two records naming one path means deleting either force-
+  removes a live seat's checkout. A reused tree is never
   rolled back on a failed spawn (it holds the previous seat's commits) and the
   ticket is not un-pinned there either — a role-assigned ticket carrying a live
   `WORK IN:` pointer replays into every seat filling that role.

@@ -8920,13 +8920,22 @@ function mkTicketWt(repo, roleExtra = {}) {
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(repo) ? repo : null),
     gitWorktree: require('../git-worktree'),
     getPersistence: () => ({
-      list: () => [],
+      // Records, not names: the reuse path SCANS this to find another record
+      // naming the tree it is about to take over. An empty list makes that scan
+      // vacuous and the stale-pointer bug unreachable.
+      list: () => upserted.map((n) => ({ name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) })),
       get: (n) => (upserted.includes(n)
         ? { name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) }
         : (n === 'lead' ? { extraArgs: [] } : null)),
       upsert: (e) => upserted.push(e.name),
       remove: (n) => { removed.push(n); wtByName.delete(n); },
-      setWorktree: (name, wt) => { worktreeSet.push({ name, wt }); wtByName.set(name, wt); },
+      // Mirrors the real store, which DELETES the key for a null worktree rather
+      // than storing one — a stub that kept it would leave the cleared seat still
+      // looking like the tree's holder.
+      setWorktree: (name, wt) => {
+        worktreeSet.push({ name, wt });
+        if (wt && wt.path) wtByName.set(name, wt); else wtByName.delete(name);
+      },
       setStripLevel: () => {}, setAutoCompact: () => {},
     }),
     getTemplates: () => ({ list: () => [] }),
@@ -9256,6 +9265,7 @@ test('task assign: a tree still held by a live seat is never handed to a second 
   const tree = f.one('t1').worktree;
 
   said.length = 0;
+  f.gated.length = 0;   // drop the spawn-time spec delivery; this asserts on the ASSIGN
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'builder', id: 't1', body: '' });
   for (let i = 0; i < 15; i++) await new Promise((r) => setImmediate(r));
 
@@ -9267,6 +9277,97 @@ test('task assign: a tree still held by a live seat is never handed to a second 
   assert.match(said[0], /team-hand-1/, 'the refusal names who holds the tree');
   assert.deepStrictEqual(f.worktreeSet.map((w) => w.name), ['team-hand-1'],
     'and no second tree is recorded either');
+  // The reply claims "Nothing was changed", so the holder must not have been told
+  // its ticket moved. A refusal that fires after the notice leaves a seat standing
+  // down on a ticket that is still its own, and nothing ever un-tells it.
+  assert.deepStrictEqual(f.gated, [], 'no notice reaches the holder — the ticket did not move');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// "Nothing was changed" has to be true of the RECORD too. Every field _taskAssign
+// writes sits above the refusal, so a refusal placed after them unparks a parked
+// ticket back into advance, replay, the badge and the watchdog, and pushes
+// lastActivityAt forward — deferring the one nudge a stalled ticket gets, once per
+// retry.
+test('task assign: a refused move leaves a PARKED ticket parked, and its stall clock alone', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', worktree: true };
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  const said = [];
+  f.m._injectText = (s, t) => { said.push(t); };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'park', who: null, id: 't1', body: '' });
+  assert.strictEqual(f.one('t1').parked, true, 'ENTER: the ticket must really be parked, or the unpark cannot be observed');
+  const before = f.one('t1').lastActivityAt;
+
+  said.length = 0; f.gated.length = 0;
+  await new Promise((r) => setTimeout(r, 5));   // so an unwanted stamp differs from `before`
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'builder', id: 't1', body: '' });
+  for (let i = 0; i < 15; i++) await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(said.length, 1, 'ENTER: exactly one reply to assert on');
+  assert.match(said[0], /Nothing was changed/, 'ENTER: this must be the refusal, not a successful move');
+  const t = f.one('t1');
+  assert.strictEqual(t.parked, true, 'still parked — the refusal must not dispatch it as a side effect');
+  assert.strictEqual(t.lastActivityAt, before, 'and its stall clock is untouched, or retries defer the watchdog forever');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The occupancy gate keys off the TICKET's tree, not the destination's role: a
+// destination with no worktree of its own still receives this ticket's WORK IN:
+// line. A gate that only covered worktree-role destinations left every plain role,
+// name-addressed seat, subagent role, lead and reviewer as a way in.
+test('task assign: a NON-worktree destination is refused too while the tree is held', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.team.roles.other = { instantiate: 'session', brief: 'the other', worktree: false };
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  const said = [];
+  f.m._injectText = (s, t) => { said.push(t); };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  f.seat('team-other-9');   // a live seat filling the non-worktree role
+
+  said.length = 0; f.gated.length = 0;
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'other', id: 't1', body: '' });
+  for (let i = 0; i < 15; i++) await new Promise((r) => setImmediate(r));
+
+  assert.ok(f.m.sessions.has('team-hand-1'), 'ENTER: the holder must still be live, or nothing is contended');
+  assert.strictEqual(f.one('t1').assignee, 'team-hand-1', 'the ticket stays with the seat holding its tree');
+  assert.deepStrictEqual(f.gated, [], 'nothing is delivered — least of all the WORK IN: line of an occupied tree');
+  assert.strictEqual(said.length, 1, 'ENTER: exactly one reply to assert on');
+  assert.match(said[0], /team-hand-1/, 'the refusal names who holds the tree');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// session:kill reads the tree off whichever RECORD it is deleting, so two records
+// naming one path means deleting either one removes the tree from under the seat
+// living in it. The delete handler has no way to detect that.
+test('task assign: reusing a tree moves the record pointer off the previous seat', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', worktree: true };
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  const tree = f.one('t1').worktree;
+
+  f.archiveSeat('team-hand-1');   // record KEPT, still naming the tree
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'builder', id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-builder-1'));
+  for (let i = 0; i < 15; i++) await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.one('t1').worktree.path, tree.path, 'ENTER: the tree must have been REUSED, or there is no second pointer');
+  const holders = f.worktreeSet.filter((w) => w.wt && w.wt.path === tree.path).map((w) => w.name);
+  const cleared = f.worktreeSet.filter((w) => !w.wt).map((w) => w.name);
+  assert.ok(holders.includes('team-builder-1'), 'the new seat records the tree');
+  assert.ok(cleared.includes('team-hand-1'),
+    'and the archived seat\'s pointer is CLEARED — Delete Session… on it would otherwise force-remove a live seat\'s tree');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 

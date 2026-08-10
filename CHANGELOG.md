@@ -49,9 +49,19 @@ blocks a release.
   fresh one made, rather than the teammate being sent to a directory that is no
   longer there. If the teammate is merely archived rather than gone, the ticket
   says so and tells you the two ways out — unarchive it, or delete the session to
-  free the name — instead of reporting that nothing was delivered and leaving you
-  to guess. And a ticket whose checkout is still held by a live teammate is not
-  moved to another one: you are told who holds it, and nothing is changed.
+  free the name, which also deletes its checkout, so anything left uncommitted
+  there goes with it (committed work stays on the branch). And a ticket whose
+  checkout is still held by a live teammate is not moved to another one: you are
+  told who holds it, and nothing is changed — not the ticket, and not the teammate,
+  which is never told its ticket moved when it did not. That holds whichever
+  teammate or role you were moving it to, including ones that have no checkout of
+  their own, since it is the ticket's checkout at stake. A parked ticket also stays
+  parked through a refused move rather than being quietly dispatched by it.
+
+- **Deleting an old teammate no longer deletes the checkout its replacement is
+  working in.** When a ticket's replacement takes over the existing checkout, the
+  old teammate's session stops pointing at it, so deleting that leftover row does
+  what it says instead of pulling the tree out from under the live one.
 
 - **Deleting a worktree's folder by hand no longer burns its branch.** git keeps
   the bookkeeping entry when the directory disappears from under it and then
