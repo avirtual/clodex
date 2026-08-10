@@ -614,11 +614,13 @@ function createSessionManager(deps) {
             }
             // Deliberately NOT inside the rotation guard above: the re-arm probe
             // also has to run on the first turn after an app restart, where
-            // nothing rotated and the gate was never closed. Side calls ARE
-            // excluded — the probe re-reads sessions.json on every call while its
-            // gate is open, and a title or probe call cannot warm the main
-            // conversation's prefix, so retrying on one can only ever decline.
-            if (!t.sideCall) this._maybeRearmHold(s, t.agent);
+            // nothing rotated and the gate was never closed. Main-line-only is
+            // already guaranteed by the side-call/subagent early return further
+            // up, and it must stay that way: noteRequest is main-line-gated too,
+            // so a hold armed off a side call would have no replayable entry and
+            // holdDecision would skip forever — a state a perpetual hold, which
+            // never self-disarms, cannot get out of.
+            this._maybeRearmHold(s, t.agent);
           } else if (s && s.agentType === 'claude') {
             for (const intent of intents) {
               this._shadow.record('wire', shadowIntentKey(t.agent, intent), {
@@ -728,20 +730,54 @@ function createSessionManager(deps) {
       return null;
     }
 
+    // Conversations this seat has moved off, oldest first. Bounded: only the
+    // recent past can still have a turn in flight, and a long-lived seat clears
+    // many times. Written at BOTH handover sites, read only by the backstop.
+    _noteSessionLeft(s, sid) {
+      if (!sid) return;
+      const left = s._leftSessionIds || (s._leftSessionIds = []);
+      if (left.includes(sid)) return;
+      left.push(sid);
+      if (left.length > 8) left.shift();
+    }
+
     // BACKSTOP path for the same handover onSessionId does. It runs only when the
     // wire id is the first news of the clear — a wiped transcript symlink, where
     // the sentinel never fired. On an ordinary clear the symlink beats the wire
-    // and this is unreachable, so it must not be the only place the handover lives.
+    // and this is normally unreachable — probabilistic, not structural, since a
+    // stalled event loop could let the wire win — so it must not be the only
+    // place the handover lives.
     //
     // A /clear mints a new wire sessionId under a live session. The keeper is
     // keyed on that id, so the old conversation's hold must END here and the
     // re-arm gate reopen for the new one on the same turn.
     _onWireSessionRotated(s, agent, newSessionId) {
+      // Never rotate BACKWARDS onto a conversation this seat has already left.
+      // The interleaving: the sentinel fires onSessionId(new), the handover there
+      // completes, a main-line turn re-arms the new id — and only THEN does a
+      // turn.completed still in flight from the old conversation land carrying
+      // the old id. The inequality at the call site holds, so without this the
+      // backstop would end the hold that was just handed over and reassign
+      // s.sessionId backwards. Corroboration below cannot be what stops it: it
+      // fails OPEN when realpathSync throws, and a momentarily unresolvable
+      // symlink is exactly what a clear transiently produces.
+      //
+      // "It self-heals on the next main-line turn" is not a defence for this
+      // feature — the seat it exists for is idle by definition, so the next turn
+      // is when the operator comes back, and the seat is cold by then.
+      //
+      // Backstop only. onSessionId is driven by the symlink, which IS the
+      // authority on which conversation is live, so it needs no such guard.
+      if (s._leftSessionIds && s._leftSessionIds.includes(newSessionId)) {
+        this._shadowLog({ type: 'wire-stale-session', agent, sessionId: newSessionId });
+        return;
+      }
       if (!this._wireSessionCorroborated(s, newSessionId)) {
         this._shadowLog({ type: 'wire-stray-session', agent, sessionId: newSessionId });
         return;
       }
       const oldSid = s.sessionId;
+      this._noteSessionLeft(s, oldSid);
       // Before the reassignment, or the old id is unreachable and its hold sits
       // in _holds forever: holdDecision never disarms a PERPETUAL hold
       // (`!hold.always` guards both the expired and max-pings branches) and a
@@ -1562,6 +1598,7 @@ function createSessionManager(deps) {
           // rather than left to lapse: see _onWireSessionRotated.
           try { if (this._holdKeeper) this._holdKeeper.endSession(priorSid); } catch { /* observer-grade */ }
           session._holdRearmed = false;
+          this._noteSessionLeft(session, priorSid);
           try { arm.onContextReset(name); } catch { /* observer-grade */ }
           // BEFORE the continuation: a clear discarded the conversation, so the
           // prompt-file rewrite has no warm cache left to bust and the fresh

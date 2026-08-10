@@ -558,6 +558,25 @@ test('a timed hold rotates too, and re-arms the remaining window on the new id',
   assert.strictEqual(armed.length, 3, 'a timed re-arm passes no always flag at all');
 });
 
+test('a stale wire turn cannot rotate the seat BACK onto a conversation it has left', () => {
+  const { m, s, calls } = rotationRig({ rec: { name: 'a', keepWarmAlways: true } });
+  m._onWireSessionRotated(s, 'a', 'new-sid');
+  m._maybeRearmHold(s, 'a');
+  assert.deepStrictEqual(calls.filter((c) => c[0] === 'arm').length, 1,
+    'ENTER: the forward handover armed the new id — the backward attempt below is vacuous otherwise');
+  calls.length = 0;
+
+  // turn.completed from the OLD conversation, still in flight when the handover
+  // ran. Corroboration is not what stops it and cannot be: rotationRig leaves the
+  // transcript symlink unresolvable, so _wireSessionCorroborated fails OPEN and
+  // returns true — which is exactly the transient state a clear produces.
+  m._onWireSessionRotated(s, 'a', 'old-sid');
+
+  assert.deepStrictEqual(calls, [['shadow', 'wire-stale-session']],
+    'no endSession: ending old-sid here would kill the hold just handed to new-sid');
+  assert.strictEqual(s.sessionId, 'new-sid', 'and the seat stays on the conversation it moved to');
+});
+
 test('a stray child-claude sessionId rotates nothing and ends no hold', () => {
   // Corroboration-gated: the wire attributes by proxy route, so a child claude
   // mints main-line-looking ids on the session's own route. Acting on one would

@@ -242,6 +242,36 @@ test('clear continuation: a clear ends the OLD conversation keep-warm hold and r
   } finally { h.stop('a'); }
 });
 
+// The two handover sites in one test, which is the only place the interleaving
+// is visible: onSessionId records what the seat left, the wire's backstop reads
+// it. Neither seam alone can show that a turn still in flight from the cleared
+// conversation does not undo the handover that just happened.
+test('clear continuation: an in-flight turn from the cleared conversation cannot undo the handover', async () => {
+  const h = mkManager();
+  try {
+    const { s, w } = await spawned(h);
+    const ended = [];
+    h.m._holdKeeper = { endSession: (sid) => { ended.push(sid); return { session: sid, holdDisarmed: true }; } };
+    h.m._shadowLog = () => {};
+
+    w.onSessionId('conv-1');
+    await tick();
+    w.onSessionId('conv-2');
+    await tick();
+    assert.deepStrictEqual(ended, ['conv-1'], 'ENTER: the handover ran at all');
+    assert.strictEqual(s._holdRearmed, false, 'ENTER: and reopened the gate');
+
+    // Now the wire's backstop, reached by a turn.completed carrying the id the
+    // clear discarded. Without the guard this ends conv-2's hold — the one the
+    // handover just installed — and walks s.sessionId backwards, leaving an idle
+    // seat cold until the operator returns.
+    h.m._onWireSessionRotated(s, 'a', 'conv-1');
+
+    assert.deepStrictEqual(ended, ['conv-1'], 'no second endSession — conv-2 keeps the hold');
+    assert.strictEqual(s.sessionId, 'conv-2', 'and the seat is still on the live conversation');
+  } finally { h.stop('a'); }
+});
+
 test('clear continuation: a BODYLESS clear behaves exactly as it did before — nothing stored, nothing fired', async () => {
   const h = mkManager();
   try {
