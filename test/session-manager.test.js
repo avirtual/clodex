@@ -9495,6 +9495,47 @@ test('task add: a seat that spawned then failed keeps its pin, its tree and its 
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
+// Recording the tree on the seated-then-threw record is only half of it. On the
+// REUSE path the tree already has a record naming it, so writing this seat's
+// pointer without clearing that one leaves TWO records on one tree — and
+// session:kill removes the tree named by whichever row is deleted, so Delete
+// Session… on the stale row destroys the live seat's checkout. The scan lives in
+// the try, which this path skips by definition, so it has to run in the catch too.
+test('task assign: a seat that spawned then failed onto a REUSED tree takes the pointer with it', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', worktree: true };
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  const tree = f.one('t1').worktree;
+  // Archived, not killed: the record is KEPT and still names the tree, which is
+  // what makes a second pointer a collision rather than a fresh write.
+  f.archiveSeat('team-hand-1');
+
+  const replies = [];
+  f.m._injectText = (t, msg) => { replies.push(msg); return { queued: true }; };
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); throw new Error('boom'); };
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'builder', id: 't1', body: '' });
+  // The spawn is fire-and-forget; a fixed tick count can sample BEFORE the catch
+  // runs and read a clean state that is only clean because nothing happened yet.
+  await until(() => replies.some((r) => /failed to spawn/.test(r)));
+
+  assert.ok(f.m.sessions.has('team-builder-1'), 'ENTER: the seat must be LIVE, or the catch takes its !live arm');
+  assert.ok(replies.some((r) => /failed to spawn/.test(r)), 'ENTER: and the spawn must have actually failed');
+  const holder = f.m._ticketTreeHolder(tree.path);
+  assert.strictEqual(holder, 'team-builder-1', 'the live seat holds the tree');
+  // The point of the test: exactly ONE record may name it.
+  const naming = f.upserted.filter((n) => {
+    const w = f.worktreeSet.filter((x) => x.name === n).pop();
+    return w && w.wt && w.wt.path === tree.path;
+  });
+  assert.deepStrictEqual(naming, ['team-builder-1'],
+    'and it is the ONLY record naming it — a second row lets Delete Session… remove the tree under the live seat');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
 // The createWorktree-failure exit is the catch's sibling and needs the same
 // invariant. Reaching it means the RECORDED tree was rejected (locked, or held)
 // and the fresh one failed too — so the ticket still names a real tree, and
@@ -9526,8 +9567,13 @@ test('task assign: a failed worktree leaves a ticket that still names a tree pin
   // asserts nothing.
   assert.ok(t.worktree && t.worktree.path === tree.path,
     'ENTER: the ticket must still name the tree nothing cleared');
-  assert.notStrictEqual(t.assignee, 'builder', 'not handed to the role — its tree would replay into every seat filling it');
-  assert.notStrictEqual(t.assignee, 'hand', 'and not back to the original role either');
+  // Exact, not "not the role": a wrong third value would satisfy notStrictEqual
+  // against both role names and leave the ticket just as misrouted.
+  assert.strictEqual(t.assignee, 'team-builder-1',
+    'stays pinned to the seat — role-assigned, its tree replays into every seat filling the role');
+  // The pin is kept BECAUSE a dead assignee is inert and the next assign recovers.
+  // That justification only holds if the name was actually released.
+  assert.ok(f.removed.includes('team-builder-1'), 'and the reserved seat name is released, so a re-assign re-mints it');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
@@ -9547,6 +9593,9 @@ test('task assign: a record naming the tree through a symlink is cleared too', a
 
   // A second record naming the SAME tree through a symlinked parent — the shape a
   // record written by session:markWorktree or carried across a restart can take.
+  // The link points at its own ancestor, which is a cycle on purpose — it is the
+  // cheapest way to get a second spelling of `tree.path`. rmSync does not follow
+  // symlinks, so the teardown below does not walk it; leave it alone.
   const link = pathReal.join(root, 'link-to-repo-parent');
   fsReal.symlinkSync(pathReal.dirname(tree.path), link);
   const aliased = pathReal.join(link, pathReal.basename(tree.path));

@@ -64,7 +64,9 @@ blocks a release.
   what it says instead of pulling the tree out from under the live one. That holds
   whether the replacement inherited the checkout or got a fresh one in the same
   place — deleting a checkout's folder by hand frees the name, and the next one
-  lands right back on it.
+  lands right back on it. It also holds when the teammate started up and then
+  failed partway: its checkout is still recorded against it, so deleting it
+  removes the tree instead of leaving it behind with nothing pointing at it.
 
 - **Deleting a worktree's folder by hand no longer burns its branch.** git keeps
   the bookkeeping entry when the directory disappears from under it and then
