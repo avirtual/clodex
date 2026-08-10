@@ -97,9 +97,12 @@ ipcMain.on('__smoke_error', (_e, { kind, message, stack }) => {
 // binding cannot silently reintroduce that noise. null is the default because
 // renderer call sites guard with `res && res.ok`.
 const STUBS = {
-  // One ARCHIVED entry: the archived branch of the restore loop populates the
-  // sidebar without constructing an xterm terminal, so the assertion below
-  // measures renderer startup and not the terminal stack.
+  // One ARCHIVED entry: this is the `.session-item` the assertion below counts.
+  // Archived on purpose — that branch of the restore loop builds the row without
+  // constructing an xterm, so a failure means renderer startup broke, not the
+  // terminal stack. Emptying this array must turn the run red; if it does not,
+  // the assertion has stopped discriminating (it once counted the empty-state
+  // note as a row).
   'app:restore-sessions': () => ([{
     name: SMOKE_SESSION, type: 'claude', cwd: ROOT, archived: true, archivedAt: Date.now(),
   }]),
@@ -154,26 +157,55 @@ async function run() {
   console.log('ok   renderer/index.html loaded');
 
   // Startup is async (the restore IIFE awaits IPC), so poll rather than sampling
-  // once. #session-list is the assertion target: it is EMPTY in index.html and
-  // filled only by renderer.js's restore loop, which is the last thing startup
-  // does — a non-empty one proves the script parsed, ran to its final IIFE, and
-  // completed the round-trip to main. Every static element in index.html is
-  // present even in the v5.5.0 tree that rendered nothing, so none of them can
-  // serve as this proof.
+  // once.
+  //
+  // Count `.session-item`, NEVER `#session-list`'s children: refreshSidebarView
+  // appends a `.session-empty-note` div when nothing is visible, so the child
+  // count is 1 whether or not a session was ever restored, and a child-count
+  // check passes with the restore stub returning []. Only `.session-item` (the
+  // class refreshSidebarView itself selects rows by) discriminates.
+  //
+  // A row proves the script parsed, ran to its final restore IIFE, and completed
+  // the round-trip to main. No static element in index.html can prove that —
+  // every one of them is present in the v5.5.0 tree that rendered nothing.
   const deadline = Date.now() + TIMEOUT_MS;
-  let rows = 0;
+  let state = { list: false, rows: 0, note: false, children: 0 };
   while (Date.now() < deadline) {
     if (failures.length) break;
-    rows = await win.webContents.executeJavaScript(
-      `(() => { const el = document.getElementById('session-list'); return el ? el.children.length : -1; })()`
+    state = await win.webContents.executeJavaScript(
+      `(() => {
+         const el = document.getElementById('session-list');
+         if (!el) return { list: false, rows: 0, note: false, children: 0 };
+         return {
+           list: true,
+           rows: el.querySelectorAll('.session-item').length,
+           note: !!el.querySelector('.session-empty-note'),
+           children: el.children.length,
+         };
+       })()`
     );
-    if (rows > 0) break;
+    if (state.rows > 0) break;
     await new Promise((r) => setTimeout(r, 100));
   }
 
-  if (rows > 0) console.log(`ok   sidebar rendered (#session-list has ${rows} row(s))`);
-  else if (rows === -1) fail('sidebar rendered', '  #session-list is missing from the document entirely');
-  else if (!failures.length) fail('sidebar rendered', `  #session-list is still empty after ${TIMEOUT_MS}ms — renderer startup never reached the restore loop`);
+  if (failures.length) {
+    // The loop breaks on the first renderer error WITHOUT measuring, so `state`
+    // is still its initial value here. Reporting a sidebar verdict from it would
+    // print an unmeasured claim ("#session-list is missing") next to the real
+    // stack. The thrown error is the diagnosis; say nothing further.
+  } else if (state.rows > 0 && state.note) {
+    // Both at once means the row exists in the DOM but refreshSidebarView filtered
+    // it out of view, so the operator sees "No sessions yet." over a restored
+    // session. Counting rows alone would call that a pass.
+    fail('sidebar rendered', `  ${state.rows} .session-item present but the empty-state note is showing — the row was built and then filtered out of view`);
+  } else if (state.rows > 0) {
+    console.log(`ok   sidebar rendered (${state.rows} session row(s), empty-note=${state.note})`);
+  } else if (!state.list) {
+    fail('sidebar rendered', '  #session-list is missing from the document entirely');
+  } else {
+    fail('sidebar rendered', `  #session-list has no .session-item after ${TIMEOUT_MS}ms `
+      + `(children=${state.children}, empty-note=${state.note}) — renderer startup never built the row for the restored session`);
+  }
 
   // Late errors (a rejection settling after the DOM filled) still count.
   await new Promise((r) => setTimeout(r, 500));
