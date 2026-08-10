@@ -5,10 +5,15 @@
 //
 // FACTORY (matches ipc-log's genus, not the CRUD library drawers): live counter
 // + event-driven list, fed by the single `notify` ipc broadcast the main-side
-// handler emits per arrival. Self-contained — the only cross-boundary reach is
-// window.api, so no core state is injected (the "click a live row to focus its
-// session" nice-to-have was deliberately dropped to keep it so; the store,
-// unread count, and workspace-name resolution are all pulled over ipc).
+// handler emits per arrival. Still no core STATE injected — the store, unread
+// count, and workspace-name resolution are all pulled over ipc, and the "click a
+// live row to focus its session" nice-to-have stays dropped to keep it that way.
+// What is injected is two FUNCTIONS, both owned by the core because a second
+// copy would diverge from the terminal's behaviour: `openFilePeek` (the peek
+// modal is core-owned, and a path click here must land in the SAME modal a path
+// click in the terminal does) and `showToast` (a path in a note routinely fails
+// to resolve — see the path handler below — and a silent miss is the wrong
+// outcome for the same reason it is in the terminal).
 //
 // The badge shows the GLOBAL unread count (store-derived via unreadCount()), not
 // per-window traffic — every window's badge agrees. Workspace names resolve at
@@ -18,8 +23,9 @@
 // DOM-bound, so no unit tests per the R1 rule — leak-scanned like every island.
 
 const { esc, fmtAgo } = require('./lib/format');
+const { scanLinks } = require('./lib/path-scan');
 
-function createInboxDrawer() {
+function createInboxDrawer({ openFilePeek, showToast }) {
   const drawer = document.getElementById('inbox-drawer');
   const listEl = document.getElementById('inbox-list');
   const emptyEl = document.getElementById('inbox-empty');
@@ -45,6 +51,50 @@ function createInboxDrawer() {
     return map;
   }
 
+  // The note body is AGENT-AUTHORED text and this renderer runs
+  // nodeIntegration:true, so an injection here is arbitrary local code. Build it
+  // out of DOM nodes ONLY — never by splicing generated <a>/<button> markup into
+  // an escaped string, which is how linkifying reintroduces the hole that a
+  // single esc() currently closes. textContent is the whole defence.
+  function renderBody(note) {
+    const body = document.createElement('div');
+    body.className = 'inbox-body';
+    for (const span of scanLinks(note.body)) {
+      if (span.kind === 'url') {
+        const a = document.createElement('a');
+        a.className = 'inbox-link';
+        a.textContent = span.text;
+        // No scheme gate here: scanLinks already dropped everything that is not
+        // http/https, and ipc-handlers.js's openExternal re-gates main-side,
+        // which is the authority.
+        a.addEventListener('click', () => window.api.openExternal(span.text));
+        body.appendChild(a);
+      } else if (span.kind === 'path') {
+        const b = document.createElement('button');
+        b.className = 'inbox-path';
+        b.textContent = span.text;
+        b.addEventListener('click', async () => {
+          const res = await window.api.fileResolve(note.from, span.path, null)
+            .catch((e) => ({ ok: false, error: String(e) }));
+          if (!res || !res.ok) {
+            // Misses are ORDINARY here, not exceptional: notes outlive their
+            // author, and resolveFilePath answers "Session not running" once the
+            // seat has exited. Suppressing the link for a dead session would
+            // need the live session map, which this drawer deliberately cannot
+            // reach — so toast the miss, exactly as the terminal does.
+            showToast((res && res.error) || `Can't find "${span.path}"`, { kind: 'warn', duration: 4000 });
+            return;
+          }
+          openFilePeek(note.from, res.path, 'file', span.line);
+        });
+        body.appendChild(b);
+      } else {
+        body.appendChild(document.createTextNode(span.text));
+      }
+    }
+    return body;
+  }
+
   async function renderList() {
     const [items, wsNames] = await Promise.all([
       window.api.listNotifications().catch(() => []),
@@ -63,14 +113,15 @@ function createInboxDrawer() {
         : (wsNames.get(note.workspaceId) || (note.workspaceId ? '(deleted workspace)' : ''));
       const el = document.createElement('div');
       el.className = 'inbox-item' + (note.readAt == null ? ' unread' : '');
-      el.innerHTML = `
-        <div class="inbox-item-head">
-          <span class="inbox-from">${esc(note.from)}</span>
-          ${wsLabel ? `<span class="inbox-ws">${esc(wsLabel)}</span>` : ''}
-          <span class="inbox-ago">${esc(fmtAgo(note.createdAt))}</span>
-        </div>
-        <div class="inbox-body">${esc(note.body)}</div>
+      const head = document.createElement('div');
+      head.className = 'inbox-item-head';
+      head.innerHTML = `
+        <span class="inbox-from">${esc(note.from)}</span>
+        ${wsLabel ? `<span class="inbox-ws">${esc(wsLabel)}</span>` : ''}
+        <span class="inbox-ago">${esc(fmtAgo(note.createdAt))}</span>
       `;
+      el.appendChild(head);
+      el.appendChild(renderBody(note));
       // Click a row to mark it read (idempotent main-side). Repaint + rebadge so
       // the unread styling and the footer count both settle.
       el.addEventListener('click', async () => {

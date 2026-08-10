@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Clodex</title>
   <style>
-/* node_modules/@xterm/xterm/css/xterm.css */
+/* ../wb-wrap-ui/node_modules/@xterm/xterm/css/xterm.css */
 .xterm {
   cursor: text;
   position: relative;
@@ -4255,6 +4255,20 @@ body {
 }
 .inbox-item.unread .inbox-body {
   color: var(--text);
+}
+.inbox-link,
+.inbox-path {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.inbox-path {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
 }
 #agent-editor,
 #skill-editor,
@@ -9568,9 +9582,9 @@ body {
     }
   });
 
-  // node_modules/@xterm/xterm/lib/xterm.js
+  // ../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js
   var require_xterm = __commonJS({
-    "node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
       !(function(e, t) {
         if ("object" == typeof exports && "object" == typeof module) module.exports = t();
         else if ("function" == typeof define && define.amd) define([], t);
@@ -15627,9 +15641,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-fit/lib/addon-fit.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js
   var require_addon_fit = __commonJS({
-    "node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.FitAddon = t() : e.FitAddon = t();
       })(self, (() => (() => {
@@ -15663,9 +15677,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-search/lib/addon-search.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js
   var require_addon_search = __commonJS({
-    "node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.SearchAddon = t() : e.SearchAddon = t();
       })(globalThis, (() => (() => {
@@ -18624,9 +18638,9 @@ ${i3.join("\n")}
     }
   });
 
-  // node_modules/@xterm/addon-web-links/lib/addon-web-links.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js
   var require_addon_web_links = __commonJS({
-    "node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.WebLinksAddon = t() : e.WebLinksAddon = t();
       })(self, (() => (() => {
@@ -19747,6 +19761,7 @@ ${i3.join("\n")}
   // renderer/lib/path-scan.js
   var require_path_scan = __commonJS({
     "renderer/lib/path-scan.js"(exports, module) {
+      var { isExternallyOpenable } = require_external_link();
       var EXTENSIONS = [
         "js",
         "mjs",
@@ -19813,7 +19828,34 @@ ${i3.join("\n")}
         }
         return out;
       }
-      module.exports = { scanPaths, PATH_RE, EXTENSIONS };
+      function scanLinks(text) {
+        if (typeof text !== "string" || !text) return [];
+        const marks = [];
+        URL_RE.lastIndex = 0;
+        for (let u = URL_RE.exec(text); u; u = URL_RE.exec(text)) {
+          if (!isExternallyOpenable(u[0])) continue;
+          marks.push({ start: u.index, end: u.index + u[0].length, span: { kind: "url", text: u[0] } });
+        }
+        for (const h of scanPaths(text)) {
+          if (marks.some((m) => h.start < m.end && m.start < h.end)) continue;
+          marks.push({
+            start: h.start,
+            end: h.end,
+            span: { kind: "path", text: h.text, path: h.path, line: h.line }
+          });
+        }
+        marks.sort((a, b) => a.start - b.start);
+        const out = [];
+        let at = 0;
+        for (const m of marks) {
+          if (m.start > at) out.push({ kind: "text", text: text.slice(at, m.start) });
+          out.push(m.span);
+          at = m.end;
+        }
+        if (at < text.length) out.push({ kind: "text", text: text.slice(at) });
+        return out;
+      }
+      module.exports = { scanPaths, scanLinks, PATH_RE, EXTENSIONS };
     }
   });
 
@@ -21518,7 +21560,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_inbox_drawer = __commonJS({
     "renderer/inbox-drawer.js"(exports, module) {
       var { esc, fmtAgo } = require_format();
-      function createInboxDrawer() {
+      var { scanLinks } = require_path_scan();
+      function createInboxDrawer({ openFilePeek, showToast }) {
         const drawer = document.getElementById("inbox-drawer");
         const listEl = document.getElementById("inbox-list");
         const emptyEl = document.getElementById("inbox-empty");
@@ -21544,6 +21587,35 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           return map;
         }
+        function renderBody(note) {
+          const body = document.createElement("div");
+          body.className = "inbox-body";
+          for (const span of scanLinks(note.body)) {
+            if (span.kind === "url") {
+              const a = document.createElement("a");
+              a.className = "inbox-link";
+              a.textContent = span.text;
+              a.addEventListener("click", () => window.api.openExternal(span.text));
+              body.appendChild(a);
+            } else if (span.kind === "path") {
+              const b = document.createElement("button");
+              b.className = "inbox-path";
+              b.textContent = span.text;
+              b.addEventListener("click", async () => {
+                const res = await window.api.fileResolve(note.from, span.path, null).catch((e) => ({ ok: false, error: String(e) }));
+                if (!res || !res.ok) {
+                  showToast(res && res.error || `Can't find "${span.path}"`, { kind: "warn", duration: 4e3 });
+                  return;
+                }
+                openFilePeek(note.from, res.path, "file", span.line);
+              });
+              body.appendChild(b);
+            } else {
+              body.appendChild(document.createTextNode(span.text));
+            }
+          }
+          return body;
+        }
         async function renderList() {
           const [items, wsNames] = await Promise.all([
             window.api.listNotifications().catch(() => []),
@@ -21559,14 +21631,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
             const wsLabel = note.workspaceId == null ? "" : wsNames.get(note.workspaceId) || (note.workspaceId ? "(deleted workspace)" : "");
             const el = document.createElement("div");
             el.className = "inbox-item" + (note.readAt == null ? " unread" : "");
-            el.innerHTML = `
-        <div class="inbox-item-head">
-          <span class="inbox-from">${esc(note.from)}</span>
-          ${wsLabel ? `<span class="inbox-ws">${esc(wsLabel)}</span>` : ""}
-          <span class="inbox-ago">${esc(fmtAgo(note.createdAt))}</span>
-        </div>
-        <div class="inbox-body">${esc(note.body)}</div>
+            const head = document.createElement("div");
+            head.className = "inbox-item-head";
+            head.innerHTML = `
+        <span class="inbox-from">${esc(note.from)}</span>
+        ${wsLabel ? `<span class="inbox-ws">${esc(wsLabel)}</span>` : ""}
+        <span class="inbox-ago">${esc(fmtAgo(note.createdAt))}</span>
       `;
+            el.appendChild(head);
+            el.appendChild(renderBody(note));
             el.addEventListener("click", async () => {
               if (note.readAt == null) {
                 try {
@@ -31658,7 +31731,7 @@ Click for live activity`;
           return !!(st && st.online && (st.caps || []).includes("shell"));
         }
       });
-      createInboxDrawer();
+      createInboxDrawer({ openFilePeek, showToast });
       createPotDrawer();
       var {
         typeToTakeControl,

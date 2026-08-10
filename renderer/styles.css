@@ -3043,6 +3043,25 @@ html, body {
 
 .inbox-item.unread .inbox-body { color: var(--text); }
 
+.inbox-link,
+.inbox-path {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* inbox-path is a <button> so the row's click-to-mark-read still reaches it;
+   the reset is what stops the UA's chrome from breaking the run of text it
+   sits in (font/color are not inherited by buttons). */
+.inbox-path {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+}
+
 #agent-editor, #skill-editor, #exec-editor {
   position: fixed;
   inset: 0;

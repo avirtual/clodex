@@ -3218,7 +3218,7 @@ createTermTab({
   },
 });
 
-createInboxDrawer();
+createInboxDrawer({ openFilePeek, showToast });
 
 createPotDrawer();
 
