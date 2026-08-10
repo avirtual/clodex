@@ -121,6 +121,18 @@ function pingOutcome(res) {
   return ['failure', `fail:${s}`]; // 401/403 and friends: the credential shape this bounds
 }
 
+// The credential subset of pingOutcome's `fail:` labels. Lives here, next to the
+// only thing that mints those labels, so the two cannot drift apart.
+//
+// Every `failure` disarms the hold — that bound is about wasted pings and is
+// deliberately wide. This predicate answers a narrower question asked by exactly
+// one caller (_onHoldLifecycle): may this failure also ERASE the operator's
+// persisted keep-warm intent? Only a rejection that says the credential is dead
+// may, because only that one is guaranteed to repeat identically after a restart.
+function isCredentialFailure(lastResult) {
+  return lastResult === 'fail:401' || lastResult === 'fail:403' || lastResult === 'fail:407';
+}
+
 // PURE re-arm planning for a persisted hold INTENT seen on a session's first
 // main-line turn after an app restart. The keeper itself is in-memory by design
 // (header), so the intent — not the last-request bytes — is what survives on the
@@ -410,4 +422,4 @@ class HoldKeeper extends EventEmitter {
   }
 }
 
-module.exports = { HoldKeeper, holdDecision, pingOutcome, postJson, rearmPlan };
+module.exports = { HoldKeeper, holdDecision, isCredentialFailure, pingOutcome, postJson, rearmPlan };

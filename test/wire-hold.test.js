@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
-const { HoldKeeper, holdDecision, pingOutcome, rearmPlan } = require('../wire/hold');
+const { HoldKeeper, holdDecision, isCredentialFailure, pingOutcome, rearmPlan } = require('../wire/hold');
 const { WarmthStore, prefixHash } = require('../wire/warmth');
 const { WireProxy } = require('../wire/proxy');
 
@@ -104,6 +104,35 @@ test('pingOutcome: only a credential-shaped rejection spends a failure strike', 
   // OAuth, so retrying against a rejected credential is pure waste.
   for (const s of [400, 401, 403, 404, 422]) {
     assert.deepStrictEqual(pingOutcome({ ok: false, status_code: s }), ['failure', `fail:${s}`], `status ${s}`);
+  }
+});
+
+// Two different questions, and conflating them is what this pair pins. `failure`
+// answers "stop pinging" — deliberately wide, because every permanent rejection
+// wastes the same budget. `isCredentialFailure` answers "erase what the operator
+// asked for", which only a dead credential justifies, because only that is
+// guaranteed to still be true after a restart.
+test('isCredentialFailure: a permanent failure disarms, but only a credential one erases the setting', () => {
+  for (const s of [401, 403, 407]) {
+    const [kind, label] = pingOutcome({ ok: false, status_code: s });
+    assert.strictEqual(kind, 'failure', `ENTER: ${s} must be a failure at all, or the case below is vacuous`);
+    assert.strictEqual(isCredentialFailure(label), true, `status ${s}`);
+  }
+
+  // 400 is the one that matters: ping() strips `thinking` and
+  // `context_management` precisely because a wrong combination 400s, so an
+  // upstream schema change makes the REPLAY 400 on a seat whose credential is
+  // perfectly good. It still disarms; it must not withdraw the seat property.
+  for (const s of [400, 404, 422, 451]) {
+    const [kind, label] = pingOutcome({ ok: false, status_code: s });
+    assert.strictEqual(kind, 'failure', `ENTER: ${s} must be a failure at all, or the case below is vacuous`);
+    assert.strictEqual(isCredentialFailure(label), false, `status ${s}`);
+  }
+
+  // Nothing that is not a failure label can qualify, including the absent one a
+  // disarm from an older code path (or a keeper that never pinged) would carry.
+  for (const l of ['warmed', 'declined:transport', 'declined:429', 'declined:cold', null, undefined, '']) {
+    assert.strictEqual(isCredentialFailure(l), false, `label ${String(l)}`);
   }
 });
 

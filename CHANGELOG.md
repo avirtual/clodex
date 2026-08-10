@@ -18,9 +18,11 @@ blocks a release.
   Unlike a duration it is a property of the seat, not a one-off arming: it has
   no deadline, and it re-arms itself when you restart Clodex, so a lead agent
   stays warm through an absence longer than you planned for. It still stops on
-  its own if two pings are rejected in a row — normally expired credentials,
-  which Clodex cannot refresh for you — and stopping it clears the setting, so
-  it will not quietly start again on the next launch. Picking a duration
+  its own if two pings are rejected in a row. When the rejection is your
+  credentials — which Clodex cannot refresh for you — the setting is cleared
+  along with it, so it will not quietly start again on the next launch; a
+  rejection of any other kind stops keep-warm for this run only and leaves
+  Always set, so restarting Clodex picks it up again. Picking a duration
   afterwards replaces it. The button reads "held always" rather than counting
   down to a deadline that does not exist. Available on sessions whose keep-warm
   is handled in-process; sessions routed through an external proxy keep the

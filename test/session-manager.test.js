@@ -401,9 +401,9 @@ test('_maybeDeliverDigest: stray sid (≠ s.sessionId) neither delivers nor mark
 // Keep-warm lifecycle listener: re-anchors must RE-PERSIST the deadline (the
 // keeper restarts its window on every organic turn, so a stale persisted
 // holdUntil would wrongly lapse-clear a still-valid hold after a restart);
-// failure-strike disarms clear the intent; explicit 'off' is the wire:hold
-// handler's job and is skipped here.
-test('_onHoldLifecycle: re-anchor re-persists, failures clears BOTH intents, off is skipped', () => {
+// a CREDENTIAL failure-strike disarm clears the intent and no other disarm does;
+// explicit 'off' is the wire:hold handler's job and is skipped here.
+test('_onHoldLifecycle: re-anchor re-persists, a credential failure clears BOTH intents, everything else is skipped', () => {
   // ONE ordered log for both setters, not one array each: the whole point of the
   // failure branch's write order is that the perpetual flag is cleared before the
   // deadline, and two separate arrays cannot see an order at all. The body is
@@ -434,10 +434,11 @@ test('_onHoldLifecycle: re-anchor re-persists, failures clears BOTH intents, off
   m._onHoldLifecycle({ session: 'sid-1', event: 're-anchored', until: null });
   assert.strictEqual(calls.length, 1);
 
-  // Failure-strike disarm clears BOTH intents (keys on cause, not reason text),
-  // flag first so a half-landed pair can never leave the seat perpetual.
+  // A CREDENTIAL failure-strike disarm clears BOTH intents (keys on cause plus
+  // the lastResult label, never the reason text), flag first so a half-landed
+  // pair can never leave the seat perpetual.
   calls.length = 0;
-  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', reason: 'whatever', pings: 3 });
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', reason: 'whatever', pings: 3, lastResult: 'fail:401' });
   assert.deepStrictEqual(calls, [
     ['setKeepWarmAlways', 'a', false],
     ['setHoldUntil', 'a', null],
@@ -455,10 +456,20 @@ test('_onHoldLifecycle: re-anchor re-persists, failures clears BOTH intents, off
   // the operator's Always setting on every /clear — the handover in
   // _onWireSessionRotated re-arms off exactly the field that branch clears.
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'session-ended', pings: 2 });
+  // A permanent but NON-credential failure: the keeper has already disarmed for
+  // this launch and that stands, but the operator's setting is not evidence about
+  // a 400. ping() strips `thinking`/`context_management` precisely because a
+  // wrong combination 400s, so if an upstream schema change ever makes the replay
+  // itself 400, this branch would otherwise withdraw Always on every unattended
+  // seat at once — the same class of bug as counting a transport blip as a strike.
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', pings: 3, lastResult: 'fail:400' });
+  // A failures disarm with no label at all is likewise not proof of a dead
+  // credential, so it must not erase anything either.
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', pings: 3 });
   assert.deepStrictEqual(calls, [
     ['setKeepWarmAlways', 'a', false],
     ['setHoldUntil', 'a', null],
-  ], 'only the failures cause writes; off/expired/max-pings/session-ended add nothing');
+  ], 'only a CREDENTIAL failure writes; off/expired/max-pings/session-ended/fail:400 add nothing');
 });
 
 // A /clear mints a new wire sessionId under a live session, and the keeper is
@@ -483,9 +494,12 @@ function rotationRig({ transcriptId = null, rec = null, sessionId = 'old-sid' } 
   });
   m._holdKeeper = {
     endSession: (sid) => { calls.push(['endSession', sid]); return { session: sid, holdDisarmed: true }; },
-    arm: (sid, hours, opts = {}) => {
-      calls.push(['arm', sid, hours, opts]);
-      return { armed: true, always: !!opts.always, until: opts.always ? null : 1_700_000_000 };
+    // Records the arguments production ACTUALLY passed — no `opts = {}` default,
+    // which would make a missing third argument indistinguishable from an empty
+    // one and quietly turn the timed-arm assertion below into a tautology.
+    arm: (sid, hours, opts) => {
+      calls.push(opts === undefined ? ['arm', sid, hours] : ['arm', sid, hours, opts]);
+      return { armed: true, always: !!(opts && opts.always), until: (opts && opts.always) ? null : 1_700_000_000 };
     },
   };
   // Both write real files off REGISTRY_DIR and neither is under test here.
@@ -538,7 +552,10 @@ test('a timed hold rotates too, and re-arms the remaining window on the new id',
   assert.ok(armed, 'ENTER: it re-armed at all — the assertions below are vacuous otherwise');
   assert.strictEqual(armed[1], 'new-sid');
   assert.ok(armed[2] > 1.9 && armed[2] <= 2, `remaining window, got ${armed[2]}`);
-  assert.deepStrictEqual(armed[3], {}, 'a timed re-arm passes no always flag');
+  // Length, not deepStrictEqual on armed[3]: the rig defaults that parameter to
+  // {}, so asserting the empty object would only pin the rig's own default and
+  // would stay green if production started passing { always: true } here.
+  assert.strictEqual(armed.length, 3, 'a timed re-arm passes no always flag at all');
 });
 
 test('a stray child-claude sessionId rotates nothing and ends no hold', () => {
