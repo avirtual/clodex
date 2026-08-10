@@ -719,7 +719,10 @@ async def handler(request: Request) -> Response:
         if not sess:
             return Response(json.dumps({"error": "session required"}),
                             status_code=400, media_type="application/json")
-        res = report_mod.bust_series(sess)
+        # `transitions` (one entry per turn) is the bulk of the payload and no
+        # summary consumer reads it -> behind ?detail=1, like /_report's `series`.
+        detail = request.query_params.get("detail") in ("1", "yes", "true")
+        res = report_mod.bust_series(sess, detail=detail)
         return Response(json.dumps(res, indent=2), media_type="application/json")
 
     # GET /_pot[?days=N] — boiling-pot tier 2: per-file redundant-read heat over a
@@ -1658,6 +1661,23 @@ async def handler(request: Request) -> Response:
         print(f"[transform-error] #{n} {agent} {type(e).__name__}: {e} — "
               "request forwarded verbatim (fail-open), transforms skipped",
               flush=True)
+    # TWO CAPTURE-FORMAT INVARIANTS ARE READ BACK OFF THIS BLOCK — see
+    # report._bust_scan, which makes /_bust and /_session?turn= fast by deciding
+    # from receipts + sidecars instead of parsing every request BODY:
+    #   1. `summary.n_messages == len(body["messages"])` — both are written from
+    #      the same parsed `obj` below, so the sidecar substitutes for counting
+    #      the array. It feeds prev/cur_messages, which pick the `compact` vs
+    #      `conversation`/`lapse` bust class.
+    #   2. **`summary` is present IFF `body` is a dict** — this try only reaches
+    #      the assignment after `obj.get("messages")/("tools")` succeed, so an
+    #      unparseable body (None -> _SkipMeta) and a parsed non-object body
+    #      (raises on .get) both leave the record summary-less. That is how the
+    #      scan reproduces the transition-chain BREAK on a bodiless capture
+    #      without opening bodies.
+    # Verified across the corpus when _bust_scan shipped (0 violations in 124,026
+    # records). If summary ever moves out of this try, or is emitted on a path
+    # that hasn't proven the body is a dict, invariant 2 breaks — and it breaks
+    # SILENTLY, as a wrong bust count. Update report._bust_scan with it.
     try:
         if obj is None:
             raise _SkipMeta   # parse failed above — nothing to summarize
@@ -1676,7 +1696,8 @@ async def handler(request: Request) -> Response:
             "role": role,
             "system_chars": sys_chars,
             "system_blocks": len(sysf) if isinstance(sysf, list) else (1 if sysf else 0),
-            "n_messages": len(msgs),
+            "n_messages": len(msgs),      # == len(body["messages"]): report._bust_scan
+                                          # reads this INSTEAD of parsing the body
             "messages_chars": msg_chars,
             "n_tools": len(obj.get("tools", []) or []),
             "tool_names": [t.get("name") for t in (obj.get("tools") or []) if isinstance(t, dict)],

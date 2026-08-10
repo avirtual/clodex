@@ -181,6 +181,14 @@ blocks a release.
   populations at click time rather than reusing a number captured when the menu
   was built — a tray menu can sit open for minutes.
 
+- **The cache-bust inspector opens in about a second instead of sixteen.**
+  Vendored wirescope v0.6.48, which decides each turn's verdict from the billing
+  receipts it already has rather than re-reading every request body, and leaves
+  the per-turn detail out of the response unless something asks for it. The
+  popover shows the same numbers; it just stops downloading five megabytes to
+  render them. The session navigator's turn view got the same treatment and is
+  now roughly eight times faster.
+
 ## 5.3.0 — 2026-08-08 — a switch the serving box can actually reach
 
 - **Terminal sharing moved to Settings, and now works on a box with no peers of

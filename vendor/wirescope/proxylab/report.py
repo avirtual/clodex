@@ -26,6 +26,7 @@ totals.est_usd (± rounding), and token_decomposition.preamble.unused_tokens ==
 import collections
 import datetime
 import json
+import re
 
 from . import billing as billing_mod
 from . import codex as codex_mod
@@ -62,6 +63,10 @@ _SCORE_PCT_CEILING = 60.0
 
 _CHARS_PER_TOK = 4
 
+# `"ts": "<iso>"` as the writer emits it at the head of a request record — lets the
+# bust scan order the series without parsing the body (see _head_ts).
+_TS_HEAD_RE = re.compile(rb'"ts"\s*:\s*"([^"]+)"')
+
 # The preamble = the static, re-sent-every-turn prefix. These composition
 # categories make it up (everything that isn't live conversation / output).
 _PREAMBLE_CATEGORIES = ("system", "claudemd", "useremail", "agents", "skills",
@@ -84,6 +89,61 @@ def _load(path):
         return json.loads(path.read_text())
     except Exception:
         return None
+
+
+def _head_ts(path, nbytes=200):
+    """The capture's `ts` read from the first `nbytes` of a request record, WITHOUT
+    parsing the body. `ts` is the 2nd key the writer emits (server.py `record = {...}`),
+    measured at byte offset 17-20 across the corpus, so a 200-byte read is a ~10x
+    guard rather than a gamble; a miss returns None and the caller falls back to a
+    full parse. Exists because ordering the series needs only this one field while a
+    full json.load pays for the whole `messages` array (mean 0.37 MB)."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(nbytes)
+    except OSError:
+        return None
+    m = _TS_HEAD_RE.search(head)
+    return m.group(1).decode("utf-8", "replace") if m else None
+
+
+def _tail_summary(path, nbytes=4096):
+    """The capture's `summary` dict read from the LAST `nbytes` of a request record,
+    without parsing the body. The writer emits `summary` as the final key (verified:
+    no key follows it anywhere in the corpus) and it measures <1 KB, so a 4 KB tail
+    read reaches it whole; the scan finds the last `"summary"` and brace-matches its
+    object. Returns None if it isn't found intact — caller falls back to a full parse,
+    so this is an optimisation with a correct slow path, never a source of wrong data.
+
+    Validated against a full parse on 4,134 requests sampled across all 1,039 capture
+    dirs: 0 misses, 0 disagreements."""
+    try:
+        with open(path, "rb") as fh:
+            size = fh.seek(0, 2)
+            fh.seek(max(0, size - nbytes))
+            tail = fh.read()
+    except OSError:
+        return None
+    k = tail.rfind(b'"summary"')
+    if k < 0:
+        return None
+    start = tail.find(b"{", k)
+    if start < 0:
+        return None
+    depth = 0
+    for i in range(start, len(tail)):
+        c = tail[i : i + 1]
+        if c == b"{":
+            depth += 1
+        elif c == b"}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    obj = json.loads(tail[start : i + 1])
+                except Exception:
+                    return None
+                return obj if isinstance(obj, dict) else None
+    return None
 
 
 def _line_key(summ):
@@ -1190,7 +1250,93 @@ def _transition_class(bust, loc, prev_msgs, cur_msgs, ratio):
     return None
 
 
-def bust_series(session):
+def _bust_scan(session):
+    """The RECEIPT-FIRST spine of bust_series: one cheap pass that yields the same
+    per-transition inputs `_iter_pairs` would, minus the request BODY.
+
+    Why this exists: _iter_pairs json.loads every `*.request.json` in the dir, and a
+    request record holds that turn's whole `messages` array. On a long session that
+    is gigabytes parsed (measured: 2.77 GB / 15.4s over 7,507 turns) to answer a
+    question about ~100 busts — the bust flag and its severity come from the RECEIPT
+    (`response.json` billing), and the body is needed ONLY for the bust turns, where
+    `_first_divergence` diffs the bytes. So: decide from receipts, then load the
+    handful of bodies that a locus is actually computed for.
+
+    Everything this reads is exact, not estimated:
+      * `ts`      — head-read of the request record (_head_ts), the ordering key.
+      * `summary` — tail-read (_tail_summary): `role`/`agent_id` give the SAME
+        `_line_key` the full path computes, and `n_messages` is built by the writer
+        as `len(obj["messages"])` from the very object it captures (server.py), so
+        it IS `len(body["messages"])` — verified equal on every comparable turn of
+        the profiled session and across a 1,039-dir sample. (Codex `/v1/responses`
+        records carry `n_messages: null`, matching a body with no `messages` key;
+        `or 0` reproduces the old value there too.)
+    Either cheap read falling short degrades to a full parse of that one file, so a
+    format change costs speed, never correctness.
+
+    The old code BREAKS the transition chain on a record whose body isn't a dict, so
+    the scan must know that without reading bodies. It can: the writer emits
+    `summary` only after successfully reading `obj["messages"]`/`obj["tools"]` off a
+    parsed body, so an unparseable body (no `summary`, `parse_error` instead) and a
+    parsed-but-non-object body (the summary block raises on `.get`) BOTH end up with
+    no summary — i.e. **summary present iff body is a dict**. Verified across the
+    whole corpus: 0 violations in 124,026 records. So a tail-read that finds a
+    summary proves a dict body, and the fallback parse establishes it directly.
+
+    Yields dicts shaped {stem, path, ts, line, tokens, ok, n_messages, has_body,
+    body} where `body` is None until _bust_body fills it in for the pairs that need
+    one."""
+    d = core_mod._session_dir(session)
+    if not d.is_dir():
+        return []
+    out = []
+    for rf in d.glob("*.request.json"):
+        stem = rf.name[: -len(".request.json")]
+        ts = _head_ts(rf)
+        summ = _tail_summary(rf)
+        body = None
+        if ts is None or summ is None:          # cheap reads missed -> full parse
+            req = _load(rf)
+            if req is None:
+                continue
+            summ = req.get("summary") or {}
+            ts = req.get("ts")
+            b = req.get("body")
+            # already paid for the parse — keep the body rather than re-read it
+            body = b if isinstance(b, dict) else False
+        resp = _load(rf.with_name(stem + ".response.json")) or {}
+        if ts is None:
+            ts = (_load(rf.with_name(stem + ".warmth.json")) or {}).get("ts")
+        billing = resp.get("billing") or {}
+        out.append({
+            "stem": stem,
+            "path": rf,
+            "ts": ts,
+            "line": _line_key(summ),
+            "tokens": billing.get("tokens") or {},
+            "ok": resp.get("status_code") == 200,
+            "n_messages": summ.get("n_messages") or 0,
+            "has_body": bool(summ) if body is None else bool(body),
+            "body": body,
+        })
+    out.sort(key=lambda p: (_epoch(p["ts"]) if _epoch(p["ts"]) is not None else 0.0,
+                            _seq_of(p["stem"])))
+    return out
+
+
+def _bust_body(p):
+    """Parse and memoise one scanned entry's request body (the expensive read the
+    receipt-first pass defers). Returns a dict, or None when the record is missing /
+    unparseable / bodiless — callers treat that exactly as the old code treated a
+    non-dict body."""
+    if p["body"] is None:
+        req = _load(p["path"])
+        body = (req or {}).get("body")
+        p["body"] = body if isinstance(body, dict) else False
+    return p["body"] or None
+
+
+def bust_series(session, detail=True):
     """Per-transition cache-divergence forensics for a session's MAIN line, in
     chronological order. For each adjacent request pair it reports WHERE the
     prefix first diverged (the locus) and HOW MUCH the receipt then re-wrote (the
@@ -1207,21 +1353,18 @@ def bust_series(session):
     that agreement is high confidence; a low-write_frac warm append is NOT a bust
     even when the N-1 text diff finds a late change."""
     from . import warmth as warmth_mod          # lazy: fault map + compact ratio
-    pairs = [p for p in _iter_pairs(session) if p["line"] == "main" and p["ok"]]
+    pairs = [p for p in _bust_scan(session) if p["line"] == "main" and p["ok"]]
     transitions = []
     prev = None
     for idx, p in enumerate(pairs):
-        body = (p.get("req") or {}).get("body")
-        if not isinstance(body, dict):
+        if not p["has_body"]:
             prev = None
             continue
         if prev is None:
             prev = p
             continue
-        a = (prev.get("req") or {}).get("body")
-        b = body
         cr, write, inp, out = _tokens_rw(p.get("tokens"))
-        prev_msgs = len(a.get("messages") or []) if isinstance(a, dict) else 0
+        prev_msgs = prev["n_messages"]
         window = cr + write + inp
         write_frac = round(write / window, 3) if window else 0.0
         # RECEIPT decides bust + severity (the bill is ground truth for magnitude).
@@ -1232,13 +1375,18 @@ def bust_series(session):
             severity = "full-rewrite"; bust = True
         else:
             severity = "partial"; bust = True
+        # Bodies are loaded HERE and nowhere else — only a bust computes a locus, so
+        # only a bust pays for the parse (~100 of 7,132 transitions on the profiled
+        # session). Everything above came from receipts + sidecar reads.
+        b = _bust_body(p) if bust else None
+        a = _bust_body(prev) if bust else None
         # survived-prefix depth from the receipt (bill's own locus)
-        surv = _survived_prefix(cr, _prefix_marks(b)) if bust else None
+        surv = _survived_prefix(cr, _prefix_marks(b)) if (bust and b) else None
         survived_prefix = ({"boundary": surv[0], "est_tokens": surv[1]}
                            if surv else ({"boundary": "none", "est_tokens": 0}
                                          if bust else None))
         # structural N-1 diff (what byte first changed vs the previous turn)
-        loc = _first_divergence(a, b) if (bust and isinstance(a, dict)) else None
+        loc = _first_divergence(a, b) if (bust and isinstance(a, dict) and b) else None
         # A STATIC-PREFIX bust changed the cached PREAMBLE (tools / system / the
         # msg[0] claudeMd bundle) — the actionable, fixable class (a model swap, a
         # date rollover), distinct from a routine cold-resume history rewrite where
@@ -1250,7 +1398,7 @@ def bust_series(session):
             surv_boundary in ("none", "tools", "system")
             or (loc and (loc["segment"] in ("tools", "system")
                          or (loc["segment"] == "messages" and loc.get("index") == 0)))))
-        cur_msgs = len(b.get("messages") or [])
+        cur_msgs = p["n_messages"]
         # class + fault + fix_hint, pulled from warmth's shared _BUST_FAULT so a
         # consumer (clodex's popover) renders per-turn severity/colour without
         # re-implementing the classifier; restart_between (the capture seq reset
@@ -1281,13 +1429,21 @@ def bust_series(session):
     busts = [t for t in transitions if t["bust"]]
     static = [t for t in busts if t["static_prefix_bust"]]
     worst = max(busts, key=lambda t: t["write_tokens"], default=None)
-    return {
+    res = {
         "session_id": session, "basis": "on-disk-capture, main-line, chronological",
         "count": len(transitions), "n_busts": len(busts),
         "n_static_prefix_busts": len(static),
         "worst": worst, "static_prefix_busts": static,
-        "busts": busts, "transitions": transitions,
+        "busts": busts,
     }
+    # `transitions` is one entry per turn (7,132 = 5.1 MB of a 5.3 MB payload on the
+    # profiled session) while every consumer of the summary reads only busts/count.
+    # Behind `detail` like /_report's `series`, so the popover fetch carries 0.18 MB.
+    # In-process callers that index by transition (server's /_session turn nav) ask
+    # for it explicitly.
+    if detail:
+        res["transitions"] = transitions
+    return res
 
 
 def session_report(session, detail=False):

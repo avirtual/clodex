@@ -455,10 +455,16 @@ def _main_line_turns(session_id):
     """Chronological (restart-stable ts order) list of this session's MAIN-line
     captured requests: [{stem, seq, ts}]. The spine for /_session turn navigation
     — every request is captured, so 'turns' here are just positions in that
-    on-disk series (same ordering report.bust_series indexes by `i`)."""
+    on-disk series (same ordering report.bust_series indexes by `i`).
+
+    Built on report._bust_scan, NOT _iter_pairs: the three fields here are stem,
+    seq and ts, and _iter_pairs would json-load every request BODY (mean 0.37 MB)
+    to hand back three values it reads from the filename and a header. The scan
+    gets the same rows from a head+tail read — same ordering key, same `main`
+    line filter — which is what keeps `?turn=` off a full-corpus parse."""
     from proxylab import report as report_mod            # lazy: avoid import cycle
     out = []
-    for p in report_mod._iter_pairs(session_id):
+    for p in report_mod._bust_scan(session_id):
         if p["line"] != "main":
             continue
         out.append({"stem": p["stem"], "seq": report_mod._seq_of(p["stem"]),
