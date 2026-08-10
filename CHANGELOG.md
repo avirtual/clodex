@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **Links and file paths in inbox notes are now clickable.** Agents routinely
+  put a URL or a `renderer.js:71` in a `[agent:notify-user]` note, and both used
+  to be dead text you had to retype. A URL opens in your browser; a path opens
+  the same file peek a path click in the terminal does, jumping to the line if
+  the note named one. Paths in notes whose author has since exited cannot be
+  resolved and say so rather than failing silently, since notes deliberately
+  outlive the seat that raised them.
+
 - **Keep-warm can now be set to "Always" on a session that should never go
   cold.** The fire button's menu gains an Always option next to 1/4/8 hours.
   Unlike a duration it is a property of the seat, not a one-off arming: it has

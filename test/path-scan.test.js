@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { scanPaths } = require('../renderer/lib/path-scan');
+const { scanPaths, scanLinks } = require('../renderer/lib/path-scan');
 
 // Offsets are what both callers convert into a range (xterm cells, HTML
 // fragments), so every assertion here checks the WHOLE hit, not just its text —
@@ -96,4 +96,127 @@ test('repeated scans of the same text are identical (lastIndex is reset)', () =>
   const s = 'a.js:1 and https://x.dev/b.js and c/d.md';
   assert.deepStrictEqual(scanPaths(s), scanPaths(s));
   assert.deepStrictEqual(scanPaths(s), scanPaths(s)); // third call, in case of parity
+});
+
+// --- scanLinks -------------------------------------------------------------
+//
+// The inbox drawer turns these spans into DOM nodes one-for-one, so a span that
+// drops or duplicates text silently corrupts the note body an agent wrote. The
+// reassembly assertion below is the invariant that makes the rest safe to trust.
+
+test('spans reassemble to the input byte for byte on a mixed note', () => {
+  const s = 'see renderer.js:71 and https://example.com/docs plus ~/.clodex/a.json ok';
+  const spans = scanLinks(s);
+  // ENTER: without at least one of each kind the reassembly below would hold
+  // trivially for a single text span covering everything.
+  assert.deepStrictEqual(
+    [...new Set(spans.map((x) => x.kind))].sort(),
+    ['path', 'text', 'url'],
+  );
+  assert.strictEqual(spans.map((x) => x.text).join(''), s);
+});
+
+test('a bare URL is one url span', () => {
+  assert.deepStrictEqual(scanLinks('https://example.com'), [
+    { kind: 'url', text: 'https://example.com' },
+  ]);
+});
+
+// A URL's own path segments are shaped exactly like a relative path. Splitting
+// here would both break the link and open a peek on a file that never existed.
+test('a URL whose path looks like a file is ONE url span, not url plus path', () => {
+  const spans = scanLinks('https://example.com/app.js');
+  assert.deepStrictEqual(spans, [{ kind: 'url', text: 'https://example.com/app.js' }]);
+});
+
+// A denied scheme must degrade to inert text. A link that silently does nothing
+// when clicked reads as the feature being broken; worse, file:/javascript: in a
+// nodeIntegration renderer is a real hole, not a cosmetic one.
+//
+// Only the `://` rows actually REACH isExternallyOpenable — URL_RE requires the
+// slashes, so the `:`-only rows never match it and are text for a different
+// reason than the gate. They are kept because they become gate-reaching the
+// moment URL_RE widens to `mailto:`-style schemes; `ftp://` is the row that
+// exercises the gate today, and deleting the gate must fail HERE.
+test('a denied scheme comes back as text, never as a link', () => {
+  for (const s of ['ftp://example.com/x', 'file:///etc/passwd', 'javascript:alert(1)', 'data:text/html,<b>x']) {
+    const spans = scanLinks(s);
+    // Per-row and negative-on-kind: names the mechanism that broke rather than
+    // reporting that some universal over all spans stopped holding.
+    assert.ok(!spans.some((x) => x.kind === 'url'), `linkified a denied scheme: ${s}`);
+    assert.strictEqual(spans.map((x) => x.text).join(''), s);
+  }
+});
+
+// file:// DOES match URL_RE, so scanPaths excludes its interior — the allowed
+// extension inside it must not leak out as a local path span.
+test('a path inside a denied-scheme URL is not claimed as a local path', () => {
+  const spans = scanLinks('file:///etc/app.js');
+  assert.deepStrictEqual(spans, [{ kind: 'text', text: 'file:///etc/app.js' }]);
+});
+
+test('path spans carry path and line the way scanPaths yields them', () => {
+  assert.deepStrictEqual(scanLinks('renderer.js:71'), [
+    { kind: 'path', text: 'renderer.js:71', path: 'renderer.js', line: 71 },
+  ]);
+  assert.deepStrictEqual(scanLinks('~/.clodex/a.json'), [
+    { kind: 'path', text: '~/.clodex/a.json', path: '~/.clodex/a.json', line: null },
+  ]);
+  assert.deepStrictEqual(scanLinks('renderer.js'), [
+    { kind: 'path', text: 'renderer.js', path: 'renderer.js', line: null },
+  ]);
+});
+
+// WHAT THESE TWO DO NOT TEST. The guard against agent-authored markup executing
+// is renderer/inbox-drawer.js building the body from createTextNode/textContent
+// only, never innerHTML and never an href — a DOM property no unit test here can
+// reach. scanLinks is not a sanitizer and must not be read as one: markup stays
+// inert because of how the spans are RENDERED, not because of how they are cut.
+// What is worth pinning at this layer is that the cut never invents, drops or
+// duplicates a byte, in either arrangement.
+
+test('markup before a URL lands intact in a single text span', () => {
+  const evil = '<img src=x onerror=alert(1)>';
+  const s = `${evil} https://example.com/ done`;
+  const spans = scanLinks(s);
+  assert.ok(
+    spans.some((x) => x.kind === 'text' && x.text.includes(evil)),
+    'markup was split across spans or absorbed into the link',
+  );
+  assert.strictEqual(spans.map((x) => x.text).join(''), s);
+});
+
+// The mirror arrangement, asserted for what actually happens rather than what
+// would be tidy: URL_RE's tail is `\S+`, so markup butted against a URL is
+// swallowed INTO the url span (no whitespace to stop it). That is not a leak —
+// the drawer sets textContent, and openExternal re-gates `^https?://` main-side
+// before anything is handed to the browser. Pinned so the greedy tail is a
+// known, deliberate property instead of a surprise found later.
+test('markup butted against a URL is absorbed into the url span, not lost', () => {
+  const s = 'https://example.com/<img/src=x> tail';
+  const spans = scanLinks(s);
+  const url = spans.find((x) => x.kind === 'url');
+  // ENTER: with no url span the reassembly check alone would hold trivially.
+  assert.ok(url, 'expected a url span');
+  assert.ok(url.text.includes('<img'), 'expected the greedy tail to absorb the markup');
+  assert.strictEqual(spans.map((x) => x.text).join(''), s);
+});
+
+test('spans are gapless, ordered and cover the whole string', () => {
+  const s = 'a.js:1 then https://x.dev/b and c/d.md tail';
+  const spans = scanLinks(s);
+  // ENTER: both assertions below are TRUE of a single text span covering the
+  // input, so without this the test that NAMES the invariant is the one blind
+  // to its collapse.
+  assert.deepStrictEqual([...new Set(spans.map((x) => x.kind))].sort(), ['path', 'text', 'url']);
+  let at = 0;
+  for (const sp of spans) {
+    assert.strictEqual(s.slice(at, at + sp.text.length), sp.text);
+    at += sp.text.length;
+  }
+  assert.strictEqual(at, s.length);
+});
+
+test('scanLinks on empty and non-string input returns no spans rather than throwing', () => {
+  for (const v of ['', null, undefined, 42, {}]) assert.deepStrictEqual(scanLinks(v), []);
 });
