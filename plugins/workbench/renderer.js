@@ -293,9 +293,13 @@ module.exports.activate = (rhost) => {
       upBtn.disabled = !cur || !parentOf(cur);
     }
 
-    async function setFolderRoot(dir) {
+    // `confirmed` says the caller ALREADY asked about unsaved edits, so this must
+    // not ask again. It defaults to false on purpose: a caller added later gets
+    // the guard unless it opts out in a token visible at its own call site, so
+    // the way to lose unsaved editor content is never silence.
+    async function setFolderRoot(dir, { confirmed = false } = {}) {
       const name = activeName(); if (!name) return;
-      if (!confirmDiscardEdit()) return;
+      if (!confirmed && !confirmDiscardEdit()) return;
       const res = await h.invoke('fs.setRoot', name, dir);
       if (!res || !res.ok) { toast(`Can't use that folder: ${(res && res.error) || 'unknown'}`); return; }
       resetEditor();
@@ -306,13 +310,15 @@ module.exports.activate = (rhost) => {
 
     $('wb-files-goto').addEventListener('click', async () => {
       if (!activeName()) return;
-      // Ask about unsaved edits BEFORE the dialog, not after: setFolderRoot also
-      // asks, but by then the operator has already picked a folder and a cancel
-      // throws that pick away.
+      // Ask about unsaved edits BEFORE the dialog, not after — a prompt raised
+      // afterwards throws away a folder the operator has already picked. The
+      // `confirmed` flag MOVES the guard here rather than adding a second one:
+      // nothing between the two calls can dirty the editor, so asking again
+      // would be the same modal twice for one click.
       if (!confirmDiscardEdit()) return;
       const dir = await h.ui.pickDirectory();
       if (!dir) return; // cancelled
-      await setFolderRoot(dir);
+      await setFolderRoot(dir, { confirmed: true });
     });
 
     upBtn.addEventListener('click', async () => {
@@ -568,7 +574,11 @@ module.exports.activate = (rhost) => {
       }
     }
 
-    $('wb-files-refresh').addEventListener('click', () => renderExplorer());
+    // Re-ask the engine for the root before repainting: `fs.list` re-resolves
+    // through effectiveRoot, so a root that died since the last wt.selected
+    // would leave the scope bar naming it while the tree lists the session cwd.
+    // Refresh is the button pressed precisely when something looks wrong.
+    $('wb-files-refresh').addEventListener('click', () => refreshRootIndicator().then(renderExplorer));
 
     // =======================================================================
     // Source control tab

@@ -670,6 +670,38 @@ test('t277: Go to Folder uses the host picker, and Up cannot spin at the fs root
     'confirmDiscardEdit guards the dialog, not just the apply');
 });
 
+test('t277: a Go to Folder click asks about unsaved edits exactly ONCE', () => {
+  // The property meant here is a COUNT: one modal per click. The ordering pin
+  // in the test above cannot express it — it passed while the guard in front of
+  // the dialog was a SECOND one and a dirty editor got the same modal twice,
+  // which is the failure the guard existed to remove, surviving in a new place.
+  //
+  // A behavioural version would drive the click and count the calls; that needs
+  // the overlay-mounting harness this file does not have (see the note above
+  // this block). So what is reachable is pinned instead: the guard is MOVED, not
+  // duplicated — setFolderRoot takes the opt-out flag, and the goto path is the
+  // caller that passes it.
+  const code = rendererSrc.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(code, /async function setFolderRoot\(dir, \{ confirmed = false \} = \{\}\)/,
+    'ENTER: the flag exists and defaults to false, so an unflagged caller still asks');
+  assert.match(code, /if \(!confirmed && !confirmDiscardEdit\(\)\) return;/,
+    'and the guard inside setFolderRoot honours it');
+  assert.match(code, /await setFolderRoot\(dir, \{ confirmed: true \}\);/,
+    'the goto path opts out, because it already asked before opening the dialog');
+  // Up does NOT opt out: it never asked, so it must still be asked for.
+  assert.match(code, /await setFolderRoot\(parent\);/,
+    'Up relies on the default and is guarded by setFolderRoot itself');
+});
+
+test('t277: Refresh re-asks for the root before repainting the tree', () => {
+  // fs.list re-resolves through effectiveRoot, so a root that died since the
+  // last wt.selected leaves the scope bar naming a dead directory while the tree
+  // below lists the session cwd — on the button pressed when something looks off.
+  const code = rendererSrc.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(code, /'wb-files-refresh'\)\.addEventListener\('click', \(\) => refreshRootIndicator\(\)\.then\(renderExplorer\)\)/,
+    'Refresh re-reads the root, it does not repaint from the cached one');
+});
+
 test('t277: the Files scope bar names the ACTIVE root, not the session cwd', () => {
   // The tree below it lists the active root. Once that can be an unrelated
   // repository, a bar naming the session directory names the wrong tree — in the

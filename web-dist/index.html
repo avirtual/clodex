@@ -9012,10 +9012,10 @@ body {
             const cur = activeRoot || curCwd();
             upBtn.disabled = !cur || !parentOf(cur);
           }
-          async function setFolderRoot(dir) {
+          async function setFolderRoot(dir, { confirmed = false } = {}) {
             const name = activeName();
             if (!name) return;
-            if (!confirmDiscardEdit()) return;
+            if (!confirmed && !confirmDiscardEdit()) return;
             const res = await h.invoke("fs.setRoot", name, dir);
             if (!res || !res.ok) {
               toast(`Can't use that folder: ${res && res.error || "unknown"}`);
@@ -9031,7 +9031,7 @@ body {
             if (!confirmDiscardEdit()) return;
             const dir = await h.ui.pickDirectory();
             if (!dir) return;
-            await setFolderRoot(dir);
+            await setFolderRoot(dir, { confirmed: true });
           });
           upBtn.addEventListener("click", async () => {
             const parent = parentOf(activeRoot || curCwd());
@@ -9256,7 +9256,7 @@ body {
               if (isOpen) await renderDirInto(container, name, ent.rel, depth + 1);
             }
           }
-          $("wb-files-refresh").addEventListener("click", () => renderExplorer());
+          $("wb-files-refresh").addEventListener("click", () => refreshRootIndicator().then(renderExplorer));
           const scmChanges = $("wb-changes");
           const scmEmpty = $("wb-scm-empty");
           const scmBranchSel = $("wb-branch-select");
