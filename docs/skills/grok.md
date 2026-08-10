@@ -1,25 +1,11 @@
 ---
 name: grok
-description: Answer a code question about THIS repo in the fewest tokens that stay honest — a two-lane router (deterministic grep for structured lookups, a fresh subagent for synthesis) that returns FILE:LINE pointers + minimal excerpts, never prose paraphrase. Use before re-reading a large file you've already walked, or when you catch yourself about to read a whole module to find one symbol. Claude Code only (no Codex skill-injection yet). Boiling-pot treatment 1.
+description: Answer a code question about THIS repo in the fewest tokens that stay honest — a two-lane router (deterministic grep for structured lookups, a fresh subagent for synthesis) that returns FILE:LINE pointers + minimal excerpts, never prose paraphrase. Use before re-reading a large file you've already walked, or when you catch yourself about to read a whole module to find one symbol. Claude Code only (no Codex skill-injection yet).
 ---
 You are about to spend tokens learning something about the current repo. Route the
 question into ONE of two lanes by its SHAPE, answer in the lane's format, and stop.
 The whole point is to NOT carry a large file into context to answer a small question —
 carriage you'd pay for again on the next turn.
-
-## First, check what's hot (optional, cheap)
-The pot ranks the files where token carriage is currently concentrating across every
-agent — the files most worth answering ABOUT instead of re-reading:
-
-```
-node "$HOME/.clodex/bin/pot-cli.js" --top 15
-```
-
-Columns: `~tokens  <n>seg  <n>r  <n>e  FILE`. `~tokens` is a ranking approximation
-(bytes/4), NOT a billing number. `seg` = distinct read ranges — a high seg count means
-a file being *walked slice by slice*, which is exactly what pointer answers shrink.
-Consult it to decide what's worth a grok answer; never hardcode a file list from it —
-it changes as work moves.
 
 ## Lane 1 — STRUCTURED lookup → deterministic grep over the LIVE tree
 Use this lane when the question is one of these shapes. Answer with `grep`/`Read` over

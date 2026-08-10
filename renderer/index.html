@@ -260,23 +260,6 @@
     </div>
   </div>
 
-  <!-- Boiling pot drawer. A global, cross-agent ranking of where token CARRIAGE
-       concentrates (boiling-pot-plan.md [internal design doc, not in this repo]). Pulled fresh on open, not live. -->
-  <div id="pot-drawer" class="hidden">
-    <div id="pot-header">
-      <span class="prompts-title">Boiling Pot</span>
-      <button id="pot-refresh" title="Refresh" type="button">Refresh</button>
-      <button id="pot-close" title="Close" type="button">×</button>
-    </div>
-    <div id="pot-legend" class="hint">
-      Files ranked by tokens <strong>carried</strong> into context across every agent — carriage, not read count. A file walked slice-by-slice piles up <strong>segments</strong> (distinct ranges); that walking is what a caching/trim treatment targets. <strong>~tokens</strong> is a ranking approximation (bytes/4, line-slice estimated), <em>not</em> a billing number.
-    </div>
-    <div id="pot-list"></div>
-    <div id="pot-empty" class="hint">
-      Nothing in the pot yet. As agents read and edit files, this ranks where token carriage concentrates — the files worth caching, trimming, or reading in fewer, wider passes.
-    </div>
-  </div>
-
   <!-- Templates library drawer. No separate editor modal: New/Edit reuse the New
        Session dialog in template-authoring mode (a template IS that form's config). -->
   <div id="templates-drawer" class="hidden">

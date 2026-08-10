@@ -113,7 +113,7 @@ function humanizeAge(ms) {
 
 // Filter vocabulary — MUST match session-manager.js TICKET_FILTERS. Duplicated,
 // not shared: this script is materialized into run/bin/ as a flat basename copy
-// (pot-bin.js materializeExecScripts) and may require node builtins ONLY, so a
+// (bin-materialize.js materializeExecScripts) and may require node builtins ONLY, so a
 // shared module would not resolve at run time.
 const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
 

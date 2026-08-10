@@ -18,7 +18,7 @@ const { confine } = require('./path-confine');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { resolveDisplayedPath } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
-const { materializePotCli, materializeExecScripts } = require('./pot-bin');
+const { materializeExecScripts } = require('./bin-materialize');
 // Module-level, unlike the rest of pending-store's surface (required inside
 // createEngine): sweepSpilledMessages below is module-level so its exemption is
 // testable without building an engine, and a closure require would not be in
@@ -1696,7 +1696,6 @@ const toolCache = createToolCache({ whichBin });
   const { persistence, templates, workspaces, promptLibrary,
     agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings, envScopes, renameWorkspaceScope } = stores;
 
-  try { materializePotCli({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
   try { materializeExecScripts({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
 
   proxyPoller.start();

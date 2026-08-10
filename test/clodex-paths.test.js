@@ -35,12 +35,14 @@ test('pathFor: 23 per-agent kinds are defined', () => {
   assert.deepStrictEqual(Object.keys(KINDS).sort(), Object.keys(LEGACY_SUFFIXES).sort());
 });
 
-test('fileHeat is NOT a kind — heat lives outside the rm -rf`d run dir (F003)', () => {
+test('a retired kind name is refused, not silently re-admitted to run/', () => {
   // The run dir is destroyed on every exit path, so anything with a window
-  // longer than one session cannot be a kind. `pathFor` must refuse the name
-  // rather than hand back a path that would be swept: a caller that still
-  // reaches for the old grammar fails loud instead of silently writing into the
-  // dir the fix moved the data out of.
+  // longer than one session cannot be a kind. `pathFor` must refuse such a name
+  // rather than hand back a path that would be swept: a caller reaching for a
+  // grammar that was deliberately moved out fails loud instead of silently
+  // writing into the dir the data was moved out of. `fileHeat` is the worked
+  // example — it WAS a kind, its multi-day window was truncated by the sweep,
+  // and it must not come back as one.
   assert.ok(!('fileHeat' in KINDS));
   assert.ok(!('fileHeat' in LEGACY_SUFFIXES));
   assert.throws(() => pathFor(ROOT, 'a', 'fileHeat'), /unknown kind 'fileHeat'/);

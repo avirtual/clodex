@@ -158,7 +158,6 @@ const API_CONTRACT = [
   { name: 'onRequestSwitchSession', kind: 'on', channel: 'request-switch-session' },
   { name: 'onRequestOpenNewDialog', kind: 'on', channel: 'request-open-new-dialog' },
   { name: 'onRequestOpenDiscovery', kind: 'on', channel: 'request-open-discovery' },
-  { name: 'onRequestOpenBoilingPot', kind: 'on', channel: 'request-open-boiling-pot' },
   { name: 'onRequestRenameWorkspace', kind: 'on', channel: 'request-rename-workspace' },
   { name: 'onRequestOpenPreferences', kind: 'on', channel: 'request-open-preferences' },
   { name: 'onRequestOpenPeersDialog', kind: 'on', channel: 'request-open-peers-dialog' },
@@ -335,8 +334,6 @@ const API_CONTRACT = [
   { name: 'currentWorkspace', kind: 'invoke', channel: 'workspace:current' },
   { name: 'setWorkspaceName', kind: 'invoke', channel: 'workspace:setName' },
   { name: 'newWorkspace', kind: 'invoke', channel: 'workspace:new' },
-  // Boiling pot (boiling-pot-plan.md [internal design doc, not in this repo]) — cross-agent file-heat snapshot.
-  { name: 'potSnapshot', kind: 'invoke', channel: 'pot:snapshot' },
   // Scoped env vars for wrapper PTYs (T46). get returns secrets MASKED
   // ({ key, secret:true, hasValue:true } — never the value); set/delete mutate
   // the global-or-workspace scope store. scope arg is 'global' or a workspaceId.

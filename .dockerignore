@@ -29,7 +29,7 @@ peering
 docs
 test
 # scripts/ is build/release tooling EXCEPT the two exec-intent helpers, which
-# pot-bin.js materializes into ${CLODEX_BIN} at engine boot (the seeded
+# bin-materialize.js copies into ${CLODEX_BIN} at engine boot (the seeded
 # exec-defs invoke `node "${CLODEX_BIN}/clodex-team.js"`). Excluding the whole
 # dir shipped images where clodex-team/clodex-monitor execs were dead — so
 # exclude the CONTENTS (`scripts/*`, not `scripts`: Docker cannot re-include

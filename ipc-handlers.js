@@ -666,7 +666,6 @@ function registerIpcHandlers(deps) {
     return { ok: true };
   });
   handle('session:files', (_e, name) => fetchSessionFiles(name));
-  handle('pot:snapshot', (_e, topN) => manager.potSnapshot(topN));
   handle('file:peek', (_e, filePath) => fetchFilePeek(filePath));
   handle('file:diff', (_e, name, filePath) => fetchFileDiff(name, filePath));
   // Takes a name, unlike file:peek — the session's cwd is what confines the

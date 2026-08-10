@@ -128,7 +128,7 @@ function createPluginHostEngine(deps) {
 //
 // One frozen event object shared by every subscriber, built ONCE before the
 // grant loop: `files`/`reads` arrive as the wire collector's live arrays, which
-// core also reads for the heat map, so a subscriber mutating one would corrupt
+// core also reads these arrays, so a subscriber mutating one would corrupt
 // core's view. Freezing beats copying per subscriber.
   function agentTextEvent(ev) {
     // Defaults to the path that CLAIMS LESS. 'wire' would mean isTurnEnd:false

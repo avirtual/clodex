@@ -65,8 +65,6 @@ const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk,
 } = require('./relay-protocol');
-const { createFileHeat, aggregateStates, normalizeState, foldRedundancy, heatPath } = require('./file-heat');
-const { readJsonSafe } = require('./fs-util');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
 const { CLAUDE_TOOLS } = require('./catalogs');
 // Cold-reviewer tool cap (Task 29a). The [agent:team-review] reviewer is SOLD as
@@ -556,7 +554,6 @@ function createSessionManager(deps) {
             const s = this.sessions.get(t.agent);
             if (s) {
               if (Array.isArray(t.files) && t.files.length) this._noteFileTouches(s, t.files, isSubagentRole(t.role));
-              this._recordHeat(s, t.reads, t.files);
               if (isSubagentRole(t.role)) this._noteSubagentTurn(s, t);
             }
           }
@@ -2528,7 +2525,6 @@ function createSessionManager(deps) {
       // files and is harmless.
       if (this._wire) { try { this._wire.unregisterAgent(name); } catch {} }
       if (s.watcher) s.watcher.stop();
-      if (s.fileHeat) { try { s.fileHeat.close(); } catch {} } // flush pending heat
       if (s.sentinel) { try { s.sentinel.stop(); } catch {} }
       if (s.ctxWatcher) { try { s.ctxWatcher.close(); } catch {} }
       if (s.transport) s.transport.stop();
@@ -2612,65 +2608,6 @@ function createSessionManager(deps) {
           try { getRemoteServer() && getRemoteServer().pushTelemetry(session.name, { files: { count } }); } catch {}
         }
       } catch { /* observer-grade — never near the PTY/intent path */ }
-    }
-
-    _fileHeatFor(session) {
-      if (!session.fileHeat) {
-        // heat/<name>/, NOT run/<name>/: _cleanup below rm -rf's the run dir on
-        // every exit path, which would truncate the 14-day window to this seat's
-        // current life. file-heat.js's header carries the full reasoning.
-        session.fileHeat = createFileHeat({ filePath: heatPath(REGISTRY_DIR, session.name) });
-      }
-      return session.fileHeat;
-    }
-
-    _recordHeat(session, reads, files) {
-      try {
-        const hasReads = Array.isArray(reads) && reads.length;
-        const hasFiles = Array.isArray(files) && files.length;
-        if (!hasReads && !hasFiles) return;
-        const heat = this._fileHeatFor(session);
-        if (!heat) return;
-        if (hasReads) for (const r of reads) {
-          if (r && r.path) Promise.resolve(heat.recordRead(r.path, r.offset, r.limit)).catch(() => {});
-        }
-        if (hasFiles) for (const f of files) { if (f && f.path) heat.recordEdit(f.path); }
-      } catch { /* observer-grade — heat is a diagnostic, never worth a throw */ }
-    }
-
-    async potSnapshot(topN) {
-      let snap;
-      try {
-        for (const s of this.sessions.values()) {
-          if (s.fileHeat) { try { s.fileHeat.flush(); } catch {} }
-        }
-        // Enumerated from heat/, not run/: heat outlives the run dir by design,
-        // so a seat that is currently stopped still contributes its window — and
-        // a seat deleted for good ages out on its own when its last day bucket
-        // falls outside keepDays.
-        let names = [];
-        try { names = fs.readdirSync(path.join(REGISTRY_DIR, 'heat')); } catch {}
-        const states = [];
-        for (const name of names) {
-          const raw = readJsonSafe(heatPath(REGISTRY_DIR, name));
-          if (raw) states.push(normalizeState(raw));
-        }
-        snap = aggregateStates(states, { topN: Number.isInteger(topN) && topN > 0 ? topN : 10 });
-      } catch {
-        return { window: null, files: [] };
-      }
-      try {
-        const bases = new Set();
-        for (const s of this.sessions.values()) { if (s.proxyBase) bases.add(s.proxyBase); }
-        if (bases.size && snap.files.length) {
-          const results = await Promise.all([...bases].map((base) =>
-            ProxyClient.potSeries(base).catch(() => ({ ok: false, files: [] }))));
-          const potFiles = [];
-          for (const r of results) { if (r && r.ok && Array.isArray(r.files)) potFiles.push(...r.files); }
-          if (potFiles.length) foldRedundancy(snap.files, potFiles);
-        }
-      } catch { /* tier-2 is additive; failure leaves tier-1 nulls intact */ }
-      return snap;
     }
 
     _emitActivity(name, state, notify) {

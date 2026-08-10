@@ -244,7 +244,6 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/drawer-host.js',
   'renderer/ipc-log.js',
   'renderer/inbox-drawer.js',
-  'renderer/pot-drawer.js',
   'renderer/term-search.js',
   'renderer/banners.js',
   'renderer/themes.js',

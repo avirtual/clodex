@@ -45,11 +45,6 @@
 // targets ~/.clodex/notices/<name>/queue.jsonl, and for the same reason: a
 // notice is typically enqueued at the spawn AFTER the exit that rm -rf'd the
 // run dir, and must survive the next one too),
-// heat/ (the boiling pot's per-agent file-heat counters —
-// ~/.clodex/heat/<name>/file-heat.json; it WAS a KIND under run/, which meant its
-// 14-day rolling window was truncated to "since this seat last started" by the
-// same rm -rf, so it moved out here with the other three. file-heat.js's header
-// carries the reasoning),
 // agents/, skills/, library/,
 // plugins/ (the BYO plugin root — plugins/plugin-sources.md §3; deliberately NOT a
 // KIND, since it is shared rather than per-agent, and constructed at the engine

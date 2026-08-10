@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Clodex</title>
   <style>
-/* node_modules/@xterm/xterm/css/xterm.css */
+/* ../wb-wrap-ui/node_modules/@xterm/xterm/css/xterm.css */
 .xterm {
   cursor: text;
   position: relative;
@@ -3996,8 +3996,7 @@ body {
 #skills-drawer,
 #templates-drawer,
 #exec-drawer,
-#inbox-drawer,
-#pot-drawer {
+#inbox-drawer {
   position: fixed;
   top: 0;
   left: var(--sidebar-width);
@@ -4010,9 +4009,6 @@ body {
   flex-direction: column;
   box-shadow: 4px 0 20px rgba(0, 0, 0, 0.4);
 }
-#pot-drawer {
-  width: 440px;
-}
 #inbox-drawer {
   width: min(70vw, 720px);
   min-width: 360px;
@@ -4024,8 +4020,7 @@ body {
 #skills-drawer.hidden,
 #templates-drawer.hidden,
 #exec-drawer.hidden,
-#inbox-drawer.hidden,
-#pot-drawer.hidden {
+#inbox-drawer.hidden {
   display: none;
 }
 .plugin-overlay {
@@ -4045,8 +4040,7 @@ body {
 #skills-header,
 #templates-header,
 #exec-header,
-#inbox-header,
-#pot-header {
+#inbox-header {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -4076,8 +4070,7 @@ body {
 #skills-close,
 #templates-close,
 #exec-close,
-#inbox-close,
-#pot-close {
+#inbox-close {
   background: transparent;
   border: none;
   color: var(--text-dim);
@@ -4092,8 +4085,7 @@ body {
 #skills-close:hover,
 #templates-close:hover,
 #exec-close:hover,
-#inbox-close:hover,
-#pot-close:hover {
+#inbox-close:hover {
   background: var(--sidebar-hover);
   color: var(--text);
 }
@@ -4101,90 +4093,16 @@ body {
 #skills-list,
 #templates-list,
 #exec-list,
-#inbox-list,
-#pot-list {
+#inbox-list {
   flex: 1;
   overflow-y: auto;
   padding: 6px 8px;
-}
-#pot-refresh {
-  margin-left: auto;
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  border-radius: 6px;
-  padding: 3px 9px;
-  font-size: 11px;
-  cursor: pointer;
-}
-#pot-refresh:hover {
-  background: var(--sidebar-hover);
-  color: var(--text);
-}
-#pot-legend {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  line-height: 1.5;
-}
-.pot-row {
-  display: grid;
-  grid-template-columns: 1fr 3.2em 3.2em 4em 4.2em;
-  gap: 6px;
-  align-items: center;
-  padding: 5px 8px;
-  border-radius: 5px;
-  font-size: 12px;
-}
-#pot-list.has-redundant .pot-row {
-  grid-template-columns: 1fr 3em 3em 3.8em 4em 4em;
-}
-.pot-head {
-  color: var(--text-dim);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  border-bottom: 1px solid var(--border);
-  border-radius: 0;
-}
-.pot-row:not(.pot-head):hover {
-  background: var(--sidebar-hover);
-}
-.pot-file {
-  overflow: hidden;
-}
-.pot-base {
-  display: block;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.pot-dir {
-  display: block;
-  color: var(--text-dim);
-  font-size: 10px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.pot-num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-dim);
-}
-.pot-head .pot-num {
-  text-align: right;
-}
-.pot-carriage {
-  color: var(--text);
-  font-weight: 600;
 }
 #agents-empty,
 #skills-empty,
 #templates-empty,
 #exec-empty,
-#inbox-empty,
-#pot-empty {
+#inbox-empty {
   padding: 20px;
   text-align: center;
   color: var(--text-dim);
@@ -5899,23 +5817,6 @@ body {
     </div>
   </div>
 
-  <!-- Boiling pot drawer. A global, cross-agent ranking of where token CARRIAGE
-       concentrates (boiling-pot-plan.md [internal design doc, not in this repo]). Pulled fresh on open, not live. -->
-  <div id="pot-drawer" class="hidden">
-    <div id="pot-header">
-      <span class="prompts-title">Boiling Pot</span>
-      <button id="pot-refresh" title="Refresh" type="button">Refresh</button>
-      <button id="pot-close" title="Close" type="button">×</button>
-    </div>
-    <div id="pot-legend" class="hint">
-      Files ranked by tokens <strong>carried</strong> into context across every agent — carriage, not read count. A file walked slice-by-slice piles up <strong>segments</strong> (distinct ranges); that walking is what a caching/trim treatment targets. <strong>~tokens</strong> is a ranking approximation (bytes/4, line-slice estimated), <em>not</em> a billing number.
-    </div>
-    <div id="pot-list"></div>
-    <div id="pot-empty" class="hint">
-      Nothing in the pot yet. As agents read and edit files, this ranks where token carriage concentrates — the files worth caching, trimming, or reading in fewer, wider passes.
-    </div>
-  </div>
-
   <!-- Templates library drawer. No separate editor modal: New/Edit reuse the New
        Session dialog in template-authoring mode (a template IS that form's config). -->
   <div id="templates-drawer" class="hidden">
@@ -6930,7 +6831,6 @@ body {
         { name: "onRequestSwitchSession", kind: "on", channel: "request-switch-session" },
         { name: "onRequestOpenNewDialog", kind: "on", channel: "request-open-new-dialog" },
         { name: "onRequestOpenDiscovery", kind: "on", channel: "request-open-discovery" },
-        { name: "onRequestOpenBoilingPot", kind: "on", channel: "request-open-boiling-pot" },
         { name: "onRequestRenameWorkspace", kind: "on", channel: "request-rename-workspace" },
         { name: "onRequestOpenPreferences", kind: "on", channel: "request-open-preferences" },
         { name: "onRequestOpenPeersDialog", kind: "on", channel: "request-open-peers-dialog" },
@@ -7107,8 +7007,6 @@ body {
         { name: "currentWorkspace", kind: "invoke", channel: "workspace:current" },
         { name: "setWorkspaceName", kind: "invoke", channel: "workspace:setName" },
         { name: "newWorkspace", kind: "invoke", channel: "workspace:new" },
-        // Boiling pot (boiling-pot-plan.md [internal design doc, not in this repo]) — cross-agent file-heat snapshot.
-        { name: "potSnapshot", kind: "invoke", channel: "pot:snapshot" },
         // Scoped env vars for wrapper PTYs (T46). get returns secrets MASKED
         // ({ key, secret:true, hasValue:true } — never the value); set/delete mutate
         // the global-or-workspace scope store. scope arg is 'global' or a workspaceId.
@@ -9653,9 +9551,9 @@ body {
     }
   });
 
-  // node_modules/@xterm/xterm/lib/xterm.js
+  // ../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js
   var require_xterm = __commonJS({
-    "node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
       !(function(e, t) {
         if ("object" == typeof exports && "object" == typeof module) module.exports = t();
         else if ("function" == typeof define && define.amd) define([], t);
@@ -15712,9 +15610,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-fit/lib/addon-fit.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js
   var require_addon_fit = __commonJS({
-    "node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.FitAddon = t() : e.FitAddon = t();
       })(self, (() => (() => {
@@ -15748,9 +15646,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-search/lib/addon-search.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js
   var require_addon_search = __commonJS({
-    "node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.SearchAddon = t() : e.SearchAddon = t();
       })(globalThis, (() => (() => {
@@ -18709,9 +18607,9 @@ ${i3.join("\n")}
     }
   });
 
-  // node_modules/@xterm/addon-web-links/lib/addon-web-links.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js
   var require_addon_web_links = __commonJS({
-    "node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.WebLinksAddon = t() : e.WebLinksAddon = t();
       })(self, (() => (() => {
@@ -21753,79 +21651,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return { openDrawer, closeDrawer };
       }
       module.exports = { createInboxDrawer };
-    }
-  });
-
-  // renderer/pot-drawer.js
-  var require_pot_drawer = __commonJS({
-    "renderer/pot-drawer.js"(exports, module) {
-      var { esc, baseName, shortPath, fmtTokens } = require_format();
-      function createPotDrawer() {
-        const drawer = document.getElementById("pot-drawer");
-        const listEl = document.getElementById("pot-list");
-        const emptyEl = document.getElementById("pot-empty");
-        const refreshBtn = document.getElementById("pot-refresh");
-        const closeBtn = document.getElementById("pot-close");
-        function hasRedundancy(files) {
-          return files.some((f) => f && (f.redundantReads != null || f.redundantTokens != null));
-        }
-        async function renderList() {
-          let snap = { window: null, files: [] };
-          try {
-            snap = await window.api.potSnapshot(10);
-          } catch {
-          }
-          const files = snap && Array.isArray(snap.files) ? snap.files : [];
-          listEl.innerHTML = "";
-          if (files.length === 0) {
-            emptyEl.style.display = "";
-            return;
-          }
-          emptyEl.style.display = "none";
-          const showRedundant = hasRedundancy(files);
-          listEl.classList.toggle("has-redundant", showRedundant);
-          const head = document.createElement("div");
-          head.className = "pot-row pot-head";
-          head.innerHTML = `
-      <span class="pot-file">File</span>
-      <span class="pot-num" title="Distinct Read calls over the window">reads</span>
-      <span class="pot-num" title="Edit/Write touches over the window">edits</span>
-      <span class="pot-num" title="Tokens carried into context \u2014 a RANKING approximation (bytes/4, line-slice estimated), not a billing number">~tokens</span>
-      <span class="pot-num" title="Distinct read ranges \u2014 a file walked slice-by-slice accumulates segments (the walking signal)">segments</span>
-      ${showRedundant ? '<span class="pot-num" title="Tokens re-carried by same-range re-reads (wirescope tier 2)">redundant</span>' : ""}
-    `;
-          listEl.appendChild(head);
-          for (const f of files) {
-            const el = document.createElement("div");
-            el.className = "pot-row";
-            const redCell = showRedundant ? `<span class="pot-num">${f.redundantTokens != null ? esc(fmtTokens(f.redundantTokens)) : "\u2014"}</span>` : "";
-            el.innerHTML = `
-        <span class="pot-file" title="${esc(f.file || "")}">
-          <span class="pot-base">${esc(baseName(f.file))}</span>
-          <span class="pot-dir">${esc(shortPath(f.file))}</span>
-        </span>
-        <span class="pot-num">${esc(String(f.reads || 0))}</span>
-        <span class="pot-num">${esc(String(f.edits || 0))}</span>
-        <span class="pot-num pot-carriage">${esc(fmtTokens(f.approxReadTokens || 0))}</span>
-        <span class="pot-num">${esc(String(f.segments || 0))}</span>
-        ${redCell}
-      `;
-            listEl.appendChild(el);
-          }
-        }
-        function openDrawer() {
-          drawer.classList.remove("hidden");
-          renderList();
-        }
-        function closeDrawer() {
-          drawer.classList.add("hidden");
-        }
-        if (window.api.onRequestOpenBoilingPot) window.api.onRequestOpenBoilingPot(openDrawer);
-        closeBtn.addEventListener("click", closeDrawer);
-        refreshBtn.addEventListener("click", renderList);
-        return { openDrawer, closeDrawer };
-      }
-      module.exports = { createPotDrawer };
     }
   });
 
@@ -28909,7 +28734,6 @@ ${detail}` });
       var { createDrawerHost } = require_drawer_host();
       var { createIpcLog } = require_ipc_log();
       var { createInboxDrawer } = require_inbox_drawer();
-      var { createPotDrawer } = require_pot_drawer();
       var { createTermSearch } = require_term_search();
       var { initBanners } = require_banners();
       var { initThemes } = require_themes();
@@ -31850,7 +31674,6 @@ Click for live activity`;
         }
       });
       createInboxDrawer({ openFilePeek, showToast });
-      createPotDrawer();
       var {
         typeToTakeControl,
         renderPeerBar,

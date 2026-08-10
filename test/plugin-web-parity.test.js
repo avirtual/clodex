@@ -11,7 +11,7 @@
 // build/build-web.js generates from `plugins/*/manifest.json`.
 //
 // That generated file is COMMITTED (web-dist is tracked for the same reason), so
-// it can go stale exactly the way pot-bin.js's materialized closure can: add a
+// it can go stale exactly the way bin-materialize.js's script list can: add a
 // plugin, forget to rebuild, and the desktop app has it while the browser
 // silently does not. This file is that staleness a red test at dev time.
 

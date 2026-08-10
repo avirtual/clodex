@@ -613,14 +613,6 @@ function createAppMenus(deps) {
           // cannot do is open a plugin's SURFACE: the overlay lives in one
           // BrowserWindow's DOM, mounted by that window's renderer half, and
           // nothing here knows whether the focused window has it.
-          {
-            label: 'Boiling Pot…',
-            click: () => {
-              const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-              if (win) win.webContents.send('request-open-boiling-pot');
-            },
-          },
-          { type: 'separator' },
           { role: 'reload' },
           { role: 'forceReload' },
           { role: 'toggleDevTools' },

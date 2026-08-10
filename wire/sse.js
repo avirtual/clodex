@@ -198,12 +198,12 @@ class UsageCollector {
 // the file — the CLI runs it (or the user denies it) after this stream ends.
 // Slight over-report is accepted; the peek/diff UI shows ground truth.
 //
-// Two channels, kept STRICTLY separate (the boiling pot, boiling-pot-plan.md [internal design doc, not in this repo]
-// tier 1): `files` = MUTATIONS (FILE_TOOLS) — the touched-files UI's semantic
-// contract, unchanged. `reads` = Read calls, captured with offset/limit when
-// present, for file-heat ranking. A Read never enters `files` and a mutation
-// never enters `reads` — cross-contamination is the silent-refactor hazard the
-// wire-proxy test pins. Read inputs carry no huge field, so they skip the
+// Two channels, kept STRICTLY separate: `files` = MUTATIONS (FILE_TOOLS) — the
+// touched-files UI's semantic contract. `reads` = Read calls, captured with
+// offset/limit when present — a documented field of the plugin turn-text feed
+// (plugins/plugin-api.md), so it is public API and outlives any one consumer.
+// A Read never enters `files` and a mutation never enters `reads` —
+// cross-contamination is the silent-refactor hazard the wire-proxy test pins. Read inputs carry no huge field, so they skip the
 // early-extract/give-up machinery: the whole (small) input is buffered to
 // content_block_stop and parsed once (JSON, regex fallback for the path).
 const FILE_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
@@ -400,7 +400,7 @@ class FileToolCollector {
   }
 
   // [{ tool, path }] for every file-MUTATING tool call whose target path was
-  // seen. Reads are NOT here — they ride `reads` (the pot's separate channel).
+  // seen. Reads are NOT here — they ride the separate `reads` channel.
   get files() { return this._files; }
 
   // [{ tool:'Read', path, offset?, limit? }] for every Read call, in stream
@@ -410,8 +410,8 @@ class FileToolCollector {
   // [{ name, arg }] for EVERY tool_use block, in stream order — including tools
   // whose input is not tracked, which arrive with `arg: null`. This is a
   // superset of `files`/`reads` by construction and does not replace either:
-  // those two carry the exact paths the touched-files and heat UIs read, this
-  // one carries display text.
+  // those two carry the exact paths the touched-files UI and the plugin feed
+  // read, this one carries display text.
   get calls() { return this._calls; }
 }
 

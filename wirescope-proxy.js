@@ -184,18 +184,6 @@ const ProxyClient = {
     return this._getJson(base, `/_bust?session=${encodeURIComponent(sessionId)}`, PROXY_REPORT_TIMEOUT);
   },
 
-  async potSeries(base) {
-    const r = await this._getJson(base, '/_pot', PROXY_REPORT_TIMEOUT);
-    if (r.status !== 200 || !r.json || !Array.isArray(r.json.files)) return { ok: false, files: [] };
-    const files = r.json.files.map((f) => ({
-      file: f.file,
-      reads: f.reads,
-      redundantReads: f.redundant_reads,
-      redundantTokens: f.redundant_tokens,
-    }));
-    return { ok: true, files };
-  },
-
   pruneInfo(base) { return this._getJson(base, '/_prune', PROXY_REPORT_TIMEOUT); },
   prune(base, { olderThan, tier, scope, dryRun } = {}) {
     const qs = new URLSearchParams({ older_than: String(olderThan) });
