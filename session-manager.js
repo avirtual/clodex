@@ -517,7 +517,6 @@ function createSessionManager(deps) {
 
     async _ensureWire() {
       if (this._wire) return this._wire;
-      const { rearmPlan } = require('./wire/hold'); // pure re-arm math (used in the turn hook below)
       const { WireProxy } = require('./wire/proxy');
       const { isSubagentRole } = require('./wire/role');
       const { ShadowDiff } = require('./wire/shadow');
@@ -611,52 +610,12 @@ function createSessionManager(deps) {
               setImmediate(() => this._maybeFireCompactLatch(s));
             }
             if (t.sessionId && s.sessionId !== t.sessionId) {
-              if (this._wireSessionCorroborated(s, t.sessionId)) {
-                s.sessionId = t.sessionId;
-                // The keeper is keyed on the wire's sessionId, so a /clear that
-                // mints a new one strands the hold on the dead key. Re-open the
-                // re-arm gate below or the seat is never re-armed until the app
-                // restarts — unbounded for a perpetual seat, whose whole promise
-                // is that it never goes cold.
-                s._holdRearmed = false;
-                getPersistence().setSessionId(t.agent, t.sessionId);
-                this._noteConversationForDigest(s, t.sessionId);
-              } else {
-                this._shadowLog({ type: 'wire-stray-session', agent: t.agent, sessionId: t.sessionId });
-              }
+              this._onWireSessionRotated(s, t.agent, t.sessionId);
             }
-            if (this._holdKeeper && !s._holdRearmed) {
-              try {
-                const p = getPersistence();
-                const rec = p.list().find((x) => x.name === t.agent);
-                const plan = rearmPlan(rec && rec.holdUntil, Date.now(), !!(rec && rec.keepWarmAlways));
-                if (!plan) {
-                  s._holdRearmed = true; // nothing persisted — stop re-checking this spawn
-                } else if (plan.clear) {
-                  p.setHoldUntil(t.agent, null);
-                  s._holdRearmed = true;
-                  log.info('keepwarm', `disarmed ${t.agent} (expired before re-arm)`);
-                } else if (plan.arm && s.sessionId) {
-                  const r = plan.always
-                    ? this._holdKeeper.arm(s.sessionId, 0, { always: true })
-                    : this._holdKeeper.arm(s.sessionId, plan.hours);
-                  // A perpetual re-arm has no `until` to write back; the seat flag
-                  // in persistence is already the whole truth for it.
-                  if (r && r.armed && (r.always || r.until)) {
-                    s._holdRearmed = true;
-                    if (r.always) {
-                      log.info('keepwarm', `re-armed ${t.agent} perpetually (seat property)`);
-                    } else {
-                      p.setHoldUntil(t.agent, Math.round(r.until * 1000)); // clamped truth
-                      log.info('keepwarm', `re-armed ${t.agent} ${plan.hours.toFixed(2)}h remaining ` +
-                        `until ${new Date(r.until * 1000).toISOString()}`);
-                    }
-                  }
-                }
-              } catch (e) {
-                this._shadowLog({ type: 'wire-hold-rearm-error', agent: t.agent, error: e.message });
-              }
-            }
+            // Deliberately NOT inside the rotation guard: the re-arm probe also
+            // has to run on the first turn after an app restart, where nothing
+            // rotated and the gate was never closed.
+            this._maybeRearmHold(s, t.agent);
           } else if (s && s.agentType === 'claude') {
             for (const intent of intents) {
               this._shadow.record('wire', shadowIntentKey(t.agent, intent), {
@@ -764,6 +723,78 @@ function createSessionManager(deps) {
         if (s.sessionId === sid) return name;
       }
       return null;
+    }
+
+    // A /clear mints a new wire sessionId under a live session. The keeper is
+    // keyed on that id, so the old conversation's hold must END here and the
+    // re-arm gate reopen for the new one on the same turn.
+    _onWireSessionRotated(s, agent, newSessionId) {
+      if (!this._wireSessionCorroborated(s, newSessionId)) {
+        this._shadowLog({ type: 'wire-stray-session', agent, sessionId: newSessionId });
+        return;
+      }
+      const oldSid = s.sessionId;
+      // Before the reassignment, or the old id is unreachable and its hold sits
+      // in _holds forever: holdDecision never disarms a PERPETUAL hold
+      // (`!hold.always` guards both the expired and max-pings branches) and a
+      // dead prefix only ever skips. tick() then re-hashes that conversation's
+      // whole message array — _entries retains the bytes — once a minute, per
+      // /clear, for the life of the app. A timed hold self-heals via the expired
+      // branch, which is why this was invisible before perpetual holds existed.
+      //
+      // endSession's cause is 'session-ended': neither 'off' (early return) nor
+      // 'failures' (the persistence-clearing branch), so _onHoldLifecycle logs
+      // and writes nothing. That routing is load-bearing — keepWarmAlways must
+      // SURVIVE the /clear for _maybeRearmHold to restore it below. Routing this
+      // through the failures cause would erase the operator's setting on every
+      // /clear.
+      if (this._holdKeeper && oldSid) this._holdKeeper.endSession(oldSid);
+      s.sessionId = newSessionId;
+      s._holdRearmed = false;
+      getPersistence().setSessionId(agent, newSessionId);
+      this._noteConversationForDigest(s, newSessionId);
+    }
+
+    // Restore a persisted keep-warm intent onto the session's CURRENT wire id.
+    // Retried every main-line turn until it lands rather than latched once per
+    // spawn: arm() is warm-gated, so a first-turn decline would otherwise lose
+    // the hold silently.
+    _maybeRearmHold(s, agent) {
+      if (!this._holdKeeper || s._holdRearmed) return;
+      try {
+        // Required here, not at module top: wire/* is loaded lazily by
+        // _ensureWire so a wire-less host never pulls it in. The keeper guard
+        // above means _ensureWire has already run, and require is cached.
+        const { rearmPlan } = require('./wire/hold');
+        const p = getPersistence();
+        const rec = p.list().find((x) => x.name === agent);
+        const plan = rearmPlan(rec && rec.holdUntil, Date.now(), !!(rec && rec.keepWarmAlways));
+        if (!plan) {
+          s._holdRearmed = true; // nothing persisted — stop re-checking this spawn
+        } else if (plan.clear) {
+          p.setHoldUntil(agent, null);
+          s._holdRearmed = true;
+          log.info('keepwarm', `disarmed ${agent} (expired before re-arm)`);
+        } else if (plan.arm && s.sessionId) {
+          const r = plan.always
+            ? this._holdKeeper.arm(s.sessionId, 0, { always: true })
+            : this._holdKeeper.arm(s.sessionId, plan.hours);
+          // A perpetual re-arm has no `until` to write back; the seat flag
+          // in persistence is already the whole truth for it.
+          if (r && r.armed && (r.always || r.until)) {
+            s._holdRearmed = true;
+            if (r.always) {
+              log.info('keepwarm', `re-armed ${agent} perpetually (seat property)`);
+            } else {
+              p.setHoldUntil(agent, Math.round(r.until * 1000)); // clamped truth
+              log.info('keepwarm', `re-armed ${agent} ${plan.hours.toFixed(2)}h remaining ` +
+                `until ${new Date(r.until * 1000).toISOString()}`);
+            }
+          }
+        }
+      } catch (e) {
+        this._shadowLog({ type: 'wire-hold-rearm-error', agent, error: e.message });
+      }
     }
 
     _onHoldLifecycle(ev) {

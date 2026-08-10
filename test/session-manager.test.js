@@ -450,41 +450,110 @@ test('_onHoldLifecycle: re-anchor re-persists, failures clears BOTH intents, off
   // silently un-set a setting the operator never withdrew.
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'expired', pings: 5 });
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'max-pings', pings: 24 });
+  // 'session-ended' is what a /clear's endSession emits, and it MUST land here
+  // as a log-only cause. Routing it to the failures branch instead would erase
+  // the operator's Always setting on every /clear — the handover in
+  // _onWireSessionRotated re-arms off exactly the field that branch clears.
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'session-ended', pings: 2 });
   assert.deepStrictEqual(calls, [
     ['setKeepWarmAlways', 'a', false],
     ['setHoldUntil', 'a', null],
-  ], 'only the failures cause writes; off/expired/max-pings add nothing');
+  ], 'only the failures cause writes; off/expired/max-pings/session-ended add nothing');
 });
 
-// Source scan rather than a driven wire, for the same reason as the junction
-// test in plugin-text-feed.test.js: this branch lives inside the
-// `wire.on('turn.completed')` handler registered after an `await wire.listen()`,
-// which a PTY-free unit test cannot reach. What is checked is a POSITION, and
-// position is exactly what is readable from source.
-test('a corroborated sessionId rotation re-opens the hold re-arm gate', () => {
-  const fs = require('fs');
-  const path = require('path');
-  const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
+// A /clear mints a new wire sessionId under a live session, and the keeper is
+// keyed on that id. Both halves of the handover are exercised through their real
+// seams — _onWireSessionRotated then _maybeRearmHold, the same order and the same
+// turn as the wire's turn.completed handler calls them.
+//
+// ONE ordered log across the keeper AND persistence, because what matters is a
+// SEQUENCE across two collaborators: ending the old hold after the reassignment
+// would end the wrong conversation, and no per-object recorder can see that.
+function rotationRig({ transcriptId = null, rec = null, sessionId = 'old-sid' } = {}) {
+  const calls = [];
+  const { m } = mkWithTranscript(transcriptId, {
+    getPersistence: () => ({
+      list: () => (rec ? [rec] : []),
+      get: () => null,
+      setSessionId: (n, v) => calls.push(['setSessionId', n, v]),
+      setHoldUntil: (n, v) => calls.push(['setHoldUntil', n, v]),
+      setKeepWarmAlways: (n, v) => calls.push(['setKeepWarmAlways', n, v]),
+    }),
+    log: { info: () => {}, warn: () => {} },
+  });
+  m._holdKeeper = {
+    endSession: (sid) => { calls.push(['endSession', sid]); return { session: sid, holdDisarmed: true }; },
+    arm: (sid, hours, opts = {}) => {
+      calls.push(['arm', sid, hours, opts]);
+      return { armed: true, always: !!opts.always, until: opts.always ? null : 1_700_000_000 };
+    },
+  };
+  // Both write real files off REGISTRY_DIR and neither is under test here.
+  m._noteConversationForDigest = (_s, sid) => calls.push(['noteDigest', sid]);
+  m._shadowLog = (r) => calls.push(['shadow', r.type]);
+  return { m, calls, s: { name: 'a', sessionId, agentType: 'claude' } };
+}
 
-  // The keeper is keyed on the WIRE's sessionId. A /clear mints a new one, so
-  // the armed hold is stranded on the dead key; without re-opening the gate the
-  // seat stays cold until the app restarts — unbounded on a perpetual seat.
-  const rotate = src.match(/if \(this\._wireSessionCorroborated\(s, t\.sessionId\)\) \{[\s\S]{0,700}?\n(\s*)\} else \{/);
-  assert.ok(rotate, 'ENTER: the corroborated-rotation branch is still shaped as matched');
-  assert.match(rotate[0], /s\.sessionId = t\.sessionId;/, 'the rotation itself');
-  assert.match(rotate[0], /s\._holdRearmed = false;/,
-    'and the re-arm gate re-opens inside it');
+test('a /clear ends the OLD conversation hold before re-arming the perpetual seat on the new one', () => {
+  const { m, s, calls } = rotationRig({ rec: { name: 'a', keepWarmAlways: true } });
 
-  // Corroboration-gated, not unconditional: a stray child-claude sessionId must
-  // not reset the gate, or every subagent turn re-runs the whole re-arm probe.
-  const stray = src.indexOf('wire-stray-session');
-  assert.ok(stray > 0 && src.indexOf('s._holdRearmed = false;') < stray,
-    'the reset sits in the corroborated arm, above the stray-session else');
+  m._onWireSessionRotated(s, 'a', 'new-sid');
+  m._maybeRearmHold(s, 'a');
 
-  // ...and above the re-arm block it feeds, which reads the flag it just cleared.
-  const reset = src.indexOf('s._holdRearmed = false;');
-  const gate = src.indexOf('if (this._holdKeeper && !s._holdRearmed) {');
-  assert.ok(gate > reset, 'the re-arm check runs AFTER the reset, on the same turn');
+  // The old id must reach endSession, which means endSession must run BEFORE
+  // the reassignment. Nothing else ever disarms it: holdDecision's expired and
+  // max-pings branches are both `!hold.always`-guarded and a dead prefix only
+  // skips, so a stranded perpetual hold is re-hashed by every tick forever.
+  assert.deepStrictEqual(calls, [
+    ['endSession', 'old-sid'],
+    ['setSessionId', 'a', 'new-sid'],
+    ['noteDigest', 'new-sid'],
+    ['arm', 'new-sid', 0, { always: true }],
+  ]);
+  assert.strictEqual(s.sessionId, 'new-sid');
+  assert.strictEqual(s._holdRearmed, true, 'the gate closed again once the re-arm landed');
+});
+
+test('a /clear does not withdraw the seat property it is handing over', () => {
+  const { m, s, calls } = rotationRig({ rec: { name: 'a', keepWarmAlways: true } });
+  m._onWireSessionRotated(s, 'a', 'new-sid');
+  m._maybeRearmHold(s, 'a');
+  // The whole ordered log is asserted above; here the point is which writes are
+  // ABSENT from it, and the only safe way to say that is to name every write
+  // that did happen. keepWarmAlways surviving is what makes the re-arm possible.
+  assert.deepStrictEqual(calls.filter((c) => c[0].startsWith('set')), [
+    ['setSessionId', 'a', 'new-sid'],
+  ], 'no setKeepWarmAlways and no setHoldUntil — the intent is untouched by a clear');
+});
+
+test('a timed hold rotates too, and re-arms the remaining window on the new id', () => {
+  const holdUntil = Date.now() + 2 * 3600e3;
+  const { m, s, calls } = rotationRig({ rec: { name: 'a', holdUntil } });
+
+  m._onWireSessionRotated(s, 'a', 'new-sid');
+  m._maybeRearmHold(s, 'a');
+
+  assert.deepStrictEqual(calls.slice(0, 2), [['endSession', 'old-sid'], ['setSessionId', 'a', 'new-sid']]);
+  const armed = calls.find((c) => c[0] === 'arm');
+  assert.ok(armed, 'ENTER: it re-armed at all — the assertions below are vacuous otherwise');
+  assert.strictEqual(armed[1], 'new-sid');
+  assert.ok(armed[2] > 1.9 && armed[2] <= 2, `remaining window, got ${armed[2]}`);
+  assert.deepStrictEqual(armed[3], {}, 'a timed re-arm passes no always flag');
+});
+
+test('a stray child-claude sessionId rotates nothing and ends no hold', () => {
+  // Corroboration-gated: the wire attributes by proxy route, so a child claude
+  // mints main-line-looking ids on the session's own route. Acting on one would
+  // end the real conversation's hold and hand keep-warm to a transient child.
+  const { m, s, calls } = rotationRig({
+    transcriptId: 'real-conv-id', sessionId: 'real-conv-id', rec: { name: 'a', keepWarmAlways: true },
+  });
+
+  m._onWireSessionRotated(s, 'a', 'stray-child-id');
+
+  assert.deepStrictEqual(calls, [['shadow', 'wire-stray-session']]);
+  assert.strictEqual(s.sessionId, 'real-conv-id', 'the live conversation id is untouched');
+  assert.notStrictEqual(s._holdRearmed, false, 'and the re-arm gate was not reopened');
 });
 
 // --- Compact latch (FIX C) ---------------------------------------------------

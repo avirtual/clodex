@@ -36,7 +36,9 @@ blocks a release.
 - **Keep-warm survives `/clear`.** Clearing a session's context starts a new
   conversation underneath it, and the keep-warm hold used to stay attached to
   the old one — leaving the session quietly going cold until Clodex was
-  restarted. It now follows the session across the clear.
+  restarted. It now hands over to the new conversation, and the old one is
+  released rather than left behind burning a little CPU every minute for the
+  rest of the session.
 
 ## 5.4.0 — 2026-08-10 — A branch and a checkout for every teammate
 
