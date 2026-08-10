@@ -1107,8 +1107,6 @@
   <!-- Transient bubble notifications (e.g. cache-cooldown warnings) -->
   <div id="toast-host"></div>
 
-  <script src="renderer.js"></script>
-
   <!-- Full-screen overlays live at ROOT, not inside #main. #main is
        position:fixed and so its own stacking context: an overlay nested in it
        is flattened to #main's z-index (11) however high its own value, and the
@@ -1139,5 +1137,8 @@
       <div id="report-body"></div>
     </div>
   </div>
+
+  <script src="renderer.js"></script>
+
 </body>
 </html>

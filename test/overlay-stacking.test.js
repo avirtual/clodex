@@ -64,6 +64,45 @@ test('full-screen overlays are not nested inside #main', () => {
   }
 });
 
+test('root overlays are parsed BEFORE the script that wires them', () => {
+  // renderer.js is a classic synchronous <script>, so it runs DURING parse.
+  // Anything below that tag does not exist yet when init code calls
+  // getElementById — it gets null, and `null.addEventListener` throws an
+  // uncaught TypeError that aborts the rest of renderer startup. That is not a
+  // cosmetic failure: it shipped in v5.5.0 as "no agents load", because the
+  // throw killed the sidebar before it ever rendered.
+  //
+  // Moving these overlays to document root (the test above) is what put them at
+  // risk — at the bottom of <body> is the natural place to paste a root-level
+  // element, and it is exactly the wrong side of the script tag.
+  const script = HTML.indexOf('<script src="renderer.js">');
+  assert.ok(script > 0, 'renderer.js script tag not found');
+
+  for (const id of ROOT_OVERLAYS) {
+    const at = HTML.indexOf(`id="${id}"`);
+    assert.ok(at > 0, `${id} not found in index.html`);
+    assert.ok(at < script,
+      `#${id} is declared AFTER <script src="renderer.js">, which runs during parse — `
+      + `getElementById('${id}') returns null at init and the wiring throws. Move it above the script tag.`);
+  }
+});
+
+test('the init sites this ordering protects still query at module scope', () => {
+  // ENTER: the ordering test above is only load-bearing while something
+  // actually resolves these ids during parse. If both lookups moved behind a
+  // DOMContentLoaded or a lazy init, the ordering would stop mattering and the
+  // test above would be guarding nothing while still passing.
+  const sites = [
+    ['popovers/report-panel.js', 'report-overlay'],
+    ['popovers/files-popover.js', 'file-peek-overlay'],
+  ];
+  for (const [rel, id] of sites) {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', rel), 'utf8');
+    assert.match(src, new RegExp(`getElementById\\(['"]${id}['"]\\)`),
+      `${rel} no longer resolves #${id} — re-check whether the ordering test still guards a real failure`);
+  }
+});
+
 test('#main still creates the stacking context this test guards against', () => {
   // If #main ever stops being position:fixed the trap disappears and this whole
   // file is obsolete. Pinning it means the test fails loudly when the premise
