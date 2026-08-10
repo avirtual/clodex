@@ -278,6 +278,17 @@ module.exports.activate = (rhost) => {
     // Up DOES compute its argument, and that is fine: the click is the gesture.
     const upBtn = $('wb-files-up');
 
+    // Both browse controls are REMOVED on the web frontend, not disabled: the
+    // engine's `fs.setRoot` is desktop-only by the surface gate (a web caller
+    // able to repoint the root would turn the "any"-marked fs.list/fs.read into
+    // an arbitrary-directory reader), so every click there fails into a toast.
+    // The web dialog itself works — api-shim draws a type-a-path modal — which
+    // is what makes a live-looking button here actively misleading.
+    if (typeof window !== 'undefined' && window.__CLODEX_WEB__) {
+      upBtn.remove();
+      $('wb-files-goto').remove();
+    }
+
     // No require('path') in a renderer half — this file is web-bundled too.
     // Returns null AT the filesystem root, which is what disables the button;
     // POSIX dirname('/') === '/', and wiring that through would spin.
@@ -289,6 +300,10 @@ module.exports.activate = (rhost) => {
     };
 
     function syncUpButton() {
+      // `isConnected` is false once the web branch above removed it. Assigning
+      // to a detached node is harmless, but reading it here says so out loud so
+      // the removal and this writer cannot drift apart.
+      if (!upBtn.isConnected) return;
       const cur = activeRoot || curCwd();
       upBtn.disabled = !cur || !parentOf(cur);
     }

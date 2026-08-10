@@ -6099,31 +6099,6 @@ body {
       <div class="popover-title"><span>Riding your next message — <span id="selection-popover-name"></span></span><button type="button" class="popover-close" id="selection-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div id="selection-popover-body"></div>
     </div>
-    <div id="file-peek-overlay" class="hidden">
-      <div id="file-peek-modal">
-        <div class="popover-title">
-          <span id="file-peek-path" title=""></span>
-          <span class="file-peek-controls">
-            <button type="button" class="file-peek-tab hidden" id="file-peek-back" title="Back to the file you came from">&larr;</button>
-            <button type="button" class="file-peek-tab" id="file-peek-tab-diff">Diff</button>
-            <button type="button" class="file-peek-tab" id="file-peek-tab-file">File</button>
-            <button type="button" class="file-peek-tab" id="file-peek-tab-edit">Edit</button>
-            <span id="file-peek-dirty" class="file-peek-dirty hidden" title="Unsaved changes">&bull;</span>
-            <button type="button" class="file-peek-open" id="file-peek-save" title="Save (Cmd+S)">Save</button>
-            <button type="button" class="file-peek-open" id="file-peek-open" title="Open in the default editor">Open</button>
-            <button type="button" class="popover-close" id="file-peek-close" title="Close" aria-label="Close">&times;</button>
-          </span>
-        </div>
-        <div id="file-peek-body"></div>
-        <textarea id="file-peek-editor" class="hidden" spellcheck="false"></textarea>
-      </div>
-    </div>
-    <div id="report-overlay" class="hidden">
-      <div id="report-modal">
-        <div class="popover-title"><span>Session Report — <span id="report-name"></span></span><button type="button" class="popover-close" id="report-close" title="Close" aria-label="Close">&times;</button></div>
-        <div id="report-body"></div>
-      </div>
-    </div>
     <div id="empty-state">
       <p>No sessions yet</p>
       <p class="hint">Click <strong>+</strong> to create one</p>
@@ -9029,6 +9004,10 @@ body {
             refreshTab();
           }
           const upBtn = $("wb-files-up");
+          if (typeof window !== "undefined" && window.__CLODEX_WEB__) {
+            upBtn.remove();
+            $("wb-files-goto").remove();
+          }
           const parentOf = (p) => {
             const s = String(p || "").replace(/\/+$/, "");
             const i = s.lastIndexOf("/");
@@ -9036,6 +9015,7 @@ body {
             return i === 0 ? "/" : s.slice(0, i);
           };
           function syncUpButton() {
+            if (!upBtn.isConnected) return;
             const cur = activeRoot || curCwd();
             upBtn.disabled = !cur || !parentOf(cur);
           }
@@ -34190,5 +34170,36 @@ ${res.stderr}` : "");
 })();
 
   </script>
+
+  <!-- Full-screen overlays live at ROOT, not inside #main. #main is
+       position:fixed and so its own stacking context: an overlay nested in it
+       is flattened to #main's z-index (11) however high its own value, and the
+       root-level drawers (z15) then paint over it. Both are inset:0, so root
+       placement is geometrically identical. -->
+  <div id="file-peek-overlay" class="hidden">
+    <div id="file-peek-modal">
+      <div class="popover-title">
+        <span id="file-peek-path" title=""></span>
+        <span class="file-peek-controls">
+          <button type="button" class="file-peek-tab hidden" id="file-peek-back" title="Back to the file you came from">&larr;</button>
+          <button type="button" class="file-peek-tab" id="file-peek-tab-diff">Diff</button>
+          <button type="button" class="file-peek-tab" id="file-peek-tab-file">File</button>
+          <button type="button" class="file-peek-tab" id="file-peek-tab-edit">Edit</button>
+          <span id="file-peek-dirty" class="file-peek-dirty hidden" title="Unsaved changes">&bull;</span>
+          <button type="button" class="file-peek-open" id="file-peek-save" title="Save (Cmd+S)">Save</button>
+          <button type="button" class="file-peek-open" id="file-peek-open" title="Open in the default editor">Open</button>
+          <button type="button" class="popover-close" id="file-peek-close" title="Close" aria-label="Close">&times;</button>
+        </span>
+      </div>
+      <div id="file-peek-body"></div>
+      <textarea id="file-peek-editor" class="hidden" spellcheck="false"></textarea>
+    </div>
+  </div>
+  <div id="report-overlay" class="hidden">
+    <div id="report-modal">
+      <div class="popover-title"><span>Session Report — <span id="report-name"></span></span><button type="button" class="popover-close" id="report-close" title="Close" aria-label="Close">&times;</button></div>
+      <div id="report-body"></div>
+    </div>
+  </div>
 </body>
 </html>

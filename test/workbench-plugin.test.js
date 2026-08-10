@@ -693,6 +693,26 @@ test('t277: a Go to Folder click asks about unsaved edits exactly ONCE', () => {
     'Up relies on the default and is guarded by setFolderRoot itself');
 });
 
+test('t277: the browse controls are REMOVED on the web frontend, not left to fail', () => {
+  // fs.setRoot is desktop-only by the surface gate (plugin-surface-gate.test.js
+  // pins the denial), so on the web every Up / Go to Folder click ends in a
+  // "Can't use that folder" toast. The web dialog itself WORKS — api-shim draws
+  // a type-a-path modal — which is exactly what makes a live-looking button
+  // misleading rather than merely inert: it looks like it should have worked.
+  //
+  // Pinned as removal, not `disabled`: a disabled control still advertises a
+  // capability this surface does not have.
+  const code = rendererSrc.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(code, /window\.__CLODEX_WEB__/,
+    'ENTER: the renderer half branches on the web-frontend flag at all');
+  assert.match(code, /upBtn\.remove\(\);/, 'Up is removed on the web surface');
+  assert.match(code, /\$\('wb-files-goto'\)\.remove\(\);/,
+    'Go to Folder is removed on the web surface');
+  // The writer that runs on every root change must not fight the removal.
+  assert.match(code, /if \(!upBtn\.isConnected\) return;/,
+    'syncUpButton bails on the detached node instead of assigning to it');
+});
+
 test('t277: Refresh re-asks for the root before repainting the tree', () => {
   // fs.list re-resolves through effectiveRoot, so a root that died since the
   // last wt.selected leaves the scope bar naming a dead directory while the tree
