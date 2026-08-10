@@ -19,6 +19,12 @@ blocks a release.
   a release that reproduces that failure now stops instead of publishing.
 - Running the test suite against a filename that does not exist is refused by
   name instead of quietly reporting success over a run that executed nothing.
+- Removes the Boiling Pot, the per-file token-carriage report on the View menu,
+  along with the background counting that fed it. It was built to find files
+  being read wastefully; measured against a month of real usage, the waste it
+  was looking for came to well under a tenth of a percent of spend, and most of
+  what it did find was scratch files rather than code. Nothing else used it, so
+  it went rather than kept collecting. Existing counter files are left alone.
 
 ## 5.5.1 — 2026-08-11 — v5.5.0 loaded no sessions; upgrade straight past it
 
