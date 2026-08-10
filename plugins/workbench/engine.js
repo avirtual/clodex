@@ -34,34 +34,48 @@
 // that stay inside this directory — core is reachable ONLY through `host`).
 
 const fs = require('fs');
+const path = require('path');
 const gitScm = require('./git-scm');
 const fsExplorer = require('./fs-explorer');
 
 module.exports.activate = (host) => {
   const { gitWorktree } = host.lib;
 
-  // ── Selected worktree, per session ──────────────────────────────────────
-  // sessionName → absolute worktree path. IN MEMORY ONLY, never persisted: a
-  // fresh launch starts at the true session cwd, and one plugin's UI state does
-  // not earn storage surface. Keyed by session so switching away and back
-  // restores your tree, and switching to a DIFFERENT session can never show you
-  // another session's.
+  // ── The ACTIVE ROOT, per session ────────────────────────────────────────
+  // sessionName → { path, kind: 'worktree' | 'folder' }. IN MEMORY ONLY, never
+  // persisted: a fresh launch starts at the true session cwd, and one plugin's
+  // UI state does not earn storage surface. That rationale is STRONGER for a
+  // folder root than for a worktree — a persisted arbitrary root is an
+  // unannounced root surviving a restart. Keyed by session so switching away and
+  // back restores your root, and switching to a DIFFERENT session can never show
+  // you another session's.
   //
-  // Only paths that `git worktree list` reports for that session's own repo
-  // ever land here — `wt.apply` is the single writer and it validates before it
-  // writes, so the confinement rule is enforced where the write happens.
-  const wtRoots = new Map();
+  // ONE map with ONE entry per session, not a map per kind: that makes "a
+  // worktree root and a folder root are mutually exclusive" structural, so
+  // nothing downstream needs a precedence rule between two live selections.
+  //
+  // Two rows write it — `wt.apply` and `fs.setRoot` — and each validates its OWN
+  // kind at the point of writing (a worktree of the repository at the ACTIVE
+  // ROOT; an existing absolute directory). There is no reachable row that writes
+  // an entry unvalidated, which is the property the wt.apply block below
+  // explains at length. Adding a third writer means adding a third validation,
+  // not reusing one of these.
+  //
+  // "The repository at the active root", not "this session's own repository":
+  // once a folder root points into another repo, that repo's worktrees are what
+  // `wt.apply` accepts. That is deliberate — see the note on the row.
+  const roots = new Map();
 
-  // Re-validate at USE time, not only at selection time: a worktree can vanish
-  // under a stale selection (`git worktree remove` elsewhere, or our own Remove
-  // button). A dead selection DROPS to the session cwd rather than erroring —
-  // the operation still does the obvious right thing. `wt.selected` reports the
-  // drop so the renderer can say so.
+  // Re-validate at USE time, not only at selection time: a root can vanish under
+  // a stale selection (`git worktree remove` elsewhere, our own Remove button, or
+  // a browsed folder deleted in Finder). A dead selection DROPS to the session
+  // cwd rather than erroring — the operation still does the obvious right thing.
+  // `wt.selected` reports the drop so the renderer can say so.
   function effectiveRoot(name, cwd) {
-    const sel = wtRoots.get(name);
+    const sel = roots.get(name);
     if (!sel) return cwd;
-    try { if (fs.statSync(sel).isDirectory()) return sel; } catch {}
-    wtRoots.delete(name);
+    try { if (fs.statSync(sel.path).isDirectory()) return sel.path; } catch {}
+    roots.delete(name);
     return cwd;
   }
 
@@ -70,12 +84,14 @@ module.exports.activate = (host) => {
   // envelope shape ({ ok:false, error }) reproduces ipc-handlers' verbatim, so
   // the renderer's existing "remote" branches keep matching.
   //
-  // The worktree substitution lives HERE, deliberately, so all twelve fs./scm.
-  // rows follow the selected tree as one consequence of one change. Files and
-  // Source can therefore never read different roots. Note this makes the
-  // selection load-bearing: scm.commit/discard/checkout and push act on the
-  // selected worktree. That is the point of selecting it, and it is why the
-  // renderer keeps a persistent indicator whenever the root is not the cwd.
+  // The root substitution lives HERE, deliberately, so all twelve fs./scm. rows
+  // follow the selected root as one consequence of one change. Files and Source
+  // can therefore never read different roots — including when the root is a
+  // folder in some other repo, where Source correctly shows THAT repo rather
+  // than disagreeing with the tree beside it. Note this makes the selection
+  // load-bearing: scm.commit/discard/checkout and push act on the selected root.
+  // That is the point of selecting it, and it is why the renderer keeps a
+  // persistent indicator whenever the root is not the cwd.
   const scoped = (fn) => async (name, ...rest) => {
     const r = host.sessions.fsScope(name);
     if (r.error) return { ok: false, error: r.error };
@@ -119,14 +135,18 @@ module.exports.activate = (host) => {
   host.ipc.handle('wt.create', (repo, branch, opts) => gitWorktree.createWorktree(repo, branch, opts || null));
 
   // ── Worktree SELECTION (the plugin's own state; no core equivalent) ──────
-  // ONE row writes `wtRoots`, and it is the row that validates. An earlier
+  // The row that writes a worktree root is the row that validates it. An earlier
   // version split this in two — a `wt.select` that validated and a `wt.apply`
   // that wrote — which put the confinement guarantee in the RENDERER's call
   // sequence rather than in the engine: `wt.apply(name, '/any/real/dir')` set
   // the root, `effectiveRoot`'s statSync passed because the directory existed,
   // and every scoped row (fs.write and scm.commit included) then acted outside
-  // the session's repo. The split is gone; there is no reachable path that
-  // writes the map unvalidated.
+  // the session's repo. The split is gone.
+  //
+  // `fs.setRoot` below now offers an arbitrary directory DELIBERATELY, which is
+  // why this row's validation must stay exactly as strict as it is: the two
+  // writers are not interchangeable, and widening this one to "any real
+  // directory" would restore the defect rather than duplicate the feature.
   //
   // Deliberately NOT `scoped`: this needs the session NAME to key the map, and
   // `scoped` hands the handler a cwd and drops the name. So it calls `fsScope`
@@ -134,7 +154,7 @@ module.exports.activate = (host) => {
   host.ipc.handle('wt.apply', async (name, worktreePath) => {
     const r = host.sessions.fsScope(name);
     if (r.error) return { ok: false, error: r.error };
-    if (!worktreePath) { wtRoots.delete(name); return { ok: true, root: null }; }
+    if (!worktreePath) { roots.delete(name); return { ok: true, root: null }; }
     // Resolve the repo from the EFFECTIVE root: worktree listing answers the
     // same set from any tree of the repo, so switching worktree-to-worktree
     // works without first returning to the session cwd.
@@ -142,19 +162,78 @@ module.exports.activate = (host) => {
     if (!list.ok) return { ok: false, error: list.error || 'Not a git repository' };
     const match = list.worktrees.find((w) => w.path === worktreePath);
     // The confinement rule, enforced where the write happens: only a path that
-    // `git worktree list` returns for THIS session's own repo is selectable.
-    if (!match) return { ok: false, error: 'Not a worktree of this session\'s repository' };
-    wtRoots.set(name, match.path);
+    // `git worktree list` returns for the repository at the ACTIVE ROOT is
+    // selectable — which is the session's own repo until a folder root moves it,
+    // and that repo's afterwards.
+    //
+    // Resolving from `r.cwd` instead would be tighter but WRONG for the UI:
+    // `wt.list` is `scoped`, so the Worktrees tab already lists the browsed
+    // repo's rows, and clicking one would then be refused. A tab that offers a
+    // choice and rejects it is a worse defect than the wider set, and the set is
+    // bounded by a folder root the operator explicitly picked.
+    if (!match) return { ok: false, error: 'Not a worktree of the active root\'s repository' };
+    // Overwrites a folder root if one is set: one entry per session is what makes
+    // the two kinds mutually exclusive.
+    roots.set(name, { path: match.path, kind: 'worktree' });
     return { ok: true, root: match.path, isMain: match.isMain };
   });
-  // What is the active root, and did a stale selection just drop? The renderer
-  // asks on every open/refresh so the indicator can never lie.
+
+  // ── FOLDER root: browsing outside the session cwd, on purpose ────────────
+  // This re-introduces the capability the block above calls a defect. Three
+  // properties made it one; each is answered here, and none may be relaxed:
+  //
+  //   * it was reachable from a renderer BUG — this row is driven only from an
+  //     operator gesture, a native pick or Up, never from a path derived from
+  //     untrusted input;
+  //   * it was INVISIBLE — the root indicator must label a folder root
+  //     distinctly from a worktree, which is what `wt.selected`'s `kind` is for;
+  //   * the validating writer was BYPASSABLE — this row is the only folder
+  //     writer and it validates inline, so there is no second, unvalidated path
+  //     to the map.
+  //
+  // No `..`-anywhere-under-home rule or similar: an operator who picked a
+  // directory in a native dialog picked it, and a half-rule would block
+  // legitimate use while stopping nothing — a Tier-A plugin is unsandboxed
+  // in-process Node holding require('fs') (see this file's header).
+  //
+  // Setting a folder root moves scm.* with it, not just the file tree; that is
+  // the one-root property the `scoped` comment above states, and it is why this
+  // is not named per-panel.
+  //
+  // Deliberately NOT `scoped`, for `wt.apply`'s reason: it needs the session
+  // NAME, so it calls `fsScope` itself and the peer refusal stays identical.
+  host.ipc.handle('fs.setRoot', (name, absPath) => {
+    const r = host.sessions.fsScope(name);
+    if (r.error) return { ok: false, error: r.error };
+    // Mirrors `wt.apply`'s clear branch, and clears EITHER kind — one entry, so
+    // the renderer's single reset gesture cannot leave a root of the other kind
+    // standing.
+    if (!absPath) { roots.delete(name); return { ok: true, root: null }; }
+    if (typeof absPath !== 'string' || !path.isAbsolute(absPath)) return { ok: false, error: 'Not an absolute path' };
+    let st;
+    try { st = fs.statSync(absPath); } catch { return { ok: false, error: 'No such directory' }; }
+    if (!st.isDirectory()) return { ok: false, error: 'Not a directory' };
+    roots.set(name, { path: absPath, kind: 'folder' });
+    return { ok: true, root: absPath, kind: 'folder' };
+  });
+
+  // What is the active root, what KIND is it, and did a stale selection just
+  // drop? The renderer asks on every open/refresh so the indicator can never lie.
   host.ipc.handle('wt.selected', (name) => {
     const r = host.sessions.fsScope(name);
     if (r.error) return { ok: false, error: r.error };
-    const had = wtRoots.get(name) || null;
+    const had = roots.get(name) || null;
     const root = effectiveRoot(name, r.cwd);
-    return { ok: true, root, cwd: r.cwd, selected: root === r.cwd ? null : root, dropped: !!had && !wtRoots.has(name) };
+    const live = roots.get(name) || null;
+    // `kind` is derived from the SAME condition as `selected`, not read straight
+    // off the map: the renderer hides the indicator when `selected` is null, and
+    // a kind surviving that would be a label with nothing to label.
+    const selected = root === r.cwd ? null : root;
+    return {
+      ok: true, root, cwd: r.cwd, selected,
+      kind: selected && live ? live.kind : null,
+      dropped: !!had && !roots.has(name),
+    };
   });
 };
 

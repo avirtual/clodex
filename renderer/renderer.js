@@ -2502,6 +2502,7 @@ const pluginBar = initPluginHost({
   listSessions: () => window.api.listSessions(),
   openPath: (p) => window.api.fileOpen(p),
   showToast,
+  selectDirectory: () => window.api.selectDirectory(),
   pluginReachesSession,
 });
 

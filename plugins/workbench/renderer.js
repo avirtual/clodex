@@ -42,13 +42,15 @@ const WORKBENCH_HTML = `
     <button type="button" class="popover-close" id="workbench-close" title="Close" aria-label="Close">&times;</button>
   </div>
   <div id="wb-root-indicator" class="wb-root-indicator hidden" role="button" tabindex="0"
-       data-tip="Working in a selected worktree — click to return to the session directory"></div>
+       data-tip="Working outside the session directory — click to return to it"></div>
   <div class="workbench-body">
     <div class="workbench-left">
       <!-- Files: lazy tree -->
       <div id="wb-files-panel" class="workbench-panel">
         <div class="workbench-panel-bar">
           <span id="wb-files-scope" class="workbench-scope"></span>
+          <button id="wb-files-up" type="button" data-tip="Browse the parent directory">Up</button>
+          <button id="wb-files-goto" type="button" data-tip="Browse any folder — moves Source Control too">Go to Folder…</button>
           <button id="wb-files-refresh" type="button">Refresh</button>
         </div>
         <input type="text" id="wb-locate" class="sidebar-search wb-locate" placeholder="Go to file… (type to filter)" spellcheck="false" autocomplete="off">
@@ -77,7 +79,7 @@ const WORKBENCH_HTML = `
       <!-- Worktrees (full width; the shared editor hides for this tab) -->
       <div id="wb-worktrees-panel" class="workbench-panel hidden">
         <div class="workbench-panel-bar">
-          <span class="workbench-scope">Worktrees for this session's repository</span>
+          <span class="workbench-scope">Worktrees for the repository at the active root</span>
           <button id="wb-worktrees-refresh" type="button">Refresh</button>
         </div>
         <div id="wb-worktrees-list" class="worktrees-list"></div>
@@ -202,38 +204,54 @@ module.exports.activate = (rhost) => {
     //
     // Why the indicator is part of the feature and not decoration: because all
     // twelve fs./scm. rows follow the selection, `Commit` and `push` act on the
-    // selected worktree. The failure this prevents is committing into a tree you
-    // forgot you had selected.
+    // selected root. The failure this prevents is committing into a tree you
+    // forgot you had selected — which is why the LABEL WORD is the engine's
+    // `kind` and never a constant: a folder root the operator browsed to may be
+    // an entirely different repository, and calling it "worktree" would describe
+    // the one thing it is guaranteed not to be.
     const rootIndicator = $('wb-root-indicator');
-    let activeRoot = null; // absolute path when a worktree is selected, else null
+    let activeRoot = null; // absolute path when a root is selected, else null
 
+    // Every early return below leaves `activeRoot` set, so the Up button is
+    // re-synced in a finally rather than at four return sites — one of which a
+    // later edit would forget, leaving Up pointing at a root that moved.
     async function refreshRootIndicator() {
+      try { await paintRootIndicator(); } finally { syncUpButton(); }
+    }
+
+    async function paintRootIndicator() {
       const name = activeName();
       if (!name) { activeRoot = null; rootIndicator.classList.add('hidden'); return; }
       const res = await h.invoke('wt.selected', name);
       if (!res || !res.ok) { activeRoot = null; rootIndicator.classList.add('hidden'); return; }
-      if (res.dropped) toast('Selected worktree is gone — back to the session directory.');
+      if (res.dropped) toast('Selected root is gone — back to the session directory.');
       activeRoot = res.selected;
       if (!activeRoot) { rootIndicator.classList.add('hidden'); rootIndicator.textContent = ''; return; }
       const leaf = activeRoot.split('/').filter(Boolean).pop() || activeRoot;
-      rootIndicator.innerHTML = `<span class="wb-root-label">worktree</span> ${esc(leaf)}`
+      // Defaults to the LESS reassuring word on an unrecognised kind. Nothing
+      // reaches that branch today, but a label whose job is to stop you
+      // committing into the wrong tree must not under-state what it is showing.
+      const label = res.kind === 'worktree' ? 'worktree' : 'folder';
+      rootIndicator.innerHTML = `<span class="wb-root-label">${esc(label)}</span> ${esc(leaf)}`
         + `<span class="wb-root-reset">✕ session dir</span>`;
       rootIndicator.title = activeRoot;
       rootIndicator.classList.remove('hidden');
     }
 
-    // Clear back to the session cwd. Also how you leave a tree you no longer want.
-    async function clearWorktree() {
+    // Clear back to the session cwd, whichever kind is active: the engine keeps
+    // ONE entry per session, so this one gesture cannot leave the other kind
+    // standing. Also how you leave a root you no longer want.
+    async function clearRoot() {
       const name = activeName(); if (!name) return;
       if (!confirmDiscardEdit()) return;
-      await h.invoke('wt.apply', name, null);
+      await h.invoke('fs.setRoot', name, null);
       resetEditor();
       await refreshRootIndicator();
       refreshTab();
     }
-    rootIndicator.addEventListener('click', clearWorktree);
+    rootIndicator.addEventListener('click', clearRoot);
     rootIndicator.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); clearWorktree(); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); clearRoot(); }
     });
 
     // Select a worktree as the active root. `wt.apply` both validates against
@@ -252,6 +270,62 @@ module.exports.activate = (rhost) => {
       await refreshRootIndicator();
       refreshTab();
     }
+
+    // ── Browsing outside the session directory ─────────────────────────────
+    // `fs.setRoot` validates the path engine-side; these two only supply one.
+    // Both supply it from an operator gesture — a native pick, or Up from the
+    // root already on screen — never from a path derived from untrusted input.
+    // Up DOES compute its argument, and that is fine: the click is the gesture.
+    const upBtn = $('wb-files-up');
+
+    // No require('path') in a renderer half — this file is web-bundled too.
+    // Returns null AT the filesystem root, which is what disables the button;
+    // POSIX dirname('/') === '/', and wiring that through would spin.
+    const parentOf = (p) => {
+      const s = String(p || '').replace(/\/+$/, '');
+      const i = s.lastIndexOf('/');
+      if (i < 0) return null;
+      return i === 0 ? '/' : s.slice(0, i);
+    };
+
+    function syncUpButton() {
+      const cur = activeRoot || curCwd();
+      upBtn.disabled = !cur || !parentOf(cur);
+    }
+
+    // `confirmed` says the caller ALREADY asked about unsaved edits, so this must
+    // not ask again. It defaults to false on purpose: a caller added later gets
+    // the guard unless it opts out in a token visible at its own call site, so
+    // the way to lose unsaved editor content is never silence.
+    async function setFolderRoot(dir, { confirmed = false } = {}) {
+      const name = activeName(); if (!name) return;
+      if (!confirmed && !confirmDiscardEdit()) return;
+      const res = await h.invoke('fs.setRoot', name, dir);
+      if (!res || !res.ok) { toast(`Can't use that folder: ${(res && res.error) || 'unknown'}`); return; }
+      resetEditor();
+      expExpanded.clear();
+      await refreshRootIndicator();
+      refreshTab();
+    }
+
+    $('wb-files-goto').addEventListener('click', async () => {
+      if (!activeName()) return;
+      // Ask about unsaved edits BEFORE the dialog, not after — a prompt raised
+      // afterwards throws away a folder the operator has already picked. The
+      // `confirmed` flag MOVES the guard here rather than adding a second one:
+      // nothing between the two calls can dirty the editor, so asking again
+      // would be the same modal twice for one click.
+      if (!confirmDiscardEdit()) return;
+      const dir = await h.ui.pickDirectory();
+      if (!dir) return; // cancelled
+      await setFolderRoot(dir, { confirmed: true });
+    });
+
+    upBtn.addEventListener('click', async () => {
+      const parent = parentOf(activeRoot || curCwd());
+      if (!parent) return;
+      await setFolderRoot(parent);
+    });
 
     sessionSel.addEventListener('change', () => {
       // Confirm before dropping unsaved edits, same as leaving the Files tab.
@@ -454,7 +528,11 @@ module.exports.activate = (rhost) => {
     async function renderExplorer() {
       const name = activeName();
       if (!name) { tree.innerHTML = ''; filesScope.textContent = ''; filesEmpty.classList.remove('hidden'); return; }
-      filesScope.textContent = curCwd();
+      // The ACTIVE root, not the session cwd: the tree below lists the active
+      // root, and once a folder root can point into an unrelated repository a
+      // bar naming the session directory is not merely imprecise, it names the
+      // wrong tree in the one panel the browse feature lives in.
+      filesScope.textContent = activeRoot || curCwd();
       const rootRes = await h.invoke('fs.list', name, '');
       if (!rootRes || !rootRes.ok) {
         tree.innerHTML = '';
@@ -496,7 +574,11 @@ module.exports.activate = (rhost) => {
       }
     }
 
-    $('wb-files-refresh').addEventListener('click', () => renderExplorer());
+    // Re-ask the engine for the root before repainting: `fs.list` re-resolves
+    // through effectiveRoot, so a root that died since the last wt.selected
+    // would leave the scope bar naming it while the tree lists the session cwd.
+    // Refresh is the button pressed precisely when something looks wrong.
+    $('wb-files-refresh').addEventListener('click', () => refreshRootIndicator().then(renderExplorer));
 
     // =======================================================================
     // Source control tab

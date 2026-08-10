@@ -954,6 +954,7 @@ rhost = {
 
   ui: {
     openPath(path),                    // reveal in the OS file manager
+    pickDirectory(),                   // -> Promise<absolute path | null>  native dialog
     showToast(msg, opts),              // core's toast host
     statusBar:   { addAction, addSegment },
     sidebar:     { footerButton, rowBadge, requestRelayout },
@@ -1010,6 +1011,16 @@ we could not ask" — do not read it as "the workspace is empty".
 `rhost.ui.openPath(p)` reveals a path in Finder/Explorer. `rhost.ui.showToast(msg, opts)`
 raises one of Clodex's own toasts, so your errors look like every other error in
 the app instead of an `alert()`.
+
+`rhost.ui.pickDirectory()` opens the OS directory chooser (defaulting to the
+user's home directory) and resolves to the chosen absolute path, or `null` if
+the user cancelled. It exists because a renderer half cannot reach `window.api`
+at all (§3.4), and a native dialog is not something a plugin can raise for
+itself. Treat the result as an operator *gesture*, not as an authorization: if
+the path then crosses to your engine half, validate it there, at the point where
+you act on it — a picked path is still just a string by the time it arrives.
+Neither this nor `openPath` is one of the seven UI slots; they take no spec and
+register nothing.
 
 `rhost.lib.renderDiffHtml` renders a unified diff to HTML, the same way core's
 own diff views do.

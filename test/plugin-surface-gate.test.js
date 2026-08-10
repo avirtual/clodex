@@ -233,6 +233,11 @@ test('every mutating workbench method is denied on web and served on desktop', a
     ['wt.create', ['/repo', 'feature']],
     ['wt.remove', ['/repo/wt']],
     ['wt.apply', ['seat', null]],
+    // Not "mutating" in the write-a-file sense, and that is exactly why it is
+    // listed: it repoints the root the "any"-marked READ rows follow, so a web
+    // caller who could reach it would turn fs.list/fs.read into an arbitrary
+    // directory reader without ever calling a method marked mutating.
+    ['fs.setRoot', ['seat', null]],
   ];
   const b = bootBothSurfaces();
   try {
