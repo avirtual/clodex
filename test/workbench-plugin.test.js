@@ -74,15 +74,32 @@ const nocwd = { name: 'bare', type: 'bash', cwd: null, workspaceId: 'ws-1' };
 // session's repo. Selection validates against exactly this, so a test that wants
 // a selection to SUCCEED declares the tree here — which is the honest shape,
 // since in production the set comes from git and not from the caller.
-function boot({ worktrees = null } = {}) {
+// `repos` (optional): { repoRoot: [worktree paths] }. Unlike `worktrees` this
+// fixture is CWD-SENSITIVE — it answers whichever repo CONTAINS the root it is
+// handed, and refuses a root under none of them.
+//
+// That distinction is the whole point of it. The `worktrees` fixture ignores its
+// argument and answers the same set for every root, so a test built on it cannot
+// see WHICH root `wt.apply` resolved from — it would pass identically whether
+// the row used the active root or the session cwd, which is exactly the question
+// some of these tests exist to answer.
+function boot({ worktrees = null, repos = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-workbench-test-'));
   const calls = [];
   const rec = makeRecorder(calls);
   const restore = stubLocalLeaves(calls);
-  const listWorktrees = worktrees
+  const under = (root, cwd) => cwd === root || String(cwd).startsWith(root + path.sep);
+  const listFromRepos = (cwd) => {
+    calls.push({ leaf: 'wt', method: 'listWorktrees', args: [cwd] });
+    const hit = Object.keys(repos).filter((r) => under(r, cwd))
+      .sort((a, b) => b.length - a.length)[0];
+    if (!hit) return { ok: false, error: 'Not a git repository' };
+    return { ok: true, repo: hit, worktrees: repos[hit].map((p, i) => ({ path: p, isMain: i === 0, branch: 'b' })) };
+  };
+  const listWorktrees = repos ? listFromRepos : (worktrees
     ? (cwd) => { calls.push({ leaf: 'wt', method: 'listWorktrees', args: [cwd] });
         return { ok: true, repo: worktrees[0], worktrees: worktrees.map((p, i) => ({ path: p, isMain: i === 0, branch: 'b' })) }; }
-    : rec('wt', 'listWorktrees');
+    : rec('wt', 'listWorktrees'));
   // A session whose cwd is a REAL directory on disk. The other three carry
   // fictional paths, which is fine for rows that only pass the cwd through — but
   // `fs.setRoot` STATS what it is given, so "set the root to the session's own
@@ -621,13 +638,22 @@ test('wt.selected reports kind null when nothing is selected', async () => {
 });
 
 // ── The renderer half's side of the visibility property ─────────────────────
+// These read the SOURCE rather than driving the DOM, which is the established
+// shape in this file (the W9 gates above do the same) because no DOM harness for
+// the workbench half exists. The limit is real and worth stating: they pin that
+// the code says a thing, not that the rendered panel does it. A behavioural
+// version would need a harness that mounts the overlay, which is a larger piece
+// of work than this ticket, and its absence is why these stay narrow.
 test('t277: the indicator label word comes from the engine kind, never a constant', () => {
   // The one thing that makes the folder root non-invisible is that it is NOT
   // labelled "worktree". A hardcoded label would pass every engine test above
   // and still ship the defect's second property.
   const code = rendererSrc.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.match(code, /kind === 'folder' \? 'folder' : 'worktree'/,
-    'the label is derived from wt.selected\'s kind');
+  // Note the DIRECTION: an unrecognised kind must fall to "folder", the word
+  // that under-states nothing. Defaulting to "worktree" would mean a label whose
+  // job is to warn you quietly reassuring you instead.
+  assert.match(code, /kind === 'worktree' \? 'worktree' : 'folder'/,
+    'the label is derived from wt.selected\'s kind, defaulting to the cautious word');
   assert.ok(!/wb-root-label">worktree/.test(code),
     'and "worktree" is never baked into the indicator markup');
 });
@@ -638,6 +664,19 @@ test('t277: Go to Folder uses the host picker, and Up cannot spin at the fs root
     'the native dialog arrives through the host surface — a plugin cannot reach window.api');
   assert.ok(!/window\.api/.test(code), 'and never through window.api');
   assert.match(code, /upBtn\.disabled/, 'Up is disabled rather than looping on dirname("/")');
+  // The unsaved-edit prompt must come BEFORE the dialog, or the operator picks a
+  // folder and only then gets asked, with a cancel discarding the pick.
+  assert.match(code, /if \(!confirmDiscardEdit\(\)\) return;\s*const dir = await h\.ui\.pickDirectory\(\);/,
+    'confirmDiscardEdit guards the dialog, not just the apply');
+});
+
+test('t277: the Files scope bar names the ACTIVE root, not the session cwd', () => {
+  // The tree below it lists the active root. Once that can be an unrelated
+  // repository, a bar naming the session directory names the wrong tree — in the
+  // one panel the browse feature lives in.
+  const code = rendererSrc.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(code, /filesScope\.textContent = activeRoot \|\| curCwd\(\)/,
+    'the scope bar follows the active root');
 });
 
 test('wt.selected reports no kind when the root resolves to the session cwd', async () => {
@@ -656,4 +695,66 @@ test('wt.selected reports no kind when the root resolves to the session cwd', as
     assert.deepStrictEqual(sel,
       { ok: true, root: realCwd, cwd: realCwd, selected: null, kind: null, dropped: false });
   } finally { cleanup(); }
+});
+
+test('wt.apply resolves from the ACTIVE ROOT, so a folder root in repo B offers B\'s worktrees', async () => {
+  // The reachable consequence of "one root, and wt.list is scoped": browse to a
+  // folder inside another repository and the Worktrees tab lists THAT repo's
+  // rows, so clicking one must be accepted. Resolving from the session cwd
+  // instead would leave the tab offering rows it then refuses.
+  //
+  // The `worktrees` fixture cannot express this — it answers the same set for
+  // every root. `repos` is cwd-sensitive, which is what makes the assertions
+  // below about the resolution and not about the fixture.
+  const repoB = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repo-b-'));
+  const wtB = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repo-b-wt-'));
+  // wtB maps to B's list as well: `git worktree list` answers the same set from
+  // ANY tree of the repo, and the row relies on that to switch tree-to-tree.
+  const { engine, calls, cleanup } = boot({
+    repos: {
+      '/repo/seat': ['/repo/seat', '/repo/seat-wt'],
+      [repoB]: [repoB, wtB],
+      [wtB]: [repoB, wtB],
+    },
+  });
+  try {
+    // ENTER: from the session cwd, B's worktree is NOT on offer and is refused —
+    // without this the success below could be a fixture that says yes to
+    // everything.
+    assert.deepStrictEqual(
+      await engine.dispatch('workbench', 'wt.apply', ['seat', wtB], 'desktop'),
+      { ok: false, error: 'Not a worktree of the active root\'s repository' },
+      'before browsing, only the session repo\'s worktrees are selectable');
+
+    assert.strictEqual((await engine.dispatch('workbench', 'fs.setRoot', ['seat', repoB], 'desktop')).ok,
+      true, 'ENTER: the folder root really moved into repo B');
+
+    // wt.list is `scoped`, so the tab now lists B's rows...
+    calls.length = 0;
+    const listed = await engine.dispatch('workbench', 'wt.list', ['seat'], 'desktop');
+    assert.deepStrictEqual(listed.worktrees.map((w) => w.path), [repoB, wtB],
+      'the Worktrees tab offers repo B\'s worktrees');
+
+    // ...and clicking one is accepted, rather than offered-then-refused.
+    const applied = await engine.dispatch('workbench', 'wt.apply', ['seat', wtB], 'desktop');
+    assert.strictEqual(applied.ok, true, 'a row the tab offered must be selectable');
+    assert.strictEqual(applied.root, wtB);
+
+    const sel = await engine.dispatch('workbench', 'wt.selected', ['seat'], 'desktop');
+    assert.strictEqual(sel.selected, wtB);
+    assert.strictEqual(sel.kind, 'worktree', 'and it is a worktree root now, not a folder one');
+
+    // Still refuses a directory that is a worktree of NEITHER repo: the rule
+    // widened with the root, it did not disappear.
+    const outsider = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-outsider-b-'));
+    try {
+      assert.deepStrictEqual(
+        await engine.dispatch('workbench', 'wt.apply', ['seat', outsider], 'desktop'),
+        { ok: false, error: 'Not a worktree of the active root\'s repository' });
+    } finally { fs.rmSync(outsider, { recursive: true, force: true }); }
+  } finally {
+    fs.rmSync(repoB, { recursive: true, force: true });
+    fs.rmSync(wtB, { recursive: true, force: true });
+    cleanup();
+  }
 });

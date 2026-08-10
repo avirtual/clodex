@@ -55,11 +55,15 @@ module.exports.activate = (host) => {
   // nothing downstream needs a precedence rule between two live selections.
   //
   // Two rows write it — `wt.apply` and `fs.setRoot` — and each validates its OWN
-  // kind at the point of writing (a worktree of this session's repo; an existing
-  // absolute directory). There is no reachable row that writes an entry
-  // unvalidated, which is the property the wt.apply block below explains at
-  // length. Adding a third writer means adding a third validation, not reusing
-  // one of these.
+  // kind at the point of writing (a worktree of the repository at the ACTIVE
+  // ROOT; an existing absolute directory). There is no reachable row that writes
+  // an entry unvalidated, which is the property the wt.apply block below
+  // explains at length. Adding a third writer means adding a third validation,
+  // not reusing one of these.
+  //
+  // "The repository at the active root", not "this session's own repository":
+  // once a folder root points into another repo, that repo's worktrees are what
+  // `wt.apply` accepts. That is deliberate — see the note on the row.
   const roots = new Map();
 
   // Re-validate at USE time, not only at selection time: a root can vanish under
@@ -158,8 +162,16 @@ module.exports.activate = (host) => {
     if (!list.ok) return { ok: false, error: list.error || 'Not a git repository' };
     const match = list.worktrees.find((w) => w.path === worktreePath);
     // The confinement rule, enforced where the write happens: only a path that
-    // `git worktree list` returns for THIS session's own repo is selectable.
-    if (!match) return { ok: false, error: 'Not a worktree of this session\'s repository' };
+    // `git worktree list` returns for the repository at the ACTIVE ROOT is
+    // selectable — which is the session's own repo until a folder root moves it,
+    // and that repo's afterwards.
+    //
+    // Resolving from `r.cwd` instead would be tighter but WRONG for the UI:
+    // `wt.list` is `scoped`, so the Worktrees tab already lists the browsed
+    // repo's rows, and clicking one would then be refused. A tab that offers a
+    // choice and rejects it is a worse defect than the wider set, and the set is
+    // bounded by a folder root the operator explicitly picked.
+    if (!match) return { ok: false, error: 'Not a worktree of the active root\'s repository' };
     // Overwrites a folder root if one is set: one entry per session is what makes
     // the two kinds mutually exclusive.
     roots.set(name, { path: match.path, kind: 'worktree' });
@@ -170,9 +182,9 @@ module.exports.activate = (host) => {
   // This re-introduces the capability the block above calls a defect. Three
   // properties made it one; each is answered here, and none may be relaxed:
   //
-  //   * it was reachable from a renderer BUG — this row is driven only by the
-  //     operator's own pick in a native directory dialog, never by a path the
-  //     renderer computed;
+  //   * it was reachable from a renderer BUG — this row is driven only from an
+  //     operator gesture, a native pick or Up, never from a path derived from
+  //     untrusted input;
   //   * it was INVISIBLE — the root indicator must label a folder root
   //     distinctly from a worktree, which is what `wt.selected`'s `kind` is for;
   //   * the validating writer was BYPASSABLE — this row is the only folder

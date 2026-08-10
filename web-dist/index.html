@@ -8846,7 +8846,7 @@ body {
       <!-- Worktrees (full width; the shared editor hides for this tab) -->
       <div id="wb-worktrees-panel" class="workbench-panel hidden">
         <div class="workbench-panel-bar">
-          <span class="workbench-scope">Worktrees for this session's repository</span>
+          <span class="workbench-scope">Worktrees for the repository at the active root</span>
           <button id="wb-worktrees-refresh" type="button">Refresh</button>
         </div>
         <div id="wb-worktrees-list" class="worktrees-list"></div>
@@ -8968,7 +8968,7 @@ body {
               return;
             }
             const leaf = activeRoot.split("/").filter(Boolean).pop() || activeRoot;
-            const label = res.kind === "folder" ? "folder" : "worktree";
+            const label = res.kind === "worktree" ? "worktree" : "folder";
             rootIndicator.innerHTML = `<span class="wb-root-label">${esc(label)}</span> ${esc(leaf)}<span class="wb-root-reset">\u2715 session dir</span>`;
             rootIndicator.title = activeRoot;
             rootIndicator.classList.remove("hidden");
@@ -9028,6 +9028,7 @@ body {
           }
           $("wb-files-goto").addEventListener("click", async () => {
             if (!activeName()) return;
+            if (!confirmDiscardEdit()) return;
             const dir = await h.ui.pickDirectory();
             if (!dir) return;
             await setFolderRoot(dir);
@@ -9218,7 +9219,7 @@ body {
               filesEmpty.classList.remove("hidden");
               return;
             }
-            filesScope.textContent = curCwd();
+            filesScope.textContent = activeRoot || curCwd();
             const rootRes = await h.invoke("fs.list", name, "");
             if (!rootRes || !rootRes.ok) {
               tree.innerHTML = "";

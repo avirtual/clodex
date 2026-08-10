@@ -79,7 +79,7 @@ const WORKBENCH_HTML = `
       <!-- Worktrees (full width; the shared editor hides for this tab) -->
       <div id="wb-worktrees-panel" class="workbench-panel hidden">
         <div class="workbench-panel-bar">
-          <span class="workbench-scope">Worktrees for this session's repository</span>
+          <span class="workbench-scope">Worktrees for the repository at the active root</span>
           <button id="wb-worktrees-refresh" type="button">Refresh</button>
         </div>
         <div id="wb-worktrees-list" class="worktrees-list"></div>
@@ -228,7 +228,10 @@ module.exports.activate = (rhost) => {
       activeRoot = res.selected;
       if (!activeRoot) { rootIndicator.classList.add('hidden'); rootIndicator.textContent = ''; return; }
       const leaf = activeRoot.split('/').filter(Boolean).pop() || activeRoot;
-      const label = res.kind === 'folder' ? 'folder' : 'worktree';
+      // Defaults to the LESS reassuring word on an unrecognised kind. Nothing
+      // reaches that branch today, but a label whose job is to stop you
+      // committing into the wrong tree must not under-state what it is showing.
+      const label = res.kind === 'worktree' ? 'worktree' : 'folder';
       rootIndicator.innerHTML = `<span class="wb-root-label">${esc(label)}</span> ${esc(leaf)}`
         + `<span class="wb-root-reset">✕ session dir</span>`;
       rootIndicator.title = activeRoot;
@@ -270,9 +273,9 @@ module.exports.activate = (rhost) => {
 
     // ── Browsing outside the session directory ─────────────────────────────
     // `fs.setRoot` validates the path engine-side; these two only supply one.
-    // "Go to Folder" supplies an operator's pick from the NATIVE dialog and
-    // nothing else — the engine row exists to serve a deliberate gesture, so a
-    // computed path must never be fed to it from here.
+    // Both supply it from an operator gesture — a native pick, or Up from the
+    // root already on screen — never from a path derived from untrusted input.
+    // Up DOES compute its argument, and that is fine: the click is the gesture.
     const upBtn = $('wb-files-up');
 
     // No require('path') in a renderer half — this file is web-bundled too.
@@ -303,6 +306,10 @@ module.exports.activate = (rhost) => {
 
     $('wb-files-goto').addEventListener('click', async () => {
       if (!activeName()) return;
+      // Ask about unsaved edits BEFORE the dialog, not after: setFolderRoot also
+      // asks, but by then the operator has already picked a folder and a cancel
+      // throws that pick away.
+      if (!confirmDiscardEdit()) return;
       const dir = await h.ui.pickDirectory();
       if (!dir) return; // cancelled
       await setFolderRoot(dir);
@@ -515,7 +522,11 @@ module.exports.activate = (rhost) => {
     async function renderExplorer() {
       const name = activeName();
       if (!name) { tree.innerHTML = ''; filesScope.textContent = ''; filesEmpty.classList.remove('hidden'); return; }
-      filesScope.textContent = curCwd();
+      // The ACTIVE root, not the session cwd: the tree below lists the active
+      // root, and once a folder root can point into an unrelated repository a
+      // bar naming the session directory is not merely imprecise, it names the
+      // wrong tree in the one panel the browse feature lives in.
+      filesScope.textContent = activeRoot || curCwd();
       const rootRes = await h.invoke('fs.list', name, '');
       if (!rootRes || !rootRes.ok) {
         tree.innerHTML = '';
