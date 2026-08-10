@@ -71,7 +71,7 @@ const RHOST_CONTRACT = [
   {
     name: 'ui',
     kind: 'ns',
-    members: ['openPath', 'showToast', 'statusBar', 'sidebar', 'sessionMenu', 'settings', 'surfaces'],
+    members: ['openPath', 'pickDirectory', 'showToast', 'statusBar', 'sidebar', 'sessionMenu', 'settings', 'surfaces'],
   },
   { name: 'lib', kind: 'ns', members: ['renderDiffHtml'] },
   { name: 'onDispose', kind: 'fn' },
@@ -179,6 +179,7 @@ function realRendererHost() {
     listSessions: async () => [],
     openPath: () => {},
     showToast: () => {},
+    selectDirectory: async () => null,
     getWorkspaceId: () => 'ws-1',
   });
   // The rhost is only reachable THROUGH activation — which is correct: it is

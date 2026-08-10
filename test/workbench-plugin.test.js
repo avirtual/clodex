@@ -83,7 +83,16 @@ function boot({ worktrees = null } = {}) {
     ? (cwd) => { calls.push({ leaf: 'wt', method: 'listWorktrees', args: [cwd] });
         return { ok: true, repo: worktrees[0], worktrees: worktrees.map((p, i) => ({ path: p, isMain: i === 0, branch: 'b' })) }; }
     : rec('wt', 'listWorktrees');
-  const map = new Map([[local.name, local], [peered.name, peered], [nocwd.name, nocwd]]);
+  // A session whose cwd is a REAL directory on disk. The other three carry
+  // fictional paths, which is fine for rows that only pass the cwd through — but
+  // `fs.setRoot` STATS what it is given, so "set the root to the session's own
+  // cwd" is unreachable with a fictional one. That case is the only way to
+  // observe a live map entry whose path equals the cwd.
+  const realCwd = path.join(dir, 'real-seat');
+  fs.mkdirSync(realCwd, { recursive: true });
+  const realSeat = { name: 'real', type: 'claude', cwd: realCwd, workspaceId: 'ws-1' };
+  const map = new Map([[local.name, local], [peered.name, peered], [nocwd.name, nocwd],
+    [realSeat.name, realSeat]]);
   const engine = createPluginHostEngine({
     manager: {
       sessions: map,
@@ -106,7 +115,7 @@ function boot({ worktrees = null } = {}) {
   // A literal would fail every one of them on a bump, which says nothing.
   engine.register('workbench', workbenchEngine, { hostApi: HOST_API_VERSION });
   const cleanup = () => { restore(); fs.rmSync(dir, { recursive: true, force: true }); };
-  return { engine, calls, cleanup };
+  return { engine, calls, cleanup, realCwd };
 }
 
 // The fourteen rows that replace core's fourteen window.api rows, plus wt.create,
@@ -131,7 +140,8 @@ const NAME_SCOPED_ROWS = [
 test('the plugin registers exactly the migrated row set, namespaced by plugin id', () => {
   const { engine, cleanup } = boot();
   assert.deepEqual(engine._dispatchKeys().sort(), [
-    'workbench:fs.find', 'workbench:fs.list', 'workbench:fs.read', 'workbench:fs.write',
+    'workbench:fs.find', 'workbench:fs.list', 'workbench:fs.read', 'workbench:fs.setRoot',
+    'workbench:fs.write',
     'workbench:scm.branches', 'workbench:scm.checkout', 'workbench:scm.commit',
     'workbench:scm.diff', 'workbench:scm.discard', 'workbench:scm.remote',
     'workbench:scm.stage', 'workbench:scm.status', 'workbench:scm.unstage',
@@ -360,14 +370,26 @@ test('wt.apply with null clears back to the session cwd', async () => {
   cleanup();
 });
 
-test('no reachable row writes the selection without validating it', async () => {
-  // The guarantee is the ENGINE's, not the renderer's call sequence: there must
-  // be exactly one row that can write wtRoots, and it validates.
+test('no reachable row writes the active root without validating it', async () => {
+  // The guarantee is the ENGINE's, not the renderer's call sequence. This used
+  // to filter `workbench:wt.` and assert "exactly one writer" — which stopped
+  // being the whole truth the moment fs.setRoot became a second writer, and a
+  // wt.-only filter would have gone on passing while saying nothing about it.
+  // So enumerate the WHOLE row set and name the writers out of it.
   const { engine, cleanup } = boot();
-  const writers = engine._dispatchKeys().filter((k) => k.startsWith('workbench:wt.'));
-  assert.deepStrictEqual(writers.sort(),
-    ['workbench:wt.apply', 'workbench:wt.create', 'workbench:wt.list',
-     'workbench:wt.remove', 'workbench:wt.selected'],
+  const rows = engine._dispatchKeys().sort();
+  const WRITERS = ['workbench:fs.setRoot', 'workbench:wt.apply'];
+  assert.deepStrictEqual(rows.filter((k) => WRITERS.includes(k)), WRITERS,
+    'ENTER: both writers must be present, or the assertions below prove nothing');
+  // Every OTHER row is a non-writer. Listed literally rather than derived: a new
+  // row that writes the map must fail here and force the author to say so.
+  assert.deepStrictEqual(rows.filter((k) => !WRITERS.includes(k)),
+    ['workbench:fs.find', 'workbench:fs.list', 'workbench:fs.read', 'workbench:fs.write',
+     'workbench:scm.branches', 'workbench:scm.checkout', 'workbench:scm.commit',
+     'workbench:scm.diff', 'workbench:scm.discard', 'workbench:scm.remote',
+     'workbench:scm.stage', 'workbench:scm.status', 'workbench:scm.unstage',
+     'workbench:wt.create', 'workbench:wt.list', 'workbench:wt.remove',
+     'workbench:wt.selected'],
     'wt.select is gone — a row whose only purpose was to be called first');
   cleanup();
 });
@@ -434,4 +456,204 @@ test('the peer refusal is untouched by selection — fsScope still runs first', 
   assert.deepStrictEqual(res, { ok: false, error: 'remote' },
     'a selection cannot smuggle a peer session past MUST-FIX 5');
   cleanup();
+});
+
+// ── Folder root (t277): browsing OUTSIDE the session cwd, deliberately ──────
+// This row re-introduces the capability engine.js's wt.apply block describes as
+// a defect, so what these pin is not "it works" but the three properties that
+// keep it from being that defect again:
+//
+//   * only a deliberate gesture can set it — the row takes a path and validates
+//     it AT THE WRITE, so a renderer that hands it a computed or bogus path is
+//     refused rather than obeyed (the four refusal cases below);
+//   * it is never invisible — wt.selected reports `kind`, which is what lets the
+//     indicator say "folder" instead of mislabelling it "worktree";
+//   * there is no unvalidated second writer — one map, one entry per session,
+//     asserted above and by the mutual-exclusion pair below.
+
+test('fs.setRoot accepts a real absolute directory and moves EVERY scoped row', async () => {
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-folder-'));
+  const { engine, calls, cleanup } = boot();
+  try {
+    const res = await engine.dispatch('workbench', 'fs.setRoot', ['seat', real], 'desktop');
+    assert.deepStrictEqual(res, { ok: true, root: real, kind: 'folder' });
+    for (const [method, args] of NAME_SCOPED_ROWS) {
+      calls.length = 0;
+      await engine.dispatch('workbench', method, args, 'desktop');
+      assert.strictEqual(calls[0].args[0], real,
+        `${method} must follow the folder root — Files and Source cannot diverge`);
+    }
+  } finally {
+    fs.rmSync(real, { recursive: true, force: true });
+    cleanup();
+  }
+});
+
+test('fs.setRoot refuses a file, a missing path and a relative path — and writes nothing', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-folder-bad-'));
+  const filePath = path.join(dir, 'a.txt');
+  fs.writeFileSync(filePath, 'x');
+  const { engine, calls, cleanup } = boot();
+  try {
+    // A FILE is the case a bare existence check would wave through: it exists,
+    // and effectiveRoot's statSync would not have objected to the path itself.
+    assert.deepStrictEqual(
+      await engine.dispatch('workbench', 'fs.setRoot', ['seat', filePath], 'desktop'),
+      { ok: false, error: 'Not a directory' });
+    assert.deepStrictEqual(
+      await engine.dispatch('workbench', 'fs.setRoot', ['seat', path.join(dir, 'nope')], 'desktop'),
+      { ok: false, error: 'No such directory' });
+    // Relative is refused BEFORE stat: a relative path would otherwise resolve
+    // against the Clodex process's cwd, which is not any session's directory.
+    assert.deepStrictEqual(
+      await engine.dispatch('workbench', 'fs.setRoot', ['seat', 'plugins'], 'desktop'),
+      { ok: false, error: 'Not an absolute path' });
+    assert.deepStrictEqual(
+      await engine.dispatch('workbench', 'fs.setRoot', ['seat', { path: dir }], 'desktop'),
+      { ok: false, error: 'Not an absolute path' }, 'a non-string is not a path');
+
+    // None of the four wrote: the rows still read the session cwd.
+    calls.length = 0;
+    const list = await engine.dispatch('workbench', 'fs.list', ['seat', ''], 'desktop');
+    assert.strictEqual(list.ok, true);
+    assert.strictEqual(calls[0].args[0], '/repo/seat',
+      'a refused setRoot must leave the root at the session cwd');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    cleanup();
+  }
+});
+
+test('fs.setRoot with null clears back to the session cwd', async () => {
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-folder-clear-'));
+  const { engine, calls, cleanup } = boot();
+  try {
+    assert.strictEqual((await engine.dispatch('workbench', 'fs.setRoot', ['seat', real], 'desktop')).ok,
+      true, 'ENTER: a root must actually be set, or "cleared" is vacuous');
+    assert.deepStrictEqual(
+      await engine.dispatch('workbench', 'fs.setRoot', ['seat', null], 'desktop'),
+      { ok: true, root: null });
+    calls.length = 0;
+    await engine.dispatch('workbench', 'fs.list', ['seat', ''], 'desktop');
+    assert.strictEqual(calls[0].args[0], '/repo/seat');
+  } finally {
+    fs.rmSync(real, { recursive: true, force: true });
+    cleanup();
+  }
+});
+
+test('a folder root and a worktree root are MUTUALLY EXCLUSIVE, in both directions', async () => {
+  // One map, one entry per session — so this is structural, not a precedence
+  // rule. Both directions, because a second map would satisfy one of them.
+  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-wt-x-'));
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-folder-x-'));
+  const { engine, calls, cleanup } = boot({ worktrees: ['/repo/seat', wt] });
+  const rootOfNextList = async () => {
+    calls.length = 0;
+    await engine.dispatch('workbench', 'fs.list', ['seat', ''], 'desktop');
+    return calls[0].args[0];
+  };
+  try {
+    assert.strictEqual((await engine.dispatch('workbench', 'wt.apply', ['seat', wt], 'desktop')).ok, true);
+    assert.strictEqual(await rootOfNextList(), wt, 'ENTER: the worktree root is really active');
+
+    // Folder over worktree.
+    assert.strictEqual((await engine.dispatch('workbench', 'fs.setRoot', ['seat', folder], 'desktop')).ok, true);
+    assert.strictEqual(await rootOfNextList(), folder, 'the folder root replaced the worktree');
+    let sel = await engine.dispatch('workbench', 'wt.selected', ['seat'], 'desktop');
+    assert.strictEqual(sel.kind, 'folder', 'and the indicator is told which kind it is');
+    assert.strictEqual(sel.selected, folder);
+
+    // Worktree back over folder.
+    assert.strictEqual((await engine.dispatch('workbench', 'wt.apply', ['seat', wt], 'desktop')).ok, true);
+    assert.strictEqual(await rootOfNextList(), wt, 'the worktree root replaced the folder');
+    sel = await engine.dispatch('workbench', 'wt.selected', ['seat'], 'desktop');
+    assert.strictEqual(sel.kind, 'worktree', 'and is labelled a worktree again');
+  } finally {
+    fs.rmSync(wt, { recursive: true, force: true });
+    fs.rmSync(folder, { recursive: true, force: true });
+    cleanup();
+  }
+});
+
+test('fs.setRoot refuses a peer session with the exact "remote" string', async () => {
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-folder-peer-'));
+  const { engine, calls, cleanup } = boot();
+  try {
+    assert.deepStrictEqual(
+      await engine.dispatch('workbench', 'fs.setRoot', ['far', real], 'desktop'),
+      { ok: false, error: 'remote' },
+      'fsScope runs FIRST here too — a new row must not be the one that forgets');
+    assert.deepStrictEqual(calls, [], 'a peer session never reaches the filesystem');
+    // And the other two fsScope refusals reach the caller unchanged.
+    assert.deepStrictEqual(
+      await engine.dispatch('workbench', 'fs.setRoot', ['nobody', real], 'desktop'),
+      { ok: false, error: 'Session not found' });
+    assert.deepStrictEqual(
+      await engine.dispatch('workbench', 'fs.setRoot', ['bare', real], 'desktop'),
+      { ok: false, error: 'Session has no working directory' });
+  } finally {
+    fs.rmSync(real, { recursive: true, force: true });
+    cleanup();
+  }
+});
+
+test('a folder root that vanishes DROPS to the session cwd, like a worktree does', async () => {
+  const gone = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-folder-gone-'));
+  const { engine, cleanup } = boot();
+  assert.strictEqual((await engine.dispatch('workbench', 'fs.setRoot', ['seat', gone], 'desktop')).ok,
+    true, 'ENTER: the folder root is set before it is destroyed');
+  fs.rmSync(gone, { recursive: true, force: true });
+  const sel = await engine.dispatch('workbench', 'wt.selected', ['seat'], 'desktop');
+  assert.strictEqual(sel.root, '/repo/seat');
+  assert.strictEqual(sel.selected, null);
+  assert.strictEqual(sel.kind, null, 'a hidden indicator must not carry a label');
+  assert.strictEqual(sel.dropped, true);
+  cleanup();
+});
+
+test('wt.selected reports kind null when nothing is selected', async () => {
+  const { engine, cleanup } = boot();
+  const sel = await engine.dispatch('workbench', 'wt.selected', ['seat'], 'desktop');
+  assert.deepStrictEqual(sel,
+    { ok: true, root: '/repo/seat', cwd: '/repo/seat', selected: null, kind: null, dropped: false });
+  cleanup();
+});
+
+// ── The renderer half's side of the visibility property ─────────────────────
+test('t277: the indicator label word comes from the engine kind, never a constant', () => {
+  // The one thing that makes the folder root non-invisible is that it is NOT
+  // labelled "worktree". A hardcoded label would pass every engine test above
+  // and still ship the defect's second property.
+  const code = rendererSrc.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(code, /kind === 'folder' \? 'folder' : 'worktree'/,
+    'the label is derived from wt.selected\'s kind');
+  assert.ok(!/wb-root-label">worktree/.test(code),
+    'and "worktree" is never baked into the indicator markup');
+});
+
+test('t277: Go to Folder uses the host picker, and Up cannot spin at the fs root', () => {
+  const code = rendererSrc.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(code, /ui\.pickDirectory\(\)/,
+    'the native dialog arrives through the host surface — a plugin cannot reach window.api');
+  assert.ok(!/window\.api/.test(code), 'and never through window.api');
+  assert.match(code, /upBtn\.disabled/, 'Up is disabled rather than looping on dirname("/")');
+});
+
+test('wt.selected reports no kind when the root resolves to the session cwd', async () => {
+  // Setting the root to the session's OWN directory is a real gesture — Up from
+  // a child, or picking the cwd in the dialog. `selected` is null there (there
+  // is nothing to indicate), so `kind` must be null too: the renderer hides the
+  // indicator on `selected`, and a surviving label would be one attached to
+  // nothing. Only reachable with a session whose cwd exists on disk, which is
+  // what `realCwd` is for.
+  const { engine, cleanup, realCwd } = boot();
+  try {
+    const applied = await engine.dispatch('workbench', 'fs.setRoot', ['real', realCwd], 'desktop');
+    assert.deepStrictEqual(applied, { ok: true, root: realCwd, kind: 'folder' },
+      'ENTER: the map really holds a live folder entry — otherwise this proves nothing');
+    const sel = await engine.dispatch('workbench', 'wt.selected', ['real'], 'desktop');
+    assert.deepStrictEqual(sel,
+      { ok: true, root: realCwd, cwd: realCwd, selected: null, kind: null, dropped: false });
+  } finally { cleanup(); }
 });

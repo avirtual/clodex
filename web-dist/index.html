@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Clodex</title>
   <style>
-/* node_modules/@xterm/xterm/css/xterm.css */
+/* ../wb-wrap-ui/node_modules/@xterm/xterm/css/xterm.css */
 .xterm {
   cursor: text;
   position: relative;
@@ -8809,13 +8809,15 @@ body {
     <button type="button" class="popover-close" id="workbench-close" title="Close" aria-label="Close">&times;</button>
   </div>
   <div id="wb-root-indicator" class="wb-root-indicator hidden" role="button" tabindex="0"
-       data-tip="Working in a selected worktree \u2014 click to return to the session directory"></div>
+       data-tip="Working outside the session directory \u2014 click to return to it"></div>
   <div class="workbench-body">
     <div class="workbench-left">
       <!-- Files: lazy tree -->
       <div id="wb-files-panel" class="workbench-panel">
         <div class="workbench-panel-bar">
           <span id="wb-files-scope" class="workbench-scope"></span>
+          <button id="wb-files-up" type="button" data-tip="Browse the parent directory">Up</button>
+          <button id="wb-files-goto" type="button" data-tip="Browse any folder \u2014 moves Source Control too">Go to Folder\u2026</button>
           <button id="wb-files-refresh" type="button">Refresh</button>
         </div>
         <input type="text" id="wb-locate" class="sidebar-search wb-locate" placeholder="Go to file\u2026 (type to filter)" spellcheck="false" autocomplete="off">
@@ -8939,6 +8941,13 @@ body {
           const rootIndicator = $("wb-root-indicator");
           let activeRoot = null;
           async function refreshRootIndicator() {
+            try {
+              await paintRootIndicator();
+            } finally {
+              syncUpButton();
+            }
+          }
+          async function paintRootIndicator() {
             const name = activeName();
             if (!name) {
               activeRoot = null;
@@ -8951,7 +8960,7 @@ body {
               rootIndicator.classList.add("hidden");
               return;
             }
-            if (res.dropped) toast("Selected worktree is gone \u2014 back to the session directory.");
+            if (res.dropped) toast("Selected root is gone \u2014 back to the session directory.");
             activeRoot = res.selected;
             if (!activeRoot) {
               rootIndicator.classList.add("hidden");
@@ -8959,24 +8968,25 @@ body {
               return;
             }
             const leaf = activeRoot.split("/").filter(Boolean).pop() || activeRoot;
-            rootIndicator.innerHTML = `<span class="wb-root-label">worktree</span> ${esc(leaf)}<span class="wb-root-reset">\u2715 session dir</span>`;
+            const label = res.kind === "folder" ? "folder" : "worktree";
+            rootIndicator.innerHTML = `<span class="wb-root-label">${esc(label)}</span> ${esc(leaf)}<span class="wb-root-reset">\u2715 session dir</span>`;
             rootIndicator.title = activeRoot;
             rootIndicator.classList.remove("hidden");
           }
-          async function clearWorktree() {
+          async function clearRoot() {
             const name = activeName();
             if (!name) return;
             if (!confirmDiscardEdit()) return;
-            await h.invoke("wt.apply", name, null);
+            await h.invoke("fs.setRoot", name, null);
             resetEditor();
             await refreshRootIndicator();
             refreshTab();
           }
-          rootIndicator.addEventListener("click", clearWorktree);
+          rootIndicator.addEventListener("click", clearRoot);
           rootIndicator.addEventListener("keydown", (e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              clearWorktree();
+              clearRoot();
             }
           });
           async function selectWorktree(name, worktreePath) {
@@ -8991,6 +9001,42 @@ body {
             await refreshRootIndicator();
             refreshTab();
           }
+          const upBtn = $("wb-files-up");
+          const parentOf = (p) => {
+            const s = String(p || "").replace(/\/+$/, "");
+            const i = s.lastIndexOf("/");
+            if (i < 0) return null;
+            return i === 0 ? "/" : s.slice(0, i);
+          };
+          function syncUpButton() {
+            const cur = activeRoot || curCwd();
+            upBtn.disabled = !cur || !parentOf(cur);
+          }
+          async function setFolderRoot(dir) {
+            const name = activeName();
+            if (!name) return;
+            if (!confirmDiscardEdit()) return;
+            const res = await h.invoke("fs.setRoot", name, dir);
+            if (!res || !res.ok) {
+              toast(`Can't use that folder: ${res && res.error || "unknown"}`);
+              return;
+            }
+            resetEditor();
+            expExpanded.clear();
+            await refreshRootIndicator();
+            refreshTab();
+          }
+          $("wb-files-goto").addEventListener("click", async () => {
+            if (!activeName()) return;
+            const dir = await h.ui.pickDirectory();
+            if (!dir) return;
+            await setFolderRoot(dir);
+          });
+          upBtn.addEventListener("click", async () => {
+            const parent = parentOf(activeRoot || curCwd());
+            if (!parent) return;
+            await setFolderRoot(parent);
+          });
           sessionSel.addEventListener("change", () => {
             if (!confirmDiscardEdit()) {
               sessionSel.value = selName || "";
@@ -9568,9 +9614,9 @@ body {
     }
   });
 
-  // node_modules/@xterm/xterm/lib/xterm.js
+  // ../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js
   var require_xterm = __commonJS({
-    "node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
       !(function(e, t) {
         if ("object" == typeof exports && "object" == typeof module) module.exports = t();
         else if ("function" == typeof define && define.amd) define([], t);
@@ -15627,9 +15673,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-fit/lib/addon-fit.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js
   var require_addon_fit = __commonJS({
-    "node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.FitAddon = t() : e.FitAddon = t();
       })(self, (() => (() => {
@@ -15663,9 +15709,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-search/lib/addon-search.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js
   var require_addon_search = __commonJS({
-    "node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.SearchAddon = t() : e.SearchAddon = t();
       })(globalThis, (() => (() => {
@@ -18624,9 +18670,9 @@ ${i3.join("\n")}
     }
   });
 
-  // node_modules/@xterm/addon-web-links/lib/addon-web-links.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js
   var require_addon_web_links = __commonJS({
-    "node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.WebLinksAddon = t() : e.WebLinksAddon = t();
       })(self, (() => (() => {
@@ -27965,6 +28011,11 @@ ${detail}` });
         // (p) -> void   (window.api.fileOpen — reveal in Finder)
         showToast,
         // (msg, opts) -> void
+        // () -> Promise<string|null>  (window.api.selectDirectory — the EXISTING
+        // dialog:selectDirectory row, not a new one). A plugin cannot reach window.api,
+        // so a native picker has to arrive as a dep; delegating keeps one main-process
+        // row behind both core's callers and plugins'.
+        selectDirectory,
         // No `= () => null` default here: the leak scanner's param matcher cannot
         // cross nested parens, and a defaulted arrow hides every dep above it.
         getWorkspaceId,
@@ -28478,6 +28529,9 @@ ${detail}` });
               openPath: (p) => {
                 if (openPath) openPath(String(p));
               },
+              // Resolves null on cancel AND when the dep is absent, so a caller only ever has
+              // the one "no directory" branch to write.
+              pickDirectory: () => selectDirectory ? selectDirectory() : Promise.resolve(null),
               showToast: (msg, opts) => {
                 if (showToast) showToast(String(msg), opts || {});
                 else {
@@ -31026,6 +31080,7 @@ ${detail}` });
         listSessions: () => window.api.listSessions(),
         openPath: (p) => window.api.fileOpen(p),
         showToast,
+        selectDirectory: () => window.api.selectDirectory(),
         pluginReachesSession
       });
       async function activatePluginRenderer(id) {

@@ -16,6 +16,11 @@ function initPluginHost({
   listSessions,              // () -> Promise<[{name,type,cwd,…}]>  (session:list — WORKSPACE-SCOPED)
   openPath,                  // (p) -> void   (window.api.fileOpen — reveal in Finder)
   showToast,                 // (msg, opts) -> void
+// () -> Promise<string|null>  (window.api.selectDirectory — the EXISTING
+// dialog:selectDirectory row, not a new one). A plugin cannot reach window.api,
+// so a native picker has to arrive as a dep; delegating keeps one main-process
+// row behind both core's callers and plugins'.
+  selectDirectory,
 // No `= () => null` default here: the leak scanner's param matcher cannot
 // cross nested parens, and a defaulted arrow hides every dep above it.
   getWorkspaceId,
@@ -481,6 +486,9 @@ function initPluginHost({
       }),
       ui: Object.freeze({
         openPath: (p) => { if (openPath) openPath(String(p)); },
+// Resolves null on cancel AND when the dep is absent, so a caller only ever has
+// the one "no directory" branch to write.
+        pickDirectory: () => (selectDirectory ? selectDirectory() : Promise.resolve(null)),
         showToast: (msg, opts) => {
           if (showToast) showToast(String(msg), opts || {});
           else { try { console.warn(`[plugin:${pluginId}]`, msg); } catch {} }

@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- **The Workbench can now browse any folder, not just the session's own
+  directory.** "Go to Folder…" in the Files panel opens a native chooser, and
+  "Up" steps to the parent. The chosen folder becomes the working root for
+  Source Control too, so the two panels can never end up showing different
+  trees — if you browse into a different repository, Source Control shows that
+  repository. The banner that already appeared for a selected worktree now
+  appears for a browsed folder as well, and says "folder" rather than
+  "worktree", because it is what tells you which tree a Commit is about to
+  write to. Clicking it returns you to the session directory. Nothing is
+  remembered across restarts: Clodex always reopens on the session's own
+  directory.
+
 - **Keep-warm can now be set to "Always" on a session that should never go
   cold.** The fire button's menu gains an Always option next to 1/4/8 hours.
   Unlike a duration it is a property of the seat, not a one-off arming: it has
