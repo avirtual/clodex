@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — A branch and a checkout for every teammate
 
 - **Teammates can now work on the same repo at the same time, each in its own
   checkout.** `[agent:spawn name:X cwd:Y worktree:<branch>]` boots the new seat
