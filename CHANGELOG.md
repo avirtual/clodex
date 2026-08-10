@@ -8,23 +8,11 @@ Keep `Unreleased` current as work lands. `scripts/release.sh` publishes it
 verbatim as the release notes, then stamps it with the version and date and
 opens a fresh empty one — so anything missing from it is missing from the
 release. Text after `## Unreleased —` becomes the release subtitle. An empty or
-
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — notes you can click, folders you can browse
 
-- **The file peek opens above the inbox drawer, not behind it.** A path
-  clicked in a note used to open the peek underneath the drawer that
-  launched it. `#main` is `position: fixed`, so a full-screen overlay
-  nested inside it was flattened to `#main`'s stacking order however high
-  its own z-index; the peek and the report panel now live at the document
-  root. Also fixed for the report panel, which had the same latent trap.
-- **The Workbench's browse controls no longer appear on the web frontend.**
-  "Go to Folder…" and "Up" are desktop-only: repointing the root from a
-  browser would let the read methods walk any directory on the server, so
-  the write is refused there. The buttons used to be present and fail into
-  a toast; now they are absent.
 - **Links and file paths in inbox notes are now clickable.** Agents routinely
   put a URL or a `renderer.js:71` in a `[agent:notify-user]` note, and both used
   to be dead text you had to retype. A URL opens in your browser; a path opens
@@ -83,6 +71,18 @@ blocks a release.
   popover's button it works on a peer that is offline — which was the one case
   where you could not pause at all. The popover's button now says "Pause" too,
   matching the "paused" the header has always shown.
+
+- **The file peek opens above the inbox drawer, not behind it.** A path
+  clicked in a note used to open the peek underneath the drawer that
+  launched it. `#main` is `position: fixed`, so a full-screen overlay
+  nested inside it was flattened to `#main`'s stacking order however high
+  its own z-index; the peek and the report panel now live at the document
+  root. Also fixed for the report panel, which had the same latent trap.
+- **The Workbench's browse controls no longer appear on the web frontend.**
+  "Go to Folder…" and "Up" are desktop-only: repointing the root from a
+  browser would let the read methods walk any directory on the server, so
+  the write is refused there. The buttons used to be present and fail into
+  a toast; now they are absent.
 
 ## 5.4.0 — 2026-08-10 — A branch and a checkout for every teammate
 
