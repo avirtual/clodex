@@ -613,6 +613,12 @@ function createSessionManager(deps) {
             if (t.sessionId && s.sessionId !== t.sessionId) {
               if (this._wireSessionCorroborated(s, t.sessionId)) {
                 s.sessionId = t.sessionId;
+                // The keeper is keyed on the wire's sessionId, so a /clear that
+                // mints a new one strands the hold on the dead key. Re-open the
+                // re-arm gate below or the seat is never re-armed until the app
+                // restarts — unbounded for a perpetual seat, whose whole promise
+                // is that it never goes cold.
+                s._holdRearmed = false;
                 getPersistence().setSessionId(t.agent, t.sessionId);
                 this._noteConversationForDigest(s, t.sessionId);
               } else {
@@ -777,11 +783,15 @@ function createSessionManager(deps) {
           // set would re-arm it on the next restart and burn the same two pings
           // again, forever — which is the waste the 2-strike disarm exists to stop.
           if (ev.cause === 'failures' && name) {
-            getPersistence().setHoldUntil(name, null);
+            // Flag first, deadline second: the flag is the one that re-arms
+            // forever, so if only one of these two writes lands it must not be
+            // the one that leaves a perpetual seat armed.
             getPersistence().setKeepWarmAlways(name, false);
+            getPersistence().setHoldUntil(name, null);
           }
           log.info('keepwarm', `disarmed ${name || ev.session} (${ev.cause || 'unknown'}` +
-            `${ev.pings != null ? `, ${ev.pings} pings` : ''})`);
+            `${ev.pings != null ? `, ${ev.pings} pings` : ''}` +
+            `${ev.lastResult ? `, last ${ev.lastResult}` : ''})`);
         } else if (ev.event === 'ping' && ev.result && ev.result.ok === false && !ev.result.skipped) {
           const name = this._nameForWireSession(ev.session);
           const r = ev.result;

@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
-const { HoldKeeper, holdDecision, rearmPlan } = require('../wire/hold');
+const { HoldKeeper, holdDecision, pingOutcome, rearmPlan } = require('../wire/hold');
 const { WarmthStore, prefixHash } = require('../wire/warmth');
 const { WireProxy } = require('../wire/proxy');
 
@@ -75,18 +75,53 @@ test('holdDecision: full verdict matrix', () => {
   assert.equal(holdDecision(hold, true, { found: true, remaining_s: 500 }, 1000, { marginSeconds: 600 })[0], 'ping');
 });
 
+// The failure budget is the ONLY thing that ends a perpetual hold, and its
+// disarm also clears the persisted seat property — so whatever this function
+// calls a 'failure' is what can silently erase the operator's setting on an
+// unattended seat. Two of anything scored here as a strike, back to back, is
+// enough; a failed ping never restamps the ledger, so the prefix stays due and
+// strike two lands on the very next tick a minute later.
+test('pingOutcome: only a credential-shaped rejection spends a failure strike', () => {
+  assert.deepStrictEqual(pingOutcome({ ok: true, warmed: true, status_code: 200 }), ['warmed', 'warmed']);
+
+  // The warm-only gate declining — the prefix raced to cold between the tick's
+  // decision and the ping. Nothing was even sent.
+  assert.deepStrictEqual(pingOutcome({ ok: true, warmed: false, skipped: 'cold' }), ['decline', 'declined:cold']);
+  assert.deepStrictEqual(pingOutcome({ ok: true, warmed: false, skipped: 'absent' }), ['decline', 'declined:absent']);
+
+  // No status at all: DNS, connection refused, reset, a closed laptop lid.
+  assert.deepStrictEqual(pingOutcome({ ok: false, status_code: null }), ['decline', 'declined:transport']);
+  // ...including the early returns that never reach the wire and so carry no
+  // status_code key whatsoever.
+  assert.deepStrictEqual(pingOutcome({ ok: false, warmed: false }), ['decline', 'declined:transport']);
+
+  // Retryable upstream: the account is fine, the service is not.
+  for (const s of [408, 429, 500, 502, 503, 529]) {
+    assert.deepStrictEqual(pingOutcome({ ok: false, status_code: s }), ['decline', `declined:${s}`], `status ${s}`);
+  }
+
+  // The shape this bound exists for: nothing in-process can refresh the CLI's
+  // OAuth, so retrying against a rejected credential is pure waste.
+  for (const s of [400, 401, 403, 404, 422]) {
+    assert.deepStrictEqual(pingOutcome({ ok: false, status_code: s }), ['failure', `fail:${s}`], `status ${s}`);
+  }
+});
+
 test('rearmPlan: restore, lapse, and no-op verdicts off a fixed now', () => {
   const now = 1_000_000_000_000; // fixed epoch ms
+  // Whole-object and strict throughout: the caller branches on WHICH key is
+  // present, so a plan carrying an extra key (an `always:false` that the timed
+  // path must not grow, say) is a different instruction than the one asserted.
   // Future deadline -> re-arm for the REMAINING window (hours, unclamped here)
-  assert.deepEqual(rearmPlan(now + 2 * 3600e3, now), { arm: true, hours: 2 });
-  assert.deepEqual(rearmPlan(now + 30 * 60e3, now), { arm: true, hours: 0.5 });
+  assert.deepStrictEqual(rearmPlan(now + 2 * 3600e3, now), { arm: true, hours: 2 });
+  assert.deepStrictEqual(rearmPlan(now + 30 * 60e3, now), { arm: true, hours: 0.5 });
   // Already lapsed (or exactly at deadline) -> clear the stale field, never arm
-  assert.deepEqual(rearmPlan(now - 1, now), { clear: true });
-  assert.deepEqual(rearmPlan(now, now), { clear: true });
+  assert.deepStrictEqual(rearmPlan(now - 1, now), { clear: true });
+  assert.deepStrictEqual(rearmPlan(now, now), { clear: true });
   // Nothing persisted -> no-op (guard flips without touching the keeper)
-  assert.equal(rearmPlan(undefined, now), null);
-  assert.equal(rearmPlan(null, now), null);
-  assert.equal(rearmPlan(0, now), null);
+  assert.strictEqual(rearmPlan(undefined, now), null);
+  assert.strictEqual(rearmPlan(null, now), null);
+  assert.strictEqual(rearmPlan(0, now), null);
 });
 
 // The three limits that each independently kill an infinite hold. A perpetual
@@ -128,16 +163,19 @@ test('rearmPlan: a perpetual seat re-arms with no deadline', () => {
   const now = 1_000_000_000_000; // fixed epoch ms
   // The seat property is the whole intent: a perpetual seat stores no deadline,
   // so it arrives with holdUntil absent — the `> 0` guard must not claim it first.
-  assert.deepEqual(rearmPlan(undefined, now, true), { arm: true, always: true });
-  assert.deepEqual(rearmPlan(null, now, true), { arm: true, always: true });
-  assert.deepEqual(rearmPlan(0, now, true), { arm: true, always: true });
+  // Strict and whole-object: the perpetual plan must carry no `hours` key at
+  // all — the caller passes plan.hours straight into arm(), where a stray 0
+  // would read as the 'off' spelling and disarm the seat it just re-armed.
+  assert.deepStrictEqual(rearmPlan(undefined, now, true), { arm: true, always: true });
+  assert.deepStrictEqual(rearmPlan(null, now, true), { arm: true, always: true });
+  assert.deepStrictEqual(rearmPlan(0, now, true), { arm: true, always: true });
   // A stale deadline left on the record does not outrank the flag, lapsed or not.
-  assert.deepEqual(rearmPlan(now - 5 * 3600e3, now, true), { arm: true, always: true });
-  assert.deepEqual(rearmPlan(now + 2 * 3600e3, now, true), { arm: true, always: true });
+  assert.deepStrictEqual(rearmPlan(now - 5 * 3600e3, now, true), { arm: true, always: true });
+  assert.deepStrictEqual(rearmPlan(now + 2 * 3600e3, now, true), { arm: true, always: true });
   // Flag off (or absent) → the three pre-existing outcomes, byte for byte.
-  assert.deepEqual(rearmPlan(now + 2 * 3600e3, now, false), { arm: true, hours: 2 });
-  assert.deepEqual(rearmPlan(now - 1, now, false), { clear: true });
-  assert.equal(rearmPlan(undefined, now, false), null);
+  assert.deepStrictEqual(rearmPlan(now + 2 * 3600e3, now, false), { arm: true, hours: 2 });
+  assert.deepStrictEqual(rearmPlan(now - 1, now, false), { clear: true });
+  assert.strictEqual(rearmPlan(undefined, now, false), null);
 });
 
 test('noteRequest caches the entry and evicts oldest past the cap', () => {
@@ -307,7 +345,10 @@ test('tick: 2 consecutive ping FAILURES disarm; ping attempts spend budget', asy
   keeper.noteRequest(SID, obj, {}, 'http://up/v1/messages');
   stampWarm(store, obj);
   keeper.arm(SID, 1);
-  responder.reject = true;
+  // 401, not a dropped connection: only a credential-shaped rejection is a
+  // strike (see the pingOutcome matrix). A transport error is a decline and
+  // would never reach two here.
+  responder.status = 401;
 
   clock.t += 250; // due
   await keeper.tick();
@@ -319,6 +360,72 @@ test('tick: 2 consecutive ping FAILURES disarm; ping attempts spend budget', asy
   await keeper.tick(); // 2 failures → disarm before spending again
   assert.deepEqual(keeper.holds(), {});
   assert.match(disarms[0], /consecutive ping failures/);
+});
+
+// pingOutcome's matrix reaching the scoring in tick(). The unit test above
+// cannot see this: the bug it guards was tick() adding a strike for anything
+// that was not `warmed`, which no assertion on the pure function would catch.
+test('tick: declines neither spend the failure budget nor clear a strike already on it', async () => {
+  const { store, keeper, clock, sent, responder } = rig();
+  const obj = makeObj();
+  const disarms = [];
+  keeper.on('hold', (e) => { if (e.event === 'disarmed') disarms.push(e.cause); });
+  keeper.noteRequest(SID, obj, {}, 'http://up/v1/messages');
+  stampWarm(store, obj);
+  keeper.arm(SID, 0, { always: true });
+
+  // Start from a real strike, so the declines that follow have both a count to
+  // wrongly add to and a count to wrongly reset.
+  responder.status = 401;
+  clock.t += 250; // due
+  await keeper.tick();
+  assert.equal(keeper.holds()[SID].failures, 1);
+
+  // Four declines back to back — twice maxFailures. No clock advance is needed:
+  // a non-200 ping never restamps the ledger, so the prefix stays due.
+  responder.reject = true; // transport
+  await keeper.tick();
+  responder.reject = false;
+  for (const s of [429, 503, 408]) {
+    responder.status = s;
+    await keeper.tick();
+  }
+  assert.equal(sent.length, 5, 'ENTER: every tick reached the wire — nothing was skipped short of the ping');
+  assert.deepStrictEqual(disarms, [], 'ENTER: still armed; every assertion below is vacuous once it disarms');
+  const h = keeper.holds()[SID];
+  assert.equal(h.failures, 1, 'a decline is no evidence either way: it neither strikes nor absolves');
+  assert.equal(h.pings, 5, 'a declined attempt still spends the ping budget');
+  assert.equal(h.lastResult, 'declined:408');
+
+  // The counter survived intact, so the next credential rejection is strike two
+  // and the hold dies on the tick after it — the bound is delayed, not lifted.
+  responder.status = 401;
+  await keeper.tick();
+  assert.equal(keeper.holds()[SID].failures, 2);
+  await keeper.tick();
+  assert.deepStrictEqual(keeper.holds(), {});
+  assert.deepStrictEqual(disarms, ['failures']);
+});
+
+// A warmed ping is the only thing that clears the count, and it must clear it
+// fully — otherwise strikes accumulate across unrelated outages until any two
+// in a session's lifetime disarm it.
+test('tick: a successful ping resets the failure count to zero', async () => {
+  const { store, keeper, clock, responder } = rig();
+  const obj = makeObj();
+  keeper.noteRequest(SID, obj, {}, 'http://up/v1/messages');
+  stampWarm(store, obj);
+  keeper.arm(SID, 1);
+
+  responder.status = 401;
+  clock.t += 250;
+  await keeper.tick();
+  assert.equal(keeper.holds()[SID].failures, 1);
+
+  responder.status = 200;
+  await keeper.tick();
+  assert.equal(keeper.holds()[SID].failures, 0);
+  assert.equal(keeper.holds()[SID].lastResult, 'warmed');
 });
 
 test('arm: always builds a deadline-free hold that maxHours cannot clamp', () => {
@@ -366,7 +473,9 @@ test('organic turn on a perpetual hold resets the budget without inventing a dea
   clock.t += 100;
   keeper.noteRequest(SID, obj, {}, 'http://up/v1/messages');
   // hours is null on a perpetual hold, so recomputing `until` here would yield
-  // NaN — and NaN > x is false, which would silently disable the expired branch.
+  // exactly `now` (null * 3600 is 0) — a FINITE, already-lapsed timestamp that
+  // clears session-manager's `ev.until > 0` gate and gets persisted as a real
+  // holdUntil on every organic turn, giving the seat both fields at once.
   const after = keeper.holds()[SID];
   assert.strictEqual(after.until, null);
   assert.strictEqual(after.pings, 0);
@@ -403,7 +512,7 @@ test('tick: a perpetual hold outlives the budget and the deadline, and still die
   assert.deepEqual(disarms, []);
 
   // The failure stop is intact: two dead-credential strikes end it for good.
-  responder.reject = true;
+  responder.status = 401;
   clock.t += 250;
   await keeper.tick();
   assert.equal(keeper.holds()[SID].failures, 1);

@@ -25991,20 +25991,25 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           closeWarmMenu();
           warmMenu = document.createElement("div");
           warmMenu.className = "warm-menu";
+          const ownerName = getActiveSession();
           const items = ['<div class="warm-menu-label">Keep cache warm for</div>'];
           for (const h of [1, 4, 8]) items.push(`<button class="warm-item" data-hours="${h}">${h} hours</button>`);
-          if (proxyState.get(getActiveSession())?.payload?.holdSource === "wire") {
+          if (proxyState.get(ownerName)?.payload?.holdSource === "wire") {
             items.push('<button class="warm-item" data-act="always">Always (until stopped)</button>');
           }
           if (held) items.push('<button class="warm-item warm-stop" data-act="off">Stop keeping warm</button>');
-          const acOn = proxyState.get(getActiveSession())?.payload?.autoCompact !== false;
+          const acOn = proxyState.get(ownerName)?.payload?.autoCompact !== false;
           items.push('<div class="warm-menu-label">When cache is about to cool</div>');
           items.push(`<button class="warm-item warm-autocompact" data-act="autocompact" title="With no keep-warm hold and over 100k context, Clodex runs /compact just before the cache expires \u2014 compacting while warm re-reads the context at cache prices instead of paying a full cold re-write later.">Auto-compact: ${acOn ? "on" : "off"}</button>`);
           warmMenu.innerHTML = items.join("");
           warmMenu.addEventListener("click", async (e) => {
             const item = e.target.closest(".warm-item");
-            if (!item || !getActiveSession()) return;
-            const name = getActiveSession();
+            if (!item || !ownerName) return;
+            if (getActiveSession() !== ownerName) {
+              closeWarmMenu();
+              return;
+            }
+            const name = ownerName;
             closeWarmMenu();
             if (item.dataset.act === "autocompact") {
               await window.api.setAutoCompact(name, !acOn);
@@ -26035,7 +26040,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const hours = always ? 0 : opts.hours;
           const ask = always ? `Keep "${name}" prompt cache warm ALWAYS?
 
-No deadline: it keeps pinging (~1 token each) whenever the cache nears expiry, and re-arms itself after an app restart, until you stop it. It still stops on its own if two pings fail in a row (usually expired credentials).` : `Keep "${name}" prompt cache warm for ${hours}h?
+No deadline: it keeps pinging (~1 token each) whenever the cache nears expiry, until you stop it. After an app restart it re-arms itself on the seat's next turn. It still stops on its own if two pings are rejected in a row (expired credentials, which Clodex cannot refresh for you).` : `Keep "${name}" prompt cache warm for ${hours}h?
 
 The proxy auto-pings to refresh the cache until ${hours}h after the last turn; each ping costs ~1 token.`;
           if (!confirm(ask)) return;

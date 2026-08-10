@@ -94,6 +94,33 @@ function holdDecision(hold, hasEntry, warmthQ, now, caps = {}) {
   return ['ping', 'due'];
 }
 
+// How one ping result scores against the failure budget — PURE
+// (offline-testable). Returns [kind, label]; only 'failure' spends a strike,
+// and only 'warmed' clears the count.
+//
+// The 2-strike disarm exists for exactly ONE condition: an OAuth credential the
+// CLI owns and nothing in-process can refresh (see header). Only a
+// credential-shaped rejection may spend it. Everything transient must decline
+// instead — a transport error or a retryable upstream status is not evidence of
+// a dead credential, and on a perpetual hold it is fatal to treat it as one:
+// `failures` resets only on a warmed ping or an organic turn, so on an idle seat
+// strikes accumulate across an unbounded lifetime and two unrelated blips weeks
+// apart disarm it. Worse, a failed ping never restamps the ledger, so the prefix
+// stays due and strike two lands on the NEXT tick — one minute without network
+// would permanently erase the operator's setting on an unattended seat.
+//
+// Declining is self-bounding rather than an unbounded retry loop: the prefix
+// only stays due while it is still warm, and an outage that outlasts the cache
+// turns it cold, at which point holdDecision skips on its own.
+function pingOutcome(res) {
+  if (res.warmed) return ['warmed', 'warmed'];
+  if (res.skipped) return ['decline', `declined:${res.skipped}`]; // warm-only gate (race to cold)
+  const s = res.status_code;
+  if (s == null) return ['decline', 'declined:transport']; // DNS, refused, reset, closed lid
+  if (s === 408 || s === 429 || s >= 500) return ['decline', `declined:${s}`]; // retryable upstream
+  return ['failure', `fail:${s}`]; // 401/403 and friends: the credential shape this bounds
+}
+
 // PURE re-arm planning for a persisted hold INTENT seen on a session's first
 // main-line turn after an app restart. The keeper itself is in-memory by design
 // (header), so the intent — not the last-request bytes — is what survives on the
@@ -174,9 +201,12 @@ class HoldKeeper extends EventEmitter {
     }
     const hold = this._holds.get(sessionId);
     if (hold) {
-      // A perpetual hold has hours:null — recomputing `until` here would make it
-      // NaN, and NaN > x is false, so the expired branch would silently stop
-      // firing for every hold that later became non-perpetual.
+      // A perpetual hold keeps until:null through an organic turn. Recomputing
+      // it would yield `now` (hours is null, and null*3600 is 0), which is a
+      // FINITE past timestamp — so the 're-anchored' emit below would pass the
+      // `ev.until > 0` gate in session-manager and persist a bogus,
+      // already-lapsed holdUntil on a perpetual seat on every single turn,
+      // producing the both-fields-set state this design forbids.
       if (!hold.always) hold.until = now + hold.hours * 3600;
       hold.pings = 0;
       hold.failures = 0;
@@ -356,23 +386,19 @@ class HoldKeeper extends EventEmitter {
         const [action, reason, cause] = holdDecision(hold, !!entry, wq, now, this);
         if (action === 'disarm') {
           this._holds.delete(sid);
-          this.emit('hold', { session: sid, event: 'disarmed', reason, cause, pings: hold.pings });
+          this.emit('hold', { session: sid, event: 'disarmed', reason, cause, pings: hold.pings, lastResult: hold.lastResult ?? null });
         } else if (action === 'ping') {
           const res = await this.ping(sid);
           const cur = this._holds.get(sid); // may have been disarmed mid-await
           if (cur) {
             cur.pings += 1;
             cur.lastPingTs = now;
-            if (res.warmed) {
-              cur.failures = 0;
-              cur.lastResult = 'warmed';
-            } else if (res.skipped) {
-              // clean warm-only decline (race to cold) — not a failure
-              cur.lastResult = `declined:${res.skipped}`;
-            } else {
-              cur.failures += 1;
-              cur.lastResult = `fail:${res.status_code ?? 'transport'}`;
-            }
+            const [kind, label] = pingOutcome(res);
+            cur.lastResult = label;
+            // A decline neither spends a strike nor clears the count: it is not
+            // evidence either way about the credential.
+            if (kind === 'warmed') cur.failures = 0;
+            else if (kind === 'failure') cur.failures += 1;
           }
           this.emit('hold', { session: sid, event: 'ping', result: res,
             pings: cur ? cur.pings : hold.pings + 1 });
@@ -384,4 +410,4 @@ class HoldKeeper extends EventEmitter {
   }
 }
 
-module.exports = { HoldKeeper, holdDecision, postJson, rearmPlan };
+module.exports = { HoldKeeper, holdDecision, pingOutcome, postJson, rearmPlan };

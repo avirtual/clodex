@@ -32,6 +32,12 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
     closeWarmMenu();
     warmMenu = document.createElement('div');
     warmMenu.className = 'warm-menu';
+    // The session this menu was built FOR. A keyboard switch (Cmd+1..9) does not
+    // close the menu — only an outside CLICK does — so the active session can
+    // change between open and click, and every item below was rendered against
+    // the old one. Acting on getActiveSession() at click time would apply the
+    // wrong seat's menu to the new seat.
+    const ownerName = getActiveSession();
     const items = ['<div class="warm-menu-label">Keep cache warm for</div>'];
     for (const h of [1, 4, 8]) items.push(`<button class="warm-item" data-hours="${h}">${h} hours</button>`);
     // "Always" is a different KIND of choice from a duration (a sticky seat
@@ -40,21 +46,25 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
     // Offered only when the in-process wire owns the hold: the external proxy's
     // /_hold has no perpetual mode and would read the hours=0 we send with it as
     // a DISARM.
-    if (proxyState.get(getActiveSession())?.payload?.holdSource === 'wire') {
+    if (proxyState.get(ownerName)?.payload?.holdSource === 'wire') {
       items.push('<button class="warm-item" data-act="always">Always (until stopped)</button>');
     }
     if (held) items.push('<button class="warm-item warm-stop" data-act="off">Stop keeping warm</button>');
     // Auto-compact-before-cold lives here because it's the OTHER answer to the
     // same moment as keep-warm: the cache is about to expire. Default on; the
     // authoritative state rides the poll payload (main-side persistence).
-    const acOn = proxyState.get(getActiveSession())?.payload?.autoCompact !== false;
+    const acOn = proxyState.get(ownerName)?.payload?.autoCompact !== false;
     items.push('<div class="warm-menu-label">When cache is about to cool</div>');
     items.push(`<button class="warm-item warm-autocompact" data-act="autocompact" title="With no keep-warm hold and over 100k context, Clodex runs /compact just before the cache expires — compacting while warm re-reads the context at cache prices instead of paying a full cold re-write later.">Auto-compact: ${acOn ? 'on' : 'off'}</button>`);
     warmMenu.innerHTML = items.join('');
     warmMenu.addEventListener('click', async (e) => {
       const item = e.target.closest('.warm-item');
-      if (!item || !getActiveSession()) return;
-      const name = getActiveSession();
+      if (!item || !ownerName) return;
+      // Switched seats while the menu was open: these items describe a session
+      // that is no longer active, so drop the click rather than apply them to
+      // the new one.
+      if (getActiveSession() !== ownerName) { closeWarmMenu(); return; }
+      const name = ownerName;
       closeWarmMenu();
       if (item.dataset.act === 'autocompact') {
         await window.api.setAutoCompact(name, !acOn);
@@ -94,7 +104,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
     const always = !!opts.always;
     const hours = always ? 0 : opts.hours;
     const ask = always
-      ? `Keep "${name}" prompt cache warm ALWAYS?\n\nNo deadline: it keeps pinging (~1 token each) whenever the cache nears expiry, and re-arms itself after an app restart, until you stop it. It still stops on its own if two pings fail in a row (usually expired credentials).`
+      ? `Keep "${name}" prompt cache warm ALWAYS?\n\nNo deadline: it keeps pinging (~1 token each) whenever the cache nears expiry, until you stop it. After an app restart it re-arms itself on the seat's next turn. It still stops on its own if two pings are rejected in a row (expired credentials, which Clodex cannot refresh for you).`
       : `Keep "${name}" prompt cache warm for ${hours}h?\n\nThe proxy auto-pings to refresh the cache until ${hours}h after the last turn; each ping costs ~1 token.`;
     if (!confirm(ask)) return;
     let r = await holdApi(name, hours, false, always);

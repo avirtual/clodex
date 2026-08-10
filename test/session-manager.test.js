@@ -403,12 +403,19 @@ test('_maybeDeliverDigest: stray sid (≠ s.sessionId) neither delivers nor mark
 // holdUntil would wrongly lapse-clear a still-valid hold after a restart);
 // failure-strike disarms clear the intent; explicit 'off' is the wire:hold
 // handler's job and is skipped here.
-test('_onHoldLifecycle: re-anchor re-persists, failures clears, off is skipped', () => {
-  const holds = [];
+test('_onHoldLifecycle: re-anchor re-persists, failures clears BOTH intents, off is skipped', () => {
+  // ONE ordered log for both setters, not one array each: the whole point of the
+  // failure branch's write order is that the perpetual flag is cleared before the
+  // deadline, and two separate arrays cannot see an order at all. The body is
+  // also wrapped in a swallow-everything try/catch, so a setter missing from
+  // this fake would abort the branch silently — every assertion here has to be
+  // a positive on the recorded calls, never an absence.
+  const calls = [];
   const m = mk({
     getPersistence: () => ({
       list: () => [], get: () => null,
-      setHoldUntil: (name, v) => holds.push([name, v]),
+      setHoldUntil: (name, v) => calls.push(['setHoldUntil', name, v]),
+      setKeepWarmAlways: (name, v) => calls.push(['setKeepWarmAlways', name, v]),
     }),
     log: { info: () => {}, warn: () => {} },
   });
@@ -416,21 +423,68 @@ test('_onHoldLifecycle: re-anchor re-persists, failures clears, off is skipped',
 
   // Re-anchor: keeper's `until` is epoch SECONDS → persisted as epoch ms.
   m._onHoldLifecycle({ session: 'sid-1', event: 're-anchored', until: 1_700_000_000 });
-  assert.deepStrictEqual(holds, [['a', 1_700_000_000_000]]);
+  assert.deepStrictEqual(calls, [['setHoldUntil', 'a', 1_700_000_000_000]]);
 
   // Unknown wire sid (child claude / rotated id): never touches persistence.
   m._onHoldLifecycle({ session: 'stray', event: 're-anchored', until: 1_700_000_000 });
-  assert.strictEqual(holds.length, 1);
+  assert.strictEqual(calls.length, 1);
 
-  // Failure-strike disarm clears the intent (keys on cause, not reason text).
+  // A perpetual seat's re-anchor carries until:null and must persist NOTHING —
+  // recording `now` here would give the seat both intents at once.
+  m._onHoldLifecycle({ session: 'sid-1', event: 're-anchored', until: null });
+  assert.strictEqual(calls.length, 1);
+
+  // Failure-strike disarm clears BOTH intents (keys on cause, not reason text),
+  // flag first so a half-landed pair can never leave the seat perpetual.
+  calls.length = 0;
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', reason: 'whatever', pings: 3 });
-  assert.deepStrictEqual(holds[1], ['a', null]);
+  assert.deepStrictEqual(calls, [
+    ['setKeepWarmAlways', 'a', false],
+    ['setHoldUntil', 'a', null],
+  ]);
 
   // Explicit off: handled (logged+cleared) by the wire:hold handler — skipped here.
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'off', pings: 0 });
   // Expiry/max-pings: log-only, field clears lazily on the next re-arm check.
+  // A perpetual seat cannot reach either cause, so clearing its flag here would
+  // silently un-set a setting the operator never withdrew.
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'expired', pings: 5 });
-  assert.strictEqual(holds.length, 2);
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'max-pings', pings: 24 });
+  assert.deepStrictEqual(calls, [
+    ['setKeepWarmAlways', 'a', false],
+    ['setHoldUntil', 'a', null],
+  ], 'only the failures cause writes; off/expired/max-pings add nothing');
+});
+
+// Source scan rather than a driven wire, for the same reason as the junction
+// test in plugin-text-feed.test.js: this branch lives inside the
+// `wire.on('turn.completed')` handler registered after an `await wire.listen()`,
+// which a PTY-free unit test cannot reach. What is checked is a POSITION, and
+// position is exactly what is readable from source.
+test('a corroborated sessionId rotation re-opens the hold re-arm gate', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
+
+  // The keeper is keyed on the WIRE's sessionId. A /clear mints a new one, so
+  // the armed hold is stranded on the dead key; without re-opening the gate the
+  // seat stays cold until the app restarts — unbounded on a perpetual seat.
+  const rotate = src.match(/if \(this\._wireSessionCorroborated\(s, t\.sessionId\)\) \{[\s\S]{0,700}?\n(\s*)\} else \{/);
+  assert.ok(rotate, 'ENTER: the corroborated-rotation branch is still shaped as matched');
+  assert.match(rotate[0], /s\.sessionId = t\.sessionId;/, 'the rotation itself');
+  assert.match(rotate[0], /s\._holdRearmed = false;/,
+    'and the re-arm gate re-opens inside it');
+
+  // Corroboration-gated, not unconditional: a stray child-claude sessionId must
+  // not reset the gate, or every subagent turn re-runs the whole re-arm probe.
+  const stray = src.indexOf('wire-stray-session');
+  assert.ok(stray > 0 && src.indexOf('s._holdRearmed = false;') < stray,
+    'the reset sits in the corroborated arm, above the stray-session else');
+
+  // ...and above the re-arm block it feeds, which reads the flag it just cleared.
+  const reset = src.indexOf('s._holdRearmed = false;');
+  const gate = src.indexOf('if (this._holdKeeper && !s._holdRearmed) {');
+  assert.ok(gate > reset, 'the re-arm check runs AFTER the reset, on the same turn');
 });
 
 // --- Compact latch (FIX C) ---------------------------------------------------
