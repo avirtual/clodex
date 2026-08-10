@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — notes you can click, folders you can browse
+## Unreleased
+
+## 5.5.0 — 2026-08-11 — notes you can click, folders you can browse
 
 - **Links and file paths in inbox notes are now clickable.** Agents routinely
   put a URL or a `renderer.js:71` in a `[agent:notify-user]` note, and both used
