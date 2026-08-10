@@ -372,6 +372,12 @@ function openWirescopeWindow(url, backgroundColor) {
     wirescopeWindow.focus();
     return;
   }
+  // Not mergeable with createWindow's BrowserWindow: the webPreferences below
+  // are its exact inverse, and deliberately. This one loads REMOTE wirescope
+  // pages, so it is sandboxed with no preload; the main window loads our own
+  // index.html and needs nodeIntegration for the renderer's require(). Factoring
+  // out a shared builder converges the two postures and hands remote content the
+  // privileged one.
   wirescopeWindow = new BrowserWindow({
     width: 1100,
     height: 800,
