@@ -4734,13 +4734,29 @@ function createSessionManager(deps) {
       const n = String(ticket.id).replace(/^t/, '');
       const name = `${team.name}-${roleKey}-${n}`;
       if (!AGENT_NAME_RE.test(name)) return { ok: false, error: `seat name "${name}" is not name-legal` };
-      // `name` rides the REFUSAL too: the name is derived, so a caller holding a
+      // `name` rides the refusal too: the name is derived, so a caller holding a
       // ticket that already has a seat has no other way to learn which one without
       // re-deriving it, and a second copy of this rule is how the two drift.
       if (this.sessions.has(name) || getPersistence().get(name)) return { ok: false, taken: true, name, error: `seat name "${name}" is taken` };
       const slug = String(ticket.title || '').toLowerCase()
         .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
       return { ok: true, name, branch: slug ? `${ticket.id}-${slug}` : String(ticket.id) };
+    }
+
+    // The live seat working in `treePath`, or null. Read off the PERSISTED record
+    // rather than the session: a seat's cwd is the shared repo (it is told its tree
+    // rather than booted in it), so cwd cannot answer this.
+    _ticketTreeHolder(treePath) {
+      if (!treePath) return null;
+      const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+      const want = real(treePath);
+      for (const s of this.sessions.values()) {
+        if (!s.agentType || s._dead) continue;
+        let rec; try { rec = getPersistence().get(s.name); } catch { rec = null; }
+        const held = rec && rec.worktree && rec.worktree.path;
+        if (held && real(held) === want) return s.name;
+      }
+      return null;
     }
 
     // The ticket's tree, when it still exists — a seat dies, its tree does not.
@@ -4765,7 +4781,16 @@ function createSessionManager(deps) {
       // `locked` is a deliberate "do not touch this tree" the operator set.
       const hit = listed.worktrees.find((e) => e.path && !e.isMain && !e.prunable && !e.locked
         && e.branch === wt.branch && real(e.path) === want);
-      return hit ? { path: wt.path, branch: wt.branch } : null;
+      if (!hit) return null;
+      // Occupancy is the check git used to make for us — it refuses to check one
+      // branch out twice, and that refusal is what caught a ticket moved to a
+      // second worktree role while the first seat was still cd'd into the tree.
+      // Reuse walks around it, so the holder has to be looked for here: two agents
+      // editing one checkout and committing onto one branch is the collision the
+      // whole mechanism exists to prevent. _taskAssign refuses earlier and names
+      // the holder; this is the backstop for every other caller.
+      if (this._ticketTreeHolder(wt.path)) return null;
+      return { path: wt.path, branch: wt.branch };
     }
 
     // Mint the worktree, spawn the seat, then hand it the spec. Async and
@@ -4790,9 +4815,19 @@ function createSessionManager(deps) {
           ticketsStore.save(teamDir, all);
         } catch { /* best-effort — the reply below is the operator-visible half */ }
       };
+      const clearTicketTree = () => {
+        try {
+          const all = ticketsStore.load(teamDir);
+          const t = all.find((x) => x.id === ticket.id);
+          if (!t || !t.worktree) return;
+          delete t.worktree;
+          ticketsStore.save(teamDir, all);
+          delete ticket.worktree;
+        } catch { /* best-effort */ }
+      };
       setImmediate(async () => {
         let wt = null;
-        // A REUSED tree is not this spawn's to destroy: it carries the commits the
+        // A reused tree is not this spawn's to destroy: it carries the commits the
         // previous seat left on the branch, which are the only thing that survived
         // it. Only a tree this spawn created is rolled back below.
         let reused = false;
@@ -4857,8 +4892,17 @@ function createSessionManager(deps) {
           if (wt && !reused) {
             const rm = await gitWorktree.removeWorktree(wt.path).catch(() => ({ ok: false }));
             log.info('worktree', `${rm && rm.ok ? 'removed' : 'ORPHANED'} ${wt.path} after failed ticket spawn of ${seat.name}`);
+            // The pointer dies with the tree. Left behind, a later reuse check
+            // reads a path that no longer exists and the spec sends a hand there.
+            clearTicketTree();
           }
-          unpin();
+          // Un-pin only when the ticket has NO tree to point at. With one — always,
+          // on the reuse path — a role-assigned ticket is matched to every seat
+          // filling that role by _openTicketsFor, so the next hand's replay would
+          // deliver this ticket's WORK IN: line into a different branch's checkout.
+          // A pinned dead assignee is inert by comparison: nothing resolves it, and
+          // the next assign re-enters the respawn path.
+          if (!reused) unpin();
           log.error('intent', `ticket ${ticket.id} seat ${seat.name} failed: ${err.message}`);
           reply(`ticket ${ticket.id}: seat ${seat.name} failed to spawn (${err.message}) — ticket left assigned to "${roleKey}"`);
         }
@@ -4956,12 +5000,17 @@ function createSessionManager(deps) {
       // works in the shared checkout holding a spec written for an isolated tree.
       const wtDef = this._ticketWorktreeRole(team, assignee);
       const minted = wtDef ? this._mintTicketSeat(team, assignee, ticket) : null;
-      // The seat name is DERIVED from the ticket id, so "taken" by the ticket's
-      // CURRENT assignee means its own seat is still live: assigning to the role is
-      // how a lead re-sends a spec, and it is not a move. Resolved above the notice
-      // below, which would otherwise tell the hand its ticket went elsewhere.
-      const ownSeat = (minted && minted.taken && minted.name === prev) ? prev : null;
-      const reassigning = !ownSeat && prev != null && prev !== assignee;
+      // The seat name is derived from the ticket id, so "taken" by the ticket's
+      // current assignee means the ticket already has its own seat. Whether that
+      // seat can be TALKED to is a second question: a record outlives an archive,
+      // a natural exit and a non-ephemeral retire, so `taken` alone would send the
+      // spec to a name nothing answers for and report "wait for it to spawn" —
+      // nothing will. Liveness decides between re-send and the stuck reply below.
+      const own = !!(minted && minted.taken && minted.name === prev);
+      const ownSeat = (own && this._ticketAssigneeSeat(team, { assignee: prev }) === prev) ? prev : null;
+      // Resolved above the notice below, which would otherwise tell the hand its
+      // ticket moved elsewhere when it is only being re-sent or is going nowhere.
+      const reassigning = !own && prev != null && prev !== assignee;
       if (reassigning) {
         const oldSeat = this._ticketAssigneeSeat(team, { assignee: prev });
         if (oldSeat && oldSeat !== team.lead) {
@@ -4977,7 +5026,7 @@ function createSessionManager(deps) {
       const wasParked = !!ticket.parked;
       delete ticket.parked;
       // Stay pinned to the live seat. Un-pinning would route the spec, and the
-      // WORK IN: line naming THIS ticket's tree, to whichever seat answers for the
+      // WORK IN: line naming this ticket's tree, to whichever seat answers for the
       // role first — another ticket's hand, mid-work in a different branch.
       if (ownSeat) {
         ticket.assignee = ownSeat;
@@ -4986,8 +5035,39 @@ function createSessionManager(deps) {
         this._reconcileTickets(team, teamDir);
         this._broadcast('ipc-message', { type: 'task', from: session.name, to: ownSeat, body: `ticket ${ticket.id} re-sent` });
         log.info('intent', `task assign by ${session.name}: ${ticket.id} re-sent to its own seat ${ownSeat}`);
-        reply(`ticket ${ticket.id} → ${ownSeat} (its own seat, spec re-sent)${this._ticketDeliverySuffix(d2, ownSeat)}`);
+        reply(`ticket ${ticket.id} → ${ownSeat}${wasParked ? ' (unparked)' : ''} (its own seat, spec re-sent)${this._ticketDeliverySuffix(d2, ownSeat)}`);
         return;
+      }
+      // Taken but not live. Nothing here can fix it: the name is held by a record
+      // this path must not mint over — _spawnTicketSeat calls create() directly,
+      // bypassing the nameConflict front door, so respawning would overwrite the
+      // record and split one name across two sidebar rows. Stay pinned (a pinned
+      // dead assignee is inert; a role-assigned one misroutes this ticket's tree)
+      // and name the two real exits, because no amount of re-assigning reaches one.
+      if (own) {
+        ticket.assignee = prev;
+        ticketsStore.save(teamDir, tickets);
+        this._reconcileTickets(team, teamDir);
+        log.info('intent', `task assign by ${session.name}: ${ticket.id} held — seat ${prev} exists but is not live`);
+        reply(`ticket ${ticket.id} is still pinned to ${prev}, whose session exists but is archived or dead — nothing was delivered. `
+          + `Unarchive it from the sidebar (its spec replays on resume), or Delete Session… to release the name and re-assign.`);
+        return;
+      }
+      // Moving a ticket to a DIFFERENT worktree role is the one case where the
+      // derived seat name changes while the tree does not, so the mint succeeds and
+      // the spawn would reuse a tree its current seat is still working in. Refused
+      // rather than silently spawning beside it: two agents in one checkout commit
+      // over each other on one branch. git used to refuse this itself, before reuse.
+      if (wtDef && minted.ok && ticket.worktree) {
+        const holder = this._ticketTreeHolder(ticket.worktree.path);
+        if (holder) {
+          ticket.assignee = prev;
+          ticketsStore.save(teamDir, tickets);
+          this._reconcileTickets(team, teamDir);
+          log.info('intent', `task assign by ${session.name}: ${ticket.id} refused — tree held by ${holder}`);
+          reply(`ticket ${ticket.id}: its worktree is held by ${holder}, which is still live — retire or delete that seat first, then re-assign. Nothing was changed.`);
+          return;
+        }
       }
       if (wtDef) {
         if (minted.ok) {

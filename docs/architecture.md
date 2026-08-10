@@ -191,17 +191,25 @@ adapter that hosts it. The modules below are what the engine assembles.
   ticket's checkout.
   A ticket that already HAS a tree never mints a second one: the seat name derives
   from the ticket id, so `_mintTicketSeat` returns `taken` with that name.
-  `_taskAssign` splits the two readings of taken — still the ticket's own live
-  seat means re-send the spec to it, un-pinning would hand THIS ticket's tree to
-  another ticket's hand; the seat gone means respawn onto the surviving tree, which
+  `_taskAssign` splits three readings of taken, on LIVENESS not on the record —
+  the ticket's own live seat means re-send the spec to it (un-pinning would hand
+  this ticket's tree to another ticket's hand); a record with no live seat
+  (archive, natural exit, non-ephemeral retire) is a dead end that stays pinned and
+  names its recovery, since respawning would bypass `nameConflict` and split the
+  name across two rows; only a fully released name respawns onto the tree, which
   `_existingTicketTree` re-verifies against `git worktree list` before reuse. The
   check that matters there is `prunable`: a tree deleted outside git keeps its
   admin entry and is listed like a live one, so path+branch alone would hand the
   seat a `WORK IN:` path with nothing at the end of it (`locked` is excluded too —
   an operator's explicit hands-off). `createWorktree` prunes first for the other
   half of the same fact: the stale entry otherwise makes git refuse the branch
-  forever. A reused tree is never rolled back on a failed spawn — it holds the
-  previous seat's commits.
+  forever. `_ticketTreeHolder` is the occupancy gate git used to provide by
+  refusing one branch two checkouts: moving a ticket to a DIFFERENT worktree role
+  keeps the tree while changing the derived name, so reuse would otherwise spawn a
+  second seat into a checkout the first is still editing. A reused tree is never
+  rolled back on a failed spawn (it holds the previous seat's commits) and the
+  ticket is not un-pinned there either — a role-assigned ticket carrying a live
+  `WORK IN:` pointer replays into every seat filling that role.
   The ticket seat's cwd is the REPO, not its worktree: it is TOLD the path by the
   `WORK IN:` line `_deliverTicketSpec` prepends, and cd's there itself. Booting it
   in the tree would bind its transcript, project root and team block to a checkout

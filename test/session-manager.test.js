@@ -8909,6 +8909,10 @@ function mkTicketWt(repo, roleExtra = {}) {
   const upserted = [];
   const removed = [];
   const worktreeSet = [];
+  // The record's worktree is read back to decide whether a tree is OCCUPIED, so
+  // the stub has to carry it. A get() that returns a bare { name } makes every
+  // live seat look like it is in no tree at all.
+  const wtByName = new Map();
   const m = mkPark({
     fs: fsReal, path: pathReal, os: osReal, countPending: countPendingReal,
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
@@ -8917,10 +8921,12 @@ function mkTicketWt(repo, roleExtra = {}) {
     gitWorktree: require('../git-worktree'),
     getPersistence: () => ({
       list: () => [],
-      get: (n) => (upserted.includes(n) ? { name: n } : (n === 'lead' ? { extraArgs: [] } : null)),
+      get: (n) => (upserted.includes(n)
+        ? { name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) }
+        : (n === 'lead' ? { extraArgs: [] } : null)),
       upsert: (e) => upserted.push(e.name),
-      remove: (n) => removed.push(n),
-      setWorktree: (name, wt) => worktreeSet.push({ name, wt }),
+      remove: (n) => { removed.push(n); wtByName.delete(n); },
+      setWorktree: (name, wt) => { worktreeSet.push({ name, wt }); wtByName.set(name, wt); },
       setStripLevel: () => {}, setAutoCompact: () => {},
     }),
     getTemplates: () => ({ list: () => [] }),
@@ -8935,7 +8941,18 @@ function mkTicketWt(repo, roleExtra = {}) {
     m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle' });
     return m.sessions.get(name);
   };
-  return { m, team, teamDir, seat, gated, upserted, removed, worktreeSet,
+  // The two teardowns a ticket seat actually gets, kept apart because the
+  // difference between them is load-bearing: archive KEEPS the persistence record
+  // (so the derived seat name stays taken), kill drops it. A test that only ever
+  // models the kill shape cannot reach the archived-seat path at all.
+  const archiveSeat = (name) => { m.sessions.delete(name); };
+  const killSeat = (name) => {
+    m.sessions.delete(name);
+    const i = upserted.indexOf(name);
+    if (i >= 0) upserted.splice(i, 1);
+    wtByName.delete(name);
+  };
+  return { m, team, teamDir, seat, gated, upserted, removed, worktreeSet, archiveSeat, killSeat,
     load: () => tstore.load(teamDir), one: (id) => tstore.load(teamDir).find((t) => t.id === id) };
 }
 
@@ -9138,9 +9155,9 @@ test('task assign: a ticket whose seat died respawns onto its EXISTING tree', as
   const tree = f.one('t1').worktree;
   assert.ok(tree && tree.path, 'ENTER: the first dispatch must have made a tree to respawn onto');
 
-  // The seat dies. `hand` is ephemeral, so retire discarded its record too.
-  f.m.sessions.delete('team-hand-1');
-  f.upserted.splice(f.upserted.indexOf('team-hand-1'), 1);
+  // Deleted, not archived: that is the teardown which releases the name. The
+  // archived case keeps the record and is a different path (its own test below).
+  f.killSeat('team-hand-1');
   createdCwd = null;
   f.gated.length = 0;
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
@@ -9176,8 +9193,7 @@ test('task assign: a tree removed by hand is not reused — a fresh one is made'
   assert.ok(listed.worktrees.some((w) => w.branch === gone.branch && w.prunable),
     'ENTER: git must still LIST the removed tree, or this asserts nothing');
 
-  f.m.sessions.delete('team-hand-1');
-  f.upserted.splice(f.upserted.indexOf('team-hand-1'), 1);
+  f.killSeat('team-hand-1');
   f.gated.length = 0;
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1') || f.removed.length);
@@ -9188,6 +9204,99 @@ test('task assign: a tree removed by hand is not reused — a fresh one is made'
   const body = f.gated.map((g) => g.body).join('\n');
   assert.match(body, new RegExp(`WORK IN: ${t.worktree.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `),
     'and that is the path it is told to cd into');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// An ARCHIVED seat keeps its record, so the derived name stays taken while no
+// session answers for it. Reusing the live-seat branch here dead-ends: the spec
+// goes to a seat that cannot receive it, and every retry re-enters the same
+// branch. The recovery has to be named, because nothing will spawn on its own.
+test('task assign: a ticket whose seat is ARCHIVED reports the recovery, and stays pinned', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  const said = [];
+  f.m._injectText = (s, t) => { said.push(t); };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+
+  f.archiveSeat('team-hand-1');   // session gone, record KEPT
+  assert.ok(f.upserted.includes('team-hand-1'), 'ENTER: the archived record must survive, or this is the kill path');
+  said.length = 0;
+  f.gated.length = 0;
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
+  for (let i = 0; i < 12; i++) await new Promise((r) => setImmediate(r));
+
+  const t = f.one('t1');
+  assert.strictEqual(t.assignee, 'team-hand-1', 'stays pinned — un-pinning would misroute its tree to another hand');
+  assert.deepStrictEqual(f.gated, [], 'nothing is delivered — no seat can receive it');
+  assert.strictEqual(said.length, 1, 'ENTER: exactly one reply to assert on');
+  assert.match(said[0], /archived/, 'the reply must say WHY nothing happened');
+  assert.match(said[0], /unarchive|Delete Session/,
+    'and name the recovery — "wait for it to spawn" is a lie, nothing will');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// Two worktree-enabled roles is a supported team.json shape, and moving a ticket
+// between them is the one case where the derived seat name CHANGES while the tree
+// does not. git's own "branch already used by worktree" refusal used to catch
+// this; reuse removed that guard, so the occupancy check has to be explicit.
+test('task assign: a tree still held by a live seat is never handed to a second one', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', worktree: true };
+  const cwds = {};
+  f.m.create = async (...args) => { cwds[args[0]] = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  const said = [];
+  f.m._injectText = (s, t) => { said.push(t); };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  const tree = f.one('t1').worktree;
+
+  said.length = 0;
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'builder', id: 't1', body: '' });
+  for (let i = 0; i < 15; i++) await new Promise((r) => setImmediate(r));
+
+  assert.ok(f.m.sessions.has('team-hand-1'), 'ENTER: the holder must still be live, or nothing is contended');
+  assert.ok(!cwds['team-builder-1'],
+    'no second seat may be spawned into a tree another seat is working in');
+  assert.strictEqual(f.one('t1').assignee, 'team-hand-1', 'the ticket stays with the seat holding its tree');
+  assert.strictEqual(said.length, 1, 'ENTER: exactly one reply to assert on');
+  assert.match(said[0], /team-hand-1/, 'the refusal names who holds the tree');
+  assert.deepStrictEqual(f.worktreeSet.map((w) => w.name), ['team-hand-1'],
+    'and no second tree is recorded either');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The failure path un-pins, and with reuse the ticket already carries a live
+// WORK IN: pointer by then. A role-assigned ticket is matched to EVERY seat
+// filling that role, so un-pinning would replay this ticket's tree into an
+// unrelated hand — the exact harm the pinning exists to prevent.
+test('task assign: a failed respawn onto a reused tree leaves the ticket pinned', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  let n = 0;
+  f.m.create = async (...args) => {
+    n += 1;
+    if (n === 2) throw new Error('boom');
+    f.seat(args[0], args[2]);
+    return { name: args[0] };
+  };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  const tree = f.one('t1').worktree;
+  f.killSeat('team-hand-1');
+
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
+  await until(() => n >= 2 && f.removed.includes('team-hand-1'));
+
+  const t = f.one('t1');
+  assert.strictEqual(t.assignee, 'team-hand-1', 'stays pinned: a pinned-but-dead assignee is inert, a role-assigned one misroutes');
+  assert.deepStrictEqual(t.worktree, tree, 'the reused tree is untouched — it holds the previous seat\'s commits');
+  assert.ok(fsReal.existsSync(tree.path), 'and it is still on disk, not rolled back by a spawn that did not create it');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 

@@ -47,7 +47,11 @@ blocks a release.
   it left on the branch are still there; previously the ticket came back
   unassigned with a git error. A checkout you deleted yourself is noticed and a
   fresh one made, rather than the teammate being sent to a directory that is no
-  longer there.
+  longer there. If the teammate is merely archived rather than gone, the ticket
+  says so and tells you the two ways out — unarchive it, or delete the session to
+  free the name — instead of reporting that nothing was delivered and leaving you
+  to guess. And a ticket whose checkout is still held by a live teammate is not
+  moved to another one: you are told who holds it, and nothing is changed.
 
 - **Deleting a worktree's folder by hand no longer burns its branch.** git keeps
   the bookkeeping entry when the directory disappears from under it and then
