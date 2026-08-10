@@ -9274,7 +9274,10 @@ test('task assign: a tree still held by a live seat is never handed to a second 
     'no second seat may be spawned into a tree another seat is working in');
   assert.strictEqual(f.one('t1').assignee, 'team-hand-1', 'the ticket stays with the seat holding its tree');
   assert.strictEqual(said.length, 1, 'ENTER: exactly one reply to assert on');
-  assert.match(said[0], /team-hand-1/, 'the refusal names who holds the tree');
+  // Not just the NAME: the taken-but-not-live reply also carries it, so a bare
+  // name match cannot tell the occupancy refusal from the archived-seat one.
+  assert.match(said[0], /is held by|Nothing was changed/, 'the OCCUPANCY refusal, not the archived-seat reply');
+  assert.match(said[0], /team-hand-1/, 'and it names who holds the tree');
   assert.deepStrictEqual(f.worktreeSet.map((w) => w.name), ['team-hand-1'],
     'and no second tree is recorded either');
   // The reply claims "Nothing was changed", so the holder must not have been told
@@ -9340,7 +9343,10 @@ test('task assign: a NON-worktree destination is refused too while the tree is h
   assert.strictEqual(f.one('t1').assignee, 'team-hand-1', 'the ticket stays with the seat holding its tree');
   assert.deepStrictEqual(f.gated, [], 'nothing is delivered — least of all the WORK IN: line of an occupied tree');
   assert.strictEqual(said.length, 1, 'ENTER: exactly one reply to assert on');
-  assert.match(said[0], /team-hand-1/, 'the refusal names who holds the tree');
+  // Not just the NAME: the taken-but-not-live reply also carries it, so a bare
+  // name match cannot tell the occupancy refusal from the archived-seat one.
+  assert.match(said[0], /is held by|Nothing was changed/, 'the OCCUPANCY refusal, not the archived-seat reply');
+  assert.match(said[0], /team-hand-1/, 'and it names who holds the tree');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
@@ -9398,6 +9404,66 @@ test('task assign: a failed respawn onto a reused tree leaves the ticket pinned'
   assert.strictEqual(t.assignee, 'team-hand-1', 'stays pinned: a pinned-but-dead assignee is inert, a role-assigned one misroutes');
   assert.deepStrictEqual(t.worktree, tree, 'the reused tree is untouched — it holds the previous seat\'s commits');
   assert.ok(fsReal.existsSync(tree.path), 'and it is still on disk, not rolled back by a spawn that did not create it');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The stale-pointer harm does not need REUSE. Delete the directory by hand and
+// createWorktree prunes the dead entry, then recomputes the same default path —
+// which is free again — so a FRESH tree lands exactly where the archived seat's
+// record still points. Two records, one path, and Delete Session… on either
+// removes the live seat's checkout.
+test('task assign: a fresh tree on a recycled path also moves the record pointer', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', worktree: true };
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  const tree = f.one('t1').worktree;
+
+  f.archiveSeat('team-hand-1');                                // record KEPT, still naming the tree
+  fsReal.rmSync(tree.path, { recursive: true, force: true });   // the operator deletes the DIRECTORY
+
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'builder', id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-builder-1'));
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+
+  // ENTER: the whole point is that the NEW tree reoccupies the OLD path. Without
+  // that there is only one record naming it and nothing below is contended.
+  assert.strictEqual(f.one('t1').worktree.path, tree.path,
+    'ENTER: the fresh tree must land on the recycled path, or there is no second pointer');
+  const cleared = f.worktreeSet.filter((w) => !w.wt).map((w) => w.name);
+  assert.ok(f.worktreeSet.some((w) => w.name === 'team-builder-1' && w.wt && w.wt.path === tree.path),
+    'the new seat records the tree');
+  assert.ok(cleared.includes('team-hand-1'),
+    'and the archived seat\'s pointer is CLEARED even though nothing was reused');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// create() succeeding and a LATER step throwing is the window the liveness gate
+// was added for: the tree is deliberately kept because a live seat is in it. The
+// un-pin has to respect that too, or the ticket goes back to the role while its
+// worktree names an occupied tree — and _openTicketsFor matches a role-assigned
+// ticket to every seat filling that role.
+test('task add: a seat that spawned then failed keeps its pin, its tree and its record', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  // Seats FIRST, then throws — every other stub in this file either seats and
+  // returns or throws before seating, so this window has no other coverage.
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); throw new Error('boom'); };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+
+  const t = f.one('t1');
+  assert.ok(f.m.sessions.has('team-hand-1'), 'ENTER: the seat must be LIVE, or the liveness gate is not what is under test');
+  assert.ok(t.worktree && t.worktree.path, 'ENTER: the ticket must still carry a tree, or un-pinning it would be harmless');
+  assert.strictEqual(t.assignee, 'team-hand-1',
+    'stays pinned to the seat: role-assigned with a live tree replays this ticket into every other hand');
+  assert.ok(fsReal.existsSync(t.worktree.path), 'the tree is kept — a live seat is sitting in it');
+  assert.ok(!f.removed.includes('team-hand-1'), 'and its record is kept for the same reason');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 

@@ -4882,17 +4882,31 @@ function createSessionManager(deps) {
             opener.workspaceId || DEFAULT_WORKSPACE_ID, null, false, opener.proxy ?? null,
             [], [], [], [], [], def.prompt || null, [], [], null, null, true,
           );
-          // One tree, one record. On the reuse path the PREVIOUS seat's record
-          // still names this path — it survives archive, natural exit and a
-          // non-ephemeral retire — and session:kill reads the tree off whichever
-          // record it is deleting, so Delete Session… on that stale row would
-          // `worktree remove --force` the tree out from under the seat now living
-          // in it. The delete handler cannot detect that; it has one path and one
-          // record. So the pointer is moved, not copied.
+          // One tree, one record. Another record naming this path — it survives
+          // archive, natural exit and a non-ephemeral retire — is a live hazard:
+          // session:kill reads the tree off whichever record it is deleting, so
+          // Delete Session… on that stale row would `worktree remove --force` the
+          // tree out from under the seat now living in it. The delete handler
+          // cannot detect that; it has one path and one record. So the pointer is
+          // moved, not copied.
+          //
+          // NOT gated on `reused`. A fresh tree lands on the same path just as
+          // easily: the seat is archived (record kept), the operator deletes the
+          // directory, _existingTicketTree rejects the stale entry, and
+          // createWorktree prunes it and recomputes the identical default path,
+          // which is free again by then. `reused` is false and the collision is
+          // identical. A path git has just handed us cannot legitimately be named
+          // by another record either, so scanning unconditionally is strictly safe.
           try {
-            if (reused) {
-              for (const e of getPersistence().list()) {
-                if (e.name !== seat.name && e.worktree && e.worktree.path === wt.path) getPersistence().setWorktree(e.name, null);
+            // Canonically. A record written through another route (session:markWorktree,
+            // a spawn-intent tree, one carried across a restart) can name the same
+            // tree through a symlinked prefix (/tmp vs /private/tmp), and a raw string
+            // compare skips it — re-opening the exact bug this closes.
+            const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+            const want = real(wt.path);
+            for (const e of getPersistence().list()) {
+              if (e.name !== seat.name && e.worktree && e.worktree.path && real(e.worktree.path) === want) {
+                getPersistence().setWorktree(e.name, null);
               }
             }
           } catch { /* best-effort */ }
@@ -4921,13 +4935,20 @@ function createSessionManager(deps) {
             // reads a path that no longer exists and the spec sends a hand there.
             clearTicketTree();
           }
-          // Un-pin only when the ticket has NO tree to point at. With one — always,
-          // on the reuse path — a role-assigned ticket is matched to every seat
-          // filling that role by _openTicketsFor, so the next hand's replay would
-          // deliver this ticket's WORK IN: line into a different branch's checkout.
-          // A pinned dead assignee is inert by comparison: nothing resolves it, and
-          // the next assign re-enters the respawn path.
-          if (!reused) unpin();
+          // Un-pin only when the ticket has NO tree to point at. With one — the
+          // reuse path always, and the `live` case below — a role-assigned ticket
+          // is matched to every seat filling that role by _openTicketsFor, so the
+          // next hand's replay would deliver this ticket's WORK IN: line into a
+          // different branch's checkout. A pinned dead assignee is inert by
+          // comparison: nothing resolves it, and the next assign re-enters the
+          // respawn path.
+          //
+          // `!live` for the same reason the two branches above carry it: create()
+          // may have succeeded and a later step thrown, and then the tree is
+          // deliberately KEPT (a live seat is sitting in it) and clearTicketTree()
+          // does not run — so un-pinning here would leave a role-assigned ticket
+          // still naming an occupied tree, which is the misroute this guards.
+          if (!reused && !live) unpin();
           log.error('intent', `ticket ${ticket.id} seat ${seat.name} failed: ${err.message}`);
           reply(`ticket ${ticket.id}: seat ${seat.name} failed to spawn (${err.message}) — ticket left assigned to "${roleKey}"`);
         }

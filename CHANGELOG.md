@@ -61,7 +61,10 @@ blocks a release.
 - **Deleting an old teammate no longer deletes the checkout its replacement is
   working in.** When a ticket's replacement takes over the existing checkout, the
   old teammate's session stops pointing at it, so deleting that leftover row does
-  what it says instead of pulling the tree out from under the live one.
+  what it says instead of pulling the tree out from under the live one. That holds
+  whether the replacement inherited the checkout or got a fresh one in the same
+  place — deleting a checkout's folder by hand frees the name, and the next one
+  lands right back on it.
 
 - **Deleting a worktree's folder by hand no longer burns its branch.** git keeps
   the bookkeeping entry when the directory disappears from under it and then

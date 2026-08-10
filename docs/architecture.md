@@ -212,13 +212,20 @@ adapter that hosts it. The modules below are what the engine assembles.
   runs with the taken-but-not-live refusal ABOVE the reassign notice and above every
   field `_taskAssign` writes: below them a refusal has already told the holder its
   ticket moved, cleared `parked`, and pushed `lastActivityAt` past the watchdog's
-  one nudge, while replying that nothing changed. Reuse also MOVES the record's
-  worktree pointer off the previous seat: `session:kill` reads the tree off whatever
+  one nudge, while replying that nothing changed. A spawn also MOVES the record's
+  worktree pointer off any other record naming that path (canonically — a record
+  written elsewhere can reach the same tree through a symlinked prefix):
+  `session:kill` reads the tree off whatever
   record it deletes, so two records naming one path means deleting either force-
-  removes a live seat's checkout. A reused tree is never
+  removes a live seat's checkout. That scan is NOT gated on reuse — deleting a
+  tree's directory by hand makes `createWorktree` prune and recompute the identical
+  default path, so a FRESH tree lands where an archived seat's record still points.
+  A reused tree is never
   rolled back on a failed spawn (it holds the previous seat's commits) and the
   ticket is not un-pinned there either — a role-assigned ticket carrying a live
-  `WORK IN:` pointer replays into every seat filling that role.
+  `WORK IN:` pointer replays into every seat filling that role. The same holds when
+  `create()` succeeded and a later step threw: the tree is kept because a live seat
+  is in it, so the un-pin is skipped for that case too.
   The ticket seat's cwd is the REPO, not its worktree: it is TOLD the path by the
   `WORK IN:` line `_deliverTicketSpec` prepends, and cd's there itself. Booting it
   in the tree would bind its transcript, project root and team block to a checkout
