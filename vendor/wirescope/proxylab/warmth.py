@@ -81,6 +81,18 @@ store_mod.register_schema(
     # _sys_full_hash / _classify_bust. (The marked-segment hashes stay in
     # session_head.sys_hash for cross-session warmth sharing — different job.)
     "ALTER TABLE session_head ADD COLUMN sysfull_hash TEXT",
+    # prior cache_read (2026-08-11): the session's last-seen `cache_read_input_tokens`
+    # — the LENGTH of the prefix the API matched on that turn. The bust test is
+    # whether this SHRINKS (see _classify_bust / report._prefix_loss): a shrink is
+    # prefix that matched last turn and no longer does, which is the definition of a
+    # bust, and it is the only signal that reads correctly on both a growing window
+    # and a silent lapse. Additive; old rows -> NULL (a NULL prior read declines to
+    # judge rather than guessing, so pre-migration sessions simply don't flag until
+    # their next turn stamps one).
+    "ALTER TABLE session_head ADD COLUMN read_tokens INTEGER",
+    # ...and that turn's cache_write, the baseline used when read_tokens is 0 (a
+    # cold turn matched nothing, so the prefix it established IS its write).
+    "ALTER TABLE session_head ADD COLUMN write_tokens INTEGER",
     # message count (2026-07-06): the session's last-seen len(messages[]). Normal
     # turns only GROW it; a sharp contraction on the same session (unchanged static
     # prefix) is a /compact collapsing the thread to a summary — the signal that
@@ -234,9 +246,27 @@ def _sys_full_hash(obj):
 # comparison — no body retention needed (the byte-level drill-down is /_bust,
 # served on demand from disk). Returns the class string or None (not a bust).
 #
-# write_frac >= this is a real bust. Data is bimodal (warm appends < ~0.05, real
-# rewrites > ~0.35); 0.15 sits in the empty valley, matching report.bust_series.
-BUST_WRITE_FRAC = float(os.environ.get("BUST_WRITE_FRAC", "0.15"))
+# A bust is a LOSS of matched prefix: this turn's cache_read came back SHORTER
+# than the prior turn's. Floor at the minimum cacheable block (1024 opus/sonnet)
+# so tokenizer jitter around an unchanged boundary isn't a bust. Mirrors
+# report.BUST_MIN_LOST_TOKENS — the live and disk twins must agree.
+#
+# When the prior turn matched NOTHING (cold start / just-busted), read-only
+# baselining is blind — every later number is >= 0 — so the prior WRITE is the
+# baseline instead, gated by a fraction because it cannot separate the CLI's
+# deferred tail as cleanly. Same rule and constants as report._prefix_loss.
+#
+# This REPLACED a write-fraction test (`created/window >= 0.15`), which was wrong
+# in both directions and is kept described here because the reasoning it encoded
+# is seductive: a big write does not mean a bust (a growing window writes a lot
+# while its prefix is fully intact — 1,100 such false alarms in a 61.8k-transition
+# corpus sweep, worst on early/small windows) and a small write does not mean
+# safety (a lapse that re-reads a static floor writes almost nothing while the
+# history evaporates — 2,046 real busts missed, one of them 138k tokens at
+# write_frac 0.00).
+BUST_MIN_LOST_TOKENS = int(os.environ.get("BUST_MIN_LOST_TOKENS", "1024"))
+BUST_COLD_BASELINE_MIN_FRAC = float(
+    os.environ.get("BUST_COLD_BASELINE_MIN_FRAC", "0.25"))
 # A history CONTRACTION to <= this fraction of the prior message count marks a
 # `compact` (vs a `conversation` flap): normal turns only GROW the message array
 # (+~2/turn), so a sharp drop on the same session (same static prefix) is a
@@ -269,11 +299,15 @@ _BUST_FAULT = {
 }
 
 
-def _classify_bust(read, created, inp, *, prior, cur_tools, cur_sys, cur_sysfull,
-                   cur_msg0, cur_msgs, lapsed):
+def _classify_bust(read, created, inp, *, prior, prior_read, prior_write=0,
+                   cur_tools, cur_sys, cur_sysfull, cur_msg0, cur_msgs, lapsed):
     """Classify this turn's cache event against the prior session_head row.
     `prior` = (tools_hash, sys_hash, sysfull_hash, msg0_hash, msg_count) of the last
     head, or None on the session's first turn (an initial cold start is NOT a bust).
+    `prior_read` = that head's cache_read (the length of the prefix it matched);
+    None on a pre-migration row, which DECLINES to judge rather than guessing.
+    `prior_write` = that head's cache_write, used as the baseline only when the
+    prior turn matched nothing (see BUST_MIN_LOST_TOKENS).
     Returns a class in {tools, system, preamble, conversation, compact, lapse} or
     None (normal append / not a bust). Most-upstream divergence wins (it dominates
     the cache cost), matching the canonical order tools -> system -> messages[0] ->
@@ -301,10 +335,22 @@ def _classify_bust(read, created, inp, *, prior, cur_tools, cur_sys, cur_sysfull
     window = (read or 0) + (created or 0) + (inp or 0)
     if window <= 0:
         return None
-    if (created or 0) / window < BUST_WRITE_FRAC:
-        return None                          # tail-append write, not a real bust
     if prior is None:
         return None                          # first turn = initial cold start
+    if prior_read is None:
+        return None                          # pre-migration head: can't judge
+    # THE TEST: did the matched prefix get SHORTER? Everything below only says
+    # WHERE it broke; this decides that it broke at all. On a cold prior turn
+    # (matched nothing) the prefix IS that turn's write, so baseline on it.
+    if prior_read > 0:
+        base, min_frac = prior_read, 0.0
+    else:
+        base, min_frac = (prior_write or 0), BUST_COLD_BASELINE_MIN_FRAC
+    lost = base - (read or 0)
+    if lost <= BUST_MIN_LOST_TOKENS:
+        return None                          # prefix held (or grew) — not a bust
+    if min_frac and lost / base < min_frac:
+        return None                          # within the deferred-tail tolerance
     p_tools, p_sys, p_sysfull, p_msg0, p_msgs = prior
     if p_tools is not None and p_tools != cur_tools:
         return "tools"
@@ -689,12 +735,15 @@ def _record_warmth(obj, usage, is_main=True):
             # which is non-reentrant.)
             new_resumes = 0
             prior_seg = None
+            prior_read = None
+            prior_write = 0
             restart_straddle = False
             if head_advance:
                 prev = con.execute(
                     "SELECT hash, cold_resumes, tools_hash, sys_hash, msg0_hash, "
-                    "sysfull_hash, msg_count, updated_at FROM session_head "
-                    "WHERE session_id=?", (sid,)).fetchone()
+                    "sysfull_hash, msg_count, updated_at, read_tokens, "
+                    "write_tokens FROM session_head WHERE session_id=?",
+                    (sid,)).fetchone()
                 if prev:
                     pe = con.execute("SELECT expires_at FROM warmth WHERE hash=?",
                                      (prev[0],)).fetchone()
@@ -703,6 +752,7 @@ def _record_warmth(obj, usage, is_main=True):
                     # (tools_hash, sys_hash, sysfull_hash, msg0_hash, msg_count) —
                     # the order _classify_bust unpacks its `prior` tuple in.
                     prior_seg = (prev[2], prev[3], prev[5], prev[4], prev[6])
+                    prior_read, prior_write = prev[8], prev[9]
                     # DEPLOY-TAX detection: the prior head was written by a process
                     # that booted before this one (its updated_at predates our
                     # _START_TS) => the proxy restarted between the prior turn and
@@ -725,7 +775,8 @@ def _record_warmth(obj, usage, is_main=True):
                 # prior segment hashes + lapse state say WHERE it diverged. Counted
                 # into session_bust; the byte-level drill-down is /_bust (on disk).
                 bust_class = _classify_bust(
-                    read, created, inp, prior=prior_seg,
+                    read, created, inp, prior=prior_seg, prior_read=prior_read,
+                    prior_write=prior_write,
                     cur_tools=(segs.get("tools") or {}).get("hash"),
                     cur_sys=(segs.get("system") or {}).get("hash"),
                     cur_sysfull=cur_sysfull,
@@ -748,18 +799,22 @@ def _record_warmth(obj, usage, is_main=True):
                         (sid, rinc, bust_class, now, created, now))
                 con.execute("INSERT INTO session_head(session_id, hash, updated_at, "
                             "tools_hash, sys_hash, msg0_hash, sysfull_hash, "
-                            "msg_count, cold_resumes) VALUES(?,?,?,?,?,?,?,?,?) "
+                            "msg_count, cold_resumes, read_tokens, write_tokens) "
+                            "VALUES(?,?,?,?,?,?,?,?,?,?,?) "
                             "ON CONFLICT(session_id) DO UPDATE SET "
                             "hash=excluded.hash, updated_at=excluded.updated_at, "
                             "tools_hash=excluded.tools_hash, sys_hash=excluded.sys_hash, "
                             "msg0_hash=excluded.msg0_hash, "
                             "sysfull_hash=excluded.sysfull_hash, "
                             "msg_count=excluded.msg_count, "
-                            "cold_resumes=excluded.cold_resumes",
+                            "cold_resumes=excluded.cold_resumes, "
+                            "read_tokens=excluded.read_tokens, "
+                            "write_tokens=excluded.write_tokens",
                             (sid, h, now,
                              (segs.get("tools") or {}).get("hash"),
                              (segs.get("system") or {}).get("hash"),
-                             cur_msg0, cur_sysfull, cur_msgs, new_resumes))
+                             cur_msg0, cur_sysfull, cur_msgs, new_resumes,
+                             read, created))
             con.commit()
             size = con.execute("SELECT COUNT(*) FROM warmth").fetchone()[0]
     except Exception as e:

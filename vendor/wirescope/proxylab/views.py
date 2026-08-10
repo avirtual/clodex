@@ -978,14 +978,24 @@ def _session_nav_html(sid, nav, bust_t):
     else:
         verdict = '<span class="warn">&#9889; history rewrite</span>'
     rd, wr = bust_t.get("read_tokens") or 0, bust_t.get("write_tokens") or 0
-    wf = bust_t.get("write_frac")
+    lost = bust_t.get("lost_tokens") or 0
+    unread = bust_t.get("unread_write") or 0
     surv = (bust_t.get("survived_prefix") or {}).get("boundary")
     loc = bust_t.get("locus") or {}
+    # LOST is the verdict's evidence (prefix that matched last turn and stopped),
+    # so it leads. `written` alone reads as damage when it is usually just the
+    # window growing; on a warm turn we say so, and surface any deferred write
+    # (tail cached past the last marker, swept in a turn later) as the benign
+    # thing it is rather than leaving it to look like an unexplained gap.
+    lostbit = (f'<span>lost <b class="bad">{e(_fmt_tok(lost))}</b> '
+               f'<span class="dim">({bust_t.get("lost_frac")} of prior read)</span></span>'
+               if lost else
+               f'<span class="dim">nothing lost{f" · {e(_fmt_tok(unread))} written-but-unread (deferred)" if unread else ""}</span>')
     panel = (f'<div class="blk bustp"><p class="kv"><span>vs seq '
              f'{bust_t.get("from_seq")}:</span><span>{verdict}</span>'
              f'<span>read <b class="warm">{e(_fmt_tok(rd))}</b></span>'
              f'<span>written <b class="warn">{e(_fmt_tok(wr))}</b></span>'
-             f'<span class="dim">write frac {wf}</span>'
+             f'{lostbit}'
              + (f'<span class="dim">cache held through <b>{e(str(surv))}</b></span>'
                 if surv else '') + '</p>')
     if bust_t.get("bust") and loc:

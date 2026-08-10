@@ -1161,6 +1161,75 @@ def _tokens_rw(tokens):
     return cr, write, inp, out
 
 
+# A bust is a LOSS of cached prefix, and the receipt states the loss directly:
+# `cache_read` is the length of the prefix the API matched. If it SHRINKS from one
+# turn to the next, the prefix stopped matching that far down — that, and only
+# that, is a bust. Floor at the minimum cacheable block (1024 tok for opus/sonnet;
+# 2048 haiku, so the floor is conservative there) because a shrink smaller than one
+# block cannot be a lost block — it is tokenizer//framing jitter around the same
+# boundary. Measured on the live corpus: the floor drops 152 of 3,214 flagged
+# transitions carrying 96k of 173.6M lost tokens (0.06%).
+BUST_MIN_LOST_TOKENS = 1024
+# Share of the previously-read prefix that must be lost to call it a full rewrite
+# rather than a partial one. Not fitted — the loss distribution is NOT bimodal
+# (p25 0.08, p50 0.44, p75 0.88), so this is a stated reporting convention: at
+# >=0.9 essentially nothing survived.
+BUST_FULL_REWRITE_FRAC = 0.9
+# Only for the COLD-WRITE baseline (see _prefix_loss): how much of a just-written
+# prefix must fail to come back before it counts as lost. Needed because that
+# baseline cannot separate the deferred tail from a real loss the way the warm
+# one can. Measured on 168 corpus cases, the two populations are far apart with
+# an EMPTY valley between 0.13 and 0.50: 156 lose everything (frac 1.000, read
+# came back 0), 6 sit at 0.015-0.13 (the deferred tail). 0.25 sits in the gap.
+BUST_COLD_BASELINE_MIN_FRAC = 0.25
+
+
+def _prefix_loss(prev_tokens, tokens):
+    """How much of the previously-matched cache prefix this turn LOST.
+
+    Returns (lost, lost_frac, unread_write) from two adjacent receipts.
+
+    Normally the baseline is the previous turn's `cache_read` ALONE, deliberately
+    not `read + write`. The tail a turn writes past its last breakpoint is
+    routinely not re-read by the very next request (the CLI's rolling marker
+    sweeps it in a turn later) — charging that as loss flags normal deferred-write
+    behaviour as a bust. Measured: 1,127 such turns / 19.3M tokens across the
+    corpus, and in 494 of the 536 clearest cases `read_k == read_{k-1}` EXACTLY,
+    i.e. the matched prefix never moved. `unread_write` reports the shortfall
+    separately so the deferred write stays VISIBLE without counting as damage.
+
+    THE COLD-WRITE EXCEPTION. When the previous turn matched nothing (`prior read
+    == 0` — a cold start or a just-busted turn), read-only baselining is blind:
+    every subsequent number is >= 0, so a total loss on the very next turn scores
+    zero. There the prefix IS the write, so the write is the baseline. It cannot
+    separate the deferred tail as cleanly, hence BUST_COLD_BASELINE_MIN_FRAC —
+    justified by the measurement recorded on that constant. Corpus impact: 168
+    real busts / 13.8M lost tokens that read-only baselining silently missed.
+
+    A shrink is the honest signal in both directions, and the old write-fraction
+    heuristic got both wrong: it fired on windows that merely GREW (a big write on
+    a small window reads as a large fraction) and stayed silent on a lapse that
+    re-read a static floor while writing little (`write_frac` 0.00 while 138k
+    tokens of prefix evaporated)."""
+    pcr = (prev_tokens or {}).get("cache_read_input_tokens") or 0
+    pw5 = (prev_tokens or {}).get("cache_write_5m_tokens") or 0
+    pw1 = (prev_tokens or {}).get("cache_write_1h_tokens") or 0
+    pflat = (prev_tokens or {}).get("cache_write_flat_tokens") or 0
+    pw = pw5 + pw1 + (pflat if not (pw5 or pw1) else 0)
+    cr = (tokens or {}).get("cache_read_input_tokens") or 0
+    cold_baseline = pcr <= 0
+    base = pw if cold_baseline else pcr
+    lost = base - cr
+    frac = round(lost / base, 3) if (base and lost > 0) else 0.0
+    if cold_baseline and frac < BUST_COLD_BASELINE_MIN_FRAC:
+        lost = 0                      # within the deferred-tail tolerance
+    if lost <= 0:
+        # No loss. Whatever of the prior WRITE this turn did not re-read is the
+        # deferred-write tail, reported but never billed as a bust.
+        return 0, 0.0, max(0, (pcr + pw) - cr)
+    return lost, frac, 0
+
+
 def _first_divergence(a, b):
     """Locus of the first prefix divergence of body `b` from body `a`, in cache
     order tools -> system -> messages. Returns a dict {segment,index,...} or None
@@ -1343,15 +1412,15 @@ def bust_series(session, detail=True):
     magnitude), classifying each transition as append / partial / full-rewrite.
     Disk-based + on-demand, like session_report/_series.
 
-    The bust flag + severity are decided by the RECEIPT (the write fraction of the
-    priced window) — the bill is ground truth for 'was there a rewrite and how
-    big'. Two loci are then attached to explain it: `survived_prefix` (the deepest
-    boundary the receipt's cache_read covered — the bill's own answer to how deep
-    the cache held) and `locus` (the first byte-change vs the previous forwarded
-    turn — the human-readable WHAT changed: a model swap, a date rollover, a
-    transform toggle). They agree on the clean cases (system swap, msg[0] date) and
-    that agreement is high confidence; a low-write_frac warm append is NOT a bust
-    even when the N-1 text diff finds a late change."""
+    The bust flag + severity are decided by the RECEIPT, which states the answer
+    directly: a bust is a SHRINKING `cache_read` (prefix that matched last turn and
+    stopped matching this turn), sized in tokens by `_prefix_loss`. `write_frac` is
+    still reported — it is the honest 'how much of this window was newly written' —
+    but it is NOT the test; it cannot separate a window that grew from a prefix
+    that was lost. Two loci then explain the loss: `survived_prefix` (the deepest
+    boundary the receipt's cache_read covered) and `locus` (the first byte-change
+    vs the previous forwarded turn — the human-readable WHAT changed: a model swap,
+    a date rollover, a transform toggle)."""
     from . import warmth as warmth_mod          # lazy: fault map + compact ratio
     pairs = [p for p in _bust_scan(session) if p["line"] == "main" and p["ok"]]
     transitions = []
@@ -1367,14 +1436,18 @@ def bust_series(session, detail=True):
         prev_msgs = prev["n_messages"]
         window = cr + write + inp
         write_frac = round(write / window, 3) if window else 0.0
-        # RECEIPT decides bust + severity (the bill is ground truth for magnitude).
-        # Data is bimodal: warm appends sit < ~0.05, real rewrites > ~0.35.
-        if write_frac < 0.15:
-            severity = "append"; bust = False
-        elif write_frac >= 0.6:
-            severity = "full-rewrite"; bust = True
+        # RECEIPT decides bust + severity — but the question is "was cached prefix
+        # LOST", which the receipt answers directly as a shrinking cache_read. See
+        # _prefix_loss for why the old write-fraction test was wrong in both
+        # directions (it fired on growth and stayed silent on real lapses).
+        lost, lost_frac, unread_write = _prefix_loss(prev.get("tokens"), p.get("tokens"))
+        bust = lost > BUST_MIN_LOST_TOKENS
+        if not bust:
+            severity = "append"
+        elif lost_frac >= BUST_FULL_REWRITE_FRAC:
+            severity = "full-rewrite"
         else:
-            severity = "partial"; bust = True
+            severity = "partial"
         # Bodies are loaded HERE and nowhere else — only a bust computes a locus, so
         # only a bust pays for the parse (~100 of 7,132 transitions on the profiled
         # session). Everything above came from receipts + sidecar reads.
@@ -1414,7 +1487,9 @@ def bust_series(session, detail=True):
             "i": idx, "ts": p["ts"], "stem": p["stem"], "seq": cur_seq,
             "from_stem": prev["stem"], "from_seq": from_seq,
             "severity": severity, "bust": bust,
-            "quasi_full_rewrite": write_frac >= 0.6,
+            "lost_tokens": lost, "lost_frac": lost_frac,
+            "unread_write": unread_write,
+            "quasi_full_rewrite": bust and lost_frac >= BUST_FULL_REWRITE_FRAC,
             "static_prefix_bust": static_prefix_bust,
             "class": cls, "fault": fault, "fix_hint": fix_hint,
             "restart_between": bool(cur_seq < from_seq),
@@ -1428,7 +1503,9 @@ def bust_series(session, detail=True):
         prev = p
     busts = [t for t in transitions if t["bust"]]
     static = [t for t in busts if t["static_prefix_bust"]]
-    worst = max(busts, key=lambda t: t["write_tokens"], default=None)
+    # Worst = the biggest LOSS, not the biggest write: a turn can write a lot
+    # because the conversation grew, which is not damage.
+    worst = max(busts, key=lambda t: t["lost_tokens"], default=None)
     res = {
         "session_id": session, "basis": "on-disk-capture, main-line, chronological",
         "count": len(transitions), "n_busts": len(busts),
