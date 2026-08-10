@@ -401,14 +401,21 @@ test('_maybeDeliverDigest: stray sid (≠ s.sessionId) neither delivers nor mark
 // Keep-warm lifecycle listener: re-anchors must RE-PERSIST the deadline (the
 // keeper restarts its window on every organic turn, so a stale persisted
 // holdUntil would wrongly lapse-clear a still-valid hold after a restart);
-// failure-strike disarms clear the intent; explicit 'off' is the wire:hold
-// handler's job and is skipped here.
-test('_onHoldLifecycle: re-anchor re-persists, failures clears, off is skipped', () => {
-  const holds = [];
+// a CREDENTIAL failure-strike disarm clears the intent and no other disarm does;
+// explicit 'off' is the wire:hold handler's job and is skipped here.
+test('_onHoldLifecycle: re-anchor re-persists, a credential failure clears BOTH intents, everything else is skipped', () => {
+  // ONE ordered log for both setters, not one array each: the whole point of the
+  // failure branch's write order is that the perpetual flag is cleared before the
+  // deadline, and two separate arrays cannot see an order at all. The body is
+  // also wrapped in a swallow-everything try/catch, so a setter missing from
+  // this fake would abort the branch silently — every assertion here has to be
+  // a positive on the recorded calls, never an absence.
+  const calls = [];
   const m = mk({
     getPersistence: () => ({
       list: () => [], get: () => null,
-      setHoldUntil: (name, v) => holds.push([name, v]),
+      setHoldUntil: (name, v) => calls.push(['setHoldUntil', name, v]),
+      setKeepWarmAlways: (name, v) => calls.push(['setKeepWarmAlways', name, v]),
     }),
     log: { info: () => {}, warn: () => {} },
   });
@@ -416,21 +423,173 @@ test('_onHoldLifecycle: re-anchor re-persists, failures clears, off is skipped',
 
   // Re-anchor: keeper's `until` is epoch SECONDS → persisted as epoch ms.
   m._onHoldLifecycle({ session: 'sid-1', event: 're-anchored', until: 1_700_000_000 });
-  assert.deepStrictEqual(holds, [['a', 1_700_000_000_000]]);
+  assert.deepStrictEqual(calls, [['setHoldUntil', 'a', 1_700_000_000_000]]);
 
   // Unknown wire sid (child claude / rotated id): never touches persistence.
   m._onHoldLifecycle({ session: 'stray', event: 're-anchored', until: 1_700_000_000 });
-  assert.strictEqual(holds.length, 1);
+  assert.strictEqual(calls.length, 1);
 
-  // Failure-strike disarm clears the intent (keys on cause, not reason text).
-  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', reason: 'whatever', pings: 3 });
-  assert.deepStrictEqual(holds[1], ['a', null]);
+  // A perpetual seat's re-anchor carries until:null and must persist NOTHING —
+  // recording `now` here would give the seat both intents at once.
+  m._onHoldLifecycle({ session: 'sid-1', event: 're-anchored', until: null });
+  assert.strictEqual(calls.length, 1);
+
+  // A CREDENTIAL failure-strike disarm clears BOTH intents (keys on cause plus
+  // the lastResult label, never the reason text), flag first so a half-landed
+  // pair can never leave the seat perpetual.
+  calls.length = 0;
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', reason: 'whatever', pings: 3, lastResult: 'fail:401' });
+  assert.deepStrictEqual(calls, [
+    ['setKeepWarmAlways', 'a', false],
+    ['setHoldUntil', 'a', null],
+  ]);
 
   // Explicit off: handled (logged+cleared) by the wire:hold handler — skipped here.
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'off', pings: 0 });
   // Expiry/max-pings: log-only, field clears lazily on the next re-arm check.
+  // A perpetual seat cannot reach either cause, so clearing its flag here would
+  // silently un-set a setting the operator never withdrew.
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'expired', pings: 5 });
-  assert.strictEqual(holds.length, 2);
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'max-pings', pings: 24 });
+  // 'session-ended' is what a /clear's endSession emits, and it MUST land here
+  // as a log-only cause. Routing it to the failures branch instead would erase
+  // the operator's Always setting on every /clear — the handover in
+  // _onWireSessionRotated re-arms off exactly the field that branch clears.
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'session-ended', pings: 2 });
+  // A permanent but NON-credential failure: the keeper has already disarmed for
+  // this launch and that stands, but the operator's setting is not evidence about
+  // a 400. ping() strips `thinking`/`context_management` precisely because a
+  // wrong combination 400s, so if an upstream schema change ever makes the replay
+  // itself 400, this branch would otherwise withdraw Always on every unattended
+  // seat at once — the same class of bug as counting a transport blip as a strike.
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', pings: 3, lastResult: 'fail:400' });
+  // A failures disarm with no label at all is likewise not proof of a dead
+  // credential, so it must not erase anything either.
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', pings: 3 });
+  assert.deepStrictEqual(calls, [
+    ['setKeepWarmAlways', 'a', false],
+    ['setHoldUntil', 'a', null],
+  ], 'only a CREDENTIAL failure writes; off/expired/max-pings/session-ended/fail:400 add nothing');
+});
+
+// A /clear mints a new wire sessionId under a live session, and the keeper is
+// keyed on that id. Both halves of the handover are exercised through their real
+// seams — _onWireSessionRotated then _maybeRearmHold, the same order and the same
+// turn as the wire's turn.completed handler calls them.
+//
+// ONE ordered log across the keeper AND persistence, because what matters is a
+// SEQUENCE across two collaborators: ending the old hold after the reassignment
+// would end the wrong conversation, and no per-object recorder can see that.
+function rotationRig({ transcriptId = null, rec = null, sessionId = 'old-sid' } = {}) {
+  const calls = [];
+  const { m } = mkWithTranscript(transcriptId, {
+    getPersistence: () => ({
+      list: () => (rec ? [rec] : []),
+      get: () => null,
+      setSessionId: (n, v) => calls.push(['setSessionId', n, v]),
+      setHoldUntil: (n, v) => calls.push(['setHoldUntil', n, v]),
+      setKeepWarmAlways: (n, v) => calls.push(['setKeepWarmAlways', n, v]),
+    }),
+    log: { info: () => {}, warn: () => {} },
+  });
+  m._holdKeeper = {
+    endSession: (sid) => { calls.push(['endSession', sid]); return { session: sid, holdDisarmed: true }; },
+    // Records the arguments production ACTUALLY passed — no `opts = {}` default,
+    // which would make a missing third argument indistinguishable from an empty
+    // one and quietly turn the timed-arm assertion below into a tautology.
+    arm: (sid, hours, opts) => {
+      calls.push(opts === undefined ? ['arm', sid, hours] : ['arm', sid, hours, opts]);
+      return { armed: true, always: !!(opts && opts.always), until: (opts && opts.always) ? null : 1_700_000_000 };
+    },
+  };
+  // Both write real files off REGISTRY_DIR and neither is under test here.
+  m._noteConversationForDigest = (_s, sid) => calls.push(['noteDigest', sid]);
+  m._shadowLog = (r) => calls.push(['shadow', r.type]);
+  return { m, calls, s: { name: 'a', sessionId, agentType: 'claude' } };
+}
+
+test('a /clear ends the OLD conversation hold before re-arming the perpetual seat on the new one', () => {
+  const { m, s, calls } = rotationRig({ rec: { name: 'a', keepWarmAlways: true } });
+
+  m._onWireSessionRotated(s, 'a', 'new-sid');
+  m._maybeRearmHold(s, 'a');
+
+  // The old id must reach endSession, which means endSession must run BEFORE
+  // the reassignment. Nothing else ever disarms it: holdDecision's expired and
+  // max-pings branches are both `!hold.always`-guarded and a dead prefix only
+  // skips, so a stranded perpetual hold is re-hashed by every tick forever.
+  assert.deepStrictEqual(calls, [
+    ['endSession', 'old-sid'],
+    ['setSessionId', 'a', 'new-sid'],
+    ['noteDigest', 'new-sid'],
+    ['arm', 'new-sid', 0, { always: true }],
+  ]);
+  assert.strictEqual(s.sessionId, 'new-sid');
+  assert.strictEqual(s._holdRearmed, true, 'the gate closed again once the re-arm landed');
+});
+
+test('a /clear does not withdraw the seat property it is handing over', () => {
+  const { m, s, calls } = rotationRig({ rec: { name: 'a', keepWarmAlways: true } });
+  m._onWireSessionRotated(s, 'a', 'new-sid');
+  m._maybeRearmHold(s, 'a');
+  // The whole ordered log is asserted above; here the point is which writes are
+  // ABSENT from it, and the only safe way to say that is to name every write
+  // that did happen. keepWarmAlways surviving is what makes the re-arm possible.
+  assert.deepStrictEqual(calls.filter((c) => c[0].startsWith('set')), [
+    ['setSessionId', 'a', 'new-sid'],
+  ], 'no setKeepWarmAlways and no setHoldUntil — the intent is untouched by a clear');
+});
+
+test('a timed hold rotates too, and re-arms the remaining window on the new id', () => {
+  const holdUntil = Date.now() + 2 * 3600e3;
+  const { m, s, calls } = rotationRig({ rec: { name: 'a', holdUntil } });
+
+  m._onWireSessionRotated(s, 'a', 'new-sid');
+  m._maybeRearmHold(s, 'a');
+
+  assert.deepStrictEqual(calls.slice(0, 2), [['endSession', 'old-sid'], ['setSessionId', 'a', 'new-sid']]);
+  const armed = calls.find((c) => c[0] === 'arm');
+  assert.ok(armed, 'ENTER: it re-armed at all — the assertions below are vacuous otherwise');
+  assert.strictEqual(armed[1], 'new-sid');
+  assert.ok(armed[2] > 1.9 && armed[2] <= 2, `remaining window, got ${armed[2]}`);
+  // Length, not deepStrictEqual on armed[3]: the rig defaults that parameter to
+  // {}, so asserting the empty object would only pin the rig's own default and
+  // would stay green if production started passing { always: true } here.
+  assert.strictEqual(armed.length, 3, 'a timed re-arm passes no always flag at all');
+});
+
+test('a stale wire turn cannot rotate the seat BACK onto a conversation it has left', () => {
+  const { m, s, calls } = rotationRig({ rec: { name: 'a', keepWarmAlways: true } });
+  m._onWireSessionRotated(s, 'a', 'new-sid');
+  m._maybeRearmHold(s, 'a');
+  assert.deepStrictEqual(calls.filter((c) => c[0] === 'arm').length, 1,
+    'ENTER: the forward handover armed the new id — the backward attempt below is vacuous otherwise');
+  calls.length = 0;
+
+  // turn.completed from the OLD conversation, still in flight when the handover
+  // ran. Corroboration is not what stops it and cannot be: rotationRig leaves the
+  // transcript symlink unresolvable, so _wireSessionCorroborated fails OPEN and
+  // returns true — which is exactly the transient state a clear produces.
+  m._onWireSessionRotated(s, 'a', 'old-sid');
+
+  assert.deepStrictEqual(calls, [['shadow', 'wire-stale-session']],
+    'no endSession: ending old-sid here would kill the hold just handed to new-sid');
+  assert.strictEqual(s.sessionId, 'new-sid', 'and the seat stays on the conversation it moved to');
+});
+
+test('a stray child-claude sessionId rotates nothing and ends no hold', () => {
+  // Corroboration-gated: the wire attributes by proxy route, so a child claude
+  // mints main-line-looking ids on the session's own route. Acting on one would
+  // end the real conversation's hold and hand keep-warm to a transient child.
+  const { m, s, calls } = rotationRig({
+    transcriptId: 'real-conv-id', sessionId: 'real-conv-id', rec: { name: 'a', keepWarmAlways: true },
+  });
+
+  m._onWireSessionRotated(s, 'a', 'stray-child-id');
+
+  assert.deepStrictEqual(calls, [['shadow', 'wire-stray-session']]);
+  assert.strictEqual(s.sessionId, 'real-conv-id', 'the live conversation id is untouched');
+  assert.notStrictEqual(s._holdRearmed, false, 'and the re-arm gate was not reopened');
 });
 
 // --- Compact latch (FIX C) ---------------------------------------------------

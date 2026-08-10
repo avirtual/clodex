@@ -141,12 +141,23 @@ popovers the owner will answer.
 The built-in wire proxy's hold keeper is **in-memory by design** — it
 replays the session's last request as a 1-token cache-read ping, so its
 state includes request bytes + auth headers that must never touch disk.
-What DOES persist is the hold **intent**: `holdUntil` (epoch ms) on the
-session's sessions.json record, written on arm (from the arm result's
-clamped `until`, never the raw requested hours), re-written on every
-re-anchor (organic turns restart the keeper's window, so the persisted
-deadline must track it), and cleared on explicit disarm, failure-strike
-disarm, or lapse. After an app restart the first main-line wire turn
+What DOES persist is the hold **intent**, in one of two mutually exclusive
+fields on the session's sessions.json record:
+
+- `holdUntil` (epoch ms) for a timed hold, written on arm (from the arm
+  result's clamped `until`, never the raw requested hours), re-written on
+  every re-anchor (organic turns restart the keeper's window, so the
+  persisted deadline must track it), and cleared on explicit disarm,
+  failure-strike disarm, or lapse.
+- `keepWarmAlways` (boolean) for a perpetual hold — a property of the SEAT
+  rather than a window. It has no deadline, so it must never be encoded as a
+  large `holdUntil`: `rearmPlan` and the fire button both read that field as a
+  real timestamp. A perpetual seat re-arms with no deadline at all, and its
+  re-anchors persist nothing (the emit carries `until: null`, below the
+  `> 0` gate).
+
+Arming either one clears the other, as does an explicit disarm or a
+failure-strike disarm — a seat must never carry both. After an app restart the first main-line wire turn
 re-arms the remaining window — retried each turn until the warm-gated
 `arm()` accepts (a strict once-per-spawn guard would silently re-lose the
 hold on a first-turn decline). Failure-disarm detection keys on the
@@ -178,8 +189,9 @@ are a proxy-side concept; the nearest in-repo trace is the supervisor's
 - The managed wirescope outlives the GUI; adopt, never double-spawn;
   vendor-bump restart at most once per launch.
 - Nothing that reaches a peer carries base/capabilities/sessionId.
-- Keep-warm persistence carries the hold INTENT only (`holdUntil`) —
-  never request bytes or auth headers.
+- Keep-warm persistence carries the hold INTENT only (`holdUntil` for a
+  timed hold, `keepWarmAlways` for a perpetual one, never both) — never
+  request bytes or auth headers.
 - Ops log stays coarse and never throws.
 - Statusline heredoc bytes are pinned; headless still writes the
   side-channel.

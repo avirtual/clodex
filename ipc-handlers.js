@@ -466,7 +466,7 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  handle('wire:hold', (_e, name, hours, force) => {
+  handle('wire:hold', (_e, name, hours, force, always) => {
     if (!manager._holdKeeper || !manager._wireTelemetry) {
       return { ok: false, error: 'In-process wire keep-warm is not running' };
     }
@@ -475,14 +475,26 @@ function registerIpcHandlers(deps) {
       return { ok: false, error: 'The wire has not seen a turn for this session yet' };
     }
     try {
-      const j = (hours > 0)
-        ? manager._holdKeeper.arm(w.sessionId, hours, { force: !!force })
+      const j = (always || hours > 0)
+        ? manager._holdKeeper.arm(w.sessionId, hours, { force: !!force, always: !!always })
         : manager._holdKeeper.disarm(w.sessionId);
-      if (j.armed && j.until) {
-        persistence.setHoldUntil(name, Math.round(j.until * 1000));
-        log.info('keepwarm', `armed ${name} ${hours}h until ${new Date(j.until * 1000).toISOString()}`);
-      } else if (!(hours > 0)) {
+      // A perpetual arm has no `until`, so it must not be gated on one.
+      if (j.armed && (j.always || j.until)) {
+        // The two are mutually exclusive states of ONE control: writing the new
+        // one without clearing the other would leave a seat that the operator
+        // set back to 4h still re-arming perpetually after every restart.
+        if (j.always) {
+          persistence.setKeepWarmAlways(name, true);
+          persistence.setHoldUntil(name, null);
+          log.info('keepwarm', `armed ${name} perpetually (no deadline)`);
+        } else {
+          persistence.setHoldUntil(name, Math.round(j.until * 1000));
+          persistence.setKeepWarmAlways(name, false);
+          log.info('keepwarm', `armed ${name} ${hours}h until ${new Date(j.until * 1000).toISOString()}`);
+        }
+      } else if (!always && !(hours > 0)) {
         persistence.setHoldUntil(name, null);
+        persistence.setKeepWarmAlways(name, false);
         log.info('keepwarm', `disarmed ${name} (explicit)`);
       }
       return { ok: true, status: 200, armed: !!j.armed, skipped: j.skipped || null, body: j };

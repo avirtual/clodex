@@ -13,6 +13,35 @@ blocks a release.
 
 ## Unreleased
 
+- **Keep-warm can now be set to "Always" on a session that should never go
+  cold.** The fire button's menu gains an Always option next to 1/4/8 hours.
+  Unlike a duration it is a property of the seat, not a one-off arming: it has
+  no deadline, and it re-arms itself when you restart Clodex, so a lead agent
+  stays warm through an absence longer than you planned for. It still stops on
+  its own if two pings are rejected in a row. When the rejection is your
+  credentials — which Clodex cannot refresh for you — the setting is cleared
+  along with it, so it will not quietly start again on the next launch; a
+  rejection of any other kind stops keep-warm for this run only and leaves
+  Always set, so restarting Clodex picks it up again. Picking a duration
+  afterwards replaces it. The button reads "held always" rather than counting
+  down to a deadline that does not exist. Available on sessions whose keep-warm
+  is handled in-process; sessions routed through an external proxy keep the
+  1/4/8 choices.
+
+- **Keep-warm no longer gives up because your network hiccupped.** A dropped
+  connection, a closed laptop lid, or an overloaded upstream now counts as a
+  ping declined rather than a ping failed, so it does not spend the two-strike
+  stop. Only a rejected credential does. Before this, two unlucky minutes
+  offline were enough to switch keep-warm off — and on a seat set to Always,
+  to erase that setting for good while you were away from the machine.
+
+- **Keep-warm survives `/clear`.** Clearing a session's context starts a new
+  conversation underneath it, and the keep-warm hold used to stay attached to
+  the old one — leaving the session quietly going cold until Clodex was
+  restarted. It now hands over to the new conversation, and the old one is
+  released rather than left behind burning a little CPU every minute for the
+  rest of the session.
+
 ## 5.4.0 — 2026-08-10 — A branch and a checkout for every teammate
 
 - **Teammates can now work on the same repo at the same time, each in its own

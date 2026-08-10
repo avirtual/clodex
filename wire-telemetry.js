@@ -219,7 +219,7 @@ class WireTelemetry {
         try {
           pingable = !!this._hold.entry(a.sessionId);
           const h = this._hold.holds()[a.sessionId];
-          if (h) hold = { until: h.until, hours: h.hours, pings: h.pings, last_result: h.lastResult ?? null };
+          if (h) hold = { until: h.until, hours: h.hours, pings: h.pings, last_result: h.lastResult ?? null, always: !!h.always };
         } catch { /* hold degrades alone */ }
       }
       return {

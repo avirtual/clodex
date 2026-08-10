@@ -517,7 +517,6 @@ function createSessionManager(deps) {
 
     async _ensureWire() {
       if (this._wire) return this._wire;
-      const { rearmPlan } = require('./wire/hold'); // pure re-arm math (used in the turn hook below)
       const { WireProxy } = require('./wire/proxy');
       const { isSubagentRole } = require('./wire/role');
       const { ShadowDiff } = require('./wire/shadow');
@@ -611,38 +610,17 @@ function createSessionManager(deps) {
               setImmediate(() => this._maybeFireCompactLatch(s));
             }
             if (t.sessionId && s.sessionId !== t.sessionId) {
-              if (this._wireSessionCorroborated(s, t.sessionId)) {
-                s.sessionId = t.sessionId;
-                getPersistence().setSessionId(t.agent, t.sessionId);
-                this._noteConversationForDigest(s, t.sessionId);
-              } else {
-                this._shadowLog({ type: 'wire-stray-session', agent: t.agent, sessionId: t.sessionId });
-              }
+              this._onWireSessionRotated(s, t.agent, t.sessionId);
             }
-            if (this._holdKeeper && !s._holdRearmed) {
-              try {
-                const p = getPersistence();
-                const rec = p.list().find((x) => x.name === t.agent);
-                const plan = rearmPlan(rec && rec.holdUntil, Date.now());
-                if (!plan) {
-                  s._holdRearmed = true; // nothing persisted — stop re-checking this spawn
-                } else if (plan.clear) {
-                  p.setHoldUntil(t.agent, null);
-                  s._holdRearmed = true;
-                  log.info('keepwarm', `disarmed ${t.agent} (expired before re-arm)`);
-                } else if (plan.arm && s.sessionId) {
-                  const r = this._holdKeeper.arm(s.sessionId, plan.hours);
-                  if (r && r.armed && r.until) {
-                    s._holdRearmed = true;
-                    p.setHoldUntil(t.agent, Math.round(r.until * 1000)); // clamped truth
-                    log.info('keepwarm', `re-armed ${t.agent} ${plan.hours.toFixed(2)}h remaining ` +
-                      `until ${new Date(r.until * 1000).toISOString()}`);
-                  }
-                }
-              } catch (e) {
-                this._shadowLog({ type: 'wire-hold-rearm-error', agent: t.agent, error: e.message });
-              }
-            }
+            // Deliberately NOT inside the rotation guard above: the re-arm probe
+            // also has to run on the first turn after an app restart, where
+            // nothing rotated and the gate was never closed. Main-line-only is
+            // already guaranteed by the side-call/subagent early return further
+            // up, and it must stay that way: noteRequest is main-line-gated too,
+            // so a hold armed off a side call would have no replayable entry and
+            // holdDecision would skip forever — a state a perpetual hold, which
+            // never self-disarms, cannot get out of.
+            this._maybeRearmHold(s, t.agent);
           } else if (s && s.agentType === 'claude') {
             for (const intent of intents) {
               this._shadow.record('wire', shadowIntentKey(t.agent, intent), {
@@ -752,6 +730,117 @@ function createSessionManager(deps) {
       return null;
     }
 
+    // Conversations this seat has moved off, oldest first. Bounded: only the
+    // recent past can still have a turn in flight, and a long-lived seat clears
+    // many times. Written at BOTH handover sites, read only by the backstop.
+    _noteSessionLeft(s, sid) {
+      if (!sid) return;
+      const left = s._leftSessionIds || (s._leftSessionIds = []);
+      if (left.includes(sid)) return;
+      left.push(sid);
+      if (left.length > 8) left.shift();
+    }
+
+    // BACKSTOP path for the same handover onSessionId does. It runs only when the
+    // wire id is the first news of the clear — a wiped transcript symlink, where
+    // the sentinel never fired. On an ordinary clear the symlink beats the wire
+    // and this is normally unreachable — probabilistic, not structural, since a
+    // stalled event loop could let the wire win — so it must not be the only
+    // place the handover lives.
+    //
+    // A /clear mints a new wire sessionId under a live session. The keeper is
+    // keyed on that id, so the old conversation's hold must END here and the
+    // re-arm gate reopen for the new one on the same turn.
+    _onWireSessionRotated(s, agent, newSessionId) {
+      // Never rotate BACKWARDS onto a conversation this seat has already left.
+      // The interleaving: the sentinel fires onSessionId(new), the handover there
+      // completes, a main-line turn re-arms the new id — and only THEN does a
+      // turn.completed still in flight from the old conversation land carrying
+      // the old id. The inequality at the call site holds, so without this the
+      // backstop would end the hold that was just handed over and reassign
+      // s.sessionId backwards. Corroboration below cannot be what stops it: it
+      // fails OPEN when realpathSync throws, and a momentarily unresolvable
+      // symlink is exactly what a clear transiently produces.
+      //
+      // "It self-heals on the next main-line turn" is not a defence for this
+      // feature — the seat it exists for is idle by definition, so the next turn
+      // is when the operator comes back, and the seat is cold by then.
+      //
+      // Backstop only. onSessionId is driven by the symlink, which IS the
+      // authority on which conversation is live, so it needs no such guard.
+      if (s._leftSessionIds && s._leftSessionIds.includes(newSessionId)) {
+        this._shadowLog({ type: 'wire-stale-session', agent, sessionId: newSessionId });
+        return;
+      }
+      if (!this._wireSessionCorroborated(s, newSessionId)) {
+        this._shadowLog({ type: 'wire-stray-session', agent, sessionId: newSessionId });
+        return;
+      }
+      const oldSid = s.sessionId;
+      this._noteSessionLeft(s, oldSid);
+      // Before the reassignment, or the old id is unreachable and its hold sits
+      // in _holds forever: holdDecision never disarms a PERPETUAL hold
+      // (`!hold.always` guards both the expired and max-pings branches) and a
+      // dead prefix only ever skips. tick() then re-hashes that conversation's
+      // whole message array — _entries retains the bytes — once a minute, per
+      // /clear, for the life of the app. A timed hold self-heals via the expired
+      // branch, which is why this was invisible before perpetual holds existed.
+      //
+      // endSession's cause is 'session-ended': neither 'off' (early return) nor
+      // 'failures' (the persistence-clearing branch), so _onHoldLifecycle logs
+      // and writes nothing. That routing is load-bearing — keepWarmAlways must
+      // SURVIVE the /clear for _maybeRearmHold to restore it below. Routing this
+      // through the failures cause would erase the operator's setting on every
+      // /clear.
+      if (this._holdKeeper && oldSid) this._holdKeeper.endSession(oldSid);
+      s.sessionId = newSessionId;
+      s._holdRearmed = false;
+      getPersistence().setSessionId(agent, newSessionId);
+      this._noteConversationForDigest(s, newSessionId);
+    }
+
+    // Restore a persisted keep-warm intent onto the session's CURRENT wire id.
+    // Retried every main-line turn until it lands rather than latched once per
+    // spawn: arm() is warm-gated, so a first-turn decline would otherwise lose
+    // the hold silently.
+    _maybeRearmHold(s, agent) {
+      if (!this._holdKeeper || s._holdRearmed) return;
+      try {
+        // Required here, not at module top: wire/* is loaded lazily by
+        // _ensureWire so a wire-less host never pulls it in. The keeper guard
+        // above means _ensureWire has already run, and require is cached.
+        const { rearmPlan } = require('./wire/hold');
+        const p = getPersistence();
+        const rec = p.list().find((x) => x.name === agent);
+        const plan = rearmPlan(rec && rec.holdUntil, Date.now(), !!(rec && rec.keepWarmAlways));
+        if (!plan) {
+          s._holdRearmed = true; // nothing persisted — stop re-checking this spawn
+        } else if (plan.clear) {
+          p.setHoldUntil(agent, null);
+          s._holdRearmed = true;
+          log.info('keepwarm', `disarmed ${agent} (expired before re-arm)`);
+        } else if (plan.arm && s.sessionId) {
+          const r = plan.always
+            ? this._holdKeeper.arm(s.sessionId, 0, { always: true })
+            : this._holdKeeper.arm(s.sessionId, plan.hours);
+          // A perpetual re-arm has no `until` to write back; the seat flag
+          // in persistence is already the whole truth for it.
+          if (r && r.armed && (r.always || r.until)) {
+            s._holdRearmed = true;
+            if (r.always) {
+              log.info('keepwarm', `re-armed ${agent} perpetually (seat property)`);
+            } else {
+              p.setHoldUntil(agent, Math.round(r.until * 1000)); // clamped truth
+              log.info('keepwarm', `re-armed ${agent} ${plan.hours.toFixed(2)}h remaining ` +
+                `until ${new Date(r.until * 1000).toISOString()}`);
+            }
+          }
+        }
+      } catch (e) {
+        this._shadowLog({ type: 'wire-hold-rearm-error', agent, error: e.message });
+      }
+    }
+
     _onHoldLifecycle(ev) {
       try {
         if (!ev) return;
@@ -763,9 +852,30 @@ function createSessionManager(deps) {
         if (ev.event === 'disarmed') {
           if (ev.cause === 'off') return;
           const name = this._nameForWireSession(ev.session);
-          if (ev.cause === 'failures' && name) getPersistence().setHoldUntil(name, null);
+          // A CREDENTIAL failure disarm must clear the PERPETUAL flag too, not
+          // just the deadline. maxFailures is the only bound on retrying against
+          // a credential nothing in-process can refresh; leaving the seat property
+          // set would re-arm it on the next restart and burn the same two pings
+          // again, forever — which is the waste the 2-strike disarm exists to stop.
+          //
+          // Every OTHER permanent failure still disarms (the keeper already did),
+          // but must not touch persistence: a 400 is not evidence about the
+          // operator's setting, and ping() strips `thinking`/`context_management`
+          // precisely because a wrong combination 400s — so an upstream schema
+          // change would otherwise withdraw Always on every unattended seat at
+          // once. The `last fail:400` in the log line below is the evidence trail.
+          // Lazy require for the same reason as _maybeRearmHold's.
+          const { isCredentialFailure } = require('./wire/hold');
+          if (ev.cause === 'failures' && name && isCredentialFailure(ev.lastResult)) {
+            // Flag first, deadline second: the flag is the one that re-arms
+            // forever, so if only one of these two writes lands it must not be
+            // the one that leaves a perpetual seat armed.
+            getPersistence().setKeepWarmAlways(name, false);
+            getPersistence().setHoldUntil(name, null);
+          }
           log.info('keepwarm', `disarmed ${name || ev.session} (${ev.cause || 'unknown'}` +
-            `${ev.pings != null ? `, ${ev.pings} pings` : ''})`);
+            `${ev.pings != null ? `, ${ev.pings} pings` : ''}` +
+            `${ev.lastResult ? `, last ${ev.lastResult}` : ''})`);
         } else if (ev.event === 'ping' && ev.result && ev.result.ok === false && !ev.result.skipped) {
           const name = this._nameForWireSession(ev.session);
           const r = ev.result;
@@ -1476,6 +1586,19 @@ function createSessionManager(deps) {
         // which owns the same transition but reports nothing back. The first id
         // (attach, resume) is not a clear and must not reset.
         if (priorSid && sessionId && priorSid !== sessionId) {
+          // The keep-warm handover rides THIS edge. The symlink repoint is what
+          // reports a clear, and it lands seconds before the new conversation's
+          // first upstream response — so by the time the wire's turn.completed
+          // runs, the assignment above has already made its
+          // `s.sessionId !== t.sessionId` test false and _onWireSessionRotated
+          // does NOT run on an ordinary clear. That method keeps the same two
+          // lines for the backstop case (a wiped symlink, where the wire id is
+          // the first news of the clear); it is a second site on purpose, so do
+          // not consolidate the handover into it. Why the old hold must be ended
+          // rather than left to lapse: see _onWireSessionRotated.
+          try { if (this._holdKeeper) this._holdKeeper.endSession(priorSid); } catch { /* observer-grade */ }
+          session._holdRearmed = false;
+          this._noteSessionLeft(session, priorSid);
           try { arm.onContextReset(name); } catch { /* observer-grade */ }
           // BEFORE the continuation: a clear discarded the conversation, so the
           // prompt-file rewrite has no warm cache left to bust and the fresh

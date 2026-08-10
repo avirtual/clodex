@@ -438,6 +438,18 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       else delete entry.holdUntil;
       this._save(all);
     },
+    // Perpetual keep-warm is a SEAT property, not a duration: it is stored as its
+    // own boolean rather than a very large holdUntil, because rearmPlan and the
+    // renderer both treat holdUntil as a real timestamp and would render a
+    // sentinel as a date far in the future.
+    setKeepWarmAlways(name, on) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (!entry) return;
+      if (on) entry.keepWarmAlways = true;
+      else delete entry.keepWarmAlways;
+      this._save(all);
+    },
     setLabel(name, label) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
