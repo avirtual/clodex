@@ -45,8 +45,15 @@ blocks a release.
   first, who was mid-work in a different branch. And if the teammate is gone, the
   same command brings up a replacement on the *existing* checkout, so the commits
   it left on the branch are still there; previously the ticket came back
-  unassigned with a git error. A checkout removed by hand is noticed and a fresh
-  one is made.
+  unassigned with a git error. A checkout you deleted yourself is noticed and a
+  fresh one made, rather than the teammate being sent to a directory that is no
+  longer there.
+
+- **Deleting a worktree's folder by hand no longer burns its branch.** git keeps
+  the bookkeeping entry when the directory disappears from under it and then
+  refuses to check that branch out anywhere else — `already used by worktree at`
+  a path that no longer exists. Clodex now clears those dead entries before
+  making a worktree, so a branch stays usable after an `rm -rf`.
 
 - **Teammates now commit their own work, and the lead merges it.** The shipped
   team prompts previously told every hand never to commit, which made sense when

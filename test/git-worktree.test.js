@@ -95,6 +95,28 @@ test('listWorktrees: main first (isMain), created worktree appears then removed'
   assert.strictEqual(l.worktrees.length, 1);
 });
 
+// Deleting a worktree's directory outside git leaves its admin entry standing.
+// Both halves of what that costs are pinned here: the listing must still SHOW the
+// entry (flagged prunable, so a caller can tell it from a live tree), and the
+// branch must remain usable — git refuses to check it out again while the stale
+// entry stands, which would make one `rm -rf` block the branch permanently.
+test('a worktree dir deleted by hand: listed as prunable, and the branch stays usable', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const created = await wt.createWorktree(repo, 'wt/orphan');
+  assert.strictEqual(created.ok, true, created.error);
+  fs.rmSync(created.path, { recursive: true, force: true });
+
+  const l = await wt.listWorktrees(repo);
+  const stale = l.worktrees.find((w) => w.branch === 'wt/orphan');
+  assert.ok(stale, 'ENTER: git still lists a deleted tree — the entry outlives the directory');
+  assert.strictEqual(stale.prunable, true, 'and flags it, which is the only way to tell it apart');
+  assert.strictEqual(l.worktrees.find((w) => w.isMain).prunable, false, 'a live tree is not flagged');
+
+  const again = await wt.createWorktree(repo, 'wt/orphan');
+  assert.strictEqual(again.ok, true, `the branch must be checkout-able again: ${again.error}`);
+  assert.ok(fs.existsSync(again.path), 'and the new tree exists on disk');
+});
+
 test('listWorktrees: non-repo → ok:false', { skip: !gitAvailable() }, async () => {
   const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-wl-'));
   assert.strictEqual((await wt.listWorktrees(notRepo)).ok, false);

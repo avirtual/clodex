@@ -194,9 +194,14 @@ adapter that hosts it. The modules below are what the engine assembles.
   `_taskAssign` splits the two readings of taken — still the ticket's own live
   seat means re-send the spec to it, un-pinning would hand THIS ticket's tree to
   another ticket's hand; the seat gone means respawn onto the surviving tree, which
-  `_existingTicketTree` re-verifies against `git worktree list` before reuse (the
-  record outlives a tree removed by hand). A reused tree is never rolled back on a
-  failed spawn — it holds the previous seat's commits.
+  `_existingTicketTree` re-verifies against `git worktree list` before reuse. The
+  check that matters there is `prunable`: a tree deleted outside git keeps its
+  admin entry and is listed like a live one, so path+branch alone would hand the
+  seat a `WORK IN:` path with nothing at the end of it (`locked` is excluded too —
+  an operator's explicit hands-off). `createWorktree` prunes first for the other
+  half of the same fact: the stale entry otherwise makes git refuse the branch
+  forever. A reused tree is never rolled back on a failed spawn — it holds the
+  previous seat's commits.
   The ticket seat's cwd is the REPO, not its worktree: it is TOLD the path by the
   `WORK IN:` line `_deliverTicketSpec` prepends, and cd's there itself. Booting it
   in the tree would bind its transcript, project root and team block to a checkout

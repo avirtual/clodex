@@ -58,6 +58,13 @@ async function createWorktree(cwd, branch, opts = null) {
     return { ok: false, error: `Invalid branch name: ${br}` };
   }
 
+  // A worktree whose directory was deleted by hand keeps its admin entry, and git
+  // refuses to check the branch out again while that entry stands ("already used
+  // by worktree at <gone path>"). Prune first so a removal outside Clodex does not
+  // permanently block the branch. Only entries whose directory is missing are
+  // dropped, so a live worktree is never touched.
+  await git(repo, ['worktree', 'prune']);
+
   // Does the branch already exist locally? (verify quietly, no output.)
   const exists = (await git(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${br}`])).ok;
 
@@ -161,11 +168,11 @@ async function removeWorktree(worktreePath) {
 }
 
 // Parse `git worktree list --porcelain` into [{ path, branch, bare, head,
-// detached, locked }]. The first block is always the main working tree.
+// detached, locked, prunable }]. The first block is always the main working tree.
 function parseWorktreeList(out) {
   const blocks = String(out).split(/\n\n+/).filter(Boolean);
   return blocks.map((block) => {
-    const rec = { path: null, branch: null, head: null, bare: false, detached: false, locked: false };
+    const rec = { path: null, branch: null, head: null, bare: false, detached: false, locked: false, prunable: false };
     for (const line of block.split('\n')) {
       if (line.startsWith('worktree ')) rec.path = line.slice('worktree '.length);
       else if (line.startsWith('branch ')) rec.branch = line.slice('branch '.length);
@@ -173,6 +180,12 @@ function parseWorktreeList(out) {
       else if (line === 'bare') rec.bare = true;
       else if (line === 'detached') rec.detached = true;
       else if (line.startsWith('locked')) rec.locked = true;
+      // A worktree whose DIRECTORY is gone stays registered until someone prunes,
+      // and is otherwise indistinguishable from a live one in this output. A
+      // caller deciding whether a recorded tree can still be used has no other
+      // signal — an existence check on the path is a race and misses a dir that
+      // exists but no longer holds the worktree.
+      else if (line.startsWith('prunable')) rec.prunable = true;
     }
     return rec;
   });
@@ -180,8 +193,9 @@ function parseWorktreeList(out) {
 
 // List the worktrees of the repo containing `cwd`, for the management pane.
 // Returns { ok, repo, worktrees:[{ path, branch, head, isMain, detached,
-// locked }] } — isMain flags the primary checkout (first entry). branch is the
-// short name (refs/heads/x → x). Never throws.
+// locked, prunable }] } — isMain flags the primary checkout (first entry),
+// prunable that the directory is gone. branch is the short name (refs/heads/x →
+// x). Never throws.
 async function listWorktrees(cwd) {
   const repo = await repoToplevel(cwd);
   if (!repo) return { ok: false, error: 'Not inside a git repository', repo: null, worktrees: [] };
@@ -195,6 +209,7 @@ async function listWorktrees(cwd) {
     isMain: i === 0,
     detached: e.detached,
     locked: e.locked,
+    prunable: e.prunable,
   }));
   return { ok: true, repo, worktrees };
 }

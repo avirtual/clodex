@@ -4744,9 +4744,8 @@ function createSessionManager(deps) {
     }
 
     // The ticket's tree, when it still exists — a seat dies, its tree does not.
-    // Read from git rather than from the record alone: the record survives a tree
-    // the operator removed by hand, and reusing a path that is no longer a
-    // registered worktree would spawn the seat into a bare directory.
+    // Read from git rather than from the record alone: the record survives the
+    // tree, so a recorded path proves nothing about what is on disk now.
     async _existingTicketTree(team, ticket) {
       const wt = ticket && ticket.worktree;
       if (!wt || !wt.path || !wt.branch) return null;
@@ -4758,7 +4757,14 @@ function createSessionManager(deps) {
       // match silently fails and every reuse mints a second tree.
       const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
       const want = real(wt.path);
-      const hit = listed.worktrees.find((e) => e.path && !e.isMain && e.branch === wt.branch && real(e.path) === want);
+      // `prunable` is the whole reason this reads the LISTING and not just the
+      // record: a tree the operator deleted by hand stays registered and is printed
+      // here like any other, so matching on path and branch alone would hand the
+      // seat a `WORK IN:` path with nothing at the end of it. Rejecting it falls
+      // through to createWorktree, which prunes the stale entry as it goes.
+      // `locked` is a deliberate "do not touch this tree" the operator set.
+      const hit = listed.worktrees.find((e) => e.path && !e.isMain && !e.prunable && !e.locked
+        && e.branch === wt.branch && real(e.path) === want);
       return hit ? { path: wt.path, branch: wt.branch } : null;
     }
 

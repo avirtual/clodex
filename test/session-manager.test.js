@@ -9157,6 +9157,40 @@ test('task assign: a ticket whose seat died respawns onto its EXISTING tree', as
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
+// A tree the operator deleted by hand stays REGISTERED (git flags it prunable and
+// prints it in `worktree list` like any other), so the record and the listing both
+// still name it. Reusing it would `cd` the hand into a directory that is gone.
+test('task assign: a tree removed by hand is not reused — a fresh one is made', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  const gone = f.one('t1').worktree;
+  assert.ok(gone && fsReal.existsSync(gone.path), 'ENTER: the tree must exist before it is removed');
+
+  // Removed the way an operator would, leaving git's admin entry behind.
+  fsReal.rmSync(gone.path, { recursive: true, force: true });
+  const listed = await require('../git-worktree').listWorktrees(repo);
+  assert.ok(listed.worktrees.some((w) => w.branch === gone.branch && w.prunable),
+    'ENTER: git must still LIST the removed tree, or this asserts nothing');
+
+  f.m.sessions.delete('team-hand-1');
+  f.upserted.splice(f.upserted.indexOf('team-hand-1'), 1);
+  f.gated.length = 0;
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1') || f.removed.length);
+
+  const t = f.one('t1');
+  assert.strictEqual(t.assignee, 'team-hand-1', 'the replacement still takes the ticket');
+  assert.ok(fsReal.existsSync(t.worktree.path), 'the tree it is pointed at must actually exist');
+  const body = f.gated.map((g) => g.body).join('\n');
+  assert.match(body, new RegExp(`WORK IN: ${t.worktree.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `),
+    'and that is the path it is told to cd into');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
 test('task add: a parked ticket for an opted-in role spawns nothing', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);
