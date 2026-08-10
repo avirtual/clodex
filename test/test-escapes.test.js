@@ -130,10 +130,10 @@ function scratch(body) {
 // and a `node --test` that sees it inherited refuses to run files ("run() is
 // being called recursively within a test file"). We are spawning an
 // INDEPENDENT runner, not nesting one, so the child gets a clean env.
-function runWrapper(file) {
+function runWrapper(...args) {
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
-  const r = spawnSync(process.execPath, [RUNNER, '--reporter=dot', file], { encoding: 'utf8', env });
+  const r = spawnSync(process.execPath, [RUNNER, '--reporter=dot', ...args], { encoding: 'utf8', env });
   return { out: `${r.stdout}${r.stderr}`, code: r.status };
 }
 
@@ -211,10 +211,19 @@ test('a run that produced no tap stream says so LOUDLY and claims NO verdict', (
   // exits non-zero on this by itself, so an exit-code assertion here would pass
   // with the guard deleted and prove nothing. The absence of `ESCAPES:` is the
   // part only this wrapper can get wrong.
-  const { out, code } = runWrapper('/nope/no-such-file.test.js');
-  assert.match(out, /run-tests: the tap stream is missing/);
-  assert.doesNotMatch(out, /ESCAPES:/, 'a run it could not read must not be given an escape verdict');
-  assert.notStrictEqual(code, 0);
+  //
+  // Reached via a bad node flag, not a nonexistent path: the argument check
+  // refuses a missing path BEFORE the spawn, so the old route no longer gets
+  // here and this test would have been asserting the wrong refusal. A real
+  // scratch file rides along so the run is not classified as a sweep — a
+  // flag-only passthrough takes the suite lock and would block on the parent.
+  const s = scratch("require('node:test').test('never runs', () => {});");
+  try {
+    const { out, code } = runWrapper('--bogus-node-flag', s.file);
+    assert.match(out, /run-tests: the tap stream is missing/);
+    assert.doesNotMatch(out, /ESCAPES:/, 'a run it could not read must not be given an escape verdict');
+    assert.notStrictEqual(code, 0);
+  } finally { s.clean(); }
 });
 
 test('a file that explodes at load is passed through as a failure, not as an escape', () => {

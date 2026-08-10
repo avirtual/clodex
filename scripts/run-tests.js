@@ -16,9 +16,10 @@
 //
 // Anything after the flag is passed through to `node --test` verbatim.
 //
-// This wrapper never converts a bad run into a good one: a spawn failure, a
-// missing or empty tap file, a run that produced no summary, or a throw inside
-// the escape analysis all exit non-zero with the reason on stderr.
+// This wrapper never converts a bad run into a good one: a named test path that
+// does not exist, a spawn failure, a missing or empty tap file, a run that
+// produced no summary, or a throw inside the escape analysis all exit non-zero
+// with the reason on stderr.
 
 const { spawnSync } = require('child_process');
 const fs = require('fs');
@@ -40,6 +41,25 @@ function die(msg, code) {
   console.error(`run-tests: ${msg}`);
   process.exit(code || 1);
 }
+
+// A named path that does not exist must not yield a run at all. Node splits on
+// the shape: a literal missing path exits non-zero, but a GLOB matching nothing
+// runs ZERO tests and exits 0 — a green report over a run that executed nothing,
+// the one thing this wrapper must never emit. Unexpanded globs do reach here:
+// sh without nullglob passes a pattern that matched nothing through literally.
+// Flag vs path is the leading `-`, the same rule `sweeping` uses below, so the
+// file keeps ONE definition of "names a target".
+const missing = passthrough.filter((a) => {
+  if (a.startsWith('-')) return false;
+  // spawnSync runs with cwd: ROOT — resolve against ROOT, not process.cwd().
+  if (/[*?[\]{}]/.test(a)) {
+    // Without globSync (node < 22) node cannot glob its own test args either,
+    // so an unmatched pattern takes the literal path and exits non-zero anyway.
+    return typeof fs.globSync === 'function' && fs.globSync(a, { cwd: ROOT }).length === 0;
+  }
+  return !fs.existsSync(path.resolve(ROOT, a));
+});
+if (missing.length) die(`named test path does not exist: ${missing.join(', ')}`);
 
 // ── the suite mutex, shared with scripts/test-digest.sh ────────────────────
 // SAME lock dir and SAME protocol as the digest path, because parts of this
