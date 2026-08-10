@@ -65,6 +65,12 @@ fi
 step "Electron runtime smoke (wire/)"
 node scripts/electron-smoke.js || die "electron smoke failed — wire/ uses something Electron's runtime lacks"
 
+# Renderer startup smoke: the unit suite reasons about the renderer as text and
+# so shipped v5.5.0 with a renderer that threw on load and drew nothing. This
+# step is the only one that opens a window.
+step "Renderer startup smoke (index.html)"
+node scripts/renderer-smoke.js || die "renderer smoke failed — the renderer throws on startup or never renders the sidebar"
+
 PREV_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
 echo "previous tag: ${PREV_TAG:-<none>}"
 
