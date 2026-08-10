@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- The release now opens a real window and checks that the interface actually
+  starts before it builds anything. Nothing in the previous checks ever loaded
+  the interface, which is how 5.5.0 shipped with a sidebar that drew nothing —
+  a release that reproduces that failure now stops instead of publishing.
+- Running the test suite against a filename that does not exist is refused by
+  name instead of quietly reporting success over a run that executed nothing.
+
 ## 5.5.1 — 2026-08-11 — v5.5.0 loaded no sessions; upgrade straight past it
 
 - **Fixes a v5.5.0 regression that left the sidebar empty.** 5.5.0 moved the
