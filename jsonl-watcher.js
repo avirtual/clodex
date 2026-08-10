@@ -43,7 +43,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
       this._readBuf = '';
       this._activityState = 'idle';
       // Touches seen since the last text flush. They fire per-LINE the moment
-      // they are parsed (onFileTouches, below) because the heat map wants them
+      // they are parsed (onFileTouches, below) because the touched-files UI wants them
       // immediately; onText flushes on a requestId change or 1s of silence. The
       // plugin feed needs them CORRELATED with the text they accompanied, so
       // they are also accumulated here and handed to onText at flush time.

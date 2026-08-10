@@ -82,7 +82,7 @@ test('collector: garbage data and unrelated events are inert', () => {
   assert.deepStrictEqual(c.reads, []);
 });
 
-// --- Read channel (boiling pot tier 1) --------------------------------------
+// --- Read channel (plugin turn-text feed `reads`) ----------------------------
 
 test('collector: a Read is captured into reads with offset/limit, never files', () => {
   const c = new FileToolCollector();

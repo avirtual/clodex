@@ -44,7 +44,6 @@ const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
 const { createDrawerHost } = require('./drawer-host');
 const { createIpcLog } = require('./ipc-log');
 const { createInboxDrawer } = require('./inbox-drawer');
-const { createPotDrawer } = require('./pot-drawer');
 const { createTermSearch } = require('./term-search');
 const { initBanners } = require('./banners');
 const { initThemes } = require('./themes');
@@ -3221,7 +3220,6 @@ createTermTab({
 
 createInboxDrawer({ openFilePeek, showToast });
 
-createPotDrawer();
 
 
 const {

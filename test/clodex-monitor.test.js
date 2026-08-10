@@ -7,7 +7,7 @@
 // one contract: a verb the script dispatches but the enum omits is unreachable,
 // and a verb the enum admits with nothing behind it dies at `unknown action`
 // after the agent has already spent a turn. Nothing pinned either half until
-// this file — pot-cli-closure.test.js reads this def only for its argv
+// this file — exec-scripts-materialize.test.js reads this def only for its argv
 // placeholder.
 //
 // Shaped after test/clodex-team.test.js's exec-def block (t101): read the

@@ -99,8 +99,6 @@ const PINNED_NAMES = [
   'sandboxUp', 'sandboxRebuild', 'sandboxDown', 'sandboxLogsTail', 'sandboxSetToken',
   'sandboxClearToken', 'sandboxListBoxes', 'sandboxCreateBox', 'sandboxDeleteBox',
   'onRequestOpenSandboxDialog',
-  // Boiling pot (boiling-pot-plan.md [internal design doc, not in this repo]) — cross-agent file-heat snapshot.
-  'potSnapshot',
   // Opt-in git worktree at session spawn + New Session working-directory
   // suggestions (recent MRU + popular). Appended deliberately as the surface grew.
   'createWorktree', 'worktreeInfo', 'markSessionWorktree',
@@ -112,8 +110,6 @@ const PINNED_NAMES = [
   // fifteen, dispatched over the plugin transport's five rows below. The
   // migration took this list 235 -> 220 — a feature leaving core took its API
   // surface with it, which is the pilot's whole claim.
-  // Boiling Pot drawer moved from a footer button to the View menu.
-  'onRequestOpenBoilingPot',
   // Scoped env vars for wrapper PTYs (T46) — global/workspace editor +
   // New Session dialog. get masks secret values.
   'envScopesGet', 'envScopesSet', 'envScopesDelete',
@@ -176,7 +172,7 @@ test('no duplicate names and no duplicate channels', () => {
 });
 
 test('contract covers exactly the pinned 254-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 254, 'pinned list is the full 254-method surface');
+  assert.equal(PINNED_NAMES.length, 252, 'pinned list is the full 252-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -200,7 +196,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 254, 'window.api has exactly 254 methods');
+    assert.equal(generated.length, 252, 'window.api has exactly 252 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

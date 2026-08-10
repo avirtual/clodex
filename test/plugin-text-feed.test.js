@@ -292,7 +292,7 @@ test('the event is frozen, and its arrays are copies — a subscriber cannot rea
     entries.seat = { name: 'seat', pluginGrants: ['archiver:turns'] };
 
     // The live arrays the wire collector hands core — the same objects
-    // _noteFileTouches and _recordHeat read for the heat map.
+    // _noteFileTouches reads these for the touched-files UI.
     const liveFiles = [{ tool: 'Write', path: '/repo/a.js' }];
     engine.hooks.fireAgentText(wireEv({ files: liveFiles }));
     await settle();
@@ -696,7 +696,7 @@ test('the tee-failure recovery replay publishes too — this is what makes the f
 });
 
 test('JsonlWatcher hands its flushed text the touches that accompanied it', () => {
-  // The correlation the feed needs: touches fire per-LINE (the heat map wants
+  // The correlation the feed needs: touches fire per-LINE (the touched-files UI wants
   // them immediately) while text flushes on a requestId change or 1s of silence.
   const { createJsonlWatcher } = require('../jsonl-watcher');
   const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: '/nonexistent' });
@@ -723,7 +723,7 @@ test('JsonlWatcher hands its flushed text the touches that accompanied it', () =
     w._readLines();
 
     assert.deepStrictEqual(immediate.map((t) => t.path), ['/repo/a.js'],
-      'ENTER: the per-line heat-map callback still fires immediately — unchanged');
+      'ENTER: the per-line touch callback still fires immediately — unchanged');
     assert.strictEqual(flushes.length, 0,
       'ENTER: and nothing has flushed yet — both lines share a requestId');
 
