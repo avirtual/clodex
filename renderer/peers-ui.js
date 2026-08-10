@@ -8,6 +8,7 @@ const { wireBulkToggles } = require('./lib/checklists');
 const { nextVisibleWithName } = require('./lib/peer-visibility');
 const { openUrl: sandboxOpenUrl } = require('./lib/sandbox-view');
 const { webViewAffordance } = require('./lib/peer-web-view');
+const { isPeerExpanded, togglePeerExpanded } = require('./lib/peer-collapse');
 const { servedBannerView } = require('./lib/served-banner');
 
 function initPeersUi({
@@ -25,6 +26,26 @@ function initPeersUi({
   let peerVisibleMap = {};
 
   const disabledPeers = new Map();
+
+  // Peer ids the operator has unfolded in THIS workspace. Absence is collapsed,
+  // so an empty list before the stored view arrives renders the same as a fresh
+  // workspace — which is the default we want anyway, not a flash of the wrong
+  // state.
+  let expandedPeers = [];
+  window.api.getSidebarView().then((res) => {
+    const view = res && res.ok && res.view;
+    if (!view || !Array.isArray(view.expandedPeers)) return;
+    expandedPeers = view.expandedPeers.slice();
+    renderPeers();
+  }).catch(() => {});
+
+  function togglePeerFold(id) {
+    expandedPeers = togglePeerExpanded(expandedPeers, id);
+    // A one-key write: workspaces.setView MERGES, so this cannot clobber the
+    // sidebar view keys renderer.js owns and this module never carries.
+    window.api.setSidebarView({ expandedPeers }).catch(() => {});
+    renderPeers();
+  }
 
   function peerNameVisible(id, name) {
     const sel = peerVisibleMap[id];
@@ -137,8 +158,17 @@ function initPeersUi({
   function renderPeers() {
     sessionList.querySelectorAll('[data-peer-ui]').forEach((el) => el.remove());
     for (const [id, st] of peerStatuses) {
+      // Rows are resolved before the header is built: a collapsed header shows
+      // how many it is hiding, so the header needs the count.
+      const rows = (st.online
+        ? (st.sessions || []).map((s) => ({ name: s.name, cwd: s.cwd, activity: s.activity, stats: s.stats }))
+        : [...sessions.entries()]
+            .filter(([, e]) => e.peer && e.peer.id === id)
+            .map(([, e]) => ({ name: e.peer.name, cwd: '', activity: 'idle' })))
+        .filter((s) => peerNameVisible(id, s.name) || sessions.has(peerKey(id, s.name)));
+      const expanded = isPeerExpanded(expandedPeers, id);
       const header = document.createElement('div');
-      header.className = 'peer-header';
+      header.className = 'peer-header' + (expanded ? '' : ' collapsed');
       header.dataset.peerUi = '1';
       const tun = peerTunnels.get(id);
       let stateText = st.online ? '' : 'offline';
@@ -160,9 +190,11 @@ function initPeersUi({
       const webView = isBox
         ? { show: false }
         : webViewAffordance({ status: st, tunnel: tun, webTunnel: peerWebTunnels.get(id) });
-      header.innerHTML = `<span class="peer-dot ${st.online ? 'online' : ''}"></span>` +
+      header.innerHTML = `<span class="peer-caret">&#9662;</span>` +
+        `<span class="peer-dot ${st.online ? 'online' : ''}"></span>` +
         (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : '') +
         `<span class="peer-label${nameSev}">${esc(hostLabel)}</span>` +
+        ((!expanded && rows.length) ? `<span class="peer-count">${rows.length}</span>` : '') +
         `<span class="peer-state">${esc(stateText)}</span>` +
         `<span class="peer-actions">` +
           (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : '') +
@@ -209,19 +241,19 @@ function initPeersUi({
           sev,
         });
       });
+      // Every button in .peer-actions stops propagation, so a bare header click
+      // is only ever the empty area, the dot, the caret or the label.
+      header.addEventListener('click', () => { togglePeerFold(id); });
       sessionList.appendChild(header);
 
-      const rows = (st.online
-        ? (st.sessions || []).map((s) => ({ name: s.name, cwd: s.cwd, activity: s.activity, stats: s.stats }))
-        : [...sessions.entries()]
-            .filter(([, e]) => e.peer && e.peer.id === id)
-            .map(([, e]) => ({ name: e.peer.name, cwd: '', activity: 'idle' })))
-        .filter((s) => peerNameVisible(id, s.name) || sessions.has(peerKey(id, s.name)));
       for (const s of rows) {
         const key = peerKey(id, s.name);
         const item = document.createElement('div');
         item.className = 'session-item peer-item' + (st.online ? '' : ' peer-offline');
         item.dataset.peerUi = '1';
+        // Hidden, not omitted: an attached peer row stays in the DOM so
+        // updateSidebarActive and the badge writes below still find it.
+        if (!expanded) item.style.display = 'none';
         item.dataset.name = key;
         item.dataset.activity = s.activity || 'idle';
         if (sessions.has(key)) item.classList.add('attached');
@@ -552,6 +584,10 @@ function initPeersUi({
         break;
       case 'rebuild':
         await rebuildBox(id, name || 'sandbox');
+        break;
+      case 'pause':
+        // `name` is the peer's display label here, as for 'restart'.
+        disablePeer(id, name || 'peer');
         break;
       case 'newSession':
         openPeerSessionDialog(id, name || 'peer');

@@ -3951,7 +3951,20 @@ html, body {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   user-select: none;
+  cursor: pointer;
 }
+/* Fold affordance, deliberately the same glyph, width and rotation as
+   .session-group-caret so a peer header reads as a group header. */
+.peer-caret {
+  display: inline-block;
+  width: 10px;
+  flex: none;
+  transition: transform 0.12s ease;
+}
+.peer-header.collapsed .peer-caret { transform: rotate(-90deg); }
+/* Hidden-row count, shown only while collapsed — same role as
+   .session-group-count on a local group. */
+.peer-count { opacity: 0.7; font-weight: 600; }
 .peer-label { font-weight: 600; }
 .peer-dot {
   width: 7px;
@@ -4032,8 +4045,10 @@ html, body {
 .agent-check.peer-select-gone { opacity: 0.55; }
 
 /* Paused peer (disabled): the whole header dims to read as inert, its lone
-   Resume (▶) icon still brightens on hover via .peer-select. */
-.peer-header-disabled { opacity: 0.5; }
+   Resume (▶) icon still brightens on hover via .peer-select. It has no rows to
+   fold, so it gets no caret and no click toggle — and must not offer the
+   pointer that would promise one. */
+.peer-header-disabled { opacity: 0.5; cursor: default; }
 
 .session-item.peer-offline { opacity: 0.5; }
 .session-name .peer-suffix { color: var(--text-dim); font-size: 11px; }

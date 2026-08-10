@@ -42,6 +42,17 @@ blocks a release.
   released rather than left behind burning a little CPU every minute for the
   rest of the session.
 
+- **Peer sections in the sidebar fold, and a new workspace starts folded.**
+  Click a peer's header to collapse it — the caret and the hidden-session count
+  match the local group headers. The fold is remembered per workspace, so a
+  workspace opened for one project no longer greets you with every session on
+  every peer you have ever connected to; peers stay folded until you open them
+  there, including peers that appear for the first time. Pausing a peer is also
+  reachable again: it is on the header's right-click menu, and unlike the ⓘ
+  popover's button it works on a peer that is offline — which was the one case
+  where you could not pause at all. The popover's button now says "Pause" too,
+  matching the "paused" the header has always shown.
+
 ## 5.4.0 — 2026-08-10 — A branch and a checkout for every teammate
 
 - **Teammates can now work on the same repo at the same time, each in its own
