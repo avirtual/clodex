@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- **Agents no longer look idle while they are working.** The idle time shown
+  for a session — in `[agent:who]`, in the sidebar, and in the tray — measured
+  how long ago the activity LABEL last changed, not how long ago the agent last
+  did anything. An agent taking request after request without changing state
+  stayed labelled "thinking" while its clock ran, so a long turn reported
+  minutes of idleness. The same number decides whether a message to an agent is
+  delivered or held until its next turn, so busy agents had messages parked and
+  cold ones woken. It is now stamped from the agent's actual traffic. Restart
+  behaviour is unchanged: a resumed session still dates from its last real turn
+  rather than from the restart, and a session whose files carry a clock ahead of
+  the machine's no longer keeps that wrong time permanently.
+
 - **Teams are reachable from the menu bar.** A new Teams menu lists every team,
   opens its roles editor, and — the part that was missing — creates a team
   without spawning a seat for it. Until now a team could only be born as a side
