@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Teams in the menu bar, and a clock that knows you are working
 
 - **Agents no longer look idle while they are working.** The idle time shown
   for a session — in `[agent:who]`, in the sidebar, and in the tray — measured
