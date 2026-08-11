@@ -2405,9 +2405,11 @@ function createSessionManager(deps) {
       if (!team) return;
       const role = matchSeatRole(team, session.name);
       const body = formatCompositionDelta(team.name, verb, { seat: session.name, role });
-      const roleDef = role ? (team.roles && team.roles[role]) : null;
+      // The persistence record is the single source of a seat's ephemerality —
+      // stamped at spawn by the path that knows. The role def carried a second
+      // copy that could disagree with it.
       let rec = null; try { rec = getPersistence().get(session.name); } catch { rec = null; }
-      const ephemeral = (roleDef && roleDef.ephemeral === true) || (rec && rec.ephemeral === true);
+      const ephemeral = !!(rec && rec.ephemeral === true);
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead || s.name === session.name) continue;
         if (s._bootSettling) continue;   // still booting (codex) → drop the delta (harmless-miss contract)
@@ -4421,25 +4423,20 @@ function createSessionManager(deps) {
         ? ` — reviewer template env keys [${droppedEnvKeys.join(', ')}] are outside the allowed set [${[...REVIEWER_ENV_ALLOWLIST].join(', ')}] — dropped (env is an authority surface; requires operator approval)`
         : '';
 
-      // C2 (T29 Slice 2): the cold reviewer ALWAYS spawns as claude, regardless of
-      // the manifest's `type`. team.json is agent-writable and enforcement is at
-      // CONSUME, not at a write op (the C3 twin): only create()'s claude arm
-      // consumes disabledTools (via setupClaudeHook), so a `type: codex` reviewer
-      // would spawn UNCAPPED — codex ignores the denylist entirely, so the T29a
-      // tools cap silently evaporates. Forcing claude here is the choke point that
-      // makes the cap real however the manifest was written. (This supersedes the
-      // old MF4 "refuse a codex reviewer that declares tools" bounce — force+notice
-      // is strictly safer than refuse: it also catches the no-tools codex reviewer
-      // that MF4 let through fully armed.) The requested type is kept only to warn.
-      const requestedType = def.type || 'claude';
+      // C2 (T29 Slice 2): the cold reviewer ALWAYS spawns as claude. This is CODE,
+      // not a manifest field: only create()'s claude arm consumes disabledTools
+      // (via setupClaudeHook), so a codex reviewer would spawn UNCAPPED — codex
+      // ignores the denylist entirely, and the tools cap would silently evaporate.
+      // Forcing claude here is the choke point that makes the cap real.
       const type = 'claude';
       const cwd = team.root;
-      const typeWarn = requestedType !== 'claude'
-        ? ` — NOTE: manifest requested reviewer type "${requestedType}", but cold reviewers always spawn as claude (a non-claude seat can't enforce the tools cap); ignoring`
-        : '';
+      // The reviewer TEMPLATE may narrow the cap; nothing widens it. The role def
+      // used to be a second source here and it was inert on every other role,
+      // which is what made a `tools:` on a hand read as a restriction and enforce
+      // nothing.
       const requestedTools = (Array.isArray(reviewTpl && reviewTpl.tools) && reviewTpl.tools.length)
         ? reviewTpl.tools
-        : ((Array.isArray(def.tools) && def.tools.length) ? def.tools : null);
+        : null;
       const effectiveTools = requestedTools
         ? REVIEWER_TOOL_CAP.filter((t) => requestedTools.includes(t))
         : REVIEWER_TOOL_CAP.slice();
@@ -4503,7 +4500,7 @@ function createSessionManager(deps) {
             type: 'team-review', from: session.name, to: name, body: `review → ${name} @ ${cwd}`,
           });
           log.info('intent', `team-review by ${session.name} → ${name} (${type}) @ ${cwd}`);
-          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${envWarn}${typeWarn}${promptWarn}${promptEscapeWarn}${tplWarn}`);
+          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${envWarn}${promptWarn}${promptEscapeWarn}${tplWarn}`);
         } catch (err) {
           if (!this.sessions.has(name)) getPersistence().remove(name);
           log.error('intent', `team-review by ${session.name} → ${name} failed: ${err.message}`);
@@ -4556,7 +4553,6 @@ function createSessionManager(deps) {
             const brief = String(intent.body == null ? '' : intent.body).trim();
             if (brief.length > BRIEF_MAX) { reply(`error: brief too long (${brief.length} > ${BRIEF_MAX} chars)`); return; }
             const def = {
-              instantiate: 'session',
               prompt: intent.prompt || null,
               template: intent.template || null,
               brief: brief || null,
@@ -4962,7 +4958,6 @@ function createSessionManager(deps) {
       if (!Object.prototype.hasOwnProperty.call(team.roles, assignee)) return null;
       const def = team.roles[assignee];
       if (!def || def.worktree !== true) return null;
-      if (def.instantiate === 'subagent') return null; // no seat to spawn into
       if (assignee === 'lead' || assignee === 'reviewer') return null;
       return def;
     }
@@ -5224,7 +5219,11 @@ function createSessionManager(deps) {
           // template-shaped seat still gets its role delta.
           const shape = this._templateShape(def.template);
           await this.create(
-            seat.name, def.type || opener.type || 'claude', team.root,
+            // The seat's type comes from the opener, not from the role: a role
+            // that wants codex hands names a codex TEMPLATE. The role field that
+            // used to sit here was honored verbatim on this path and overridden
+            // with a warning on the review path.
+            seat.name, opener.type || 'claude', team.root,
             (shape && shape.extraArgs) || postureArgs, null,
             opener.workspaceId || DEFAULT_WORKSPACE_ID, null, false, opener.proxy ?? null,
             (shape && shape.agents) || [], (shape && shape.denyBuiltins) || [],
@@ -6494,13 +6493,22 @@ function createSessionManager(deps) {
         fail(`"${requesterName}" and "${targetName}" are not in the same project (no shared team.json root)`);
         return;
       }
+      // Two independent facts, one from each store that actually knows. The
+      // MANIFEST answers "is this seat the team's at all" — an unrecognized seat
+      // is not the team's to preserve. The persistence RECORD answers "was this
+      // seat spawned to be thrown away", stamped at spawn by the path that knew
+      // (the ticket seat and the review reservation both stamp it). The role def
+      // used to carry an `ephemeral` copy of the second fact and it could
+      // disagree with the record; one word in two stores is how it did.
       let discard = false;
       try {
         const team = resolveTeam(target.cwd);
         if (team) {
           const role = matchSeatRole(team, targetName);
-          const def = role ? team.roles[role] : null;
-          discard = !def || def.ephemeral === true;
+          const roleMatch = role ? team.roles[role] : null;
+          let rec = null;
+          try { rec = getPersistence().get(targetName); } catch { rec = null; }
+          discard = !roleMatch || (rec != null && rec.ephemeral === true);
         }
       } catch { discard = false; }
       const disposition = discard ? 'discard' : 'archive';

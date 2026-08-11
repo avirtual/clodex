@@ -144,7 +144,7 @@ function registerIpcHandlers(deps) {
       const { team, role, prompt, ...p } = spec || {};
       const def = role === 'hand'
         ? { ...STOCK_ROLE_DEFS.hand }
-        : { instantiate: 'session', prompt: prompt || null };
+        : { prompt: prompt || null };
       addRole(team, role, def);
       return await spawnFromParams(e, p);
     } catch (err) {
