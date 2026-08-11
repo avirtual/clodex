@@ -27,6 +27,9 @@ blocks a release.
   cancelled restart now says so and says not to re-request it.
 - The "restart dropped" notification no longer claims the restart was
   cancelled, and names the agent that asked for it when an agent did.
+- Traffic optimization updated to wirescope v0.6.50, which drops the
+  boiling-pot analysis that measured out negative and was removed from Clodex
+  last release. No change to how requests are handled.
 
 ## 5.5.2 — 2026-08-11
 
