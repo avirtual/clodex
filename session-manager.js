@@ -783,12 +783,10 @@ function createSessionManager(deps) {
       // /clear, for the life of the app. A timed hold self-heals via the expired
       // branch, which is why this was invisible before perpetual holds existed.
       //
-      // endSession's cause is 'session-ended': neither 'off' (early return) nor
-      // 'failures' (the persistence-clearing branch), so _onHoldLifecycle logs
-      // and writes nothing. That routing is load-bearing — keepWarmAlways must
-      // SURVIVE the /clear for _maybeRearmHold to restore it below. Routing this
-      // through the failures cause would erase the operator's setting on every
-      // /clear.
+      // endSession's cause is 'session-ended', which _onHoldLifecycle logs
+      // without touching the re-arm gate — the reset below is this path's own
+      // job and must stay here. Routing the handover through the 'failures'
+      // cause instead would reopen the gate twice and muddy which path owns it.
       if (this._holdKeeper && oldSid) this._holdKeeper.endSession(oldSid);
       s.sessionId = newSessionId;
       s._holdRearmed = false;
@@ -849,26 +847,33 @@ function createSessionManager(deps) {
         if (ev.event === 'disarmed') {
           if (ev.cause === 'off') return;
           const name = this._nameForWireSession(ev.session);
-          // A CREDENTIAL failure disarm must clear the PERPETUAL flag too, not
-          // just the deadline. maxFailures is the only bound on retrying against
-          // a credential nothing in-process can refresh; leaving the seat property
-          // set would re-arm it on the next restart and burn the same two pings
-          // again, forever — which is the waste the 2-strike disarm exists to stop.
+          // A failure disarm is PROVISIONAL: it stops THIS launch's pinging and
+          // writes nothing. No ping failure — credential-shaped or not — may
+          // erase a persisted keep-warm intent, because a rejected replay is not
+          // evidence about what the operator asked for. The 401 is the case that
+          // settled this: the CLI owns the OAuth file and refreshes it on its
+          // next real turn, so an overnight rejection is transient (measured
+          // recovery: ~12 minutes) while the erase was permanent and silent.
+          // A `holdUntil` deadline is not cleared here either — it expires by
+          // TIME, and rearmPlan's lapse branch is what notices that.
           //
-          // Every OTHER permanent failure still disarms (the keeper already did),
-          // but must not touch persistence: a 400 is not evidence about the
-          // operator's setting, and ping() strips `thinking`/`context_management`
-          // precisely because a wrong combination 400s — so an upstream schema
-          // change would otherwise withdraw Always on every unattended seat at
-          // once. The `last fail:400` in the log line below is the evidence trail.
-          // Lazy require for the same reason as _maybeRearmHold's.
-          const { isCredentialFailure } = require('./wire/hold');
-          if (ev.cause === 'failures' && name && isCredentialFailure(ev.lastResult)) {
-            // Flag first, deadline second: the flag is the one that re-arms
-            // forever, so if only one of these two writes lands it must not be
-            // the one that leaves a perpetual seat armed.
-            getPersistence().setKeepWarmAlways(name, false);
-            getPersistence().setHoldUntil(name, null);
+          // Accepted cost: a genuinely dead credential burns the 2-ping strike
+          // budget once per re-arm rather than once, forever. Two warm cache-read
+          // pings beats discarding an explicit operator setting unattended. It is
+          // self-limiting besides — the re-arm rides a MAIN-LINE turn, and a turn
+          // means the CLI just authenticated, so a truly dead credential earns no
+          // re-arms at all while the seat sits idle.
+          //
+          // Reopening the gate is what makes the surviving flag mean anything:
+          // _maybeRearmHold latches _holdRearmed once an arm lands, so without
+          // this the intent would sit in sessions.json un-restored until the next
+          // /clear or app restart. Only 'failures' reopens it: 'off' returned
+          // above, 'expired'/'max-pings' are terminal for the timed holds that
+          // can reach them, and 'session-ended' already resets the gate on the
+          // rotation path that emits it.
+          if (ev.cause === 'failures' && name) {
+            const s = this.sessions.get(name);
+            if (s) s._holdRearmed = false;
           }
           log.info('keepwarm', `disarmed ${name || ev.session} (${ev.cause || 'unknown'}` +
             `${ev.pings != null ? `, ${ev.pings} pings` : ''}` +

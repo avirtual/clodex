@@ -147,14 +147,22 @@ fields on the session's sessions.json record:
 - `holdUntil` (epoch ms) for a timed hold, written on arm (from the arm
   result's clamped `until`, never the raw requested hours), re-written on
   every re-anchor (organic turns restart the keeper's window, so the
-  persisted deadline must track it), and cleared on explicit disarm,
-  failure-strike disarm, or lapse.
+  persisted deadline must track it), and cleared on explicit disarm or on
+  lapse (`rearmPlan`'s clear verdict, checked on the next main-line turn).
 - `keepWarmAlways` (boolean) for a perpetual hold — a property of the SEAT
   rather than a window. It has no deadline, so it must never be encoded as a
   large `holdUntil`: `rearmPlan` and the fire button both read that field as a
   real timestamp. A perpetual seat re-arms with no deadline at all, and its
   re-anchors persist nothing (the emit carries `until: null`, below the
   `> 0` gate).
+
+Neither field is ever cleared by a **ping failure**. A failure-strike disarm is
+provisional — it stops this launch's pinging and reopens the re-arm gate, so the
+surviving intent is restored on the seat's next main-line turn. The 401 is why:
+the CLI owns its OAuth file and refreshes it on the next real turn, so an
+overnight rejection is transient, and erasing an explicit operator setting on it
+was permanent and silent. Only the operator (`wire:hold`, Settings) withdraws an
+intent.
 
 Arming either one clears the other, as does an explicit disarm or a
 failure-strike disarm — a seat must never carry both. After an app restart the first main-line wire turn

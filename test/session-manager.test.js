@@ -401,15 +401,18 @@ test('_maybeDeliverDigest: stray sid (≠ s.sessionId) neither delivers nor mark
 // Keep-warm lifecycle listener: re-anchors must RE-PERSIST the deadline (the
 // keeper restarts its window on every organic turn, so a stale persisted
 // holdUntil would wrongly lapse-clear a still-valid hold after a restart);
-// a CREDENTIAL failure-strike disarm clears the intent and no other disarm does;
-// explicit 'off' is the wire:hold handler's job and is skipped here.
-test('_onHoldLifecycle: re-anchor re-persists, a credential failure clears BOTH intents, everything else is skipped', () => {
-  // ONE ordered log for both setters, not one array each: the whole point of the
-  // failure branch's write order is that the perpetual flag is cleared before the
-  // deadline, and two separate arrays cannot see an order at all. The body is
-  // also wrapped in a swallow-everything try/catch, so a setter missing from
-  // this fake would abort the branch silently — every assertion here has to be
-  // a positive on the recorded calls, never an absence.
+// NO disarm cause may erase a persisted intent; and a 'failures' disarm — alone
+// among the causes — REOPENS the re-arm gate, because that disarm is provisional.
+test('_onHoldLifecycle: re-anchor re-persists, no disarm erases an intent, only a failure disarm reopens the gate', () => {
+  // ONE ordered log for both setters, not one array each: a write to the wrong
+  // one of the two is the failure this pins, and separate arrays cannot see it.
+  //
+  // The body is wrapped in a swallow-everything try/catch, and the disarm
+  // assertions below are now ABSENCES (`calls` stays empty) — exactly the shape
+  // that would also hold if the branch threw on line one and was swallowed. The
+  // `_holdRearmed` assertions are what stop that: each is a POSITIVE observation
+  // of a mutation made at the END of the branch, so the branch cannot have
+  // aborted early and still satisfy them. Do not drop them to "simplify".
   const calls = [];
   const m = mk({
     getPersistence: () => ({
@@ -419,7 +422,11 @@ test('_onHoldLifecycle: re-anchor re-persists, a credential failure clears BOTH 
     }),
     log: { info: () => {}, warn: () => {} },
   });
-  m.sessions.set('a', { name: 'a', sessionId: 'sid-1' });
+  // _holdRearmed starts LATCHED SHUT, which is the state a live armed seat is in
+  // (_maybeRearmHold sets it once the arm lands). Starting it false would make
+  // every "reopened the gate" assertion below vacuous.
+  const seat = { name: 'a', sessionId: 'sid-1', _holdRearmed: true };
+  m.sessions.set('a', seat);
 
   // Re-anchor: keeper's `until` is epoch SECONDS → persisted as epoch ms.
   m._onHoldLifecycle({ session: 'sid-1', event: 're-anchored', until: 1_700_000_000 });
@@ -434,42 +441,103 @@ test('_onHoldLifecycle: re-anchor re-persists, a credential failure clears BOTH 
   m._onHoldLifecycle({ session: 'sid-1', event: 're-anchored', until: null });
   assert.strictEqual(calls.length, 1);
 
-  // A CREDENTIAL failure-strike disarm clears BOTH intents (keys on cause plus
-  // the lastResult label, never the reason text), flag first so a half-landed
-  // pair can never leave the seat perpetual.
+  // THE REGRESSION. A 401 strike-out used to clear keepWarmAlways + holdUntil,
+  // which erased an explicit operator setting on a rejection that recovers by
+  // itself in minutes (the CLI owns the OAuth file and refreshes it on its next
+  // real turn). It must now write nothing and reopen the gate instead.
   calls.length = 0;
-  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', reason: 'whatever', pings: 3, lastResult: 'fail:401' });
-  assert.deepStrictEqual(calls, [
-    ['setKeepWarmAlways', 'a', false],
-    ['setHoldUntil', 'a', null],
-  ]);
+  assert.strictEqual(seat._holdRearmed, true,
+    'ENTER: the gate is latched shut going in, or "reopened" below proves nothing');
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', reason: 'whatever', pings: 2, lastResult: 'fail:401' });
+  assert.strictEqual(seat._holdRearmed, false,
+    'a 401 disarm reopens the gate so the surviving intent re-arms on the next main-line turn');
+  assert.deepStrictEqual(calls, [], 'and it erases neither the seat flag nor the deadline');
 
-  // Explicit off: handled (logged+cleared) by the wire:hold handler — skipped here.
+  // Explicit off: the operator withdrew it. Handled (logged+cleared) by the
+  // wire:hold handler, skipped here — and it must NOT reopen the gate, or the
+  // seat would re-arm itself out of a withdrawal on the very next turn.
+  seat._holdRearmed = true;
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'off', pings: 0 });
-  // Expiry/max-pings: log-only, field clears lazily on the next re-arm check.
-  // A perpetual seat cannot reach either cause, so clearing its flag here would
-  // silently un-set a setting the operator never withdrew.
+  assert.strictEqual(seat._holdRearmed, true, "'off' is a withdrawal, not a provisional stop");
+
+  // Expiry/max-pings are terminal for the TIMED holds that can reach them (a
+  // perpetual hold is `!hold.always`-guarded out of both), and 'session-ended'
+  // is emitted on the /clear handover path, which resets the gate itself. None
+  // of the three may reopen it here.
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'expired', pings: 5 });
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'max-pings', pings: 24 });
-  // 'session-ended' is what a /clear's endSession emits, and it MUST land here
-  // as a log-only cause. Routing it to the failures branch instead would erase
-  // the operator's Always setting on every /clear — the handover in
-  // _onWireSessionRotated re-arms off exactly the field that branch clears.
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'session-ended', pings: 2 });
-  // A permanent but NON-credential failure: the keeper has already disarmed for
-  // this launch and that stands, but the operator's setting is not evidence about
-  // a 400. ping() strips `thinking`/`context_management` precisely because a
-  // wrong combination 400s, so if an upstream schema change ever makes the replay
-  // itself 400, this branch would otherwise withdraw Always on every unattended
-  // seat at once — the same class of bug as counting a transport blip as a strike.
-  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', pings: 3, lastResult: 'fail:400' });
-  // A failures disarm with no label at all is likewise not proof of a dead
-  // credential, so it must not erase anything either.
-  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', pings: 3 });
-  assert.deepStrictEqual(calls, [
-    ['setKeepWarmAlways', 'a', false],
-    ['setHoldUntil', 'a', null],
-  ], 'only a CREDENTIAL failure writes; off/expired/max-pings/session-ended/fail:400 add nothing');
+  assert.strictEqual(seat._holdRearmed, true,
+    'expired/max-pings are terminal and session-ended is the rotation path\'s own job');
+
+  // A permanent but NON-credential failure now takes the SAME branch as the 401.
+  // It always deserved the same treatment: ping() strips `thinking` and
+  // `context_management` precisely because a wrong combination 400s, so an
+  // upstream schema change makes the REPLAY 400 on a perfectly good credential.
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', pings: 2, lastResult: 'fail:400' });
+  assert.strictEqual(seat._holdRearmed, false, 'a 400 strike-out is provisional too');
+
+  // A failures disarm with no label at all (older code path, or a keeper that
+  // never pinged) is likewise provisional.
+  seat._holdRearmed = true;
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', pings: 2 });
+  assert.strictEqual(seat._holdRearmed, false, 'an unlabelled failures disarm is provisional too');
+
+  assert.deepStrictEqual(calls, [],
+    'no disarm cause writes to persistence at all — a failed ping is not evidence about the setting');
+});
+
+// The end-to-end claim the ticket is about, driven through the real seams rather
+// than asserted on source text: a perpetual seat strikes out on a transient 401,
+// and its persisted flag both SURVIVES that and is re-armed on the next
+// main-line turn. Needs the real _onHoldLifecycle → _maybeRearmHold pair,
+// because the bug lived in the handoff between them: the old code cleared the
+// flag, and clearing it was not even the whole defect — the re-arm gate stays
+// latched shut after a disarm, so the flag alone would never have been restored.
+test('a perpetual seat survives a 401 strike-out and re-arms itself on the next turn', () => {
+  const calls = [];
+  // A REAL record object, mutated by the fake setters exactly as persistence
+  // would mutate sessions.json. list() reads it back, so if the disarm branch
+  // ever clears keepWarmAlways again, the re-arm below sees the cleared record
+  // and declines — the test fails on the behaviour, not on a recorded call.
+  const rec = { name: 'a', keepWarmAlways: true };
+  const m = mk({
+    getPersistence: () => ({
+      list: () => [rec],
+      get: () => null,
+      setHoldUntil: (n, v) => { calls.push(['setHoldUntil', n, v]); if (v == null) delete rec.holdUntil; else rec.holdUntil = v; },
+      setKeepWarmAlways: (n, v) => { calls.push(['setKeepWarmAlways', n, v]); if (v) rec.keepWarmAlways = true; else delete rec.keepWarmAlways; },
+    }),
+    log: { info: () => {}, warn: () => {} },
+  });
+  m._holdKeeper = {
+    endSession: (sid) => calls.push(['endSession', sid]),
+    arm: (sid, hours, opts) => {
+      calls.push(opts === undefined ? ['arm', sid, hours] : ['arm', sid, hours, opts]);
+      return { armed: true, always: !!(opts && opts.always), until: null };
+    },
+  };
+  m._shadowLog = (r) => calls.push(['shadow', r.type, r.error]);
+  const s = { name: 'a', sessionId: 'sid-1', agentType: 'claude', _holdRearmed: true };
+  m.sessions.set('a', s);
+
+  // Two overnight 401s → the keeper strikes out and emits the disarm.
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'failures', pings: 2, lastResult: 'fail:401' });
+
+  assert.strictEqual(rec.keepWarmAlways, true,
+    'the operator setting is still in the record after the strike-out');
+
+  // Morning: the CLI's OAuth has refreshed and the seat takes a real turn. This
+  // is the exact call the wire's turn.completed handler makes.
+  m._maybeRearmHold(s, 'a');
+
+  assert.deepStrictEqual(calls.filter((c) => c[0] === 'arm'), [['arm', 'sid-1', 0, { always: true }]],
+    'ENTER: it re-armed perpetually on the live wire id — everything else here is vacuous otherwise');
+  assert.deepStrictEqual(calls.filter((c) => c[0] === 'shadow'), [],
+    'and no swallowed throw hid inside _maybeRearmHold');
+  assert.deepStrictEqual(calls.filter((c) => c[0].startsWith('set')), [],
+    'the whole round trip wrote nothing to persistence: the intent was never touched');
+  assert.strictEqual(s._holdRearmed, true, 'and the gate latched shut again behind the re-arm');
 });
 
 // A /clear mints a new wire sessionId under a live session, and the keeper is
