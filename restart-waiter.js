@@ -50,10 +50,14 @@ function createIdleWaiter({
 
   function isArmed() { return timer !== null; }
 
-  function drainAbandoned() {
+  // The reason is carried, not inferred: a requester told only "dropped" cannot
+  // tell a 30-minute give-up from a human pressing Cancel, and the two demand
+  // opposite advice — retry when work settles, versus do not retry, a person
+  // said no.
+  function drainAbandoned(reason) {
     const ws = abandonWatchers;
     abandonWatchers = [];
-    for (const fn of ws) { try { fn(); } catch {} }
+    for (const fn of ws) { try { fn(reason); } catch {} }
   }
 
   // `abandoned` separates the two ways a pending wait ends early: an operator
@@ -63,7 +67,7 @@ function createIdleWaiter({
   function disarm({ abandoned = false } = {}) {
     if (timer !== null) { clearTimer(timer); timer = null; }
     quietSince = null;
-    if (abandoned) drainAbandoned();
+    if (abandoned) drainAbandoned('cancelled');
     else abandonWatchers = [];
   }
 
@@ -71,12 +75,16 @@ function createIdleWaiter({
     timer = null; // consumed; re-armed at the tail unless we fire/give up
     const t = now();
     // Cap first: never wait past the give-up horizon, even if it's still busy.
-    if (t - armedAt >= capMs) { quietSince = null; try { notify(); } catch {} drainAbandoned(); return; }
+    if (t - armedAt >= capMs) { quietSince = null; try { notify(); } catch {} drainAbandoned('gave-up'); return; }
     const { busy } = classifyRestart(getSessions());
     if (busy > 0) {
       quietSince = null; // any busy sample resets the sustained window
     } else {
       if (quietSince === null) quietSince = t; // streak begins now
+      // Dropping the watchers here treats `restart()` as terminal and irreversible.
+      // That holds for a host that quits; a future host whose restart can FAIL
+      // asynchronously must re-register them before calling it, or its requesters
+      // are left waiting on a restart that already fell over.
       if (t - quietSince >= sustainMs) { quietSince = null; abandonWatchers = []; restart(); return; }
     }
     timer = setTimer(tick, pollMs);

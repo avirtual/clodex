@@ -42,6 +42,7 @@ function engineSeamTargets(seams) {
   } finally {
     smMod.createSessionManager = origSm;
     rwMod.createRemoteWiring = origRw;
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
   }
   assert.ok(smDeps, 'the session manager was constructed');
   assert.ok(rwDeps, 'the peer wiring was constructed');
@@ -91,18 +92,44 @@ test('engine: a host with no deferred seam falls back to the immediate one (head
 
 // ── main.js: the Electron wiring, pinned as source ──────────────────────────
 
+// Slice a seam's arrow-function body by BALANCING braces from its opening one.
+// A regex must not do this job: `\{([^}]*)\}` stops at the first `}`, which here
+// belongs to the inner `arm({ ... })` object literal — so a `restartClodex();`
+// appended AFTER that literal falls outside the capture entirely, and a guard
+// built on it passes over the exact regression it exists to catch. A brace in a
+// string or comment inside the body would misalign this and fail loudly, which
+// is the right direction to fail in.
+function seamBody(src, name) {
+  const at = src.indexOf(`${name}: (`);
+  assert.ok(at > 0, `${name} seam is declared`);
+  const open = src.indexOf('{', src.indexOf('=>', at));
+  assert.ok(open > at, `${name} has a block body`);
+  let depth = 0;
+  for (let i = open; i < src.length; i += 1) {
+    if (src[i] === '{') depth += 1;
+    else if (src[i] === '}') { depth -= 1; if (depth === 0) return src.slice(open + 1, i); }
+  }
+  throw new Error(`unbalanced braces in the ${name} seam`);
+}
+
 test('main.js arms the idle waiter on the agent seam and restarts immediately on the other', () => {
   // main.js requires electron, so it cannot be require()d here. The property is
   // textual and is exactly the one that regresses under a "simplify these two
   // identical-looking seams" edit.
   const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
 
-  const agent = /restartHostWhenIdle:\s*\(opts\)\s*=>\s*\{([^}]*)\}/.exec(src);
-  assert.ok(agent, 'main.js declares the deferred seam');
-  assert.match(agent[1], /idleWaiter\.arm\(/, 'the agent path arms the waiter');
-  assert.match(agent[1], /onAbandon/, 'and hands the requester its give-up callback');
-  assert.doesNotMatch(agent[1], /restartClodex\s*\(/,
-    'the agent path must NOT quit directly — that is the 500ms race this ticket closes');
+  const agent = seamBody(src, 'restartHostWhenIdle');
+  // ENTER: without this the assertions below can be read against a truncated
+  // slice that stops inside the arm() argument, where every one of them is
+  // vacuously true. The nested literal must be closed INSIDE the captured body.
+  assert.match(agent, /\}\s*\)\s*;/,
+    'ENTER: the slice runs past the inner object literal to the arm() call\'s own close');
+  assert.match(agent, /idleWaiter\.arm\(/, 'the agent path arms the waiter');
+  assert.match(agent, /onAbandon/, 'and hands the requester its give-up callback');
+  assert.doesNotMatch(agent, /restartClodex\s*\(/,
+    'the agent path must NOT quit directly — arming AND THEN quitting is the 500ms race, additively restored');
+  assert.doesNotMatch(agent, /app\.(relaunch|quit)\s*\(/,
+    'nor reach past restartClodex to quit by hand');
 
   assert.match(src, /restartHost:\s*\(\)\s*=>\s*restartClodex\(\)/,
     'the operator/remote seam still restarts immediately');

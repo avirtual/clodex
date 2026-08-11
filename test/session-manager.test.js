@@ -1097,7 +1097,7 @@ test('reboot: an abandoned wait leaves a LATER requester\'s notice alone', async
   const { m, state } = mkReboot({ intents: ['reboot'] });
   await m._handleIntent('a', { type: 'reboot', body: 'first' });
   state.pendingRebootNotice = { name: 'b', at: Date.now(), reason: 'second' };
-  await m._rebootAbandoned('a');
+  m._rebootAbandoned('a', 'gave-up');
   assert.ok(state.pendingRebootNotice, 'still armed');
   assert.strictEqual(state.pendingRebootNotice.name, 'b', "and it is still b's");
 });
@@ -1107,9 +1107,45 @@ test('reboot: abandoning after the requesting seat is gone does not throw', asyn
   const { m, state, injected } = mkReboot({ intents: ['reboot'] });
   await m._handleIntent('a', { type: 'reboot', body: 'nightly' });
   m.sessions.delete('a');
-  await m._rebootAbandoned('a');
+  m._rebootAbandoned('a', 'gave-up');
   assert.strictEqual(state.pendingRebootNotice, null, 'the notice is still cleared');
   assert.strictEqual(injected.length, 1, 'nothing injected into a session that no longer exists');
+});
+
+test('reboot: an operator CANCEL and a 30m give-up reach the seat with different copy and advice', async () => {
+  // Same seam, same clear, opposite meaning. "sessions stayed busy" is simply
+  // false when a human pressed Cancel, and "ask again when work settles" tells
+  // the seat to re-request in 5 minutes the thing the operator just refused —
+  // so the operator cancels it again, and again.
+  const gaveUp = mkReboot({ intents: ['reboot'] });
+  await gaveUp.m._handleIntent('a', { type: 'reboot', body: 'nightly' });
+  gaveUp.relaunches[0].onAbandon('gave-up');
+
+  const cancelled = mkReboot({ intents: ['reboot'] });
+  await cancelled.m._handleIntent('a', { type: 'reboot', body: 'nightly' });
+  cancelled.relaunches[0].onAbandon('cancelled');
+
+  assert.strictEqual(gaveUp.injected.length, 2, 'ENTER: both seats were told something');
+  assert.strictEqual(cancelled.injected.length, 2, 'ENTER: both seats were told something');
+  const g = gaveUp.injected[1];
+  const c = cancelled.injected[1];
+  assert.notStrictEqual(g, c, 'the two outcomes do not share one sentence');
+
+  assert.match(g, /sessions stayed busy/, 'the cap says why it gave up');
+  assert.match(g, /ask again when work settles/, 'and retrying is the right advice there');
+
+  assert.match(c, /CANCELLED/, 'a cancel is named as a cancel');
+  assert.doesNotMatch(c, /stayed busy|30 minutes/,
+    'and does not invent a timeout that did not happen');
+  assert.doesNotMatch(c, /ask again when work settles/,
+    'a human said no — the seat must not be told to re-request it');
+  for (const msg of [g, c]) {
+    assert.match(msg, /Nothing was restarted/, 'both stay true about the one fact that matters');
+  }
+
+  // The notice is cleared either way — neither outcome may announce a restart later.
+  assert.strictEqual(gaveUp.state.pendingRebootNotice, null);
+  assert.strictEqual(cancelled.state.pendingRebootNotice, null);
 });
 
 test('reboot: DEFAULT-OFF — an all-enabled seat cannot reboot (generic gate bounce, no seam)', async () => {

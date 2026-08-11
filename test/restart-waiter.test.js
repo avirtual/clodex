@@ -238,6 +238,25 @@ test('watcher: cancelling a pending wait abandons it; consuming it silently does
   assert.deepStrictEqual(consumed.events, [], 'no false "dropped" ahead of a restart that IS happening');
 });
 
+test('watcher: a give-up and an operator cancel are told APART, not merely told', () => {
+  // Both end the wait without restarting, but the advice they imply is opposite:
+  // one means "ask again when work settles", the other means a human said no. A
+  // watcher handed no reason has to guess, and guessing wrong turns a cancel into
+  // a re-arm loop the operator has to keep cancelling.
+  const gaveUp = freshWaiter();
+  gaveUp.setSessions(BUSY);
+  gaveUp.waiter.arm({ onAbandon: (why) => gaveUp.events.push(`abandon:${why}`) });
+  gaveUp.clock.advance(31 * 60_000);
+  assert.deepStrictEqual(gaveUp.events, ['notify', 'abandon:gave-up'], 'the cap reports itself as a give-up');
+
+  const cancelled = freshWaiter();
+  cancelled.setSessions(BUSY);
+  cancelled.waiter.arm({ onAbandon: (why) => cancelled.events.push(`abandon:${why}`) });
+  cancelled.waiter.disarm({ abandoned: true });
+  assert.deepStrictEqual(cancelled.events, ['abandon:cancelled'],
+    'an operator cancel reports itself as a cancel — a different word, not the same one twice');
+});
+
 test('watcher: watchers are one-shot — a later give-up does not re-notify a spent one', () => {
   const { waiter, clock, events, setSessions } = freshWaiter();
   setSessions(BUSY);
