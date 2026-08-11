@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- Long turns no longer die at ~5 minutes of stream silence. Clodex now spawns
+  every seat with the Claude CLI's stall threshold raised to its maximum of 30
+  minutes, which mostly matters behind a proxy, where a slow first token used to
+  surface as `API Error: Response stalled mid-stream.` This is a floor, not an
+  override: a value you set in any env scope (global, workspace, or session)
+  still wins. It has one cost worth knowing — setting the variable at all takes
+  the CLI off its server-side default, so a future upstream change to that
+  default no longer reaches you in either direction.
+
 - A second agent asking for a reboot too soon after another one is no longer
   told "a reboot happened" when none has. Since restarts now wait for an
   all-idle window, the earlier request may still be pending — or have been
