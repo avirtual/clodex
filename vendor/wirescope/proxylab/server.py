@@ -21,7 +21,6 @@ from proxylab import hints_native as hints_native_mod
 from proxylab import hold as hold_mod
 from proxylab import meta as meta_mod
 from proxylab import pinger as pinger_mod
-from proxylab import pot as pot_mod
 from proxylab import prune as prune_mod
 from proxylab import receipts as receipts_mod
 from proxylab import report as report_mod
@@ -725,16 +724,6 @@ async def handler(request: Request) -> Response:
         res = report_mod.bust_series(sess, detail=detail)
         return Response(json.dumps(res, indent=2), media_type="application/json")
 
-    # GET /_pot[?days=N] — boiling-pot tier 2: per-file redundant-read heat over a
-    # trailing N-day window (default 14), files[] ranked by wasted tokens + window
-    # totals (the kill-criteria number). Standing SQLite aggregation, off the 5s
-    # poll (drawer/popover open). Frozen shape + redundant definition:
-    # pot_contract.md. Cross-session, no `session` param.
-    if request.method == "GET" and request.url.path.rstrip("/") == "/_pot":
-        days = request.query_params.get("days")
-        res = pot_mod.snapshot(days=days) if days else pot_mod.snapshot()
-        return Response(json.dumps(res, indent=2), media_type="application/json")
-
     # ---- capture-dir retention -------------------------------------------------
     # GET /_prune — free size readout: where the disk went + what the default
     # cutoffs would reclaim (one fs walk, nothing deleted). POST /_prune?
@@ -1317,12 +1306,6 @@ async def handler(request: Request) -> Response:
             if transforms_mod._patch_system(obj):
                 record["syspatch"] = True
                 changed = True
-            # Proxy-side `rest` split: relocate static prose to an env-independent
-            # cache prefix (byte-identical model-visible text; cache boundary only).
-            sp = transforms_mod._split_system_rest(obj)
-            if sp:
-                record["rest_split"] = sp
-                changed = True
             # Design-2: relocate env+date to a tail block, mark CLAUDE.md (model-visible).
             rel = transforms_mod._relocate_env_to_tail(obj)
             if rel:
@@ -1443,7 +1426,8 @@ async def handler(request: Request) -> Response:
             # strip rode a PHANTOM bust and self-inflicted one instead — wire-proven
             # in the AB3 multi-turn rerun (rider cold-latched at a task transition,
             # collapsed two already-cached acks, busting ~8.7k tok for 296 chars,
-            # ~30:1). (The _RIDER_LATCH machinery is now vestigial — no caller.)
+            # ~30:1). (The rider-latch machinery this replaced was removed
+            # 2026-08-11 — see the retirement note in transforms.py.)
             sea = transforms_mod._strip_consumed_edit_acks(obj, agent_id=agent_id)
             if sea:
                 record["strip_prior_edit_acks"] = sea
@@ -1736,17 +1720,11 @@ async def handler(request: Request) -> Response:
                 _new_tic = _ts.get("turns_in_context")
                 _prev_tic = (_prev or {}).get("turns_in_context")
                 billing_mod.mark_compact_boundary(session_id, _new_tic, _prev_tic)
-                # boiling-pot tier 2: roll per-file redundant-read counters off
-                # this request's message history, resetting the window on the same
-                # compact signal since_compact uses. Best-effort (swallows).
-                _is_compact = _prev_tic is not None and _new_tic is not None \
-                    and _new_tic < _prev_tic
-                pot_mod.ingest(session_id, obj, _is_compact)
                 meta_mod._CONTEXT_STATS[session_id] = {**_ts, "ts": time.time()}
     except _SkipMeta:
         pass
     except Exception as e:
-        # summary/meta/pot crashed — attribution for this request degrades
+        # summary/meta crashed — attribution for this request degrades
         # (may land under NO_SESSION) but the forward is unaffected. Loud.
         record["meta_error"] = repr(e)
         core_mod.ERROR_COUNTS["meta_errors"] += 1

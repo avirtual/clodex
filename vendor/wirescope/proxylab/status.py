@@ -89,10 +89,6 @@ def _identity():
             "since_compact": True,        # /_status session.since_compact rollup
                                           # {turns,requests,est_usd,boundary_ts,compacted}
                                           # from the last /compact boundary (or start)
-            "pot": True,                  # /_pot[?days=N] boiling-pot tier 2: per-file
-                                          # {reads,redundant_reads,redundant_tokens}
-                                          # heat; files[] ranked by redundant_tokens
-                                          # + window totals (kill-criteria metric)
             # prior-turn thinking strip: per-session consumer opt-in via /_strip
             # or [wirescope:strip-thinking on]. `default` = the global flag (what
             # `effective` is when no per-session override is set). When the proxy
@@ -198,7 +194,6 @@ def _identity():
             #                               one-letter gap is a trap; see below)
             "hints": "/_hints",           # tail-hint registry (hints_contract.md)
             "prune": "/_prune",
-            "pot": "/_pot",
         },
         "docs": "INTEGRATION.md",         # front-door contract; push deep-dive = SUBSCRIBERS.md
     }

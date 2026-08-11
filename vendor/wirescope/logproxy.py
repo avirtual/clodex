@@ -19,15 +19,24 @@ owning module instead, e.g. `lp.warmth.WARMTH_LEDGER = False`.
 """
 from proxylab.server import app  # noqa: F401  (eager: uvicorn logproxy:app)
 from proxylab import (core, store, codex, transforms, canary, writer, warmth,  # noqa: F401
-                      subs, meta, pinger, hold, billing, receipts, report, pot,
-                      prune, restore, status, views, server)
+                      subs, meta, pinger, hold, billing, receipts, report,
+                      prune, restore, status, views, server,
+                      fold, hints, hints_native, tokest, bake_session)
 
 # Fixed search order for __getattr__ (original file order; server last). Names
 # duplicated across modules are only by-name imports of the same object, so any
 # hit is the right object and the order rarely matters.
+#
+# EVERY module in the package must be here, or this shim silently under-resolves:
+# a name living only in an unlisted module raises AttributeError, and a REBINDABLE
+# GLOBAL there reads as missing rather than live — which is how `lp.HINTS` and
+# `lp.FOLD_EXPERIMENTAL` returned False while `lp.SORT_TOOLS` worked (2026-08-11).
+# test_registry.py asserts the SET against the directory listing; per-name checks
+# are what let this drift in the first place.
 _SUBMODULES = (core, store, codex, transforms, canary, writer, warmth, subs,
-               meta, pinger, hold, billing, receipts, report, pot, prune,
-               restore, status, views, server)
+               meta, pinger, hold, billing, receipts, report, prune,
+               restore, status, views, server,
+               fold, hints, hints_native, tokest, bake_session)
 
 
 def __getattr__(name):
