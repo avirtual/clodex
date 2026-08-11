@@ -27,6 +27,18 @@ blocks a release.
   cancelled restart now says so and says not to re-request it.
 - The "restart dropped" notification no longer claims the restart was
   cancelled, and names the agent that asked for it when an agent did.
+- **Keep-warm "Always" is no longer silently switched off overnight.** This
+  corrects the behaviour described in 5.5.0: a rejected ping that looked like
+  an expired credential used to clear the Always setting from the session's
+  record, on the reasoning that Clodex cannot refresh your credentials for you.
+  That reasoning was wrong. The CLI refreshes its own token on its next real
+  turn, so the rejection is temporary — but the erasure was permanent, and the
+  seat came back cold with nothing to show why. Measured on one box: every such
+  disarm happened overnight, and a seat that missed the erasure by chance
+  recovered on its own about twelve minutes later and stayed warm for six more
+  hours. Now no ping failure of any kind, credential-shaped or not, can clear
+  what you set: the strikes still stop that round of pinging, and the seat
+  picks it back up on its next turn. Only you withdraw an Always.
 - Traffic optimization updated to wirescope v0.6.50, which drops the
   boiling-pot analysis that measured out negative and was removed from Clodex
   last release. No change to how requests are handled.
