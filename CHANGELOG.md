@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- Retiring a teammate no longer abandons its worktree. A discarded seat's
+  checkout was left on disk with nothing pointing at it — retiring dropped the
+  only record naming the tree, so neither Clodex nor the sidebar could find it
+  again, and any commits on its branch that had not been merged were stranded
+  there. The confirmation said its state lived on in the task artifact, which
+  was true of its notes and not of its code. Retiring now removes the checkout,
+  and archiving still keeps it, since an archived seat is resumable and that
+  checkout is what it resumes into.
+
 ## 5.6.0 — 2026-08-11 — Teams in the menu bar, and a clock that knows you are working
 
 - **Agents no longer look idle while they are working.** The idle time shown
