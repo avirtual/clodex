@@ -1072,6 +1072,9 @@ test('reboot: the seam is handed an onAbandon callback, not fired blind', async 
   assert.strictEqual(relaunches.length, 1, 'ENTER: the seam fired, so the options below are the real ones');
   assert.strictEqual(typeof relaunches[0].onAbandon, 'function',
     'the host can tell the seat the deferred restart was dropped');
+  assert.strictEqual(relaunches[0].requester, 'a',
+    'and the requesting seat by NAME — the give-up notification the OPERATOR reads is '
+    + 'otherwise unattributed, and reads as their own restart failing');
 });
 
 test('reboot: firing onAbandon replies to the seat AND clears the armed notice', async () => {

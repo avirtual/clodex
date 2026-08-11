@@ -163,18 +163,21 @@ function restartClodex() {
   setTimeout(() => { app.relaunch(); app.quit(); }, 500);
 }
 
-const { classifyRestart, createIdleWaiter } = require('./restart-waiter');
+const { classifyRestart, createIdleWaiter, giveUpBody } = require('./restart-waiter');
 const idleWaiter = createIdleWaiter({
   getSessions: () => Array.from(manager.sessions.values()),
   now: () => Date.now(),
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: (h) => clearTimeout(h),
   restart: () => restartClodex(),
-  notify: () => {
+  notify: (asked) => {
     try {
       if (Notification.isSupported()) new Notification({
-        title: 'Restart canceled',
-        body: 'Sessions stayed busy for 30 minutes — the pending restart was dropped. Try again when work settles.',
+        // "canceled" would be false on every render: this is the ONLY notify call
+        // site and it is the cap's give-up. An operator cancel does not notify at
+        // all — they pressed the button.
+        title: 'Restart dropped',
+        body: giveUpBody(asked),
       }).show();
     } catch {}
   },
@@ -473,7 +476,9 @@ app.whenReady().then(() => {
       // reboot notice is delivered across. Arming the same waiter the menu uses
       // holds the restart until every seat — the requester included — has been
       // idle for a sustained window. Never restartClodex() directly here.
-      restartHostWhenIdle: (opts) => { idleWaiter.arm({ onAbandon: opts && opts.onAbandon }); },
+      restartHostWhenIdle: (opts) => {
+        idleWaiter.arm({ onAbandon: opts && opts.onAbandon, requester: opts && opts.requester });
+      },
     },
   });
   manager = engine.manager;

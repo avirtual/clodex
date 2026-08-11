@@ -4,7 +4,7 @@
 // pattern as remind-scheduler.test.js.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { classifyRestart, createIdleWaiter } = require('../restart-waiter');
+const { classifyRestart, createIdleWaiter, giveUpBody } = require('../restart-waiter');
 
 // --- classifyRestart -------------------------------------------------------
 
@@ -268,6 +268,106 @@ test('watcher: watchers are one-shot — a later give-up does not re-notify a sp
   clock.advance(31 * 60_000);
   assert.deepStrictEqual(events, ['notify', 'abandon:first', 'notify'],
     'second give-up notifies the operator only');
+});
+
+// --- the give-up notification's copy (t282 follow-up) -----------------------
+// These CALL the builder rather than reading main.js. The distinction is the
+// whole point: a source pin can show the copy interpolates something, and a
+// version whose attribution was wired to a permanently-empty value passed every
+// such assertion. Only calling it proves a name reaches the string.
+
+test('copy: no requesters — the sentence stands alone, with no duration and no dangling label', () => {
+  const s = giveUpBody([]);
+  assert.match(s, /Sessions stayed busy/, 'it still says why the restart was dropped');
+  assert.match(s, /dropped/, 'ENTER: this is the give-up copy');
+  assert.doesNotMatch(s, /Requested by/, 'nothing to attribute — no empty label');
+  assert.doesNotMatch(s, /30 minutes/,
+    'no duration: a seat that joined a wait in progress did not wait the cap');
+});
+
+test('copy: a requester is APPENDED, never folded into the sentence', () => {
+  // The mixed-arm case is what forces this shape: the operator arms from the menu
+  // at t=0, an agent joins at t=25m, the cap fires. "the pending restart requested
+  // by hand-282 was dropped" tells the operator their OWN restart was someone
+  // else's. Appending is true for menu-only, agent-only and mixed alike — so the
+  // sentence must come through byte-identical to the unattributed one.
+  const alone = giveUpBody([]);
+  const one = giveUpBody(['hand-282']);
+  assert.ok(one.startsWith(alone),
+    'the unattributed sentence survives verbatim; attribution only follows it');
+  assert.strictEqual(one.slice(alone.length), ' Requested by: hand-282.',
+    'and the name really reaches the string — the assertion a source pin could not make');
+});
+
+test('copy: every requester is named, comma-separated', () => {
+  assert.strictEqual(giveUpBody(['hand-282', 'hand-281']).slice(giveUpBody([]).length),
+    ' Requested by: hand-282, hand-281.', 'a wait several seats joined names all of them');
+});
+
+test('copy: junk in the name list cannot produce a half-formed attribution', () => {
+  // notify() is called by the waiter, but the list is assembled from whatever the
+  // hosts passed as `requester`; an empty string must not render "Requested by: ."
+  const alone = giveUpBody([]);
+  assert.strictEqual(giveUpBody(['', null, undefined]), alone, 'all-empty is the same as none');
+  assert.strictEqual(giveUpBody(undefined), alone, 'and a missing list does not throw');
+  assert.strictEqual(giveUpBody(['', 'hand-282']).slice(alone.length), ' Requested by: hand-282.',
+    'a real name beside the junk still lands, without a leading empty entry');
+});
+
+// --- who the OPERATOR is told about (t282 follow-up) ------------------------
+// The give-up notification is the operator's only view of a wait that died. Since
+// an agent can arm one, an unattributed notice reads as the operator's own
+// restart failing — so the requesting seats ride along to `notify`.
+
+// A waiter whose notify records its argument. Kept local: the shared fake asserts
+// on the bare string 'notify' and every existing test reads that.
+function attributedWaiter() {
+  const seen = [];
+  const w = freshWaiter(1_000_000, { notify: (asked) => seen.push(asked) });
+  return { ...w, seen };
+}
+
+test('attribution: the give-up names the seats that asked, and stays anonymous from the menu', () => {
+  const menu = attributedWaiter();
+  menu.setSessions(BUSY);
+  menu.waiter.arm(); // the dialog's "Restart When Idle" — no requester
+  menu.clock.advance(31 * 60_000);
+  assert.deepStrictEqual(menu.seen, [[]],
+    'ENTER: the menu wait reached the cap, and named nobody — the operator knows they asked');
+
+  const agents = attributedWaiter();
+  agents.setSessions(BUSY);
+  agents.waiter.arm({ requester: 'hand-282' });
+  agents.waiter.arm({ requester: 'hand-281' });
+  agents.waiter.arm({ requester: 'hand-282' }); // same seat again — one name, not two
+  agents.clock.advance(31 * 60_000);
+  assert.deepStrictEqual(agents.seen, [['hand-282', 'hand-281']],
+    'every requesting seat, deduped, in arm order');
+});
+
+test('attribution: a fulfilled restart does not leak its requester into the NEXT wait', () => {
+  // The quiet failure mode: a restart consumes the request, so a later menu-armed
+  // wait that gives up must not tell the operator an innocent seat asked for it.
+  const { waiter, clock, seen, setSessions } = attributedWaiter();
+  setSessions(IDLE);
+  waiter.arm({ requester: 'hand-282' });
+  clock.advance(12_000);
+  assert.deepStrictEqual(seen, [], 'ENTER: that wait ended in a restart, not a give-up');
+
+  setSessions(BUSY);
+  assert.strictEqual(waiter.arm(), true, 'ENTER: a genuinely fresh wait, so the cap below is reached');
+  clock.advance(31 * 60_000);
+  assert.deepStrictEqual(seen, [[]], 'the new give-up names nobody — the old requester was consumed');
+});
+
+test('attribution: an operator cancel clears the names too', () => {
+  const { waiter, clock, seen, setSessions } = attributedWaiter();
+  setSessions(BUSY);
+  waiter.arm({ requester: 'hand-282' });
+  waiter.disarm({ abandoned: true });
+  waiter.arm();
+  clock.advance(31 * 60_000);
+  assert.deepStrictEqual(seen, [[]], 'the cancelled request is gone, not carried into the next wait');
 });
 
 test('watcher: a throwing watcher does not stop the others or the give-up', () => {

@@ -126,6 +126,8 @@ test('main.js arms the idle waiter on the agent seam and restarts immediately on
     'ENTER: the slice runs past the inner object literal to the arm() call\'s own close');
   assert.match(agent, /idleWaiter\.arm\(/, 'the agent path arms the waiter');
   assert.match(agent, /onAbandon/, 'and hands the requester its give-up callback');
+  assert.match(agent, /requester/,
+    'and its NAME — the operator\'s give-up notification is unattributable without it');
   assert.doesNotMatch(agent, /restartClodex\s*\(/,
     'the agent path must NOT quit directly — arming AND THEN quitting is the 500ms race, additively restored');
   assert.doesNotMatch(agent, /app\.(relaunch|quit)\s*\(/,
@@ -141,6 +143,40 @@ test('main.js arms the idle waiter on the agent seam and restarts immediately on
     'cancelling a pending restart tells the agents waiting on it');
   assert.match(src, /idleWaiter\.disarm\(\);\s*restartClodex\(\);/,
     '"Restart Now" disarms silently and takes the restart itself');
+});
+
+test('main.js: the give-up notification delegates its copy to the tested builder', () => {
+  // main.js requires electron and cannot be require()d, so anything asserted here
+  // is a source pin — which is exactly why the COPY is not asserted here anymore.
+  // Only the two things that are source-only live here: the delegation, and the
+  // constant title.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const body = seamBody(src, 'notify');
+  // ENTER: the slice must run past the nested Notification({...}) literal, or
+  // every assertion below reads an empty string and passes vacuously.
+  assert.match(body, /\}\)\.show\(\)/, 'ENTER: the captured body reaches the .show() call');
+
+  const litAt = body.indexOf('new Notification(');
+  assert.ok(litAt > 0, 'the seam constructs a Notification');
+  const lit = body.slice(litAt, body.indexOf(').show()', litAt));
+
+  // The body's CONTENT is not pinned here. Source assertions could only show the
+  // copy interpolates something, which a mutant that wires the attribution to a
+  // dead value passes — so the copy lives in `giveUpBody` and is tested by being
+  // CALLED (test/restart-waiter.test.js). What is source-only, and therefore
+  // pinned here, is that main.js delegates to it and hands it the names.
+  assert.match(lit, /body:\s*giveUpBody\(\s*asked\s*\)/,
+    'ENTER: this is the give-up notification, and its copy comes from the tested builder — '
+    + 'a body rebuilt inline here would escape the behavioural tests entirely');
+
+  // The title is a constant, so a source pin is the whole of it; it is read from
+  // the SAME literal the delegation above identifies.
+  const t = /title:\s*'([^']*)'/.exec(lit);
+  assert.ok(t, 'the notification has a title');
+  assert.doesNotMatch(t[1], /cancel/i,
+    'not "canceled" — this is the cap giving up, and an operator cancel never reaches notify at all, '
+    + 'so that word would be false on every render');
+  assert.match(t[1], /drop/i, 'it says what actually happened, in the body\'s own vocabulary');
 });
 
 // createEngine's background timers keep the loop alive; exit once results flush.

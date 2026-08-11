@@ -3353,7 +3353,10 @@ function createSessionManager(deps) {
         // which means the wait can also be given up, and onAbandon is the only way
         // the seat hears about that. Nobody is watching the desktop notification
         // on its behalf.
-        if (relaunchApp) relaunchApp({ onAbandon: (why) => this._rebootAbandoned(who, why) });
+        // `requester` is for the OPERATOR's give-up notification, not for this
+        // seat: without it the desktop notice reads as the operator's own restart
+        // failing, when in fact an agent they never asked armed it.
+        if (relaunchApp) relaunchApp({ requester: who, onAbandon: (why) => this._rebootAbandoned(who, why) });
       } catch (e) {
         log.error('intent', `reboot relaunch failed: ${e.message}`);
         reply(`relaunch failed: ${e.message}`);
