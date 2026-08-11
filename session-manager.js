@@ -3366,7 +3366,14 @@ function createSessionManager(deps) {
         // `requester` is for the OPERATOR's give-up notification, not for this
         // seat: without it the desktop notice reads as the operator's own restart
         // failing, when in fact an agent they never asked armed it.
-        if (relaunchApp) relaunchApp({ requester: who, onAbandon: (why) => this._rebootAbandoned(who, why) });
+        //
+        // `born` and `now` are captured HERE, not re-read in the callback: the
+        // wait runs up to 30 minutes and only carries the name across, so both
+        // ends of the abandon have to be able to tell this request from a later
+        // one wearing the same name. Rate-limiting is 5 minutes, well inside the
+        // wait, so a kill + same-name recreate is reachable, not theoretical.
+        const born = this._bornFor(who);
+        if (relaunchApp) relaunchApp({ requester: who, onAbandon: (why) => this._rebootAbandoned(who, why, born, now) });
       } catch (e) {
         log.error('intent', `reboot relaunch failed: ${e.message}`);
         reply(`relaunch failed: ${e.message}`);
@@ -3385,16 +3392,24 @@ function createSessionManager(deps) {
     // that seat to "ask again when work settles" turns the operator's no into an
     // invitation to re-arm the moment REBOOT_MIN_INTERVAL lapses, leaving them
     // cancelling the same restart on a loop. Anything else is the 30-minute cap.
-    _rebootAbandoned(who, why) {
+    //
+    // `born`/`at` identify THIS request across the wait; both guards below are
+    // against a later request that the name alone cannot distinguish.
+    _rebootAbandoned(who, why, born, at) {
       const cancelled = why === 'cancelled';
       const store = getUiSettings && getUiSettings();
       if (store) {
         try {
           const cur = store.get();
           const notice = cur && cur.pendingRebootNotice;
-          // Only if it is still THIS seat's notice — a later requester's must not
-          // be cleared out from under it.
-          if (notice && notice.name === who) store.set({ pendingRebootNotice: null });
+          // Only if it is still THIS REQUEST's notice. The name is not enough:
+          // the later requester may BE this name — a same-name recreated seat, or
+          // this same seat re-requesting once the 5-minute rate limit lapses —
+          // and clearing then discards a pending restart that is still armed.
+          // `at` is the request's own timestamp, already persisted in the record.
+          const mine = notice && notice.name === who && (at == null || notice.at === at);
+          if (mine) store.set({ pendingRebootNotice: null });
+          else if (notice) log.info('intent', `reboot abandon by ${who}: notice left alone — it is not this request's`);
         } catch (e) { log.error('intent', `reboot notice clear failed: ${e.message}`); }
       }
       log.warn('intent', cancelled
@@ -3407,9 +3422,18 @@ function createSessionManager(deps) {
         body: cancelled ? 'reboot CANCELLED (operator)' : 'reboot DROPPED (sessions stayed busy)',
       });
       // The wait may have run for up to 30 minutes; the requester may be gone.
-      // Re-resolve by name rather than holding the session object across it.
+      // Re-resolve by name rather than holding the session object across it —
+      // but a name is not an identity across that long a gap. A seat killed and
+      // recreated under the same name resolves here, and the inject is parkable,
+      // so it would land in the NEW seat's next prompt as a report about a
+      // restart it never asked for. Same generation stamp the parked deliveries
+      // use; null born means no expectation, so deliver.
       const live = this.sessions.get(who);
       if (!live) return;
+      if (born != null && live.createdAt !== born) {
+        log.info('intent', `reboot abandon by ${who}: inject SKIPPED — the live ${who} is a different seat than the requester`);
+        return;
+      }
       this._injectText(live, cancelled
         ? '[agent:reboot] reboot CANCELLED — the operator cancelled the pending restart. Nothing was restarted, and this is a decision, not a timeout: do not re-request it, ask them first.'
         : '[agent:reboot] reboot DROPPED — sessions stayed busy, so the restart was never taken. Nothing was restarted; ask again when work settles.',
