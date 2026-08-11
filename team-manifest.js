@@ -13,7 +13,30 @@ const ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
 // name is BOTH a directory under ~/.clodex/teams/ AND the `<team>-` seat-name
 // prefix, so it must be name-legal; top-level `lead` is a seat name.
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
-const INSTANTIATE = new Set(['session', 'subagent']);
+
+// Bumped when the ROLE schema loses or gains a key. 2 dropped the five fields no
+// resolver consumed (instantiate, standing, tools, type, ephemeral); a file
+// without one is a version-1 file, which is why absent reads as 1 rather than
+// current — a current-by-default would let a stale file claim to be new.
+const MANIFEST_VERSION = 2;
+
+// Everything a role def may carry. Anything else is dropped at load with a
+// warning rather than throwing: team.json is agent-writable and old files carry
+// the version-1 keys, so a hard failure here would read as "no team" everywhere
+// (every caller resolves teams inside a best-effort catch).
+const ROLE_KEYS = new Set(['template', 'prompt', 'brief', 'worktree']);
+
+// Schema fields NO front door sets, each with the reason it is exempt. The
+// legibility test asserts EDITABLE_ROLE_FIELDS ∪ this ≡ ROLE_KEYS, so a new
+// field is either reachable or listed here with a reason — never merely absent.
+// `worktree`'s current semantics are superseded by per-ticket isolation; it is
+// left as-is until that lands, and this entry is what makes the gap loud.
+const UNREACHABLE_ROLE_FIELDS = new Set(['worktree']);
+
+// Every role field a front door (setRole, the Add Role form, the popover row
+// model) may set. Exported so the legibility test compares the real list against
+// the schema instead of a copy that can drift from it.
+const EDITABLE_ROLE_FIELDS = ['brief', 'prompt', 'template'];
 
 // team.json is agent-writable and these role keys are trusted downstream, so the
 // mutators below must never create, destroy or rename them; only the operator
@@ -25,29 +48,32 @@ const WATCHDOG_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 const STOCK_ROLE_DEFS = {
   lead: { prompt: 'clodex-team-lead', brief: 'team lead; holds durable context, dispatches specs, verifies and integrates the work.' },
-  hand: { instantiate: 'session', prompt: 'clodex-team-hand', brief: 'implementer; executes a spec to done, one distilled report per task.' },
-  reviewer: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'reviewer; an independent verification pass, invoked on demand.' },
+  hand: { prompt: 'clodex-team-hand', brief: 'implementer; executes a spec to done, one distilled report per task.' },
+  reviewer: { prompt: 'clodex-team-reviewer', brief: 'reviewer; an independent verification pass, invoked on demand.' },
 };
 
 function defaultClodexHome() {
   return process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex');
 }
 
+// A field may live here only if exactly one resolver consumes it and every spawn
+// path reaches that resolver. Five fields failed that test and were cut:
+// `instantiate` (a declaration two display sites compensated for), `standing`
+// (zero consumers anywhere), `tools` (a restriction enforced on one role and
+// inert-but-believed on the rest), `type` (honored on one spawn path, overridden
+// with a warning on the other), and `ephemeral` (one word, two stores — the
+// persistence record is now the single source). Variation belongs in a TEMPLATE,
+// which is data and cheap to vary; a new role field is code semantics and is how
+// every one of those divergences was born.
+//
 // Fixed key order: addRole's no-op check compares JSON.stringify of two
 // normalized defs, so reordering these keys breaks equality.
 function normalizeRoleDef(roleName, def, file) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) {
     throw new Error(`role "${roleName}" must be an object (${file})`);
   }
-  const inst = def.instantiate ?? 'session';
-  if (!INSTANTIATE.has(inst)) {
-    throw new Error(`role "${roleName}" instantiate must be session|subagent, got "${inst}" (${file})`);
-  }
   if (def.template != null && typeof def.template !== 'string') {
     throw new Error(`role "${roleName}" template must be a string (${file})`);
-  }
-  if (def.standing != null && typeof def.standing !== 'string') {
-    throw new Error(`role "${roleName}" standing must be a string (${file})`);
   }
   if (def.prompt != null && typeof def.prompt !== 'string') {
     throw new Error(`role "${roleName}" prompt must be a string (${file})`);
@@ -55,62 +81,31 @@ function normalizeRoleDef(roleName, def, file) {
   if (def.brief != null && typeof def.brief !== 'string') {
     throw new Error(`role "${roleName}" brief must be a string (${file})`);
   }
-  if (def.tools != null && (!Array.isArray(def.tools) || def.tools.some((t) => typeof t !== 'string'))) {
-    throw new Error(`role "${roleName}" tools must be an array of strings (${file})`);
-  }
-  // An empty allowlist is a silent-lockout trap: it can't mean "allow nothing"
-  // (a seat with no tools is useless) and must NOT quietly read as "unrestricted"
-  // (the disabledTools inverter treats []-length as "no restriction"). Fail loud
-  // at manifest load — omit `tools` for unrestricted, or list what's allowed.
-  if (Array.isArray(def.tools) && def.tools.length === 0) {
-    throw new Error(`role "${roleName}" tools must not be empty — omit it for unrestricted, or list the allowed tools (${file})`);
-  }
-  if (def.type != null && typeof def.type !== 'string') {
-    throw new Error(`role "${roleName}" type must be a string (${file})`);
-  }
   if (def.worktree != null && typeof def.worktree !== 'boolean') {
     throw new Error(`role "${roleName}" worktree must be a boolean (${file})`);
   }
   return {
     template: def.template ?? null,
-    standing: def.standing ?? null,
     prompt: def.prompt ?? null,
-    instantiate: inst,
-    ephemeral: def.ephemeral === true,
     brief: def.brief ?? null,
-    // SCOPE OF `tools`, stated because it was believed to be wider (F008).
-    // The ONLY consumer of a role's tools is the cold-reviewer spawn in
-    // session-manager.js, which intersects it with REVIEWER_TOOL_CAP and inverts
-    // the result into disabledTools. Every other role carries the field and
-    // NOTHING reads it: `tools: ['Read']` on a `hand` restricts that hand by
-    // exactly nothing.
-    //
-    // Why the scope is real and not an oversight to widen casually: disabledTools
-    // is enforced through the claude settings hook (setupClaudeHook), and codex
-    // ignores a denylist entirely. The reviewer path can rely on it only because
-    // it FORCES type claude — a choke point an arbitrary role does not have, so
-    // enforcing tools generally would produce a cap that silently evaporates on
-    // any codex seat. That is a fail-open dressed as a restriction, which is the
-    // same defect this comment exists to stop, one layer down.
-    //
-    // So the field stays reviewer-scoped, and addRole below REFUSES to write it
-    // on any other role rather than storing a restriction nobody applies. A
-    // hand-authored manifest that already carries one still LOADS (throwing here
-    // would take the whole team layer down: every caller resolves teams inside a
-    // best-effort catch, so a hard failure reads as "no team" everywhere) — it is
-    // inert, documented, and refused at the front door.
-    tools: def.tools ?? null,
-    type: def.type ?? null,
     // Opt in to branch-per-ticket: a ticket dispatched to this role mints its own
     // branch, spawns a seat in a git worktree on it, and re-pins the ticket from
-    // the ROLE to that seat. Unlike `tools`, this one is enforced — session-manager
-    // reads it on the dispatch path — so addRole is allowed to write it.
+    // the ROLE to that seat. Enforced — session-manager reads it on the dispatch
+    // path — so addRole is allowed to write it.
     //
     // Per-role and per-team on purpose, not a flag on `task add`: the lead would
     // have to remember it on every dispatch, and the one dispatch that forgets
     // lands a hand in the shared checkout holding a spec that assumes isolation.
     worktree: def.worktree === true,
   };
+}
+
+// Keys a role def carries that this schema no longer models, for the load-time
+// warning. Returned rather than warned in place: normalizeRoleDef runs on the
+// write paths too, where a drop is the caller's answer, not a console line.
+function unknownRoleKeys(def) {
+  if (!def || typeof def !== 'object' || Array.isArray(def)) return [];
+  return Object.keys(def).filter((k) => !ROLE_KEYS.has(k));
 }
 
 function createTeamManifest({ fs, clodexHome } = {}) {
@@ -184,14 +179,20 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`team.json roles must include a "lead" role (${file})`);
     }
     const roles = {};
+    const dropped = [];
     for (const [roleName, def] of Object.entries(rolesIn)) {
       if (!ROLE_RE.test(roleName)) {
         throw new Error(`role name "${roleName}" must match ${ROLE_RE} (${file})`);
       }
+      for (const k of unknownRoleKeys(def)) dropped.push(`${roleName}.${k}`);
       roles[roleName] = normalizeRoleDef(roleName, def, file);
     }
-    if (roles.lead.instantiate !== 'session') {
-      throw new Error(`lead role "lead" must have instantiate: session (${file})`);
+    // Warn, never throw: a version-1 file still on disk carries `instantiate`
+    // and friends, and a manifest that refuses to load reads as "this cwd is on
+    // no team" at every call site — the whole team layer would vanish over a key
+    // nothing consumes any more.
+    if (dropped.length) {
+      console.warn(`team "${name}": ignoring role keys this schema no longer models — ${dropped.join(', ')} (${file})`);
     }
     // team.json is agent-writable, so a hand-written watchdogMs is neutralized at
     // READ, the choke point every consumer passes. Never throw on a bad value — one
@@ -200,7 +201,12 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const watchdogMs = (typeof rawWatchdog === 'number' && Number.isFinite(rawWatchdog) && rawWatchdog > 0)
       ? Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, rawWatchdog))
       : null;
-    return { name, root: path.resolve(root), lead, roles, file, watchdogMs };
+    // Absent reads as 1, not as current: a file written before the version
+    // existed IS a version-1 file, and defaulting to current would let a stale
+    // manifest claim a schema it was never checked against.
+    const version = (typeof m.version === 'number' && Number.isInteger(m.version) && m.version > 0)
+      ? m.version : 1;
+    return { name, root: path.resolve(root), lead, roles, file, watchdogMs, version };
   }
 
   function containsPath(root, cwd) {
@@ -320,11 +326,15 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const defaultRoles = {
       lead: { ...STOCK_ROLE_DEFS.lead },
       hand: { ...STOCK_ROLE_DEFS.hand },
-      reviewer: { ...STOCK_ROLE_DEFS.reviewer, tools: ['Read', 'Grep', 'Glob'] },
+      // No `tools` here: the reviewer's cap is REVIEWER_TOOL_CAP in
+      // session-manager, a code constant on the one path that can enforce it.
+      // Restating it as data made a manifest look like the authority it wasn't.
+      reviewer: { ...STOCK_ROLE_DEFS.reviewer },
     };
     const callerRoles = roles && typeof roles === 'object' && !Array.isArray(roles) && Object.keys(roles).length
       ? roles : null;
     const manifest = {
+      version: MANIFEST_VERSION,
       lead,
       root: resolvedRoot,
       roles: callerRoles || defaultRoles,
@@ -348,16 +358,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // def. The `!existing` carve-out keeps join's no-op re-ride of a stock def.
     if (RESERVED_ROLE_KEYS.has(roleName) && !existing) {
       throw new Error(`the "${roleName}" role is operator-owned topology; add it via the app, not an intent/mutator (${team.file})`);
-    }
-    // `tools` is enforced ONLY on the reviewer (see normalizeRoleDef). Writing it
-    // on any other role stores a restriction nothing applies — a knob that reads
-    // as a grant of safety and grants none, which is worse than its absence
-    // because it is written down and believed (F008). Refused, not stripped:
-    // setRole drops authority-bearing fields silently by spec, but that is an
-    // EDIT of an existing role, where the field was never promised; here the
-    // caller is defining the role and must not walk away thinking it capped one.
-    if (!RESERVED_ROLE_KEYS.has(roleName) && normalized.tools) {
-      throw new Error(`role "${roleName}" cannot declare tools — a tools allowlist is only enforced for the reviewer role; use a template's disabledTools to restrict a seat (${team.file})`);
     }
     if (existing) {
       if (JSON.stringify(existing) === JSON.stringify(normalized)) return team; // no-op
@@ -383,11 +383,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
       throw new Error(`setRole patch must be an object (${team.file})`);
     }
-    // Only DESCRIPTIVE fields are editable. C6: tools/type are authority-bearing —
-    // dropped by NOT being in this whitelist (silent, per spec). Anything else a
-    // caller echoes (e.g. ephemeral) is likewise ignored — this op edits metadata,
-    // it doesn't redefine a role's class.
-    const EDITABLE = ['brief', 'prompt', 'template', 'standing', 'instantiate'];
+    const EDITABLE = EDITABLE_ROLE_FIELDS;
     const clean = {};
     for (const k of EDITABLE) {
       if (k in patch) clean[k] = patch[k];
@@ -522,21 +518,21 @@ function formatTeamBlock(team, seatName) {
 }
 
 // How the lead reaches each class of role. Derived from the manifest rather
-// than stored on the def: a role's reachability is a consequence of its
-// instantiate class plus the reserved `reviewer` key, and a stored copy would
-// drift from the code that actually routes the spawn.
+// than stored on the def: reachability is a consequence of the reserved
+// `reviewer` key plus the code that routes the spawn, and a stored copy would
+// drift from it — which is exactly what the deleted `instantiate` field did.
 function leadActionLine(team) {
   const sessionRoles = [];
-  const subagentRoles = [];
   let hasReviewer = false;
-  for (const [role, def] of Object.entries(team.roles || {})) {
+  for (const role of Object.keys(team.roles || {})) {
     // `team.lead` is a SEAT name, not a role key — comparing against it here
     // would drop an unrelated role from a team whose lead seat happens to
     // share its name.
     if (role === 'lead') continue;
     if (role === 'reviewer') { hasReviewer = true; continue; }
-    if (def && def.instantiate === 'subagent') subagentRoles.push(role);
-    else sessionRoles.push(role);
+    // Every non-reserved role is staffable: a ticket assigned to it spawns a
+    // seat. There is no boolean gate any more.
+    sessionRoles.push(role);
   }
   const parts = [];
   if (sessionRoles.length) parts.push('Dispatch: [agent:task add <role>] <spec> — it starts the seat IMMEDIATELY. To file one for later, [agent:task add park <role>] <spec>: the assignee is recorded, the spec is not delivered, and [agent:task assign <id> <role>] releases it. A "do not start" line in the body is NOT read by anything.');
@@ -545,9 +541,6 @@ function leadActionLine(team) {
   // reached for its harness subagent tool instead — which gets a reviewer with
   // no tools cap, no verdict intent, and no seat the operator can see.
   if (hasReviewer) parts.push('Review: [agent:team-review] <scope> — the intent spawns the cold reviewer seat itself; do NOT spawn or subagent one by hand.');
-  if (subagentRoles.length) {
-    parts.push(`Subagent roles (${subagentRoles.join(', ')}): your harness subagent tool, not a seat spawn.`);
-  }
   if (sessionRoles.length) {
     parts.push(`New session seat: [agent:spawn name:${team.name}-<role> template:<tmpl>].`);
   }
@@ -577,13 +570,12 @@ function formatRoster(team, liveSeats = [], { seat = null } = {}) {
   }
   const lines = [`[team ${team.name}] roster (lead: ${team.lead})`];
   for (const [role, def] of Object.entries(team.roles)) {
-    // `reviewer` is a reserved key reached by [agent:team-review], which spawns a
-    // real ephemeral SESSION seat — its manifest `instantiate` is an internal
-    // detail, and printing it as "subagent" told the lead to use its harness
-    // subagent tool instead of the intent. Print how the role is reached, and
-    // name the intent ONLY to the seat allowed to use it: _handleTeamReview
-    // bounces a non-lead, so advertising it to a hand invites a wasted turn.
-    const cls = role !== 'reviewer' ? def.instantiate
+    // `reviewer` is a reserved key reached by [agent:team-review]. Name the
+    // intent ONLY to the seat allowed to use it: _handleTeamReview bounces a
+    // non-lead, so advertising it to a hand invites a wasted turn. Every other
+    // role is reached the same way — a ticket assigned to it — so the row says
+    // so instead of printing a class that used to lie.
+    const cls = role !== 'reviewer' ? 'session'
       : (seat && seat === team.lead ? 'via [agent:team-review]' : 'lead-only');
     // Suppressed on the reviewer: [agent:team-review] resolves the template
     // itself, so printing one invites the hand-spawn the row exists to prevent.
@@ -620,4 +612,5 @@ function formatCompositionDelta(teamName, verb, { seat = null, role = null } = {
 module.exports = {
   createTeamManifest, matchSeatRole, formatTeamBlock, formatRoster,
   formatCompositionDelta, STOCK_ROLE_DEFS, TEAM_FILE,
+  ROLE_KEYS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
 };
