@@ -8933,9 +8933,10 @@ body {
             refreshTab();
           }
           const upBtn = $("wb-files-up");
+          const gotoBtn = $("wb-files-goto");
           if (typeof window !== "undefined" && window.__CLODEX_WEB__) {
             upBtn.remove();
-            $("wb-files-goto").remove();
+            gotoBtn.remove();
           }
           const parentOf = (p) => {
             const s = String(p || "").replace(/\/+$/, "");
@@ -8962,7 +8963,7 @@ body {
             await refreshRootIndicator();
             refreshTab();
           }
-          $("wb-files-goto").addEventListener("click", async () => {
+          gotoBtn.addEventListener("click", async () => {
             if (!activeName()) return;
             if (!confirmDiscardEdit()) return;
             const dir = await h.ui.pickDirectory();

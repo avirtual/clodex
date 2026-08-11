@@ -693,22 +693,18 @@ test('t277: a Go to Folder click asks about unsaved edits exactly ONCE', () => {
     'Up relies on the default and is guarded by setFolderRoot itself');
 });
 
-test('t277: the browse controls are REMOVED on the web frontend, not left to fail', () => {
-  // fs.setRoot is desktop-only by the surface gate (plugin-surface-gate.test.js
-  // pins the denial), so on the web every Up / Go to Folder click ends in a
-  // "Can't use that folder" toast. The web dialog itself WORKS — api-shim draws
-  // a type-a-path modal — which is exactly what makes a live-looking button
-  // misleading rather than merely inert: it looks like it should have worked.
-  //
-  // Pinned as removal, not `disabled`: a disabled control still advertises a
-  // capability this surface does not have.
+// The web-surface removal of the browse controls is asserted in
+// test/workbench-renderer.test.js, by MOUNTING the overlay under the web flag
+// and reading the resulting DOM. It was a source regex here, matching the
+// removal expression verbatim — which pinned a null re-query below it as
+// required text, so the overlay-wide throw it caused could not be fixed without
+// failing this file. A source match cannot see that wire() aborted.
+test('t277: the writer that runs on every root change tolerates the removal', () => {
+  // Kept as source, because there is no root change to drive in a mounted test:
+  // syncUpButton runs on a real refresh, after the node is already detached.
   const code = rendererSrc.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
   assert.match(code, /window\.__CLODEX_WEB__/,
     'ENTER: the renderer half branches on the web-frontend flag at all');
-  assert.match(code, /upBtn\.remove\(\);/, 'Up is removed on the web surface');
-  assert.match(code, /\$\('wb-files-goto'\)\.remove\(\);/,
-    'Go to Folder is removed on the web surface');
-  // The writer that runs on every root change must not fight the removal.
   assert.match(code, /if \(!upBtn\.isConnected\) return;/,
     'syncUpButton bails on the detached node instead of assigning to it');
 });

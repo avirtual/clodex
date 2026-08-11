@@ -276,7 +276,12 @@ module.exports.activate = (rhost) => {
     // Both supply it from an operator gesture — a native pick, or Up from the
     // root already on screen — never from a path derived from untrusted input.
     // Up DOES compute its argument, and that is fine: the click is the gesture.
+    // BOTH handles are captured BEFORE the web branch below removes them: `$`
+    // queries the live tree, so a re-query after removal returns null and the
+    // listener wiring throws — aborting the rest of wire() and leaving the whole
+    // overlay unwired. Listeners on a detached node are harmless and never fire.
     const upBtn = $('wb-files-up');
+    const gotoBtn = $('wb-files-goto');
 
     // Both browse controls are REMOVED on the web frontend, not disabled: the
     // engine's `fs.setRoot` is desktop-only by the surface gate (a web caller
@@ -286,7 +291,7 @@ module.exports.activate = (rhost) => {
     // is what makes a live-looking button here actively misleading.
     if (typeof window !== 'undefined' && window.__CLODEX_WEB__) {
       upBtn.remove();
-      $('wb-files-goto').remove();
+      gotoBtn.remove();
     }
 
     // No require('path') in a renderer half — this file is web-bundled too.
@@ -323,7 +328,7 @@ module.exports.activate = (rhost) => {
       refreshTab();
     }
 
-    $('wb-files-goto').addEventListener('click', async () => {
+    gotoBtn.addEventListener('click', async () => {
       if (!activeName()) return;
       // Ask about unsaved edits BEFORE the dialog, not after — a prompt raised
       // afterwards throws away a folder the operator has already picked. The

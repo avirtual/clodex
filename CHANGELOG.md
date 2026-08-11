@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- Fixes the Workbench being unusable over web access, where the file tree
+  showed nothing and no button or the close X responded to a click, though they
+  still lit up on hover. It looked like something invisible was covering the
+  panel; in fact the panel had never finished being built. Hiding the two
+  desktop-only browse buttons in 5.5.0 aborted the rest of the setup, so most
+  of the Workbench was never connected to anything. Desktop was unaffected.
 - The release now opens a real window and checks that the interface actually
   starts before it builds anything. Nothing in the previous checks ever loaded
   the interface, which is how 5.5.0 shipped with a sidebar that drew nothing —
