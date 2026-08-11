@@ -122,6 +122,12 @@ function createEngine({ userDataPath, seams = {}, log }) {
   const refreshTrayMenu = seams.refreshTrayMenu || (() => {});
   const scheduleTrayRefresh = seams.scheduleTrayRefresh || (() => {});
   const restartHost = seams.restartHost || (() => {});
+  // The agent path's restart, kept SEPARATE from restartHost: restartHost is a
+  // human pressing a control (menu, phone) and must stay immediate, while
+  // [agent:reboot] fires mid-turn and has to wait for the seats to settle. A host
+  // that offers no deferred variant falls back to the immediate one, which is what
+  // headless does — its supervisor contract is exit-64-now.
+  const restartHostWhenIdle = seams.restartHostWhenIdle || restartHost;
   const pathMergeFailed = !!seams.pathMergeFailed;
   const enableSandbox = seams.enableSandbox !== false;
   // The drawer's service-backed tenants (a clodexctl verb runner over `ctl:*`,
@@ -965,7 +971,7 @@ const SessionManager = createSessionManager({
   openPath,
   notifyOS,
   setAppQuitting,
-  relaunchApp: restartHost,
+  relaunchApp: restartHostWhenIdle,
   getPluginHooks: () => (pluginHost ? pluginHost.hooks : null),
 });
 const manager = new SessionManager();

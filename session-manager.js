@@ -3346,15 +3346,43 @@ function createSessionManager(deps) {
       catch (e) { log.error('intent', `reboot: settings write failed (proceeding): ${e.message}`); }
       this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `rebooting${reason ? `: ${reason}` : ''}` });
       log.info('intent', `reboot by ${who}${reason ? `: ${reason}` : ''}`);
-      reply('rebooting — sessions resume on relaunch');
+      reply('reboot queued — restarting once every session is idle; sessions resume on relaunch');
       try {
-        if (relaunchApp) relaunchApp();
+        // The host decides WHEN. Under Electron the restart waits for a sustained
+        // all-idle window, so this seat's own turn finishes and flushes first —
+        // which means the wait can also be given up, and onAbandon is the only way
+        // the seat hears about that. Nobody is watching the desktop notification
+        // on its behalf.
+        if (relaunchApp) relaunchApp({ onAbandon: () => this._rebootAbandoned(who) });
       } catch (e) {
         log.error('intent', `reboot relaunch failed: ${e.message}`);
         reply(`relaunch failed: ${e.message}`);
         try { store.set({ pendingRebootNotice: null }); }
         catch (e2) { log.error('intent', `reboot notice clear failed: ${e2.message}`); }
       }
+    }
+
+    // The host gave up on a deferred reboot. Two things are now wrong and both
+    // have to be undone: the seat is blocked on a relaunch that will never come,
+    // and pendingRebootNotice would announce that restart on some later launch.
+    _rebootAbandoned(who) {
+      const store = getUiSettings && getUiSettings();
+      if (store) {
+        try {
+          const cur = store.get();
+          const notice = cur && cur.pendingRebootNotice;
+          // Only if it is still THIS seat's notice — a later requester's must not
+          // be cleared out from under it.
+          if (notice && notice.name === who) store.set({ pendingRebootNotice: null });
+        } catch (e) { log.error('intent', `reboot notice clear failed: ${e.message}`); }
+      }
+      log.warn('intent', `reboot requested by ${who} ABANDONED — sessions never settled`);
+      this._broadcast('ipc-message', { type: 'reboot', from: 'clodex', to: who, body: 'reboot DROPPED (sessions stayed busy)' });
+      // Up to 30 minutes have passed; the requester may be gone. Re-resolve by
+      // name rather than holding the session object across the wait.
+      const live = this.sessions.get(who);
+      if (!live) return;
+      this._injectText(live, '[agent:reboot] reboot DROPPED — sessions stayed busy for 30 minutes, so the restart was never taken. Nothing was restarted; ask again when work settles.', { parkable: true });
     }
 
     maybeDeliverRebootNotice() {

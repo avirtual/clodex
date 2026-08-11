@@ -177,3 +177,86 @@ test('waiter: re-arm after firing works (not permanently spent)', () => {
   clock.advance(12_000);
   assert.deepStrictEqual(events, ['restart', 'restart'], 'second sustained window fires again');
 });
+
+// --- abandon watchers (t282) ------------------------------------------------
+// [agent:reboot] arms this waiter instead of quitting under the requesting seat.
+// That makes the give-up path reachable by a caller nobody is watching a desktop
+// notification for: a seat told nothing sits blocked on a relaunch that will
+// never come. These pin who gets told, and — just as load-bearing — who does not.
+
+test('watcher: the 30m give-up tells every requester, including one that armed while armed', () => {
+  const { waiter, clock, events, setSessions } = freshWaiter();
+  setSessions(BUSY); // never settles
+  assert.strictEqual(waiter.arm({ onAbandon: () => events.push('abandon:a') }), true);
+  clock.advance(5 * 60_000);
+  // A second seat reboots 5 minutes into the pending wait. The timer is a no-op
+  // (the cap must not be pushed out), but this requester still has to hear.
+  assert.strictEqual(waiter.arm({ onAbandon: () => events.push('abandon:b') }), false,
+    'the pending wait already serves it — the window is not restarted');
+  assert.strictEqual(clock.pending(), 1, 'ENTER: still one poll loop, so the cap below is the ORIGINAL horizon');
+  clock.advance(24 * 60_000); // 29 min after the FIRST arm — before the cap
+  assert.deepStrictEqual(events, [], 'nothing yet: still inside the original 30m horizon');
+  clock.advance(2 * 60_000);
+  assert.deepStrictEqual(events, ['notify', 'abandon:a', 'abandon:b'],
+    'operator notified once, and BOTH requesters told the restart was dropped');
+});
+
+test('watcher: a restart that FIRES consumes its watchers rather than abandoning them', () => {
+  // Two failures in one shape. Reporting "dropped" as the process dies would be
+  // a lie the seat acts on; leaving the watcher REGISTERED instead is the quieter
+  // bug — a later, unrelated wait gives up and replays a requester whose reboot
+  // already happened. Silence alone cannot tell those apart from a watcher
+  // mechanism that never worked, so the same waiter is driven to a give-up after.
+  const { waiter, clock, events, setSessions } = freshWaiter();
+  setSessions(IDLE);
+  waiter.arm({ onAbandon: () => events.push('abandon') });
+  clock.advance(12_000);
+  assert.deepStrictEqual(events, ['restart'], 'restart only — the request was fulfilled, not dropped');
+
+  // Re-arm with nobody attached and let this one die at the cap.
+  setSessions(BUSY);
+  assert.strictEqual(waiter.arm(), true, 'ENTER: a genuinely fresh wait, so the cap below is reached');
+  clock.advance(31 * 60_000);
+  assert.deepStrictEqual(events, ['restart', 'notify'],
+    'the give-up notifies the operator only — the fulfilled watcher was consumed, not left armed');
+});
+
+test('watcher: cancelling a pending wait abandons it; consuming it silently does not', () => {
+  // The two menu exits. "Cancel Pending Restart" owes the waiting agents the
+  // news; "Restart Now" disarms only to take the restart itself, which fulfills
+  // them.
+  const cancelled = freshWaiter();
+  cancelled.setSessions(BUSY);
+  cancelled.waiter.arm({ onAbandon: () => cancelled.events.push('abandon') });
+  cancelled.waiter.disarm({ abandoned: true });
+  assert.deepStrictEqual(cancelled.events, ['abandon'], 'an operator cancel reaches the seat');
+
+  const consumed = freshWaiter();
+  consumed.setSessions(BUSY);
+  consumed.waiter.arm({ onAbandon: () => consumed.events.push('abandon') });
+  consumed.waiter.disarm(); // "Restart Now": disarm, then restart outside the waiter
+  assert.deepStrictEqual(consumed.events, [], 'no false "dropped" ahead of a restart that IS happening');
+});
+
+test('watcher: watchers are one-shot — a later give-up does not re-notify a spent one', () => {
+  const { waiter, clock, events, setSessions } = freshWaiter();
+  setSessions(BUSY);
+  waiter.arm({ onAbandon: () => events.push('abandon:first') });
+  clock.advance(31 * 60_000);
+  assert.deepStrictEqual(events, ['notify', 'abandon:first'], 'ENTER: the first wait gave up and told its requester');
+  // A fresh wait with nobody attached must not replay the old requester.
+  waiter.arm();
+  clock.advance(31 * 60_000);
+  assert.deepStrictEqual(events, ['notify', 'abandon:first', 'notify'],
+    'second give-up notifies the operator only');
+});
+
+test('watcher: a throwing watcher does not stop the others or the give-up', () => {
+  const { waiter, clock, events, setSessions } = freshWaiter();
+  setSessions(BUSY);
+  waiter.arm({ onAbandon: () => { throw new Error('seat is gone'); } });
+  waiter.arm({ onAbandon: () => events.push('abandon:b') });
+  clock.advance(31 * 60_000);
+  assert.deepStrictEqual(events, ['notify', 'abandon:b'], 'one bad watcher cannot silence the rest');
+  assert.strictEqual(waiter.isArmed(), false, 'and the waiter still ended cleanly');
+});

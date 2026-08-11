@@ -1041,8 +1041,10 @@ function mkReboot({ intents = ['reboot'], lastRebootAt = 0, relaunchThrows = fal
         Object.assign(state, partial); return { ...state };
       },
     }),
-    relaunchApp: () => { if (relaunchThrows) throw new Error('relaunch boom'); relaunches.push(Date.now()); },
-    log: { info: () => {}, error: () => {} },
+    // The seam now takes the requester's callbacks, so the fake keeps the OPTIONS
+    // rather than a timestamp — the give-up path is only reachable through them.
+    relaunchApp: (opts) => { if (relaunchThrows) throw new Error('relaunch boom'); relaunches.push(opts || {}); },
+    log: { info: () => {}, error: () => {}, warn: () => {} },
   });
   m._injectText = (_s, text) => injected.push(text);
   m._broadcast = (_ch, msg) => broadcasts.push(msg);
@@ -1054,10 +1056,60 @@ test('reboot: a seat granted the reboot intent → seam fires once, confirm inje
   const { m, state, relaunches, injected, broadcasts } = mkReboot({ intents: ['reboot'] });
   await m._handleIntent('a', { type: 'reboot', body: 'overnight restart-window test' });
   assert.strictEqual(relaunches.length, 1, 'relaunchApp fired exactly once');
-  assert.strictEqual(injected[0], '[agent:reboot] rebooting — sessions resume on relaunch');
+  assert.strictEqual(injected[0],
+    '[agent:reboot] reboot queued — restarting once every session is idle; sessions resume on relaunch');
   assert.ok(state.lastRebootAt > 0, 'lastRebootAt stamped');
   const b = broadcasts.find((x) => x.type === 'reboot');
   assert.ok(b && /rebooting: overnight restart-window test/.test(b.body), 'ipc log carries reason');
+});
+
+// t282: the restart is DEFERRED by the host until every seat is idle, so it can
+// also be GIVEN UP (30m cap). The seam therefore carries a callback back, and a
+// seat that is never told sits blocked on a relaunch that will never come.
+test('reboot: the seam is handed an onAbandon callback, not fired blind', async () => {
+  const { m, relaunches } = mkReboot({ intents: ['reboot'] });
+  await m._handleIntent('a', { type: 'reboot', body: 'nightly' });
+  assert.strictEqual(relaunches.length, 1, 'ENTER: the seam fired, so the options below are the real ones');
+  assert.strictEqual(typeof relaunches[0].onAbandon, 'function',
+    'the host can tell the seat the deferred restart was dropped');
+});
+
+test('reboot: firing onAbandon replies to the seat AND clears the armed notice', async () => {
+  const { m, state, injected, relaunches } = mkReboot({ intents: ['reboot'] });
+  await m._handleIntent('a', { type: 'reboot', body: 'nightly' });
+  assert.ok(state.pendingRebootNotice, 'ENTER: the notice is armed, so the clear below is this path deciding');
+  assert.strictEqual(injected.length, 1, 'ENTER: only the queued confirmation so far');
+
+  // Drive the give-up through the callback the HOST was handed, not a private
+  // method — that handoff is the thing that has to work.
+  relaunches[0].onAbandon();
+
+  assert.strictEqual(state.pendingRebootNotice, null,
+    'a restart that never happened must not announce itself on some later launch');
+  assert.strictEqual(injected.length, 2, 'the seat was told');
+  assert.match(injected[1], /^\[agent:reboot\] reboot DROPPED/);
+  assert.match(injected[1], /Nothing was restarted/, 'and told unambiguously that no restart occurred');
+});
+
+test('reboot: an abandoned wait leaves a LATER requester\'s notice alone', async () => {
+  // The notice is a single slot. Seat b overwrote seat a's; when a's wait is
+  // abandoned it must not wipe the notice b is still waiting on.
+  const { m, state } = mkReboot({ intents: ['reboot'] });
+  await m._handleIntent('a', { type: 'reboot', body: 'first' });
+  state.pendingRebootNotice = { name: 'b', at: Date.now(), reason: 'second' };
+  await m._rebootAbandoned('a');
+  assert.ok(state.pendingRebootNotice, 'still armed');
+  assert.strictEqual(state.pendingRebootNotice.name, 'b', "and it is still b's");
+});
+
+test('reboot: abandoning after the requesting seat is gone does not throw', async () => {
+  // 30 minutes is long enough for the seat to have been archived or killed.
+  const { m, state, injected } = mkReboot({ intents: ['reboot'] });
+  await m._handleIntent('a', { type: 'reboot', body: 'nightly' });
+  m.sessions.delete('a');
+  await m._rebootAbandoned('a');
+  assert.strictEqual(state.pendingRebootNotice, null, 'the notice is still cleared');
+  assert.strictEqual(injected.length, 1, 'nothing injected into a session that no longer exists');
 });
 
 test('reboot: DEFAULT-OFF — an all-enabled seat cannot reboot (generic gate bounce, no seam)', async () => {

@@ -33,8 +33,8 @@ function classifyRestart(sessions) {
 // session has classified idle for a SUSTAINED window (default 10s) — a single busy
 // sample resets the streak, because activityState flickers idle on mid-turn quiet
 // gaps and an instant-idle snapshot is not "at rest". A 30-minute cap gives up the
-// wait (calling `notify`, never forcing a restart). Arming while already armed is a
-// no-op (one waiter); disarm() cancels a pending wait.
+// wait (calling `notify`, never forcing a restart). Arming while already armed does
+// not restart the window (one waiter); disarm() cancels a pending wait.
 function createIdleWaiter({
   getSessions, now, setTimer, clearTimer, restart, notify,
   pollMs = 2000, sustainMs = 10_000, capMs = 30 * 60_000,
@@ -42,30 +42,53 @@ function createIdleWaiter({
   let timer = null;      // non-null iff armed
   let armedAt = 0;       // when the wait began (drives the cap)
   let quietSince = null; // start of the current all-idle streak, or null if busy
+  // Requesters that must LEARN the wait ended without a restart. The agent path
+  // ([agent:reboot]) has no operator reading the give-up notification, so a
+  // dropped wait it is never told about leaves a seat blocked on a relaunch that
+  // will never come.
+  let abandonWatchers = [];
 
   function isArmed() { return timer !== null; }
 
-  function disarm() {
+  function drainAbandoned() {
+    const ws = abandonWatchers;
+    abandonWatchers = [];
+    for (const fn of ws) { try { fn(); } catch {} }
+  }
+
+  // `abandoned` separates the two ways a pending wait ends early: an operator
+  // CANCELLING it (watchers must be told) from one consumed by an immediate
+  // restart, where the request is about to be fulfilled and "dropped" would be a
+  // lie the seat acts on.
+  function disarm({ abandoned = false } = {}) {
     if (timer !== null) { clearTimer(timer); timer = null; }
     quietSince = null;
+    if (abandoned) drainAbandoned();
+    else abandonWatchers = [];
   }
 
   function tick() {
     timer = null; // consumed; re-armed at the tail unless we fire/give up
     const t = now();
     // Cap first: never wait past the give-up horizon, even if it's still busy.
-    if (t - armedAt >= capMs) { quietSince = null; try { notify(); } catch {} return; }
+    if (t - armedAt >= capMs) { quietSince = null; try { notify(); } catch {} drainAbandoned(); return; }
     const { busy } = classifyRestart(getSessions());
     if (busy > 0) {
       quietSince = null; // any busy sample resets the sustained window
     } else {
       if (quietSince === null) quietSince = t; // streak begins now
-      if (t - quietSince >= sustainMs) { quietSince = null; restart(); return; }
+      if (t - quietSince >= sustainMs) { quietSince = null; abandonWatchers = []; restart(); return; }
     }
     timer = setTimer(tick, pollMs);
   }
 
-  function arm() {
+  // `onAbandon` is registered even when the timer is already armed, and the timer
+  // is deliberately NOT re-armed in that case: re-arming resets armedAt, so a
+  // stream of requests would push the give-up horizon out forever and the cap
+  // would stop being a cap. The pending wait already serves the new request —
+  // but every requester still has to learn how it ended.
+  function arm({ onAbandon } = {}) {
+    if (typeof onAbandon === 'function') abandonWatchers.push(onAbandon);
     if (timer !== null) return false; // already waiting — one waiter
     armedAt = now();
     quietSince = null;
