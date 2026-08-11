@@ -3374,7 +3374,7 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
 // mergedEnv, which only exists inside create(). A stubbed create() (what the old
 // tests used, appropriate when the POST was in the handler) would assert nothing
 // here.
-function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false } = {}) {
+function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null } = {}) {
   const root = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-hint-'));
   const hints = [];
   const order = [];
@@ -3421,7 +3421,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
     resolveProxyBase: () => proxyBase,
     resolveProxyAgentId: ({ name }) => `clodex-${name}-rt`,
     normalizeProxyBase: (v) => v,
-    lastTranscriptWrite: () => null,
+    lastTranscriptWrite,
     ProxyClient: ProxyClient || {
       spawnerHint: (base, agent, opts) => {
         hints.push({ base, agent, opts }); order.push('hint'); return Promise.resolve({ status: 200 });
@@ -3678,6 +3678,31 @@ test('spawner-hint (t158): create() persists spawnerHintSet on the record — fa
   await unset.spawn('seat', null);
   assert.strictEqual(unset.upserts.at(-1).spawnerHintSet, false,
     'and one that did not writes `false` — absent would spread-merge over a stale true');
+});
+
+// The activityTs restore seed, driven through a REAL create() (mkHintProbe is the
+// nearest fixture that spawns one; it takes lastTranscriptWrite as a param for
+// this). Pre-t289 an out-of-range mtime — NFS, `rsync -t`, a clock step — was
+// self-correcting, because the next transition assigned Date.now() over it. The
+// clock only moves forward now, so an unclamped future seed is PERMANENT: idleMs
+// stays negative, `idleMs < DM_HOLD_IDLE_MS` is trivially true, and that seat can
+// never be held again.
+test('create: a future-dated transcript mtime is clamped to now; a past one is still trusted', async () => {
+  const future = mkHintProbe({ lastTranscriptWrite: () => Date.now() + 900000 });
+  const before = Date.now();
+  await future.spawn('ahead');
+  const seeded = future.m.sessions.get('ahead').activityTs;
+  assert.ok(seeded <= Date.now(), 'a future mtime must not seed the clock ahead of now');
+  assert.ok(seeded >= before, 'ENTER: the clamp fell back to now — it did not zero or drop the field');
+
+  // The other direction, and the reason this is a clamp and not `Date.now()`: a
+  // genuine past mtime is the whole point of the seed (a resumed long-cold peer
+  // must not read as fresh), so it has to survive untouched.
+  const past = Date.now() - 3600000;
+  const behind = mkHintProbe({ lastTranscriptWrite: () => past });
+  await behind.spawn('cold');
+  assert.strictEqual(behind.m.sessions.get('cold').activityTs, past,
+    'a real past mtime is the seed and must pass through exactly');
 });
 
 test('spawner-hint (t158): the reviewer-graveyard sweep clears the route row before dropping the record', () => {

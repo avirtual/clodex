@@ -531,11 +531,14 @@ function createSessionManager(deps) {
         // whether a dm is delivered or parked (shouldHoldDm). _emitActivity only
         // fires on a LABEL CHANGE, so stamping there alone froze the clock for a
         // seat that keeps working in one state — parking dms at a busy seat.
-        // Stamp from the wire event instead. Math.max, never assignment: a
-        // late-delivered event must not drag the clock back behind a newer
-        // transition stamp (that would inflate idleMs into the hold band), and a
-        // session that has produced no wire event at all keeps the
-        // lastTranscriptWrite restore seed rather than reading as active-now.
+        // Stamp from the wire event instead. Two separate properties, one per
+        // mechanism — do not merge them:
+        //   Math.max buys exactly one thing: an out-of-order event cannot drag
+        //   the clock backwards, which would inflate idleMs into the hold band.
+        //   The lastTranscriptWrite restore seed surviving is NOT Math.max's
+        //   doing — it holds because this callback never FIRES for traffic the
+        //   tracker did not count (sideCall, not-in-flight). Weaken those
+        //   filters and the seed goes, with nothing here to catch it.
         onEvent: (name, ts) => {
           const s = this.sessions.get(name);
           if (s) s.activityTs = Math.max(s.activityTs || 0, ts);
@@ -1512,7 +1515,12 @@ function createSessionManager(deps) {
         // GUI restart reset idle clocks, mislabeling long-cold peers as fresh
         // and letting DMs to them past the hold gate for 30 minutes.
         activityState: 'idle',
-        activityTs: lastTranscriptWrite(agentType, cwd, resumeId) || Date.now(),
+        // Math.min clamps a FUTURE mtime (NFS, rsync -t, a clock step). It used
+        // to self-correct on the next transition, which assigned Date.now(); the
+        // clock is monotonic now, so a future seed would stick forever, keep
+        // idleMs negative, and make `idleMs < DM_HOLD_IDLE_MS` trivially true —
+        // that seat could never be held again.
+        activityTs: Math.min(lastTranscriptWrite(agentType, cwd, resumeId) || Date.now(), Date.now()),
         needsAttention: null,
         // Auto-compact atPrompt seed. A freshly spawned or resumed CLI is by
         // definition parked at its input prompt — permission dialogs don't
@@ -2664,6 +2672,9 @@ function createSessionManager(deps) {
         // tracker just stamped the same ts); falls back to now for jsonl-source
         // sessions, whose transitions arrive from JsonlWatcher and have no wire
         // event at all — the two watcher families are disjoint by construction.
+        // The fallback does not threaten a wire session's restore seed only
+        // because a wire session cannot reach a transition without a counted
+        // event having set lastEventTs first: reachability, not Math.max.
         s.activityState = state;
         s.activityTs = Math.max(s.activityTs || 0, this._activity.lastEventTs(name) || Date.now());
         if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();

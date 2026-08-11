@@ -170,6 +170,10 @@ class ActivityTracker {
     // jsonl-source session: the wire's failure wiring is UNGATED, and a stamp
     // there resets an idle seat's clock to 0 and wakes a cold seat with a dm
     // that should have been held. Captured before the delete.
+    // turnCompleted deliberately does NOT carry this guard — do not harmonize
+    // them: its wiring is gated three ways (intentSource, sideCall, tee-parsed
+    // /v1/messages only) where this one is gated zero, and a sweep-evicted
+    // request that then genuinely completes IS work and must stamp.
     const counted = a.inflight.has(reqId);
     if (counted) this._touch(agent, a);
     a.inflight.delete(reqId);

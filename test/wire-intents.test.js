@@ -157,7 +157,7 @@ test('ActivityTracker: repeat requests in a steady state emit nothing but MOVE t
   t = 9000;
   a.requestFailed('alice', 'r1');                                     // failures are events too
   assert.strictEqual(a.lastEventTs('alice'), 9000);
-  assert.strictEqual(touches.length, 4);
+  assert.deepStrictEqual(touches.at(-1), ['alice', 9000]);
 });
 
 test('ActivityTracker: side-call traffic is not activity, and an unseen agent mints no state', () => {
@@ -203,6 +203,13 @@ test('ActivityTracker: a failure the tracker never counted is not activity', () 
   // finds nothing in flight.
   t = 4000;
   a.turnStarted('bob', { reqId: 'r1' });
+  // The production shape, and the only one that separates "this reqId is in
+  // flight" from "this seat has anything in flight": a side-call probe failing
+  // WHILE a genuine request is open. A guard on inflight.size would stamp here.
+  t = 4500;
+  a.requestFailed('bob', 'uncounted');
+  assert.strictEqual(a.lastEventTs('bob'), 4000,
+    'an uncounted failure is not activity even while real work is in flight');
   t = 5000;
   a.requestFailed('bob', 'r1');
   assert.strictEqual(a.lastEventTs('bob'), 5000, 'a real request failing IS activity');
