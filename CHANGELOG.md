@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- **Teams are reachable from the menu bar.** A new Teams menu lists every team,
+  opens its roles editor, and — the part that was missing — creates a team
+  without spawning a seat for it. Until now a team could only be born as a side
+  effect of creating a session, and the only way to edit one was an unhinted
+  right-click on a sidebar group header, which exists solely when the sidebar is
+  grouped by Project. That right-click still works; it is no longer the only way
+  in. The menu also stays for a box with no teams at all, since that is exactly
+  the box that needs to create its first one.
+
 - Long turns no longer die at ~5 minutes of stream silence. Clodex now spawns
   every seat with the Claude CLI's stall threshold raised to its maximum of 30
   minutes, which mostly matters behind a proxy, where a slow first token used to
