@@ -46,6 +46,22 @@ const { API_CONTRACT } = require(path.join(ROOT, 'api-contract'));
 
 const TIMEOUT_MS = Number(process.env.RENDERER_SMOKE_TIMEOUT || 45000);
 const SMOKE_SESSION = 'renderer-smoke-fixture';
+// A benign startup console.error added later would turn the release red with no
+// way to proceed, and the likely response is deleting the hook wholesale rather
+// than narrowing it. A regex here suppresses a known-benign message and nothing
+// else. Empty (the default) reports every console.error.
+const ALLOWED_CONSOLE_ERROR = process.env.RENDERER_SMOKE_ALLOW_CONSOLE_ERROR || '';
+
+// TIMEOUT_MS bounds only the poll loop below. If whenReady() or loadFile() never
+// settles — a stalled subresource, a compositor that never comes up over ssh —
+// nothing else stops this process, and release.sh has no timeout either, so the
+// release WEDGES instead of failing. Measured precedent: a 13h47m suite wedge.
+// unref'd so it can never hold a healthy run open.
+setTimeout(() => {
+  console.error(`renderer-smoke: hung before reaching a verdict (${TIMEOUT_MS * 2}ms)`);
+  cleanup();
+  app.exit(1);
+}, TIMEOUT_MS * 2).unref();
 
 const failures = [];
 const fail = (what, detail) => {
@@ -57,6 +73,17 @@ const fail = (what, detail) => {
 // with no GPU. Hardware acceleration there aborts the whole process rather than
 // failing the window creation we could report on.
 app.disableHardwareAcceleration();
+
+// A throwaway userData dir, set BEFORE whenReady() because the path is read as
+// the app initializes. Without it the smoke boots the operator's LIVE profile —
+// the same dir a dev `npm start` uses — and both directions are wrong at release
+// time: renderer/themes.js reads a real `clodex-theme` and drawer-host.js a real
+// TALL_KEY, so the gate runs WARM and a startup regression that only bites an
+// empty profile (exactly the "new user opens the app and sees nothing" shape
+// this exists to catch) passes here; and a second Chromium on a userData dir a
+// running Clodex already owns is unsupported, on the operator's real profile.
+const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'renderer-smoke-profile-'));
+app.setPath('userData', profileDir);
 
 // The renderer's error hooks must be installed BEFORE any page script parses,
 // or the very exceptions this test exists to catch land before anyone listens.
@@ -72,6 +99,15 @@ const send = (kind, message, stack) => {
   try { ipcRenderer.send('__smoke_error', { kind, message: String(message), stack: stack || null }); } catch {}
 };
 window.addEventListener('error', (e) => {
+  // The listener is CAPTURING, so a resource that failed to load (a <script src>
+  // that 404s on file://) arrives here too — but such events carry no e.error,
+  // no e.message and no filename/lineno, so the naive report reads
+  // "undefined at undefined:undefined:undefined". Still red, but the diagnosis
+  // is gone for a failure mode adjacent to the one this exists for.
+  if (!e.error && e.target && e.target !== window) {
+    send('resource failed to load', e.target.src || e.target.href || e.target.tagName, null);
+    return;
+  }
   send('uncaught exception', (e.error && e.error.message) || e.message,
     (e.error && e.error.stack) || \`  at \${e.filename}:\${e.lineno}:\${e.colno}\`);
 }, true);
@@ -80,12 +116,25 @@ window.addEventListener('unhandledrejection', (e) => {
   send('unhandled rejection', (r && r.message) || r, (r && r.stack) || null);
 });
 const realError = console.error.bind(console);
+const allowed = ${JSON.stringify(ALLOWED_CONSOLE_ERROR)};
+const allowedRe = allowed ? new RegExp(allowed) : null;
 console.error = (...args) => {
-  send('console.error', args.map((a) => (a && a.stack) || String(a)).join(' '), null);
+  const text = args.map((a) => (a && a.stack) || String(a)).join(' ');
+  if (!allowedRe || !allowedRe.test(text)) send('console.error', text, null);
   realError(...args);
 };
 require(${JSON.stringify(path.join(ROOT, 'preload.js'))});
 `);
+
+// Called from both exit paths: the watchdog above leaves the normal cleanup
+// below unreached. Measured: it does not fully win there — Chromium recreates
+// the profile dir while it is still initializing — but a hang is a
+// human-investigated failure, not a thing that recurs unnoticed.
+function cleanup() {
+  for (const dir of [shimDir, profileDir]) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+}
 
 ipcMain.on('__smoke_error', (_e, { kind, message, stack }) => {
   fail(`renderer ${kind}`, `  ${message}\n${stack || '  <no stack>'}`);
@@ -165,6 +214,12 @@ async function run() {
   // check passes with the restore stub returning []. Only `.session-item` (the
   // class refreshSidebarView itself selects rows by) discriminates.
   //
+  // Pinned to the FIXTURE's data-name, not any `.session-item`: index.html ships
+  // #session-list empty today, but refreshSidebarView already filters
+  // `[data-peer-ui]` / `.peer-item` / `.session-child` out of its own row set, so
+  // other row types are an anticipated future and an unpinned count would start
+  // passing on one of them instead.
+  //
   // A row proves the script parsed, ran to its final restore IIFE, and completed
   // the round-trip to main. No static element in index.html can prove that —
   // every one of them is present in the v5.5.0 tree that rendered nothing.
@@ -178,7 +233,7 @@ async function run() {
          if (!el) return { list: false, rows: 0, note: false, children: 0 };
          return {
            list: true,
-           rows: el.querySelectorAll('.session-item').length,
+           rows: el.querySelectorAll('.session-item[data-name="${SMOKE_SESSION}"]').length,
            note: !!el.querySelector('.session-empty-note'),
            children: el.children.length,
          };
@@ -217,7 +272,7 @@ app.whenReady()
   .then(run)
   .catch((e) => { fail('smoke harness', `  ${e.stack || e.message}`); return 1; })
   .then((code) => {
-    try { fs.rmSync(shimDir, { recursive: true, force: true }); } catch {}
+    cleanup();
     if (failures.length) console.error(`\nrenderer-smoke: ${failures.length} failure(s): ${failures.join(', ')}`);
     else console.log('\nrenderer-smoke: all green');
     app.exit(code || (failures.length ? 1 : 0));

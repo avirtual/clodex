@@ -55,11 +55,23 @@ const missing = passthrough.filter((a) => {
   if (/[*?[\]{}]/.test(a)) {
     // Without globSync (node < 22) node cannot glob its own test args either,
     // so an unmatched pattern takes the literal path and exits non-zero anyway.
-    return typeof fs.globSync === 'function' && fs.globSync(a, { cwd: ROOT }).length === 0;
+    if (typeof fs.globSync !== 'function') return false;
+    // Fails OPEN: a pattern globSync rejects is node's to refuse, with node's
+    // own message, not ours to turn into a wrapper stack trace. (It does not
+    // throw on the installed node — `foo[bar` returns [] on 25.8.1 — so this is
+    // belt-and-braces against a future glob implementation, not a live bug.)
+    try {
+      return fs.globSync(a, { cwd: ROOT }).length === 0;
+    } catch { return false; }
   }
   return !fs.existsSync(path.resolve(ROOT, a));
 });
-if (missing.length) die(`named test path does not exist: ${missing.join(', ')}`);
+// Name what the path was resolved AGAINST: arguments resolve against the repo
+// root, not the caller's cwd, so someone in cli/ otherwise gets "does not exist"
+// for a file they can ls.
+if (missing.length) {
+  die(`named test path does not exist: ${missing.join(', ')} (resolved against ${ROOT})`);
+}
 
 // ── the suite mutex, shared with scripts/test-digest.sh ────────────────────
 // SAME lock dir and SAME protocol as the digest path, because parts of this
@@ -165,6 +177,67 @@ const pass = counter('pass');
 const fail = counter('fail');
 if (tests === null || pass === null || fail === null) {
   die('the run produced no summary — the suite did not complete');
+}
+
+// A filter flag that matched NOTHING is the same false green as a missing path,
+// reached through a door no counter watches. Measured on node 25.8.1 over a
+// 3-file root: `--test-name-pattern=zzzznope` and `--test-name-pattern=alpha`
+// both report `# tests 3 / # suites 0 / # pass 3 / # fail 0 / # skipped 0` and
+// exit 0 — byte identical. Node promotes a file whose tests were all filtered
+// out to a passing test point and counts it as a PASS, not a skip, so
+// `tests === 0` never fires and NO counter separates "ran and passed" from
+// "filtered out and never executed". Do not replace this with a counter check.
+//
+// What DOES separate them is which test points node emits. During a run it
+// flattens a test FILE away and reports its tests by their own names — a file
+// appears as a test point of its own ONLY when it contributed no executed test,
+// and then it is named by its path. So a point named after an existing file is
+// a container that ran nothing, and every other point is a test body that ran.
+// Two shapes produce such a container, and both must be discounted:
+//   `1..0` + `ok N - some.test.js`   a file whose tests were all filtered out
+//   `ok N - scripts/test-escapes.js` a file that defines no tests at all
+//                                    (no plan line — measured; do not rely on
+//                                    `1..0` alone, node omits it here, and the
+//                                    repo really does sweep such files in:
+//                                    node's own `test-*.js` pattern matches
+//                                    scripts/test-escapes.js)
+// The yaml block is byte-identical for a container and a real test, so the name
+// and the plan are the whole signal.
+//
+// Ruling: exiting non-zero on a filtered run that executed nothing is correct
+// even when someone was deliberately narrowing a run. A green over a run that
+// never happened is what this whole wrapper exists to prevent.
+const FILTER_FLAGS = ['--test-name-pattern', '--test-skip-pattern', '--test-only'];
+// Both spellings: node accepts `--flag=value` and `--flag value`, and produces
+// the same invisible-miss from either, so matching only the `=` form would close
+// half the door.
+const filters = passthrough.filter(
+  (a) => FILTER_FLAGS.some((f) => a === f || a.startsWith(`${f}=`)),
+);
+// `fail === 0` is not a softening: a run with failures already exits non-zero,
+// so it cannot be a false green, and blaming the filter there would misattribute
+// a real failure to a mistyped pattern.
+if (filters.length && fail === 0) {
+  let executed = 0;
+  let emptyPlan = false;
+  for (const line of tap.split('\n')) {
+    if (/^ *1\.\.0 *$/.test(line)) { emptyPlan = true; continue; }
+    const point = /^ *(?:not )?ok \d+ - (.*)$/.exec(line);
+    if (!point) continue;
+    const name = point[1].replace(/ +# +(SKIP|TODO)\b.*$/i, '').trim();
+    // A test whose NAME happens to collide with a real file counts as a
+    // container and is not evidence. That direction costs a loud refusal on a
+    // run that did execute something; the other direction is a silent green
+    // over a run that did not.
+    const ranNothing = emptyPlan || fs.existsSync(path.resolve(ROOT, name));
+    emptyPlan = false;
+    if (!ranNothing) executed++;
+  }
+  if (executed === 0) {
+    die(`the run executed zero tests: ${filters.join(' ')} matched nothing.\n`
+      + `  node reported ${pass} pass over ${tests} test(s), but those are FILES it opened and\n`
+      + '  filtered away, counted as passes. Nothing was verified.');
+  }
 }
 
 let escapes;
