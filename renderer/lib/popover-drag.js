@@ -38,6 +38,17 @@ function clampTranslate(rect, dx, dy, vw, vh, margin = 8) {
   };
 }
 
+// The rect an opener anchors to, tolerating an anchor that has no DOM box. A
+// popover opened from a NATIVE MENU item (the Teams menu, t288) has no anchor
+// element at all, so dereferencing getBoundingClientRect would throw — and only
+// when a human clicks a team, which no test reaches. The fallback is the
+// top-left viewport origin plus the standard margin; callers clamp from there.
+function anchorRect(anchorEl) {
+  return anchorEl && typeof anchorEl.getBoundingClientRect === 'function'
+    ? anchorEl.getBoundingClientRect()
+    : { left: 24, bottom: 24 };
+}
+
 function applyOffset(popover, dx, dy) {
   offsets.set(popover, { dx, dy });
   popover.style.transform = (dx || dy) ? `translate(${dx}px, ${dy}px)` : '';
@@ -90,4 +101,4 @@ function makeDraggable(popover) {
   });
 }
 
-module.exports = { clampTranslate, makeDraggable, resetDrag };
+module.exports = { anchorRect, clampTranslate, makeDraggable, resetDrag };

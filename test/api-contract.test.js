@@ -17,7 +17,7 @@ const { API_CONTRACT } = require('../api-contract');
 // this list must be updated deliberately, and the mismatch is caught here.
 const PINNED_NAMES = [
   // Teams front door (teams-design.md [internal design doc, not in this repo]) — added with the front-door build.
-  'teamCreate', 'teamJoin', 'teamForCwd', 'teamNames', 'teamRolePrompts',
+  'teamCreate', 'teamCreateBare', 'teamJoin', 'teamForCwd', 'teamNames', 'teamRolePrompts',
   // Team-management GUI (T29 Layer A Slice 3).
   'teamGet', 'teamAddRole', 'teamSetRole', 'teamRemoveRole', 'teamRenameRole', 'teamSetWatchdog',
   'createSession', 'listSessions', 'reservedSessionNames', 'killSession', 'archiveSession',
@@ -126,6 +126,7 @@ const PINNED_NAMES = [
   // a core dialog — the same shape as onRequestOpenPeersDialog — so it does NOT
   // widen the plugin transport, which is still exactly the five rows above.
   'onRequestOpenPluginsDialog',
+  'onRequestOpenTeamRoles', 'onRequestOpenTeamCreate',
   // t209: the wire-fed subagent Activity feed, which REPLACED the proxy-polled
   // `getProxySubagentDetail` on this surface rather than joining it — it reads a
   // per-session ring Clodex fills from its own tee, so it needs no wirescope
@@ -171,8 +172,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 254-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 252, 'pinned list is the full 252-method surface');
+test('contract covers exactly the pinned 255-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 255, 'pinned list is the full 255-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -196,7 +197,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 252, 'window.api has exactly 252 methods');
+    assert.equal(generated.length, 255, 'window.api has exactly 255 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

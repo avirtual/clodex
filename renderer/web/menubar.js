@@ -162,6 +162,10 @@ function buildMenus(ctx) {
         ];
       },
     },
+    // Teams is STATIC in the bar, unlike Plugins (inserted asynchronously, and
+    // removed again): it has no null rule to evaluate, so there is nothing to
+    // wait for. Plugins lands immediately before it — see refreshPluginsTop.
+    buildTeamsMenu(ctx),
     {
       label: 'Window',
       items: async () => {
@@ -255,6 +259,36 @@ function buildPluginsMenu(status, ctx) {
   };
 }
 
+// ── The top-level Teams menu (t288) ────────────────────────────────────────
+// The browser's mirror of app-menus.js's buildTeamsMenu, and it reproduces that
+// function's INVERSION of the plugins null rule: it is never null. Zero teams
+// still shows the menu, because "Create Team…" is the only way to get the first
+// one — hiding it would make an empty box a dead end.
+//
+// Unlike the desktop, which reads listTeams()/loadManifest() in-process, the
+// browser has only the team:* invokes. Broken teams are found the same way the
+// desktop finds them (a manifest that will not load), here by asking teamGet per
+// name on OPEN — teams are few, and a stale list is worse than N small invokes.
+function buildTeamsMenu(ctx) {
+  return {
+    label: 'Teams',
+    items: async () => {
+      let names = [];
+      try { const r = await ctx.teamNames(); names = (r && r.names) || []; } catch { names = []; }
+      const rows = [];
+      for (const name of names) {
+        let ok = false;
+        try { const g = await ctx.teamGet(name); ok = !!(g && g.ok); } catch { ok = false; }
+        if (ok) rows.push({ label: name, run: () => ctx.emit('request-open-team-roles', name) });
+        else rows.push({ label: `${name} — not loaded`, disabled: true });
+      }
+      if (!names.length) rows.push({ label: '(no teams)', disabled: true });
+      rows.push({ sep: true }, { label: 'Create Team…', run: () => ctx.emit('request-open-team-create') });
+      return rows;
+    },
+  };
+}
+
 function tokenQuery() {
   try {
     const t = new URLSearchParams(location.search).get('token');
@@ -295,6 +329,16 @@ function mount(shim) {
     pluginStatus: async () => {
       if (!api.pluginInvoke) return null;
       try { return await api.pluginInvoke('_host', 'plugins.status'); } catch { return null; }
+    },
+    // The Teams menu's two reads (t288), both already on the contract — the
+    // browser inherits them free, no new wire surface for this menu either.
+    teamNames: async () => {
+      if (!api.teamNames) return null;
+      try { return await api.teamNames(); } catch { return null; }
+    },
+    teamGet: async (name) => {
+      if (!api.teamGet) return null;
+      try { return await api.teamGet(name); } catch { return null; }
     },
     setPluginEnabled: async (id, on) => {
       if (!api.pluginSetEnabled) return;
@@ -421,11 +465,11 @@ function mount(shim) {
     if (pluginsTop) { if (state && state.top === pluginsTop) closeAll(); pluginsTop.remove(); pluginsTop = null; }
     if (!menu) return;
     pluginsTop = makeTop(menu);
-    // Between View and Window, matching app-menus.js:609. insertBefore rather
-    // than append because the Window menu is built before we know whether there
-    // are plugins at all; falling back to append keeps the menu reachable if the
-    // anchor is ever missing, rather than dropping it silently.
-    const anchor = bar.children && Array.prototype.find.call(bar.children, (c) => c.textContent === 'Window');
+    // Between View and Teams, matching the desktop's template order. insertBefore
+    // rather than append because the menus after it are built before we know
+    // whether there are plugins at all; falling back to append keeps the menu
+    // reachable if the anchor is ever missing, rather than dropping it silently.
+    const anchor = bar.children && Array.prototype.find.call(bar.children, (c) => c.textContent === 'Teams' || c.textContent === 'Window');
     if (anchor && bar.insertBefore) bar.insertBefore(pluginsTop, anchor);
     else bar.appendChild(pluginsTop);
   };
@@ -437,4 +481,4 @@ function mount(shim) {
   }
 }
 
-module.exports = { mount, buildMenus, buildPluginsMenu, BAR_H, THEMES };
+module.exports = { mount, buildMenus, buildPluginsMenu, buildTeamsMenu, BAR_H, THEMES };

@@ -5,7 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { bumpDefaultName } = require('../renderer/lib/name-suggest');
+const { bumpDefaultName, teamNamePrefill, TEAM_NAME_MAX } = require('../renderer/lib/name-suggest');
 
 test('free base is returned untouched', () => {
   assert.strictEqual(bumpDefaultName('session-1', new Set()), 'session-1');
@@ -36,4 +36,36 @@ test('a base without a trailing number gets a -2, -3 suffix', () => {
 test('null / undefined reserved → base returned (nothing taken)', () => {
   assert.strictEqual(bumpDefaultName('session-1', null), 'session-1');
   assert.strictEqual(bumpDefaultName('session-1', undefined), 'session-1');
+});
+
+// teamNamePrefill — the Create Team… dialog's proposed name (t288). The dialog
+// must never PREFILL a name its own writer refuses: the operator did not type it,
+// so the refusal reads as a bug in the app rather than a correction of them.
+
+test('teamNamePrefill strips the leading dot slugifyTeamName leaves behind', () => {
+  // A root of `…/.dotfiles` slugs to `.dotfiles`, which createTeam refuses:
+  // listTeams skips dot-directories, so the team would be invisible.
+  assert.strictEqual(teamNamePrefill('.dotfiles', []), 'dotfiles');
+  assert.strictEqual(teamNamePrefill('...deep', []), 'deep', 'several dots, not just one');
+  assert.strictEqual(teamNamePrefill('mid.dot', []), 'mid.dot', 'an interior dot is legal, keep it');
+  assert.strictEqual(teamNamePrefill('...', []), '', 'nothing left to propose');
+});
+
+test('teamNamePrefill clamps so the DEFAULT lead seat still fits', () => {
+  // The seat is `<team>-lead`, capped at 64 by NAME_RE — so the team name caps
+  // at 59. Pinned at the boundary in both directions.
+  assert.strictEqual(TEAM_NAME_MAX, 59);
+  assert.strictEqual(teamNamePrefill('a'.repeat(59), []).length, 59, 'exactly at the limit is untouched');
+  assert.strictEqual(teamNamePrefill('a'.repeat(200), []).length, 59, 'and anything longer is cut to it');
+});
+
+test('teamNamePrefill clamps AFTER the dedupe suffix, not before', () => {
+  // The suffix is appended to an already-clamped base, so a name that just fits
+  // must not be pushed back over the limit by its own `-2`.
+  const base = 'a'.repeat(59);
+  const out = teamNamePrefill(base, [base]);
+  assert.ok(out.length <= TEAM_NAME_MAX, `dedupe must not overflow the limit, got ${out.length}`);
+  // ENTER: the dedupe really ran — without it this test would pass on a plain clamp.
+  assert.notStrictEqual(teamNamePrefill('proj', ['proj']), 'proj', 'a taken name is still bumped');
+  assert.strictEqual(teamNamePrefill('proj', ['proj']), 'proj-2');
 });

@@ -291,6 +291,14 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (typeof name !== 'string' || !NAME_RE.test(name)) {
       throw new Error(`team name "${name}" must match ${NAME_RE}`);
     }
+    // NAME_RE accepts `.hidden` (t115, deliberate for SESSION names), but listTeams
+    // skips dot-directories — so a dot-named team would be written and then never
+    // listed, never resolved for any cwd, and never shown in the Teams menu, while
+    // loadManifest still opens it by path. Refuse at the writer: the free-text name
+    // field in Create Team… (t288) makes that state reachable by typing.
+    if (name.startsWith('.')) {
+      throw new Error(`team name "${name}" must not start with "." — listTeams skips dot-directories, so the team would be invisible`);
+    }
     if (typeof root !== 'string' || !path.isAbsolute(root)) {
       throw new Error(`team "${name}" root must be an absolute path`);
     }

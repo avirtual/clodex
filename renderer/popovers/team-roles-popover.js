@@ -23,7 +23,7 @@ const {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote,
   parseDuration, formatDuration, formatBlockedBy,
 } = require('../lib/team-roles');
-const { makeDraggable, resetDrag } = require('../lib/popover-drag');
+const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
 
 // `promptText` is the in-app text-input modal from renderer.js — window.prompt()
 // is a no-op in Electron, so rename MUST route through it (threaded in as a dep,
@@ -196,8 +196,9 @@ function initTeamRolesPopover({ promptText } = {}) {
     const ok = await refresh(name);
     if (!ok) { popover.dataset.name = ''; return; } // not a team / unreadable → show nothing
     popover.classList.remove('hidden');
-    // Anchor just below the header, clamped to the viewport.
-    const r = anchorEl.getBoundingClientRect();
+    // Anchor just below the header, clamped to the viewport. anchorRect absorbs
+    // the anchor-less open the Teams menu (t288) performs.
+    const r = anchorRect(anchorEl);
     const w = popover.offsetWidth;
     popover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
     const wantTop = r.bottom + 6;

@@ -254,6 +254,7 @@ const {
   getSkillLibrary: () => skillLibrary,
   getEnvScopes: () => envScopes,
   getPluginHost: () => (engine ? engine.getPluginHost() : null),
+  getTeams: () => (engine ? { listTeams: engine.listTeams, loadManifest: engine.loadManifest } : null),
 });
 
 

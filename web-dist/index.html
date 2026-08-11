@@ -3008,6 +3008,19 @@ body {
   outline: none;
   border-color: var(--accent);
 }
+.team-create-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.team-create-field label {
+  font-size: 11px;
+  opacity: 0.7;
+}
+.team-create-error {
+  color: var(--error);
+  font-size: 12px;
+}
 #peer-session-dialog {
   background: var(--sidebar-bg);
   border: 1px solid var(--border);
@@ -6700,6 +6713,10 @@ body {
         // teamCreate adopts the new session as lead; teamJoin adds a role + spawns a seat.
         { name: "teamCreate", kind: "invoke", channel: "team:create" },
         { name: "teamJoin", kind: "invoke", channel: "team:join" },
+        // t288: the manifest write WITHOUT a spawn — the Teams menu's Create Team…,
+        // where there is no session to adopt as lead. Separate from teamCreate because
+        // that one is indivisible by design (write, then spawn the lead in one step).
+        { name: "teamCreateBare", kind: "invoke", channel: "team:createBare" },
         // Does a cwd already resolve to a team? Drives the dialog's create-vs-join mode.
         { name: "teamForCwd", kind: "invoke", channel: "team:forCwd" },
         // Existing team names for the create-mode duplicate pre-check.
@@ -6839,6 +6856,10 @@ body {
         // transport is the five plugin:* rows, frozen by plan §1; a plugin never sees
         // this channel).
         { name: "onRequestOpenPluginsDialog", kind: "on", channel: "request-open-plugins-dialog" },
+        // t288: the Teams menu's two menu→renderer open requests. The popover and the
+        // create dialog are renderer-side surfaces, so the menu can only ask for them.
+        { name: "onRequestOpenTeamRoles", kind: "on", channel: "request-open-team-roles" },
+        { name: "onRequestOpenTeamCreate", kind: "on", channel: "request-open-team-create" },
         { name: "onRequestOpenPeerSession", kind: "on", channel: "request-open-peer-session" },
         { name: "onRequestOpenAgentsDrawer", kind: "on", channel: "request-open-agents-drawer" },
         { name: "onRequestOpenSkillsDrawer", kind: "on", channel: "request-open-skills-drawer" },
@@ -7630,6 +7651,10 @@ body {
               ];
             }
           },
+          // Teams is STATIC in the bar, unlike Plugins (inserted asynchronously, and
+          // removed again): it has no null rule to evaluate, so there is nothing to
+          // wait for. Plugins lands immediately before it — see refreshPluginsTop.
+          buildTeamsMenu(ctx),
           {
             label: "Window",
             items: async () => {
@@ -7700,6 +7725,35 @@ body {
           }
         };
       }
+      function buildTeamsMenu(ctx) {
+        return {
+          label: "Teams",
+          items: async () => {
+            let names = [];
+            try {
+              const r = await ctx.teamNames();
+              names = r && r.names || [];
+            } catch {
+              names = [];
+            }
+            const rows = [];
+            for (const name of names) {
+              let ok = false;
+              try {
+                const g = await ctx.teamGet(name);
+                ok = !!(g && g.ok);
+              } catch {
+                ok = false;
+              }
+              if (ok) rows.push({ label: name, run: () => ctx.emit("request-open-team-roles", name) });
+              else rows.push({ label: `${name} \u2014 not loaded`, disabled: true });
+            }
+            if (!names.length) rows.push({ label: "(no teams)", disabled: true });
+            rows.push({ sep: true }, { label: "Create Team\u2026", run: () => ctx.emit("request-open-team-create") });
+            return rows;
+          }
+        };
+      }
       function tokenQuery() {
         try {
           const t = new URLSearchParams(location.search).get("token");
@@ -7747,6 +7801,24 @@ body {
             if (!api.pluginInvoke) return null;
             try {
               return await api.pluginInvoke("_host", "plugins.status");
+            } catch {
+              return null;
+            }
+          },
+          // The Teams menu's two reads (t288), both already on the contract — the
+          // browser inherits them free, no new wire surface for this menu either.
+          teamNames: async () => {
+            if (!api.teamNames) return null;
+            try {
+              return await api.teamNames();
+            } catch {
+              return null;
+            }
+          },
+          teamGet: async (name) => {
+            if (!api.teamGet) return null;
+            try {
+              return await api.teamGet(name);
             } catch {
               return null;
             }
@@ -7901,7 +7973,7 @@ body {
           }
           if (!menu) return;
           pluginsTop = makeTop(menu);
-          const anchor = bar.children && Array.prototype.find.call(bar.children, (c) => c.textContent === "Window");
+          const anchor = bar.children && Array.prototype.find.call(bar.children, (c) => c.textContent === "Teams" || c.textContent === "Window");
           if (anchor && bar.insertBefore) bar.insertBefore(pluginsTop, anchor);
           else bar.appendChild(pluginsTop);
         };
@@ -7912,7 +7984,7 @@ body {
           });
         }
       }
-      module.exports = { mount, buildMenus, buildPluginsMenu, BAR_H, THEMES };
+      module.exports = { mount, buildMenus, buildPluginsMenu, buildTeamsMenu, BAR_H, THEMES };
     }
   });
 
@@ -20251,7 +20323,13 @@ ${i3.join("\n")}
         while (taken.has(`${prefix}${n}`)) n++;
         return `${prefix}${n}`;
       }
-      module.exports = { bumpDefaultName };
+      var TEAM_NAME_MAX = 64 - "-lead".length;
+      function teamNamePrefill(slug, taken) {
+        const base = String(slug || "").replace(/^\.+/, "").slice(0, TEAM_NAME_MAX);
+        if (!base) return "";
+        return bumpDefaultName(base, taken).slice(0, TEAM_NAME_MAX);
+      }
+      module.exports = { bumpDefaultName, teamNamePrefill, TEAM_NAME_MAX };
     }
   });
 
@@ -24280,6 +24358,9 @@ helper=${d.helperPath}`;
           dy: clampAxis(rect.top, rect.height, dy, vh, margin)
         };
       }
+      function anchorRect(anchorEl) {
+        return anchorEl && typeof anchorEl.getBoundingClientRect === "function" ? anchorEl.getBoundingClientRect() : { left: 24, bottom: 24 };
+      }
       function applyOffset(popover, dx, dy) {
         offsets.set(popover, { dx, dy });
         popover.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : "";
@@ -24322,7 +24403,7 @@ helper=${d.helperPath}`;
           document.addEventListener("mouseup", onUp);
         });
       }
-      module.exports = { clampTranslate, makeDraggable, resetDrag };
+      module.exports = { anchorRect, clampTranslate, makeDraggable, resetDrag };
     }
   });
 
@@ -25395,7 +25476,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         formatDuration,
         formatBlockedBy
       } = require_team_roles();
-      var { makeDraggable, resetDrag } = require_popover_drag();
+      var { anchorRect, makeDraggable, resetDrag } = require_popover_drag();
       function initTeamRolesPopover({ promptText } = {}) {
         const popover = document.getElementById("team-roles-popover");
         const nameEl = document.getElementById("team-roles-popover-name");
@@ -25518,7 +25599,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             return;
           }
           popover.classList.remove("hidden");
-          const r = anchorEl.getBoundingClientRect();
+          const r = anchorRect(anchorEl);
           const w = popover.offsetWidth;
           popover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
           const wantTop = r.bottom + 6;
@@ -28718,7 +28799,7 @@ ${detail}` });
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
       var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
-      var { bumpDefaultName } = require_name_suggest();
+      var { bumpDefaultName, teamNamePrefill } = require_name_suggest();
       var { prefsGate } = require_prefs_gate();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { isToolInstallSession } = require_tool_doctor();
@@ -31585,6 +31666,88 @@ Click for live activity`;
         switchSession
       });
       var { openTeamRolesPopover } = initTeamRolesPopover({ promptText });
+      function openCreateTeamDialog() {
+        const live = document.querySelector(".team-create-overlay");
+        if (live) {
+          if (!live.contains(document.activeElement)) {
+            const f = live.querySelector('[data-f="root"]');
+            if (f) f.focus();
+          }
+          return Promise.resolve(null);
+        }
+        return new Promise((resolve) => {
+          const overlay = document.createElement("div");
+          overlay.className = "prompt-modal-overlay team-create-overlay";
+          overlay.innerHTML = `
+      <div class="prompt-modal">
+        <h3>Create Team</h3>
+        <div class="team-create-field">
+          <label>Root directory (absolute)</label>
+          <input type="text" data-f="root" spellcheck="false" placeholder="/Users/you/projects/thing">
+        </div>
+        <div class="team-create-field">
+          <label>Team name</label>
+          <input type="text" data-f="name" spellcheck="false">
+        </div>
+        <div class="team-create-error hidden"></div>
+        <div class="dialog-actions">
+          <div style="flex:1;"></div>
+          <button class="secondary" data-act="cancel" type="button">Cancel</button>
+          <button data-act="ok" type="button">Create</button>
+        </div>
+      </div>`;
+          const rootInput = overlay.querySelector('[data-f="root"]');
+          const nameInput = overlay.querySelector('[data-f="name"]');
+          const errEl = overlay.querySelector(".team-create-error");
+          document.body.appendChild(overlay);
+          let nameTouched = false;
+          nameInput.addEventListener("input", () => {
+            nameTouched = true;
+          });
+          rootInput.addEventListener("input", () => {
+            if (nameTouched) return;
+            const base = pathBasename(rootInput.value.trim());
+            nameInput.value = base ? teamNamePrefill(slugifyTeamName(base), dialogTeamNames) : "";
+          });
+          const done = (val) => {
+            overlay.remove();
+            resolve(val);
+          };
+          const submit = async () => {
+            errEl.classList.add("hidden");
+            const res = await window.api.teamCreateBare({
+              name: nameInput.value.trim(),
+              root: rootInput.value.trim()
+            });
+            if (!res || !res.ok) {
+              errEl.textContent = res && res.error || "could not create the team";
+              errEl.classList.remove("hidden");
+              return;
+            }
+            done(res.team);
+            openTeamRolesPopover(nameInput.value.trim(), null);
+          };
+          overlay.querySelector('[data-act="ok"]').addEventListener("click", submit);
+          overlay.querySelector('[data-act="cancel"]').addEventListener("click", () => done(null));
+          overlay.addEventListener("mousedown", (e) => {
+            if (e.target === overlay) done(null);
+          });
+          for (const inp of [rootInput, nameInput]) {
+            inp.addEventListener("keydown", (e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") submit();
+              else if (e.key === "Escape") done(null);
+            });
+          }
+          window.api.teamNames().then((r) => {
+            dialogTeamNames = r && r.names || [];
+          }).catch(() => {
+          });
+          setTimeout(() => rootInput.focus(), 50);
+        });
+      }
+      window.api.onRequestOpenTeamRoles((name) => openTeamRolesPopover(name, null));
+      window.api.onRequestOpenTeamCreate(() => openCreateTeamDialog());
       var ctxCatLabel = (c) => CTX_CAT_LABELS[c] || "other";
       function popoverApi(name) {
         const entry = sessions.get(name);

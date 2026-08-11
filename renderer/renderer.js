@@ -29,7 +29,7 @@ const { altChordAction } = require('./lib/web-shortcuts');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
-const { bumpDefaultName } = require('./lib/name-suggest');
+const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { prefsGate } = require('./lib/prefs-gate');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { isToolInstallSession } = require('../tool-doctor');
@@ -3101,6 +3101,110 @@ const { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopov
 });
 
 const { openTeamRolesPopover } = initTeamRolesPopover({ promptText });
+
+// Create Team… (t288) — a team with NO seat behind it, which is why it goes
+// through teamCreateBare rather than the new-session dialog's teamCreate (that
+// one writes the manifest and spawns the lead indivisibly).
+//
+// Validation is NOT duplicated here: createTeam refuses a bad name, a relative
+// root, a duplicate name and an already-owned root with readable messages, and
+// it is the writer that actually enforces them — a second copy in the dialog
+// would drift from it silently. The dialog shows what the backend said.
+function openCreateTeamDialog() {
+  // A menu item can be clicked while its dialog is already up (the native menu
+  // stays live), and each open appends its own overlay — stacked modals whose
+  // hidden copies keep taking Enter. Re-focus the live one instead.
+  const live = document.querySelector('.team-create-overlay');
+  if (live) {
+    // Only pull focus in from OUTSIDE — a second menu click while the operator is
+    // mid-word in the name field must not yank them back to the root field.
+    if (!live.contains(document.activeElement)) {
+      const f = live.querySelector('[data-f="root"]');
+      if (f) f.focus();
+    }
+    // Resolves null, which the caller cannot tell apart from Cancel. Harmless
+    // because the only caller (the Teams menu listener) ignores the result — a
+    // future caller that acts on the resolution needs a distinguishable value.
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'prompt-modal-overlay team-create-overlay';
+    overlay.innerHTML = `
+      <div class="prompt-modal">
+        <h3>Create Team</h3>
+        <div class="team-create-field">
+          <label>Root directory (absolute)</label>
+          <input type="text" data-f="root" spellcheck="false" placeholder="/Users/you/projects/thing">
+        </div>
+        <div class="team-create-field">
+          <label>Team name</label>
+          <input type="text" data-f="name" spellcheck="false">
+        </div>
+        <div class="team-create-error hidden"></div>
+        <div class="dialog-actions">
+          <div style="flex:1;"></div>
+          <button class="secondary" data-act="cancel" type="button">Cancel</button>
+          <button data-act="ok" type="button">Create</button>
+        </div>
+      </div>`;
+    const rootInput = overlay.querySelector('[data-f="root"]');
+    const nameInput = overlay.querySelector('[data-f="name"]');
+    const errEl = overlay.querySelector('.team-create-error');
+    document.body.appendChild(overlay);
+
+    // The name follows the root's basename until the operator takes it over —
+    // after that a further root edit must not overwrite what they typed.
+    let nameTouched = false;
+    nameInput.addEventListener('input', () => { nameTouched = true; });
+    rootInput.addEventListener('input', () => {
+      if (nameTouched) return;
+      const base = pathBasename(rootInput.value.trim());
+      // dedupe lives in teamNamePrefill (it clamps AFTER the suffix); this dialog
+      // only supplies the slug and the taken set.
+      nameInput.value = base ? teamNamePrefill(slugifyTeamName(base), dialogTeamNames) : '';
+    });
+
+    const done = (val) => { overlay.remove(); resolve(val); };
+    const submit = async () => {
+      errEl.classList.add('hidden');
+      const res = await window.api.teamCreateBare({
+        name: nameInput.value.trim(),
+        root: rootInput.value.trim(),
+      });
+      if (!res || !res.ok) {
+        errEl.textContent = (res && res.error) || 'could not create the team';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      done(res.team);
+      // Land somewhere useful: the new team's roles popover, the surface the
+      // operator came here to reach, rather than a dismissed dialog.
+      openTeamRolesPopover(nameInput.value.trim(), null);
+    };
+    overlay.querySelector('[data-act="ok"]').addEventListener('click', submit);
+    overlay.querySelector('[data-act="cancel"]').addEventListener('click', () => done(null));
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) done(null); });
+    for (const inp of [rootInput, nameInput]) {
+      inp.addEventListener('keydown', (e) => {
+        e.stopPropagation(); // keep global shortcuts out, like promptText
+        if (e.key === 'Enter') submit();
+        else if (e.key === 'Escape') done(null);
+      });
+    }
+    // dedupeTeamName reads the same dialogTeamNames the new-session dialog fills;
+    // refresh it here so a duplicate suffix reflects teams created since.
+    window.api.teamNames()
+      .then((r) => { dialogTeamNames = (r && r.names) || []; })
+      .catch(() => {});
+    setTimeout(() => rootInput.focus(), 50);
+  });
+}
+
+// The Teams menu's two menu→renderer requests. The popover and the create dialog
+// are renderer DOM the main process cannot reach, so the menu can only ask.
+window.api.onRequestOpenTeamRoles((name) => openTeamRolesPopover(name, null));
+window.api.onRequestOpenTeamCreate(() => openCreateTeamDialog());
 
 
 const ctxCatLabel = (c) => CTX_CAT_LABELS[c] || 'other';

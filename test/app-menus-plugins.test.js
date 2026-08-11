@@ -325,6 +325,31 @@ test('the Plugins menu sits between View and Window in the real app menu', () =>
   assert.ok(iPlugins > iView && iPlugins < iWindow, `Plugins must sit between them, got ${labels}`);
 });
 
+test('the Teams menu sits after Plugins and before Window, and is there without a team reader', () => {
+  // Teams (t288) is spliced next to Plugins but obeys the OPPOSITE rule: never
+  // absent, because Create Team… is the only route to a first team. This deps
+  // object passes no getTeams at all — the lazy engine getter is null while the
+  // menu is first built — so the row must survive that too.
+  const dir = tmpdir('teams-order');
+  writePlugin(dir, 'alpha', { name: 'Alpha' });
+  const { host } = realStack(dir);
+  const template = buildTemplateWith(host);
+  const labels = template.map((m) => m.label);
+  const iPlugins = labels.indexOf('Plugins');
+  const iTeams = labels.indexOf('Teams');
+  const iWindow = labels.indexOf('Window');
+  assert.ok(labels.includes('Teams'), `Teams is always present, got ${labels}`);
+  assert.ok(iPlugins < iTeams && iTeams < iWindow,
+    `Plugins → Teams → Window is the desktop order the web menubar mirrors, got ${labels}`);
+
+  // A present-but-EMPTY submenu is the same dead end as an absent menu, and the
+  // label assertions above survive it. With no team reader there is nothing to
+  // list, so Create Team… is the whole point of the row.
+  const submenu = template[iTeams].submenu.map((i) => i.label);
+  assert.ok(submenu.includes('Create Team…'),
+    `the reader-less menu still offers the only route to a first team, got ${submenu}`);
+});
+
 test('with no plugin host the app menu has no Plugins entry at all', () => {
   const labels = buildTemplateWith(null).map((m) => m.label);
   assert.ok(!labels.includes('Plugins'), `CLODEX_PLUGINS=0 leaves no Plugins menu, got ${labels}`);
