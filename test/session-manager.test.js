@@ -6683,15 +6683,23 @@ const bashCreateWithEnv = (m, name, sessionEnv) => m.create(
   [], [], [], [], [], null, [], [], null, sessionEnv,
 );
 
-test('create → PTY env: no scopes reduces to byte-identical { ...process.env, TERM, CLODEX_HOME }', async () => {
+test('create → PTY env: no scopes reduces to byte-identical { BASE_ENV_DEFAULTS, ...process.env, TERM, CLODEX_HOME }', async () => {
   // The load-bearing no-behavior-change pin: with nothing set anywhere and no
-  // override file, mergeSessionEnv returns exactly { ...process.env }, so the
-  // spawned env is byte-for-byte process.env plus the app-owned keys and
-  // NOTHING else. Whole-object equality on purpose — it is what catches a key
-  // arriving as undefined from a seam the harness forgot to wire.
+  // override file, mergeSessionEnv returns exactly its base, so the spawned env
+  // is byte-for-byte process.env plus BASE_ENV_DEFAULTS underneath it, plus the
+  // app-owned keys on top, and NOTHING else. Whole-object equality on purpose —
+  // it is what catches a key arriving as undefined from a seam the harness
+  // forgot to wire, and what makes every future addition to either set a
+  // deliberate edit here.
+  //
+  // The defaults are spelled BEFORE the process.env spread because that is
+  // where create() puts them: they are the bottom of the scope chain, so an
+  // inherited value would beat them (the app scrubs CLAUDE_* out of
+  // process.env at startup, so in production there is never one).
   const { m, captured, registryDir } = mkEnvProbe();
   await bashCreate(m, 'env-none', null);
   assert.deepStrictEqual(captured(), {
+    CLAUDE_STREAM_IDLE_TIMEOUT_MS: '1800000',
     ...process.env, TERM: 'xterm-256color', CLODEX_HOME: registryDir, FORCE_HYPERLINK: '1',
   });
 });
