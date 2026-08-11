@@ -1243,6 +1243,27 @@ test('reboot: inside the rate-limit window → refused, seam NOT fired, stamp un
   assert.strictEqual(state.lastRebootAt, recent, 'stamp not rewritten on a refusal');
 });
 
+// t284: the stamp is written when the reboot is QUEUED, and since t282 the restart
+// waits for an all-idle window — so it may be pending, or already abandoned, with
+// the stamp still standing (_rebootAbandoned leaves it deliberately). This drives
+// the case where NO restart occurred at all and the refusal is the only thing the
+// second seat is told about it.
+test('reboot: the rate-limit refusal does not claim a restart that never happened', async () => {
+  const { m, state, relaunches, injected } = mkReboot({ intents: ['reboot'] });
+  await m._handleIntent('a', { type: 'reboot', body: 'first' });
+  assert.strictEqual(relaunches.length, 1, 'ENTER: the seam fired, so the wait below is a real one');
+  relaunches[0].onAbandon('dropped'); // sessions stayed busy — nothing restarted
+  assert.ok(state.lastRebootAt > 0, 'ENTER: the stamp survives the abandon, so the next request IS rate-limited');
+
+  const before = injected.length;
+  await m._handleIntent('a', { type: 'reboot', body: 'second' });
+  const refusal = injected[before];
+  assert.match(refusal, /^\[agent:reboot\] rate-limited/, 'ENTER: this is the refusal, not some other reply');
+  assert.doesNotMatch(refusal, /reboot happened/,
+    'no restart has occurred — the seat must not be told one did');
+  assert.match(refusal, /a reboot was requested \d+s ago/, 'it reports the request, which is the fact the stamp actually holds');
+});
+
 test('reboot: an UNGRANTED bash pane gets neither relaunch nor a bounce typed into its shell', async () => {
   // Bash panes reach _handleIntent via _scanPtyOutput with any KNOWN type, and
   // reboot is gate-disabled on every default seat — so the gate bounce would

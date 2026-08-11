@@ -3347,7 +3347,11 @@ function createSessionManager(deps) {
       const sinceMs = now - last;
       if (last && sinceMs < REBOOT_MIN_INTERVAL) {
         const waitS = Math.ceil((REBOOT_MIN_INTERVAL - sinceMs) / 1000);
-        reply(`rate-limited — a reboot happened ${Math.round(sinceMs / 1000)}s ago; try again in ${waitS}s`);
+        // "requested", not "happened": the stamp is written at QUEUE time, and since
+        // t282 the restart may still be waiting for an all-idle window, or have been
+        // cancelled/dropped without ever running — _rebootAbandoned deliberately
+        // leaves the stamp behind so there is no rapid-retry window.
+        reply(`rate-limited — a reboot was requested ${Math.round(sinceMs / 1000)}s ago; try again in ${waitS}s`);
         this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `REFUSED (rate-limited): ${reason || '(no reason)'}` });
         return;
       }

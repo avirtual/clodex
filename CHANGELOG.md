@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- A second agent asking for a reboot too soon after another one is no longer
+  told "a reboot happened" when none has. Since restarts now wait for an
+  all-idle window, the earlier request may still be pending — or have been
+  cancelled or dropped without ever restarting anything. The refusal now says
+  a reboot was *requested* that long ago, which is the fact Clodex actually
+  knows.
+
+- Reboot: a deferred restart that is abandoned no longer reports itself to a
+  seat that merely shares the requester's name. A seat killed and recreated
+  under the same name during the wait — which can run up to 30 minutes — was
+  receiving a parked "reboot DROPPED" for a restart it never asked for.
+
 ## 5.5.3 — 2026-08-11
 
 - `[agent:reboot]` no longer interrupts working agents. It used to relaunch
