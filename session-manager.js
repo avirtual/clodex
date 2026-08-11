@@ -2000,6 +2000,47 @@ function createSessionManager(deps) {
       }, 5000);
     }
 
+    // Poll the map the kill path actually releases. engine.js has its own copy
+    // reaching in from outside for the restart paths; this one exists so the
+    // electron-free manager can wait without an injected seam.
+    async _waitForExit(name, timeoutMs = 8000) {
+      const start = Date.now();
+      while (this.sessions.has(name) && Date.now() - start < timeoutMs) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return !this.sessions.has(name);
+    }
+
+    // kill() PLUS the worktree the record names. Every route that ends a seat
+    // for good must come through here, never `kill()` directly: `kill()` drops
+    // the persistence record, and that record is the only pointer to the
+    // checkout — so a caller that kills without removing the tree first orphans
+    // it irrecoverably, along with whatever unmerged commits its branch carries.
+    // Team-retire did exactly that while telling the operator "state lives in
+    // its task artifact".
+    //
+    // NOT folded into kill() itself: the restart paths (engine.js) kill and
+    // recreate the same seat, and destroying its checkout there would delete the
+    // tree out from under a session that is coming right back.
+    //
+    // Captured BEFORE the kill and removed AFTER the pty exits, so git is not
+    // racing a live cwd.
+    async destroy(name) {
+      const entry = getPersistence().get(name);
+      const worktree = entry && entry.worktree && entry.worktree.path ? entry.worktree : null;
+      await this.kill(name);
+      if (!worktree) return { ok: true };
+      await this._waitForExit(name);
+      const r = await gitWorktree.removeWorktree(worktree.path).catch((e) => ({ ok: false, error: e.message }));
+      if (r && r.ok) {
+        log.info('worktree', `removed ${worktree.path} (branch ${worktree.branch}) after destroying ${name}`);
+        return { ok: true, worktreeRemoved: true };
+      }
+      const error = (r && r.error) || 'unknown error';
+      log.info('worktree', `remove failed for ${worktree.path} after destroying ${name}: ${error}`);
+      return { ok: true, worktreeRemoved: false, error };
+    }
+
     async archive(name) {
       const s = this.sessions.get(name);
       if (!s) return;
@@ -6397,7 +6438,10 @@ function createSessionManager(deps) {
         body: `retire → ${targetName} (${disposition}, project ${targetRoot})`,
       });
       log.info('intent', `team-retire ${requesterName} → ${targetName} (${disposition}, project ${targetRoot})`);
-      const teardown = discard ? this.kill(targetName) : this.archive(targetName);
+      // destroy(), not kill(): a discarded seat is gone for good, and its ticket
+      // worktree goes with it. The archive branch keeps the tree deliberately —
+      // the seat is resumable, and its checkout is what it resumes into.
+      const teardown = discard ? this.destroy(targetName) : this.archive(targetName);
       const confirm = discard
         ? `retired ${targetName} (discarded — state lives in its task artifact)`
         : `retired ${targetName} (resumable from the sidebar or on next project open)`;

@@ -42,7 +42,7 @@ function registerIpcHandlers(deps) {
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     setRemoteToken, hasRemoteToken, refreshRemoteToken,
-    waitForSessionExit, wirescope, workspaceOfSender,
+    wirescope, workspaceOfSender,
     sessionScopeCtx, renameWorkspaceScope,
     templates, workspaces, promptLibrary, agentDefaults,
     agentLibrary, skillLibrary, execLibrary, notifications, uiSettings, envScopes,
@@ -276,23 +276,11 @@ function registerIpcHandlers(deps) {
     for (const s of persistence.list()) names.add(s.name);
     return { ok: true, names: [...names] };
   });
-  // Grab the worktree BEFORE the kill (kill removes the record) and remove it
-  // AFTER the PTY exits, so git isn't racing a live cwd.
-  handle('session:kill', async (_e, name) => {
-    const entry = persistence.get(name);
-    const worktree = entry && entry.worktree && entry.worktree.path ? entry.worktree : null;
-    await manager.kill(name);
-    if (!worktree) return { ok: true };
-    await waitForSessionExit(name);
-    const r = await gitWorktree.removeWorktree(worktree.path).catch((e) => ({ ok: false, error: e.message }));
-    if (r && r.ok) {
-      log.info('worktree', `removed ${worktree.path} (branch ${worktree.branch}) after deleting ${name}`);
-      return { ok: true, worktreeRemoved: true };
-    }
-    const error = (r && r.error) || 'unknown error';
-    log.info('worktree', `remove failed for ${worktree.path} after deleting ${name}: ${error}`);
-    return { ok: true, worktreeRemoved: false, error };
-  });
+  // Delegates to manager.destroy — kill plus the worktree the record names.
+  // This handler used to BE that logic, which is why team-retire (which cannot
+  // reach an ipcMain handler) leaked every tree it discarded. One implementation
+  // now, so a new delete route inherits it instead of reimplementing half.
+  handle('session:kill', async (_e, name) => manager.destroy(name));
   handle('session:flushPending', (_e, name) => manager.flushPending(name));
   handle('session:peekPending', (_e, name) => manager.peekPendingFor(name));
   handle('session:resize', (_e, name, cols, rows) => manager.resize(name, cols, rows));

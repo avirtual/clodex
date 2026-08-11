@@ -2551,7 +2551,7 @@ test('T54: a PASSIVE park still does NOT earn the boot/idle edge (only the activ
 
 // --- team-retire (teams-design.md [internal design doc, not in this repo]): socket envelope → archive|discard --
 
-function mkRetire(rootByName, rolesByRoot) {
+function mkRetire(rootByName, rolesByRoot, extraDeps) {
   // rootByName: cwd → project root map for the stub findProjectRoot.
   // rolesByRoot: root → { role: def } map for the stub resolveTeam (drives the
   // archive-vs-discard disposition). Defaults to a team where lead + dev are
@@ -2567,6 +2567,7 @@ function mkRetire(rootByName, rolesByRoot) {
       if (!root) return null;
       return { name: 'team', root, lead: 'lead', roles: normalize(roles(root)), file: `${root}/team.json` };
     },
+    ...(extraDeps || {}),
   });
   const archived = [];
   const killed = [];
@@ -2617,6 +2618,59 @@ test('team-retire: an ephemeral role → kill (discard), drops the record, no ar
   assert.deepStrictEqual(delivered, [], 'no waking DM on success');
   const parked = drainPending(PENDING_DIR, 'lead', 't');
   assert.match(parked[0], /discarded — state lives in its task artifact/, 'discard confirmation wording');
+});
+
+// Every other retire test stubs m.kill and gives its seats no worktree, so the
+// discard path could orphan a checkout with all of them green — and it did.
+// This one lets destroy() actually run and gives the seat a tree.
+test('team-retire: a discarded seat takes its worktree with it', async () => {
+  const removed = [];
+  const { m, archived } = mkRetire(
+    { '/proj/a': '/proj', '/proj/r': '/proj' },
+    { '/proj': { lead: {}, runner: { ephemeral: true } } },
+    {
+      getPersistence: () => ({
+        list: () => [],
+        get: (n) => (n === 'team-runner'
+          ? { name: n, worktree: { path: '/wt/t900', branch: 't900' } } : null),
+      }),
+      gitWorktree: { removeWorktree: async (p) => { removed.push(p); return { ok: true }; } },
+    },
+  );
+  // destroy() is the unit under test, so it must NOT be stubbed — only what it
+  // reaches for. mkRetire stubbed kill(); restore a minimal one that just drops
+  // the session, which is what makes _waitForExit's poll terminate.
+  m.kill = async (name) => { m.sessions.delete(name); };
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepStrictEqual(removed, ['/wt/t900'],
+    'a discarded seat\'s worktree must be removed: kill() drops the persistence record, which is the ONLY pointer to the checkout, so a tree not removed here is orphaned forever along with any unmerged commits on its branch');
+  assert.deepStrictEqual(archived, [], 'discard path never archives');
+});
+
+// The companion absence: the archive path must KEEP the tree. Without this, the
+// fix above could be "remove the worktree on every retire" and stay green while
+// deleting the checkout a resumable seat resumes into.
+test('team-retire: an ARCHIVED seat keeps its worktree', async () => {
+  const removed = [];
+  const { m, archived } = mkRetire({ '/proj/a': '/proj', '/proj/b': '/proj' }, undefined, {
+    getPersistence: () => ({
+      list: () => [],
+      get: () => ({ name: 'team-dev', worktree: { path: '/wt/keep', branch: 'keep' } }),
+    }),
+    gitWorktree: { removeWorktree: async (p) => { removed.push(p); return { ok: true }; } },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._onIncoming('team-dev', { from: 'lead', body: '', type: 'team-retire' });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepStrictEqual(archived, ['team-dev'], 'ENTER: the archive path ran');
+  assert.deepStrictEqual(removed, [],
+    'an archived seat is resumable and its checkout is what it resumes into — removing the tree here deletes the work the archive exists to preserve');
 });
 
 test('team-retire: an OFF-manifest seat (matches no role) → kill (discard)', async () => {
@@ -9055,8 +9109,15 @@ test('t77: every kill-then-respawn path awaits waitForSessionExit', () => {
     assert.ok(w >= kills,
       `${f} has ${kills} \`await manager.kill(\` call(s) but only ${w} \`await waitForSessionExit(\` — a kill-then-recreate path that does not wait for the map slot will respawn while _cleanup is still releasing the registry entry, the socket and the generated hook files, and the collision surfaces as "session already exists" or a silently unreachable agent, not as a test failure`);
   }
-  assert.strictEqual(waits, 3,
-    `expected exactly 3 waitForSessionExit call sites (engine.js restart x2, ipc-handlers.js session:kill) and found ${waits} — if a fourth kill+create caller was added, extend the ordering pin above to cover it rather than bumping this number`);
+  assert.strictEqual(waits, 2,
+    `expected exactly 2 waitForSessionExit call sites (engine.js restart x2) and found ${waits} — if a third kill+create caller was added, extend the ordering pin above to cover it rather than bumping this number`);
+  // session:kill's wait did not disappear, it MOVED: the handler now delegates
+  // to manager.destroy, which waits on its own copy before removing the tree.
+  // Without this, the count above could be satisfied by deleting the wait
+  // outright — the pin would read green over exactly the race it exists to stop.
+  const sm = fsReal2.readFileSync(pathReal2.join(root, 'session-manager.js'), 'utf8');
+  assert.ok(/await this\._waitForExit\(name\)/.test(sm),
+    'manager.destroy must await the map slot before removing the worktree — git cannot remove a checkout that is still some live process\'s cwd, and the failure is a left-behind tree, not a throw');
 });
 
 // `proxyBase` is captured when the session SPAWNS, so it outlives the pref that
