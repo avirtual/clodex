@@ -142,7 +142,13 @@ registry `~/.clodex/library/exec/clodex-team.json`.
   all**, is discarded (killed, record dropped, name immediately reusable); a
   seat filling a named role is archived (resumable, and the name stays taken).
   The record is the single source of ephemerality — the role schema carried a
-  second copy that could disagree with it, and no longer does. It
+  second copy that could disagree with it, and no longer does. A discard takes
+  the seat's worktree with it, so it is gated on that tree being CLEAN: an
+  uncommitted diff, an untracked file, or a tree git cannot read downgrades the
+  discard to an archive and tells the requester which tree and why (commit, then
+  retire again). The confirmation names what happened to the checkout rather
+  than the old flat "state lives in its task artifact", which was only ever true
+  of committed or written-out work. It
   tells the owning window either way and confirms to the requester PASSIVELY;
   refusals wake the requester as loud DMs.
 - `tickets` (query → replies): the team's ticket board, `filter` one of

@@ -6471,13 +6471,18 @@ function createSessionManager(deps) {
         return;
       }
       if (mtype === 'team-retire') {
-        this._handleTeamRetire(targetName, sender);
+        // Async since the discard branch probes the worktree for uncommitted
+        // work before choosing a disposition. Caught here, not left floating: a
+        // rejection would otherwise retire nothing and tell no one.
+        this._handleTeamRetire(targetName, sender).catch((e) => {
+          log.warn('intent', `team-retire ${sender} → ${targetName} failed: ${e.message}`);
+        });
         return;
       }
       this._deliverMessage(targetName, sender, body, mtype);
     }
 
-    _handleTeamRetire(targetName, requesterName) {
+    async _handleTeamRetire(targetName, requesterName) {
       const fail = (why) => {
         log.warn('intent', `team-retire ${requesterName} → ${targetName} refused: ${why}`);
         this._deliverMessage(requesterName, 'clodex-team', `retire ${targetName} refused: ${why}`, 'dm');
@@ -6511,6 +6516,26 @@ function createSessionManager(deps) {
           discard = !roleMatch || (rec != null && rec.ephemeral === true);
         }
       } catch { discard = false; }
+      // A discard force-removes the seat's worktree, so an UNCOMMITTED diff or an
+      // untracked file dies with it. Retire is a routine lead-triggerable action
+      // and a ticket seat is ephemeral by construction, which together make that
+      // the common path, not the corner: downgrade to archive instead and say
+      // why, so the operator's exit is "commit, then retire again" rather than
+      // "notice afterwards". Committed work was never at risk — it is on the
+      // branch — so this only ever costs a resumable session nobody wanted.
+      //
+      // An UNREADABLE tree (git missing, path gone) also downgrades: `ok:false`
+      // is not evidence of a clean tree, and archiving something discardable is
+      // recoverable while the reverse is not.
+      let dirtyPath = null;
+      if (discard) {
+        const rec = (() => { try { return getPersistence().get(targetName); } catch { return null; } })();
+        const wt = rec && rec.worktree && rec.worktree.path ? rec.worktree.path : null;
+        if (wt) {
+          const d = await gitWorktree.isDirty(wt).catch((e) => ({ ok: false, error: e.message }));
+          if (!d.ok || d.dirty) { discard = false; dirtyPath = wt; }
+        }
+      }
       const disposition = discard ? 'discard' : 'archive';
       this._sendToSession(targetName, 'session:context-action', { action: 'retired', name: targetName, disposition });
       this._broadcast('ipc-message', {
@@ -6522,10 +6547,25 @@ function createSessionManager(deps) {
       // worktree goes with it. The archive branch keeps the tree deliberately —
       // the seat is resumable, and its checkout is what it resumes into.
       const teardown = discard ? this.destroy(targetName) : this.archive(targetName);
-      const confirm = discard
-        ? `retired ${targetName} (discarded — state lives in its task artifact)`
-        : `retired ${targetName} (resumable from the sidebar or on next project open)`;
-      teardown.then(() => {
+      teardown.then((r) => {
+        // The confirmation names what actually happened to the checkout. "State
+        // lives in its task artifact" was true only of what the seat committed
+        // or wrote out, and a discard deletes the tree — so the wording mirrors
+        // _taskAssign's, which the app already uses for the same loss.
+        let confirm;
+        if (dirtyPath) {
+          confirm = `retired ${targetName} (ARCHIVED, not discarded — ${dirtyPath} has uncommitted work). `
+            + 'A discard would have deleted that tree. Commit or clear it, then retire again to discard.';
+        } else if (!discard) {
+          confirm = `retired ${targetName} (resumable from the sidebar or on next project open)`;
+        } else if (r && r.worktreeRemoved) {
+          confirm = `retired ${targetName} (discarded — its worktree was removed; committed work survives on the branch)`;
+        } else if (r && r.error) {
+          confirm = `retired ${targetName} (discarded, but its worktree could NOT be removed: ${r.error} — remove it by hand)`;
+        } else {
+          confirm = `retired ${targetName} (discarded — state lives in its task artifact)`;
+        }
+        log.info('intent', `team-retire ${requesterName} → ${targetName} done: ${confirm}`);
         this._deliverPassive(requesterName, 'clodex-team', confirm, 'dm');
       }).catch((err) => fail(err.message));
     }

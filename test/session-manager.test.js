@@ -2643,7 +2643,12 @@ test('team-retire: a discarded seat takes its worktree with it', async () => {
         get: (n) => (n === 'team-runner'
           ? { name: n, ephemeral: true, worktree: { path: '/wt/t900', branch: 't900' } } : null),
       }),
-      gitWorktree: { removeWorktree: async (p) => { removed.push(p); return { ok: true }; } },
+      gitWorktree: {
+        removeWorktree: async (p) => { removed.push(p); return { ok: true }; },
+        // CLEAN, explicitly: discard only proceeds on a tree with nothing to
+        // lose, so this stub is what keeps the test on the discard path at all.
+        isDirty: async () => ({ ok: true, dirty: false }),
+      },
     },
   );
   // destroy() is the unit under test, so it must NOT be stubbed — only what it
@@ -2658,6 +2663,135 @@ test('team-retire: a discarded seat takes its worktree with it', async () => {
   assert.deepStrictEqual(removed, ['/wt/t900'],
     'a discarded seat\'s worktree must be removed: kill() drops the persistence record, which is the ONLY pointer to the checkout, so a tree not removed here is orphaned forever along with any unmerged commits on its branch');
   assert.deepStrictEqual(archived, [], 'discard path never archives');
+});
+
+// The honesty half. "State lives in its task artifact" is true only of what the
+// seat COMMITTED or wrote out; the confirmation must name the tree it deleted,
+// or a lead reads a reassuring line over a destructive act.
+test('team-retire: the discard confirmation names the removed worktree', async () => {
+  const { m, PENDING_DIR } = mkRetire(
+    { '/proj/a': '/proj', '/proj/r': '/proj' },
+    { '/proj': { lead: {}, runner: {} } },
+    {
+      getPersistence: () => ({
+        list: () => [],
+        get: (n) => (n === 'team-runner'
+          ? { name: n, ephemeral: true, worktree: { path: '/wt/t900', branch: 't900' } } : null),
+      }),
+      gitWorktree: {
+        removeWorktree: async () => ({ ok: true }),
+        isDirty: async () => ({ ok: true, dirty: false }),
+      },
+    },
+  );
+  m.kill = async (name) => { m.sessions.delete(name); };
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  await new Promise((r) => setTimeout(r, 50));
+  const parked = drainPending(PENDING_DIR, 'lead', 't');
+  assert.strictEqual(parked.length, 1, 'ENTER: the confirmation was delivered');
+  assert.match(parked[0], /worktree was removed/, 'the confirmation says the tree is gone');
+  assert.match(parked[0], /committed work survives on the branch/,
+    'and bounds the loss the way _taskAssign already words it, so the lead knows what it still has');
+});
+
+// The safety half, and the reason it is in scope: moving the discard decision to
+// the persistence record made EVERY ticket seat ephemeral, so a routine retire
+// began force-deleting trees that used to be archived. A dirty tree downgrades.
+test('team-retire: a DIRTY worktree downgrades the discard to an archive', async () => {
+  const removed = [];
+  const { m, PENDING_DIR, archived, killed, contextActions } = mkRetire(
+    { '/proj/a': '/proj', '/proj/r': '/proj' },
+    { '/proj': { lead: {}, runner: {} } },
+    {
+      getPersistence: () => ({
+        list: () => [],
+        get: (n) => (n === 'team-runner'
+          ? { name: n, ephemeral: true, worktree: { path: '/wt/t900', branch: 't900' } } : null),
+      }),
+      gitWorktree: {
+        removeWorktree: async (p) => { removed.push(p); return { ok: true }; },
+        isDirty: async () => ({ ok: true, dirty: true }),
+      },
+    },
+  );
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepStrictEqual(archived, ['team-runner'],
+    'an ephemeral seat holding uncommitted work is ARCHIVED, not discarded — the recoverable direction');
+  assert.deepStrictEqual(killed, [], 'and never killed');
+  assert.deepStrictEqual(removed, [], 'so the tree with the work in it is not touched');
+  assert.deepStrictEqual(contextActions.map((c) => c.payload.disposition), ['archive'],
+    'the window is told archive, so the row stays instead of vanishing like a delete');
+  const parked = drainPending(PENDING_DIR, 'lead', 't');
+  assert.strictEqual(parked.length, 1, 'ENTER: the confirmation was delivered');
+  assert.match(parked[0], /ARCHIVED, not discarded/, 'the lead is told the disposition changed');
+  assert.match(parked[0], /\/wt\/t900/, 'and which tree caused it');
+  assert.match(parked[0], /retire again/, 'and the exit: commit, then retire again');
+});
+
+// UNKNOWN is not clean. If git cannot answer, discarding would be a guess in the
+// destructive direction.
+test('team-retire: an UNREADABLE worktree also downgrades to an archive', async () => {
+  const removed = [];
+  const { m, archived, killed } = mkRetire(
+    { '/proj/a': '/proj', '/proj/r': '/proj' },
+    { '/proj': { lead: {}, runner: {} } },
+    {
+      getPersistence: () => ({
+        list: () => [],
+        get: (n) => (n === 'team-runner'
+          ? { name: n, ephemeral: true, worktree: { path: '/wt/t900', branch: 't900' } } : null),
+      }),
+      gitWorktree: {
+        removeWorktree: async (p) => { removed.push(p); return { ok: true }; },
+        isDirty: async () => ({ ok: false, error: 'git unavailable' }),
+      },
+    },
+  );
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepStrictEqual(archived, ['team-runner'], 'an unanswerable tree is preserved, not deleted on a guess');
+  assert.deepStrictEqual(killed, [], 'and never killed');
+  assert.deepStrictEqual(removed, [], 'nor its tree removed');
+});
+
+// A seat with NO worktree keeps discarding: the probe is about the tree, not a
+// blanket softening of retire. Without this the fix above could be "never
+// discard" and stay green.
+test('team-retire: a treeless ephemeral seat still discards', async () => {
+  const { m, archived, killed, contextActions } = mkRetire(
+    { '/proj/a': '/proj', '/proj/r': '/proj' },
+    { '/proj': { lead: {}, runner: {} } },
+    {
+      getPersistence: () => ({
+        list: () => [],
+        get: (n) => (n === 'team-runner' ? { name: n, ephemeral: true } : null),
+      }),
+      gitWorktree: {
+        removeWorktree: async () => ({ ok: true }),
+        // Would report dirty if it were ever consulted — it must not be, because
+        // there is no tree to consult about.
+        isDirty: async () => ({ ok: true, dirty: true }),
+      },
+    },
+  );
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepStrictEqual(killed, ['team-runner'], 'ENTER: the discard path ran');
+  assert.deepStrictEqual(archived, [], 'no tree, nothing to protect, still a discard');
+  assert.deepStrictEqual(contextActions.map((c) => c.payload.disposition), ['discard']);
 });
 
 // The companion absence: the archive path must KEEP the tree. Without this, the

@@ -137,6 +137,23 @@ async function repoInfo(cwd) {
   return { isRepo: true, repo, defaultBranch: def, branches: ordered };
 }
 
+// Does this worktree hold work that removing it would destroy? `--porcelain`
+// covers modified, staged and UNTRACKED files; untracked matters most here,
+// because a seat that wrote a report or a scratch design and never `git add`ed
+// it is the exact case an operator would call "my work", and `git worktree
+// remove --force` deletes it with everything else.
+//
+// UNKNOWN, not clean, when git can't answer: `{ ok: false }` must never be read
+// as "nothing to lose" — the caller's fail-safe direction is to keep the tree.
+// Committed work is deliberately NOT counted: it survives on the branch.
+async function isDirty(worktreePath) {
+  const wt = worktreePath && path.resolve(String(worktreePath));
+  if (!wt) return { ok: false, error: 'No worktree path given' };
+  const r = await git(wt, ['status', '--porcelain']);
+  if (!r.ok) return { ok: false, error: (r.stderr || 'git status failed').trim() };
+  return { ok: true, dirty: r.stdout.trim().length > 0 };
+}
+
 // Remove a worktree. --force covers a dirty tree / lingering handles (the PTY
 // is already dead by the time this runs on kill). Best-effort: also prunes the
 // admin entry. Returns { ok } or { ok:false, error }. Refuses to remove the
@@ -216,6 +233,6 @@ async function listWorktrees(cwd) {
 }
 
 module.exports = {
-  repoToplevel, createWorktree, removeWorktree, defaultWorktreePath,
+  repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
   defaultBranch, repoInfo, listWorktrees,
 };
