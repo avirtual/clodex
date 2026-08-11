@@ -2553,12 +2553,13 @@ test('T54: a PASSIVE park still does NOT earn the boot/idle edge (only the activ
 
 function mkRetire(rootByName, rolesByRoot, extraDeps) {
   // rootByName: cwd → project root map for the stub findProjectRoot.
-  // rolesByRoot: root → { role: def } map for the stub resolveTeam (drives the
-  // archive-vs-discard disposition). Defaults to a team where lead + dev are
-  // both persistent (ephemeral:false) so existing archive tests are unchanged.
+  // rolesByRoot: root → { role: def } map for the stub resolveTeam. The manifest
+  // now answers only "is this seat the team's at all"; ephemerality comes from
+  // the persistence record, so a test that wants the discard path stubs
+  // getPersistence().get to return { ephemeral: true } rather than marking a role.
   const roles = (root) => rolesByRoot?.[root] ?? { lead: {}, dev: {} };
   const normalize = (defs) => Object.fromEntries(
-    Object.entries(defs).map(([r, d]) => [r, { ephemeral: d.ephemeral === true, template: d.template ?? null, instantiate: d.instantiate ?? 'session', standing: d.standing ?? null }]),
+    Object.entries(defs).map(([r, d]) => [r, { template: d.template ?? null, prompt: d.prompt ?? null, brief: d.brief ?? null, worktree: d.worktree === true }]),
   );
   const { m, PENDING_DIR, injected } = mkPark({
     findProjectRoot: (cwd) => rootByName[cwd] ?? null,
@@ -2598,20 +2599,28 @@ test('team-retire: persistent role → archives, signals the window first, confi
   assert.match(parked[0], /resumable from the sidebar/, 'archive confirmation wording');
 });
 
-test('team-retire: an ephemeral role → kill (discard), drops the record, no archived row', async () => {
-  // 'team-runner' binds to the ephemeral:true 'runner' role → discard path:
-  // kill() (drops the record), the window is signalled disposition:discard so
-  // the row vanishes like a delete.
+test('team-retire: an ephemeral RECORD → kill (discard), drops the record, no archived row', async () => {
+  // 'team-runner' matches the 'runner' role, so it IS the team's seat — but its
+  // persistence record carries ephemeral:true (stamped at spawn by the ticket-seat
+  // and review paths), which is the one source of that fact now. Discard path:
+  // kill() (drops the record), the window is signalled disposition:discard so the
+  // row vanishes like a delete.
   const { m, PENDING_DIR, archived, killed, contextActions, delivered } = mkRetire(
     { '/proj/a': '/proj', '/proj/r': '/proj' },
-    { '/proj': { lead: {}, runner: { ephemeral: true } } },
+    { '/proj': { lead: {}, runner: {} } },
+    {
+      getPersistence: () => ({
+        list: () => [],
+        get: (n) => (n === 'team-runner' ? { name: n, ephemeral: true } : null),
+      }),
+    },
   );
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
   m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
   await new Promise((r) => setImmediate(r));
-  assert.deepStrictEqual(killed, ['team-runner'], 'ephemeral role is killed (record dropped)');
+  assert.deepStrictEqual(killed, ['team-runner'], 'a seat whose RECORD says ephemeral is killed (record dropped)');
   assert.deepStrictEqual(archived, [], 'never archived on the discard path');
   assert.deepStrictEqual(contextActions.map((c) => [c.name, c.payload.action, c.payload.disposition]),
     [['team-runner', 'retired', 'discard']], 'window signalled discard → row removed like a delete');
@@ -2627,12 +2636,12 @@ test('team-retire: a discarded seat takes its worktree with it', async () => {
   const removed = [];
   const { m, archived } = mkRetire(
     { '/proj/a': '/proj', '/proj/r': '/proj' },
-    { '/proj': { lead: {}, runner: { ephemeral: true } } },
+    { '/proj': { lead: {}, runner: {} } },
     {
       getPersistence: () => ({
         list: () => [],
         get: (n) => (n === 'team-runner'
-          ? { name: n, worktree: { path: '/wt/t900', branch: 't900' } } : null),
+          ? { name: n, ephemeral: true, worktree: { path: '/wt/t900', branch: 't900' } } : null),
       }),
       gitWorktree: { removeWorktree: async (p) => { removed.push(p); return { ok: true }; } },
     },
@@ -2921,19 +2930,22 @@ test('_notifyComposition (T34): an ephemeral subject is still self-skipped even 
   assert.deepStrictEqual(passive.map((p) => p.t), ['lead'], 'delivered to the lead, never to the subject itself');
 });
 
-// T34: ephemeral via the ROLE DEF (future-proofing) — a role explicitly marked
-// ephemeral:true on the manifest also fans lead-only, even with no persistence
-// record. Proves the belt-and-braces predicate honors BOTH markers.
-test('_notifyComposition (T34): a role-def-ephemeral seat also fans lead-only (no persistence record needed)', () => {
+// t292 inverts T34's second marker. The role def's `ephemeral` was a SECOND
+// source for a fact the persistence record already carried, and two stores for
+// one word is how they came to disagree. The record is now the only one — so a
+// stale `ephemeral: true` left on a def in a version-1 team.json must NOT quietly
+// narrow the fan-out, because a seat that is genuinely persistent would stop
+// telling its teammates it had gone.
+test('_notifyComposition: a stale role-def `ephemeral` does NOT narrow the fan — the record is the only source', () => {
   const teamStubEphRole = { name: 'team', root: '/proj', lead: 'lead',
     roles: {
-      lead: { instantiate: 'session', brief: 'the lead' },
-      runner: { instantiate: 'subagent', brief: 'the runner', ephemeral: true }, // ephemeral ON the def
+      lead: { brief: 'the lead' },
+      runner: { brief: 'the runner', ephemeral: true }, // stale marker on the def
     } };
   const { m } = mkPark({
     resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? teamStubEphRole : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj' : null),
-    getPersistence: () => ({ list: () => [], get: () => null }), // NO ephemeral record — the def carries it
+    getPersistence: () => ({ list: () => [], get: () => null }), // no record → NOT ephemeral
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-hand', { name: 'team-hand', agentType: 'claude', cwd: '/proj/b' });
@@ -2941,8 +2953,8 @@ test('_notifyComposition (T34): a role-def-ephemeral seat also fans lead-only (n
   const passive = [];
   m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
   m._notifyComposition(m.sessions.get('team-runner-1'), 'retired');
-  assert.deepStrictEqual(passive.map((p) => p.t), ['lead'],
-    'role-def ephemeral is honored even without a persistence marker');
+  assert.deepStrictEqual(passive.map((p) => p.t).sort(), ['lead', 'team-hand'],
+    'the full fan runs: without a record marker the seat is persistent, whatever the def still says');
 });
 
 // Task 22: the one-time team wiring (initial roster + the seat's own 'spawned'
@@ -4028,54 +4040,40 @@ test('team-review: two reviews in one lead turn mint DISTINCT names (no -1 colli
   assert.strictEqual(persistence.get('team-reviewer-2').reviewFor, 'lead');
 });
 
-// C2 (T29 Slice 2): a cold reviewer ALWAYS spawns as claude — a codex seat can't
-// enforce the tools cap (codex ignores disabledTools). The old MF4 REFUSAL of a
-// codex-with-tools reviewer is superseded: force-claude + a loud notice is strictly
-// safer (it also catches the no-tools codex reviewer MF4 let through fully armed).
-test('team-review C2: a manifest codex reviewer WITH tools spawns as CLAUDE + capped, with the force-claude notice', async () => {
-  const { m, injected, created } = mkReview({
-    reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
-      tools: ['Read', 'Grep', 'Glob'], type: 'codex', template: null, standing: null, ephemeral: false },
+// C2 (T29 Slice 2), and the half of it that SURVIVES t292: a cold reviewer always
+// spawns as claude, because only create()'s claude arm consumes disabledTools —
+// codex ignores the denylist, so a codex reviewer would spawn uncapped. That is
+// CODE now, not a manifest field being overridden. A `type` still on disk in a
+// version-1 team.json is dropped at load, so it cannot even ask.
+test('team-review C2: a role def still carrying `type: codex` spawns as CLAUDE + capped', async () => {
+  const { m, created } = mkReview({
+    reviewerRole: { prompt: 'clodex-team-reviewer', brief: 'the reviewer',
+      type: 'codex', template: null, worktree: false },
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
   await new Promise((r) => setImmediate(r));
-  assert.strictEqual(created.length, 1, 'the reviewer still spawns');
-  assert.strictEqual(created[0][1], 'claude', 'forced to claude regardless of the manifest type');
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
+  assert.strictEqual(created[0][1], 'claude',
+    'a stale type field cannot steer the seat off the one runtime that can enforce the cap');
   const disabledTools = created[0][11];
   assert.ok(disabledTools.includes('Bash') && !disabledTools.includes('Read'),
-    'the cap is live on the forced-claude seat (Read/Grep/Glob kept, rest disabled)');
-  assert.ok(injected.some((t) => /manifest requested reviewer type "codex", but cold reviewers always spawn as claude/.test(t)),
-    'the lead gets the force-claude notice naming the ignored type');
+    'the cap is live on the claude seat (Read/Grep/Glob kept, rest disabled)');
 });
 
-// A codex reviewer WITHOUT a tools restriction ALSO force-spawns as claude now (the
-// hole MF4 left: it only bounced codex WITH tools, so a no-tools codex reviewer
-// spawned fully armed). C2 closes it — capped claude + the same notice.
-test('team-review C2: a no-tools codex reviewer force-spawns as CLAUDE + capped (MF4 hole closed)', async () => {
+// The force is unconditional, so there is nothing left to warn ABOUT: the notice
+// existed only to say a manifest field had been ignored, and the field is gone.
+test('team-review C2: no force-claude notice is emitted any more', async () => {
   const { m, injected, created } = mkReview({
-    reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
-      tools: null, type: 'codex', template: null, standing: null, ephemeral: false },
+    reviewerRole: { prompt: 'clodex-team-reviewer', brief: 'the reviewer',
+      type: 'codex', template: null, worktree: false },
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
   await new Promise((r) => setImmediate(r));
-  assert.strictEqual(created.length, 1, 'the reviewer spawns');
-  assert.strictEqual(created[0][1], 'claude', 'forced to claude even with no manifest tools');
-  const disabledTools = created[0][11];
-  assert.ok(disabledTools.includes('Bash') && !disabledTools.includes('Read'),
-    'the default cap (Read/Grep/Glob) is applied to the forced-claude seat');
-  assert.ok(injected.some((t) => /always spawn as claude/.test(t)), 'force-claude notice present');
-});
-
-// A claude reviewer (the normal case) spawns with NO force-claude notice.
-test('team-review C2: a claude reviewer spawns with no force-claude notice', async () => {
-  const { m, injected, created } = mkReview();
-  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
-  m._handleTeamReview(m.sessions.get('lead'), 'scope');
-  await new Promise((r) => setImmediate(r));
-  assert.strictEqual(created[0][1], 'claude');
-  assert.ok(!injected.some((t) => /always spawn as claude/.test(t)), 'no notice when the manifest already asked for claude');
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
+  assert.ok(!injected.some((t) => /always spawn as claude/.test(t)),
+    'no notice about ignoring a field the schema no longer has');
 });
 
 // --- Task 29a → T52: `tools` is a NARROWING hint under REVIEWER_TOOL_CAP ---
@@ -4173,29 +4171,37 @@ test('team-review (T52): a TEMPLATE NARROWER than the cap is honored (narrows, n
 
 // T52: template omits tools → the role manifest's tools drive (fallback), still
 // capped. Proves template > role > built-in precedence for the tools field.
-test('team-review (T52): a template WITHOUT tools falls back to the role manifest tools (still capped)', async () => {
+// t292: `tools` left the role schema. A def that still carries one (a version-1
+// team.json on disk, hand-authored) must change NOTHING — the template is the
+// only narrowing source now. The old behavior was a role field driving the cap
+// on the one path that read it while being inert on every other role.
+test('team-review: a role def still carrying `tools` does not narrow the cap', async () => {
   const { m, injected, created } = mkReview({
     reviewTemplates: [{ name: 'clodex-team-reviewer', systemPromptFile: 'clodex-team-reviewer', intents: [],
       env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', FORCE_PROMPT_CACHING_5M: '1', CLODEX_DISABLE_IPC_PROMPT: '1' } }],
-    reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
-      tools: ['Read', 'Bash'], type: null, template: null, standing: null, ephemeral: false },
+    reviewerRole: { prompt: 'clodex-team-reviewer', brief: 'the reviewer',
+      tools: ['Read', 'Bash'], template: null, worktree: false },
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
   await new Promise((r) => setImmediate(r));
-  assert.strictEqual(created.length, 1, 'template-without-tools falls back to role tools + spawns');
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
   const disabledTools = created[0][11];
-  assert.ok(!disabledTools.includes('Read'), 'the role-requested Read (within cap) stays enabled');
-  assert.ok(disabledTools.includes('Bash'), 'the role-requested Bash (beyond cap) is disabled — cap still holds on the fallback source');
-  assert.ok(disabledTools.includes('Grep') && disabledTools.includes('Glob'), 'cap tools the role dropped are disabled');
-  assert.ok(injected.some((t) => /requested \[Bash\] beyond the reviewer cap/.test(t)),
-    'the beyond-cap warn fires on the role-fallback source too');
+  // The full cap is live: the role asked to DROP Grep/Glob and to ADD Bash, and
+  // neither happened. A stale field must not still be steering the one path that
+  // ever read it.
+  assert.ok(!disabledTools.includes('Read') && !disabledTools.includes('Grep') && !disabledTools.includes('Glob'),
+    'the whole cap stays enabled — the role def did not narrow it to [Read]');
+  assert.ok(disabledTools.includes('Bash'),
+    'and it certainly did not widen it: the cap is code, not a manifest field');
+  assert.ok(!injected.some((t) => /beyond the reviewer cap/.test(t)),
+    'no beyond-cap line, because the role def is no longer a request at all');
 });
 
 test('team-review: an ABSENT manifest tools list applies the cap as-is', async () => {
   const { m, injected, created } = mkReview({
-    reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
-      tools: null, type: null, template: null, standing: null, ephemeral: false },
+    reviewerRole: { prompt: 'clodex-team-reviewer', brief: 'the reviewer',
+      template: null, worktree: false },
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
@@ -6116,7 +6122,7 @@ test('team: lead role-add / role-set call the mutators with the parsed def/patch
   f.seat('lead');
   f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-add', name: 'builder', prompt: 'p1', template: 't1', body: 'builds things' });
   assert.deepStrictEqual(f.calls[0], ['addRole', 'team', 'builder',
-    { instantiate: 'session', prompt: 'p1', template: 't1', brief: 'builds things' }], 'role-add → addRole with the def');
+    { prompt: 'p1', template: 't1', brief: 'builds things' }], 'role-add → addRole with the def');
   f.calls.length = 0;
   f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-set', name: 'runner', prompt: 'p2', body: 'new brief' });
   assert.deepStrictEqual(f.calls[0], ['setRole', 'team', 'runner', { brief: 'new brief', prompt: 'p2' }], 'role-set → setRole with only the present fields');

@@ -94,7 +94,7 @@ test('team:join custom role forwards the picked prompt into the role def', async
   });
   await handlers['team:join']({}, { team: 'shop', role: 'analyst', prompt: 'my-analyst', name: 'shop-analyst', type: 'claude', cwd: '/proj/sub' });
   assert.strictEqual(writes[0][1], 'analyst');
-  assert.deepStrictEqual(writes[0][2], { instantiate: 'session', prompt: 'my-analyst' });
+  assert.deepStrictEqual(writes[0][2], { prompt: 'my-analyst' });
 });
 
 test('team:forCwd reaches resolveTeam and returns {team,root}', () => {
@@ -116,7 +116,15 @@ test('team:names reaches listTeams; team:rolePrompts filters the library', () =>
     ]) },
   });
   assert.deepStrictEqual(handlers['team:names']({}), { ok: true, names: ['shop', 'lab'] });
-  assert.deepStrictEqual(handlers['team:rolePrompts']({}), { ok: true, prompts: ['clodex-team-hand'] });
+  // `prompts` is the picker's rail-filtered offering; `all` is everything on
+  // disk. The popover needs both to tell "not installed" from "installed but off
+  // the append rail" — one message for both facts sent the operator looking for
+  // a file that was there the whole time (R3).
+  assert.deepStrictEqual(handlers['team:rolePrompts']({}), {
+    ok: true,
+    prompts: ['clodex-team-hand'],
+    all: ['clodex-team-hand', 'clodex-team-lead', 'clodex-team-reviewer', 'house'],
+  });
 });
 
 test('a write refusal surfaces as {ok:false} WITHOUT spawning', async () => {
