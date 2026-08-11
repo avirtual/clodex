@@ -847,8 +847,8 @@ function createSessionManager(deps) {
         if (ev.event === 'disarmed') {
           if (ev.cause === 'off') return;
           const name = this._nameForWireSession(ev.session);
-          // A failure disarm is PROVISIONAL: it stops THIS launch's pinging and
-          // writes nothing. No ping failure — credential-shaped or not — may
+          // A failure disarm is PROVISIONAL: it stops the LIVE hold and writes
+          // nothing. No ping failure — credential-shaped or not — may
           // erase a persisted keep-warm intent, because a rejected replay is not
           // evidence about what the operator asked for. The 401 is the case that
           // settled this: the CLI owns the OAuth file and refreshes it on its
@@ -858,11 +858,16 @@ function createSessionManager(deps) {
           // TIME, and rearmPlan's lapse branch is what notices that.
           //
           // Accepted cost: a genuinely dead credential burns the 2-ping strike
-          // budget once per re-arm rather than once, forever. Two warm cache-read
-          // pings beats discarding an explicit operator setting unattended. It is
-          // self-limiting besides — the re-arm rides a MAIN-LINE turn, and a turn
-          // means the CLI just authenticated, so a truly dead credential earns no
-          // re-arms at all while the seat sits idle.
+          // budget once per re-arm rather than once per launch. Two warm
+          // cache-read pings beats discarding an explicit operator setting
+          // unattended. The bound is per-TURN, and NOT because a turn proves the
+          // credential works — a 401'd main-line turn emits turn.completed too
+          // (proxy.js tees any non-SSE /v1/messages POST regardless of status)
+          // and the re-arm probe never inspects it. It holds only because a
+          // re-arm needs a main-line turn at all: an idle seat earns none, and an
+          // actively-used seat with a dead credential burns two replays per turn
+          // until the operator notices — which they will, because their own turns
+          // are failing alongside.
           //
           // Reopening the gate is what makes the surviving flag mean anything:
           // _maybeRearmHold latches _holdRearmed once an arm lands, so without

@@ -148,7 +148,9 @@ fields on the session's sessions.json record:
   result's clamped `until`, never the raw requested hours), re-written on
   every re-anchor (organic turns restart the keeper's window, so the
   persisted deadline must track it), and cleared on explicit disarm or on
-  lapse (`rearmPlan`'s clear verdict, checked on the next main-line turn).
+  lapse (`rearmPlan`'s clear verdict, checked on the next main-line turn on
+  which the re-arm gate is open — so after an `'expired'` disarm a stale
+  `holdUntil` lingers until a restart, `/clear`, or failures-disarm reopens it).
 - `keepWarmAlways` (boolean) for a perpetual hold — a property of the SEAT
   rather than a window. It has no deadline, so it must never be encoded as a
   large `holdUntil`: `rearmPlan` and the fire button both read that field as a
@@ -157,15 +159,24 @@ fields on the session's sessions.json record:
   `> 0` gate).
 
 Neither field is ever cleared by a **ping failure**. A failure-strike disarm is
-provisional — it stops this launch's pinging and reopens the re-arm gate, so the
+provisional — it stops the LIVE hold and reopens the re-arm gate, so the
 surviving intent is restored on the seat's next main-line turn. The 401 is why:
 the CLI owns its OAuth file and refreshes it on the next real turn, so an
 overnight rejection is transient, and erasing an explicit operator setting on it
 was permanent and silent. Only the operator (`wire:hold`, Settings) withdraws an
 intent.
 
-Arming either one clears the other, as does an explicit disarm or a
-failure-strike disarm — a seat must never carry both. After an app restart the first main-line wire turn
+The strike budget therefore bounds waste per TURN, not per launch — and NOT
+because a turn proves the credential works: a 401'd main-line turn emits
+`turn.completed` too (the tee is built for any non-SSE `/v1/messages` POST
+regardless of status) and the re-arm probe does not inspect it. The bound holds
+because a re-arm needs a main-line turn at all: an idle seat with a dead
+credential earns none, while an actively-used one burns two replays per turn
+until the operator notices — which they will, because their own turns are
+failing alongside.
+
+Arming either one clears the other, as does an explicit disarm — a seat must
+never carry both. After an app restart the first main-line wire turn
 re-arms the remaining window — retried each turn until the warm-gated
 `arm()` accepts (a strict once-per-spawn guard would silently re-lose the
 hold on a first-turn decline). Failure-disarm detection keys on the
