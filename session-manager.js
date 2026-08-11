@@ -3409,7 +3409,7 @@ function createSessionManager(deps) {
           // `at` is the request's own timestamp, already persisted in the record.
           const mine = notice && notice.name === who && (at == null || notice.at === at);
           if (mine) store.set({ pendingRebootNotice: null });
-          else if (notice) log.info('intent', `reboot abandon by ${who}: notice left alone — it belongs to a later request`);
+          else if (notice) log.info('intent', `reboot abandon by ${who}: notice left alone — it is not this request's`);
         } catch (e) { log.error('intent', `reboot notice clear failed: ${e.message}`); }
       }
       log.warn('intent', cancelled

@@ -144,6 +144,13 @@ test('a stale abandon does not clear the LATER request\'s pending notice', () =>
   // The notice-clear hole, which the name check alone does not close: the later
   // requester may wear the same name. Clearing here deletes the announcement for
   // a restart that is still armed, so the next launch says nothing.
+  //
+  // This interleaving is driven DIRECTLY, and the shipped host cannot produce
+  // it: there is one idleWaiter (main.js), arm() refuses to duplicate it, and
+  // drainAbandoned fires every pending onAbandon in one synchronous loop — so
+  // both requesters are always abandoned back-to-back and either order ends at
+  // null. The guard is defence for a host that could split them, not a fix for
+  // an observed defect; do not infer from this test that the waiter can.
   const { eng, armed } = armEngine();
   const first = seat(eng, 'worker', BORN_A);
   watchInjects(eng);
