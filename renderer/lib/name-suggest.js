@@ -23,4 +23,25 @@ function bumpDefaultName(base, reserved) {
   return `${prefix}${n}`;
 }
 
-module.exports = { bumpDefaultName };
+// A team name the Create Team… dialog may safely PROPOSE, given an already
+// slugified basename and the taken names. Two constraints bind a team name that
+// do not bind a session name, so slugifyTeamName (shared with the new-session
+// dialog) is deliberately left alone and narrowed here instead:
+//
+//   - a leading '.' is refused by createTeam — listTeams skips dot-directories,
+//     so the team would be written and then invisible. slugifyTeamName strips a
+//     leading '-' but not a '.', so a root of `…/.dotfiles` proposed `.dotfiles`.
+//   - the DEFAULT lead seat is `<team>-lead`, so a team name over 59 chars mints
+//     a seat past the 64-char NAME_RE limit (team-manifest.js).
+//
+// Both refusals would otherwise land on a name the operator never typed. The
+// clamp is applied after the dedupe too: a `-2` suffix must not push it back over.
+const TEAM_NAME_MAX = 64 - '-lead'.length;
+
+function teamNamePrefill(slug, taken) {
+  const base = String(slug || '').replace(/^\.+/, '').slice(0, TEAM_NAME_MAX);
+  if (!base) return '';
+  return bumpDefaultName(base, taken).slice(0, TEAM_NAME_MAX);
+}
+
+module.exports = { bumpDefaultName, teamNamePrefill, TEAM_NAME_MAX };

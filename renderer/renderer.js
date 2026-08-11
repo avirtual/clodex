@@ -29,7 +29,7 @@ const { altChordAction } = require('./lib/web-shortcuts');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
-const { bumpDefaultName } = require('./lib/name-suggest');
+const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { prefsGate } = require('./lib/prefs-gate');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { isToolInstallSession } = require('../tool-doctor');
@@ -3116,8 +3116,15 @@ function openCreateTeamDialog() {
   // hidden copies keep taking Enter. Re-focus the live one instead.
   const live = document.querySelector('.team-create-overlay');
   if (live) {
-    const f = live.querySelector('[data-f="root"]');
-    if (f) f.focus();
+    // Only pull focus in from OUTSIDE — a second menu click while the operator is
+    // mid-word in the name field must not yank them back to the root field.
+    if (!live.contains(document.activeElement)) {
+      const f = live.querySelector('[data-f="root"]');
+      if (f) f.focus();
+    }
+    // Resolves null, which the caller cannot tell apart from Cancel. Harmless
+    // because the only caller (the Teams menu listener) ignores the result — a
+    // future caller that acts on the resolution needs a distinguishable value.
     return Promise.resolve(null);
   }
   return new Promise((resolve) => {
@@ -3153,7 +3160,9 @@ function openCreateTeamDialog() {
     rootInput.addEventListener('input', () => {
       if (nameTouched) return;
       const base = pathBasename(rootInput.value.trim());
-      nameInput.value = base ? dedupeTeamName(slugifyTeamName(base)) : '';
+      // dedupe lives in teamNamePrefill (it clamps AFTER the suffix); this dialog
+      // only supplies the slug and the taken set.
+      nameInput.value = base ? teamNamePrefill(slugifyTeamName(base), dialogTeamNames) : '';
     });
 
     const done = (val) => { overlay.remove(); resolve(val); };

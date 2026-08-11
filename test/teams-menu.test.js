@@ -63,22 +63,24 @@ function registerWith(overrides = {}) {
 
 // The manager whose create() would record a spawn. It exists so the "no spawn"
 // assertion is a real observation of the spawn path, not the absence of a stub.
-function fakeManager(created) {
+function fakeManager(created, live = []) {
   return {
     create: async (...args) => { created.push(args); return { name: args[0] }; },
-    sessions: new Map(),
+    // Pre-seeded names drive spawnFromParams' nameConflict throw, which is how a
+    // team:create fails AFTER its manifest write.
+    sessions: new Map(live.map((n) => [n, {}])),
     list: () => [],
   };
 }
 
-function bareHandlers(home, created) {
+function bareHandlers(home, created, { live = [] } = {}) {
   const { createTeam, listTeams, loadManifest } = createTeamManifest({ fs, clodexHome: home });
   // The app menu is a rebuilt TEMPLATE with no open-time hook, so every write
   // route owes it a refresh. Recording the seam is the only way to see that: the
   // Proxy's inert stub would swallow a missing call and the test would pass.
   const refreshed = [];
   const handlers = registerWith({
-    manager: fakeManager(created),
+    manager: fakeManager(created, live),
     createTeam,
     listTeams,
     loadManifest,
@@ -185,6 +187,47 @@ test('team:create refreshes the app menu too — the same staleness by a second 
   assert.deepStrictEqual(refreshed, ['refresh'], 'nothing written, nothing to refresh');
 });
 
+test('a team:create whose SPAWN fails still refreshes — the write landed', async () => {
+  const home = mkHome();
+  const created = [];
+  const { handlers, loadManifest, refreshed } = bareHandlers(home, created, { live: ['boss'] });
+
+  // spawnFromParams throws on a name conflict AFTER createTeam has written the
+  // manifest. The refresh therefore has to be gated on the WRITE, not on the
+  // handler's return value, and it has to sit outside the try — a refresh placed
+  // after the spawn never runs, and the menu is missing the team that now exists.
+  const res = await handlers['team:create']({}, { teamName: 'x', cwd: '/proj/x', name: 'boss' });
+
+  assert.strictEqual(res.ok, false, 'the operator is told the spawn failed');
+  assert.match(res.error, /already exists/);
+  assert.strictEqual(loadManifest('x').root, '/proj/x', 'but the team was written anyway');
+  assert.deepStrictEqual(refreshed, ['refresh'], 'so the menu must show it');
+});
+
+test('a failing menu rebuild is never reported as a failed write', async () => {
+  const home = mkHome();
+  const created = [];
+  const { createTeam, listTeams } = bareHandlers(home, created);
+  // The refresh must sit OUTSIDE the try. Inside it, a throwing rebuild is caught
+  // by the write's own handler and returned as {ok:false} for a team that exists —
+  // and the operator's retry then bounces off "already exists". Outside, the
+  // failure surfaces as itself.
+  const handlers = registerWith({
+    manager: fakeManager(created),
+    createTeam,
+    listTeams,
+    loadManifest: () => { throw new Error('unused'); },
+    refreshAppMenu: () => { throw new Error('menu rebuild blew up'); },
+    agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
+    persistence: { setStripLevel: () => {}, get: () => null },
+    workspaceOfSender: () => 'ws1',
+  });
+
+  assert.throws(() => handlers['team:createBare']({}, { name: 'shop', root: '/proj/shop' }),
+    /menu rebuild blew up/, 'the rebuild failure is not swallowed into the write result');
+  assert.deepStrictEqual(listTeams(), ['shop'], 'and the write it followed still stands');
+});
+
 test('a leading-dot team name is refused — it would be written and then invisible', async () => {
   const home = mkHome();
   const created = [];
@@ -224,6 +267,33 @@ test('a team name too long for its DEFAULT lead is refused by naming the team na
   // about — and a short one for the same long team name still works.
   const ok = await handlers['team:createBare']({}, { name, root: '/proj/long', lead: 'boss' });
   assert.strictEqual(ok.ok, true);
+
+  // The `!lead` half of the guard: an OVER-LONG explicit lead must reach the
+  // WRITER and be refused in its words, not intercepted by the handler's
+  // team-name message. Without this the `!lead` condition could be dropped and
+  // every assertion above would still pass (the explicit lead there is 4 chars).
+  const long = await handlers['team:createBare']({}, {
+    name: 'shortname', root: '/proj/other', lead: 'b'.repeat(65),
+  });
+  assert.strictEqual(long.ok, false);
+  assert.match(long.error, /lead must be a seat name/,
+    "the writer's refusal, not the handler's — the caller named this field");
+});
+
+test('the 64-character seat limit binds at exactly the boundary, both sides', async () => {
+  const home = mkHome();
+  const created = [];
+  const { handlers } = bareHandlers(home, created);
+
+  // 59 + '-lead' = exactly 64: the last team name that can mint its own default
+  // lead. 60 + '-lead' = 65: the first that cannot. Pinning both sides documents
+  // the duplicated `64` literal as deliberate rather than a guess.
+  const fits = await handlers['team:createBare']({}, { name: 'a'.repeat(59), root: '/proj/fits' });
+  assert.strictEqual(fits.ok, true, 'a 64-char seat name is legal, so this must not be refused');
+
+  const over = await handlers['team:createBare']({}, { name: 'a'.repeat(60), root: '/proj/over' });
+  assert.strictEqual(over.ok, false, 'one character more and the seat name is 65');
+  assert.match(over.error, /too long/);
 });
 
 // ── The desktop Teams menu ──────────────────────────────────────────────────

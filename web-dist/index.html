@@ -20323,7 +20323,13 @@ ${i3.join("\n")}
         while (taken.has(`${prefix}${n}`)) n++;
         return `${prefix}${n}`;
       }
-      module.exports = { bumpDefaultName };
+      var TEAM_NAME_MAX = 64 - "-lead".length;
+      function teamNamePrefill(slug, taken) {
+        const base = String(slug || "").replace(/^\.+/, "").slice(0, TEAM_NAME_MAX);
+        if (!base) return "";
+        return bumpDefaultName(base, taken).slice(0, TEAM_NAME_MAX);
+      }
+      module.exports = { bumpDefaultName, teamNamePrefill, TEAM_NAME_MAX };
     }
   });
 
@@ -28793,7 +28799,7 @@ ${detail}` });
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
       var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
-      var { bumpDefaultName } = require_name_suggest();
+      var { bumpDefaultName, teamNamePrefill } = require_name_suggest();
       var { prefsGate } = require_prefs_gate();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { isToolInstallSession } = require_tool_doctor();
@@ -31663,8 +31669,10 @@ Click for live activity`;
       function openCreateTeamDialog() {
         const live = document.querySelector(".team-create-overlay");
         if (live) {
-          const f = live.querySelector('[data-f="root"]');
-          if (f) f.focus();
+          if (!live.contains(document.activeElement)) {
+            const f = live.querySelector('[data-f="root"]');
+            if (f) f.focus();
+          }
           return Promise.resolve(null);
         }
         return new Promise((resolve) => {
@@ -31699,7 +31707,7 @@ Click for live activity`;
           rootInput.addEventListener("input", () => {
             if (nameTouched) return;
             const base = pathBasename(rootInput.value.trim());
-            nameInput.value = base ? dedupeTeamName(slugifyTeamName(base)) : "";
+            nameInput.value = base ? teamNamePrefill(slugifyTeamName(base), dialogTeamNames) : "";
           });
           const done = (val) => {
             overlay.remove();

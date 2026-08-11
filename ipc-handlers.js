@@ -87,14 +87,23 @@ function registerIpcHandlers(deps) {
   // The manifest write happens FIRST; the spawn then resolves the now-written
   // team and attaches the role prompt. A write refusal leaves the session unspawned.
   handle('team:create', async (e, spec) => {
+    const { teamName, ...p } = spec || {};
+    let written = false;
+    let res;
     try {
-      const { teamName, ...p } = spec || {};
       createTeam({ name: teamName, root: p.cwd, lead: p.name });
-      refreshAppMenu(); // the Teams menu lists teams (t288) — a new one must appear.
-      return await spawnFromParams(e, p);
+      written = true;
+      res = await spawnFromParams(e, p);
     } catch (err) {
-      return { ok: false, error: err.message };
+      res = { ok: false, error: err.message };
     }
+    // Refresh OUTSIDE the try (house pattern, agents:remove): inside it, a throwing
+    // rebuild would report failure for a write that landed, and the operator's retry
+    // would then hit "already exists". Gated on the WRITE, not on `res`: the spawn
+    // throws on a name conflict AFTER the team exists, and that team is exactly what
+    // the menu is now missing.
+    if (written) refreshAppMenu();
+    return res;
   });
 
   // The manifest write with NO spawn (t288): the Teams menu creates a team before
@@ -105,25 +114,29 @@ function registerIpcHandlers(deps) {
   // refusal is the single gate; resolving it here would silently accept a
   // relative root against whatever cwd the main process happens to have.
   handle('team:createBare', (_e, spec) => {
+    const { name, root, lead } = spec || {};
+    let team;
     try {
-      const { name, root, lead } = spec || {};
       // The DEFAULT lead is minted here, so the refusal for it is owed here too:
       // `${name}-lead` overflows the 64-char seat-name limit (NAME_RE in
       // team-manifest.js) for a 60-64 char team name, and createTeam would then
-      // refuse a `lead` field the Create Team… dialog never shows.
+      // refuse a `lead` field the Create Team… dialog never shows. An EXPLICIT
+      // lead is the caller's own value and goes to the writer untouched.
       const seat = lead || `${name}-lead`;
       if (!lead && seat.length > 64) {
         throw new Error(`team name "${name}" is too long: its default lead seat name "${seat}" exceeds the 64-character seat-name limit`);
       }
-      const team = createTeam({ name, root, lead: seat });
-      // The Electron menu is a TEMPLATE, rebuilt only by refreshAppMenu — it has
-      // no open-time hook, unlike the web mirror which re-reads in items(). Without
-      // this the fresh-box flow (create, then use the menu) still shows (no teams).
-      refreshAppMenu();
-      return { ok: true, team };
+      team = createTeam({ name, root, lead: seat });
     } catch (err) {
       return { ok: false, error: err.message };
     }
+    // Refreshed AFTER the try/catch (house pattern, agents:remove). The Electron
+    // menu is a TEMPLATE rebuilt only here — it has no open-time hook, unlike the
+    // web mirror which re-reads in items() — so without this the fresh-box flow
+    // (create, then use the menu) still shows (no teams). A throwing rebuild must
+    // not turn the landed write into {ok:false}; the retry would hit "already exists".
+    refreshAppMenu();
+    return { ok: true, team };
   });
 
   handle('team:join', async (e, spec) => {
