@@ -187,14 +187,45 @@ test('activityTs is stamped from wire events, not only from state transitions', 
   assert.strictEqual(m.sessions.get('a').activityState, 'thinking', 'state stayed deduped');
 
   // A late event carrying an older ts must not drag the clock backwards into the
-  // dm-hold band (Math.max, not assignment).
+  // dm-hold band (Math.max, not assignment). Driven through a real wire verb with
+  // the tracker's clock pushed back, not by calling the callback directly — a
+  // direct call would pass even if _touch stopped invoking it at all.
   const now = m.sessions.get('a').activityTs;
-  m._activity._onEvent('a', now - 900000);
-  assert.strictEqual(m.sessions.get('a').activityTs, now);
+  m._activity._now = () => now - 900000;
+  m._activity.turnStarted('a', { reqId: 'r3' });
+  assert.strictEqual(m.sessions.get('a').activityTs, now, 'the clock never runs backwards');
 
   // An event for a session this manager does not own is a no-op, not a throw.
   m._activity.turnStarted('ghost', { reqId: 'g1' });
   assert.strictEqual(m.sessions.has('ghost'), false);
+});
+
+// The tracker's "timers are not activity" rule has to hold on the LABEL route
+// too: gap-idle and post-sweep transitions reach the session only through
+// _emitActivity, and stamping Date.now() there reports a seat as fresher than
+// its last real event by up to INFLIGHT_MAX_AGE_MS (15min) — long enough to slip
+// a cold seat's dm past the hold gate.
+test('_emitActivity: a timer-inferred transition stamps the last wire event, not now', () => {
+  const m = mk();
+  m.sessions.set('a', { name: 'a', workspaceId: 'ws1', activityState: 'idle', activityTs: 0 });
+  const wireTs = Date.now() - 600000; // the seat's last real request, 10 min ago
+  m._activity._now = () => wireTs;
+  m._activity.turnStarted('a', { reqId: 'r1' });
+  assert.strictEqual(m.sessions.get('a').activityTs, wireTs);
+
+  // The gap-idle / sweep path: a transition with no wire event behind it.
+  m._emitActivity('a', 'idle', false);
+  assert.strictEqual(m.sessions.get('a').activityState, 'idle');
+  assert.strictEqual(m.sessions.get('a').activityTs, wireTs,
+    'the timer transition must not refresh the clock');
+
+  // A jsonl-source session has no wire events at all (the two watcher families
+  // are disjoint: wire sessions get the sentinel, whose watcher passes a no-op in
+  // the activity slot). It must keep today's behaviour — stamp now.
+  m.sessions.set('j', { name: 'j', workspaceId: 'ws1', activityState: 'idle', activityTs: 0 });
+  m._emitActivity('j', 'thinking', false);
+  assert.ok(m.sessions.get('j').activityTs >= wireTs + 600000 - 5000,
+    'no wire event for this session → falls back to now');
 });
 
 test('create: rejects a duplicate session name before any spawn', async () => {

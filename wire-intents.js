@@ -163,7 +163,15 @@ class ActivityTracker {
   // the quiet-gap timer, same as a mid-turn tool run.
   requestFailed(agent, reqId) {
     const a = this._a(agent);
-    this._touch(agent, a);
+    // Only a request THIS tracker counted is activity. `inflight` is written in
+    // exactly one place — turnStarted, already past its sideCall filter and its
+    // caller's intentSource gate — so this one guard is what keeps the failure
+    // route from stamping a side-call probe, a non-/v1/messages request, or a
+    // jsonl-source session: the wire's failure wiring is UNGATED, and a stamp
+    // there resets an idle seat's clock to 0 and wakes a cold seat with a dm
+    // that should have been held. Captured before the delete.
+    const counted = a.inflight.has(reqId);
+    if (counted) this._touch(agent, a);
     a.inflight.delete(reqId);
     this._armSweep(agent, a);
     this._maybeGapIdle(agent, a);

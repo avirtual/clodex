@@ -2656,7 +2656,16 @@ function createSessionManager(deps) {
     _emitActivity(name, state, notify) {
       const s = this.sessions.get(name);
       if (s && s.activityState !== state) {
-        s.activityState = state; s.activityTs = Date.now();
+        // Not Date.now(): the gap-idle and post-sweep transitions are this
+        // process INFERRING quiet from a timer, and stamping them "now" reports
+        // the seat as fresher than its last real event by up to
+        // INFLIGHT_MAX_AGE_MS — a long-cold seat reads as minutes idle and its
+        // dm is delivered instead of held. Identity on wire-driven edges (the
+        // tracker just stamped the same ts); falls back to now for jsonl-source
+        // sessions, whose transitions arrive from JsonlWatcher and have no wire
+        // event at all — the two watcher families are disjoint by construction.
+        s.activityState = state;
+        s.activityTs = Math.max(s.activityTs || 0, this._activity.lastEventTs(name) || Date.now());
         if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       }
       if (s && state !== 'idle') s.lastMainStop = null;

@@ -88,8 +88,10 @@ test('ActivityTracker: quiet-gap idle (mid-turn silence) is turnEnd:false; new r
   await sleep(35);
   assert.deepStrictEqual(events, [['thinking', false]]);              // no idle flap between hops
   a.turnCompleted('alice', { reqId: 'r2', stop: { is_turn: false } });
+  const stamped = a.lastEventTs('alice');
   await sleep(35);                                                    // now the gap elapses
   assert.deepStrictEqual(events.at(-1), ['idle', false]);             // quiet-gap idle: no notification
+  assert.strictEqual(a.lastEventTs('alice'), stamped, 'the gap timer is not a wire event');
 });
 
 test('ActivityTracker: failed request (tee-failure) cannot wedge thinking', async () => {
@@ -106,9 +108,14 @@ test('ActivityTracker: receipt lost entirely (no completed, no failed) expires i
   const a = new ActivityTracker((_n, state, meta) => events.push([state, meta.turnEnd]),
     { idleGapMs: 10, inflightMaxAgeMs: 30 });
   a.turnStarted('alice', { reqId: 'r1' });
+  const stamped = a.lastEventTs('alice');
   // r1's turn.completed never arrives — pre-fix this stayed 'thinking' forever.
   await sleep(80); // max-age sweep drops r1, quiet-gap timer follows
   assert.deepStrictEqual(events, [['thinking', false], ['idle', false]]); // gap idle: no notification
+  // Both timer-driven transitions fired above. Neither may count as activity:
+  // they are this class inferring quiet from silence, and a stamp here would
+  // report a seat with a lost receipt as fresh for up to inflightMaxAgeMs.
+  assert.strictEqual(a.lastEventTs('alice'), stamped, 'gap-idle and sweep timers must not touch the clock');
   // The receipt arriving AFTER expiry is harmless: already idle, deduped,
   // and its turnEnd notification is forfeit (the request was silent >maxAge).
   a.turnCompleted('alice', { reqId: 'r1', stop: { is_turn: true } });
@@ -166,6 +173,43 @@ test('ActivityTracker: side-call traffic is not activity, and an unseen agent mi
   t = 2000;
   a.turnStarted('alice', { reqId: 'r1' });                            // a real request does count
   assert.strictEqual(a.lastEventTs('alice'), 2000);
+});
+
+// The failure route is the ONE ungated wiring (session-manager's onWireFailure
+// checks no intentSource, unlike turn.started/turn.completed), so everything the
+// tracker never counted arrives here: side-call probes, non-/v1/messages requests
+// (GET /v1/models, count_tokens), and jsonl-source sessions. Stamping any of them
+// is the original defect in mirror image — an idle seat's failed background probe
+// zeroes idleMs and shouldHoldDm delivers a dm that should have been held, waking
+// a cold seat. Only a request in flight HERE is activity.
+test('ActivityTracker: a failure the tracker never counted is not activity', () => {
+  const touches = [];
+  let t = 1000;
+  const a = new ActivityTracker(() => {}, { now: () => t, onEvent: (n, ts) => touches.push([n, ts]) });
+
+  // Side-call probe: turnStarted skipped it, so its failure must be invisible too.
+  a.turnStarted('alice', { reqId: 's1', sideCall: true });
+  t = 2000;
+  a.requestFailed('alice', 's1');
+  assert.strictEqual(a.lastEventTs('alice'), 0, 'a failed side call is not activity');
+
+  // Never-started reqId (non-messages endpoint / jsonl-source session).
+  t = 3000;
+  a.requestFailed('bob', 'never-seen');
+  assert.strictEqual(a.lastEventTs('bob'), 0);
+  assert.deepStrictEqual(touches, []);
+
+  // The counted case still stamps, and only once: the retry of a dropped reqId
+  // finds nothing in flight.
+  t = 4000;
+  a.turnStarted('bob', { reqId: 'r1' });
+  t = 5000;
+  a.requestFailed('bob', 'r1');
+  assert.strictEqual(a.lastEventTs('bob'), 5000, 'a real request failing IS activity');
+  t = 6000;
+  a.requestFailed('bob', 'r1');                                       // already dropped
+  assert.strictEqual(a.lastEventTs('bob'), 5000);
+  assert.deepStrictEqual(touches, [['bob', 4000], ['bob', 5000]]);
 });
 
 const fakeWatcherFactory = (made) => (cbs) => {
