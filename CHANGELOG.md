@@ -19,6 +19,14 @@ blocks a release.
   a release that reproduces that failure now stops instead of publishing.
 - Running the test suite against a filename that does not exist is refused by
   name instead of quietly reporting success over a run that executed nothing.
+- The test suite now refuses to report success when a filter (a test-name or
+  skip pattern) matched nothing at all. It previously counted the files it had
+  opened and filtered away as passes, so a mistyped pattern produced a green
+  run with a plausible-looking number of passing tests and nothing verified.
+- The release's startup check now runs against a clean, throwaway profile
+  rather than whatever state the app on that machine had accumulated, so a
+  failure that only affects a first-time user can no longer pass it. It also
+  fails instead of hanging if the app never finishes starting.
 - Removes the Boiling Pot, the per-file token-carriage report on the View menu,
   along with the background counting that fed it. It was built to find files
   being read wastefully; measured against a month of real usage, the waste it
