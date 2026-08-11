@@ -24352,6 +24352,9 @@ helper=${d.helperPath}`;
           dy: clampAxis(rect.top, rect.height, dy, vh, margin)
         };
       }
+      function anchorRect(anchorEl) {
+        return anchorEl && typeof anchorEl.getBoundingClientRect === "function" ? anchorEl.getBoundingClientRect() : { left: 24, bottom: 24 };
+      }
       function applyOffset(popover, dx, dy) {
         offsets.set(popover, { dx, dy });
         popover.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : "";
@@ -24394,7 +24397,7 @@ helper=${d.helperPath}`;
           document.addEventListener("mouseup", onUp);
         });
       }
-      module.exports = { clampTranslate, makeDraggable, resetDrag };
+      module.exports = { anchorRect, clampTranslate, makeDraggable, resetDrag };
     }
   });
 
@@ -25467,7 +25470,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         formatDuration,
         formatBlockedBy
       } = require_team_roles();
-      var { makeDraggable, resetDrag } = require_popover_drag();
+      var { anchorRect, makeDraggable, resetDrag } = require_popover_drag();
       function initTeamRolesPopover({ promptText } = {}) {
         const popover = document.getElementById("team-roles-popover");
         const nameEl = document.getElementById("team-roles-popover-name");
@@ -25590,7 +25593,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             return;
           }
           popover.classList.remove("hidden");
-          const r = anchorEl && anchorEl.getBoundingClientRect ? anchorEl.getBoundingClientRect() : { left: 24, bottom: 24 };
+          const r = anchorRect(anchorEl);
           const w = popover.offsetWidth;
           popover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
           const wantTop = r.bottom + 6;
@@ -31658,9 +31661,15 @@ Click for live activity`;
       });
       var { openTeamRolesPopover } = initTeamRolesPopover({ promptText });
       function openCreateTeamDialog() {
+        const live = document.querySelector(".team-create-overlay");
+        if (live) {
+          const f = live.querySelector('[data-f="root"]');
+          if (f) f.focus();
+          return Promise.resolve(null);
+        }
         return new Promise((resolve) => {
           const overlay = document.createElement("div");
-          overlay.className = "prompt-modal-overlay";
+          overlay.className = "prompt-modal-overlay team-create-overlay";
           overlay.innerHTML = `
       <div class="prompt-modal">
         <h3>Create Team</h3>

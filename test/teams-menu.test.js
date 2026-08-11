@@ -73,16 +73,21 @@ function fakeManager(created) {
 
 function bareHandlers(home, created) {
   const { createTeam, listTeams, loadManifest } = createTeamManifest({ fs, clodexHome: home });
+  // The app menu is a rebuilt TEMPLATE with no open-time hook, so every write
+  // route owes it a refresh. Recording the seam is the only way to see that: the
+  // Proxy's inert stub would swallow a missing call and the test would pass.
+  const refreshed = [];
   const handlers = registerWith({
     manager: fakeManager(created),
     createTeam,
     listTeams,
     loadManifest,
+    refreshAppMenu: () => refreshed.push('refresh'),
     agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
     persistence: { setStripLevel: () => {}, get: () => null },
     workspaceOfSender: () => 'ws1',
   });
-  return { handlers, loadManifest, listTeams };
+  return { handlers, createTeam, loadManifest, listTeams, refreshed };
 }
 
 // ── team:createBare ─────────────────────────────────────────────────────────
@@ -141,6 +146,84 @@ test('team:createBare surfaces a duplicate-name refusal instead of overwriting',
   const res = await handlers['team:createBare']({}, { name: 'shop', root: '/other' });
   assert.strictEqual(res.ok, false);
   assert.match(res.error, /already exists/);
+});
+
+test('a bare create REFRESHES the app menu, and a refusal does not', async () => {
+  const home = mkHome();
+  const created = [];
+  const { handlers, refreshed } = bareHandlers(home, created);
+
+  // The headline flow of the whole ticket: fresh box → Create Team… → use the
+  // menu. buildTeamsMenu reads listTeams() at BUILD time and the Electron menu is
+  // re-set only by refreshAppMenu, so without this call the menu still says
+  // "(no teams)" until some unrelated event happens to rebuild it. The web mirror
+  // re-reads in items() and is therefore correct already — the two surfaces must
+  // not be asymmetric in the direction that hurts.
+  const ok = await handlers['team:createBare']({}, { name: 'shop', root: '/proj/shop' });
+  assert.strictEqual(ok.ok, true);
+  assert.deepStrictEqual(refreshed, ['refresh'], 'the new team must appear in the menu');
+
+  const no = await handlers['team:createBare']({}, { name: 'shop2', root: 'relative' });
+  assert.strictEqual(no.ok, false);
+  assert.deepStrictEqual(refreshed, ['refresh'],
+    'a refusal wrote nothing, so it must not rebuild the menu');
+});
+
+test('team:create refreshes the app menu too — the same staleness by a second route', async () => {
+  const home = mkHome();
+  const created = [];
+  const { handlers, loadManifest, refreshed } = bareHandlers(home, created);
+
+  // Harmless before t288 because no menu listed teams; now it is a second write
+  // route into the same stale menu.
+  await handlers['team:create']({}, { teamName: 'shop', cwd: '/proj/shop', name: 'shop-lead' });
+  assert.strictEqual(loadManifest('shop').root, '/proj/shop', 'ENTER: the write really happened');
+  assert.deepStrictEqual(refreshed, ['refresh']);
+
+  const no = await handlers['team:create']({}, { teamName: 'other', cwd: 'relative', name: 'x' });
+  assert.strictEqual(no.ok, false);
+  assert.deepStrictEqual(refreshed, ['refresh'], 'nothing written, nothing to refresh');
+});
+
+test('a leading-dot team name is refused — it would be written and then invisible', async () => {
+  const home = mkHome();
+  const created = [];
+  const { handlers, createTeam, listTeams } = bareHandlers(home, created);
+
+  // NAME_RE accepts `.hidden` deliberately (t115, for SESSION names), but
+  // listTeams filters dot-directories: the team would resolve for no cwd and
+  // never reach the Teams menu, while the popover still opened it by path. The
+  // free-text name field is what makes this reachable by typing.
+  const res = await handlers['team:createBare']({}, { name: '.secret', root: '/proj/secret' });
+  assert.strictEqual(res.ok, false);
+  assert.match(res.error, /must not start with "\."/);
+  assert.match(res.error, /invisible/, 'the message names the consequence, not just the rule');
+  assert.deepStrictEqual(listTeams(), [], 'and nothing was written');
+
+  // The WRITER is the gate, not this one handler: team:create and any future
+  // caller reach the same hole. A guard moved up into ipc-handlers would still
+  // satisfy every assertion above.
+  assert.throws(() => createTeam({ name: '.secret', root: '/proj/secret', lead: 'boss' }),
+    /must not start with "\."/);
+});
+
+test('a team name too long for its DEFAULT lead is refused by naming the team name', async () => {
+  const home = mkHome();
+  const created = [];
+  const { handlers } = bareHandlers(home, created);
+
+  // 62 chars: a valid team name, but `${name}-lead` is 67 and overflows the
+  // 64-char seat-name limit. The handler MINTS that default, so a bare
+  // pass-through would refuse a `lead` field the Create Team… dialog never shows.
+  const name = 'a'.repeat(62);
+  const res = await handlers['team:createBare']({}, { name, root: '/proj/long' });
+  assert.strictEqual(res.ok, false);
+  assert.match(res.error, /team name .* is too long/, 'the message names the field the operator can see');
+
+  // An EXPLICIT lead is the caller's own value, so the limit is theirs to hear
+  // about — and a short one for the same long team name still works.
+  const ok = await handlers['team:createBare']({}, { name, root: '/proj/long', lead: 'boss' });
+  assert.strictEqual(ok.ok, true);
 });
 
 // ── The desktop Teams menu ──────────────────────────────────────────────────
@@ -287,15 +370,23 @@ test('the web Teams menu mirrors the desktop, including the never-null rule', as
 
 test('the web Teams menu re-reads on every open, so a new team is never missing', async () => {
   let names = ['one'];
+  let broken = new Set();
   const ctx = {
     emit() {},
     teamNames: async () => ({ ok: true, names }),
-    teamGet: async () => ({ ok: true, team: {} }),
+    teamGet: async (n) => (broken.has(n) ? { ok: false, error: 'bad' } : { ok: true, team: {} }),
   };
   const menu = buildWebTeamsMenu(ctx);
   assert.deepStrictEqual((await menu.items()).filter((r) => !r.sep).map((r) => r.label),
     ['one', 'Create Team…']);
+
+  // Flip BOTH inputs: a name added, and an existing name's manifest gone bad. A
+  // per-name result cached across opens would still pass on the names alone,
+  // since 'two' is new either way — the state change on 'one' is what forces a
+  // genuine re-probe.
   names = ['one', 'two'];
+  broken = new Set(['one']);
   assert.deepStrictEqual((await menu.items()).filter((r) => !r.sep).map((r) => r.label),
-    ['one', 'two', 'Create Team…'], 'the second open sees the team created since');
+    ['one — not loaded', 'two', 'Create Team…'],
+    'the second open sees the team created since AND the one that broke since');
 });

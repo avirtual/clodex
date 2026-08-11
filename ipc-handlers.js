@@ -90,6 +90,7 @@ function registerIpcHandlers(deps) {
     try {
       const { teamName, ...p } = spec || {};
       createTeam({ name: teamName, root: p.cwd, lead: p.name });
+      refreshAppMenu(); // the Teams menu lists teams (t288) — a new one must appear.
       return await spawnFromParams(e, p);
     } catch (err) {
       return { ok: false, error: err.message };
@@ -106,7 +107,19 @@ function registerIpcHandlers(deps) {
   handle('team:createBare', (_e, spec) => {
     try {
       const { name, root, lead } = spec || {};
-      const team = createTeam({ name, root, lead: lead || `${name}-lead` });
+      // The DEFAULT lead is minted here, so the refusal for it is owed here too:
+      // `${name}-lead` overflows the 64-char seat-name limit (NAME_RE in
+      // team-manifest.js) for a 60-64 char team name, and createTeam would then
+      // refuse a `lead` field the Create Team… dialog never shows.
+      const seat = lead || `${name}-lead`;
+      if (!lead && seat.length > 64) {
+        throw new Error(`team name "${name}" is too long: its default lead seat name "${seat}" exceeds the 64-character seat-name limit`);
+      }
+      const team = createTeam({ name, root, lead: seat });
+      // The Electron menu is a TEMPLATE, rebuilt only by refreshAppMenu — it has
+      // no open-time hook, unlike the web mirror which re-reads in items(). Without
+      // this the fresh-box flow (create, then use the menu) still shows (no teams).
+      refreshAppMenu();
       return { ok: true, team };
     } catch (err) {
       return { ok: false, error: err.message };

@@ -3111,9 +3111,18 @@ const { openTeamRolesPopover } = initTeamRolesPopover({ promptText });
 // it is the writer that actually enforces them — a second copy in the dialog
 // would drift from it silently. The dialog shows what the backend said.
 function openCreateTeamDialog() {
+  // A menu item can be clicked while its dialog is already up (the native menu
+  // stays live), and each open appends its own overlay — stacked modals whose
+  // hidden copies keep taking Enter. Re-focus the live one instead.
+  const live = document.querySelector('.team-create-overlay');
+  if (live) {
+    const f = live.querySelector('[data-f="root"]');
+    if (f) f.focus();
+    return Promise.resolve(null);
+  }
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
-    overlay.className = 'prompt-modal-overlay';
+    overlay.className = 'prompt-modal-overlay team-create-overlay';
     overlay.innerHTML = `
       <div class="prompt-modal">
         <h3>Create Team</h3>

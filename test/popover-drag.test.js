@@ -6,7 +6,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { clampTranslate } = require('../renderer/lib/popover-drag');
+const { anchorRect, clampTranslate } = require('../renderer/lib/popover-drag');
 
 // A 200x100 popover sitting at (100,100) in a 1000x800 viewport, margin 8.
 const rect = { left: 100, top: 100, width: 200, height: 100 };
@@ -35,4 +35,24 @@ test('clampTranslate: a popover larger than the viewport pins to the start margi
   const big = { left: 100, top: 100, width: 2000, height: 100 };
   const r = clampTranslate(big, 500, 0, 1000, 800, 8);
   assert.strictEqual(r.dx, 8 - 100, 'pinned to left margin (minDelta), not drifting off-screen');
+});
+
+// anchorRect — the anchor-less open. A popover opened from a NATIVE MENU item
+// (the Teams menu, t288) has no anchor element, and the throw that a naive
+// dereference produces surfaces only when a human clicks a team in the menu, so
+// no other test in this suite would reach it.
+
+test('anchorRect: a real anchor element passes its own rect through', () => {
+  const box = { left: 40, bottom: 90, top: 60, width: 120, height: 30 };
+  const el = { getBoundingClientRect: () => box };
+  assert.strictEqual(anchorRect(el), box, 'the element rect wins — no fallback when there is a box');
+});
+
+test('anchorRect: no anchor at all yields the viewport-origin fallback', () => {
+  // null is the menu-driven open; the others are the ways a caller can arrive
+  // holding something that merely LOOKS like an element.
+  for (const nothing of [null, undefined, false, {}, { getBoundingClientRect: null }]) {
+    assert.deepStrictEqual(anchorRect(nothing), { left: 24, bottom: 24 },
+      `${JSON.stringify(nothing)} must not throw`);
+  }
 });
