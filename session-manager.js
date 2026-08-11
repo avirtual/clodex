@@ -5044,6 +5044,59 @@ function createSessionManager(deps) {
     // Mint the worktree, spawn the seat, then hand it the spec. Async and
     // fire-and-forget like the other spawn paths: the ticket record is already
     // saved, so a crash here loses the seat, never the ticket.
+    // Resolve a library template NAME into the seat shape create() takes.
+    // Extracted because the ticket path used to pass `[]` for every one of these
+    // and a role's `template:` was inert for exactly the seats it was written
+    // for — the hands — while the spawn-intent path 40 lines up honored it. Two
+    // call sites, one resolution; a third inherits it instead of re-deriving it.
+    //
+    // AGENT-INITIATED, both callers: a template is agent-writable, so privileged
+    // intents are stripped and env is confined to REVIEWER_ENV_ALLOWLIST. Only an
+    // operator's local GUI create/edit may grant those.
+    _templateShape(tplName) {
+      if (!tplName) return null;
+      let tpl = null;
+      try { tpl = getTemplates().list().find((t) => t && t.name === tplName) || null; }
+      catch { tpl = null; }
+      if (!tpl) return null;
+      const env = {};
+      let sessionEnv = null;
+      const dropped = [];
+      if (tpl.env && typeof tpl.env === 'object' && !Array.isArray(tpl.env)) {
+        for (const [k, v] of Object.entries(tpl.env)) {
+          if (!REVIEWER_ENV_ALLOWLIST.has(k) || typeof v !== 'string') { dropped.push(k); continue; }
+          env[k] = v;
+        }
+        if (Object.keys(env).length) sessionEnv = env;
+      }
+      return {
+        tpl,
+        extraArgs: (Array.isArray(tpl.extraArgs) && tpl.extraArgs.length) ? tpl.extraArgs : null,
+        agents: tpl.agents || [],
+        denyBuiltins: tpl.denyBuiltins || [],
+        disabledTools: tpl.disabledTools || [],
+        disabledSkills: tpl.disabledSkills || [],
+        injectSkills: tpl.injectSkills || [],
+        systemPromptFile: tpl.systemPromptFile || null,
+        appendPromptFiles: tpl.appendPromptFiles || [],
+        execCommands: Array.isArray(tpl.execCommands) ? tpl.execCommands : [],
+        intents: withoutPrivilegedIntentsFor(Array.isArray(tpl.intents) ? tpl.intents : null),
+        sessionEnv,
+        envDropped: dropped,
+        noWire: tpl.noWire === true,
+      };
+    }
+
+    // stripLevel/autoCompact are persistence writes, not create() args, so they
+    // land AFTER create() mints the entry — setStripLevel on a missing entry is a
+    // silent no-op, which is how a template's strip level got lost before.
+    _applyTemplatePersistence(name, shape) {
+      if (!shape || !shape.tpl) return;
+      const { tpl } = shape;
+      if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
+      if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
+    }
+
     _spawnTicketSeat(opener, team, teamDir, ticket, roleKey, def, seat) {
       const reply = (msg) => this._injectText(opener, `[agent:task] ${msg}`, { parkable: true });
       // Reserved SYNCHRONOUSLY, before any await: two tickets opened in one lead
@@ -5165,11 +5218,30 @@ function createSessionManager(deps) {
           // instead would bind the seat's whole identity — transcript, project root,
           // team block, recent-cwd — to one branch's checkout, and that checkout is
           // removed when the ticket's session is deleted.
+          // The role's template, honored. Its systemPromptFile does NOT displace
+          // `def.prompt`: for claude both ride --append-system-prompt-file and
+          // create() dedupes them by name equality, so passing both is how a
+          // template-shaped seat still gets its role delta.
+          const shape = this._templateShape(def.template);
           await this.create(
-            seat.name, def.type || opener.type || 'claude', team.root, postureArgs, null,
+            seat.name, def.type || opener.type || 'claude', team.root,
+            (shape && shape.extraArgs) || postureArgs, null,
             opener.workspaceId || DEFAULT_WORKSPACE_ID, null, false, opener.proxy ?? null,
-            [], [], [], [], [], def.prompt || null, [], [], null, null, true,
+            (shape && shape.agents) || [], (shape && shape.denyBuiltins) || [],
+            (shape && shape.disabledTools) || [], (shape && shape.disabledSkills) || [],
+            (shape && shape.injectSkills) || [],
+            def.prompt || (shape && shape.systemPromptFile) || null,
+            (shape && shape.appendPromptFiles) || [],
+            (shape && shape.execCommands) || [],
+            shape ? shape.intents : null,
+            // Stops at the 20th positional: `noWire` is deliberately NOT threaded
+            // from the template here. A ticket seat is one Clodex spawns on the
+            // lead's behalf with no operator checkbox behind it, and a template is
+            // agent-writable — so honoring it would let a template silently blind
+            // the wire that measures what this seat costs. Pinned by t189.
+            (shape && shape.sessionEnv) || null, true,
           );
+          this._applyTemplatePersistence(seat.name, shape);
           // FIRST, before anything else that can throw. Between create() and this
           // line the seat is live in a tree no record names, and _ticketTreeHolder
           // reads occupancy off the RECORD — so it is blind to it, and session:kill
