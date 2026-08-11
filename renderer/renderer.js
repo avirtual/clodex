@@ -3102,6 +3102,92 @@ const { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopov
 
 const { openTeamRolesPopover } = initTeamRolesPopover({ promptText });
 
+// Create Team… (t288) — a team with NO seat behind it, which is why it goes
+// through teamCreateBare rather than the new-session dialog's teamCreate (that
+// one writes the manifest and spawns the lead indivisibly).
+//
+// Validation is NOT duplicated here: createTeam refuses a bad name, a relative
+// root, a duplicate name and an already-owned root with readable messages, and
+// it is the writer that actually enforces them — a second copy in the dialog
+// would drift from it silently. The dialog shows what the backend said.
+function openCreateTeamDialog() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'prompt-modal-overlay';
+    overlay.innerHTML = `
+      <div class="prompt-modal">
+        <h3>Create Team</h3>
+        <div class="team-create-field">
+          <label>Root directory (absolute)</label>
+          <input type="text" data-f="root" spellcheck="false" placeholder="/Users/you/projects/thing">
+        </div>
+        <div class="team-create-field">
+          <label>Team name</label>
+          <input type="text" data-f="name" spellcheck="false">
+        </div>
+        <div class="team-create-error hidden"></div>
+        <div class="dialog-actions">
+          <div style="flex:1;"></div>
+          <button class="secondary" data-act="cancel" type="button">Cancel</button>
+          <button data-act="ok" type="button">Create</button>
+        </div>
+      </div>`;
+    const rootInput = overlay.querySelector('[data-f="root"]');
+    const nameInput = overlay.querySelector('[data-f="name"]');
+    const errEl = overlay.querySelector('.team-create-error');
+    document.body.appendChild(overlay);
+
+    // The name follows the root's basename until the operator takes it over —
+    // after that a further root edit must not overwrite what they typed.
+    let nameTouched = false;
+    nameInput.addEventListener('input', () => { nameTouched = true; });
+    rootInput.addEventListener('input', () => {
+      if (nameTouched) return;
+      const base = pathBasename(rootInput.value.trim());
+      nameInput.value = base ? dedupeTeamName(slugifyTeamName(base)) : '';
+    });
+
+    const done = (val) => { overlay.remove(); resolve(val); };
+    const submit = async () => {
+      errEl.classList.add('hidden');
+      const res = await window.api.teamCreateBare({
+        name: nameInput.value.trim(),
+        root: rootInput.value.trim(),
+      });
+      if (!res || !res.ok) {
+        errEl.textContent = (res && res.error) || 'could not create the team';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      done(res.team);
+      // Land somewhere useful: the new team's roles popover, the surface the
+      // operator came here to reach, rather than a dismissed dialog.
+      openTeamRolesPopover(nameInput.value.trim(), null);
+    };
+    overlay.querySelector('[data-act="ok"]').addEventListener('click', submit);
+    overlay.querySelector('[data-act="cancel"]').addEventListener('click', () => done(null));
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) done(null); });
+    for (const inp of [rootInput, nameInput]) {
+      inp.addEventListener('keydown', (e) => {
+        e.stopPropagation(); // keep global shortcuts out, like promptText
+        if (e.key === 'Enter') submit();
+        else if (e.key === 'Escape') done(null);
+      });
+    }
+    // dedupeTeamName reads the same dialogTeamNames the new-session dialog fills;
+    // refresh it here so a duplicate suffix reflects teams created since.
+    window.api.teamNames()
+      .then((r) => { dialogTeamNames = (r && r.names) || []; })
+      .catch(() => {});
+    setTimeout(() => rootInput.focus(), 50);
+  });
+}
+
+// The Teams menu's two menu→renderer requests. The popover and the create dialog
+// are renderer DOM the main process cannot reach, so the menu can only ask.
+window.api.onRequestOpenTeamRoles((name) => openTeamRolesPopover(name, null));
+window.api.onRequestOpenTeamCreate(() => openCreateTeamDialog());
+
 
 const ctxCatLabel = (c) => CTX_CAT_LABELS[c] || 'other';
 

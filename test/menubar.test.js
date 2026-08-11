@@ -52,10 +52,10 @@ async function walkRows(rows) {
   }
 }
 
-test('menu tree mirrors the Electron app menu: File / Agents / Skills / View / Window', () => {
+test('menu tree mirrors the Electron app menu: File / Agents / Skills / View / Teams / Window', () => {
   const { ctx } = recordingCtx();
   const menus = buildMenus(ctx);
-  assert.deepEqual(menus.map((m) => m.label), ['File', 'Agents', 'Skills', 'View', 'Window']);
+  assert.deepEqual(menus.map((m) => m.label), ['File', 'Agents', 'Skills', 'View', 'Teams', 'Window']);
 });
 
 test('every menu action targets a real channel (request-*/set-theme are on-channels)', async () => {
@@ -157,8 +157,8 @@ test('mount builds #clx-menubar under #main and tags it .has-web-menubar', () =>
     const bar = main.children.find((c) => c.id === 'clx-menubar');
     assert.ok(bar, 'the menu bar mounts inside #main');
     const tops = bar.children.filter((c) => c.className === 'clx-top');
-    assert.deepEqual(tops.map((t) => t.textContent), ['File', 'Agents', 'Skills', 'View', 'Window'],
-      'five themed top-level menu titles, in order');
+    assert.deepEqual(tops.map((t) => t.textContent), ['File', 'Agents', 'Skills', 'View', 'Teams', 'Window'],
+      'six themed top-level menu titles, in order');
     // A <style> is injected for the bar's look.
     assert.ok(head.children.some((c) => c.tag === 'style'), 'bar styles are injected');
   } finally {
@@ -278,9 +278,9 @@ function mountWithPlugins(status) {
 test('mount inserts Plugins between View and Window when there is something to show', async () => {
   const m = mountWithPlugins(STATUS_ONE);
   try {
-    assert.deepEqual(m.labels(), ['File', 'Agents', 'Skills', 'View', 'Window'], 'not there synchronously');
+    assert.deepEqual(m.labels(), ['File', 'Agents', 'Skills', 'View', 'Teams', 'Window'], 'not there synchronously');
     await m.settle();
-    assert.deepEqual(m.labels(), ['File', 'Agents', 'Skills', 'View', 'Plugins', 'Window'],
+    assert.deepEqual(m.labels(), ['File', 'Agents', 'Skills', 'View', 'Plugins', 'Teams', 'Window'],
       'inserted at the desktop position (app-menus.js:609), not appended at the end');
   } finally { m.restore(); }
 });
@@ -289,7 +289,7 @@ test('mount inserts NO Plugins element when there is nothing to show', async () 
   const m = mountWithPlugins({ ok: true, plugins: [], problems: [] });
   try {
     await m.settle();
-    assert.deepEqual(m.labels(), ['File', 'Agents', 'Skills', 'View', 'Window'],
+    assert.deepEqual(m.labels(), ['File', 'Agents', 'Skills', 'View', 'Teams', 'Window'],
       'absent, not empty — an empty menu reads as a broken feature');
   } finally { m.restore(); }
 });
@@ -307,7 +307,7 @@ test('mount REMOVES the Plugins element when the last plugin goes', async () => 
     assert.equal(m.listeners.length, 1, 'mount subscribes to the plugin-state broadcast');
     m.listeners[0]('_host', 'plugin-state', { id: 'demo', enabled: false });
     await m.settle();
-    assert.deepEqual(m.labels(), ['File', 'Agents', 'Skills', 'View', 'Window'], 'gone again');
+    assert.deepEqual(m.labels(), ['File', 'Agents', 'Skills', 'View', 'Teams', 'Window'], 'gone again');
   } finally { m.restore(); }
 });
 

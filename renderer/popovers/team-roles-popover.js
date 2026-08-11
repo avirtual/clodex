@@ -196,8 +196,12 @@ function initTeamRolesPopover({ promptText } = {}) {
     const ok = await refresh(name);
     if (!ok) { popover.dataset.name = ''; return; } // not a team / unreadable → show nothing
     popover.classList.remove('hidden');
-    // Anchor just below the header, clamped to the viewport.
-    const r = anchorEl.getBoundingClientRect();
+    // Anchor just below the header, clamped to the viewport. The Teams menu
+    // (t288) opens this with NO anchor — a native menu item has no DOM box — so
+    // fall back to a fixed top-left origin rather than dereferencing null.
+    const r = anchorEl && anchorEl.getBoundingClientRect
+      ? anchorEl.getBoundingClientRect()
+      : { left: 24, bottom: 24 };
     const w = popover.offsetWidth;
     popover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
     const wantTop = r.bottom + 6;

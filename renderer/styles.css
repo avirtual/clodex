@@ -2009,6 +2009,12 @@ html, body {
 }
 .prompt-modal input:focus { outline: none; border-color: var(--accent); }
 
+/* Create Team… (t288): the prompt modal with two labelled fields and a slot for
+   the backend's verbatim refusal, on the semantic --error accent. */
+.team-create-field { display: flex; flex-direction: column; gap: 4px; }
+.team-create-field label { font-size: 11px; opacity: 0.7; }
+.team-create-error { color: var(--error); font-size: 12px; }
+
 /* New-session-on-a-peer dialog: a simple single-column form (name/type/cwd),
    not the two-column grid of the full new-session dialog. */
 #peer-session-dialog {

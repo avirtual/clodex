@@ -1,12 +1,12 @@
 # Renderer event push surface — the other half of the browser contract
 
 The contract map for every event the main process pushes at a renderer.
-`preload.js` invoke/send is the request half of `window.api` (195 endpoints);
+`preload.js` invoke/send is the request half of `window.api` (196 endpoints);
 THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (57 channels). This doc maps each to its emission point, its
+`preload.js` (59 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
 
@@ -126,7 +126,8 @@ them.
   (`name`), `request-open-skills-drawer` (`name`), `request-open-exec-drawer`
   (`name`), `request-open-inbox-drawer`, `request-open-prompts-drawer`,
   `request-open-templates-drawer`, `request-open-ipc-log`,
-  `request-rename-workspace`, `request-switch-session` (`name`).
+  `request-rename-workspace`, `request-switch-session` (`name`),
+  `request-open-team-roles` (`name`), `request-open-team-create`.
 - **`set-theme`** (`name`) — app-menus theme submenu (the browser sets its own
   theme in-page).
 - **`zoom-nudge`** — Electron `zoomFactor` refit (app-menus + main.js

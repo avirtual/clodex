@@ -27,6 +27,10 @@ const API_CONTRACT = [
   // teamCreate adopts the new session as lead; teamJoin adds a role + spawns a seat.
   { name: 'teamCreate', kind: 'invoke', channel: 'team:create' },
   { name: 'teamJoin', kind: 'invoke', channel: 'team:join' },
+  // t288: the manifest write WITHOUT a spawn — the Teams menu's Create Team…,
+  // where there is no session to adopt as lead. Separate from teamCreate because
+  // that one is indivisible by design (write, then spawn the lead in one step).
+  { name: 'teamCreateBare', kind: 'invoke', channel: 'team:createBare' },
   // Does a cwd already resolve to a team? Drives the dialog's create-vs-join mode.
   { name: 'teamForCwd', kind: 'invoke', channel: 'team:forCwd' },
   // Existing team names for the create-mode duplicate pre-check.
@@ -166,6 +170,10 @@ const API_CONTRACT = [
   // transport is the five plugin:* rows, frozen by plan §1; a plugin never sees
   // this channel).
   { name: 'onRequestOpenPluginsDialog', kind: 'on', channel: 'request-open-plugins-dialog' },
+  // t288: the Teams menu's two menu→renderer open requests. The popover and the
+  // create dialog are renderer-side surfaces, so the menu can only ask for them.
+  { name: 'onRequestOpenTeamRoles', kind: 'on', channel: 'request-open-team-roles' },
+  { name: 'onRequestOpenTeamCreate', kind: 'on', channel: 'request-open-team-create' },
   { name: 'onRequestOpenPeerSession', kind: 'on', channel: 'request-open-peer-session' },
   { name: 'onRequestOpenAgentsDrawer', kind: 'on', channel: 'request-open-agents-drawer' },
   { name: 'onRequestOpenSkillsDrawer', kind: 'on', channel: 'request-open-skills-drawer' },

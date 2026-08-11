@@ -96,6 +96,23 @@ function registerIpcHandlers(deps) {
     }
   });
 
+  // The manifest write with NO spawn (t288): the Teams menu creates a team before
+  // any seat exists, so there is nothing to adopt as lead. `lead` is a seat NAME
+  // the manifest records; defaulting it to `<team>-lead` names a seat that is not
+  // running, which is the state EVERY team is in whenever its lead is stopped —
+  // not a new one. `root` is forwarded verbatim so createTeam's absolute-path
+  // refusal is the single gate; resolving it here would silently accept a
+  // relative root against whatever cwd the main process happens to have.
+  handle('team:createBare', (_e, spec) => {
+    try {
+      const { name, root, lead } = spec || {};
+      const team = createTeam({ name, root, lead: lead || `${name}-lead` });
+      return { ok: true, team };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   handle('team:join', async (e, spec) => {
     try {
       const { team, role, prompt, ...p } = spec || {};

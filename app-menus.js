@@ -71,6 +71,9 @@ function createAppMenus(deps) {
     // The plugin host (T5) — null under CLODEX_PLUGINS=0 or a failed
     // construction, in which case the Plugins menu is absent rather than empty.
     getPluginHost,
+    // The team manifest readers (t288), lazy for the same reason as the rest:
+    // they live on the engine, which is assigned after this factory runs.
+    getTeams,
   } = deps;
 
   let tray = null;
@@ -433,6 +436,41 @@ function createAppMenus(deps) {
     return { label: 'Plugins', submenu };
   }
 
+  // The top-level Teams menu (t288). Structurally the Plugins menu above, with
+  // ONE deliberate inversion: it never returns null. A box with zero teams must
+  // still show it, because "Create Team…" is the only route to the first team —
+  // teams are otherwise reachable only by right-clicking a sidebar group header
+  // that exists solely in the 'project' grouping mode. The plugins menu can hide
+  // because a packaged build always ships plugins/workbench; that hole is masked
+  // by luck (renderer/web/menubar.js documents it), and copying it here would
+  // make an empty box a dead end.
+  //
+  // Clicking a team asks the RENDERER to open the roles popover: the popover is
+  // renderer-side DOM the main process cannot reach, so the menu can only send
+  // the request — the same shape as "Manage Plugins…".
+  function buildTeamsMenu() {
+    const teams = getTeams ? getTeams() : null;
+    let names = [];
+    try { names = (teams && teams.listTeams()) || []; } catch { names = []; }
+    const submenu = [];
+    for (const name of names) {
+      // A team whose manifest will not load is LISTED, disabled — mirroring the
+      // plugins menu's `problems` rows. Omitting it would make a broken team
+      // invisible in the one surface that is supposed to enumerate teams, and
+      // resolveTeam already skips it, so nothing else would ever mention it.
+      let ok = false;
+      try { teams.loadManifest(name); ok = true; } catch {}
+      if (ok) submenu.push({ label: name, click: () => sendToFocused('request-open-team-roles', name) });
+      else submenu.push({ label: `${name} — not loaded`, enabled: false });
+    }
+    if (!names.length) submenu.push({ label: '(no teams)', enabled: false });
+    submenu.push(
+      { type: 'separator' },
+      { label: 'Create Team…', click: () => sendToFocused('request-open-team-create') }
+    );
+    return { label: 'Teams', submenu };
+  }
+
   // Theme change from anywhere (View menu or a renderer's Preferences picker):
   // persist the canonical copy, refresh the menu radios, and push to every
   // window so all open workspaces retint together. exceptWc skips the renderer
@@ -649,6 +687,8 @@ function createAppMenus(deps) {
       // Plugins sits between View and Window, and is ABSENT (not empty) when
       // there is no host or nothing on disk — see buildPluginsMenu.
       ...(() => { const m = buildPluginsMenu(); return m ? [m] : []; })(),
+      // Teams sits next to Plugins but is ALWAYS present — see buildTeamsMenu.
+      buildTeamsMenu(),
       {
         label: 'Window',
         submenu: [
@@ -833,7 +873,7 @@ function createAppMenus(deps) {
 
   return {
     buildTrayMenu, initTray, refreshTrayMenu, scheduleTrayRefresh,
-    buildAgentsSubmenu, buildSkillsSubmenu, buildPluginsMenu, setUiTheme, buildAppMenu,
+    buildAgentsSubmenu, buildSkillsSubmenu, buildPluginsMenu, buildTeamsMenu, setUiTheme, buildAppMenu,
     refreshAppMenu, scheduleAppMenuRefresh, sendToFocused,
   };
 }
