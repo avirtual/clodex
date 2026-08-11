@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.5.3 — 2026-08-11
+
 - `[agent:reboot]` no longer interrupts working agents. It used to relaunch
   half a second after the request, which landed mid-turn and cut off whatever
   any session happened to be streaming — including agents that had nothing to
