@@ -13,6 +13,21 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:reboot]` no longer interrupts working agents. It used to relaunch
+  half a second after the request, which landed mid-turn and cut off whatever
+  any session happened to be streaming — including agents that had nothing to
+  do with the reboot. It now waits for every session to go quiet before
+  restarting, giving up after 30 minutes rather than waiting forever. Measured
+  against a month of traffic: about a fifth of all mid-stream cutoffs were
+  caused by this, and 19 of 25 reboots interrupted at least one agent.
+- If a pending restart is abandoned, the requesting agent is now told why.
+  Previously it was always told sessions had stayed busy for 30 minutes, even
+  when the operator had cancelled the restart by hand a moment earlier — and it
+  was invited to ask again, which turned a deliberate cancel into a loop. A
+  cancelled restart now says so and says not to re-request it.
+- The "restart dropped" notification no longer claims the restart was
+  cancelled, and names the agent that asked for it when an agent did.
+
 ## 5.5.2 — 2026-08-11
 
 - Fixes the Workbench being unusable over web access, where the file tree
