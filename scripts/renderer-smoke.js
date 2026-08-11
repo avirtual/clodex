@@ -82,7 +82,22 @@ app.disableHardwareAcceleration();
 // empty profile (exactly the "new user opens the app and sees nothing" shape
 // this exists to catch) passes here; and a second Chromium on a userData dir a
 // running Clodex already owns is unsupported, on the operator's real profile.
-const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'renderer-smoke-profile-'));
+const PROFILE_PREFIX = 'renderer-smoke-profile-';
+// Sweep leftovers from previous runs BEFORE claiming ours (see the cleanup note
+// below: the dir cannot be removed reliably on the way out, so it is removed on
+// the way in, where nothing is racing us). Anything under 1h old may belong to a
+// concurrent run and is left alone.
+try {
+  const cutoff = Date.now() - 3600_000;
+  for (const e of fs.readdirSync(os.tmpdir())) {
+    if (!e.startsWith(PROFILE_PREFIX)) continue;
+    const p = path.join(os.tmpdir(), e);
+    try {
+      if (fs.statSync(p).mtimeMs < cutoff) fs.rmSync(p, { recursive: true, force: true });
+    } catch {}
+  }
+} catch {}
+const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), PROFILE_PREFIX));
 app.setPath('userData', profileDir);
 
 // The renderer's error hooks must be installed BEFORE any page script parses,
@@ -135,6 +150,14 @@ function cleanup() {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 }
+
+// Chromium keeps writing the profile until the process is actually gone, so
+// cleanup() removes a dir that is then recreated on the way out — measured, one
+// leaked dir per run, on the normal path as well as the watchdog's. A
+// process.on('exit') second pass does NOT fix it either (app.exit is a hard
+// exit): measured, still +1 per run. So sweep at START instead, where nothing
+// is racing us. Skips any dir a concurrent run owns by leaving today's alone
+// only if it is ours — there is no lock here, and a smoke run is short.
 
 ipcMain.on('__smoke_error', (_e, { kind, message, stack }) => {
   fail(`renderer ${kind}`, `  ${message}\n${stack || '  <no stack>'}`);
