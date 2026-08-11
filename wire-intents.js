@@ -97,18 +97,38 @@ class IntentDeduper {
 class ActivityTracker {
   // emit(agent, 'thinking' | 'idle', { turnEnd }) — deduped, turnEnd true only
   // on a terminal main-line stop (the notification-worthy idle).
-  constructor(emit, { idleGapMs = IDLE_GAP_MS, inflightMaxAgeMs = INFLIGHT_MAX_AGE_MS, now = Date.now } = {}) {
+  // onEvent(agent, ts) — NOT deduped: one call per counted wire event. The two
+  // callbacks must stay separate; a consumer that derives "how long since this
+  // agent did anything" from `emit` measures the last LABEL CHANGE instead, so a
+  // seat taking request after request in a steady 'thinking' state reads as idle.
+  constructor(emit, { idleGapMs = IDLE_GAP_MS, inflightMaxAgeMs = INFLIGHT_MAX_AGE_MS, now = Date.now, onEvent = null } = {}) {
     this._emit = emit;
     this._gap = idleGapMs;
     this._maxAge = inflightMaxAgeMs;
     this._now = now;
-    this._agents = new Map(); // agent -> { inflight:Map<reqId,ts>, state, timer, sweep }
+    this._onEvent = onEvent;
+    this._agents = new Map(); // agent -> { inflight:Map<reqId,ts>, state, timer, sweep, lastEventTs }
   }
 
   _a(agent) {
     let a = this._agents.get(agent);
-    if (!a) { a = { inflight: new Map(), state: 'idle', timer: null, sweep: null }; this._agents.set(agent, a); }
+    if (!a) { a = { inflight: new Map(), state: 'idle', timer: null, sweep: null, lastEventTs: 0 }; this._agents.set(agent, a); }
     return a;
+  }
+
+  // Stamped outside `_set`, so repeat activity in an unchanged state still
+  // registers. Timer-driven transitions (gap idle, max-age sweep) deliberately
+  // do NOT touch: they are this class inferring quiet, not the wire reporting work.
+  _touch(agent, a) {
+    a.lastEventTs = this._now();
+    if (this._onEvent) { try { this._onEvent(agent, a.lastEventTs); } catch { /* consume-only */ } }
+  }
+
+  // Last counted wire event, 0 if none. Deliberately not `_a` — a reader must
+  // not mint tracker state for an agent that has never been seen.
+  lastEventTs(agent) {
+    const a = this._agents.get(agent);
+    return (a && a.lastEventTs) || 0;
   }
 
   _set(agent, a, state, turnEnd = false) {
@@ -121,6 +141,7 @@ class ActivityTracker {
   turnStarted(agent, { reqId, sideCall } = {}) {
     if (sideCall) return; // title/probe traffic isn't the agent working
     const a = this._a(agent);
+    this._touch(agent, a);
     a.inflight.set(reqId, this._now());
     this._armSweep(agent, a);
     if (a.timer) { clearTimeout(a.timer); a.timer = null; }
@@ -132,6 +153,7 @@ class ActivityTracker {
     a.inflight.delete(reqId);
     this._armSweep(agent, a);
     if (sideCall) return;
+    this._touch(agent, a);
     if (stop && stop.is_turn) { this._set(agent, a, 'idle', true); return; }
     this._maybeGapIdle(agent, a);
   }
@@ -141,6 +163,7 @@ class ActivityTracker {
   // the quiet-gap timer, same as a mid-turn tool run.
   requestFailed(agent, reqId) {
     const a = this._a(agent);
+    this._touch(agent, a);
     a.inflight.delete(reqId);
     this._armSweep(agent, a);
     this._maybeGapIdle(agent, a);

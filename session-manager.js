@@ -526,6 +526,20 @@ function createSessionManager(deps) {
       this._intentDeduper = new IntentDeduper();
       this._activity = new ActivityTracker((name, state, { turnEnd }) => {
         this._emitActivity(name, state, state === 'idle' && turnEnd);
+      }, {
+        // activityTs is read as idleMs at four sites, one of which decides
+        // whether a dm is delivered or parked (shouldHoldDm). _emitActivity only
+        // fires on a LABEL CHANGE, so stamping there alone froze the clock for a
+        // seat that keeps working in one state — parking dms at a busy seat.
+        // Stamp from the wire event instead. Math.max, never assignment: a
+        // late-delivered event must not drag the clock back behind a newer
+        // transition stamp (that would inflate idleMs into the hold band), and a
+        // session that has produced no wire event at all keeps the
+        // lastTranscriptWrite restore seed rather than reading as active-now.
+        onEvent: (name, ts) => {
+          const s = this.sessions.get(name);
+          if (s) s.activityTs = Math.max(s.activityTs || 0, ts);
+        },
       });
     }
 
@@ -1491,8 +1505,9 @@ function createSessionManager(deps) {
         // `_noteSubagentTurn` already handles), never throw out of create() and
         // strand a listening socket.
         subagentStore: createSubagentStore ? createSubagentStore() : null,
-        // Peer-visibility facts ([agent:who] labels, dm hold gate): state +
-        // since-when, updated in _emitActivity. Restores seed from the resumed
+        // Peer-visibility facts ([agent:who] labels, dm hold gate): state from
+        // _emitActivity (transition-deduped), timestamp from every counted wire
+        // event (the ActivityTracker onEvent seam). Restores seed from the resumed
         // transcript's mtime (= last real turn) — seeding "now" would make every
         // GUI restart reset idle clocks, mislabeling long-cold peers as fresh
         // and letting DMs to them past the hold gate for 30 minutes.

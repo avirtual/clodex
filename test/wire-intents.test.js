@@ -128,6 +128,46 @@ test('ActivityTracker: max-age sweep drops only stale entries — a fresh reques
   assert.deepStrictEqual(events.at(-1), ['idle', true]); // real turn end still notifies
 });
 
+// The defect t289 fixed: idleMs was derived from the state label's age, so a seat
+// taking request after request without changing state read as idle — and idleMs
+// gates dm parking (shouldHoldDm), so a busy seat had its messages held.
+test('ActivityTracker: repeat requests in a steady state emit nothing but MOVE the event clock', () => {
+  const events = [];
+  const touches = [];
+  let t = 1000;
+  const a = new ActivityTracker((_n, state) => events.push(state),
+    { now: () => t, onEvent: (agent, ts) => touches.push([agent, ts]) });
+  a.turnStarted('alice', { reqId: 'r1' });
+  assert.deepStrictEqual(events, ['thinking']);
+  assert.strictEqual(a.lastEventTs('alice'), 1000);
+  t = 5000;
+  a.turnStarted('alice', { reqId: 'r2' });                            // state deduped, real work
+  t = 6000;
+  a.turnCompleted('alice', { reqId: 'r2', stop: { is_turn: false } }); // tool hop, r1 still in flight
+  assert.deepStrictEqual(events, ['thinking'], 'state stays transition-deduped');
+  assert.strictEqual(a.lastEventTs('alice'), 6000, 'clock tracks the last wire event');
+  assert.deepStrictEqual(touches, [['alice', 1000], ['alice', 5000], ['alice', 6000]]);
+  t = 9000;
+  a.requestFailed('alice', 'r1');                                     // failures are events too
+  assert.strictEqual(a.lastEventTs('alice'), 9000);
+  assert.strictEqual(touches.length, 4);
+});
+
+test('ActivityTracker: side-call traffic is not activity, and an unseen agent mints no state', () => {
+  const touches = [];
+  let t = 1000;
+  const a = new ActivityTracker(() => {}, { now: () => t, onEvent: (n, ts) => touches.push([n, ts]) });
+  assert.strictEqual(a.lastEventTs('nobody'), 0);
+  assert.strictEqual(a._agents.has('nobody'), false, 'reader must not create tracker state');
+  a.turnStarted('alice', { reqId: 's1', sideCall: true });
+  a.turnCompleted('alice', { reqId: 's1', sideCall: true, stop: { is_turn: true } });
+  assert.deepStrictEqual(touches, [], 'title/probe traffic leaves the clock alone');
+  assert.strictEqual(a.lastEventTs('alice'), 0);
+  t = 2000;
+  a.turnStarted('alice', { reqId: 'r1' });                            // a real request does count
+  assert.strictEqual(a.lastEventTs('alice'), 2000);
+});
+
 const fakeWatcherFactory = (made) => (cbs) => {
   const w = { started: false, stopped: false, cbs,
     start() { this.started = true; }, stop() { this.stopped = true; } };

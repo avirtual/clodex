@@ -159,6 +159,44 @@ test('_emitActivity notify seam: fires when no/unfocused window, silent when foc
   assert.strictEqual(calls.length, 1, 'no new notify while the owning window is focused');
 });
 
+// The ctor wires the tracker's un-deduped event seam to s.activityTs, which the
+// four idleMs read sites (and through them shouldHoldDm) consume. Driven through
+// the real ActivityTracker: a fake would test the fake, and the whole defect was
+// that the deduped `emit` seam is the wrong source for this number.
+test('activityTs is stamped from wire events, not only from state transitions', () => {
+  const m = mk();
+  const seed = Date.now() - 600000; // a restored seat: seeded from lastTranscriptWrite
+  m.sessions.set('a', { name: 'a', workspaceId: 'ws1', activityState: 'idle', activityTs: seed });
+
+  // No wire event yet → the restore seed survives, so a long-cold seat is not
+  // relabelled active-now by the mere existence of the new seam.
+  m._activity.turnStarted('a', { reqId: 's1', sideCall: true });
+  assert.strictEqual(m.sessions.get('a').activityTs, seed, 'side call is not activity');
+
+  m._activity.turnStarted('a', { reqId: 'r1' });
+  const first = m.sessions.get('a').activityTs;
+  assert.ok(first > seed, 'first real request moves the clock off the seed');
+  assert.strictEqual(m.sessions.get('a').activityState, 'thinking');
+
+  // The defect: a further request in the SAME state emits no transition, so the
+  // pre-fix clock stopped here while the seat kept working.
+  m.sessions.get('a').activityTs = first - 300000; // as if stamped 5min ago
+  m._activity.turnStarted('a', { reqId: 'r2' });
+  assert.ok(m.sessions.get('a').activityTs >= first,
+    'a request in an unchanged state still moves the clock');
+  assert.strictEqual(m.sessions.get('a').activityState, 'thinking', 'state stayed deduped');
+
+  // A late event carrying an older ts must not drag the clock backwards into the
+  // dm-hold band (Math.max, not assignment).
+  const now = m.sessions.get('a').activityTs;
+  m._activity._onEvent('a', now - 900000);
+  assert.strictEqual(m.sessions.get('a').activityTs, now);
+
+  // An event for a session this manager does not own is a no-op, not a throw.
+  m._activity.turnStarted('ghost', { reqId: 'g1' });
+  assert.strictEqual(m.sessions.has('ghost'), false);
+});
+
 test('create: rejects a duplicate session name before any spawn', async () => {
   const m = mk();
   m.sessions.set('dup', { name: 'dup' });
