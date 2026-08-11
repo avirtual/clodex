@@ -7,6 +7,13 @@
 // Exists because the redesign's governing claim is cost-at-equal-quality, and
 // a claim measured only AFTER the change is narrative. The baseline has to be
 // collectable before the resolver and the packer land.
+//
+// `path` and path-confine are the only requires, and both are pure leaves —
+// keep it that way: the whole point of this module is that the rollup shapes
+// are testable without booting an Electron main process.
+
+const path = require('path');
+const { confineOrThrow } = require('./path-confine');
 
 // The wire label is a SINGLE path segment on the proxy route
 // (`/agent/<label>/anthropic`), so the `<team>/<ticket>/<role>` of the design
@@ -60,6 +67,72 @@ function ticketIdFromScope(scope) {
   return m ? `t${m[1]}` : null;
 }
 
+// A ticket's `taskDir` is the first line of an AGENT-WRITTEN spec, captured
+// verbatim by tickets-store extractTaskDir. Measured over the live store: of
+// 227 tickets carrying one, 175 are relative (`tasks/<name>`), 52 are
+// tilde-prefixed, and NONE is absolute. So a writer that trusts the field
+// mkdir -p's a literal `~` directory under the process cwd, silently, and the
+// artifact never reaches the task dir at all.
+//
+// Two hazards, both handled here rather than at the write:
+//  - shape: `~` must expand and a bare `tasks/…` must resolve against the
+//    project's artifact dir (clodex-paths projectDirFor), never against cwd.
+//  - containment: the charset extractTaskDir admits includes `.`, so
+//    `tasks/../../..` parses fine. This is the first path derived from that
+//    text that Clodex WRITES to, so it is confined positively — segment by
+//    segment through path-confine, which is the same primitive the stores use
+//    and cannot be walked around by a spelling nobody anticipated.
+// Returns the resolved absolute dir, or null when it cannot be placed.
+// Throws only on an escaping path — a caller treats that as "do not write".
+function resolveTaskDir({ taskDir, projectDir, projectsRoot, homedir }) {
+  const raw = String(taskDir == null ? '' : taskDir).trim();
+  if (!raw) return null;
+  let abs;
+  if (raw === '~' || raw.startsWith('~/')) {
+    if (!homedir) return null;
+    abs = path.join(homedir, raw.slice(1));
+  } else if (path.isAbsolute(raw)) {
+    abs = raw;
+  } else {
+    if (!projectDir) return null;
+    abs = path.join(projectDir, raw);
+  }
+  abs = stripFileTail(path.resolve(abs));
+  if (!projectsRoot) return null;
+  return confineUnder(projectsRoot, abs);
+}
+
+// A lead routinely writes the SPEC file as the task pointer
+// (`…/tasks/wire-off/SPEC.md`) — 51 of the live store's taskDirs carry a tail
+// past the task name and 36 end in a slash. ensureDir on those either throws
+// (the file exists) or mints a directory named `SPEC.md`, so a file-shaped last
+// segment is dropped. Only when something remains under `tasks/`: a task dir
+// legitimately named `foo.bar` at the top level is kept, because guessing wrong
+// there would place the artifact outside the task's dir entirely.
+const FILE_TAIL_RE = /\.[A-Za-z0-9]{1,8}$/;
+function stripFileTail(p) {
+  const parts = p.split(path.sep);
+  const i = parts.lastIndexOf('tasks');
+  if (i < 0 || parts.length - i < 3) return p;
+  if (!FILE_TAIL_RE.test(parts[parts.length - 1])) return p;
+  return parts.slice(0, -1).join(path.sep);
+}
+
+// path-confine admits ONE segment; a task dir is `tasks/<name>[/…]`. Walking
+// the relative path segment by segment gives exact subtree containment out of
+// the existing primitive: a target outside the root produces leading `..`
+// segments, and each one fails the direct-child test at the step that
+// introduces it. An empty relative path is the root ITSELF, which is not a task
+// dir — writing COST.json there would drop it into the projects root.
+function confineUnder(root, target) {
+  const base = path.resolve(root);
+  const rel = path.relative(base, path.resolve(target));
+  if (!rel) throw new Error(`invalid taskDir: ${base} is not a task dir`);
+  let cur = base;
+  for (const seg of rel.split(path.sep)) cur = confineOrThrow(cur, seg, 'taskDir segment');
+  return cur;
+}
+
 function num(v) { return typeof v === 'number' && Number.isFinite(v) ? v : 0; }
 
 // Sum the persisted per-session ledger across the seat's session history.
@@ -75,11 +148,18 @@ function sumSessions(totals, sessionIds) {
     usd: 0, requests: 0, turns: 0, refusals: 0,
     inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
     known: 0, total: Array.isArray(sessionIds) ? sessionIds.length : 0,
+    tokensKnown: 0,
   };
   for (const sid of (sessionIds || [])) {
     const v = sessions[sid];
     if (!v) continue;
     out.known++;
+    // Counted separately from `known` because the token fields were added to
+    // wire-totals.json by this ticket: every row written before it has a cost
+    // but no tokens, num() coerces the absent field to 0, and the sum would
+    // read as complete while being a floor. `tokensKnown < known` is the same
+    // shortfall signal `known < total` already gives for cost.
+    if (typeof v.inputTokens === 'number') out.tokensKnown++;
     out.usd += num(v.cost);
     out.requests += num(v.requests);
     out.turns += num(v.turns);
@@ -115,15 +195,23 @@ const COST_VERSION = 1;
 // actually minted, so it is null (not false) for a ticket that never had one:
 // counting an un-minted ticket as "not wasted" would dilute the rate the Phase
 // 2a isolation decision is graded on.
+// `seatResolved: false` says the seat that spent the money could not be found —
+// a ticket assigned to a ROLE keeps `assignee: 'hand'`, and no persistence
+// record is stored under a role name. The ledger for an unfindable seat is not
+// zero, it is UNKNOWN, so every measured field goes null: `known === total === 0`
+// otherwise reads as "complete, nothing spent", and a ticket that burned real
+// money would be indistinguishable from a free one. That false zero is the
+// class this whole artifact exists to prevent.
 function costRecord({
-  ticket, team, ledger, worktree = null, commits = null,
-  orphanedCheckouts = null, now = Date.now(),
+  ticket, team, ledger, worktree = null, commits = null, commitsBase = null,
+  orphans = null, seatResolved = true, now = Date.now(),
 }) {
   const t = ticket || {};
   const openedAt = num(t.openedAt) || null;
   const closedAt = num(t.closedAt) || now;
   const minted = !!(worktree && worktree.path);
   const l = ledger || sumSessions(null, []);
+  const measured = (v) => (seatResolved ? v : null);
   return {
     version: COST_VERSION,
     ticket: t.id || null,
@@ -135,23 +223,35 @@ function costRecord({
     openedAt,
     closedAt,
     wallMs: openedAt ? Math.max(0, closedAt - openedAt) : null,
-    sessions: { ids: l.ids || [], known: l.known, total: l.total },
-    tokens: {
-      input: l.inputTokens,
-      output: l.outputTokens,
-      cacheRead: l.cacheReadTokens,
-      cacheWrite: l.cacheWriteTokens,
-      cachedFraction: cachedFraction(l),
+    sessions: {
+      ids: l.ids || [], known: l.known, total: l.total,
+      tokensKnown: num(l.tokensKnown), seatResolved: !!seatResolved,
     },
-    usd: l.usd,
-    requests: l.requests,
-    turns: l.turns,
-    refusals: l.refusals,
+    tokens: {
+      input: measured(l.inputTokens),
+      output: measured(l.outputTokens),
+      cacheRead: measured(l.cacheReadTokens),
+      cacheWrite: measured(l.cacheWriteTokens),
+      cachedFraction: measured(cachedFraction(l)),
+    },
+    usd: measured(l.usd),
+    requests: measured(l.requests),
+    turns: measured(l.turns),
+    refusals: measured(l.refusals),
     waste: {
       worktreeMinted: minted,
       commits: minted ? commits : null,
       zeroCommit: minted && typeof commits === 'number' ? commits === 0 : null,
-      orphanedCheckouts,
+      // Which ref the count was taken against. A commit count is only readable
+      // next to its base, and the base varies by what the record carried (a
+      // mint-time SHA, else a merge-base) — recording it makes a wrong number
+      // auditable instead of silently wrong.
+      commitsBase: minted ? (commitsBase || null) : null,
+      // Fixed slots, present whether or not the sweep ran, so the artifact's
+      // schema does not vary by whether git answered. null is "not swept".
+      orphanedCheckouts: orphans ? orphans.orphaned : null,
+      unclaimedNonMain: orphans ? orphans.unclaimedNonMain : null,
+      claimedByArchived: orphans ? orphans.claimedByArchived : null,
     },
   };
 }
@@ -172,16 +272,33 @@ const TICKET_BRANCH_RE = /^t\d+(-[a-zA-Z0-9._-]+)?$/;
 //
 // `unclaimedNonMain` is returned alongside as the unscoped number, so a
 // mis-scoped filter cannot hide a real orphan behind a clean count.
-function orphanedCheckouts({ worktrees, records }) {
+//
+// A record that ARCHIVED its seat still names the tree, which excluded the
+// commonest real leak — record-outlives-seat — from both counters at once. So
+// an archived record does not claim: its tree goes to `claimedByArchived`,
+// which is the leak's own counter rather than a silence.
+//
+// `real` is injected (fs.realpathSync at the call site) because git prints
+// canonical paths while a record carries the path as created — on macOS
+// /tmp vs /private/tmp — and a raw string compare misses the match, reporting
+// a live tree as an orphan. Injected rather than required so the module stays
+// a pure leaf; absent, it degrades to path.resolve.
+function orphanedCheckouts({ worktrees, records, real = null }) {
+  const canon = typeof real === 'function' ? real : ((p) => path.resolve(p));
   const claimed = new Set();
+  const archivedClaims = new Set();
   for (const r of (records || [])) {
-    if (r && r.worktree && r.worktree.path) claimed.add(r.worktree.path);
+    if (!r || !r.worktree || !r.worktree.path) continue;
+    (r.archivedAt ? archivedClaims : claimed).add(canon(r.worktree.path));
   }
   const orphans = [];
   const unclaimed = [];
+  const archived = [];
   for (const w of (worktrees || [])) {
     if (!w || !w.path || w.isMain) continue;
-    if (claimed.has(w.path)) continue;
+    const p = canon(w.path);
+    if (claimed.has(p)) continue;
+    if (archivedClaims.has(p)) { archived.push(w.path); continue; }
     unclaimed.push(w.path);
     const branch = String(w.branch || '').replace(/^refs\/heads\//, '');
     if (TICKET_BRANCH_RE.test(branch)) orphans.push(w.path);
@@ -191,11 +308,13 @@ function orphanedCheckouts({ worktrees, records }) {
     orphanedPaths: orphans,
     unclaimedNonMain: unclaimed.length,
     unclaimedPaths: unclaimed,
+    claimedByArchived: archived.length,
+    claimedByArchivedPaths: archived,
   };
 }
 
 module.exports = {
   COST_FILE, COST_VERSION, MAX_LABEL, TICKET_BRANCH_RE,
-  wireLabelFor, reviewWireLabelFor, ticketIdFromScope,
+  wireLabelFor, reviewWireLabelFor, ticketIdFromScope, resolveTaskDir,
   sumSessions, cachedFraction, costRecord, orphanedCheckouts,
 };

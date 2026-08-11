@@ -103,8 +103,25 @@ test('sumSessions totals the whole ledger object across a seat history', () => {
   assert.deepStrictEqual(tc.sumSessions(totals, ['s1', 's2']), {
     usd: 1.75, requests: 14, turns: 4, refusals: 1,
     inputTokens: 110, outputTokens: 25, cacheReadTokens: 1000, cacheWriteTokens: 50,
-    known: 2, total: 2,
+    known: 2, total: 2, tokensKnown: 2,
   });
+});
+
+test('sumSessions counts token rows separately — a pre-token row is a floor, not a total', () => {
+  // The token fields were added to wire-totals.json by this ticket, so every row
+  // written before it has a cost and no tokens. num() coerces those to 0 and the
+  // sum reads complete while being a floor; tokensKnown < known is the signal.
+  const totals = { sessions: {
+    'new': { cost: 1, requests: 2, turns: 1, refusals: 0, inputTokens: 100, outputTokens: 10, cacheReadTokens: 400, cacheWriteTokens: 0 },
+    'legacy': { cost: 5, requests: 9, turns: 4, refusals: 0 },   // pre-token row
+  } };
+  const got = tc.sumSessions(totals, ['new', 'legacy']);
+  // ENTER: the legacy row was actually summed. Were it dropped, known would be 1
+  // and tokensKnown 1 — "complete" — which is the shape this exists to deny.
+  assert.strictEqual(got.usd, 6, 'the legacy row must contribute its cost');
+  assert.strictEqual(got.known, 2);
+  assert.strictEqual(got.tokensKnown, 1, 'only one row carried tokens at all');
+  assert.strictEqual(got.inputTokens, 100, 'and the token sum is that row alone — a floor');
 });
 
 test('sumSessions reports a shortfall rather than hiding it', () => {
@@ -118,7 +135,7 @@ test('sumSessions reports a shortfall rather than hiding it', () => {
   assert.deepStrictEqual(tc.sumSessions(null, ['a']), {
     usd: 0, requests: 0, turns: 0, refusals: 0,
     inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
-    known: 0, total: 1,
+    known: 0, total: 1, tokensKnown: 0,
   });
 });
 
@@ -145,7 +162,8 @@ test('costRecord: the whole artifact shape, for a ticket that did work', () => {
     ledger,
     worktree: { path: '/tmp/wt', branch: 't293' },
     commits: 3,
-    orphanedCheckouts: 0,
+    commitsBase: 'abc1234',
+    orphans: { orphaned: 0, unclaimedNonMain: 2, claimedByArchived: 1 },
   });
   // The WHOLE object: this is the artifact's schema, and a field that silently
   // stops being written is exactly the failure a field-pick assertion misses.
@@ -154,11 +172,40 @@ test('costRecord: the whole artifact shape, for a ticket that did work', () => {
     ticket: 't293', team: 'clodex', role: 'hand', seat: 'clodex-hand-293',
     wireLabel: 'clodex.t293.hand', state: 'done',
     openedAt: 1000, closedAt: 61000, wallMs: 60000,
-    sessions: { ids: ['s1'], known: 1, total: 1 },
+    sessions: { ids: ['s1'], known: 1, total: 1, tokensKnown: 1, seatResolved: true },
     tokens: { input: 1000, output: 300, cacheRead: 9000, cacheWrite: 0, cachedFraction: 0.9 },
     usd: 2.5, requests: 20, turns: 6, refusals: 0,
-    waste: { worktreeMinted: true, commits: 3, zeroCommit: false, orphanedCheckouts: 0 },
+    waste: {
+      worktreeMinted: true, commits: 3, zeroCommit: false, commitsBase: 'abc1234',
+      orphanedCheckouts: 0, unclaimedNonMain: 2, claimedByArchived: 1,
+    },
   });
+});
+
+test('costRecord: an unresolved seat measures NOTHING — never an authoritative $0', () => {
+  // A ticket assigned to a ROLE keeps assignee:'hand' and no record is stored
+  // under a role name, so the ledger comes back empty. known===total===0 is the
+  // shape sumSessions defines as "complete, no shortfall", so a ticket that
+  // burned real money would report a MEASURED zero. Every measured field must be
+  // null instead, and the artifact must say why.
+  const rec = tc.costRecord({
+    ticket: { id: 't294', role: 'hand', assignee: 'hand', state: 'done', openedAt: 1, closedAt: 2 },
+    team: 'clodex', ledger: tc.sumSessions(null, []),
+    worktree: { path: '/tmp/wt', branch: 't294' }, commits: 2, commitsBase: 'ff00',
+    seatResolved: false,
+  });
+  assert.strictEqual(rec.sessions.seatResolved, false, 'the artifact must SAY the seat was not found');
+  assert.deepStrictEqual(
+    [rec.usd, rec.requests, rec.turns, rec.refusals],
+    [null, null, null, null],
+    'an unfindable seat spent an UNKNOWN amount, not zero');
+  assert.deepStrictEqual(rec.tokens,
+    { input: null, output: null, cacheRead: null, cacheWrite: null, cachedFraction: null });
+  // The waste half is still MEASURED: it comes from git, not from the seat, so
+  // losing it here would drop the counters for exactly the tickets most likely
+  // to have been mis-assigned.
+  assert.deepStrictEqual([rec.waste.commits, rec.waste.zeroCommit, rec.waste.commitsBase],
+    [2, false, 'ff00']);
 });
 
 test('costRecord: the t290 case — a worktree minted, nothing committed', () => {
@@ -179,8 +226,11 @@ test('costRecord: a ticket with no worktree is not counted as un-wasted', () => 
     ticket: { id: 't291', state: 'done', openedAt: 1, closedAt: 2 },
     team: 'clodex', ledger: tc.sumSessions(null, []), worktree: null, commits: null,
   });
+  // The slots are FIXED — present and null when nothing was swept — so the
+  // artifact's schema does not vary by whether git happened to answer.
   assert.deepStrictEqual(rec.waste, {
-    worktreeMinted: false, commits: null, zeroCommit: null, orphanedCheckouts: null,
+    worktreeMinted: false, commits: null, zeroCommit: null, commitsBase: null,
+    orphanedCheckouts: null, unclaimedNonMain: null, claimedByArchived: null,
   });
   // An unknown commit count on a REAL tree is also null, not a false zero —
   // "git failed" must not read as "produced nothing".
@@ -215,7 +265,125 @@ test('orphanedCheckouts counts ticket trees only, and reports the unscoped numbe
     orphanedPaths: ['/repo-t293'],
     unclaimedNonMain: 3,
     unclaimedPaths: ['/repo-t293', '/repo-audit', '/repo/.claude/worktrees/agent-x'],
+    claimedByArchived: 0,
+    claimedByArchivedPaths: [],
   });
+});
+
+test('a tree claimed by an ARCHIVED record is counted, not silently excluded', () => {
+  // Record-outlives-seat is the commonest real leak. An archived record still
+  // names its tree, so treating it as a claim removed that tree from BOTH
+  // counters at once — the leak detector reporting clean over the leak.
+  const worktrees = [
+    { path: '/repo', branch: 'master', isMain: true },
+    { path: '/repo-t1', branch: 't1' },     // claimed by a LIVE record
+    { path: '/repo-t2', branch: 't2' },     // claimed by an ARCHIVED one
+  ];
+  const got = tc.orphanedCheckouts({
+    worktrees,
+    records: [
+      { name: 'live', worktree: { path: '/repo-t1' } },
+      { name: 'gone', archivedAt: 123, worktree: { path: '/repo-t2' } },
+    ],
+  });
+  // ENTER: the archived-claim row survived into its own bucket. Without this the
+  // three counts below are all satisfied by an empty set.
+  assert.deepStrictEqual(got.claimedByArchivedPaths, ['/repo-t2'],
+    'the archived claim must land in its own bucket, not vanish');
+  assert.strictEqual(got.claimedByArchived, 1);
+  assert.strictEqual(got.orphaned, 0, 'it is not an orphan — a record does name it');
+  assert.strictEqual(got.unclaimedNonMain, 0, 'nor unclaimed');
+});
+
+test('the sweep compares paths canonically — /tmp vs /private/tmp is one tree', () => {
+  // git prints realpath'd paths; a record carries the path as created. A raw
+  // string compare reports a live, claimed tree as an orphan, which is the
+  // counter accusing a clean repo.
+  const real = (p) => p.replace(/^\/tmp\//, '/private/tmp/');
+  const worktrees = [
+    { path: '/repo', branch: 'master', isMain: true },
+    { path: '/private/tmp/repo-t7', branch: 't7' },
+  ];
+  const records = [{ name: 'a', worktree: { path: '/tmp/repo-t7' } }];
+  assert.strictEqual(tc.orphanedCheckouts({ worktrees, records, real }).orphaned, 0,
+    'the symlinked prefix must resolve to the same tree');
+  // And without the resolver it is the false positive this guards.
+  assert.strictEqual(tc.orphanedCheckouts({ worktrees, records }).orphaned, 1);
+});
+
+// resolveTaskDir — measured against the live store, of 227 tickets carrying a
+// taskDir NONE is absolute: 175 are relative and 52 tilde-prefixed. A writer
+// that trusts the field mkdir -p's a literal `~` under the process cwd without
+// throwing, so the artifact silently never lands anywhere anyone looks.
+const RESOLVE_ENV = {
+  projectDir: '/home/u/.clodex/projects/wb-wrap-ui-5bc8ce0a',
+  projectsRoot: '/home/u/.clodex/projects',
+  homedir: '/home/u',
+};
+
+test('resolveTaskDir places the two shapes real tickets actually have', () => {
+  // Tilde — 52 of the live store. path.join would treat `~` as a directory name.
+  assert.strictEqual(
+    tc.resolveTaskDir({ taskDir: '~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/phase0-measure', ...RESOLVE_ENV }),
+    '/home/u/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/phase0-measure');
+  // Bare relative — 175 of them. Resolved against the PROJECT dir, never cwd:
+  // against cwd this writes into the user's own repo, which Clodex never does.
+  assert.strictEqual(
+    tc.resolveTaskDir({ taskDir: 'tasks/phase0-measure', ...RESOLVE_ENV }),
+    '/home/u/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/phase0-measure');
+  // An absolute one inside the root is honored as-is.
+  assert.strictEqual(
+    tc.resolveTaskDir({ taskDir: '/home/u/.clodex/projects/p-1234abcd/tasks/x', ...RESOLVE_ENV }),
+    '/home/u/.clodex/projects/p-1234abcd/tasks/x');
+  assert.strictEqual(tc.resolveTaskDir({ taskDir: '', ...RESOLVE_ENV }), null);
+  assert.strictEqual(tc.resolveTaskDir({ taskDir: null, ...RESOLVE_ENV }), null);
+});
+
+test('resolveTaskDir drops a file-shaped tail — a lead names the SPEC, not the dir', () => {
+  // 51 live taskDirs carry a tail past the task name and 36 end in a slash;
+  // many name a file. ensureDir on those either throws or mints a directory
+  // called SPEC.md, and COST.json lands inside it.
+  const want = '/home/u/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/wire-off';
+  assert.strictEqual(tc.resolveTaskDir({ taskDir: '~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/wire-off/SPEC.md', ...RESOLVE_ENV }), want);
+  assert.strictEqual(tc.resolveTaskDir({ taskDir: 'tasks/wire-off/SPEC.md', ...RESOLVE_ENV }), want);
+  assert.strictEqual(tc.resolveTaskDir({ taskDir: 'tasks/wire-off/', ...RESOLVE_ENV }), want, 'a trailing slash is not a segment');
+  // A DIRECTORY whose own name has a dot is kept: guessing wrong at the top
+  // level would put the artifact outside the task's dir entirely.
+  assert.strictEqual(tc.resolveTaskDir({ taskDir: 'tasks/v1.2', ...RESOLVE_ENV }),
+    '/home/u/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/v1.2');
+  // A deeper spec path keeps its intermediate dirs, losing only the file.
+  assert.strictEqual(tc.resolveTaskDir({ taskDir: 'tasks/audit/specs/P4.md', ...RESOLVE_ENV }),
+    '/home/u/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/audit/specs');
+});
+
+test('resolveTaskDir refuses to escape the projects root — taskDir is agent-written', () => {
+  // The field is captured verbatim from spec text by a regex whose charset
+  // includes `.`, so `..` parses fine. This commit makes it the first WRITE
+  // target derived from that text; an escape must throw, never resolve.
+  const escapes = [
+    'tasks/../../../../etc/cron.d',
+    '~/.clodex/projects/../../../tmp/pwned',
+    '/etc/tasks/x',
+    '/home/u/.clodex/projects/../../evil/tasks/y',
+  ];
+  // ENTER: the resolver EXISTS and places a legitimate path. Without this the
+  // loop below is satisfied by a resolver that throws on everything — including
+  // one that is not implemented at all, which is how this first passed against
+  // the unfixed tree.
+  assert.strictEqual(tc.resolveTaskDir({ taskDir: 'tasks/ok', ...RESOLVE_ENV }),
+    '/home/u/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/ok');
+  const leaked = [];
+  for (const taskDir of escapes) {
+    let out = null;
+    try { out = tc.resolveTaskDir({ taskDir, ...RESOLVE_ENV }); }
+    catch { continue; }                       // refusing is the correct answer
+    if (out) leaked.push(`${taskDir} → ${out}`);
+  }
+  assert.deepStrictEqual(leaked, [],
+    'a taskDir that escapes the projects root must not resolve to a writable path: ' + leaked.join('; '));
+  // The projects root ITSELF is not a task dir — writing there scatters
+  // COST.json over every project's parent.
+  assert.throws(() => tc.resolveTaskDir({ taskDir: '/home/u/.clodex/projects', ...RESOLVE_ENV }));
 });
 
 test('orphanedCheckouts: a fully claimed tree reports zero, main never counts', () => {

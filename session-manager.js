@@ -130,6 +130,7 @@ const REVIEWER_FALLBACK = {
 };
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = require('./tickets-store');
 const teamCost = require('./team-cost');
+const { projectDirFor } = require('./clodex-paths');
 // Aliased deliberately: the manager has its OWN trackedSessionIds() method with
 // a different contract (every id across all sessions, no argument). This is the
 // per-entry union, and the two must not be mistaken for each other.
@@ -225,7 +226,12 @@ const RECENT_DONE_LABEL = `${RECENT_DONE_MS / (60 * 60 * 1000)}h`;
 // A field a restart can legitimately reset (rosterSentAt on a fresh
 // restart) must stay caller-controlled.
 // test/preserve-across-restart.test.js pins that every caller gets these.
-const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants'];
+// `wireLabel` is here for the same reason: it is seeded ONLY at the team-spawn
+// mint, nothing regrows it, and create() re-mints the proxy agent id from
+// `entry.wireLabel || name`. Dropped by an in-place restart, the seat's whole
+// remaining spend bills to an unlabeled route and its ticket's COST.json reads
+// a null label — the ticket looks free because the money went somewhere else.
+const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel'];
 
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
 // re-register over — when the process it names is dead, OR when it names OUR OWN
@@ -5070,7 +5076,11 @@ function createSessionManager(deps) {
       // whole mechanism exists to prevent. _taskAssign refuses earlier and names
       // the holder; this is the backstop for every other caller.
       if (this._ticketTreeHolder(wt.path)) return null;
-      return { path: wt.path, branch: wt.branch };
+      // baseSha carried through: it was captured when the tree was MINTED and is
+      // unrecoverable here, so dropping it on reuse quietly downgrades the
+      // close-time commit count to its merge-base fallback for exactly the
+      // tickets that outlived a seat.
+      return { path: wt.path, branch: wt.branch, ...(wt.baseSha ? { baseSha: wt.baseSha } : {}) };
     }
 
     // Mint the worktree, spawn the seat, then hand it the spec. Async and
@@ -5238,7 +5248,10 @@ function createSessionManager(deps) {
                 : `ticket ${ticket.id}: worktree "${seat.branch}" could not be created (${(r && r.error) || 'unknown'}) — no seat spawned, ticket left assigned to "${roleKey}"`);
               return;
             }
-            wt = { path: r.path, branch: r.branch };
+            // baseSha is the fork point, captured HERE because it is unrecoverable
+            // later: the ref this forked from is 'HEAD', which has moved by the time
+            // the ticket closes and counts its commits against it.
+            wt = { path: r.path, branch: r.branch, ...(r.baseSha ? { baseSha: r.baseSha } : {}) };
           }
           // Recorded on the TICKET, which is what _deliverTicketSpec reads to tell
           // the seat where to work. On the ticket rather than only on the session
@@ -5594,12 +5607,36 @@ function createSessionManager(deps) {
     // that closed having burned a worktree and produced nothing is precisely the
     // t290 case being graded, and skipping it would make the counter measure
     // only the tickets that did work.
+    //
+    // The taskDir is RESOLVED, never trusted: it is spec text, and no ticket in
+    // the live store carries an absolute one. Writing it verbatim mkdir -p's a
+    // literal `~` under the process cwd and the artifact silently never lands.
     _writeTicketCost(team, ticket) {
-      const taskDir = ticket && ticket.taskDir;
+      if (!ticket || !ticket.taskDir) return;
+      let taskDir = null;
+      try {
+        taskDir = teamCost.resolveTaskDir({
+          taskDir: ticket.taskDir,
+          projectDir: projectDirFor(REGISTRY_DIR, team.root),
+          projectsRoot: path.join(REGISTRY_DIR, 'projects'),
+          homedir: os.homedir(),
+        });
+      } catch (e) {
+        // An escaping taskDir is a refusal to write, loudly — not a fallback to
+        // some safer path, which would put the artifact where nobody looks.
+        log.info('intent', `COST.json refused for ${ticket.id}: ${e.message}`);
+        return;
+      }
       if (!taskDir) return;
       setImmediate(async () => {
         try {
-          const entry = getPersistence().get(ticket.assignee) || null;
+          // A ticket assigned to a ROLE keeps `assignee: 'hand'`, and nothing is
+          // stored under a role name — only the worktree-seat path re-pins the
+          // assignee to a seat. Resolving through the role gives the seat that
+          // actually spent; failing to resolve makes the ledger UNKNOWN, not zero.
+          const seatName = this._ticketAssigneeSeat(team, ticket) || ticket.assignee;
+          const entry = (seatName && getPersistence().get(seatName)) || null;
+          const seatResolved = !!entry;
           const sessionIds = entrySessionIds(entry);
           let totals = null;
           try {
@@ -5610,10 +5647,15 @@ function createSessionManager(deps) {
 
           const wt = (entry && entry.worktree) || ticket.worktree || null;
           let commits = null;
+          let commitsBase = null;
           if (wt && wt.branch) {
             try {
-              const r = await gitWorktree.commitsOnBranch(team.root, wt.branch);
-              if (r && typeof r.count === 'number') commits = r.count;
+              // The mint-time fork SHA when the record has one. Without it
+              // commitsOnBranch falls back to a merge-base; it never counts
+              // against the main checkout's live HEAD, which answers wrongly in
+              // both directions.
+              const r = await gitWorktree.commitsOnBranch(team.root, wt.branch, wt.baseSha || null);
+              if (r && typeof r.count === 'number') { commits = r.count; commitsBase = r.base || null; }
             } catch { /* a git failure costs the commit count, not the record */ }
           }
 
@@ -5622,17 +5664,24 @@ function createSessionManager(deps) {
             const listed = await gitWorktree.listWorktrees(team.root);
             if (listed && listed.ok) {
               orphans = teamCost.orphanedCheckouts({
-                worktrees: listed.worktrees, records: getPersistence().list(),
+                worktrees: listed.worktrees,
+                records: getPersistence().list(),
+                // git prints realpath'd paths, records carry the path as created
+                // (/tmp vs /private/tmp) — a raw compare reports a live tree as
+                // an orphan.
+                real: (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } },
               });
             }
           } catch { /* sweep failure costs counter (b), not the record */ }
 
           const rec = teamCost.costRecord({
-            ticket: { ...ticket, wireLabel: (entry && entry.wireLabel) || null },
-            team: team.name, ledger, worktree: wt, commits,
-            orphanedCheckouts: orphans ? orphans.orphaned : null,
+            // `seat` is the RESOLVED name, not the ticket's `assignee`: a
+            // role-assigned ticket's assignee is 'hand', which names no seat and
+            // could not be joined back to the spend it is reporting.
+            ticket: { ...ticket, assignee: seatName || null, wireLabel: (entry && entry.wireLabel) || null },
+            team: team.name, ledger, worktree: wt, commits, commitsBase,
+            orphans, seatResolved,
           });
-          if (orphans) rec.waste.unclaimedNonMain = orphans.unclaimedNonMain;
           ensureDir(taskDir);
           fs.writeFileSync(path.join(taskDir, teamCost.COST_FILE), JSON.stringify(rec, null, 2));
         } catch (e) {

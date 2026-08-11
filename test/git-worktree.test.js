@@ -197,6 +197,94 @@ test('commitsOnBranch counts a branch\'s own commits against its fork point', { 
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
+// The base is what makes the count readable, and the repo's live HEAD is the
+// one base that answers WRONGLY IN BOTH DIRECTIONS. Both halves are pinned:
+// a merged ticket must not read as waste, and a parked HEAD must not make an
+// idle ticket look productive.
+test('commitsOnBranch never counts against the main checkout\'s live HEAD', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const run = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
+  const forkSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  const made = await wt.createWorktree(repo, 't901');
+  assert.equal(made.ok, true, made.error);
+  // ENTER: the mint captured a fork point at all. Absent, every count below
+  // silently falls back to the merge-base path and this test proves nothing
+  // about the SHA it is named for.
+  assert.equal(made.baseSha, forkSha, 'createWorktree must return the fork SHA it branched from');
+
+  const runWt = (...a) => execFileSync('git', ['-C', made.path, ...a], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(made.path, 'b.txt'), 'work\n');
+  runWt('add', '-A');
+  runWt('commit', '-qm', 'ticket work');
+
+  // (1) MERGED before close. HEAD now contains the branch, so `HEAD..t901` is 0
+  // and the counter would accuse the ticket that actually shipped.
+  run('merge', '-q', '--no-ff', '-m', 'merge t901', 't901');
+  const merged = await wt.commitsOnBranch(repo, 't901', made.baseSha);
+  assert.deepEqual([merged.ok, merged.count], [true, 1], 'a merged ticket still did its work');
+  // The merge-base FALLBACK cannot do this, and that is a property of merge-base
+  // rather than a bug to fix here: once a branch is merged, merge-base(default,
+  // branch) IS the branch tip, so the count is 0. Pinned so the limitation is
+  // stated rather than discovered — a record with no baseSha (every ticket
+  // predating it) reads a merged branch as zero-commit. baseSha is what makes
+  // the counter correct; the fallback is only better than counting against HEAD.
+  const noSha = await wt.commitsOnBranch(repo, 't901');
+  assert.deepEqual([noSha.ok, noSha.count], [true, 0],
+    'the fallback bottoms out at the branch tip once merged — legacy records only');
+
+  // (2) HEAD parked on an unrelated branch. Every commit on the ticket's side of
+  // the fork would count as its work, and the leak detector reports clean.
+  run('checkout', '-q', '-b', 'sidequest', forkSha);
+  fs.writeFileSync(path.join(repo, 'side.txt'), 'x\n');
+  run('add', '-A');
+  run('commit', '-qm', 'unrelated');
+  const parked = await wt.commitsOnBranch(repo, 't901', made.baseSha);
+  assert.deepEqual([parked.ok, parked.count], [true, 1], 'a parked HEAD must not inflate the count');
+
+  await wt.removeWorktree(made.path);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('commitsOnBranch: a stale base SHA falls through to the merge base', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const made = await wt.createWorktree(repo, 't902');
+  assert.equal(made.ok, true, made.error);
+  // A mint-time SHA can be rebased or gc'd away. Refusing outright would score a
+  // working ticket as unknown for the life of the record.
+  const r = await wt.commitsOnBranch(repo, 't902', '0'.repeat(40));
+  assert.equal(r.ok, true, 'a vanished base must degrade to the merge base, not fail');
+  assert.equal(r.count, 0);
+  assert.notEqual(r.base, '0'.repeat(40), 'and the record must name the base it ACTUALLY used');
+  await wt.removeWorktree(made.path);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('createWorktree: an EXISTING branch reports no fork point', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const runWt = (dir, ...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
+  const first = await wt.createWorktree(repo, 't903');
+  fs.writeFileSync(path.join(first.path, 'w.txt'), 'work\n');
+  runWt(first.path, 'add', '-A');
+  runWt(first.path, 'commit', '-qm', 'prior work');
+  await wt.removeWorktree(first.path);
+
+  // Checking an existing branch out again lands on a tip that already carries
+  // commits. Pinning THAT as the base would report every later count as zero —
+  // a working ticket scored as a wasted worktree.
+  const again = await wt.createWorktree(repo, 't903');
+  assert.equal(again.ok, true, again.error);
+  // strictly null, not merely falsy: `undefined` is what a createWorktree that
+  // never captured a fork point returns, and loose equality reads the two as the
+  // same answer — which is how this first passed against the unfixed tree.
+  assert.strictEqual(again.baseSha, null, 'no fork point for a branch this call did not create');
+  assert.ok('baseSha' in again, 'the field must be present, so a caller can tell null from absent');
+  const c = await wt.commitsOnBranch(repo, 't903', again.baseSha);
+  assert.deepEqual([c.ok, c.count], [true, 1], 'the prior commit is still the branch\'s own work');
+  await wt.removeWorktree(again.path);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
 test('commitsOnBranch degrades to a null count, never a false zero', { skip: !gitAvailable() }, async () => {
   const repo = makeRepo();
   // "git failed" must not read as "produced nothing" — that would score a

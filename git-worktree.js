@@ -98,7 +98,21 @@ async function createWorktree(cwd, branch, opts = null) {
     : ['worktree', 'add', '-b', br, dest, baseRef];
   const r = await git(repo, args);
   if (!r.ok) return { ok: false, error: (r.stderr || 'git worktree add failed').trim() };
-  return { ok: true, path: dest, branch: br, base: exists ? null : baseRef, repo };
+  // The fork point as a SHA, resolved now. A caller counting the branch's own
+  // commits later cannot recover it: the ref it forked from (routinely 'HEAD')
+  // has moved by then, and counting against a moved base credits the ticket
+  // with the base's commits or with none of its own. Best-effort — a null just
+  // sends that caller to its merge-base fallback.
+  //
+  // Only for a branch this call CREATED. An existing branch is checked out at a
+  // tip that already carries its own commits, so pinning that as the base would
+  // report every later count as zero — exactly the false "wasted worktree".
+  let baseSha = null;
+  if (!exists) {
+    const sha = await git(repo, ['rev-parse', `${baseRef}^{commit}`]);
+    baseSha = sha.ok ? (sha.stdout.trim() || null) : null;
+  }
+  return { ok: true, path: dest, branch: br, base: exists ? null : baseRef, baseSha, repo };
 }
 
 // The repo's default branch. Prefers the remote HEAD (origin/HEAD → origin/main
@@ -226,10 +240,31 @@ async function listWorktrees(cwd) {
 // count 0 with ok:true is the ANSWER, not a failure — the zero-commit case is
 // exactly what the counter grades, so a caller must not read falsy as unknown.
 // Unknown is `ok:false` / a null count.
+//
+// The base is NEVER the repo's live HEAD, which is what makes this readable at
+// all. `HEAD` is whatever branch the main checkout happens to sit on when the
+// ticket closes, and it flips the answer BOTH ways: a branch already merged
+// into HEAD counts 0 (the counter accuses the tickets that shipped), and a HEAD
+// parked on an unrelated branch counts every commit on the ticket's side of the
+// fork as work (the leak detector reports clean). So: the mint-time SHA when the
+// record carries one, else the merge base against the repo's default branch,
+// else unknown. `base` in the result names which was used.
 async function commitsOnBranch(cwd, branch, base = null) {
   const repo = await repoToplevel(cwd);
   if (!repo || !branch) return { ok: false, count: null, error: 'no repo or branch' };
-  const against = base || 'HEAD';
+  let against = base && String(base).trim() ? String(base).trim() : null;
+  if (against && !(await git(repo, ['rev-parse', '--verify', '--quiet', `${against}^{commit}`])).ok) {
+    against = null;   // a mint-time SHA can be gone (rebased, gc'd) — fall through
+  }
+  if (!against) {
+    const def = await defaultBranch(repo);
+    if (!def) return { ok: false, count: null, error: 'no base and no default branch' };
+    const mb = await git(repo, ['merge-base', def, branch]);
+    if (!mb.ok || !mb.stdout.trim()) {
+      return { ok: false, count: null, error: (mb.stderr || 'no merge base').trim() };
+    }
+    against = mb.stdout.trim();
+  }
   const r = await git(repo, ['rev-list', '--count', `${against}..${branch}`]);
   if (!r.ok) return { ok: false, count: null, error: (r.stderr || 'rev-list failed').trim() };
   const n = parseInt(r.stdout.trim(), 10);
