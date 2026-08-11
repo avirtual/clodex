@@ -20,6 +20,11 @@ blocks a release.
   a reboot was *requested* that long ago, which is the fact Clodex actually
   knows.
 
+- Reboot: a deferred restart that is abandoned no longer reports itself to a
+  seat that merely shares the requester's name. A seat killed and recreated
+  under the same name during the wait — which can run up to 30 minutes — was
+  receiving a parked "reboot DROPPED" for a restart it never asked for.
+
 ## 5.5.3 — 2026-08-11
 
 - `[agent:reboot]` no longer interrupts working agents. It used to relaunch

@@ -3350,9 +3350,7 @@ function createSessionManager(deps) {
         // "requested", not "happened": the stamp is written at QUEUE time, and since
         // t282 the restart may still be waiting for an all-idle window, or have been
         // cancelled/dropped without ever running — _rebootAbandoned deliberately
-        // leaves the stamp behind so there is no rapid-retry window. This sentence
-        // may therefore be the only thing a seat is told about a reboot that never
-        // occurred; it must not assert one did.
+        // leaves the stamp behind so there is no rapid-retry window.
         reply(`rate-limited — a reboot was requested ${Math.round(sinceMs / 1000)}s ago; try again in ${waitS}s`);
         this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `REFUSED (rate-limited): ${reason || '(no reason)'}` });
         return;

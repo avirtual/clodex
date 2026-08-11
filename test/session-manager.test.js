@@ -1261,7 +1261,7 @@ test('reboot: the rate-limit refusal does not claim a restart that never happene
   assert.match(refusal, /^\[agent:reboot\] rate-limited/, 'ENTER: this is the refusal, not some other reply');
   assert.doesNotMatch(refusal, /reboot happened/,
     'no restart has occurred — the seat must not be told one did');
-  assert.match(refusal, /requested/, 'it reports the request, which is the fact the stamp actually holds');
+  assert.match(refusal, /a reboot was requested \d+s ago/, 'it reports the request, which is the fact the stamp actually holds');
 });
 
 test('reboot: an UNGRANTED bash pane gets neither relaunch nor a bounce typed into its shell', async () => {
