@@ -215,7 +215,29 @@ async function listWorktrees(cwd) {
   return { ok: true, repo, worktrees };
 }
 
+// Commits a ticket branch added on top of its base — waste counter (a) of
+// DESIGN.md §7.3 reads this to find worktrees minted for tickets that closed
+// having produced nothing.
+//
+// `base..branch` counts commits reachable from the branch and NOT from the
+// base, so base-side movement while the ticket was open cannot inflate it; an
+// explicit merge-base step would compute the same number for one more git call.
+//
+// count 0 with ok:true is the ANSWER, not a failure — the zero-commit case is
+// exactly what the counter grades, so a caller must not read falsy as unknown.
+// Unknown is `ok:false` / a null count.
+async function commitsOnBranch(cwd, branch, base = null) {
+  const repo = await repoToplevel(cwd);
+  if (!repo || !branch) return { ok: false, count: null, error: 'no repo or branch' };
+  const against = base || 'HEAD';
+  const r = await git(repo, ['rev-list', '--count', `${against}..${branch}`]);
+  if (!r.ok) return { ok: false, count: null, error: (r.stderr || 'rev-list failed').trim() };
+  const n = parseInt(r.stdout.trim(), 10);
+  if (!Number.isFinite(n)) return { ok: false, count: null, error: 'unparsable count' };
+  return { ok: true, count: n, base: against };
+}
+
 module.exports = {
   repoToplevel, createWorktree, removeWorktree, defaultWorktreePath,
-  defaultBranch, repoInfo, listWorktrees,
+  defaultBranch, repoInfo, listWorktrees, commitsOnBranch,
 };

@@ -129,6 +129,11 @@ const REVIEWER_FALLBACK = {
   },
 };
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = require('./tickets-store');
+const teamCost = require('./team-cost');
+// Aliased deliberately: the manager has its OWN trackedSessionIds() method with
+// a different contract (every id across all sessions, no argument). This is the
+// per-entry union, and the two must not be mistaken for each other.
+const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
@@ -1042,7 +1047,20 @@ function createSessionManager(deps) {
         const taken = new Set();
         for (const e of getPersistence().list()) if (e.proxyAgent) taken.add(e.proxyAgent);
         for (const s of this.sessions.values()) if (s.proxyAgent) taken.add(s.proxyAgent);
-        proxyAgent = resolveProxyAgentId({ name, fork, existing: getPersistence().get(name), taken });
+        // The wire label, not the seat name, is what the id is minted FROM when
+        // the spawn path seeded one (team ticket seats and reviewers do, via
+        // their pre-create upsert). A seat name outlives its ticket — it is
+        // recycled, retired, renamed — so spend keyed by it cannot be rolled up
+        // per ticket after the fact. `<team>.<ticket>.<role>` in the proxy route
+        // segment makes the attribution durable at the point it is billed.
+        //
+        // Only the EXTERNAL proxy id carries this. The in-process wire's
+        // registerAgent() keeps taking the bare name: `t.agent` is a sessions-map
+        // key at ~10 call sites and wire-telemetry prunes against that map, so a
+        // divergent label there would silently drop every telemetry record.
+        const existingEntry = getPersistence().get(name);
+        const labelFrom = (existingEntry && existingEntry.wireLabel) || name;
+        proxyAgent = resolveProxyAgentId({ name: labelFrom, fork, existing: existingEntry, taken });
       }
 
       // CLODEX_SPAWNER_HINT=off|on — suppress (or force) wirescope's [wirescope]
@@ -4463,7 +4481,21 @@ function createSessionManager(deps) {
       // This also carries the seat's identity fields (drives review-done's guard +
       // the team-retire discard disposition); create()'s own upsert spread-merges
       // over this stub, and the restart-preserve seam re-seeds it after a kill().
-      getPersistence().upsert({ name, ephemeral: true, reviewFor: session.name });
+      // `wireLabel` rides the SAME synchronous stub as the name reservation, and
+      // that is the ordering that makes it work: create() reads it back off the
+      // record to mint the proxy agent id, so a label written after the deferred
+      // create() would label nothing. The round is the reviewer seat's own index
+      // (n was post-incremented by the loop above), which is what keeps round 2's
+      // spend off round 1's label — the §4 cache-ordering claim is only testable
+      // if the rounds are separable.
+      const reviewRound = n - 1;
+      const reviewLabel = teamCost.reviewWireLabelFor({
+        team: team.name, ticketId: teamCost.ticketIdFromScope(scope), round: reviewRound,
+      });
+      getPersistence().upsert({
+        name, ephemeral: true, reviewFor: session.name,
+        ...(reviewLabel ? { wireLabel: reviewLabel } : {}),
+      });
 
       let promptWarn = '';
       if (reviewerSystemPrompt) {
@@ -5102,7 +5134,15 @@ function createSessionManager(deps) {
       // Reserved SYNCHRONOUSLY, before any await: two tickets opened in one lead
       // turn both run their taken-name check above before either create() lands,
       // and the persistence stub is what makes the second one see the first.
-      getPersistence().upsert({ name: seat.name, ephemeral: true });
+      // Same ordering contract as the reviewer's stub: the label must be on the
+      // record BEFORE the deferred create() reads it back to mint the proxy id.
+      const seatLabel = teamCost.wireLabelFor({
+        team: team.name, ticketId: ticket.id, role: roleKey,
+      });
+      getPersistence().upsert({
+        name: seat.name, ephemeral: true,
+        ...(seatLabel ? { wireLabel: seatLabel } : {}),
+      });
       // Un-pin the ticket back to its role. Reloaded from the store rather than
       // mutating the caller's array: this runs after the caller returned, so that
       // array may no longer be what is on disk.
@@ -5537,8 +5577,68 @@ function createSessionManager(deps) {
       const next = doneSeat ? this._advanceSeat(team, teamDir, doneSeat, ticket.id) : null;
       const nextSuffix = next ? ` — next: ${next.id} delivered to ${doneSeat}` : '';
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: lead, body: `ticket ${ticket.id} done` });
+      this._writeTicketCost(team, ticket);
       log.info('intent', `task done ${ticket.id} by ${session.name} → ${lead}`);
       reply((isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`) + nextSuffix);
+    }
+
+    // COST.json — the per-ticket rollup (DESIGN.md §7.1), written at close.
+    //
+    // Deferred and fully best-effort: the commit count shells out to git, and a
+    // rollup is a measurement, never a reason a ticket fails to close. Every
+    // failure mode here (no taskDir, an unreadable totals file, a git error, an
+    // unwritable dir) costs this one artifact and nothing else.
+    //
+    // Written even when the ledger is empty, because the WASTE counters are the
+    // half of the record that has to exist for the zero-commit case — a ticket
+    // that closed having burned a worktree and produced nothing is precisely the
+    // t290 case being graded, and skipping it would make the counter measure
+    // only the tickets that did work.
+    _writeTicketCost(team, ticket) {
+      const taskDir = ticket && ticket.taskDir;
+      if (!taskDir) return;
+      setImmediate(async () => {
+        try {
+          const entry = getPersistence().get(ticket.assignee) || null;
+          const sessionIds = entrySessionIds(entry);
+          let totals = null;
+          try {
+            totals = JSON.parse(fs.readFileSync(path.join(getUserDataPath(), 'wire-totals.json'), 'utf8'));
+          } catch { /* no ledger yet — the rollup degrades to its waste half */ }
+          const ledger = teamCost.sumSessions(totals, sessionIds);
+          ledger.ids = sessionIds;
+
+          const wt = (entry && entry.worktree) || ticket.worktree || null;
+          let commits = null;
+          if (wt && wt.branch) {
+            try {
+              const r = await gitWorktree.commitsOnBranch(team.root, wt.branch);
+              if (r && typeof r.count === 'number') commits = r.count;
+            } catch { /* a git failure costs the commit count, not the record */ }
+          }
+
+          let orphans = null;
+          try {
+            const listed = await gitWorktree.listWorktrees(team.root);
+            if (listed && listed.ok) {
+              orphans = teamCost.orphanedCheckouts({
+                worktrees: listed.worktrees, records: getPersistence().list(),
+              });
+            }
+          } catch { /* sweep failure costs counter (b), not the record */ }
+
+          const rec = teamCost.costRecord({
+            ticket: { ...ticket, wireLabel: (entry && entry.wireLabel) || null },
+            team: team.name, ledger, worktree: wt, commits,
+            orphanedCheckouts: orphans ? orphans.orphaned : null,
+          });
+          if (orphans) rec.waste.unclaimedNonMain = orphans.unclaimedNonMain;
+          ensureDir(taskDir);
+          fs.writeFileSync(path.join(taskDir, teamCost.COST_FILE), JSON.stringify(rec, null, 2));
+        } catch (e) {
+          log.info('intent', `COST.json not written for ${ticket && ticket.id}: ${e.message}`);
+        }
+      });
     }
 
     _taskReject(session, team, teamDir, intent, reply) {
@@ -5582,6 +5682,7 @@ function createSessionManager(deps) {
       this._reconcileTickets(team, teamDir);
       const next = seat ? this._advanceSeat(team, teamDir, seat, ticket.id) : null;
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} cancelled` });
+      this._writeTicketCost(team, ticket);
       log.info('intent', `task cancel ${ticket.id} by ${session.name}`);
       reply(`ticket ${ticket.id} cancelled${next ? ` — next: ${next.id} delivered to ${seat}` : ''}`);
     }

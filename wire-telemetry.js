@@ -109,6 +109,16 @@ class WireTelemetry {
       requests: add(b && b.requests, t.requests),
       turns: add(b && b.turns, t.turns),
       refusals: ((b && b.refusals) || 0) + (t.refusals || 0),
+      // Token counts ride the same ledger snapshot as cost (wire/billing.js
+      // newTotals) and are carried through so a per-ticket rollup can compute a
+      // CACHED FRACTION, which cost alone cannot express. Unlike the four above
+      // they have no seed path: seedLifetime imports wirescope's poll payload,
+      // which carries no token fields, so a session that predates the wire has
+      // base 0 here and its token total is a floor while its cost is not.
+      inputTokens: add(b && b.inputTokens, t.input_tokens),
+      outputTokens: add(b && b.outputTokens, t.output_tokens),
+      cacheReadTokens: add(b && b.cacheReadTokens, t.cache_read_tokens),
+      cacheWriteTokens: add(b && b.cacheWriteTokens, t.cache_write_tokens),
     };
   }
 
@@ -230,6 +240,14 @@ class WireTelemetry {
         turns: lt.turns,
         refusals: lt.refusals || 0,
         context: { inputTokens: a.inputTokens },
+        // Cumulative billed tokens, NOT context.inputTokens. The two are
+        // different scopes and must not be collapsed: context.inputTokens is
+        // the LAST main-line turn's window size, while these are the lifetime
+        // sums the per-ticket rollup divides to get a cached fraction.
+        tokens: {
+          input: lt.inputTokens, output: lt.outputTokens,
+          cacheRead: lt.cacheReadTokens, cacheWrite: lt.cacheWriteTokens,
+        },
         warmth,
         pingable,
         hold,

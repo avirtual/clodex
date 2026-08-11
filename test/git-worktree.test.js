@@ -161,3 +161,51 @@ test('createWorktree: rejects a base ref that does not exist', { skip: !gitAvail
   assert.strictEqual(r.ok, false);
   assert.match(r.error, /base ref not found/i);
 });
+
+// commitsOnBranch — waste counter (a) of DESIGN.md §7.3 reads this to find
+// worktrees minted for tickets that closed having produced nothing.
+test('commitsOnBranch counts a branch\'s own commits against its fork point', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const run = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
+
+  const made = await wt.createWorktree(repo, 't900');
+  assert.equal(made.ok, true);
+
+  // A freshly minted tree has produced nothing — 0 with ok:true is the ANSWER
+  // the counter grades on, not a failure, so a caller reading falsy as unknown
+  // would lose exactly the case this exists for.
+  const fresh = await wt.commitsOnBranch(repo, 't900');
+  assert.deepEqual([fresh.ok, fresh.count], [true, 0]);
+
+  const runWt = (...a) => execFileSync('git', ['-C', made.path, ...a], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(made.path, 'b.txt'), 'work\n');
+  runWt('add', '-A');
+  runWt('commit', '-qm', 'ticket work');
+  const one = await wt.commitsOnBranch(repo, 't900');
+  assert.deepEqual([one.ok, one.count], [true, 1]);
+
+  // The base MOVES while a ticket is open. The count must stay the branch's own
+  // output — base-side commits are on the excluded side of the range, so a
+  // busy master must not inflate a ticket's apparent work.
+  fs.writeFileSync(path.join(repo, 'c.txt'), 'master moved\n');
+  run('add', '-A');
+  run('commit', '-qm', 'unrelated master work');
+  const afterDrift = await wt.commitsOnBranch(repo, 't900');
+  assert.deepEqual([afterDrift.ok, afterDrift.count], [true, 1]);
+
+  await wt.removeWorktree(made.path);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('commitsOnBranch degrades to a null count, never a false zero', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  // "git failed" must not read as "produced nothing" — that would score a
+  // working ticket as waste.
+  const missing = await wt.commitsOnBranch(repo, 'no-such-branch');
+  assert.deepEqual([missing.ok, missing.count], [false, null]);
+  const noBranch = await wt.commitsOnBranch(repo, null);
+  assert.deepEqual([noBranch.ok, noBranch.count], [false, null]);
+  const noRepo = await wt.commitsOnBranch(os.tmpdir(), 't1');
+  assert.equal(noRepo.count, null);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
