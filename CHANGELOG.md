@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.5.2 — 2026-08-11
+
 - Fixes the Workbench being unusable over web access, where the file tree
   showed nothing and no button or the close X responded to a click, though they
   still lit up on hover. It looked like something invisible was covering the
