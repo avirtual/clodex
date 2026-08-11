@@ -3346,15 +3346,64 @@ function createSessionManager(deps) {
       catch (e) { log.error('intent', `reboot: settings write failed (proceeding): ${e.message}`); }
       this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `rebooting${reason ? `: ${reason}` : ''}` });
       log.info('intent', `reboot by ${who}${reason ? `: ${reason}` : ''}`);
-      reply('rebooting — sessions resume on relaunch');
+      reply('reboot queued — restarting once every session is idle; sessions resume on relaunch');
       try {
-        if (relaunchApp) relaunchApp();
+        // The host decides WHEN. Under Electron the restart waits for a sustained
+        // all-idle window, so this seat's own turn finishes and flushes first —
+        // which means the wait can also be given up, and onAbandon is the only way
+        // the seat hears about that. Nobody is watching the desktop notification
+        // on its behalf.
+        // `requester` is for the OPERATOR's give-up notification, not for this
+        // seat: without it the desktop notice reads as the operator's own restart
+        // failing, when in fact an agent they never asked armed it.
+        if (relaunchApp) relaunchApp({ requester: who, onAbandon: (why) => this._rebootAbandoned(who, why) });
       } catch (e) {
         log.error('intent', `reboot relaunch failed: ${e.message}`);
         reply(`relaunch failed: ${e.message}`);
         try { store.set({ pendingRebootNotice: null }); }
         catch (e2) { log.error('intent', `reboot notice clear failed: ${e2.message}`); }
       }
+    }
+
+    // A deferred reboot ended without restarting. Two things are now wrong and
+    // both have to be undone: the seat is blocked on a relaunch that will never
+    // come, and pendingRebootNotice would announce that restart on some later
+    // launch.
+    //
+    // `why` is the host's reason and drives the ADVICE, which is opposite in the
+    // two cases. 'cancelled' is a human pressing Cancel Pending Restart: telling
+    // that seat to "ask again when work settles" turns the operator's no into an
+    // invitation to re-arm the moment REBOOT_MIN_INTERVAL lapses, leaving them
+    // cancelling the same restart on a loop. Anything else is the 30-minute cap.
+    _rebootAbandoned(who, why) {
+      const cancelled = why === 'cancelled';
+      const store = getUiSettings && getUiSettings();
+      if (store) {
+        try {
+          const cur = store.get();
+          const notice = cur && cur.pendingRebootNotice;
+          // Only if it is still THIS seat's notice — a later requester's must not
+          // be cleared out from under it.
+          if (notice && notice.name === who) store.set({ pendingRebootNotice: null });
+        } catch (e) { log.error('intent', `reboot notice clear failed: ${e.message}`); }
+      }
+      log.warn('intent', cancelled
+        ? `reboot requested by ${who} CANCELLED by the operator`
+        : `reboot requested by ${who} ABANDONED — sessions never settled`);
+      this._broadcast('ipc-message', {
+        type: 'reboot',
+        from: 'clodex',
+        to: who,
+        body: cancelled ? 'reboot CANCELLED (operator)' : 'reboot DROPPED (sessions stayed busy)',
+      });
+      // The wait may have run for up to 30 minutes; the requester may be gone.
+      // Re-resolve by name rather than holding the session object across it.
+      const live = this.sessions.get(who);
+      if (!live) return;
+      this._injectText(live, cancelled
+        ? '[agent:reboot] reboot CANCELLED — the operator cancelled the pending restart. Nothing was restarted, and this is a decision, not a timeout: do not re-request it, ask them first.'
+        : '[agent:reboot] reboot DROPPED — sessions stayed busy, so the restart was never taken. Nothing was restarted; ask again when work settles.',
+        { parkable: true });
     }
 
     maybeDeliverRebootNotice() {

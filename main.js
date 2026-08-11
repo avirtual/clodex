@@ -163,18 +163,21 @@ function restartClodex() {
   setTimeout(() => { app.relaunch(); app.quit(); }, 500);
 }
 
-const { classifyRestart, createIdleWaiter } = require('./restart-waiter');
+const { classifyRestart, createIdleWaiter, giveUpBody } = require('./restart-waiter');
 const idleWaiter = createIdleWaiter({
   getSessions: () => Array.from(manager.sessions.values()),
   now: () => Date.now(),
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: (h) => clearTimeout(h),
   restart: () => restartClodex(),
-  notify: () => {
+  notify: (asked) => {
     try {
       if (Notification.isSupported()) new Notification({
-        title: 'Restart canceled',
-        body: 'Sessions stayed busy for 30 minutes — the pending restart was dropped. Try again when work settles.',
+        // "canceled" would be false on every render: this is the ONLY notify call
+        // site and it is the cap's give-up. An operator cancel does not notify at
+        // all — they pressed the button.
+        title: 'Restart dropped',
+        body: giveUpBody(asked),
       }).show();
     } catch {}
   },
@@ -192,7 +195,10 @@ async function confirmRestartClodex() {
       detail: 'Clodex will restart once every session is idle. Restart now anyway, cancel the pending restart, or keep waiting?',
     });
     if (response === 0) { idleWaiter.disarm(); restartClodex(); }
-    else if (response === 1) idleWaiter.disarm();
+    // "Restart Now" above disarms silently — the pending request is fulfilled by
+    // the restart it takes. Cancelling is the one exit that owes every agent
+    // waiting on this restart the news that it is not coming.
+    else if (response === 1) idleWaiter.disarm({ abandoned: true });
     return;
   }
 
@@ -465,6 +471,14 @@ app.whenReady().then(() => {
       refreshTrayMenu: (...a) => refreshTrayMenu(...a),
       scheduleTrayRefresh: (...a) => scheduleTrayRefresh(...a),
       restartHost: () => restartClodex(),
+      // [agent:reboot] must NOT quit under the requesting seat: the intent is
+      // scanned mid-turn, so an immediate relaunch destroys the turn boundary the
+      // reboot notice is delivered across. Arming the same waiter the menu uses
+      // holds the restart until every seat — the requester included — has been
+      // idle for a sustained window. Never restartClodex() directly here.
+      restartHostWhenIdle: (opts) => {
+        idleWaiter.arm({ onAbandon: opts && opts.onAbandon, requester: opts && opts.requester });
+      },
     },
   });
   manager = engine.manager;
