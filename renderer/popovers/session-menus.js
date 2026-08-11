@@ -104,7 +104,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
     const always = !!opts.always;
     const hours = always ? 0 : opts.hours;
     const ask = always
-      ? `Keep "${name}" prompt cache warm ALWAYS?\n\nNo deadline: it keeps pinging (~1 token each) whenever the cache nears expiry, until you stop it. After an app restart it re-arms itself on the seat's next turn. It still stops on its own if two pings are rejected in a row (expired credentials, which Clodex cannot refresh for you).`
+      ? `Keep "${name}" prompt cache warm ALWAYS?\n\nNo deadline: it keeps pinging (~1 token each) whenever the cache nears expiry, until you stop it. It pauses on its own if two pings are rejected in a row, and picks itself back up on the seat's next turn — as it also does after an app restart. Only you can turn it off.`
       : `Keep "${name}" prompt cache warm for ${hours}h?\n\nThe proxy auto-pings to refresh the cache until ${hours}h after the last turn; each ping costs ~1 token.`;
     if (!confirm(ask)) return;
     let r = await holdApi(name, hours, false, always);
