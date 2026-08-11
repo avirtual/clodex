@@ -159,6 +159,75 @@ test('_emitActivity notify seam: fires when no/unfocused window, silent when foc
   assert.strictEqual(calls.length, 1, 'no new notify while the owning window is focused');
 });
 
+// The ctor wires the tracker's un-deduped event seam to s.activityTs, which the
+// four idleMs read sites (and through them shouldHoldDm) consume. Driven through
+// the real ActivityTracker: a fake would test the fake, and the whole defect was
+// that the deduped `emit` seam is the wrong source for this number.
+test('activityTs is stamped from wire events, not only from state transitions', () => {
+  const m = mk();
+  const seed = Date.now() - 600000; // a restored seat: seeded from lastTranscriptWrite
+  m.sessions.set('a', { name: 'a', workspaceId: 'ws1', activityState: 'idle', activityTs: seed });
+
+  // No wire event yet → the restore seed survives, so a long-cold seat is not
+  // relabelled active-now by the mere existence of the new seam.
+  m._activity.turnStarted('a', { reqId: 's1', sideCall: true });
+  assert.strictEqual(m.sessions.get('a').activityTs, seed, 'side call is not activity');
+
+  m._activity.turnStarted('a', { reqId: 'r1' });
+  const first = m.sessions.get('a').activityTs;
+  assert.ok(first > seed, 'first real request moves the clock off the seed');
+  assert.strictEqual(m.sessions.get('a').activityState, 'thinking');
+
+  // The defect: a further request in the SAME state emits no transition, so the
+  // pre-fix clock stopped here while the seat kept working.
+  m.sessions.get('a').activityTs = first - 300000; // as if stamped 5min ago
+  m._activity.turnStarted('a', { reqId: 'r2' });
+  assert.ok(m.sessions.get('a').activityTs >= first,
+    'a request in an unchanged state still moves the clock');
+  assert.strictEqual(m.sessions.get('a').activityState, 'thinking', 'state stayed deduped');
+
+  // A late event carrying an older ts must not drag the clock backwards into the
+  // dm-hold band (Math.max, not assignment). Driven through a real wire verb with
+  // the tracker's clock pushed back, not by calling the callback directly — a
+  // direct call would pass even if _touch stopped invoking it at all.
+  const now = m.sessions.get('a').activityTs;
+  m._activity._now = () => now - 900000;
+  m._activity.turnStarted('a', { reqId: 'r3' });
+  assert.strictEqual(m.sessions.get('a').activityTs, now, 'the clock never runs backwards');
+
+  // An event for a session this manager does not own is a no-op, not a throw.
+  m._activity.turnStarted('ghost', { reqId: 'g1' });
+  assert.strictEqual(m.sessions.has('ghost'), false);
+});
+
+// The tracker's "timers are not activity" rule has to hold on the LABEL route
+// too: gap-idle and post-sweep transitions reach the session only through
+// _emitActivity, and stamping Date.now() there reports a seat as fresher than
+// its last real event by up to INFLIGHT_MAX_AGE_MS (15min) — long enough to slip
+// a cold seat's dm past the hold gate.
+test('_emitActivity: a timer-inferred transition stamps the last wire event, not now', () => {
+  const m = mk();
+  m.sessions.set('a', { name: 'a', workspaceId: 'ws1', activityState: 'idle', activityTs: 0 });
+  const wireTs = Date.now() - 600000; // the seat's last real request, 10 min ago
+  m._activity._now = () => wireTs;
+  m._activity.turnStarted('a', { reqId: 'r1' });
+  assert.strictEqual(m.sessions.get('a').activityTs, wireTs);
+
+  // The gap-idle / sweep path: a transition with no wire event behind it.
+  m._emitActivity('a', 'idle', false);
+  assert.strictEqual(m.sessions.get('a').activityState, 'idle');
+  assert.strictEqual(m.sessions.get('a').activityTs, wireTs,
+    'the timer transition must not refresh the clock');
+
+  // A jsonl-source session has no wire events at all (the two watcher families
+  // are disjoint: wire sessions get the sentinel, whose watcher passes a no-op in
+  // the activity slot). It must keep today's behaviour — stamp now.
+  m.sessions.set('j', { name: 'j', workspaceId: 'ws1', activityState: 'idle', activityTs: 0 });
+  m._emitActivity('j', 'thinking', false);
+  assert.ok(m.sessions.get('j').activityTs >= wireTs + 600000 - 5000,
+    'no wire event for this session → falls back to now');
+});
+
 test('create: rejects a duplicate session name before any spawn', async () => {
   const m = mk();
   m.sessions.set('dup', { name: 'dup' });
@@ -3305,7 +3374,7 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
 // mergedEnv, which only exists inside create(). A stubbed create() (what the old
 // tests used, appropriate when the POST was in the handler) would assert nothing
 // here.
-function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false } = {}) {
+function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null } = {}) {
   const root = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-hint-'));
   const hints = [];
   const order = [];
@@ -3352,7 +3421,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
     resolveProxyBase: () => proxyBase,
     resolveProxyAgentId: ({ name }) => `clodex-${name}-rt`,
     normalizeProxyBase: (v) => v,
-    lastTranscriptWrite: () => null,
+    lastTranscriptWrite,
     ProxyClient: ProxyClient || {
       spawnerHint: (base, agent, opts) => {
         hints.push({ base, agent, opts }); order.push('hint'); return Promise.resolve({ status: 200 });
@@ -3609,6 +3678,31 @@ test('spawner-hint (t158): create() persists spawnerHintSet on the record — fa
   await unset.spawn('seat', null);
   assert.strictEqual(unset.upserts.at(-1).spawnerHintSet, false,
     'and one that did not writes `false` — absent would spread-merge over a stale true');
+});
+
+// The activityTs restore seed, driven through a REAL create() (mkHintProbe is the
+// nearest fixture that spawns one; it takes lastTranscriptWrite as a param for
+// this). Pre-t289 an out-of-range mtime — NFS, `rsync -t`, a clock step — was
+// self-correcting, because the next transition assigned Date.now() over it. The
+// clock only moves forward now, so an unclamped future seed is PERMANENT: idleMs
+// stays negative, `idleMs < DM_HOLD_IDLE_MS` is trivially true, and that seat can
+// never be held again.
+test('create: a future-dated transcript mtime is clamped to now; a past one is still trusted', async () => {
+  const future = mkHintProbe({ lastTranscriptWrite: () => Date.now() + 900000 });
+  const before = Date.now();
+  await future.spawn('ahead');
+  const seeded = future.m.sessions.get('ahead').activityTs;
+  assert.ok(seeded <= Date.now(), 'a future mtime must not seed the clock ahead of now');
+  assert.ok(seeded >= before, 'ENTER: the clamp fell back to now — it did not zero or drop the field');
+
+  // The other direction, and the reason this is a clamp and not `Date.now()`: a
+  // genuine past mtime is the whole point of the seed (a resumed long-cold peer
+  // must not read as fresh), so it has to survive untouched.
+  const past = Date.now() - 3600000;
+  const behind = mkHintProbe({ lastTranscriptWrite: () => past });
+  await behind.spawn('cold');
+  assert.strictEqual(behind.m.sessions.get('cold').activityTs, past,
+    'a real past mtime is the seed and must pass through exactly');
 });
 
 test('spawner-hint (t158): the reviewer-graveyard sweep clears the route row before dropping the record', () => {

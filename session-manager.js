@@ -526,6 +526,23 @@ function createSessionManager(deps) {
       this._intentDeduper = new IntentDeduper();
       this._activity = new ActivityTracker((name, state, { turnEnd }) => {
         this._emitActivity(name, state, state === 'idle' && turnEnd);
+      }, {
+        // activityTs is read as idleMs at four sites, one of which decides
+        // whether a dm is delivered or parked (shouldHoldDm). _emitActivity only
+        // fires on a LABEL CHANGE, so stamping there alone froze the clock for a
+        // seat that keeps working in one state — parking dms at a busy seat.
+        // Stamp from the wire event instead. Two separate properties, one per
+        // mechanism — do not merge them:
+        //   Math.max buys exactly one thing: an out-of-order event cannot drag
+        //   the clock backwards, which would inflate idleMs into the hold band.
+        //   The lastTranscriptWrite restore seed surviving is NOT Math.max's
+        //   doing — it holds because this callback never FIRES for traffic the
+        //   tracker did not count (sideCall, not-in-flight). Weaken those
+        //   filters and the seed goes, with nothing here to catch it.
+        onEvent: (name, ts) => {
+          const s = this.sessions.get(name);
+          if (s) s.activityTs = Math.max(s.activityTs || 0, ts);
+        },
       });
     }
 
@@ -1491,13 +1508,19 @@ function createSessionManager(deps) {
         // `_noteSubagentTurn` already handles), never throw out of create() and
         // strand a listening socket.
         subagentStore: createSubagentStore ? createSubagentStore() : null,
-        // Peer-visibility facts ([agent:who] labels, dm hold gate): state +
-        // since-when, updated in _emitActivity. Restores seed from the resumed
+        // Peer-visibility facts ([agent:who] labels, dm hold gate): state from
+        // _emitActivity (transition-deduped), timestamp from every counted wire
+        // event (the ActivityTracker onEvent seam). Restores seed from the resumed
         // transcript's mtime (= last real turn) — seeding "now" would make every
         // GUI restart reset idle clocks, mislabeling long-cold peers as fresh
         // and letting DMs to them past the hold gate for 30 minutes.
         activityState: 'idle',
-        activityTs: lastTranscriptWrite(agentType, cwd, resumeId) || Date.now(),
+        // Math.min clamps a FUTURE mtime (NFS, rsync -t, a clock step). It used
+        // to self-correct on the next transition, which assigned Date.now(); the
+        // clock is monotonic now, so a future seed would stick forever, keep
+        // idleMs negative, and make `idleMs < DM_HOLD_IDLE_MS` trivially true —
+        // that seat could never be held again.
+        activityTs: Math.min(lastTranscriptWrite(agentType, cwd, resumeId) || Date.now(), Date.now()),
         needsAttention: null,
         // Auto-compact atPrompt seed. A freshly spawned or resumed CLI is by
         // definition parked at its input prompt — permission dialogs don't
@@ -2641,7 +2664,19 @@ function createSessionManager(deps) {
     _emitActivity(name, state, notify) {
       const s = this.sessions.get(name);
       if (s && s.activityState !== state) {
-        s.activityState = state; s.activityTs = Date.now();
+        // Not Date.now(): the gap-idle and post-sweep transitions are this
+        // process INFERRING quiet from a timer, and stamping them "now" reports
+        // the seat as fresher than its last real event by up to
+        // INFLIGHT_MAX_AGE_MS — a long-cold seat reads as minutes idle and its
+        // dm is delivered instead of held. Identity on wire-driven edges (the
+        // tracker just stamped the same ts); falls back to now for jsonl-source
+        // sessions, whose transitions arrive from JsonlWatcher and have no wire
+        // event at all — the two watcher families are disjoint by construction.
+        // The fallback does not threaten a wire session's restore seed only
+        // because a wire session cannot reach a transition without a counted
+        // event having set lastEventTs first: reachability, not Math.max.
+        s.activityState = state;
+        s.activityTs = Math.max(s.activityTs || 0, this._activity.lastEventTs(name) || Date.now());
         if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       }
       if (s && state !== 'idle') s.lastMainStop = null;
