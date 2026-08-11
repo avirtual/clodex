@@ -69,8 +69,8 @@ const REBOOT_NOTICE_MAX_ATTEMPTS = 3;
 // stall threshold, and 1800000 is the highest expressible value. The cost of
 // setting it at all: the CLI then skips its tengu_byte_stream_idle_timeout_ms
 // remote-config lookup, which makes us immune to a silent server-side
-// tightening and equally locked out of a silent server-side fix. Baking it
-// here rather than telling operators to export it is not a preference —
+// tightening and equally locked out of a silent server-side fix. It must be
+// baked here rather than documented as an operator export:
 // claude-env.js's startup scrub deletes every inherited CLAUDE_* key that is
 // not a SCRUB_SURVIVOR, so a shell export of this one never reaches a seat.
 const BASE_ENV_DEFAULTS = { CLAUDE_STREAM_IDLE_TIMEOUT_MS: '1800000' };
