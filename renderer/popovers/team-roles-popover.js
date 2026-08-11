@@ -72,7 +72,6 @@ function initTeamRolesPopover({ promptText } = {}) {
         el.classList.add('read-only');
         el.innerHTML =
           `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span>` +
-          `<span class="team-role-inst">${esc(row.instantiate)}</span>` +
           `<span class="team-role-badge" title="Managed by Clodex — you don't need to change anything here">managed by Clodex</span></div>` +
           `<div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div>` +
           `<div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || '—')}</span></div>` +
@@ -86,8 +85,7 @@ function initTeamRolesPopover({ promptText } = {}) {
         // property assignment can't escape an attribute context). Placeholders +
         // the caption are fixed strings — they signal this row is editable (C3).
         el.innerHTML =
-          `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span>` +
-          `<span class="team-role-inst">${esc(row.instantiate)}</span></div>` +
+          `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div>` +
           `<div class="team-role-editcap">Edit this role</div>` +
           `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label>` +
           `<label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label>` +
@@ -116,15 +114,23 @@ function initTeamRolesPopover({ promptText } = {}) {
           if (row.prompt && !promptNames.includes(row.prompt)) {
             const missing = document.createElement('option');
             missing.value = row.prompt;
-            // Only accuse it of being absent when the listing SUCCEEDED (empty ≠
-            // failed). On a transient listing failure, show the stored name plainly
-            // with a neutral tooltip — the prompt may well be present. Both branches
-            // set textContent/title by PROPERTY (row.prompt is agent-writable).
-            if (promptsListingOk) {
-              missing.textContent = `${row.prompt} (missing from library)`;
-            } else {
+            // THREE distinct facts, three messages. They have different fixes, and
+            // one wording for all of them sent the operator hunting for a file that
+            // was on disk the whole time. All set by PROPERTY (agent-writable).
+            if (!promptsListingOk) {
+              // The listing failed — an empty list is indistinguishable from a
+              // genuinely empty library by count, so accuse the prompt of nothing.
               missing.textContent = row.prompt;
               missing.title = 'library listing unavailable';
+            } else if (allPromptNames.includes(row.prompt)) {
+              // Present on disk, but not an append-rail prompt: the picker won't
+              // offer it and the seat won't compose it. The fix is `rail: append`
+              // in its front matter, not writing the file.
+              missing.textContent = `${row.prompt} (not an append-rail prompt)`;
+              missing.title = 'this prompt exists but does not declare "rail: append", so it can\'t compose onto a role';
+            } else {
+              missing.textContent = `${row.prompt} (missing from library)`;
+              missing.title = 'no system prompt by this name is installed';
             }
             sel.appendChild(missing);
           }
@@ -166,6 +172,9 @@ function initTeamRolesPopover({ promptText } = {}) {
   // renderRows (also hit on post-mutation refresh) can build per-row pickers
   // without re-fetching.
   let promptNames = [];
+  // Every system prompt on disk, rail or not — the second fact renderRows needs
+  // to tell "not installed" from "installed but off the append rail".
+  let allPromptNames = [];
   // Did the LAST prompts listing actually succeed? A transient IPC reject/timeout
   // (res null) or a handler error (res.ok === false) both collapse to an empty
   // list — indistinguishable from "the library is genuinely empty" by count alone.
@@ -178,6 +187,7 @@ function initTeamRolesPopover({ promptText } = {}) {
     promptsListingOk = !!(res && res.ok);
     const prompts = (res && res.prompts) || [];
     promptNames = prompts;
+    allPromptNames = (res && res.all) || [];
     addPrompt.innerHTML = '<option value="">(no prompt)</option>';
     for (const p of prompts) {
       const opt = document.createElement('option');
@@ -247,7 +257,7 @@ function initTeamRolesPopover({ promptText } = {}) {
     if (!v.ok) { setStatus(v.error, true); return; }
     // Omit empty fields rather than writing literal nulls into the def (keeps the
     // manifest clean; the schema treats absent === null anyway).
-    const def = { instantiate: 'session' };
+    const def = {};
     if (addPrompt.value) def.prompt = addPrompt.value;
     if (v.template) def.template = v.template;
     const brief = addBrief.value.trim();

@@ -22,6 +22,10 @@ const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 // One display row-model per role in a loaded manifest, in the manifest's key
 // order. `readOnly` marks the operator-owned keys (lead/reviewer). Missing
 // descriptive fields normalize to '' so the render can show them uniformly.
+//
+// The editable keys here are pinned against the manifest schema by the
+// legibility test: a row model that shows a field no front door sets, or omits
+// one that is set, is the drift that test exists to catch.
 function teamRoleRows(manifest) {
   const roles = (manifest && manifest.roles) || {};
   return Object.entries(roles).map(([key, def]) => ({
@@ -29,7 +33,6 @@ function teamRoleRows(manifest) {
     brief: (def && def.brief) || '',
     prompt: (def && def.prompt) || '',
     template: (def && def.template) || '',
-    instantiate: (def && def.instantiate) || 'session',
     readOnly: RESERVED_ROLE_KEYS.has(key),
   }));
 }

@@ -136,10 +136,13 @@ registry `~/.clodex/library/exec/clodex-team.json`.
 - `retire` (command → silent success): delivers a `team-retire` envelope to
   the TARGET's own socket. The core (`_handleTeamRetire`) authorizes —
   requester running, same team root, no self-retire — then disposes of the
-  seat by its ROLE: a seat whose role is marked `ephemeral: true` in
-  `team.json`, **or whose name matches no role at all**, is discarded (killed,
-  record dropped, name immediately reusable); a seat filling a named
-  non-ephemeral role is archived (resumable, and the name stays taken). It
+  seat from two facts: a seat whose persistence record carries
+  `ephemeral: true` (stamped at spawn by the path that knew — the ticket seat
+  and the review reservation), **or whose name matches no manifest role at
+  all**, is discarded (killed, record dropped, name immediately reusable); a
+  seat filling a named role is archived (resumable, and the name stays taken).
+  The record is the single source of ephemerality — the role schema carried a
+  second copy that could disagree with it, and no longer does. It
   tells the owning window either way and confirms to the requester PASSIVELY;
   refusals wake the requester as loud DMs.
 - `tickets` (query → replies): the team's ticket board, `filter` one of

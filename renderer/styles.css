@@ -1225,7 +1225,6 @@ html, body {
 .team-role-row.read-only { opacity: 0.72; }
 .team-role-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .team-role-key { font-weight: 600; }
-.team-role-inst { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); }
 .team-role-badge {
   font-size: 10px;
   color: var(--text-dim);

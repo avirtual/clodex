@@ -202,9 +202,19 @@ function registerIpcHandlers(deps) {
     catch (err) { return { ok: false, error: err.message }; }
   });
 
+  // `prompts` is the picker's offering (append-rail only); `all` is every system
+  // prompt on disk. The popover needs both to tell a stored prompt that is ABSENT
+  // from one that is present but off the rail — one message for both facts sent
+  // the operator looking for a file that was there all along.
   handle('team:rolePrompts', () => {
-    try { return { ok: true, prompts: appendRailPrompts(promptLibrary.list('system')) }; }
-    catch (err) { return { ok: false, error: err.message, prompts: [] }; }
+    try {
+      const rows = promptLibrary.list('system');
+      return {
+        ok: true,
+        prompts: appendRailPrompts(rows),
+        all: (rows || []).map((p) => p && p.name).filter(Boolean),
+      };
+    } catch (err) { return { ok: false, error: err.message, prompts: [], all: [] }; }
   });
 
   handle('worktree:create', async (_e, cwd, branch, opts) =>
