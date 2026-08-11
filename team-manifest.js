@@ -108,6 +108,30 @@ function unknownRoleKeys(def) {
   return Object.keys(def).filter((k) => !ROLE_KEYS.has(k));
 }
 
+// The write-path counterpart of the load-time drop: a def carrying only keys this
+// schema models. Every mutator writes through this, because dropping a key only on
+// the way OUT leaves it on disk — `tools: ["Read"]` in team.json is a restriction
+// nothing enforces, and a front door that accepts one is worse than a hand-edit,
+// which at least nobody mistakes for a supported feature.
+//
+// A non-object is returned untouched so a malformed def still reaches the
+// validators that throw on it, rather than being laundered into a valid `{}`.
+function pickRoleKeys(def) {
+  if (!def || typeof def !== 'object' || Array.isArray(def)) return def;
+  const out = {};
+  for (const [k, v] of Object.entries(def)) {
+    if (ROLE_KEYS.has(k)) out[k] = v;
+  }
+  return out;
+}
+
+// One console line per (file, dropped-key-set), for the life of the process.
+// loadManifest has no cache and resolveTeam loads EVERY team on EVERY call —
+// _sweepTickets alone runs it every 60s per live seat — so an ungated warn is a
+// line several times a minute, forever, for one legacy file anywhere on the
+// machine. A main-process log nobody can read is where a real error goes to hide.
+const warnedDrops = new Set();
+
 function createTeamManifest({ fs, clodexHome } = {}) {
   const home = clodexHome || defaultClodexHome();
   const teamsDir = path.join(home, 'teams');
@@ -125,6 +149,19 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   // every caller (engine.js and every test) injects the real fs anyway. The dir
   // is still created 0700 first — atomicWriteFileSync's own mkdir carries no
   // mode, and ~/.clodex/teams/<name>/ must not widen to the umask default.
+  // Stamp the current schema version onto a manifest about to be written, but
+  // ONLY when every role on it is free of keys this schema no longer models.
+  // A mutator touches one role and deliberately preserves the others' raw keys,
+  // so an unconditional stamp would claim a migration that did not happen and
+  // silence the load-time warn over keys still sitting on disk. Conditional, the
+  // version means what it says: this file has nothing left to drop.
+  function stampVersion(raw) {
+    const roles = (raw && raw.roles && typeof raw.roles === 'object') ? raw.roles : {};
+    const clean = Object.values(roles).every((d) => unknownRoleKeys(d).length === 0);
+    if (clean) raw.version = MANIFEST_VERSION;
+    return raw;
+  }
+
   function atomicWrite(file, data) {
     ensureDir(path.dirname(file));
     atomicWriteFileSync(file, data);
@@ -187,12 +224,28 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       for (const k of unknownRoleKeys(def)) dropped.push(`${roleName}.${k}`);
       roles[roleName] = normalizeRoleDef(roleName, def, file);
     }
+    // Absent reads as 1, not as current: a file written before the version
+    // existed IS a version-1 file, and defaulting to current would let a stale
+    // manifest claim a schema it was never checked against.
+    const version = (typeof m.version === 'number' && Number.isInteger(m.version) && m.version > 0)
+      ? m.version : 1;
     // Warn, never throw: a version-1 file still on disk carries `instantiate`
     // and friends, and a manifest that refuses to load reads as "this cwd is on
     // no team" at every call site — the whole team layer would vanish over a key
     // nothing consumes any more.
-    if (dropped.length) {
-      console.warn(`team "${name}": ignoring role keys this schema no longer models — ${dropped.join(', ')} (${file})`);
+    //
+    // This is `version`'s consumer, and the pair is what makes the drop
+    // self-healing rather than merely quiet: an out-of-date file warns (once per
+    // key set) until a mutator rewrites it clean and restamps, after which the
+    // version gate alone silences it. A CURRENT-version file with unknown keys is
+    // silent by design — that is a hand-added key on today's schema, which the
+    // legibility gate covers; the warn exists for the migration, not as a linter.
+    if (dropped.length && version < MANIFEST_VERSION) {
+      const seen = `${file} ${dropped.join(',')}`;
+      if (!warnedDrops.has(seen)) {
+        warnedDrops.add(seen);
+        console.warn(`team "${name}": ignoring role keys this schema no longer models — ${dropped.join(', ')} (${file})`);
+      }
     }
     // team.json is agent-writable, so a hand-written watchdogMs is neutralized at
     // READ, the choke point every consumer passes. Never throw on a bad value — one
@@ -201,11 +254,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const watchdogMs = (typeof rawWatchdog === 'number' && Number.isFinite(rawWatchdog) && rawWatchdog > 0)
       ? Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, rawWatchdog))
       : null;
-    // Absent reads as 1, not as current: a file written before the version
-    // existed IS a version-1 file, and defaulting to current would let a stale
-    // manifest claim a schema it was never checked against.
-    const version = (typeof m.version === 'number' && Number.isInteger(m.version) && m.version > 0)
-      ? m.version : 1;
     return { name, root: path.resolve(root), lead, roles, file, watchdogMs, version };
   }
 
@@ -333,11 +381,15 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     };
     const callerRoles = roles && typeof roles === 'object' && !Array.isArray(roles) && Object.keys(roles).length
       ? roles : null;
+    // Caller roles are picked down to the schema for the same reason addRole's
+    // are: a brand-new file must not be born carrying a field no resolver reads.
+    const seedRoles = {};
+    for (const [k, v] of Object.entries(callerRoles || defaultRoles)) seedRoles[k] = pickRoleKeys(v);
     const manifest = {
       version: MANIFEST_VERSION,
       lead,
       root: resolvedRoot,
-      roles: callerRoles || defaultRoles,
+      roles: seedRoles,
     };
     atomicWrite(file, JSON.stringify(manifest, null, 2));
     return loadManifest(name);
@@ -363,12 +415,18 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       if (JSON.stringify(existing) === JSON.stringify(normalized)) return team; // no-op
       throw new Error(`role "${roleName}" already exists on team "${teamName}" with a different definition`);
     }
-    // Re-read raw to preserve any hand-authored fields/formatting we don't model,
-    // then append the new role and write atomically.
+    // Re-read raw to preserve any hand-authored fields/formatting we don't model
+    // on the OTHER roles, then append the new role and write atomically.
+    //
+    // The new role is written through pickRoleKeys, not verbatim: this is the
+    // front door (`team:addRole` takes an arbitrary def), and a verbatim write
+    // lands `tools: ["Read"]` — a restriction enforced by nothing — in team.json,
+    // where read-back drops it but the file still reads as a policy. That
+    // preservation rule above is about roles this call did not author.
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
-    raw.roles[roleName] = def;
-    atomicWrite(team.file, JSON.stringify(raw, null, 2));
+    raw.roles[roleName] = pickRoleKeys(def);
+    atomicWrite(team.file, JSON.stringify(stampVersion(raw), null, 2));
     return loadManifest(teamName);
   }
 
@@ -397,9 +455,13 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     }
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
+    // NOT picked down to the schema, unlike addRole's new role: this write
+    // preserves an EXISTING role's hand-authored keys (pinned below), and `clean`
+    // is already EDITABLE-only, so no cut field can enter here — it can only
+    // already be on disk. The restamp below is conditional for that reason.
     raw.roles[roleName] = { ...raw.roles[roleName], ...clean };
     normalizeRoleDef(roleName, raw.roles[roleName], team.file);
-    atomicWrite(team.file, JSON.stringify(raw, null, 2));
+    atomicWrite(team.file, JSON.stringify(stampVersion(raw), null, 2));
     return loadManifest(teamName);
   }
 
