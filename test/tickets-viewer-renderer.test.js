@@ -86,15 +86,33 @@ function fakeDom() {
         if (!s) return;
         for (const m of s.matchAll(/<([a-zA-Z][a-zA-Z0-9]*)/g)) this.children.push(make(m[1].toLowerCase()));
       },
-      appendChild(c) { this.children.push(c); return c; },
+      appendChild(c) { this.children.push(c); c.parentNode = this; return c; },
       removeChild(c) {
         const i = this.children.indexOf(c);
         // Throws like the real DOM: a renderer removing a node it does not own
         // is a bug, and a silent no-op here would hide it.
         if (i < 0) throw new Error('removeChild: node is not a child of this node');
         this.children.splice(i, 1);
+        c.parentNode = null;
         return c;
       },
+      // The editor panel is PREPENDED, so the harness has to model insertion
+      // position — appending it instead would still satisfy every text
+      // assertion while putting the panel below the fold on a long board.
+      insertBefore(c, ref) {
+        const i = ref ? this.children.indexOf(ref) : -1;
+        if (i < 0) this.children.push(c); else this.children.splice(i, 0, c);
+        c.parentNode = this;
+        return c;
+      },
+      get firstChild() { return this.children[0] || null; },
+      // Form-control state the CRUD surface reads back. `value` is a plain
+      // field: the renderer writes it (seeding the editor with an existing
+      // spec) and reads it (on submit), and a test drives an edit by setting it.
+      value: '',
+      placeholder: '',
+      parentNode: null,
+      focus() {},
       addEventListener(ev, fn) { (this.listeners[ev] ||= []).push(fn); },
       setAttribute() {},
       classList: { toggle: () => {}, add: () => {}, remove: () => {} },
@@ -110,12 +128,50 @@ function fakeDom() {
         return null;
       },
       click() { for (const fn of this.listeners.click || []) fn(); },
+      // A <select> fires `change`, not `click`. Modelled as its own dispatch so
+      // a test drives the assign control the way the operator does — pick a
+      // value, then fire — rather than by reaching for the handler directly.
+      change(v) {
+        if (v !== undefined) this.value = v;
+        for (const fn of this.listeners.change || []) fn();
+      },
     };
     return node;
   };
   const prevDoc = global.document;
   global.document = { createElement: make };
   return { root: make('div'), restore: () => { global.document = prevDoc; } };
+}
+
+// Every node in the tree whose className contains `cls`.
+function allByClass(root, cls, out = []) {
+  if (String(root.className).split(/\s+/).includes(cls)) out.push(root);
+  for (const c of root.children) allByClass(c, cls, out);
+  return out;
+}
+
+// The first button whose visible label is exactly `label`. Buttons are found by
+// what the operator reads, not by class, so a relabelled control fails loudly
+// here instead of silently going untested.
+function buttonLabelled(root, label) {
+  const hit = [];
+  (function walk(n) {
+    if (n.tag === 'button' && n.textContent === label) hit.push(n);
+    n.children.forEach(walk);
+  })(root);
+  return hit[0] || null;
+}
+
+// window.confirm, stubbed. Returns `answer` and records what it was asked, so a
+// destructive action can be tested BOTH ways — confirmed and declined — and the
+// decline case can assert nothing was invoked.
+function withConfirm(answer, fn) {
+  const prev = global.confirm;
+  const asked = [];
+  global.confirm = (msg) => { asked.push(String(msg)); return answer; };
+  return Promise.resolve()
+    .then(() => fn(asked))
+    .finally(() => { if (prev === undefined) delete global.confirm; else global.confirm = prev; });
 }
 
 // All text in the tree, and every class present. The assertions below are about
@@ -147,37 +203,61 @@ function shaped(id, over = {}) {
 
 function boardRes(over = {}) {
   return {
-    ok: true, team: 'alpha', now: Date.now(), stallMs: 30 * 60 * 1000, warning: '',
+    ok: true, project: 'proj-1234abcd', root: '/proj/alpha', team: 'alpha',
+    now: Date.now(), stallMs: 30 * 60 * 1000, warning: '',
     open: [], recent: [],
     counts: { open: 0, backlog: 0, done: 0, cancelled: 0, recentOver: 0, recentWindowMs: 24 * HOUR, unknownState: 0, malformed: 0 },
     ...over,
   };
 }
 
+// One project row, in the shape `projects` answers with. The left pane lists
+// PROJECTS since t304 — the board belongs to the project, and a team is one
+// optional name for it.
+function projectRow(over = {}) {
+  return { key: 'proj-1234abcd', leaf: 'proj', root: '/proj/alpha', team: 'alpha', open: 0, stalled: 0, backlog: 0, parked: 0, warning: '', ...over };
+}
+
+function projectsRes(rows) {
+  return { ok: true, projects: rows === undefined ? [projectRow()] : rows };
+}
+
 // `answers` maps a method to its response, so each case declares exactly what
 // the engine said and the assertions are about what the renderer did with it.
+// Every invocation is RECORDED: a mutating case asserts what the renderer asked
+// the engine to do, which is the only thing this half can be responsible for.
 function withDom(answers, fn) {
   const { root, restore } = fakeDom();
   const logged = [];
+  const toasts = [];
+  const calls = [];
   const rhost = {
     invoke(method, arg) {
-      const a = answers[method];
+      calls.push({ method, arg });
+      // Defaults so every case does not have to restate the two reads it does
+      // not care about. A case that DOES care overrides them.
+      const a = Object.prototype.hasOwnProperty.call(answers, method)
+        ? answers[method]
+        : ({ projects: projectsRes(), sessions: { ok: true, sessions: [] } })[method];
       return Promise.resolve(typeof a === 'function' ? a(arg) : a);
     },
     log: { info: () => {}, error: (...m) => logged.push(m) },
     ui: {
       surfaces: { overlay: (spec) => { rhost._overlay = spec; return { open: () => {}, close: () => {} }; } },
       sidebar: { footerButton: (spec) => { rhost._button = spec; return () => {}; }, requestRelayout: () => {} },
-      showToast: () => {},
+      showToast: (msg, opts) => toasts.push({ msg: String(msg), kind: opts && opts.kind }),
     },
+    _calls: calls,
+    _toasts: toasts,
   };
+  const settle = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
   const run = async () => {
     const teardown = viewer.activate(rhost);
     rhost._overlay.mount(root);
     await rhost._overlay.onOpen();
     // The mount's refresh is fire-and-forget; let its promise chain settle.
-    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
-    return { rhost, root, teardown, logged };
+    await settle();
+    return { rhost, root, teardown, logged, toasts, calls, settle };
   };
   return run().then(async (ctx) => {
     try { await fn(ctx); } finally { ctx.teardown(); restore(); }
@@ -190,12 +270,12 @@ test('a board that FAILED to load does not paint like an empty one', async () =>
   const failed = [];
   const empty = [];
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 0, stalled: 0 }] },
+    projects: projectsRes(),
     board: { ok: false, error: 'tickets.json is not valid JSON' },
   }, ({ root }) => { failed.push(textOf(root).join('\n'), classesOf(root).join(' ')); });
 
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 0, stalled: 0 }] },
+    projects: projectsRes(),
     board: boardRes(),
   }, ({ root }) => { empty.push(textOf(root).join('\n'), classesOf(root).join(' ')); });
 
@@ -212,41 +292,45 @@ test('a board that FAILED to load does not paint like an empty one', async () =>
   assert.doesNotMatch(empty[0], /Could not read/);
 });
 
-test('an unreadable TEAMS list does not paint like "no teams yet"', async () => {
+test('an unreadable PROJECTS list does not paint like "no projects yet"', async () => {
   const failed = [];
-  await withDom({ teams: { ok: false, error: 'could not read /x/teams (EACCES)' }, board: boardRes() },
+  await withDom({ projects: { ok: false, error: 'could not read /x/projects (EACCES)' }, board: boardRes() },
     ({ root }) => { failed.push(textOf(root).join('\n'), classesOf(root).join(' ')); });
-  assert.match(failed[0], /Could not read the teams directory/);
+  assert.match(failed[0], /Could not read the projects directory/);
   assert.match(failed[0], /EACCES/);
   assert.match(failed[1], /tv-error/);
 
   const none = [];
-  await withDom({ teams: { ok: true, teams: [] }, board: boardRes() },
+  await withDom({ projects: { ok: true, projects: [] }, board: boardRes() },
     ({ root }) => { none.push(textOf(root).join('\n'), classesOf(root).join(' ')); });
-  assert.match(none[0], /No teams yet/);
+  assert.match(none[0], /No projects yet/);
   assert.doesNotMatch(none[1], /tv-error/);
+  // The empty state must not blame a missing TEAM: a board with no team is the
+  // ordinary solo case since t304, and telling the operator to create one would
+  // send them after the wrong thing.
+  assert.doesNotMatch(none[0], /team/i, 'no team is a normal state, not the reason the list is empty');
 });
 
 test('an invoke that throws is a stated failure, never an empty board', async () => {
   // The transport dying is a third way to get nothing back, and it must land in
   // the same place as an {ok:false} rather than falling through to a blank.
   await withDom({
-    teams: () => { throw new Error('channel is gone'); },
+    projects: () => { throw new Error('channel is gone'); },
     board: boardRes(),
   }, ({ root }) => {
     const text = textOf(root).join('\n');
-    assert.match(text, /Could not read the teams directory/);
+    assert.match(text, /Could not read the projects directory/);
     assert.match(classesOf(root).join(' '), /tv-error/);
   });
 });
 
-test('a team whose registry is broken shows an error marker, never a count', async () => {
+test('a project whose registry is broken shows an error marker, never a count', async () => {
   await withDom({
-    teams: { ok: true, teams: [{ team: 'broken', error: 'tickets.json is not valid JSON' }] },
+    projects: projectsRes([projectRow({ key: 'broken-1234abcd', open: undefined, error: 'tickets.json is not valid JSON' })]),
     board: { ok: false, error: 'tickets.json is not valid JSON' },
   }, ({ root }) => {
     const text = textOf(root).join('\n');
-    // `0 open` beside a team that could not be read is the false green.
+    // `0 open` beside a project that could not be read is the false green.
     assert.doesNotMatch(text, /0 open/);
     assert.match(classesOf(root).join(' '), /tv-team-error/);
   });
@@ -259,7 +343,7 @@ test('a team whose registry is broken shows an error marker, never a count', asy
 // others call `hand`.
 test('a re-pinned row renders the ROLE, so the viewer and the two boards name the same thing', async () => {
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0 }] },
+    projects: projectsRes([projectRow({ open: 1 })]),
     board: boardRes({
       open: [shaped('t1', { assignee: 'team-hand-9', role: 'hand', shownFor: 'hand' })],
       counts: { ...boardRes().counts, open: 1 },
@@ -278,7 +362,7 @@ test('a re-pinned row renders the ROLE, so the viewer and the two boards name th
 
 test('the open list renders id, title, assignee, ages and artifact path', async () => {
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0 }] },
+    projects: projectsRes([projectRow({ open: 1 })]),
     board: boardRes({
       open: [shaped('t7', { title: 'do the thing', assignee: 'hand', taskDir: 'tasks/do-the-thing', ageMs: 5 * HOUR, quietMs: 20 * 60 * 1000 })],
       counts: { ...boardRes().counts, open: 1 },
@@ -293,7 +377,7 @@ test('the open list renders id, title, assignee, ages and artifact path', async 
 
 test('a MISSING artifact path is stated, not left blank', async () => {
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0 }] },
+    projects: projectsRes([projectRow({ open: 1 })]),
     board: boardRes({ open: [shaped('t1', { taskDir: '' })] }),
   }, ({ root }) => {
     // "there is nothing on disk to pick up" is the actionable half of the
@@ -305,7 +389,7 @@ test('a MISSING artifact path is stated, not left blank', async () => {
 
 test('an unassigned ticket says so rather than showing an empty slot', async () => {
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0 }] },
+    projects: projectsRes([projectRow({ open: 1 })]),
     board: boardRes({ open: [shaped('t1', { assignee: '' })] }),
   }, ({ root }) => {
     assert.match(textOf(root).join('\n'), /unassigned/);
@@ -315,7 +399,7 @@ test('an unassigned ticket says so rather than showing an empty slot', async () 
 
 test('a stalled ticket is MARKED, and an already-nudged one differently', async () => {
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 2, stalled: 2 }] },
+    projects: projectsRes([projectRow({ open: 2, stalled: 2 })]),
     board: boardRes({
       open: [shaped('t1', { stalled: true, nudged: true }), shaped('t2', { stalled: true })],
     }),
@@ -332,7 +416,7 @@ test('a stalled ticket is MARKED, and an already-nudged one differently', async 
 
 test('a BACKLOG ticket is marked as backlog, never as stalled', async () => {
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 2, stalled: 1, backlog: 1 }] },
+    projects: projectsRes([projectRow({ open: 2, stalled: 1, backlog: 1 })]),
     board: boardRes({
       open: [shaped('t1', { assignee: '', backlog: true, quietMs: 40 * HOUR }), shaped('t2', { stalled: true })],
       counts: { ...boardRes().counts, open: 2, backlog: 1 },
@@ -352,7 +436,7 @@ test('a BACKLOG ticket is marked as backlog, never as stalled', async () => {
 
 test('a PARKED ticket is marked parked, never stalled or backlog (t174)', async () => {
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 2, stalled: 1, backlog: 0, parked: 1 }] },
+    projects: projectsRes([projectRow({ open: 2, stalled: 1, parked: 1 })]),
     board: boardRes({
       // Assigned AND parked: the row that would read as ordinary work in flight
       // without the flag, and that the backlog branch cannot claim.
@@ -372,7 +456,7 @@ test('a PARKED ticket is marked parked, never stalled or backlog (t174)', async 
 
 test('a manifest core would reject is WARNED about while the tickets still render', async () => {
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0, backlog: 0, warning: 'team.json "root" is not an absolute path — core would refuse this team' }] },
+    projects: projectsRes([projectRow({ open: 1, warning: 'team.json "root" is not an absolute path — core would refuse this team' })]),
     board: boardRes({ open: [shaped('t1')], warning: 'team.json "root" is not an absolute path — core would refuse this team', counts: { ...boardRes().counts, open: 1 } }),
   }, ({ root }) => {
     const text = textOf(root).join('\n');
@@ -404,7 +488,7 @@ function headOf(root, id) {
 
 test('a ticket\'s spec is COLLAPSED by default and expands on click', async () => {
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0, backlog: 0 }] },
+    projects: projectsRes([projectRow({ open: 1 })]),
     board: boardRes({
       open: [shaped('t1', { spec: 'line one\n\n- a bullet\n- another' })],
       counts: { ...boardRes().counts, open: 1 },
@@ -439,7 +523,7 @@ test('a long title stays recoverable on hover after the head took a click hint',
   // carry its own, the nearer-element rule hands the reader the hint instead.
   const long = 'a title far too long for the row to show without ellipsizing it somewhere';
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0, backlog: 0 }] },
+    projects: projectsRes([projectRow({ open: 1 })]),
     board: boardRes({ open: [shaped('t1', { title: long })], counts: { ...boardRes().counts, open: 1 } }),
   }, ({ root }) => {
     let titleNode = null;
@@ -456,7 +540,7 @@ test('a spec containing markup renders as TEXT, never as elements', async () => 
   // this surface. The text assertion alone is satisfied by an innerHTML
   // implementation too — the querySelector half is the one that can fail.
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0, backlog: 0 }] },
+    projects: projectsRes([projectRow({ open: 1 })]),
     board: boardRes({
       open: [shaped('t1', { spec: 'before <img src=x onerror="boom()"> after' })],
       counts: { ...boardRes().counts, open: 1 },
@@ -476,7 +560,7 @@ test('a ticket with NO spec says so rather than expanding to a blank', async () 
   // prevent.
   for (const spec of ['', '\n  \n']) {
     await withDom({
-      teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0, backlog: 0 }] },
+      projects: projectsRes([projectRow({ open: 1 })]),
       board: boardRes({ open: [shaped('t1', { spec })], counts: { ...boardRes().counts, open: 1 } }),
     }, ({ root }) => {
       headOf(root, 't1').click();
@@ -490,7 +574,7 @@ test('a ticket with NO spec says so rather than expanding to a blank', async () 
 
 test('recently-closed renders below the open list and is capped-marked', async () => {
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0 }] },
+    projects: projectsRes([projectRow({ open: 1 })]),
     board: boardRes({
       open: [shaped('t1')],
       recent: [shaped('t9', { state: 'done', closedAt: Date.now() - HOUR, closedBy: 'hand' })],
@@ -514,7 +598,7 @@ test('recently-closed renders below the open list and is capped-marked', async (
 
 test('no recently-closed section at all when there is none', async () => {
   await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0 }] },
+    projects: projectsRes([projectRow({ open: 1 })]),
     board: boardRes({ open: [shaped('t1')] }),
   }, ({ root }) => {
     assert.doesNotMatch(textOf(root).join('\n'), /Recently closed/);
@@ -523,21 +607,23 @@ test('no recently-closed section at all when there is none', async () => {
 
 test('a board fetch that lands after a RELOAD does not paint over it', async () => {
   // The monotonic-token bug class we fixed in memory-viewer. selectSeq alone is
-  // not enough: renderTeams returns EARLY when the teams list fails, so it never
+  // not enough: renderProjects returns EARLY when the list fails, so it never
   // starts a new select and never bumps selectSeq — an in-flight board result
   // then paints tickets over the error the user is looking at.
   let resolveBoard;
   const pending = new Promise((r) => { resolveBoard = r; });
-  let teamsCalls = 0;
+  let listCalls = 0;
   const { root, restore } = fakeDom();
   const rhost = {
     invoke(method) {
-      if (method === 'teams') {
-        teamsCalls += 1;
-        return Promise.resolve(teamsCalls === 1
-          ? { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0, backlog: 0 }] }
-          : { ok: false, error: 'could not read /x/teams (EACCES)' });
+      if (method === 'projects') {
+        listCalls += 1;
+        return Promise.resolve(listCalls === 1
+          ? projectsRes([projectRow({ open: 1 })])
+          : { ok: false, error: 'could not read /x/projects (EACCES)' });
       }
+      // `sessions` rides with the board fetch, so it must hang too — resolving
+      // it while the board hangs would let the select finish half-way.
       return pending;
     },
     log: { info: () => {}, error: () => {} },
@@ -551,33 +637,242 @@ test('a board fetch that lands after a RELOAD does not paint over it', async () 
   const teardown = viewer.activate(rhost);
   try {
     rhost._overlay.mount(root);
-    await rhost._overlay.onOpen();   // teams ok → selects alpha → board hangs
+    await rhost._overlay.onOpen();   // list ok → selects the project → board hangs
     await settle();
-    await rhost._overlay.onOpen();   // reload: teams now fails, no new select
+    await rhost._overlay.onOpen();   // reload: the list now fails, no new select
     await settle();
     resolveBoard(boardRes({ open: [shaped('t-stale')], counts: { ...boardRes().counts, open: 1 } }));
     await settle();
 
     const text = textOf(root).join('\n');
-    assert.match(text, /Could not read the teams directory/, 'the reload\'s error survives');
+    assert.match(text, /Could not read the projects directory/, 'the reload\'s error survives');
     assert.doesNotMatch(text, /t-stale/, 'a board from before the reload must not paint');
   } finally { teardown(); restore(); }
 });
 
-// ── read-only, on screen ────────────────────────────────────────────────────
+// ── the CRUD surface (t304) ─────────────────────────────────────────────────
 
-test('the board offers NO mutation control', async () => {
-  await withDom({
-    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0 }] },
-    board: boardRes({ open: [shaped('t1')], recent: [shaped('t9', { closedAt: Date.now() })] }),
-  }, ({ root, rhost }) => {
-    // v1 is read-only by decision, not by omission. The only button in the tree
-    // is the overlay's own close control; a close/assign/cancel button
-    // appearing here is a scope change for the lead to approve.
-    const buttons = [];
-    (function walk(n) { if (n.tag === 'button') buttons.push(n); n.children.forEach(walk); })(root);
-    assert.deepEqual(buttons.map((b) => b.className), ['tv-close']);
-    // And the surface it contributes is one footer button, nothing more.
+// The board a mutating case starts from: one open ticket, one live seat to
+// assign it to.
+function crudAnswers(over = {}) {
+  return {
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({ open: [shaped('t1', { title: 'do the thing', spec: 'the original spec' })], counts: { ...boardRes().counts, open: 1 } }),
+    sessions: { ok: true, sessions: ['hand-1', 'hand-2'] },
+    ...over,
+  };
+}
+
+test('every CRUD action is reachable with NO team defined', async () => {
+  // The ticket's premise: the board is the project's, so a project no team
+  // names must still offer the whole surface. A control that only appeared for
+  // a team would strand the solo operator the feature is for.
+  await withDom(crudAnswers({
+    projects: projectsRes([projectRow({ team: '', open: 1 })]),
+    board: boardRes({
+      team: '', open: [shaped('t1')], counts: { ...boardRes().counts, open: 1 },
+    }),
+  }), ({ root }) => {
+    for (const label of ['+ New ticket', 'Edit spec', 'Close', 'Cancel']) {
+      assert.ok(buttonLabelled(root, label), `${label} must be reachable with no team`);
+    }
+    assert.equal(allByClass(root, 'tv-assign').length, 1, 'and so must the assign control');
+  });
+});
+
+test('the add form opens a ticket with the spec and assignee the operator chose', async () => {
+  await withDom(crudAnswers({ add: { ok: true, id: 't2', delivered: true } }), async ({ root, calls, settle }) => {
+    buttonLabelled(root, '+ New ticket').click();
+
+    const area = allByClass(root, 'tv-editor-spec')[0];
+    assert.ok(area, 'the editor opened');
+    // A textarea, never a prompt(): a spec is multi-line, and prompt collapses
+    // it to one line — which would silently rewrite every spec typed into it.
+    assert.equal(area.tag, 'textarea');
+    area.value = 'tasks/new-thing — a new ticket\n\nwith a second line';
+
+    const picker = allByClass(root, 'tv-editor-assignee')[0];
+    assert.ok(picker, 'the add form offers an assignee');
+    picker.value = 'hand-2';
+
+    buttonLabelled(root, 'Open ticket').click();
+    await settle();
+
+    const add = calls.find((c) => c.method === 'add');
+    assert.ok(add, 'the engine was asked to add');
+    assert.deepEqual(add.arg, {
+      project: 'proj-1234abcd',
+      spec: 'tasks/new-thing — a new ticket\n\nwith a second line',
+      assignee: 'hand-2',
+    }, 'the whole multi-line spec crosses, with the chosen seat');
+
+    // The surface is pull-on-open, so a write that did not re-read would leave
+    // the operator looking at a board that no longer matches the disk.
+    assert.ok(calls.filter((c) => c.method === 'board').length >= 2,
+      'the board is re-read after a successful write');
+    assert.equal(allByClass(root, 'tv-editor-spec').length, 0, 'and the editor closed');
+  });
+});
+
+test('the add form defaults to UNASSIGNED, which is a backlog ticket', async () => {
+  await withDom(crudAnswers({ add: { ok: true, id: 't2', delivered: false } }), async ({ root, calls, settle }) => {
+    buttonLabelled(root, '+ New ticket').click();
+    allByClass(root, 'tv-editor-spec')[0].value = 'no seat for this one';
+    buttonLabelled(root, 'Open ticket').click();
+    await settle();
+
+    // Opening to the backlog is a first-class outcome, not a degraded one — it
+    // is the only outcome available on a box with nothing running.
+    assert.equal(calls.find((c) => c.method === 'add').arg.assignee, '');
+  });
+});
+
+test('an add with an empty spec never reaches the engine', async () => {
+  await withDom(crudAnswers(), async ({ root, calls, toasts, settle }) => {
+    buttonLabelled(root, '+ New ticket').click();
+    allByClass(root, 'tv-editor-spec')[0].value = '   \n\n  ';
+    buttonLabelled(root, 'Open ticket').click();
+    await settle();
+
+    assert.equal(calls.filter((c) => c.method === 'add').length, 0,
+      'the operator is told before a round trip, not after');
+    assert.match(toasts.map((t) => t.msg).join('\n'), /needs a spec/);
+    assert.ok(allByClass(root, 'tv-editor-spec')[0], 'and the editor stays open with their text');
+  });
+});
+
+test('the spec editor opens SEEDED with the current spec, and saves the edit', async () => {
+  await withDom(crudAnswers({ editSpec: { ok: true } }), async ({ root, calls, settle }) => {
+    buttonLabelled(root, 'Edit spec').click();
+
+    const area = allByClass(root, 'tv-editor-spec')[0];
+    // Seeded, because an editor that opened blank turns every edit into a
+    // rewrite from scratch — and the engine replaces the whole field.
+    assert.equal(area.value, 'the original spec', 'the editor starts from what is there');
+
+    area.value = 'the corrected spec';
+    buttonLabelled(root, 'Save spec').click();
+    await settle();
+
+    assert.deepEqual(calls.find((c) => c.method === 'editSpec').arg,
+      { project: 'proj-1234abcd', id: 't1', spec: 'the corrected spec' });
+  });
+});
+
+test('the assign control offers the live seats and reassigns on pick', async () => {
+  await withDom(crudAnswers({ assign: { ok: true, delivered: true } }), async ({ root, calls, settle }) => {
+    const picker = allByClass(root, 'tv-assign')[0];
+    const options = picker.children.map((o) => o.value);
+    // A select over live seats, not a text field: with no team an assignee IS a
+    // session name, so the valid answers are known and typing one is a chance
+    // to typo a ticket into a seat that does not exist.
+    assert.ok(options.includes('hand-2'), 'a live seat is offered');
+    assert.ok(options.includes(''), 'and the no-change option leads');
+
+    picker.change('hand-2');
+    await settle();
+
+    assert.deepEqual(calls.find((c) => c.method === 'assign').arg,
+      { project: 'proj-1234abcd', id: 't1', assignee: 'hand-2' });
+  });
+});
+
+test('picking the no-change option does NOT reassign', async () => {
+  await withDom(crudAnswers({ assign: { ok: true, delivered: true } }), async ({ root, calls, settle }) => {
+    allByClass(root, 'tv-assign')[0].change('');
+    await settle();
+    // The head option exists to display the current holder; firing on it would
+    // reassign a ticket to nobody every time the control was touched.
+    assert.equal(calls.filter((c) => c.method === 'assign').length, 0);
+  });
+});
+
+test('an assignment nobody could be told about is REPORTED, not silently ok', async () => {
+  await withDom(crudAnswers({ assign: { ok: true, delivered: false } }), async ({ root, toasts, settle }) => {
+    allByClass(root, 'tv-assign')[0].change('hand-2');
+    await settle();
+
+    // The one outcome an ok/error pair cannot express: the ticket IS assigned,
+    // so this is not a failure, but a seat that was never sent the spec will
+    // never start — and that looks exactly like a seat working quietly.
+    const said = toasts.map((t) => t.msg).join('\n');
+    assert.match(said, /hand-2/);
+    assert.match(said, /not delivered|not running/i);
+  });
+});
+
+test('a delivered assignment says nothing at all', async () => {
+  await withDom(crudAnswers({ assign: { ok: true, delivered: true } }), async ({ root, toasts, settle }) => {
+    allByClass(root, 'tv-assign')[0].change('hand-2');
+    await settle();
+    // The accept half of the case above: a notice on every success trains the
+    // operator to dismiss the one that matters.
+    assert.deepEqual(toasts, []);
+  });
+});
+
+test('close and cancel CONFIRM first, and do nothing when declined', async () => {
+  for (const [label, method] of [['Close', 'close'], ['Cancel', 'cancel']]) {
+    // Declined.
+    await withConfirm(false, (asked) => withDom(crudAnswers({ [method]: { ok: true } }),
+      async ({ root, calls, settle }) => {
+        buttonLabelled(root, label).click();
+        await settle();
+        assert.equal(asked.length, 1, `${label} asks first`);
+        assert.match(asked[0], /t1/, 'and names the ticket it would act on');
+        assert.equal(calls.filter((c) => c.method === method).length, 0,
+          `a declined ${label} must not reach the engine`);
+      }));
+
+    // Confirmed — the accept half, without which the assertion above passes for
+    // a button that does nothing at all.
+    await withConfirm(true, () => withDom(crudAnswers({ [method]: { ok: true } }),
+      async ({ root, calls, settle }) => {
+        buttonLabelled(root, label).click();
+        await settle();
+        assert.deepEqual(calls.find((c) => c.method === method).arg,
+          { project: 'proj-1234abcd', id: 't1' }, `a confirmed ${label} acts`);
+      }));
+  }
+});
+
+test('a failed write is reported and does NOT close the editor', async () => {
+  await withDom(crudAnswers({ add: { ok: false, error: 'refusing to write: tickets.json is not valid JSON' } }),
+    async ({ root, toasts, settle }) => {
+      buttonLabelled(root, '+ New ticket').click();
+      allByClass(root, 'tv-editor-spec')[0].value = 'some real work';
+      buttonLabelled(root, 'Open ticket').click();
+      await settle();
+
+      const said = toasts.map((t) => t.msg).join('\n');
+      assert.match(said, /refusing to write/, 'the engine\'s reason reaches the operator');
+      assert.equal(toasts[0].kind, 'error');
+      // The text must survive: closing the editor on failure discards what the
+      // operator typed, and a spec is minutes of writing.
+      assert.equal(allByClass(root, 'tv-editor-spec')[0].value, 'some real work',
+        'the operator does not lose their spec to a failed write');
+    });
+});
+
+test('a CLOSED ticket offers no lifecycle action', async () => {
+  await withDom(crudAnswers({
+    board: boardRes({
+      open: [], recent: [shaped('t9', { state: 'done', closedAt: Date.now() - HOUR, closedBy: 'hand' })],
+    }),
+  }), ({ root }) => {
+    // Reopening is `[agent:task reject]`, which carries the notice to the seat
+    // that a silent state flip here would not. Offering Close on a closed row
+    // would also overwrite closedAt/closedBy with the viewer's.
+    assert.equal(buttonLabelled(root, 'Close'), null);
+    assert.equal(buttonLabelled(root, 'Cancel'), null);
+    assert.equal(allByClass(root, 'tv-assign').length, 0);
+    // The row itself is still there — this is about actions, not visibility.
+    assert.match(textOf(root).join('\n'), /t9/);
+  });
+});
+
+test('the surface contributes one footer button and no other entry point', async () => {
+  await withDom(crudAnswers(), ({ rhost }) => {
     assert.equal(rhost._button.label, 'Tickets');
   });
 });

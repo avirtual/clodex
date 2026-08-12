@@ -1,12 +1,20 @@
 'use strict';
 
 /**
- * tickets-viewer — engine half. Read-only, and structurally so: it opens
- * tickets.json for reading and there is no seam it could write through even by
- * mistake — tickets are not a `host.library` kind, so `remove` refuses them.
- * Opening, assigning, closing and cancelling stay with `[agent:task …]`, which
- * also delivers the spec, nudges a stalled seat and hands out the next ticket.
- * A button here that only edited the JSON would skip all of that.
+ * tickets-viewer — engine half. The board belongs to the PROJECT (t301), so
+ * this half enumerates `~/.clodex/projects/*` directly and a team is only ever
+ * enrichment: which team names a project, and whose watchdogMs sets its stall
+ * threshold. Nothing here requires a team to exist.
+ *
+ * It WRITES, as of t304. What a write through this file does NOT do is the
+ * reason the surface stays narrow: `[agent:task …]` also drains the closed
+ * seat's queue (_advanceSeat), rebuilds the sidebar's ticket badges
+ * (_reconcileTickets), writes COST.json, and enforces the lead-only gates. A
+ * plugin can reach none of those — the host surface has no seam for them — so a
+ * viewer write is deliberately the operator's OWN edit of the board, not an
+ * impersonation of the intent path. Spec DELIVERY is the one side effect that
+ * IS reachable (host.sessions.get(name).inject) and it is done, because an
+ * assignment nobody is told about is the one failure that looks like success.
  */
 
 const fs = require('node:fs');
@@ -19,18 +27,39 @@ const crypto = require('node:crypto');
 // null and clodexHome() is the expression below it.
 let clodexHomeOverride = null;
 
+// Latched true the first time a test points this module at a temp home, and
+// NEVER cleared. It exists because clodexHome() falls back to the operator's
+// REAL ~/.clodex, which was harmless while this module only read and is not now
+// that it writes: a mutating call that lands outside a live boot()/cleanup()
+// pair — a test that forgot to boot, one whose cleanup already ran, an await
+// resolving late — would rewrite the operator's live tickets.json, and there is
+// no undo.
+//
+// So: once a test has overridden the home, an override of null means the test
+// tree is GONE, not that we are in production, and every write refuses. Reads
+// are deliberately unaffected — a test asserts the un-overridden root is the
+// real homedir join, and that must stay reachable.
+//
+// Inert in the app by construction: nothing but a test calls
+// setClodexHomeForTest, so this stays false and no production write consults it.
+let everOverridden = false;
+
 // A bare homedir join, byte-identical to engine.js:133's REGISTRY_DIR. Reading
 // CLODEX_HOME here would make the board report on a different tree than the app
 // hosting it: core's root does not honour the variable.
 //
-// The HOME, not the teams dir: teams/ is where a team is discovered, projects/
-// is where its board lives, and both hang off this one root.
+// The HOME, not a subdirectory: teams/ is where a team is discovered, projects/
+// is where every board lives, and both hang off this one root.
 function clodexHome() {
-  return clodexHomeOverride || path.join(os.homedir(), '.clodex');
+  return path.join(clodexHomeOverride || path.join(os.homedir(), '.clodex'));
 }
 
 function teamsRoot() {
   return path.join(clodexHome(), 'teams');
+}
+
+function projectsRoot() {
+  return path.join(clodexHome(), 'projects');
 }
 
 /**
@@ -48,10 +77,96 @@ function projectDirFor(root, projectPath) {
   return path.join(root, 'projects', `${path.basename(real)}-${hash}`);
 }
 
+/**
+ * Core's tickets-store.nextTicketId / ticketTitle / extractTaskDir, copied for
+ * the same §4 reason and pinned against drift by
+ * test/tickets-viewer-path-parity.test.js alongside projectDirFor.
+ *
+ * nextTicketId scans the WHOLE array including closed records, which is what
+ * makes an id permanent: ids are public references (branch names, artifact
+ * dirs, commit messages), so re-issuing one still resolves — to the wrong work.
+ */
+function nextTicketId(tickets) {
+  let max = 0;
+  for (const t of tickets || []) {
+    const m = /^t(\d+)$/.exec(t && t.id);
+    if (m) {
+      const n = Number(m[1]);
+      if (n > max) max = n;
+    }
+  }
+  return `t${max + 1}`;
+}
+
+function ticketTitle(specText) {
+  const lines = String(specText == null ? '' : specText).split('\n');
+  for (const line of lines) {
+    const t = line.trim();
+    if (t) return t.length > 80 ? `${t.slice(0, 77)}…` : t;
+  }
+  return '(untitled)';
+}
+
+// The absolute form is matched FIRST because `tasks/` appears inside it — bare
+// first would truncate an absolute path to its tail.
+function extractTaskDir(specText) {
+  const firstLine = String(specText == null ? '' : specText).split('\n')[0] || '';
+  const abs = firstLine.match(/(?:~|\/)[A-Za-z0-9._/-]*\/tasks\/[A-Za-z0-9._/-]+/);
+  if (abs) return abs[0];
+  const m = firstLine.match(/tasks\/[A-Za-z0-9._/-]+/);
+  return m ? m[0] : null;
+}
+
+/**
+ * Core's fs-util.atomicWriteFileSync, copied for the same §4 reason. Every
+ * clause is load-bearing and none may be simplified into a plain writeFileSync:
+ * the board is a single JSON array rewritten whole, so a torn write does not
+ * lose an edit — it truncates the entire registry. Temp in the SAME directory
+ * (rename is only atomic within a volume), fsync the contents, rename, then
+ * fsync the DIRECTORY so the rename itself is durable and not just the bytes.
+ */
+function atomicWriteFileSync(filePath, data) {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const tmp = path.join(dir, `.${path.basename(filePath)}.tmp.${process.pid}.${Date.now()}`);
+  let fd;
+  try {
+    fd = fs.openSync(tmp, 'w', 0o600);
+    fs.writeSync(fd, data);
+    fs.fsyncSync(fd);
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch (_) {} }
+  }
+  try {
+    fs.renameSync(tmp, filePath);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (_) {}
+    throw e;
+  }
+  let dfd;
+  try {
+    dfd = fs.openSync(dir, 'r');
+    fs.fsyncSync(dfd);
+  } catch (_) {} finally {
+    if (dfd !== undefined) { try { fs.closeSync(dfd); } catch (_) {} }
+  }
+}
+
 const TICKETS_FILE = 'tickets.json';
 // A directory under teams/ is a team when it carries this. Without the check the
 // board would list any stray directory as an empty team.
 const TEAM_FILE = 'team.json';
+// Optional, and treated as a HINT rather than a source of truth: nothing in the
+// app writes it, so a project dir may not have one and one that exists may name
+// a path that no longer hashes to the directory holding it. Verified before it
+// is believed — see projectRootFor.
+const PROJECT_FILE = '.project';
+
+// The actor recorded in `opener` / `closedBy` for a write made HERE. Core writes
+// session.name; a viewer edit has no session behind it, and borrowing a seat's
+// name would attribute the operator's decision to an agent. A name no session
+// can hold keeps the two distinguishable in the record forever.
+const VIEWER_ACTOR = 'viewer';
 
 /**
  * Core's path-confine.js, copied rather than required: §12 of
@@ -61,8 +176,8 @@ const TEAM_FILE = 'team.json';
  *
  * Positive containment, not a name pattern: `.` and `..` are spelled entirely
  * in legal name characters, so no charset filter can reject them. The team name
- * arrives over IPC from the renderer and this is the only sanctioned way to
- * turn it into a path.
+ * and the project key both arrive over IPC from the renderer and this is the
+ * only sanctioned way to turn either into a path.
  */
 function confine(root, name) {
   if (typeof root !== 'string' || !root) return null;
@@ -75,7 +190,9 @@ function confine(root, name) {
 // Core's TICKET_STALL_MS and its per-team override, mirrored from
 // session-manager's _sweepTickets. Re-derived rather than guessed: a board that
 // called a ticket stalled on a different threshold than the one that nudges the
-// seat would contradict the nudge the lead already saw.
+// seat would contradict the nudge the lead already saw. A project with NO team
+// has no override to read, so it gets core's default — which is also the
+// threshold core would apply to it.
 const DEFAULT_STALL_MS = 30 * 60 * 1000;
 
 // team-manifest.js's WATCHDOG_MIN_MS / WATCHDOG_MAX_MS. Core clamps at READ, in
@@ -100,30 +217,24 @@ let host = null;
 // ---------------------------------------------------------------------------
 
 /**
- * `{ ok: true, tickets, malformed }` or `{ ok: false, error }`.
+ * `{ ok: true, tickets, malformed }` or `{ ok: false, error }`, for a board
+ * directory that has already been resolved and confined.
  *
  * Deliberately NOT tickets-store.js's `load()`, which is best-effort by design
  * and answers `[]` for a missing file, an unreadable one, invalid JSON and a
  * non-array alike. That is right for a writer that must not crash a session on
- * a corrupt registry, and wrong for a viewer: it would render a team whose
- * tickets.json is broken exactly like a team that has never opened one.
+ * a corrupt registry, and wrong for a viewer: it would render a project whose
+ * tickets.json is broken exactly like one that has never opened a ticket. It is
+ * doubly wrong now that this file WRITES — saving an array rebuilt from a
+ * best-effort `[]` would erase the very registry it failed to parse.
  *
  * A missing file is the one read failure that genuinely IS empty — the file is
- * created by the first `[agent:task add]`.
- *
- * Takes the PROJECT ROOT, not a team dir: the board moved to the project and a
- * team is now only where that root is read FROM.
+ * created by the first ticket opened.
  */
-function readTickets(projectRoot) {
-  if (typeof projectRoot !== 'string' || !projectRoot) {
-    // Not locatable is a read FAILURE, not an empty board — the manifest warning
-    // beside it explains why, and rendering "no tickets" here would report a
-    // board nobody can find as a team that has never opened one.
-    return { ok: false, error: `cannot locate ${TICKETS_FILE}: team.json names no project root` };
-  }
+function readTicketsAt(boardDir) {
   let raw;
   try {
-    raw = fs.readFileSync(path.join(projectDirFor(clodexHome(), projectRoot), TICKETS_FILE), 'utf8');
+    raw = fs.readFileSync(path.join(boardDir, TICKETS_FILE), 'utf8');
   } catch (e) {
     if (e && e.code === 'ENOENT') return { ok: true, tickets: [], malformed: 0 };
     return { ok: false, error: `could not read ${TICKETS_FILE} (${(e && e.code) || (e && e.message) || 'unknown error'})` };
@@ -144,6 +255,21 @@ function readTickets(projectRoot) {
 }
 
 /**
+ * The same read, keyed by the project ROOT — the form a team manifest gives.
+ * Kept as the seam that maps root → directory so `projectDirFor` has exactly
+ * one caller on the read path.
+ */
+function readTickets(projectRoot) {
+  if (typeof projectRoot !== 'string' || !projectRoot) {
+    // Not locatable is a read FAILURE, not an empty board — rendering "no
+    // tickets" here would report a board nobody can find as a project that has
+    // never opened one.
+    return { ok: false, error: `cannot locate ${TICKETS_FILE}: no project root` };
+  }
+  return readTicketsAt(projectDirFor(clodexHome(), projectRoot));
+}
+
+/**
  * The team's manifest, and with it the answer to "is this directory a team at
  * all". Exactly one of `missing` / `error` / `manifest` is set.
  *
@@ -152,10 +278,6 @@ function readTickets(projectRoot) {
  * nobody can read indistinguishable from a team that was never created. The
  * three outcomes want three different pictures — not a team, a broken team, a
  * team — so the probe has to be able to tell them apart.
- *
- * A manifest that parses but is unusable is NOT a failure: it comes back with a
- * `warning` and the tickets beside it are still shown, because the tickets are
- * the thing on screen.
  */
 function readManifest(teamDir) {
   let raw;
@@ -202,14 +324,71 @@ function manifestWarning(m) {
  * applies at read. Both halves are load-bearing: the precedence keeps this
  * board's verdict equal to the watchdog's, and the clamp keeps a hand-edited
  * `watchdogMs` from silently emptying the stalled column.
- *
- * A manifest that would not parse falls back to the default rather than failing
- * the board — that is what core would use anyway.
  */
 function stallMsFor(manifest) {
   const raw = manifest && manifest.watchdogMs;
   if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return DEFAULT_STALL_MS;
   return Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, raw));
+}
+
+/**
+ * Every team that resolves, indexed by the PROJECT KEY its root hashes to.
+ *
+ * This is the whole of the team's remaining role on this board: it supplies a
+ * display name and a watchdogMs, and its absence costs neither. Built by
+ * hashing each manifest's root FORWARD rather than by inverting a project key,
+ * which is not invertible — sha256 is the point.
+ *
+ * A root claimed by two teams keeps the FIRST in sorted order, so the pick is
+ * stable across reloads rather than readdir-order dependent.
+ */
+function teamIndex() {
+  const out = new Map();
+  let entries;
+  try {
+    entries = fs.readdirSync(teamsRoot(), { withFileTypes: true });
+  } catch (_) {
+    return out;
+  }
+  for (const d of entries.slice().sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+    if (!d.isDirectory()) continue;
+    const man = readManifest(path.join(teamsRoot(), d.name));
+    const root = man.manifest && man.manifest.root;
+    if (typeof root !== 'string' || !root) continue;
+    const key = path.basename(projectDirFor(clodexHome(), root));
+    if (!out.has(key)) out.set(key, { team: d.name, root, manifest: man.manifest, warning: man.warning || '' });
+  }
+  return out;
+}
+
+/**
+ * The project's own root path, or ''. Three sources in falling order of trust,
+ * and the ORDER is the point: a team manifest is written by core and is
+ * authoritative; `.project` is a marker nothing in the app currently writes, so
+ * it is believed only when it still hashes to the directory holding it.
+ *
+ * That check is not ceremony. A project directory is named for the hash of the
+ * root, so a `.project` naming some OTHER path is a stale file left behind by a
+ * moved checkout — and a board that displayed it would name a directory whose
+ * tickets it is not showing.
+ */
+function projectRootFor(key, known) {
+  if (known && known.root) return known.root;
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(projectsRoot(), key, PROJECT_FILE), 'utf8');
+  } catch (_) {
+    return '';
+  }
+  let m;
+  try {
+    m = JSON.parse(raw);
+  } catch (_) {
+    return '';
+  }
+  const p = m && typeof m.path === 'string' ? m.path : '';
+  if (!p) return '';
+  return path.basename(projectDirFor(clodexHome(), p)) === key ? p : '';
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +435,8 @@ function shape(t, now, stallMs) {
     shownFor: role || assignee,
     // Uncapped on purpose. A length limit here drops the tail of a spec with
     // nothing on screen to say so; the renderer caps the HEIGHT in CSS, where
-    // the rest of the body is a scroll away rather than gone.
+    // the rest of the body is a scroll away rather than gone. The editor also
+    // reads this field, so a truncation here would be saved back as the spec.
     spec: str(t.spec),
     state: str(t.state) || '(no state)',
     assignee,
@@ -291,29 +471,150 @@ function shape(t, now, stallMs) {
   };
 }
 
-function board(teamName) {
-  const dir = confine(teamsRoot(), teamName);
-  if (dir === null) return { ok: false, error: 'a valid team name is required' };
-  // Containment is not existence. `confine` accepts any legal single path
-  // component — `...` among them — so without this a team that does not exist
-  // reads as a team with nothing open, which is the same false green as a
-  // corrupt registry rendering empty. team.json is what makes a directory a
-  // team, exactly as in teams().
-  const man = readManifest(dir);
-  if (man.missing) return { ok: false, error: `no team "${teamName}" under ${teamsRoot()}` };
-  if (man.error) return { ok: false, error: man.error };
+// ---------------------------------------------------------------------------
+// Listing
+// ---------------------------------------------------------------------------
 
-  // The board is the PROJECT's, so the manifest's `root` is what locates it —
-  // which makes an unusable team.json a READ failure now, where it used to be a
-  // warning beside a perfectly readable board. That is not a regression to route
-  // around: with no root there is no project, and the tickets are not somewhere
-  // else to be found. It fails loudly for the same reason an unparseable board
-  // does. The warning rides along so the row can say WHY.
-  const read = readTickets(man.manifest && man.manifest.root);
-  if (!read.ok) return man.warning ? { ...read, warning: man.warning } : read;
+/**
+ * `{ ok: true, projects }` or `{ ok: false, error }`. Every project with a board
+ * directory, whether or not a team names it — this is the listing that replaced
+ * the team list as the board's index, because a project is what a board belongs
+ * to and a team is one optional consumer of it.
+ *
+ * A missing projects/ directory is "no projects yet" — nothing has ever opened a
+ * ticket — and every other readdir failure is a failure, reported as one.
+ *
+ * Per-project read failures do NOT fail the list: one corrupt registry must not
+ * hide the projects that are fine, so the row carries its own `error` and the
+ * renderer paints that row differently.
+ */
+function projects() {
+  const root = projectsRoot();
+  let entries;
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { ok: true, projects: [] };
+    return { ok: false, error: `could not read ${root} (${(e && e.code) || (e && e.message) || 'unknown error'})` };
+  }
+
+  const teams = teamIndex();
+  const out = [];
+  for (const d of entries) {
+    if (!d.isDirectory()) continue;
+    const known = teams.get(d.name);
+    const row = {
+      key: d.name,
+      leaf: d.name.replace(/-[0-9a-f]{8}$/, ''),
+      root: projectRootFor(d.name, known),
+      team: known ? known.team : '',
+      warning: known ? known.warning : '',
+    };
+    const read = readTicketsAt(path.join(root, d.name));
+    if (!read.ok) {
+      out.push({ ...row, error: read.error });
+      continue;
+    }
+    const now = Date.now();
+    const stallMs = stallMsFor(known && known.manifest);
+    const open = read.tickets.filter((t) => t.state === 'open').map((t) => shape(t, now, stallMs));
+    out.push({
+      ...row,
+      open: open.length,
+      stalled: open.filter((t) => t.stalled).length,
+      // Separate from `stalled` for the same reason it is separate on a row:
+      // an unassigned ticket needs assigning, not chasing.
+      backlog: open.filter((t) => t.backlog).length,
+      parked: open.filter((t) => t.parked).length,
+    });
+  }
+  out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return { ok: true, projects: out };
+}
+
+/**
+ * `{ ok: true, teams }` or `{ ok: false, error }` — every team, with the project
+ * key its board lives under.
+ *
+ * Kept after the board moved to the project because a team is still how most
+ * boards are reached by name, and NO team is a normal state: an empty list is
+ * `{ ok: true, teams: [] }`, never an error. A missing teams/ directory is the
+ * same normal state — on a box that has never created a team the directory does
+ * not exist at all, so treating ENOENT as a failure would make the ordinary
+ * solo install look broken.
+ */
+function teams() {
+  const root = teamsRoot();
+  let entries;
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { ok: true, teams: [] };
+    return { ok: false, error: `could not read ${root} (${(e && e.code) || (e && e.message) || 'unknown error'})` };
+  }
+
+  const out = [];
+  for (const d of entries) {
+    if (!d.isDirectory()) continue;
+    // team.json is what makes a directory a team (team-manifest's TEAM_FILE).
+    // Without this a stray directory would list as a team.
+    const man = readManifest(path.join(root, d.name));
+    if (man.missing) continue;
+    if (man.error) {
+      out.push({ team: d.name, error: man.error });
+      continue;
+    }
+    const troot = man.manifest && man.manifest.root;
+    out.push({
+      team: d.name,
+      root: typeof troot === 'string' ? troot : '',
+      // The join to the board. Empty when the manifest names no usable root —
+      // which is exactly the case manifestWarning already explains.
+      project: typeof troot === 'string' && troot ? path.basename(projectDirFor(clodexHome(), troot)) : '',
+      warning: man.warning || '',
+    });
+  }
+  out.sort((a, b) => (a.team < b.team ? -1 : a.team > b.team ? 1 : 0));
+  return { ok: true, teams: out };
+}
+
+// ---------------------------------------------------------------------------
+// The board
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves a renderer-supplied project key to a board directory, or an error.
+ * Every read and every write goes through this — it is the only place a string
+ * from the renderer becomes a path, and the existence probe is part of it.
+ */
+function resolveProject(key) {
+  const dir = confine(projectsRoot(), key);
+  if (dir === null) return { ok: false, error: 'a valid project key is required' };
+  // Containment is not existence. `confine` accepts any legal single path
+  // component — `...` among them — so without this a project that does not
+  // exist reads as a project with nothing open, which is the same false green as
+  // a corrupt registry rendering empty.
+  let st;
+  try {
+    st = fs.statSync(dir);
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { ok: false, error: `no project "${key}" under ${projectsRoot()}` };
+    return { ok: false, error: `could not read ${key} (${(e && e.code) || (e && e.message) || 'unknown error'})` };
+  }
+  if (!st.isDirectory()) return { ok: false, error: `no project "${key}" under ${projectsRoot()}` };
+  return { ok: true, dir };
+}
+
+function board(projectKey) {
+  const loc = resolveProject(projectKey);
+  if (!loc.ok) return loc;
+
+  const known = teamIndex().get(projectKey);
+  const read = readTicketsAt(loc.dir);
+  if (!read.ok) return known && known.warning ? { ...read, warning: known.warning } : read;
 
   const now = Date.now();
-  const stallMs = stallMsFor(man.manifest);
+  const stallMs = stallMsFor(known && known.manifest);
   const all = read.tickets;
 
   const open = all
@@ -345,13 +646,17 @@ function board(teamName) {
 
   return {
     ok: true,
-    team: teamName,
+    project: projectKey,
+    root: projectRootFor(projectKey, known),
+    // '' when no team names this project — the ordinary solo case, and NOT a
+    // warning: the board is the project's and a team is optional.
+    team: known ? known.team : '',
     now,
     stallMs,
     // A manifest core would reject, when the tickets themselves read fine. Not
-    // a false green about the tickets — they are real — but a board that showed
-    // nothing would let a team the app cannot resolve look entirely healthy.
-    warning: man.warning || '',
+    // a false green about the tickets — they are real — but a team the app
+    // cannot resolve must not look entirely healthy here.
+    warning: known ? known.warning : '',
     open,
     recent,
     counts: {
@@ -370,61 +675,255 @@ function board(teamName) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------------
+
 /**
- * `{ ok: true, teams }` or `{ ok: false, error }`. A missing teams/ directory is
- * "no teams yet" — nothing has ever created one — and every other readdir
- * failure is a failure, reported as one.
+ * The refusal described at `everOverridden`, as a result object or null.
  *
- * Per-team read failures do NOT fail the list: one corrupt registry must not
- * hide the teams that are fine, so the row carries its own `error` and the
- * renderer paints that row differently.
+ * Checked at the write choke point rather than at each verb so a verb added
+ * later cannot forget it.
  */
-function teams() {
-  const root = teamsRoot();
-  let entries;
+function writeEscapedTestTree() {
+  if (everOverridden && clodexHomeOverride === null) {
+    return {
+      ok: false,
+      error: 'refusing to write: the test clodex home was cleared, so this write '
+        + 'would land in the real ~/.clodex board',
+    };
+  }
+  return null;
+}
+
+/**
+ * Load the board, hand it to `mutate`, and save it back — the ONE path every
+ * write takes.
+ *
+ * The load happens HERE rather than in the caller, as late as it can: core's
+ * ticket handlers carry the same note (`_taskDone`'s "an early load would be a
+ * wider window for a concurrent clodex-team write to be clobbered by the save")
+ * because the whole array is rewritten, so anything another writer added
+ * between the read and the save is lost. There is no lock to take — core does
+ * not take one either — so narrowing the window is the entire mitigation.
+ *
+ * `mutate` returns `{ error }` to refuse without writing, or `{ result }` to
+ * commit. Refusing BEFORE any save is what keeps a rejected edit from leaving
+ * half a change on disk.
+ */
+function mutateBoard(projectKey, mutate) {
+  // Ahead of resolveProject, so the refusal cannot depend on what happens to
+  // exist under the real home.
+  const escaped = writeEscapedTestTree();
+  if (escaped) return escaped;
+  const loc = resolveProject(projectKey);
+  if (!loc.ok) return loc;
+  // Not tickets-store's best-effort load: saving an array rebuilt from a `[]`
+  // that actually meant "this file did not parse" would erase the registry.
+  const read = readTicketsAt(loc.dir);
+  if (!read.ok) return { ok: false, error: `refusing to write: ${read.error}` };
+
+  const outcome = mutate(read.tickets);
+  if (outcome && outcome.error) return { ok: false, error: outcome.error };
+
   try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
+    atomicWriteFileSync(path.join(loc.dir, TICKETS_FILE), JSON.stringify(read.tickets, null, 2));
   } catch (e) {
-    if (e && e.code === 'ENOENT') return { ok: true, teams: [] };
-    return { ok: false, error: `could not read ${root} (${(e && e.code) || (e && e.message) || 'unknown error'})` };
+    return { ok: false, error: `could not write ${TICKETS_FILE} (${(e && e.code) || (e && e.message) || 'unknown error'})` };
   }
+  return { ok: true, ...(outcome && outcome.result ? outcome.result : {}) };
+}
 
-  const out = [];
-  for (const d of entries) {
-    if (!d.isDirectory()) continue;
-    const dir = path.join(root, d.name);
-    // team.json is what makes a directory a team (team-manifest's TEAM_FILE).
-    // Without this a stray directory would list as a team with no tickets. A
-    // team.json that exists but cannot be READ is not a stray directory — it
-    // lists, carrying its error.
-    const man = readManifest(dir);
-    if (man.missing) continue;
-    if (man.error) {
-      out.push({ team: d.name, error: man.error });
-      continue;
-    }
+function findOpen(tickets, id) {
+  const t = tickets.find((x) => str(x.id) === id);
+  if (!t) return { error: `no ticket "${id}" on this board` };
+  if (t.state !== 'open') return { error: `ticket ${id} is ${str(t.state) || 'in no state'}, not open` };
+  return { ticket: t };
+}
 
-    const read = readTickets(man.manifest && man.manifest.root);
-    if (!read.ok) {
-      out.push({ team: d.name, error: read.error });
-      continue;
-    }
+/**
+ * Deliver the spec to a live session, best effort.
+ *
+ * Best effort DELIBERATELY, and it must stay that way: the record is already
+ * written when this runs, so throwing here would report a failed write over a
+ * board that did change. The return value says whether the seat was actually
+ * told, and every caller passes it back to the renderer so the operator learns
+ * that the ticket exists but nobody was notified — the alternative is an
+ * assignment that looks delivered and is not.
+ *
+ * Format matches core's _deliverTicketSpec so a seat cannot tell the two apart.
+ */
+function deliverSpec(name, ticket) {
+  if (!name || !host || !host.sessions) return false;
+  let handle;
+  try {
+    handle = host.sessions.get(name);
+  } catch (_) {
+    return false;
+  }
+  if (!handle || !handle.isAlive()) return false;
+  try {
+    handle.inject(`[ticket ${ticket.id}] ${str(ticket.spec)}`, { parkable: true });
+    return true;
+  } catch (e) {
+    host.log.error(`could not deliver ${ticket.id} to ${name}`, e);
+    return false;
+  }
+}
+
+/**
+ * Open a ticket. `assignee` is optional — an unassigned ticket is BACKLOG, the
+ * normal state for a project with no team, not a degraded one.
+ *
+ * The record is minted field for field as session-manager mints it, including
+ * the two conditionals: `parked` is written ONLY when true (a stored
+ * `parked: false` is a state core refuses to produce, and every reader tests
+ * truthiness) and `taskDir` only when the spec's first line names one.
+ */
+function add(payload) {
+  const { project, spec, assignee } = payload || {};
+  const text = str(spec);
+  if (!text.trim()) return { ok: false, error: 'a ticket needs a spec' };
+  const who = str(assignee);
+
+  let delivered = false;
+  const res = mutateBoard(project, (tickets) => {
     const now = Date.now();
-    const stallMs = stallMsFor(man.manifest);
-    const open = read.tickets.filter((t) => t.state === 'open').map((t) => shape(t, now, stallMs));
-    out.push({
-      team: d.name,
-      open: open.length,
-      stalled: open.filter((t) => t.stalled).length,
-      // Separate from `stalled` for the same reason it is separate on a row:
-      // an unassigned ticket needs assigning, not chasing.
-      backlog: open.filter((t) => t.backlog).length,
-      parked: open.filter((t) => t.parked).length,
-      warning: man.warning || '',
-    });
+    const ticket = {
+      id: nextTicketId(tickets),
+      title: ticketTitle(text),
+      spec: text,
+      assignee: who,
+      opener: VIEWER_ACTOR,
+      state: 'open',
+      openedAt: now,
+      closedAt: null,
+      lastActivityAt: now,
+      nudgedAt: null,
+    };
+    const taskDir = extractTaskDir(text);
+    if (taskDir) ticket.taskDir = taskDir;
+    tickets.push(ticket);
+    return { result: { id: ticket.id, ticket } };
+  });
+  if (!res.ok) return res;
+  if (who) delivered = deliverSpec(who, res.ticket);
+  return { ok: true, id: res.id, delivered };
+}
+
+/**
+ * Replace a ticket's spec. Title and taskDir are DERIVED from the spec, so both
+ * are recomputed here — leaving either stale would make the board's summary
+ * line and its artifact path describe a spec that no longer exists.
+ *
+ * `taskDir` is deleted when the new spec names none, rather than left at its old
+ * value: a stale path pointing at another ticket's artifacts is worse than the
+ * absence the row already knows how to render.
+ */
+function editSpec(payload) {
+  const { project, id, spec } = payload || {};
+  const ticketId = str(id);
+  const text = str(spec);
+  if (!ticketId) return { ok: false, error: 'a ticket id is required' };
+  if (!text.trim()) return { ok: false, error: 'a ticket needs a spec' };
+
+  return mutateBoard(project, (tickets) => {
+    const t = tickets.find((x) => str(x.id) === ticketId);
+    // Editable in any state on purpose, unlike the lifecycle verbs: correcting
+    // the record of a closed ticket is not a lifecycle change.
+    if (!t) return { error: `no ticket "${ticketId}" on this board` };
+    t.spec = text;
+    t.title = ticketTitle(text);
+    const taskDir = extractTaskDir(text);
+    if (taskDir) t.taskDir = taskDir; else delete t.taskDir;
+    t.lastActivityAt = Date.now();
+    return { result: {} };
+  });
+}
+
+/**
+ * Assign or reassign an open ticket. With no team the name is a LIVE SESSION;
+ * with a team it may equally be a role, and neither is resolved here — the
+ * string is stored as core stores it and delivery is attempted against a
+ * session of that name.
+ *
+ * `role` is DELETED, matching core's plain-name assign branch: the field means
+ * "this ticket was filed under a role and re-pinned to a seat", and leaving a
+ * stale one behind would make `shownFor` render the old role over the new
+ * assignee — the board would name the wrong holder.
+ *
+ * Clearing `parked` is likewise core's behaviour: assigning is what releases a
+ * parked ticket.
+ */
+function assign(payload) {
+  const { project, id, assignee } = payload || {};
+  const ticketId = str(id);
+  const who = str(assignee);
+  if (!ticketId) return { ok: false, error: 'a ticket id is required' };
+  if (!who) return { ok: false, error: 'an assignee is required' };
+
+  const res = mutateBoard(project, (tickets) => {
+    const found = findOpen(tickets, ticketId);
+    if (found.error) return { error: found.error };
+    const t = found.ticket;
+    t.assignee = who;
+    t.lastActivityAt = Date.now();
+    // The new holder has not been chased, whatever the old one had accrued.
+    t.nudgedAt = null;
+    delete t.role;
+    delete t.parked;
+    return { result: { ticket: t } };
+  });
+  if (!res.ok) return res;
+  return { ok: true, delivered: deliverSpec(who, res.ticket) };
+}
+
+/**
+ * Close an open ticket, done or cancelled.
+ *
+ * One shape across both close verbs, as core writes them: `state`, `closedAt`,
+ * `closedBy` and a `lastActivityAt` equal to `closedAt`. The two differ only in
+ * the state, which is what keeps "what got shipped" and "what got dropped"
+ * countable apart.
+ */
+function closeTicket(payload, state) {
+  const { project, id } = payload || {};
+  const ticketId = str(id);
+  if (!ticketId) return { ok: false, error: 'a ticket id is required' };
+
+  return mutateBoard(project, (tickets) => {
+    const found = findOpen(tickets, ticketId);
+    if (found.error) return { error: found.error };
+    const t = found.ticket;
+    const now = Date.now();
+    t.state = state;
+    t.closedAt = now;
+    t.closedBy = VIEWER_ACTOR;
+    t.lastActivityAt = now;
+    return { result: {} };
+  });
+}
+
+/**
+ * Live session names the assign picker can offer.
+ *
+ * Bash sessions are filtered out because they are private — no registry, no
+ * socket, not DM-able (see the app's own gotcha list) — so offering one would
+ * produce an assignment whose spec can never be delivered.
+ */
+function sessions() {
+  if (!host || !host.sessions) return { ok: true, sessions: [] };
+  let rows;
+  try {
+    rows = host.sessions.listAll() || [];
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || 'could not list sessions' };
   }
-  out.sort((a, b) => (a.team < b.team ? -1 : a.team > b.team ? 1 : 0));
-  return { ok: true, teams: out };
+  const names = rows
+    .filter((s) => s && s.name && s.type && s.type !== 'bash')
+    .map((s) => String(s.name));
+  names.sort();
+  return { ok: true, sessions: names };
 }
 
 // ---------------------------------------------------------------------------
@@ -434,8 +933,20 @@ function teams() {
 module.exports.activate = (h) => {
   host = h;
 
+  host.ipc.handle('projects', () => projects());
   host.ipc.handle('teams', () => teams());
-  host.ipc.handle('board', (team) => board(team));
+  host.ipc.handle('board', (key) => board(key));
+  host.ipc.handle('sessions', () => sessions());
+
+  // The write half. Deliberately absent from manifest.json's `surfaces`, which
+  // is what keeps them desktop-only: plugin-api.md §"What to mark any" leaves
+  // off anything that writes a file, and a board reachable from a browser is a
+  // board a browser can close tickets on.
+  host.ipc.handle('add', (p) => add(p));
+  host.ipc.handle('editSpec', (p) => editSpec(p));
+  host.ipc.handle('assign', (p) => assign(p));
+  host.ipc.handle('close', (p) => closeTicket(p, 'done'));
+  host.ipc.handle('cancel', (p) => closeTicket(p, 'cancelled'));
 
   host.log.info('activated');
 };
@@ -445,16 +956,28 @@ module.exports.deactivate = () => {
 };
 
 // Exported for the test suite. Not part of the plugin contract — the host only
-// ever calls activate/deactivate and the two ipc methods above.
+// ever calls activate/deactivate and the ipc methods above.
 module.exports._internals = {
-  confine, readTickets, readManifest, stallMsFor, shape, board, teams, teamsRoot,
-  clodexHome, projectDirFor,
+  confine, readTickets, readTicketsAt, readManifest, stallMsFor, shape,
+  board, teams, projects, teamsRoot, projectsRoot, teamIndex, projectRootFor,
+  clodexHome, projectDirFor, nextTicketId, ticketTitle, extractTaskDir,
+  atomicWriteFileSync, resolveProject,
+  add, editSpec, assign, closeTicket, sessions,
+  VIEWER_ACTOR,
   DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, RECENT_DONE_MS, RECENT_DONE_CAP,
   // The tree is no longer env-derived, so a test needs a seam that is not an
-  // environment variable. It overrides the HOME rather than the teams dir, because
-  // teams/ and projects/ must move together — a test that repointed only teams/
-  // would read fixture manifests against the operator's real boards.
+  // environment variable. It overrides the HOME rather than teams/ or projects/,
+  // because they must move together — a test that repointed only one would read
+  // fixture data against the operator's real boards.
   // Deliberately NOT on the host surface: hostApi is frozen at "1", and a plugin
   // able to ask core where things live is a contract change. Pass null to restore.
-  setClodexHomeForTest(dir) { clodexHomeOverride = dir || null; },
+  setClodexHomeForTest(dir) {
+    if (dir) everOverridden = true;
+    clodexHomeOverride = dir || null;
+  },
+  // Read back so a test can assert WHERE a write would land before making one.
+  boardPathForTest(key) { return path.join(projectsRoot(), key, TICKETS_FILE); },
+  // The engine half holds `host` in module state, so a test driving the write
+  // path without the real plugin host needs a way to stand one in.
+  setHostForTest(h) { host = h; },
 };
