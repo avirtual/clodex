@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- The terminal's shell refusal no longer reads as a version treadmill. When your
+  shell is a bash too old to report command results, the message used to name two
+  version numbers and point at Homebrew — which reads as "your machine is behind"
+  when the truth is the opposite. bash 4.4 is from 2016; macOS still ships 2007's
+  3.2 as `/bin/bash`, so the newest Mac reports the same version as the oldest.
+  The refusal now says that, says nothing needs updating, and offers zsh first —
+  it has been the macOS default since 2019, so it is already there and needs no
+  install. It also tells you to restart Clodex afterwards, without which the
+  advice quietly does not take: the shell is read from the app's own environment
+  at launch, so changing it and opening a new tab reproduces the same refusal.
+
 - Filing a ticket and starting it are now two acts. `[agent:task add]` wrote the
   ticket and immediately minted its branch, its checkout and its teammate, so a
   lead who wanted to think about a ticket before running it had to remember to
