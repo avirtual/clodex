@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- A cold reviewer now boots already knowing what it is reviewing. The scope you
+  pass to `[agent:team-review]` was sent to the new seat as a message, which meant
+  it arrived at the seat's first turn — and a message written while the CLI is
+  still drawing its interface is wiped by it. The seat then sat idle, looking like
+  it was thinking, holding a briefing that said how to review but not what; the
+  lead had to notice and resend. Six times in one day. The scope is now part of
+  the reviewer's prompt, present before it takes a turn at all, so there is no
+  moment at which it can be lost — and it survives a compact, which the message
+  did not.
+
 - How a role gets its work is now a named choice you can see and change. Whether
   a ticket went to the role's live seat or minted a fresh one in its own branch
   and checkout used to be a `worktree: true` boolean that only a hand-edit of
