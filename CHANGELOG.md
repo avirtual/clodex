@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- A reviewer template whose `tools` is not a list, or is an empty one, no longer
+  spawns a reviewer holding every tool the cap allows. Both cases used to be
+  indistinguishable from leaving `tools` out, so a typo in the template granted
+  more than it asked for — the one direction that should never happen by
+  accident. Each is now refused with the edit that fixes it: make the value a
+  list, or put allowed tool names in it. Leaving `tools` out still means "accept
+  the full set", unchanged.
 - A cold review is now refused, with an explanation, when the reviewer template
   asks for tools that share nothing with what a reviewer is allowed
   (`Read`/`Grep`/`Glob`). That combination used to spawn a reviewer with every
