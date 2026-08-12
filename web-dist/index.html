@@ -8542,9 +8542,19 @@ body {
         if (counts.malformed) parts.push(`${counts.malformed} unreadable record(s)`);
         return parts.join(" \xB7 ");
       }
+      function projectLabel(p) {
+        if (!p) return "";
+        return p.team ? `${p.leaf || p.key} \xB7 ${p.team}` : p.leaf || p.key;
+      }
+      function deliveryNote(assignee, delivered) {
+        if (!assignee) return "";
+        return delivered ? "" : `${assignee} is not running \u2014 the ticket is assigned but the spec was not delivered.`;
+      }
       module.exports.humanizeAge = humanizeAge;
       module.exports.ageLine = ageLine;
       module.exports.summaryText = summaryText;
+      module.exports.projectLabel = projectLabel;
+      module.exports.deliveryNote = deliveryNote;
       module.exports.activate = (rhost) => {
         let torn = false;
         const alive = () => !torn;
@@ -8557,6 +8567,9 @@ body {
             rhost.log.error(`${method} failed`, e);
             return { ok: false, error: e && e.message || "the tickets engine did not answer" };
           });
+        }
+        function toastError(res) {
+          rhost.ui.showToast(res && res.error || "the tickets engine did not answer", { kind: "error" });
         }
         let refresh = null;
         const surface = rhost.ui.surfaces.overlay({
@@ -8574,20 +8587,26 @@ body {
           if (text !== void 0) e.textContent = text;
           return e;
         }
+        function button(cls, label, tip, onClick) {
+          const b = el("button", cls, label);
+          if (tip) b.title = tip;
+          b.addEventListener("click", onClick);
+          return b;
+        }
         function wire(rootEl) {
           rootEl.innerHTML = "";
           const modal = el("div", "tv-modal");
           const topbar = el("div", "tv-topbar");
           topbar.appendChild(el("div", "tv-title", "Tickets"));
-          topbar.appendChild(el("div", "tv-subtitle", "read-only \u2014 open, assign and close with [agent:task \u2026]"));
+          topbar.appendChild(el("div", "tv-subtitle", "the project ticket board"));
           const closeBtn = el("button", "tv-close", "\xD7");
           closeBtn.title = "Close";
           closeBtn.addEventListener("click", () => surface.close());
           topbar.appendChild(closeBtn);
           const body = el("div", "tv-body");
-          const teamsPane = el("div", "tv-teams");
+          const projectsPane = el("div", "tv-teams");
           const boardPane = el("div", "tv-board");
-          body.appendChild(teamsPane);
+          body.appendChild(projectsPane);
           body.appendChild(boardPane);
           modal.appendChild(topbar);
           modal.appendChild(body);
@@ -8595,6 +8614,137 @@ body {
           let selected = null;
           let selectSeq = 0;
           let reloadSeq = 0;
+          let liveSessions = [];
+          function reselect() {
+            if (!selected) return Promise.resolve();
+            return selectProject(selected);
+          }
+          async function mutate(method, payload, note) {
+            const res = await ask(method, payload);
+            if (!alive()) return res;
+            if (!res.ok) {
+              toastError(res);
+              return res;
+            }
+            if (note) {
+              const text = note(res);
+              if (text) rhost.ui.showToast(text, { kind: "error" });
+            }
+            await reselect();
+            return res;
+          }
+          let editorEl = null;
+          function closeEditor() {
+            if (editorEl && editorEl.parentNode === boardPane) boardPane.removeChild(editorEl);
+            editorEl = null;
+          }
+          function openEditor(opts) {
+            closeEditor();
+            const panel = el("div", "tv-editor");
+            panel.appendChild(el("div", "tv-editor-head", opts.heading));
+            const area = el("textarea", "tv-editor-spec");
+            area.value = opts.spec || "";
+            area.placeholder = "The ticket spec. Its first non-empty line becomes the title.";
+            panel.appendChild(area);
+            let picker = null;
+            if (opts.assignable) {
+              picker = el("select", "tv-editor-assignee");
+              const none = el("option", "", "unassigned (backlog)");
+              none.value = "";
+              picker.appendChild(none);
+              for (const name of liveSessions) {
+                const o = el("option", "", name);
+                o.value = name;
+                picker.appendChild(o);
+              }
+              const row = el("div", "tv-editor-row");
+              row.appendChild(el("span", "tv-editor-label", "Assign to"));
+              row.appendChild(picker);
+              panel.appendChild(row);
+            }
+            const actions = el("div", "tv-editor-actions");
+            actions.appendChild(button("tv-btn tv-btn-primary", opts.submitLabel, "", async () => {
+              const spec = String(area.value || "");
+              if (!spec.trim()) {
+                rhost.ui.showToast("a ticket needs a spec", { kind: "error" });
+                return;
+              }
+              const res = await opts.submit(spec, picker ? String(picker.value || "") : "");
+              if (res && res.ok) closeEditor();
+            }));
+            actions.appendChild(button("tv-btn", "Cancel", "", () => closeEditor()));
+            panel.appendChild(actions);
+            if (boardPane.firstChild) boardPane.insertBefore(panel, boardPane.firstChild);
+            else boardPane.appendChild(panel);
+            editorEl = panel;
+            if (area.focus) area.focus();
+          }
+          function openAdd() {
+            openEditor({
+              heading: "New ticket",
+              spec: "",
+              assignable: true,
+              submitLabel: "Open ticket",
+              submit: (spec, assignee) => mutate(
+                "add",
+                { project: selected, spec, assignee },
+                (res) => deliveryNote(assignee, res.delivered)
+              )
+            });
+          }
+          function openEditSpec(t) {
+            openEditor({
+              heading: `Edit spec \u2014 ${t.id}`,
+              spec: t.spec,
+              assignable: false,
+              submitLabel: "Save spec",
+              submit: (spec) => mutate("editSpec", { project: selected, id: t.id, spec })
+            });
+          }
+          function assignControl(t) {
+            const sel = el("select", "tv-assign");
+            sel.title = "Assign this ticket to a live session";
+            const holder = t.shownFor || t.assignee;
+            const head = el("option", "", holder ? `${holder} (unchanged)` : "unassigned \u2014 pick a seat");
+            head.value = "";
+            sel.appendChild(head);
+            for (const name of liveSessions) {
+              if (name === t.assignee) continue;
+              const o = el("option", "", name);
+              o.value = name;
+              sel.appendChild(o);
+            }
+            sel.addEventListener("change", async () => {
+              const who = String(sel.value || "");
+              if (!who) return;
+              await mutate(
+                "assign",
+                { project: selected, id: t.id, assignee: who },
+                (res) => deliveryNote(who, res.delivered)
+              );
+            });
+            return sel;
+          }
+          function rowActions(t) {
+            const bar = el("div", "tv-actions");
+            bar.appendChild(assignControl(t));
+            bar.appendChild(button("tv-btn", "Edit spec", "Replace this ticket's spec", () => openEditSpec(t)));
+            bar.appendChild(button("tv-btn", "Close", "Mark this ticket done", async () => {
+              if (!confirm(`Close ${t.id} as done?
+
+${t.title}`)) return;
+              await mutate("close", { project: selected, id: t.id });
+            }));
+            bar.appendChild(button("tv-btn tv-btn-danger", "Cancel", "Cancel this ticket", async () => {
+              if (!confirm(`Cancel ${t.id}?
+
+${t.title}
+
+Cancelled tickets are not counted as done.`)) return;
+              await mutate("cancel", { project: selected, id: t.id });
+            }));
+            return bar;
+          }
           function ticketRow(t, opts) {
             const row = el("div", t.stalled ? "tv-ticket tv-stalled" : "tv-ticket");
             const head = el("div", "tv-ticket-head");
@@ -8625,11 +8775,11 @@ body {
             if (opts && opts.closed && t.closedBy) meta.appendChild(el("span", "tv-closed-by", `by ${t.closedBy}`));
             if (t.stalled) {
               const flag = el("span", "tv-stall-flag", t.nudged ? "stalled \xB7 nudged" : "stalled");
-              flag.title = t.nudged ? "Quiet past the team\u2019s stall threshold; the watchdog has already nudged the seat once." : "Quiet past the team\u2019s stall threshold.";
+              flag.title = t.nudged ? "Quiet past the stall threshold; the watchdog has already nudged the seat once." : "Quiet past the stall threshold.";
               meta.appendChild(flag);
             } else if (t.parked && !(opts && opts.closed)) {
               const flag = el("span", "tv-backlog-flag", "parked");
-              flag.title = "Held out of dispatch by the lead. The seat has NOT been sent the spec; assign it to release.";
+              flag.title = "Held out of dispatch. The seat has NOT been sent the spec; assign it to release.";
               meta.appendChild(flag);
             } else if (t.backlog && !(opts && opts.closed)) {
               const flag = el("span", "tv-backlog-flag", "backlog");
@@ -8644,18 +8794,26 @@ body {
             );
             if (t.taskDir) art.title = t.taskDir;
             row.appendChild(art);
+            if (!(opts && opts.closed)) row.appendChild(rowActions(t));
             return row;
           }
           function renderBoard(res) {
             boardPane.innerHTML = "";
+            editorEl = null;
             if (!res.ok) {
-              boardPane.appendChild(el("div", "tv-error", `Could not read this team's tickets: ${res.error || "unknown error"}`));
+              boardPane.appendChild(el("div", "tv-error", `Could not read this project's tickets: ${res.error || "unknown error"}`));
               return;
             }
             if (res.warning) {
-              boardPane.appendChild(el("div", "tv-warning", `This team\u2019s manifest is unusable: ${res.warning}`));
+              boardPane.appendChild(el("div", "tv-warning", `This project's team manifest is unusable: ${res.warning}`));
             }
             const openHead = el("div", "tv-section-head", `Open (${res.open.length})`);
+            openHead.appendChild(button(
+              "tv-btn tv-btn-primary tv-add",
+              "+ New ticket",
+              "Open a ticket on this board",
+              () => openAdd()
+            ));
             boardPane.appendChild(openHead);
             if (!res.open.length) {
               boardPane.appendChild(el("div", "tv-empty", "No open tickets."));
@@ -8695,81 +8853,86 @@ body {
               }
             }
           }
-          async function selectTeam(team) {
+          async function selectProject(key) {
             const my = ++selectSeq;
             const myReload = reloadSeq;
-            selected = team;
-            for (const row of teamsPane.querySelectorAll(".tv-team-row")) {
-              row.classList.toggle("tv-selected", row.dataset.tvTeam === team);
+            selected = key;
+            for (const row of projectsPane.querySelectorAll(".tv-team-row")) {
+              row.classList.toggle("tv-selected", row.dataset.tvProject === key);
             }
             boardPane.innerHTML = "";
+            editorEl = null;
             boardPane.appendChild(el("div", "tv-empty", "Loading\u2026"));
-            const res = await ask("board", team);
+            const [res, live] = await Promise.all([ask("board", key), ask("sessions")]);
             if (!alive() || my !== selectSeq || myReload !== reloadSeq) return;
+            liveSessions = live.ok && Array.isArray(live.sessions) ? live.sessions : [];
             renderBoard(res);
           }
-          function renderTeams(res) {
-            teamsPane.innerHTML = "";
+          function renderProjects(res) {
+            projectsPane.innerHTML = "";
             if (!res.ok) {
-              teamsPane.appendChild(el("div", "tv-error", `Could not read the teams directory: ${res.error || "unknown error"}`));
+              projectsPane.appendChild(el("div", "tv-error", `Could not read the projects directory: ${res.error || "unknown error"}`));
               boardPane.innerHTML = "";
               return;
             }
-            const list = Array.isArray(res.teams) ? res.teams : [];
+            const list = Array.isArray(res.projects) ? res.projects : [];
             if (!list.length) {
-              teamsPane.appendChild(el("div", "tv-empty", "No teams yet."));
+              projectsPane.appendChild(el("div", "tv-empty", "No projects yet."));
               boardPane.innerHTML = "";
-              boardPane.appendChild(el("div", "tv-empty", "A team is created with [agent:team \u2026]; tickets follow it."));
+              boardPane.appendChild(el("div", "tv-empty", "A board appears here once a project has its first ticket."));
               return;
             }
-            for (const t of list) {
+            for (const p of list) {
               const row = el("div", "tv-team-row");
-              row.dataset.tvTeam = t.team;
-              row.appendChild(el("span", "tv-team-name", t.team));
-              if (t.error) {
+              row.dataset.tvProject = p.key;
+              const name = el("span", "tv-team-name", projectLabel(p));
+              name.title = p.root ? `${p.key}
+${p.root}` : p.key;
+              row.appendChild(name);
+              if (p.error) {
                 const bad = el("span", "tv-team-error", "!");
-                bad.title = t.error;
+                bad.title = p.error;
                 row.appendChild(bad);
               } else {
-                if (t.warning) {
+                if (p.warning) {
                   const warn = el("span", "tv-team-warning", "\u26A0");
-                  warn.title = t.warning;
+                  warn.title = p.warning;
                   row.appendChild(warn);
                 }
-                if (t.stalled) {
-                  const s = el("span", "tv-team-stalled", String(t.stalled));
-                  s.title = `${t.stalled} open ticket(s) quiet past this team's stall threshold`;
+                if (p.stalled) {
+                  const s = el("span", "tv-team-stalled", String(p.stalled));
+                  s.title = `${p.stalled} open ticket(s) quiet past the stall threshold`;
                   row.appendChild(s);
                 }
-                if (t.backlog) {
-                  const b = el("span", "tv-team-backlog", String(t.backlog));
-                  b.title = `${t.backlog} open ticket(s) with no assignee \u2014 the watchdog never nudges these`;
+                if (p.backlog) {
+                  const b = el("span", "tv-team-backlog", String(p.backlog));
+                  b.title = `${p.backlog} open ticket(s) with no assignee \u2014 the watchdog never nudges these`;
                   row.appendChild(b);
                 }
-                if (t.parked) {
-                  const p = el("span", "tv-team-backlog", String(t.parked));
-                  p.title = `${t.parked} open ticket(s) parked \u2014 assigned or not, held out of dispatch until released`;
-                  row.appendChild(p);
+                if (p.parked) {
+                  const pk = el("span", "tv-team-backlog", String(p.parked));
+                  pk.title = `${p.parked} open ticket(s) parked \u2014 assigned or not, held out of dispatch until released`;
+                  row.appendChild(pk);
                 }
-                row.appendChild(el("span", "tv-team-count", `${t.open} open`));
+                row.appendChild(el("span", "tv-team-count", `${p.open} open`));
               }
               row.addEventListener("click", () => {
-                selectTeam(t.team).catch((e) => rhost.log.error("select failed", e));
+                selectProject(p.key).catch((e) => rhost.log.error("select failed", e));
               });
-              teamsPane.appendChild(row);
+              projectsPane.appendChild(row);
             }
-            if (!selected || !list.some((t) => t.team === selected)) {
-              selected = list[0].team;
+            if (!selected || !list.some((p) => p.key === selected)) {
+              selected = list[0].key;
             }
-            selectTeam(selected).catch((e) => rhost.log.error("select failed", e));
+            selectProject(selected).catch((e) => rhost.log.error("select failed", e));
           }
           async function reload() {
             const my = ++reloadSeq;
-            teamsPane.innerHTML = "";
-            teamsPane.appendChild(el("div", "tv-empty", "Loading\u2026"));
-            const res = await ask("teams");
+            projectsPane.innerHTML = "";
+            projectsPane.appendChild(el("div", "tv-empty", "Loading\u2026"));
+            const res = await ask("projects");
             if (!alive() || my !== reloadSeq) return;
-            renderTeams(res);
+            renderProjects(res);
           }
           return () => {
             reload().catch((e) => rhost.log.error("reload failed", e));
@@ -8779,7 +8942,7 @@ body {
           id: "open",
           glyph: "\u25A4",
           label: "Tickets",
-          tip: "The team ticket board",
+          tip: "The project ticket board",
           onClick: () => surface.open()
         });
         return () => {
