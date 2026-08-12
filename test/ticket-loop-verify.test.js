@@ -24,6 +24,7 @@ const { execFileSync } = require('node:child_process');
 
 const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
+const { ticketInFlight } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 
 const SHIPPED_REVIEWER_TEMPLATE = {
@@ -213,6 +214,13 @@ test('a branch with a commit passes every check and reaches a reviewer, not the 
   assert.strictEqual(f.one().loopStep, 'verify', 'ENTER: the loop holds the ticket at verify');
 
   await f.m._runTicketLoop(f.team, 't1');
+  // The spawn runs inside _handleTeamReview's setImmediate, and so does every
+  // escalation it can raise (a refused spawn, an UNBRIEFED reviewer). Asserting
+  // before draining the microtask queue measures a window in which NO spawn-time
+  // escalation exists yet, so `esc() === []` would hold even if every spawn
+  // escalated. This is the exact shape that hid the missing reviewer prompt in
+  // round 1 — the assertion passed by being early, not by being right.
+  await new Promise((r) => setImmediate(r));
 
   assert.deepStrictEqual(f.esc(), [], 'a green tree must not reach the lead at all');
   const rec = f.persistence.list().find((e) => e.reviewTicket === 't1');
@@ -511,6 +519,70 @@ test('an unbriefed reviewer escalates rather than reviewing nothing', async () =
   const esc = f.esc();
   assert.strictEqual(esc.length, 1, 'the lead is told the review will not happen');
   assert.match(esc[0].body, /boots UNBRIEFED/);
+});
+
+test('a throw AFTER the record advanced escalates as "review", not as "verify"', async () => {
+  // The catch-all reports which half of the loop stopped, and the lead's first
+  // act is to go look at it. Reporting a literal `verify` after the record
+  // already says `review` sends them to the wrong half — and the record is the
+  // thing they would check the claim against, so the two disagree.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  f.m._spawnTicketReview = () => { throw new Error('spawn exploded'); };
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: the catch-all escalated exactly once');
+  assert.match(esc[0].body, /spawn exploded/, 'ENTER: it is the throw, not another arm');
+  assert.match(esc[0].body, /stopped at: review/,
+    'the step reported must be the step the record is actually at');
+  assert.ok(!/stopped at: verify/.test(esc[0].body),
+    'reporting verify here contradicts the record and sends the lead to the wrong half');
+});
+
+test('the UNBRIEFED escalation KEEPS the hold, because the seat can still answer', async () => {
+  // The other escalation arms release the hold once the lead has been told, and
+  // that is right for them: nothing is left running. This arm is different — the
+  // seat spawned and carries reviewTicket. Releasing here makes the ticket
+  // not-in-flight, so a verdict that seat later emits fails
+  // _landVerdictOnTicket's guard and is never recorded: no verdict, no mustFix,
+  // reviewRound stuck at 0, and a later round 2 announcing itself as round 1.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, noReviewerPrompt: true });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.esc().length, 1, 'ENTER: the UNBRIEFED arm is the one that fired');
+  const t = f.one();
+  assert.strictEqual(t.loopStep, 'review', 'the hold stays, at the step the reviewer is at');
+  assert.strictEqual(ticketInFlight(t), true,
+    'in-flight is the property that actually matters: it is what lets a verdict land');
+});
+
+test('an escalation with no live seat behind it still RELEASES the hold', async () => {
+  // The converse of the test above, and the reason keepHold is an opt-in rather
+  // than the default: a verify-stage failure spawns nobody, so nothing can ever
+  // land a verdict on that ticket. Holding it there would leave the sweep
+  // nudging the lead about a loop that has already reported and stopped.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });   // no commit on the branch: CHECK 1 fails
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.esc().length, 1, 'ENTER: the verify arm escalated');
+  const t = f.one();
+  assert.ok(!('loopStep' in t) || t.loopStep == null,
+    'a delivered escalation with nothing left running releases the hold');
+  assert.strictEqual(ticketInFlight(t), false, 'the ticket is finished with the lead');
 });
 
 test('the nudge for a loop-held ticket names the STEP, not the finished hand', () => {

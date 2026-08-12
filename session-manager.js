@@ -6264,6 +6264,12 @@ function createSessionManager(deps) {
     // seat are exactly what the lead looks at first.
     async _runTicketLoop(team, ticketId) {
       const fail = (step, evidence, tried) => this._escalateTicket(team, ticketId, step, evidence, tried);
+      // Tracks the step the RECORD is actually at, for the catch-all alone: an
+      // unexpected throw after the record advanced to `review` would otherwise
+      // report `verify`, sending the lead to look at the wrong half of the loop
+      // while the ticket says something else. Every named arm passes its own
+      // step literal and does not read this.
+      let atStep = 'verify';
       try {
         const ticket = this._loadTicket(team, ticketId);
         // Gone or already moved on: another path (cancel, accept, a second done)
@@ -6335,12 +6341,14 @@ function createSessionManager(deps) {
         }
 
         this._setLoopStep(team, ticketId, 'review');
+        atStep = 'review';
         this._spawnTicketReview(team, ticketId, written.path);
       } catch (e) {
         // The catch-all is an escalation, never a swallow: an unexpected throw
         // here leaves a ticket marked in-flight, and the watchdog's one nudge is
         // a worse way to learn about it than being told the exception.
-        fail('verify', `the loop threw: ${e && e.message ? e.message : String(e)}`, 'no reviewer spawned');
+        fail(atStep, `the loop threw: ${e && e.message ? e.message : String(e)}`,
+          atStep === 'review' ? 'verify passed and the diff was written; the throw came at or after the review spawn' : 'no reviewer spawned');
       }
     }
 
@@ -6439,8 +6447,13 @@ function createSessionManager(deps) {
           // reply, so it needs its own test — the error branch below never sees
           // it, and a log line about it reaches nobody who can install the prompt.
           if (/boots UNBRIEFED/.test(m)) {
+            // keepHold: the seat DID spawn and still carries reviewTicket. An
+            // unbriefed reviewer may never emit a verdict — but if it does, the
+            // hold is what lets that verdict land on the ticket instead of
+            // falling through to the lead as raw text.
             this._escalateTicket(team, ticketId, 'review: spawn', m,
-              'verify passed, the diff was written and a reviewer seat WAS spawned — but without its role prompt it may never emit a verdict');
+              'verify passed, the diff was written and a reviewer seat WAS spawned — but without its role prompt it may never emit a verdict',
+              { keepHold: true });
             return;
           }
           if (/^error:/i.test(m)) {
@@ -6471,7 +6484,15 @@ function createSessionManager(deps) {
     //
     // On failure the hold STAYS, which is what hands the ticket to the watchdog:
     // it re-surfaces once the lead is reachable, which is the whole point of §E.
-    _escalateTicket(team, ticketId, step, evidence, tried) {
+    //
+    // `keepHold` is for the arms that escalate while a REVIEWER SEAT IS STILL
+    // LIVE and still carries `reviewTicket`. Releasing the hold there looks
+    // right — the lead was told — but it makes the ticket not-in-flight, and a
+    // verdict that seat emits afterwards then fails `_landVerdictOnTicket`'s
+    // guard: nothing is written to `verdict`/`mustFix`, `reviewRound` stays 0,
+    // and a later round 2 announces itself as round 1. The loop legitimately
+    // still holds a ticket whose reviewer has not answered yet.
+    _escalateTicket(team, ticketId, step, evidence, tried, { keepHold = false } = {}) {
       try {
         const body = [
           `[ticket ${ticketId} ESCALATED] the loop stopped at: ${step}`,
@@ -6483,8 +6504,13 @@ function createSessionManager(deps) {
         ].join('\n');
         const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticketId} ESCALATED]`);
         const reached = !!(r && (r.queued || r.parked));
+        // Two independent reasons to keep the hold, deliberately not collapsed
+        // into one branch: an undelivered escalation keeps it so the watchdog
+        // re-surfaces the ticket, and `keepHold` keeps it because a live
+        // reviewer may still land a verdict. Only the first is a failure, so
+        // only the first logs one.
         if (reached) {
-          this._setLoopStep(team, ticketId, null);
+          if (!keepHold) this._setLoopStep(team, ticketId, null);
         } else {
           const why = (r && (r.error || r.held)) || 'unknown delivery failure';
           // log.error, not info: this is the arm where a human must eventually

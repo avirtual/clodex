@@ -258,6 +258,14 @@ function extractMustFix(verdictText) {
 // write `role` when the assignee is a SEAT NAME rather than a role key, so an
 // old name-addressed ticket dispatched with neither field set. Those records are
 // caught by the absent-key arm, not by this one.
+function ticketStarted(ticket) {
+  if (!ticket) return false;
+  if (ticket.startedAt != null) return true;
+  if (ticket.role || (ticket.worktree && ticket.worktree.path)) return true;
+  if (!Object.prototype.hasOwnProperty.call(ticket, 'startedAt')) return !ticket.parked;
+  return false;
+}
+
 // Is this ticket still in flight — i.e. is anyone expected to act on it?
 //
 // `open` is the ordinary case. `done` used to be terminal and no longer is: the
@@ -275,14 +283,6 @@ function ticketInFlight(ticket) {
   if (!ticket) return false;
   if (ticket.state === 'open') return true;
   return ticket.state === 'done' && !!ticket.loopStep;
-}
-
-function ticketStarted(ticket) {
-  if (!ticket) return false;
-  if (ticket.startedAt != null) return true;
-  if (ticket.role || (ticket.worktree && ticket.worktree.path)) return true;
-  if (!Object.prototype.hasOwnProperty.call(ticket, 'startedAt')) return !ticket.parked;
-  return false;
 }
 
 module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, ticketStarted, ticketInFlight, branchSlug, TICKETS_FILE };
