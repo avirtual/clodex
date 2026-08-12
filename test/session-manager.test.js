@@ -1939,11 +1939,17 @@ const tick = () => new Promise((r) => setTimeout(r, 10));
 
 function mkSpawn(templatesList, persistedEntries = {}) {
   const stripCalls = [], acCalls = [];
+  // Both setters resolve the entry BY NAME and no-op when it is absent, so the
+  // fixture must too: a recorder that captured the call unconditionally would
+  // record a write that the real store would have thrown away, and every
+  // "the template's level reached the seat" assertion downstream would still
+  // pass with the call moved BEFORE create(). `minted` is what create() makes.
+  const minted = new Set(Object.keys(persistedEntries));
   const persistence = {
     list: () => [],
     get: (n) => persistedEntries[n] || null,
-    setStripLevel: (n, l) => stripCalls.push([n, l]),
-    setAutoCompact: (n, on) => acCalls.push([n, on]),
+    setStripLevel: (n, l) => { if (minted.has(n)) stripCalls.push([n, l]); },
+    setAutoCompact: (n, on) => { if (minted.has(n)) acCalls.push([n, on]); },
   };
   const m = mk({
     getPersistence: () => persistence,
@@ -1960,7 +1966,7 @@ function mkSpawn(templatesList, persistedEntries = {}) {
   m._injectText = (_s, text) => replies.push(text);
   m._sendToSession = () => {};
   m._broadcast = () => {};
-  m.create = async (...args) => { created.push(args); };
+  m.create = async (...args) => { created.push(args); minted.add(args[0]); };
   const spawner = { name: 'clodex', type: 'claude', workspaceId: 'default', proxy: null };
   return { m, created, replies, stripCalls, acCalls, spawner };
 }
@@ -2129,6 +2135,48 @@ test('spawn template: malformed JSON file errors, no spawn', async () => {
   assert.match(replies.at(-1), /invalid JSON/);
   await tick();
   assert.strictEqual(created.length, 0);
+});
+
+// t297: the spawn path had its own copy of the env filter and reported a bad
+// VALUE TYPE as an out-of-allowlist key — sending the operator to ask for
+// approval for a key they already have. The two reasons must stay apart on
+// EVERY spawn path (review and ticket already split them), which is why this
+// asserts the two reason phrases and not just that the key was named.
+test('spawn template (t297): an allowed env key with a NON-STRING value is dropped for its OWN reason, not as an authority question', async () => {
+  const { m, created, replies, spawner } = mkSpawn([{
+    id: 'tpl-e', name: 'env-seat', type: 'claude', cwd: '/proj/desk',
+    env: {
+      CLODEX_DISABLE_IPC_PROMPT: '1',    // allowed, well-typed → crosses
+      ANTHROPIC_BASE_URL: 'http://evil', // not allowed → authority question
+      FORCE_PROMPT_CACHING_5M: 5,        // allowed KEY, bad value type
+    },
+  }]);
+  m._handleSpawnIntent(spawner, { name: 't2', cwd: null, template: 'env-seat' });
+  await tick();
+  // ENTER: a spawn that never reached create() makes the env assertion below
+  // read as "nothing crossed", which is also true of a total failure.
+  assert.strictEqual(created.length, 1, 'ENTER: create() must have been reached');
+  assert.deepStrictEqual(created[0][18], { CLODEX_DISABLE_IPC_PROMPT: '1' },
+    'only the well-typed allowlisted key crosses');
+  const reply = replies.at(-1);
+  assert.match(reply, /env keys not allowed, dropped: ANTHROPIC_BASE_URL/,
+    'the out-of-allowlist key keeps the authority reason');
+  assert.ok(!/not allowed, dropped:[^—]*FORCE_PROMPT_CACHING_5M/.test(reply),
+    'the badly-typed key must NOT ride the authority bucket');
+  assert.match(reply, /FORCE_PROMPT_CACHING_5M/, 'but it must still be named');
+  assert.match(reply, /values are not strings/, 'with its own reason');
+});
+
+test('spawn template (t297): a template whose env is entirely well-typed and allowed reports no drop at all', async () => {
+  const { m, created, replies, spawner } = mkSpawn([{
+    id: 'tpl-ok', name: 'ok-seat', type: 'claude', cwd: '/proj/desk',
+    env: { CLODEX_DISABLE_IPC_PROMPT: '1', CLODEX_SPAWNER_HINT: 'off' },
+  }]);
+  m._handleSpawnIntent(spawner, { name: 't2', cwd: null, template: 'ok-seat' });
+  await tick();
+  assert.strictEqual(created.length, 1, 'ENTER: create() must have been reached');
+  assert.deepStrictEqual(created[0][18], { CLODEX_DISABLE_IPC_PROMPT: '1', CLODEX_SPAWNER_HINT: 'off' });
+  assert.ok(!/dropped/.test(replies.at(-1)), `clean env must not warn, got: ${replies.at(-1)}`);
 });
 
 // --- Mid-flight DM delivery: park-on-busy (piece 2) + idle-edge drain (piece 3) -
@@ -3508,6 +3556,7 @@ const SHIPPED_REVIEWER_TEMPLATE = {
 function mkReview(extra = {}) {
   const roleOverride = extra.reviewerRole;
   delete extra.reviewerRole;
+  const acCalls = [];
   // Template seed: `reviewTemplates` (the full list) wins; else `reviewTemplate`
   // (single, overriding the shipped default's fields); else the shipped default.
   const templatesList = Array.isArray(extra.reviewTemplates)
@@ -3534,6 +3583,18 @@ function mkReview(extra = {}) {
       const e = store.find((x) => x.name === n);
       if (!e) return;
       if (level === 1 || level === 2) e.stripLevel = level; else delete e.stripLevel;
+    },
+    // Same by-name, no-op-when-absent shape as setStripLevel, and for the same
+    // reason: a fixture that wrote unconditionally would make a call moved
+    // BEFORE create() look like it worked.
+    // acCalls records the CALL, which the resulting record cannot: `on !== false`
+    // deletes the key, so an unconditional setAutoCompact(name, true) leaves a
+    // record indistinguishable from one the guard skipped entirely.
+    setAutoCompact: (n, on) => {
+      acCalls.push([n, on]);
+      const e = store.find((x) => x.name === n);
+      if (!e) return;
+      if (on === false) e.autoCompact = false; else delete e.autoCompact;
     },
   };
   const overrides = {
@@ -3569,7 +3630,7 @@ function mkReview(extra = {}) {
   // persistence record — mirror that here so the sweep/record assertions see it.
   m.kill = async (name) => { killed.push(name); persistence.remove(name); order.push('discard'); };
   m._sendToSession = (name, channel, payload) => { contextActions.push({ name, channel, payload }); order.push('context-action'); };
-  return { m, injected, created, delivered, passive, parkedActive, gated, archived, killed, contextActions, order, persistence, team };
+  return { m, injected, created, delivered, passive, parkedActive, gated, archived, killed, contextActions, order, persistence, acCalls, team };
 }
 
 test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inverted tools, ephemeral+reviewFor, scope delivered as an active-class park', async () => {
@@ -4319,6 +4380,54 @@ test('team-review: the template stripLevel lands on the seat, and only after cre
   assert.ok(entry.ephemeral === true && entry.reviewFor === 'lead',
     'and the identity seed survived the later setStripLevel write');
   assert.ok(!injected.some((t) => /error/i.test(t)), 'no error surfaced to the lead');
+});
+
+// t297 Part B: `autoCompact: false` was inert on the review path — the site
+// applied stripLevel only — so a reviewer template that opted out of
+// auto-compact got compacted anyway, on exactly the seat type the template was
+// written for. Same post-create() ordering claim as stripLevel above, driven
+// through setAutoCompact because that is the setter this test's claim rides on.
+test('team-review (t297): the template autoCompact:false lands on the seat, and only after create()', async () => {
+  const { m, injected, created, persistence } = mkReview({
+    reviewTemplate: { autoCompact: false },
+  });
+  let createDone = false;
+  const realSetAutoCompact = persistence.setAutoCompact;
+  persistence.setAutoCompact = (n, on) => {
+    if (!createDone) return; // pre-create(): no record yet, so the write is lost
+    realSetAutoCompact(n, on);
+  };
+  m.create = async (...args) => { created.push(args); createDone = true; };
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
+  const entry = persistence.get(created[0][0]);
+  assert.ok(entry, 'ENTER: the seat has a persistence entry to carry the opt-out');
+  assert.strictEqual(entry.autoCompact, false,
+    'the template opted out of auto-compact and the seat honors it');
+  assert.ok(entry.ephemeral === true && entry.reviewFor === 'lead',
+    'and the identity seed survived the later write');
+  assert.ok(!injected.some((t) => /error/i.test(t)), 'no error surfaced to the lead');
+});
+
+// The opt-OUT is the only stored value: a template that says nothing must leave
+// the key ABSENT, or it freezes "on" onto the record and autoCompactOf can no
+// longer tell a deliberate choice from a default.
+test('team-review (t297): a template with no autoCompact never calls the setter at all', async () => {
+  const { m, created, persistence, acCalls } = mkReview();
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
+  const entry = persistence.get(created[0][0]);
+  assert.ok(entry, 'ENTER: the seat has a persistence entry');
+  // The CALL, not the record: `on !== false` deletes the key, so an
+  // unconditional setAutoCompact(name, true) leaves the record identical to
+  // this one and the record assertion below cannot see the guard at all.
+  assert.deepStrictEqual(acCalls, [], 'the guard skipped the setter entirely');
+  assert.ok(!('autoCompact' in entry),
+    'and the key stays absent, so the default applies');
 });
 
 // A template with no stripLevel must not write one: absent is a real value
@@ -9735,6 +9844,8 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   const upserted = [];
   const removed = [];
   const worktreeSet = [];
+  const stripCalls = [];
+  const acCalls = [];
   // The record's worktree is read back to decide whether a tree is OCCUPIED, so
   // the stub has to carry it. A get() that returns a bare { name } makes every
   // live seat look like it is in no tree at all.
@@ -9772,7 +9883,13 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
         worktreeSet.push({ name, wt });
         if (wt && wt.path) wtByName.set(name, wt); else wtByName.delete(name);
       },
-      setStripLevel: () => {}, setAutoCompact: () => {},
+      // Recorders, not no-ops: the ticket path's only persistence-application
+      // assertion was create()'s argv, so deleting its _applyTemplatePersistence
+      // call left the suite green. Gated on `upserted` for the same reason the
+      // real setters resolve by name — an unconditional recorder cannot tell a
+      // call placed BEFORE create() from one placed after.
+      setStripLevel: (n, l) => { if (upserted.includes(n)) stripCalls.push([n, l]); },
+      setAutoCompact: (n, on) => { if (upserted.includes(n)) acCalls.push([n, on]); },
     }),
     getTemplates: () => ({ list: () => [] }),
     ensureDir: () => {},
@@ -9808,7 +9925,7 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
     if (i >= 0) upserted.splice(i, 1);
     wtByName.delete(name);
   };
-  return { m, team, teamDir, seat, seatWithTree, gated, upserted, removed, worktreeSet, archiveSeat, killSeat,
+  return { m, team, teamDir, seat, seatWithTree, gated, upserted, removed, worktreeSet, stripCalls, acCalls, archiveSeat, killSeat,
     load: () => tstore.load(teamDir), one: (id) => tstore.load(teamDir).find((t) => t.id === id) };
 }
 
@@ -10674,6 +10791,13 @@ test('task add: the role\'s template shapes the seat it staffs', async () => {
     'env is confined to the allowlist — a template is agent-writable and ANTHROPIC_BASE_URL redirects credentials');
   assert.strictEqual(got.promptFile, 'clodex-team-hand',
     'the ROLE prompt still wins the prompt slot: a template must not silently displace the role delta that defines the seat\'s job');
+  // stripLevel is NOT a create() arg — it is a persistence write applied after,
+  // so create()'s argv above cannot see it and dropping the call was invisible.
+  // The recorder is gated on the record existing, which is also the ordering pin.
+  assert.deepStrictEqual(f.stripCalls, [[f.upserted.at(-1), 2]],
+    'the template stripLevel is applied to the seat, after create() minted its record');
+  assert.deepStrictEqual(f.acCalls, [],
+    'and a template with no autoCompact never calls that setter');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 

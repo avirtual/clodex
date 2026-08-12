@@ -107,6 +107,29 @@ const REVIEWER_ENV_ALLOWLIST = new Set([
   'CLODEX_DISABLE_IPC_PROMPT',
   'CLODEX_SPAWNER_HINT',
 ]);
+// The ONE filter for every agent-initiated env. It lived in three hand-rolled
+// copies against the same constant, so any one could be edited without the
+// others — and one of them did diverge, reporting a bad VALUE TYPE as an
+// out-of-allowlist key. Two distinct reasons, returned in separate buckets and
+// never merged by a caller: an unknown key is an authority question that needs
+// operator approval, a non-string value is a template typo that needs an edit.
+// Telling the operator to seek approval for a key they already have sends them
+// to the wrong fix.
+function filterTemplateEnv(rawEnv) {
+  const env = {};
+  const dropped = [];
+  const badType = [];
+  if (rawEnv && typeof rawEnv === 'object' && !Array.isArray(rawEnv)) {
+    for (const [k, v] of Object.entries(rawEnv)) {
+      if (!REVIEWER_ENV_ALLOWLIST.has(k)) { dropped.push(k); continue; }
+      if (typeof v !== 'string') { badType.push(k); continue; }
+      env[k] = v;
+    }
+  }
+  // null, not `{}`: create() treats an empty map as a REAL empty env, while
+  // absence keeps the box's environment.
+  return { sessionEnv: Object.keys(env).length ? env : null, dropped, badType };
+}
 // Sender labels the MANAGER writes on system-originated deliveries; no agent is
 // on the other end of any of them. They must never collect the "(reply: …)"
 // trailer, and reachability is the wrong test for that: session names are a
@@ -4287,21 +4310,12 @@ function createSessionManager(deps) {
       // A template's `env` was read ONLY on the cold-reviewer path, so an
       // agent-initiated spawn silently dropped it — a seat whose whole point was
       // CLODEX_DISABLE_IPC_PROMPT booted with the full protocol prompt anyway,
-      // and nothing said so. Honored here through the SAME allowlist the reviewer
-      // uses, not a wider one: env is an authority surface (base-url, credential
-      // and model redirects) and a template is agent-writable, so this stays a
-      // fixed code-level ceiling. Keys outside it are dropped and named in the
-      // reply, because a silently ignored env key is the bug being fixed.
-      const tplEnv = (tpl && tpl.env && typeof tpl.env === 'object' && !Array.isArray(tpl.env)) ? tpl.env : null;
-      const envDropped = [];
-      let sessionEnv = null;
-      if (tplEnv) {
-        for (const [k, v] of Object.entries(tplEnv)) {
-          if (!REVIEWER_ENV_ALLOWLIST.has(k)) { envDropped.push(k); continue; }
-          if (typeof v !== 'string') { envDropped.push(k); continue; }
-          (sessionEnv || (sessionEnv = {}))[k] = v;
-        }
-      }
+      // and nothing said so. Honored here through the SAME filter the reviewer and
+      // ticket paths use, not a copy of it: env is an authority surface (base-url,
+      // credential and model redirects) and a template is agent-writable, so this
+      // stays a fixed code-level ceiling. Keys outside it are dropped and named in
+      // the reply, because a silently ignored env key is the bug being fixed.
+      const { sessionEnv, dropped: envDropped, badType: envBadType } = filterTemplateEnv(tpl && tpl.env);
 
       setImmediate(async () => {
         // Declared OUTSIDE the try: the catch below removes the worktree, and a
@@ -4350,10 +4364,7 @@ function createSessionManager(deps) {
           if (wt) {
             try { getPersistence().setWorktree(name, wt); } catch { /* best-effort */ }
           }
-          if (tpl) {
-            if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
-            if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
-          }
+          this._applyTemplatePersistence(name, tpl);
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd: spawnCwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
           });
@@ -4363,7 +4374,8 @@ function createSessionManager(deps) {
           });
           log.info('intent', `spawn by ${spawner.name} → ${name} (${type}) @ ${where}` + (tpl ? ` via template "${tplLabel}"` : ''));
           reply(`ok: spawned "${name}" (${type}) @ ${where}` + (tpl ? ` via template "${tplLabel}"` : '')
-            + (envDropped.length ? ` — env keys not allowed, dropped: ${envDropped.join(', ')}` : ''));
+            + (envDropped.length ? ` — env keys not allowed, dropped: ${envDropped.join(', ')}` : '')
+            + (envBadType.length ? ` — env keys [${envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)` : ''));
         } catch (err) {
           log.error('intent', `spawn by ${spawner.name} → ${name} failed: ${err.message}`);
           // The worktree outlives a failed spawn otherwise: create() threw, so no
@@ -4496,14 +4508,11 @@ function createSessionManager(deps) {
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
           );
-          // AFTER create(), not before: setStripLevel resolves the entry by name
-          // and silently no-ops if it isn't there yet. The spawn-intent path
-          // applies the template's level the same way; a reviewer that skipped
-          // this ran unstripped no matter what the template said, which is
-          // invisible from inside the seat.
-          if (reviewTpl && (reviewTpl.stripLevel === 1 || reviewTpl.stripLevel === 2)) {
-            getPersistence().setStripLevel(name, reviewTpl.stripLevel);
-          }
+          // AFTER create(), not before: the setters resolve the entry by name and
+          // silently no-op if it isn't there yet. A reviewer that skipped this ran
+          // unstripped no matter what the template said, which is invisible from
+          // inside the seat.
+          this._applyTemplatePersistence(name, shape.tpl);
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
           });
@@ -5158,21 +5167,7 @@ function createSessionManager(deps) {
       try { tpl = getTemplates().list().find((t) => t && t.name === tplName) || null; }
       catch { tpl = null; }
       if (!tpl) return null;
-      const env = {};
-      let sessionEnv = null;
-      // Two DISTINCT reasons, reported separately: an unknown key needs operator
-      // approval, a bad value type needs an edit. Collapsing them tells the
-      // operator to seek approval for a key they already have.
-      const dropped = [];
-      const badType = [];
-      if (tpl.env && typeof tpl.env === 'object' && !Array.isArray(tpl.env)) {
-        for (const [k, v] of Object.entries(tpl.env)) {
-          if (!REVIEWER_ENV_ALLOWLIST.has(k)) { dropped.push(k); continue; }
-          if (typeof v !== 'string') { badType.push(k); continue; }
-          env[k] = v;
-        }
-        if (Object.keys(env).length) sessionEnv = env;
-      }
+      const { sessionEnv, dropped, badType } = filterTemplateEnv(tpl.env);
       return {
         tpl,
         extraArgs: (Array.isArray(tpl.extraArgs) && tpl.extraArgs.length) ? tpl.extraArgs : null,
@@ -5349,9 +5344,12 @@ function createSessionManager(deps) {
     // stripLevel/autoCompact are persistence writes, not create() args, so they
     // land AFTER create() mints the entry — setStripLevel on a missing entry is a
     // silent no-op, which is how a template's strip level got lost before.
-    _applyTemplatePersistence(name, shape) {
-      if (!shape || !shape.tpl) return;
-      const { tpl } = shape;
+    // Takes the TEMPLATE, not a shape: one caller has no shape to give (its
+    // template can be a bare JSON file named by path), and a synthetic `{ tpl }`
+    // there would be a second source that agrees only until this writer reads a
+    // second shape field — at which point that path goes inert silently.
+    _applyTemplatePersistence(name, tpl) {
+      if (!tpl) return;
       if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
       if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
     }
@@ -5502,7 +5500,7 @@ function createSessionManager(deps) {
             // the wire that measures what this seat costs. Pinned by t189.
             shape.env, true,
           );
-          this._applyTemplatePersistence(seat.name, shape);
+          this._applyTemplatePersistence(seat.name, shape.tpl);
           // FIRST, before anything else that can throw. Between create() and this
           // line the seat is live in a tree no record names, and _ticketTreeHolder
           // reads occupancy off the RECORD — so it is blind to it, and session:kill
