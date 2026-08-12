@@ -37,7 +37,9 @@ const UNREACHABLE_ROLE_FIELDS = new Set(['worktree']);
 // in ROLE_KEYS", because the mutators DELETE these from disk: a derived set would
 // silently grow to include hand-authored keys nobody asked us to remove, and the
 // migration would become data loss. Every one of these is already dropped at
-// load, so removing it from the file changes no behavior — only the bytes.
+// load by every reader that routes through loadManifest, so removing it from the
+// file changes no behavior there — only the bytes. scripts/clodex-team.js parses
+// team.json itself and does NOT route through here; keep it off these fields.
 const CUT_ROLE_FIELDS = ['instantiate', 'standing', 'tools', 'type', 'ephemeral'];
 
 // Every role field a front door (setRole, the Add Role form, the popover row
