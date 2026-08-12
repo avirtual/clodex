@@ -244,6 +244,11 @@ async function assigned(world, who = 'hand') {
   const lead = await app.spawn('lead');
   await app.spawn('team-hand');
   app.m._handleTask(lead, { type: 'task', sub: 'add', who, id: null, body: 'BUILD THE WIDGET\nstep one' });
+  // t308 moved dispatch out of `add`: writing the ticket and running it are two
+  // steps now. The property under test is unchanged — a seat that received its
+  // spec in THIS process, so a replay in the next one is distinguishable from a
+  // first delivery arriving late.
+  app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   const t = world.tickets().find((x) => x.id === 't1');
   assert.ok(t, 'ENTER: the assign must have minted a ticket');
   assert.strictEqual(t.state, 'open', 'ENTER: minted open');

@@ -1331,13 +1331,16 @@ test('formatRoster: live seats matching no role are listed, and the line is abse
 
 test('formatRoster: the action line is rendered for the lead seat only', () => {
   const forLead = formatRoster(TEAM(), [], { seat: 'clodex' });
-  assert.match(forLead, /Dispatch: \[agent:task add <role>\] <spec>/);
-  // t174: add DISPATCHES, and the lead that filed a ticket whose body said
-  // "do not start" was following a line that offered no other way to file for
-  // later. The line must name the park form and say the body is not read, or
-  // the prose convention it replaces gets reinvented.
-  assert.match(forLead, /\[agent:task add park <role>\] <spec>/, 'the park form is named');
-  assert.match(forLead, /body is NOT read by anything/, 'and the body convention is explicitly disclaimed');
+  assert.match(forLead, /\[agent:task add <role>\] <spec>/);
+  // t174 pinned "the park form is named" because add DISPATCHED: a lead with no
+  // file-for-later verb wrote "do not start" into the body, which nothing reads.
+  // t308 removed the dispatch from add, so the file-for-later verb is now add
+  // itself — but the HAZARD t174 found is unchanged, and the line still has to
+  // close it. It does so by naming the second step: a lead that cannot see where
+  // "start" lives is a lead that goes looking for a prose way to say it.
+  assert.match(forLead, /\[agent:task start <id>\]/, 'the start verb is named — dispatch is a step the lead must be able to find');
+  assert.match(forLead, /starts NOTHING/, 'and add is explicitly stated not to dispatch');
+  assert.match(forLead, /body is NOT read by anything/, 'the body convention stays explicitly disclaimed (t174)');
   // The intent must be stated as SELF-SUFFICIENT. "Review: [agent:team-review]"
   // alone read as a channel the lead had to spawn a seat for first.
   assert.match(forLead, /Review: \[agent:team-review\] <scope> — the intent spawns the cold reviewer seat itself; do NOT spawn or subagent one by hand\./,
@@ -1359,7 +1362,7 @@ test('formatRoster: the action line keys off the role name, never the lead SEAT 
   const roster = formatRoster(team, [], { seat: 'hand' });
   assert.match(roster, /New session seat: \[agent:spawn name:shop-<role>/,
     'the hand role survives a lead seat that happens to be called "hand"');
-  assert.match(roster, /Dispatch: \[agent:task add <role>\] <spec>/);
+  assert.match(roster, /Dispatch: TWO steps\. \[agent:task add <role>\] <spec>/);
 });
 
 test('formatTeamBlock: its ground-truth invocation is concrete and schema-valid', () => {

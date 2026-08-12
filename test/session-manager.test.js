@@ -3533,7 +3533,7 @@ test('composeRosterFor: renders for the NAMED seat, live or persistence-only', (
   assert.match(forLead, /"agent":"lead"/, 'the exec line names the seat the digest is for');
   assert.match(forLead, /live: lead \(you\)/, 'the reading seat is marked in its own digest');
   assert.match(forLead, /live: team-dev \(idle 12m, warm\)/, 'teammates carry their warmth label');
-  assert.match(forLead, /Dispatch: \[agent:task add <role>\]/, 'the lead seat gets the action line');
+  assert.match(forLead, /Dispatch: TWO steps\. \[agent:task add <role>\]/, 'the lead seat gets the action line');
 
   // Not in the map: the cwd comes from persistence, and the seat name must
   // still reach formatRoster.
@@ -5127,20 +5127,42 @@ function mkTasks(extra = {}) {
   return { m, injected, gated, urgents, broadcasts, team, home, tstore, seat, load, one };
 }
 
-test('task add (assigned): mints t1, delivers spec to the assignee seat, confirms to lead', () => {
+// t308 split this test's subject in two. It used to pin add's WHOLE job —
+// mint, re-pin to the receiving seat, deliver, confirm — because add did all
+// four. Add now writes only, so the record fields stay here and the re-pin and
+// the delivery moved to the `start` half below (and to test/task-start.test.js,
+// which owns that verb). The pair still covers every assertion the original had.
+test('task add (assigned): mints t1 with the role as its durable assignee, and dispatches NOTHING', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget\ndetail' });
   const t = f.one('t1');
   assert.ok(t, 'ticket persisted');
+  // Still the ROLE, not the seat: the re-pin is a delivery-time act, and there
+  // has been no delivery. `role` is unwritten for the same reason — it is the
+  // marker a dispatch path leaves behind.
+  assert.strictEqual(t.assignee, 'hand', 'filed against the role; nothing has received it yet');
+  assert.strictEqual(t.role, undefined, 'no delivery-time pin, so no role marker');
+  assert.strictEqual(t.state, 'open');
+  assert.strictEqual(t.title, 'build the widget');
+  assert.strictEqual(t.opener, 'lead');
+  assert.deepStrictEqual(f.gated, [],
+    'add DELIVERS NOTHING — the seam the whole ticket loop hangs on is that writing a ticket and running it are two acts');
+  assert.ok(f.injected.some((x) => /ticket t1 → hand \(not started\)/.test(x)), 'lead confirmed, and told it is not started');
+  assert.ok(f.injected.some((x) => /\[agent:task start t1\]/.test(x)), 'and told the verb that starts it');
+});
+
+test('task start (assigned): re-pins to the receiving seat and delivers the spec', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget\ndetail' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const t = f.one('t1');
   // Re-pinned at delivery: `role` is what the lead filed it under, `assignee` is
   // the seat that actually received it, so the close-time cost path reads a seat
   // instead of inferring one.
   assert.strictEqual(t.assignee, 'team-hand', 'pinned to the seat that received it');
   assert.strictEqual(t.role, 'hand', 'the filed role survives the pin');
-  assert.strictEqual(t.state, 'open');
-  assert.strictEqual(t.title, 'build the widget');
-  assert.strictEqual(t.opener, 'lead');
   assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] build the widget\ndetail' }],
     'spec delivered to the live seat holding the role, id-prefixed');
   assert.ok(f.injected.some((x) => /ticket t1 → hand/.test(x)), 'lead confirmed');
@@ -5152,13 +5174,18 @@ test('task add (assigned): mints t1, delivers spec to the assignee seat, confirm
 // wrong one silently resolves nothing, and the role-addressed path above would
 // stay green throughout. This is the name-addressed path, which nothing else
 // covers.
-test('task add (name-addressed): a live seat name resolves as an assignee and receives the spec', () => {
+test('task add/start (name-addressed): a live seat name resolves as an assignee and receives the spec', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'team-hand', id: null, body: 'name-addressed work' });
   const t = f.one('t1');
   assert.ok(t, 'ticket persisted');
   assert.strictEqual(t.assignee, 'team-hand', 'the seat NAME is stored as the assignee, not a role');
+  // The delivery moved to `start` (t308); the RESOLUTION under test did not. A
+  // name-addressed ticket carries no `role`, so it is the case where the two
+  // resolvers (_teamLiveSeats vs _teamLiveSeatNames) can silently disagree —
+  // which is what this test has always been for.
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] name-addressed work' }],
     'the spec reaches the named seat — _ticketAssigneeSeat resolved it by name');
 });
@@ -5187,12 +5214,15 @@ test('task add (backlog): unassigned, no delivery, confirmed as backlog', () => 
   assert.ok(f.injected.some((x) => /ticket t1 \(backlog\)/.test(x)));
 });
 
-test('task add to a role with no live seat: minted, but the lead is warned it was not delivered', () => {
+test('task start on a role with no live seat: kept on the role, and the lead is warned it was not delivered', () => {
   const f = mkTasks();
   f.seat('lead'); // no team-hand live
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   assert.strictEqual(f.one('t1').assignee, 'hand', 'role is the durable assignee even with no live seat');
   assert.deepStrictEqual(f.gated, [], 'no live seat → nothing delivered');
+  // The warning belongs to the verb that TRIED to deliver. Under t308 that is
+  // `start`: add no longer attempts a delivery, so it has nothing to warn about.
   assert.ok(f.injected.some((x) => /no live seat for "hand"/.test(x)), 'lead warned spec not delivered');
 });
 
@@ -5250,6 +5280,10 @@ test('t82 dispatch WAKES the assignee: the spec delivery is urgent, because an a
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget' });
+  // Dispatch is `start` since t308. The t82 property is about the DISPATCH, so
+  // it follows the verb that dispatches — asserting urgency on add would now be
+  // asserting it about nothing (add delivers nothing at all).
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery, so urgents[0] is the spec');
   assert.strictEqual(f.urgents[0], true,
     'the ticket spec must be dispatched urgent — parking a work assignment leaves the board saying "assigned" while nothing runs');
@@ -5488,6 +5522,7 @@ test('t82 a HELD spec is NOT reported as delivered: un-parkable means the seat n
     return { held: 'blocked on a permission dialog — injecting now would answer the dialog' };
   };
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   assert.strictEqual(f.gated.length, 1, 'ENTER: the delivery was attempted and the gate held it');
   const note = f.injected.join('\n');
   assert.match(note, /NOT delivered/,
@@ -5503,6 +5538,7 @@ test('t82 a PARKED spec reads as parked, not delivered — it will arrive, but i
     return { parked: 'pk-1', reason: 'idle 5h with a cold cache — waking it re-bills its full context' };
   };
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   const note = f.injected.join('\n');
   assert.match(note, /parked/,
     'parked must be distinguishable from delivered: the spec is queued, so the lead should wait rather than re-send');
@@ -5923,6 +5959,7 @@ test('task done: the LEAD closes a ticket assigned to SOMEONE ELSE (retired seat
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   // The seat retires with its ticket open — the other half of the hole.
   f.m.sessions.delete('team-hand');
   const t0 = f.one('t1');
@@ -5986,6 +6023,7 @@ test('task reject: lead reopens a DONE ticket, reason to the assignee, assignee 
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'done' });
   f.gated.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'fix the edge case' });
@@ -6057,6 +6095,10 @@ function mkAccept(mergedAnswer, extra = {}) {
 function openAndDone(f) {
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget' });
+  // t308: add writes, start dispatches. Accept's subject is the DONE ticket's
+  // teardown, and a ticket that was never started never reaches done — so the
+  // helper has to walk the real lifecycle, not a shortcut through it.
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped' });
 }
 
@@ -6257,11 +6299,15 @@ test('t89 the advance skips closed tickets and other seats` work', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand'); f.seat('team-reviewer-1');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'closing this' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'already cancelled' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'reviewer', id: null, body: 'not mine' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't3', body: '' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'backlog, unassigned' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', body: 'never mind' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the real next one' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't5', body: '' });
   // ENTER: the decoys are really in the states this test claims.
   assert.strictEqual(f.one('t2').state, 'cancelled', 'ENTER: t2 is closed');
   assert.strictEqual(f.one('t3').assignee, 'team-reviewer-1', 'ENTER: t3 belongs to another seat');
@@ -6347,7 +6393,9 @@ test('t295: a dead seat does not take its pinned role tickets with it', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'first' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'second' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   // ENTER: both must actually be pinned to the seat, or the recovery below is
   // about ordinary role tickets and proves nothing.
   assert.deepStrictEqual(f.load().map((t) => [t.id, t.assignee, t.role]),
@@ -6379,6 +6427,9 @@ test('t295: a dead seat does not take its pinned role tickets with it', () => {
   const g = mkTasks();
   g.seat('lead'); g.seat('team-hand'); g.seat('team-hand-2');
   g.m._handleTask(g.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'held' });
+  // `g` is a SECOND fixture with its own board, so its first ticket is t1 — the
+  // ids above belong to `f` and do not continue into it.
+  g.m._handleTask(g.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   assert.strictEqual(g.one('t1').assignee, 'team-hand', 'ENTER: pinned to the first live seat');
   assert.deepStrictEqual(g.m._openTicketsFor(g.team, 'team-hand-2').map((t) => t.id),
     [], 'a live seat\'s pinned ticket stays its own');
@@ -6788,7 +6839,12 @@ test('task add without park writes NO parked key, so old records read identicall
   // Absence, not `false`: every record predating t174 has no key, and a stored
   // `false` would be a second spelling of the same state for readers to get wrong.
   assert.ok(!('parked' in f.one('t1')), 'no parked key on an ordinary add');
-  assert.strictEqual(f.gated.length, 1, 'and it still dispatches');
+  // t308: the contrast this pins is parked-vs-not, and since add stopped
+  // dispatching, the observable difference is whether START is refused. An
+  // unparked ticket starts; the parked test above asserts add delivered nothing
+  // for BOTH, which is why the discriminator had to move here.
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.strictEqual(f.gated.length, 1, 'and it still dispatches when started');
 });
 
 test('a parked ticket is invisible to _openTicketsFor, so advance SKIPS it', () => {
@@ -6839,6 +6895,7 @@ test('[agent:task park] toggles an already-open ticket both ways', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   assert.strictEqual(f.gated.length, 1, 'dispatched on add');
   f.gated.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
@@ -10413,6 +10470,7 @@ test('task add: a template env key outside the allowlist is dropped AND named in
   f.m.create = async (...args) => { sessionEnv = args[18]; f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build it' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   // NOT on the reply text: the handler emits a pre-spawn "ticket t1 -> spawning"
   // line BEFORE create(), so waiting on that raced ahead of the env resolution
   // and read an UNSET capture. Wait on the spawn itself.
@@ -10446,6 +10504,7 @@ test('task add: an opted-in role mints a branch, a worktree and a seat, and the 
   f.m.create = async (...args) => { createdName = args[0]; createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget\ndetail' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => createdCwd !== 'UNSET' || f.gated.length);
 
   // ENTER: without this every assertion below reads as "not the shared repo",
@@ -10511,6 +10570,7 @@ test('task add: the minted branch carries the REAL ticket id and no id from the 
     type: 'task', sub: 'add', who: 'hand', id: null,
     body: 't306 — tasks/t306-accept-and-retire/spec.md accept and retire\ndetail',
   });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => createdName || f.gated.length);
   assert.strictEqual(createdName, 'team-hand-1', 'ENTER: the seat must have spawned, or nothing below was reached');
 
@@ -10539,6 +10599,7 @@ test('task add: a role WITHOUT the opt-in keeps the old role-assigned path', asy
   f.m.create = async () => { created = true; return { name: 'x' }; };
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'ordinary work' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
   assert.strictEqual(created, false, 'no seat is spawned for a role that did not opt in');
   const t = f.one('t1');
@@ -10562,6 +10623,7 @@ test('task add: a role ticket with no live seat stays on the role — there is n
   const f = mkTicketWt(repo, { dispatch: 'standing' });
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'nobody home' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
   const t = f.one('t1');
   // ENTER: the ticket must exist, or every assertion below is about undefined.
@@ -10575,6 +10637,7 @@ test('task add: a role ticket with no live seat stays on the role — there is n
   // certify nothing. Same team, same role — the only difference is a live seat.
   f.seat('team-hand');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'somebody home' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
   assert.strictEqual(f.one('t2').assignee, 'team-hand',
     'the SAME role pins once a seat is live — so the un-pinned t1 above is about liveness, not about pinning being off');
@@ -10590,6 +10653,7 @@ test('task add: a lead-held role ticket is NOT re-pinned to the lead', async () 
   const f = mkTicketWt(repo, { dispatch: 'standing' });
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'lead', id: null, body: 'my own work' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
   const t = f.one('t1');
   assert.ok(t, 'ENTER: the ticket must have been filed');
@@ -10601,6 +10665,7 @@ test('task add: a lead-held role ticket is NOT re-pinned to the lead', async () 
   // absence that any never-pinning tree satisfies.
   f.seat('team-hand');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'delegated work' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
   assert.strictEqual(f.one('t2').assignee, 'team-hand',
     'a non-lead role pins — so the lead exemption above is specific to the lead');
@@ -10613,6 +10678,7 @@ test('task assign: a re-pinned ticket still moves to another seat, and back to t
   f.seat('lead'); f.seat('team-hand'); f.seat('team-hand-2');
   const lead = f.m.sessions.get('lead');
   f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the work' });
+  f.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
   // ENTER: the pin under test must have happened, or the moves below prove nothing.
   assert.strictEqual(f.one('t1').assignee, 'team-hand', 'ENTER: the ticket must be seat-pinned first');
@@ -10679,6 +10745,7 @@ test('task add: the ticket branch forks from the lead\'s HEAD, not the default b
   f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'work on it' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => createdCwd !== 'UNSET' || f.gated.length);
   assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: create() must have been reached');
 
@@ -10732,6 +10799,7 @@ test('task assign: a ticket whose seat is still live is not given a second workt
   f.m.create = async (...args) => { creates += 1; f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the work' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => creates > 0 || f.gated.length);
   assert.strictEqual(creates, 1, 'ENTER: the first dispatch must have spawned the seat');
   const treesAfterAdd = f.worktreeSet.length;
@@ -10755,8 +10823,10 @@ test('task assign: re-assigning a live worktree ticket to its role keeps it on i
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job two' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   await until(() => f.m.sessions.has('team-hand-2'));
   assert.strictEqual(f.one('t2').assignee, 'team-hand-2', 'ENTER: t2 must be pinned to its own seat first');
 
@@ -10786,6 +10856,7 @@ test('task assign: a ticket whose seat died respawns onto its EXISTING tree', as
   f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
   const tree = f.one('t1').worktree;
   assert.ok(tree && tree.path, 'ENTER: the first dispatch must have made a tree to respawn onto');
@@ -10818,6 +10889,7 @@ test('task assign: a tree removed by hand is not reused — a fresh one is made'
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
   const gone = f.one('t1').worktree;
   assert.ok(gone && fsReal.existsSync(gone.path), 'ENTER: the tree must exist before it is removed');
@@ -10854,6 +10926,7 @@ test('task assign: a ticket whose seat is ARCHIVED reports the recovery, and sta
   f.m._injectText = (s, t) => { said.push(t); };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
 
   f.archiveSeat('team-hand-1');   // session gone, record KEPT
@@ -10887,6 +10960,7 @@ test('task assign: a tree still held by a live seat is never handed to a second 
   f.m._injectText = (s, t) => { said.push(t); };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
   const tree = f.one('t1').worktree;
 
@@ -10927,6 +11001,7 @@ test('task assign: a refused move leaves a PARKED ticket parked, and its stall c
   f.m._injectText = (s, t) => { said.push(t); };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'park', who: null, id: 't1', body: '' });
   assert.strictEqual(f.one('t1').parked, true, 'ENTER: the ticket must really be parked, or the unpark cannot be observed');
@@ -10958,6 +11033,7 @@ test('task assign: a NON-worktree destination is refused too while the tree is h
   f.m._injectText = (s, t) => { said.push(t); };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
   f.seat('team-other-9');   // a live seat filling the non-worktree role
 
@@ -10986,6 +11062,7 @@ test('task assign: reusing a tree moves the record pointer off the previous seat
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
   const tree = f.one('t1').worktree;
 
@@ -11019,6 +11096,7 @@ test('task assign: a failed respawn onto a reused tree leaves the ticket pinned'
   };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
   const tree = f.one('t1').worktree;
   f.killSeat('team-hand-1');
@@ -11045,6 +11123,7 @@ test('task assign: a fresh tree on a recycled path also moves the record pointer
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
   const tree = f.one('t1').worktree;
 
@@ -11080,6 +11159,7 @@ test('task add: a seat that spawned then failed keeps its pin, its tree and its 
   f.m.create = async (...args) => { f.seat(args[0], args[2]); throw new Error('boom'); };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
   for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
 
@@ -11114,6 +11194,7 @@ test('task assign: a seat that spawned then failed onto a REUSED tree takes the 
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
   const tree = f.one('t1').worktree;
   // Archived, not killed: the record is KEPT and still names the tree, which is
@@ -11159,6 +11240,7 @@ test('task assign: a failed worktree leaves a ticket that still names a tree pin
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
   const tree = f.one('t1').worktree;
   f.archiveSeat('team-hand-1');
@@ -11200,6 +11282,7 @@ test('task assign: a record naming the tree through a symlink is cleared too', a
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
   const tree = f.one('t1').worktree;
 
@@ -11276,6 +11359,7 @@ test('task add: the role\'s template shapes the seat it staffs', async () => {
   };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'shaped work' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => got.disabledTools !== undefined);
 
   assert.deepStrictEqual(got.disabledTools, ['WebFetch', 'TodoWrite'],
@@ -11310,6 +11394,7 @@ test('task add: a worktree that cannot be created leaves the ticket on the role,
   f.m._mintTicketSeat = (team, role, ticket) => ({ ok: true, name: 'team-hand-1', branch: 'bad..name' });
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'doomed work' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.removed.includes('team-hand-1'));
 
   assert.strictEqual(created, false, 'NO fallback into the shared checkout');
