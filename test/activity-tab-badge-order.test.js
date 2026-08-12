@@ -186,10 +186,12 @@ test('the pre-mount queue drains once, not on every later poll', () => {
 test('a stale payload badges nothing', () => {
   withDom(() => {
     const levels = [];
-    const stale = new Map([['alpha', {
-      at: Date.now() - 60000, // far past proxyPollMs * 4
-      payload: { linked: true, subagents: [{ key: 'sub1', requests: 3, lastActiveS: 1 }] },
-    }]]);
+    // Built from the same helper as every other fixture, mutating ONLY the
+    // variable under test. A hand-rolled payload here would drift when the
+    // helper's shape changes, and this assertion is an ABSENCE — it would go
+    // vacuously true for the wrong reason and never say so.
+    const stale = proxyState(['sub1', 3]);
+    stale.get('alpha').at = Date.now() - 60000; // far past proxyPollMs * 4
     const tab = createActivityTab({ host: unmountedHost(levels), proxyState: stale, proxyPollMs: 5000 });
     tab.refreshChips();
     assert.deepStrictEqual(levels, []);

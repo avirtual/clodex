@@ -137,6 +137,10 @@ test('requests going backwards is not an advance', () => {
   b.notice(liveMap(['alpha', 'sub1', 9]));
   b.arm();
   assert.deepStrictEqual(b.notice(liveMap(['alpha', 'sub1', 3])), []);
+  // The interesting consequence, and the reason the absence above is not the
+  // whole story: a backwards value IS written to lastReq, so the NEXT arm()
+  // snapshots 3 and a return to 9 counts as an advance.
+  assert.deepStrictEqual(b.snapshot().lastReq, { 'alpha sub1': 3 });
 });
 
 test('several subs each badge on their own, in payload-iteration order', () => {

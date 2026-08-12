@@ -52,8 +52,7 @@ const ICON = {
 // Feeds outlive their subagents on purpose (history is the point), so memory is
 // bounded here: the oldest feeds that are neither live nor selected are evicted.
 // A SOFT cap, not a guarantee — `pruneFeeds` skips live and selected feeds, so
-// 40 concurrently-live subagents hold 40 feeds. `notified` is looser still: it
-// is only ever cleaned by `dropParent`.
+// 40 concurrently-live subagents hold 40 feeds.
 const MAX_RETAINED_FEEDS = 20;
 
 function createActivityTab({ host, proxyState, proxyPollMs }) {
