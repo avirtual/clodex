@@ -20,7 +20,7 @@
 
 const { esc } = require('../lib/format');
 const {
-  teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote,
+  teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, DISPATCH_VALUES, DEFAULT_DISPATCH,
   parseDuration, formatDuration, formatBlockedBy,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
@@ -36,6 +36,7 @@ function initTeamRolesPopover({ promptText } = {}) {
   const addBrief = document.getElementById('team-roles-add-brief');
   const addPrompt = document.getElementById('team-roles-add-prompt');
   const addTemplate = document.getElementById('team-roles-add-template');
+  const addDispatch = document.getElementById('team-roles-add-dispatch');
   const addBtn = document.getElementById('team-roles-add-btn');
   const watchdogInput = document.getElementById('team-roles-watchdog-ms');
   const watchdogSet = document.getElementById('team-roles-watchdog-set');
@@ -90,6 +91,11 @@ function initTeamRolesPopover({ promptText } = {}) {
           `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label>` +
           `<label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label>` +
           `<label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label>` +
+          `<label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span>` +
+          `<select data-f="dispatch">` +
+          `<option value="standing">standing — the live seat gets the spec</option>` +
+          `<option value="worktree">worktree — one-shot seat, own branch + checkout</option>` +
+          `</select></label>` +
           `<div class="team-role-actions">` +
           `<button type="button" data-act="save">Save</button>` +
           `<button type="button" data-act="rename" class="secondary">Rename</button>` +
@@ -137,6 +143,11 @@ function initTeamRolesPopover({ promptText } = {}) {
           sel.value = row.prompt;
         }
         el.querySelector('input[data-f="template"]').value = row.template;
+        // A hand-edited team.json can hold a value this picker has no option for.
+        // Fall back to the default rather than leaving the select blank, which
+        // would send '' and have buildSavePatch drop the key silently.
+        const disp = el.querySelector('select[data-f="dispatch"]');
+        disp.value = DISPATCH_VALUES.includes(row.dispatch) ? row.dispatch : DEFAULT_DISPATCH;
       }
       listEl.appendChild(el);
     }
@@ -235,7 +246,9 @@ function initTeamRolesPopover({ promptText } = {}) {
       };
       // buildSavePatch sends brief/prompt (blank clears) but OMITS a blank
       // template — backend setRole throws NAME_RE on '' (no clear-template in v1).
-      const patch = buildSavePatch({ brief: val('brief'), prompt: val('prompt'), template: val('template') });
+      const patch = buildSavePatch({
+        brief: val('brief'), prompt: val('prompt'), template: val('template'), dispatch: val('dispatch'),
+      });
       const res = await window.api.teamSetRole(name, role, patch);
       await afterMutation(res, `role "${role}" saved`);
     } else if (act === 'rename') {
@@ -262,8 +275,15 @@ function initTeamRolesPopover({ promptText } = {}) {
     if (v.template) def.template = v.template;
     const brief = addBrief.value.trim();
     if (brief) def.brief = brief;
+    // Only the non-default is written: absent already reads as `standing`, so an
+    // explicit one would put a value on disk that means exactly what its absence
+    // does (the same rule migrateRoles follows).
+    if (addDispatch.value === 'worktree') def.dispatch = 'worktree';
     const res = await window.api.teamAddRole(name, v.name, def);
-    if (res && res.ok) { addName.value = ''; addBrief.value = ''; addTemplate.value = ''; addPrompt.value = ''; }
+    if (res && res.ok) {
+      addName.value = ''; addBrief.value = ''; addTemplate.value = ''; addPrompt.value = '';
+      addDispatch.value = DEFAULT_DISPATCH;
+    }
     await afterMutation(res, `role "${v.name}" added`);
   });
 

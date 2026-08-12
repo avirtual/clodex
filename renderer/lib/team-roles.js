@@ -18,6 +18,11 @@ const RESERVED_ROLE_KEYS = new Set(['lead', 'reviewer']);
 // regexes on every write regardless.
 const ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+// Mirror of team-manifest's ROLE_DISPATCH_VALUES / DEFAULT_ROLE_DISPATCH. An
+// absent value on disk IS `standing`, so the row model normalizes to it rather
+// than showing a blank the operator would have to interpret.
+const DISPATCH_VALUES = ['standing', 'worktree'];
+const DEFAULT_DISPATCH = 'standing';
 
 // One display row-model per role in a loaded manifest, in the manifest's key
 // order. `readOnly` marks the operator-owned keys (lead/reviewer). Missing
@@ -31,6 +36,7 @@ function teamRoleRows(manifest) {
   return Object.entries(roles).map(([key, def]) => ({
     key,
     brief: (def && def.brief) || '',
+    dispatch: (def && def.dispatch) || DEFAULT_DISPATCH,
     prompt: (def && def.prompt) || '',
     template: (def && def.template) || '',
     readOnly: RESERVED_ROLE_KEYS.has(key),
@@ -57,11 +63,18 @@ function validateAddRole({ name, template } = {}) {
 // no clear-template semantics (flagged as a Slice-2 backend gap). All values are
 // trimmed. (Takes the form values only; the role name isn't needed to shape the
 // patch — the caller addresses the role separately.)
+// `dispatch` is sent whenever the form offers a value the schema knows, INCLUDING
+// the default: a two-value picker has no blank state, and omitting `standing`
+// would make worktree→standing unreachable from the only door that can undo it.
+// An unrecognized value is omitted rather than forwarded — the backend would
+// throw and lose the brief/prompt edits sent alongside it.
 function buildSavePatch(formValues) {
   const trim = (v) => String(v == null ? '' : v).trim();
   const patch = { brief: trim(formValues && formValues.brief), prompt: trim(formValues && formValues.prompt) };
   const template = trim(formValues && formValues.template);
   if (template) patch.template = template;
+  const dispatch = trim(formValues && formValues.dispatch);
+  if (DISPATCH_VALUES.includes(dispatch)) patch.dispatch = dispatch;
   return patch;
 }
 
@@ -123,4 +136,5 @@ function formatBlockedBy(blockedBy) {
 module.exports = {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote,
   parseDuration, formatDuration, formatBlockedBy,
+  DISPATCH_VALUES, DEFAULT_DISPATCH,
 };

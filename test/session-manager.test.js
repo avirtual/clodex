@@ -2607,7 +2607,7 @@ function mkRetire(rootByName, rolesByRoot, extraDeps) {
   // getPersistence().get to return { ephemeral: true } rather than marking a role.
   const roles = (root) => rolesByRoot?.[root] ?? { lead: {}, dev: {} };
   const normalize = (defs) => Object.fromEntries(
-    Object.entries(defs).map(([r, d]) => [r, { template: d.template ?? null, prompt: d.prompt ?? null, brief: d.brief ?? null, worktree: d.worktree === true }]),
+    Object.entries(defs).map(([r, d]) => [r, { template: d.template ?? null, prompt: d.prompt ?? null, brief: d.brief ?? null, dispatch: d.dispatch ?? 'standing' }]),
   );
   const { m, PENDING_DIR, injected } = mkPark({
     findProjectRoot: (cwd) => rootByName[cwd] ?? null,
@@ -4444,7 +4444,7 @@ test('team-review: two reviews in one lead turn mint DISTINCT names (no -1 colli
 test('team-review C2: a role def still carrying `type: codex` spawns as CLAUDE + capped', async () => {
   const { m, created } = mkReview({
     reviewerRole: { prompt: 'clodex-team-reviewer', brief: 'the reviewer',
-      type: 'codex', template: null, worktree: false },
+      type: 'codex', template: null, dispatch: 'standing' },
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
@@ -4462,7 +4462,7 @@ test('team-review C2: a role def still carrying `type: codex` spawns as CLAUDE +
 test('team-review C2: no force-claude notice is emitted any more', async () => {
   const { m, injected, created } = mkReview({
     reviewerRole: { prompt: 'clodex-team-reviewer', brief: 'the reviewer',
-      type: 'codex', template: null, worktree: false },
+      type: 'codex', template: null, dispatch: 'standing' },
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
@@ -4773,7 +4773,7 @@ test('team-review: a role def still carrying `tools` does not narrow the cap', a
     reviewTemplates: [{ name: 'clodex-team-reviewer', systemPromptFile: 'clodex-team-reviewer', intents: [],
       env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', FORCE_PROMPT_CACHING_5M: '1', CLODEX_DISABLE_IPC_PROMPT: '1' } }],
     reviewerRole: { prompt: 'clodex-team-reviewer', brief: 'the reviewer',
-      tools: ['Read', 'Bash'], template: null, worktree: false },
+      tools: ['Read', 'Bash'], template: null, dispatch: 'standing' },
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
@@ -4794,7 +4794,7 @@ test('team-review: a role def still carrying `tools` does not narrow the cap', a
 test('team-review: an ABSENT manifest tools list applies the cap as-is', async () => {
   const { m, injected, created } = mkReview({
     reviewerRole: { prompt: 'clodex-team-reviewer', brief: 'the reviewer',
-      template: null, worktree: false },
+      template: null, dispatch: 'standing' },
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
@@ -10279,9 +10279,9 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
     name: 'team', root: repo, lead: 'lead', watchdogMs: null,
     file: pathReal.join(home, 'teams', 'team', 'team.json'),
     roles: {
-      lead: { instantiate: 'session', brief: 'the lead', worktree: false },
-      hand: { instantiate: 'session', brief: 'the hand', worktree: true, ...roleExtra },
-      reviewer: { instantiate: 'subagent', brief: 'the reviewer', worktree: false },
+      lead: { instantiate: 'session', brief: 'the lead', dispatch: 'standing' },
+      hand: { instantiate: 'session', brief: 'the hand', dispatch: 'worktree', ...roleExtra },
+      reviewer: { instantiate: 'subagent', brief: 'the reviewer', dispatch: 'standing' },
     },
   };
   const upserted = [];
@@ -10518,7 +10518,7 @@ test('task add: the minted branch carries the REAL ticket id and no id from the 
 
 test('task add: a role WITHOUT the opt-in keeps the old role-assigned path', async () => {
   const { root, repo } = mkGitRepo();
-  const f = mkTicketWt(repo, { worktree: false });
+  const f = mkTicketWt(repo, { dispatch: 'standing' });
   let created = false;
   f.m.create = async () => { created = true; return { name: 'x' }; };
   f.seat('lead'); f.seat('team-hand');
@@ -10543,7 +10543,7 @@ test('task add: a role WITHOUT the opt-in keeps the old role-assigned path', asy
 
 test('task add: a role ticket with no live seat stays on the role — there is nothing to pin to', async () => {
   const { root, repo } = mkGitRepo();
-  const f = mkTicketWt(repo, { worktree: false });
+  const f = mkTicketWt(repo, { dispatch: 'standing' });
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'nobody home' });
   for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
@@ -10571,7 +10571,7 @@ test('task add: a role ticket with no live seat stays on the role — there is n
 // "unknown" replaced by a confidently wrong number.
 test('task add: a lead-held role ticket is NOT re-pinned to the lead', async () => {
   const { root, repo } = mkGitRepo();
-  const f = mkTicketWt(repo, { worktree: false });
+  const f = mkTicketWt(repo, { dispatch: 'standing' });
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'lead', id: null, body: 'my own work' });
   for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
@@ -10593,7 +10593,7 @@ test('task add: a lead-held role ticket is NOT re-pinned to the lead', async () 
 
 test('task assign: a re-pinned ticket still moves to another seat, and back to the role', async () => {
   const { root, repo } = mkGitRepo();
-  const f = mkTicketWt(repo, { worktree: false });
+  const f = mkTicketWt(repo, { dispatch: 'standing' });
   f.seat('lead'); f.seat('team-hand'); f.seat('team-hand-2');
   const lead = f.m.sessions.get('lead');
   f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the work' });
@@ -10622,7 +10622,7 @@ test('task assign: a re-pinned ticket still moves to another seat, and back to t
 // here or not at all.
 test('advance: the queued ticket handed to a seat on close is re-pinned to it', async () => {
   const { root, repo } = mkGitRepo();
-  const f = mkTicketWt(repo, { worktree: false });
+  const f = mkTicketWt(repo, { dispatch: 'standing' });
   f.seat('lead');
   const lead = f.m.sessions.get('lead');
   f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'first job' });
@@ -10864,7 +10864,7 @@ test('task assign: a ticket whose seat is ARCHIVED reports the recovery, and sta
 test('task assign: a tree still held by a live seat is never handed to a second one', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);
-  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', worktree: true };
+  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', dispatch: 'worktree' };
   const cwds = {};
   f.m.create = async (...args) => { cwds[args[0]] = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
   const said = [];
@@ -10905,7 +10905,7 @@ test('task assign: a tree still held by a live seat is never handed to a second 
 test('task assign: a refused move leaves a PARKED ticket parked, and its stall clock alone', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);
-  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', worktree: true };
+  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', dispatch: 'worktree' };
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   const said = [];
   f.m._injectText = (s, t) => { said.push(t); };
@@ -10936,7 +10936,7 @@ test('task assign: a refused move leaves a PARKED ticket parked, and its stall c
 test('task assign: a NON-worktree destination is refused too while the tree is held', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);
-  f.team.roles.other = { instantiate: 'session', brief: 'the other', worktree: false };
+  f.team.roles.other = { instantiate: 'session', brief: 'the other', dispatch: 'standing' };
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   const said = [];
   f.m._injectText = (s, t) => { said.push(t); };
@@ -10966,7 +10966,7 @@ test('task assign: a NON-worktree destination is refused too while the tree is h
 test('task assign: reusing a tree moves the record pointer off the previous seat', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);
-  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', worktree: true };
+  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', dispatch: 'worktree' };
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
@@ -11025,7 +11025,7 @@ test('task assign: a failed respawn onto a reused tree leaves the ticket pinned'
 test('task assign: a fresh tree on a recycled path also moves the record pointer', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);
-  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', worktree: true };
+  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', dispatch: 'worktree' };
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
@@ -11094,7 +11094,7 @@ test('task add: a seat that spawned then failed keeps its pin, its tree and its 
 test('task assign: a seat that spawned then failed onto a REUSED tree takes the pointer with it', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);
-  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', worktree: true };
+  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', dispatch: 'worktree' };
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
@@ -11139,7 +11139,7 @@ test('task assign: a seat that spawned then failed onto a REUSED tree takes the 
 test('task assign: a failed worktree leaves a ticket that still names a tree pinned', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);
-  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', worktree: true };
+  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', dispatch: 'worktree' };
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
@@ -11180,7 +11180,7 @@ test('task assign: a failed worktree leaves a ticket that still names a tree pin
 test('task assign: a record naming the tree through a symlink is cleared too', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);
-  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', worktree: true };
+  f.team.roles.builder = { instantiate: 'session', brief: 'the builder', dispatch: 'worktree' };
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });

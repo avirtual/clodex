@@ -5160,7 +5160,9 @@ function createSessionManager(deps) {
       if (!team || !assignee || !team.roles) return null;
       if (!Object.prototype.hasOwnProperty.call(team.roles, assignee)) return null;
       const def = team.roles[assignee];
-      if (!def || def.worktree !== true) return null;
+      if (!def || def.dispatch !== 'worktree') return null;
+      // The manifest refuses to WRITE this pair, but team.json is hand-editable
+      // and files predating that check exist: the resolver holds the line too.
       if (assignee === 'lead' || assignee === 'reviewer') return null;
       return def;
     }

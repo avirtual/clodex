@@ -95,9 +95,12 @@ half-written state, but on disk, where one hand's edit lands mid-read of the
 other's. So a ticket that gets its own hand gets its own branch and its own
 checkout.
 
-A role with `"worktree": true` in team.json does it automatically: every ticket
+A role set to `"dispatch": "worktree"` does it automatically: every ticket
 you `task add` to that role mints a branch off the ticket id, creates a worktree
-on it, spawns a seat, and re-pins the ticket to that seat. The seat's cwd stays
+on it, spawns a seat, and re-pins the ticket to that seat. Set it from the team
+popover's Roles section — each role has a `dispatch` picker (`standing` delivers
+the spec to the live seat holding the role; `worktree` is this behaviour) — so
+there is no need to hand-edit team.json. The seat's cwd stays
 the shared REPO — it is TOLD where its tree is, by a `WORK IN:` line at the head
 of the spec, and goes there itself. One ticket, one branch, one seat.
 

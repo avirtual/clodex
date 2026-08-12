@@ -16,10 +16,11 @@
 //   4. addRole's WRITABLE key set      (what a def can actually land on disk)
 //
 // A field added to the schema and to none of these FAILS here. A field shown in
-// the UI that the schema does not model FAILS here. The one legitimate gap —
-// `worktree`, whose current semantics are superseded by per-ticket isolation —
-// is named in UNREACHABLE_ROLE_FIELDS with a reason, so the gap is a declaration
-// rather than an oversight, and a second one cannot join it silently.
+// the UI that the schema does not model FAILS here. UNREACHABLE_ROLE_FIELDS is
+// now EMPTY — the one gap it ever declared (`worktree`, waiting on per-ticket
+// isolation) was closed by giving that field a front door rather than by moving
+// its exemption. A future gap has to add itself back explicitly, which is the
+// difference between a declaration and an oversight.
 //
 // This is the test that makes the cut stick. Deleting it un-deletes the schema.
 
@@ -72,8 +73,11 @@ function addRoleWritableFields() {
   tm.createTeam({ name: 'shop', root, lead: 'shop-lead' });
   tm.addRole('shop', 'runner', {
     // The full surviving schema...
-    template: 'fable-lead', prompt: 'p', brief: 'b', worktree: true,
-    // ...every field this ticket cut...
+    template: 'fable-lead', prompt: 'p', brief: 'b', dispatch: 'worktree',
+    // ...every field a version bump cut EXCEPT `worktree`, which addRole now
+    // refuses loudly rather than dropping (pinned in team-manifest.test.js):
+    // pickRoleKeys would drop it without emitting a `dispatch`, so a def
+    // carrying it would store a standing role and report success...
     instantiate: 'session', standing: 'prompts/s.md', tools: ['Read'],
     type: 'codex', ephemeral: true,
     // ...and one nobody ever declared, so the check is not a denylist.
@@ -97,6 +101,14 @@ test('legibility: addRole stores exactly the schema, dropping anything else', ()
 test('legibility: every schema field is either front-door reachable or declared unreachable', () => {
   const reachable = new Set(EDITABLE_ROLE_FIELDS);
   const declaredGap = new Set(UNREACHABLE_ROLE_FIELDS);
+
+  // Stated, not merely implied by the union below: EVERY field is reachable
+  // today. The union check alone is satisfied by any partition of the schema, so
+  // a field moved from EDITABLE into the gap set would still pass it. This is
+  // the assertion a future exemption has to argue with.
+  assert.deepStrictEqual(sorted(declaredGap), [],
+    'no role field is exempt from a front door today — adding an entry here means '
+    + 'shipping a field only a hand-edit can reach, which is what this file exists to stop');
 
   // No field may be in both lists — that would let a field claim exemption while
   // also being editable, and the union check below would still pass.
@@ -134,10 +146,12 @@ test('legibility: the popover row model shows exactly the editable fields', () =
 // membership itself, so a swap (drop `brief`, add `standing`) that keeps the
 // count cannot pass, and re-adding a cut field has to come through here.
 test('legibility: the schema is exactly the four surviving fields', () => {
-  assert.deepStrictEqual(sorted(ROLE_KEYS), ['brief', 'prompt', 'template', 'worktree'],
+  assert.deepStrictEqual(sorted(ROLE_KEYS), ['brief', 'dispatch', 'prompt', 'template'],
     'the role schema is four fields: the seat\'s shape source, its standing instructions, '
-    + 'the human label, and the isolation prior');
-  for (const cut of ['instantiate', 'standing', 'tools', 'type', 'ephemeral']) {
+    + 'the human label, and what dispatching a ticket to the role does');
+  // `worktree` is in this list as a CUT field: it was replaced by `dispatch`, and
+  // re-adding the boolean would give the migration two sources to disagree over.
+  for (const cut of ['instantiate', 'standing', 'tools', 'type', 'ephemeral', 'worktree']) {
     assert.ok(!ROLE_KEYS.has(cut),
       `"${cut}" was cut because no single resolver consumed it on every spawn path; `
       + 'reintroducing it needs the resolver first, not a normalizeRoleDef line');

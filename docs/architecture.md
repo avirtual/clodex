@@ -181,7 +181,7 @@ adapter that hosts it. The modules below are what the engine assembles.
   rather than shelling out to git — `resolveTeam` runs on every roster render and
   ticket resolution, and a subprocess there would make membership a latency
   problem.
-  Branch per ticket: a role with `worktree: true` in team.json gets a branch, a
+  Branch per ticket: a role with `dispatch: "worktree"` in team.json gets a branch, a
   worktree and a fresh seat per ticket. BOTH dispatch paths mint — `_taskAdd`
   and `_taskAssign` (releasing a parked ticket), each via `_spawnTicketSeat`;
   minting in only one silently opts the role out on the other. The
