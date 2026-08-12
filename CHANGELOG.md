@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- A team role now declares only the four things something actually reads:
+  `template`, `prompt`, `brief`, and `worktree`. The other five —
+  `instantiate`, `standing`, `tools`, `type`, `ephemeral` — were declarations no
+  spawn path consumed, so setting one changed nothing while reading exactly like
+  configuration. `tools` was the worst of them: a role that appeared to cap a
+  seat's tools did not, and the only real cap lives in code. Team files carrying
+  the old fields are migrated in place the next time any role is edited, and are
+  read correctly until then.
+- Plugins can ask whether a worktree is dirty. `host.lib.gitWorktree.isDirty()`
+  reports whether a checkout holds work git would track, so a plugin can warn
+  before an action that would discard it.
+
 - Retiring a teammate no longer abandons its worktree. A discarded seat's
   checkout was left on disk with nothing pointing at it — retiring dropped the
   only record naming the tree, so neither Clodex nor the sidebar could find it
