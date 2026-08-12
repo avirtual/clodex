@@ -77,6 +77,7 @@ test('ticket purpose: the whole shape, with no template', () => {
     intents: null,
     env: null,
     envDropped: [],
+    envBadType: [],
     beyondCap: [],
     promptEscaped: null,
     workspaceId: 'ws-7',
@@ -109,11 +110,56 @@ test('review purpose: the whole shape, with no template', () => {
       CLODEX_SPAWNER_HINT: 'off',
     },
     envDropped: [],
+    envBadType: [],
     beyondCap: [],
     promptEscaped: null,
     workspaceId: 'ws-7',
     ephemeral: true,
   });
+});
+
+test('review purpose: the whole shape, WITH a template (the production config)', () => {
+  // Both pins above use the no-template fallback, which is the recovery path.
+  // The shipped reviewer template exists, so this is the shape that actually
+  // spawns — and it is where a field wired to the template rather than to the
+  // reviewer's ceiling would show up.
+  const m = managerWith([{
+    name: 'rv', type: 'claude', cwd: '/repo',
+    tools: ['Read', 'Grep'],
+    intents: ['dm'],
+    env: { CLODEX_DISABLE_IPC_PROMPT: '1' },
+    systemPromptFile: 'rv-brief',
+    // Every one of these must be IGNORED on the review path: the reviewer's
+    // shape is a code-level ceiling, not a template's wish list.
+    agents: ['a'], denyBuiltins: ['d'], disabledSkills: ['s'], injectSkills: ['i'],
+    appendPromptFiles: ['ap'], execCommands: ['ec'], extraArgs: ['--foo'],
+  }], { leadArgs: ['--dangerously-skip-permissions'] });
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(shape, {
+    type: 'claude',
+    cwd: '/repo',
+    tpl: shape.tpl,   // identity-compared below; the whole template is not the contract
+    extraArgs: ['--dangerously-skip-permissions'],
+    agents: [],
+    denyBuiltins: [],
+    disabledTools: CLAUDE_TOOLS.filter((t) => !['Read', 'Grep'].includes(t)),
+    disabledSkills: [],
+    injectSkills: [],
+    effectiveTools: ['Read', 'Grep'],
+    systemPromptFile: 'rv-brief',
+    appendPromptFiles: [],
+    execCommands: [],
+    intents: ['dm'],
+    env: { CLODEX_DISABLE_IPC_PROMPT: '1' },
+    envDropped: [],
+    envBadType: [],
+    beyondCap: [],
+    promptEscaped: null,
+    workspaceId: 'ws-7',
+    ephemeral: true,
+  });
+  assert.strictEqual(shape.tpl.name, 'rv', 'the template rides along for _applyTemplatePersistence');
 });
 
 // --- the reviewer's three hard rules, now properties of the resolver ---
@@ -124,6 +170,25 @@ test('a reviewer template naming type codex still resolves claude', () => {
   const m = managerWith([{ name: 'rv', type: 'codex', cwd: '/repo' }]);
   const team = teamWith({ reviewer: { template: 'rv' } });
   assert.strictEqual(m.resolveSeatShape(team, 'reviewer', 'review', LEAD).type, 'claude');
+});
+
+test('a CODEX lead still gets a claude reviewer', () => {
+  // The opener is the other way the type could leak in, and LEAD is claude — so
+  // the assertion above passes against a review arm written `opener.type ||
+  // 'claude'`, which is the expression the ticket arm 40 lines up actually uses.
+  // A codex lead is the case that separates them, and it is the whole C2 rule:
+  // the reviewer's cap is a denylist only create()'s claude arm reads.
+  const m = managerWith([]);
+  const team = teamWith({ reviewer: {} });
+  assert.strictEqual(
+    m.resolveSeatShape(team, 'reviewer', 'review', { ...LEAD, type: 'codex' }).type, 'claude',
+  );
+  // ...and with a codex template on top of a codex lead, so neither source wins.
+  const m2 = managerWith([{ name: 'rv', type: 'codex', cwd: '/repo' }]);
+  assert.strictEqual(
+    m2.resolveSeatShape(teamWith({ reviewer: { template: 'rv' } }), 'reviewer', 'review',
+      { ...LEAD, type: 'codex' }).type, 'claude',
+  );
 });
 
 test('a reviewer template requesting Bash has it dropped, and the overreach is reported', () => {
@@ -153,6 +218,22 @@ test('a non-allowlisted reviewer template env key is dropped and named', () => {
   assert.deepStrictEqual(shape.envDropped, ['ANTHROPIC_BASE_URL']);
 });
 
+test('an allowlisted key with a non-string value is reported as a TYPE problem, not an authority one', () => {
+  // The two reasons must not merge: telling the operator that
+  // CLODEX_DISABLE_IPC_PROMPT is "outside the allowed set" is false — the key is
+  // allowed, the value is not a string — and sends them to seek approval for a
+  // key they already have instead of quoting the value.
+  const m = managerWith([{
+    name: 'rv', type: 'claude', cwd: '/repo',
+    env: { CLODEX_DISABLE_IPC_PROMPT: 1, ANTHROPIC_BASE_URL: 'http://evil.example' },
+  }]);
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(shape.envDropped, ['ANTHROPIC_BASE_URL'], 'only the unknown key is an authority question');
+  assert.deepStrictEqual(shape.envBadType, ['CLODEX_DISABLE_IPC_PROMPT'], 'the allowed key is a type problem');
+  assert.deepStrictEqual(shape.env, {}, 'neither value crosses');
+});
+
 test('a non-allowlisted env key is dropped on the TICKET path too', () => {
   // The rule is the resolver's, not the review call site's. This is the
   // divergence that existed: two copies of one filter, either one editable alone.
@@ -172,6 +253,22 @@ test('a traversing reviewer systemPromptFile falls back and rides back for the w
   const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
   assert.strictEqual(shape.systemPromptFile, 'clodex-team-reviewer', 'the escape must not reach the resolver');
   assert.strictEqual(shape.promptEscaped, '../../../../etc/x', 'the caller warns loudly, so it needs the stem');
+});
+
+test('an unknown purpose throws rather than resolving the weaker seat', () => {
+  // Fail-closed. `!review` takes the ticket arm, so a typo'd 'reviewer' would
+  // otherwise produce an UNCAPPED seat silently — the one failure mode this
+  // choke point exists to prevent.
+  const m = managerWith([]);
+  const team = teamWith({ reviewer: {}, hand: { worktree: true } });
+  for (const bad of ['reviewer', 'REVIEW', '', null, undefined]) {
+    assert.throws(() => m.resolveSeatShape(team, 'reviewer', bad, LEAD), /unknown purpose/,
+      `purpose ${JSON.stringify(bad)} must not silently resolve`);
+  }
+  // The two legal values still work — a guard that rejected everything would
+  // also pass the assertions above.
+  assert.strictEqual(m.resolveSeatShape(team, 'reviewer', 'review', LEAD).type, 'claude');
+  assert.strictEqual(m.resolveSeatShape(team, 'hand', 'ticket', LEAD).type, 'claude');
 });
 
 // --- preserved details a refactor is most likely to smooth away ---
@@ -236,8 +333,24 @@ test('the lead permission posture is inherited when no template overrides it', (
   assert.deepStrictEqual(
     m.resolveSeatShape(team, 'hand', 'ticket', LEAD).extraArgs, ['--dangerously-skip-permissions'],
   );
-  // The reviewer inherits the posture but never a template's extraArgs.
+});
+
+test('a reviewer template CANNOT contribute extraArgs', () => {
+  // The template must actually carry extraArgs or this asserts nothing: with no
+  // template _templateShape returns null, and a review arm written
+  // `(shape && shape.extraArgs) || postureArgs` passes for the wrong reason.
+  //
+  // extraArgs is raw CLI argv on a seat whose entire premise is a hard tool cap,
+  // and REVIEWER_TOOL_CAP does not screen it — --allowedTools, --mcp-config and
+  // --dangerously-skip-permissions all ride here from an agent-writable template.
+  const m = managerWith(
+    [{ name: 'rv', type: 'claude', cwd: '/repo', extraArgs: ['--foo', '--allowedTools', 'Bash'] }],
+    { leadArgs: ['--dangerously-skip-permissions'] },
+  );
+  const team = teamWith({ reviewer: { template: 'rv' } });
   assert.deepStrictEqual(
-    m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs, ['--dangerously-skip-permissions'],
+    m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs,
+    ['--dangerously-skip-permissions'],
+    'the reviewer inherits the lead posture only; the template argv must lose',
   );
 });

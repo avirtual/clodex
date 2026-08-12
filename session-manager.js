@@ -4415,9 +4415,15 @@ function createSessionManager(deps) {
       const promptEscapeWarn = shape.promptEscaped
         ? ` — NOTE: reviewer systemPromptFile "${shape.promptEscaped}" contains a path separator or "..", which could escape library/prompts/system; ignored, using the built-in default "${REVIEWER_FALLBACK.systemPromptFile}"`
         : '';
-      const envWarn = shape.envDropped.length
+      // Two reasons, never merged: an unknown key is an authority question, a
+      // non-string value is a template typo. Telling the operator to seek
+      // approval for a key that is already allowed sends them to the wrong fix.
+      const envWarn = (shape.envDropped.length
         ? ` — reviewer template env keys [${shape.envDropped.join(', ')}] are outside the allowed set [${[...REVIEWER_ENV_ALLOWLIST].join(', ')}] — dropped (env is an authority surface; requires operator approval)`
-        : '';
+        : '')
+        + (shape.envBadType.length
+          ? ` — reviewer template env keys [${shape.envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)`
+          : '');
       const capWarn = shape.beyondCap.length
         ? ` — requested [${shape.beyondCap.join(', ')}] beyond the reviewer cap [${REVIEWER_TOOL_CAP.join(', ')}] — requires operator approval; spawned with [${shape.effectiveTools.join(', ')}]`
         : '';
@@ -5044,10 +5050,15 @@ function createSessionManager(deps) {
       if (!tpl) return null;
       const env = {};
       let sessionEnv = null;
+      // Two DISTINCT reasons, reported separately: an unknown key needs operator
+      // approval, a bad value type needs an edit. Collapsing them tells the
+      // operator to seek approval for a key they already have.
       const dropped = [];
+      const badType = [];
       if (tpl.env && typeof tpl.env === 'object' && !Array.isArray(tpl.env)) {
         for (const [k, v] of Object.entries(tpl.env)) {
-          if (!REVIEWER_ENV_ALLOWLIST.has(k) || typeof v !== 'string') { dropped.push(k); continue; }
+          if (!REVIEWER_ENV_ALLOWLIST.has(k)) { dropped.push(k); continue; }
+          if (typeof v !== 'string') { badType.push(k); continue; }
           env[k] = v;
         }
         if (Object.keys(env).length) sessionEnv = env;
@@ -5066,6 +5077,7 @@ function createSessionManager(deps) {
         intents: withoutPrivilegedIntentsFor(Array.isArray(tpl.intents) ? tpl.intents : null),
         sessionEnv,
         envDropped: dropped,
+        envBadType: badType,
         noWire: tpl.noWire === true,
       };
     }
@@ -5080,6 +5092,14 @@ function createSessionManager(deps) {
     // from (team, roleKey): `type` and `workspaceId` are inherited from it, and so
     // is the permission posture.
     resolveSeatShape(team, roleKey, purpose, opener) {
+      // Explicit, because the switch below is otherwise FAIL-OPEN: `!review`
+      // takes the ticket arm, so a typo'd 'reviewer' at a future call site would
+      // spawn a reviewer with no tool cap, no forced claude and no env fallback,
+      // and nothing would fail. This method is the choke point that makes the cap
+      // real, so an unrecognized purpose must not resolve to the weaker seat.
+      if (purpose !== 'ticket' && purpose !== 'review') {
+        throw new Error(`resolveSeatShape: unknown purpose "${purpose}" (expected 'ticket' or 'review')`);
+      }
       const def = (team && team.roles && team.roles[roleKey]) || null;
       const review = purpose === 'review';
       const shape = this._templateShape(
@@ -5125,6 +5145,7 @@ function createSessionManager(deps) {
           intents: shape ? shape.intents : null,
           env: (shape && shape.sessionEnv) || null,
           envDropped: (shape && shape.envDropped) || [],
+          envBadType: (shape && shape.envBadType) || [],
           beyondCap: [],
           promptEscaped: null,
           workspaceId,
@@ -5207,6 +5228,7 @@ function createSessionManager(deps) {
         // allowlist was drawn from, and unlike a template it is not agent-writable.
         env: tplSuppliedEnv ? { ...((shape && shape.sessionEnv) || {}) } : { ...REVIEWER_FALLBACK.env },
         envDropped: (shape && shape.envDropped) || [],
+        envBadType: (shape && shape.envBadType) || [],
         beyondCap,
         promptEscaped,
         workspaceId,
@@ -5224,7 +5246,10 @@ function createSessionManager(deps) {
       if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
     }
 
-    _spawnTicketSeat(opener, team, teamDir, ticket, roleKey, def, seat) {
+    // No `def` parameter: the resolver derives the role def from (team, roleKey)
+    // itself, and passing a second copy in would be exactly the duplicate source
+    // this seam removes — a caller could hand in a def for a different role.
+    _spawnTicketSeat(opener, team, teamDir, ticket, roleKey, seat) {
       const reply = (msg) => this._injectText(opener, `[agent:task] ${msg}`, { parkable: true });
       // Reserved SYNCHRONOUSLY, before any await: two tickets opened in one lead
       // turn both run their taken-name check above before either create() lands,
@@ -5494,7 +5519,7 @@ function createSessionManager(deps) {
       tickets.push(ticket);
       ticketsStore.save(teamDir, tickets);
       if (seat) {
-        this._spawnTicketSeat(session, team, teamDir, ticket, assignee, wtDef, seat);
+        this._spawnTicketSeat(session, team, teamDir, ticket, assignee, seat);
         this._reconcileTickets(team, teamDir);
         log.info('intent', `task add by ${session.name} → ${ticket.id} (${assignee} → seat ${seat.name}, branch ${seat.branch})`);
         reply(`ticket ${ticket.id} → spawning ${seat.name} in a worktree on branch ${seat.branch}`);
@@ -5613,7 +5638,7 @@ function createSessionManager(deps) {
           ticket.role = assignee;
           ticket.assignee = minted.name;
           ticketsStore.save(teamDir, tickets);
-          this._spawnTicketSeat(session, team, teamDir, ticket, assignee, wtDef, minted);
+          this._spawnTicketSeat(session, team, teamDir, ticket, assignee, minted);
           this._reconcileTickets(team, teamDir);
           log.info('intent', `task assign by ${session.name}: ${ticket.id} → seat ${minted.name}, branch ${minted.branch}`);
           reply(`ticket ${ticket.id} → spawning ${minted.name} in a worktree on branch ${minted.branch}`);
