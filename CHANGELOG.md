@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- Ticket cost is now attributed to the seat that actually did the work. A
+  ticket filed against a role is recorded against the seat it was handed to,
+  including when the original seat died and a sibling picked the work up on the
+  next respawn. Previously the record kept naming the seat the ticket was first
+  pinned to, so a rollup could publish a dead seat's lifetime spend under work
+  somebody else did. Where the record and the delivery disagree about who
+  worked it, the cost says the seat is unknown rather than picking one.
+- Ticket boards name the role a ticket was filed under rather than the seat it
+  was handed to, in the tickets viewer as well as the built-in boards. Replies
+  suggesting a recovery command name the role too — suggesting a seat that has
+  since gone would hand back a command that bounces.
 - A team role now declares only the four things something actually reads:
   `template`, `prompt`, `brief`, and `worktree`. The other five —
   `instantiate`, `standing`, `tools`, `type`, `ephemeral` — were declarations no
