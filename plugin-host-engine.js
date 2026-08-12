@@ -36,11 +36,22 @@ function createPluginHostEngine(deps) {
 // A frozen façade of BOUND wrappers, not the module object: freezing a wrapper
 // leaves `gitWorktree` — the same live module object core holds under the same
 // require-cache entry — writable, so a plugin could repoint core's calls.
-// Derived from the leaf's own keys; a hardcoded name list silently NARROWS a
-// frozen surface whenever git-worktree.js gains an export.
+//
+// Derived from the leaf's own keys MINUS an explicit withhold list, because the
+// two obvious designs each fail silently in one direction: deriving from every
+// key WIDENS the published surface the day git-worktree.js gains an export, and
+// a hardcoded lend-list NARROWS it the day one is renamed. Partitioning means a
+// new export belongs to exactly one of the two sets and lands in neither by
+// accident — the test pins the partition, so adding an export fails until it is
+// classified.
+//
+// WITHHELD is the safe default for anything that MUTATES refs. A plugin holding
+// `deleteBranch` could destroy a branch core never asked it to touch, and a
+// worktree's branch is where a seat's only committed work lives.
+  const LIB_GIT_WITHHELD = new Set(['deleteBranch', 'isMerged']);
   const libGitWorktree = Object.freeze(Object.fromEntries(
     Object.keys(gitWorktree || {})
-      .filter((k) => typeof gitWorktree[k] === 'function')
+      .filter((k) => typeof gitWorktree[k] === 'function' && !LIB_GIT_WITHHELD.has(k))
       .map((k) => [k, (...a) => gitWorktree[k](...a)]),
   ));
 

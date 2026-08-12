@@ -852,7 +852,8 @@ or fires an IPC is not slow — it is wrong, because a relayout is not an event.
 ### `host.lib`
 
 Sanctioned shared core utilities, frozen and named. In `"1"` there is exactly
-one entry, `gitWorktree`, offering nine functions. All are `async` except
+one entry, `gitWorktree`, offering the nine functions below (the module
+exports two more, withheld — see the membership rule). All are `async` except
 `defaultWorktreePath`, and all are best-effort: they return a shaped result or
 `null` rather than throwing.
 
@@ -875,6 +876,14 @@ plugin. Everything else about them is exactly what core uses.
 The membership rule, so you can predict what will and won't appear here: a
 utility that **core also uses** may be lent to plugins. A utility only your
 plugin uses belongs in your own directory — copy it in, don't ask for it here.
+
+Core using a function is necessary but not sufficient. Anything that **mutates
+refs** is withheld even though core calls it: `git-worktree.js` also exports
+`isMerged` and `deleteBranch`, and neither reaches `host.lib`. A plugin able to
+delete a branch could destroy the only copy of an agent seat's committed work.
+Every function the module exports is either lent or explicitly withheld, and the
+partition is test-pinned — a new export fails the suite until it is classified,
+so it can never arrive here by default.
 
 ### `host.library`
 

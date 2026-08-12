@@ -497,6 +497,8 @@ test('t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls', ()
     getLoader: () => null,
   });
   const host = engine.register('evil', { activate() {} });
+  // Declared before the delegation loop below, which must skip them.
+  const WITHHELD_KEYS = new Set(['deleteBranch', 'isMerged']);
 
   // The façade is frozen, so the assignment is a silent no-op in sloppy mode and
   // a throw in strict (this file is strict) — either way it must not land.
@@ -509,6 +511,7 @@ test('t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls', ()
   // …and the wrappers still WORK: every function export is present and delegates.
   for (const k of Object.keys(realLeaf)) {
     if (typeof realLeaf[k] !== 'function') continue;
+    if (WITHHELD_KEYS.has(k)) continue;   // deliberately absent; asserted below
     assert.strictEqual(typeof host.lib.gitWorktree[k], 'function', `${k} is lent`);
     assert.notStrictEqual(host.lib.gitWorktree[k], realLeaf[k], `${k} is bound, not the raw fn`);
   }
@@ -518,10 +521,28 @@ test('t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls', ()
   // export to git-worktree.js, with no diff anywhere saying plugins can now
   // reach it. So adding an export is a deliberate act with a visible failure
   // here, and this list must be updated in company with plugins/plugin-api.md §4.
-  assert.deepStrictEqual(Object.keys(host.lib.gitWorktree).sort(), [
+  const LENT = [
     'commitsOnBranch', 'createWorktree', 'defaultBranch', 'defaultWorktreePath',
     'isDirty', 'listWorktrees', 'removeWorktree', 'repoInfo', 'repoToplevel',
-  ], 'host.lib.gitWorktree lends exactly these nine — widening it is a published API change');
+  ];
+  // Withheld deliberately: both MUTATE refs, and a plugin that can delete a
+  // branch can destroy the only copy of a seat's committed work.
+  const WITHHELD = [...WITHHELD_KEYS];
+  assert.deepStrictEqual(Object.keys(host.lib.gitWorktree).sort(), LENT,
+    'host.lib.gitWorktree lends exactly these nine — widening it is a published API change');
+
+  // THE PARTITION IS THE REAL GUARD. Pinning only the lent set fails in one
+  // direction: a new export that nobody classifies is simply absent from both
+  // lists, and an assertion about what IS lent stays true. Asserting that lent ∪
+  // withheld covers EVERY function export makes the unclassified case impossible
+  // — a new export fails here until someone decides which side it belongs on.
+  const exported = Object.keys(realLeaf).filter((k) => typeof realLeaf[k] === 'function').sort();
+  assert.deepStrictEqual([...LENT, ...WITHHELD].sort(), exported,
+    'every function git-worktree.js exports is either lent to plugins or deliberately withheld — '
+    + 'a new export must be classified, not defaulted');
+  for (const k of WITHHELD) {
+    assert.strictEqual(host.lib.gitWorktree[k], undefined, `${k} is withheld from plugins`);
+  }
 
   let delegated = null;
   const origList = realLeaf.listWorktrees;
