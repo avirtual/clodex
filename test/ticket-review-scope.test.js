@@ -77,6 +77,18 @@ test('scope states the verdict grammar the parser is tuned to', () => {
   assert.match(s, /ACCEPT \| REWORK/);
 });
 
+test('the grammar names the intent that EMITS the verdict, not just its sections', () => {
+  // Four perfect sections that are never emitted report to nobody and retire
+  // nothing. This works today only because the role prompt carries the verb —
+  // but the scope claims to be the authority on how to answer, it survives a
+  // prompt edit, and an unbriefed reviewer (a reachable, warned-about state)
+  // has nothing else to go on.
+  assert.ok(VERDICT_GRAMMAR.includes('[agent:review-done]'),
+    'the emit intent belongs to the grammar constant itself');
+  const s = buildReviewScope({ ticket: ticket(), diffPath: '/tmp/d.diff' });
+  assert.ok(s.includes('[agent:review-done]'));
+});
+
 test('the emitted grammar is one _landVerdictOnTicket actually parses', () => {
   // Pins the two halves together: the scope tells the reviewer to write this
   // shape, and the shipped parser must accept what that instruction produces.
@@ -104,14 +116,30 @@ test('round 1 scope carries no prior-round section at all', () => {
 
 test('round 2 carries round 1 MUST-FIX verbatim and closes settled ground', () => {
   const s = buildReviewScope({
-    ticket: ticket({ reviewRound: 1, mustFix: '- widget.js:12 retry bound is off by one\n- no test for the empty case' }),
+    ticket: ticket({ reviewRound: 1, verdict: 'REWORK', mustFix: '- widget.js:12 retry bound is off by one\n- no test for the empty case' }),
     diffPath: '/tmp/d.diff',
   });
   assert.match(s, /THIS IS ROUND 2\./);
   assert.ok(s.includes('- widget.js:12 retry bound is off by one\n- no test for the empty case'),
     "round 1's must-fixes must appear verbatim, both items");
-  assert.match(s, /Round 1 ACCEPTED everything else in this change\./);
+  assert.match(s, /Round 1 returned REWORK\./);
+  assert.match(s, /Round 1 raised nothing else against this change\./);
   assert.match(s, /Do not re-open settled ground/);
+});
+
+test('the round-2 opener is DERIVED from the recorded verdict, never assumed', () => {
+  // A round 2 can follow an ACCEPT the lead rejected anyway. Asserting "returned
+  // REWORK" unconditionally opens the scope with a falsehood the reviewer cannot
+  // check, and contradicts the settled-ground sentence that follows it.
+  const acc = buildReviewScope({ ticket: ticket({ reviewRound: 1, verdict: 'ACCEPT', mustFix: '- x' }), diffPath: '/tmp/d.diff' });
+  assert.match(acc, /Round 1 returned ACCEPT, and the lead sent it back anyway\./);
+  assert.ok(!/returned REWORK/.test(acc), 'an ACCEPTed round must not be reported as REWORK');
+
+  // No recorded verdict at all: say nothing about it rather than guessing.
+  const none = buildReviewScope({ ticket: ticket({ reviewRound: 1, verdict: null, mustFix: '- x' }), diffPath: '/tmp/d.diff' });
+  assert.match(none, /THIS IS ROUND 2\. The MUST-FIX items on record/);
+  assert.ok(!/returned REWORK/.test(none) && !/returned ACCEPT/.test(none),
+    'an unknown prior verdict is stated as neither');
 });
 
 test('round 2 with no recorded mustFix text says so rather than emitting a blank', () => {
@@ -129,6 +157,10 @@ test('missing optional fields degrade without throwing or printing undefined', (
   // The grammar is unconditional: a degraded scope still has to tell the
   // reviewer how to answer, or the verdict cannot land at all.
   assert.ok(s.includes(VERDICT_GRAMMAR));
+  // Asserted HERE specifically, on the most degraded ticket in the file, so the
+  // emit line cannot be made conditional on a field this scope does not have.
+  assert.ok(s.includes('[agent:review-done]'),
+    'even a scope built from almost nothing must say how to emit the verdict');
 });
 
 test('a wholly absent ticket still produces an answerable scope', () => {

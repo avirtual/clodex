@@ -258,6 +258,25 @@ function extractMustFix(verdictText) {
 // write `role` when the assignee is a SEAT NAME rather than a role key, so an
 // old name-addressed ticket dispatched with neither field set. Those records are
 // caught by the absent-key arm, not by this one.
+// Is this ticket still in flight — i.e. is anyone expected to act on it?
+//
+// `open` is the ordinary case. `done` used to be terminal and no longer is: the
+// loop closes the ticket BEFORE it runs its checks and spawns the review, so a
+// done ticket carrying a `loopStep` has work outstanding, while one without has
+// genuinely finished.
+//
+// Single-sourced deliberately. Three call sites depend on this answer — the
+// stall sweep's eligibility test, the sweep's own nudge stamp, and the verdict
+// landing — and the failure mode of a divergence is not a wrong answer but a
+// silent one: a shape the sweep nudges but the stamp refuses to record re-nudges
+// every sweep, and a shape the sweep skips is a ticket nobody is ever told about.
+// Two literal copies were the state this replaced; a comment is not enough.
+function ticketInFlight(ticket) {
+  if (!ticket) return false;
+  if (ticket.state === 'open') return true;
+  return ticket.state === 'done' && !!ticket.loopStep;
+}
+
 function ticketStarted(ticket) {
   if (!ticket) return false;
   if (ticket.startedAt != null) return true;
@@ -266,4 +285,4 @@ function ticketStarted(ticket) {
   return false;
 }
 
-module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, ticketStarted, branchSlug, TICKETS_FILE };
+module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, ticketStarted, ticketInFlight, branchSlug, TICKETS_FILE };

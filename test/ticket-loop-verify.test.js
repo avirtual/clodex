@@ -67,8 +67,17 @@ function commitOnBranch(dir, branch, file, body) {
   return sha;
 }
 
-function mkLoop({ repo, ticketOver = {}, noLeadSession = false } = {}) {
+function mkLoop({ repo, ticketOver = {}, noLeadSession = false, noReviewerPrompt = false } = {}) {
   const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-loop-'));
+  // The reviewer's role prompt must EXIST, because the spawn path warns when it
+  // does not and the loop escalates on that warning. Without this the fixture
+  // models a box with no prompts installed, and every green-path assertion below
+  // would be measuring the unbriefed escalation instead of the review.
+  if (!noReviewerPrompt) {
+    const pdir = pathReal.join(home, 'library', 'prompts', 'system');
+    fsReal.mkdirSync(pdir, { recursive: true });
+    fsReal.writeFileSync(pathReal.join(pdir, 'clodex-team-reviewer.md'), '# reviewer\n');
+  }
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: repo.dir, lead: 'lead', watchdogMs: null,
@@ -223,7 +232,8 @@ test('the materialized diff is written, non-empty, and named in the scope', asyn
 
   const diffs = f.diffFile();
   assert.strictEqual(diffs.length, 1, 'exactly one diff file is materialized');
-  assert.strictEqual(pathReal.basename(diffs[0]), 'review-t1.diff');
+  // The round is in the name so round 2 cannot overwrite round 1's artifact.
+  assert.strictEqual(pathReal.basename(diffs[0]), 'review-t1-r1.diff');
   const body = fsReal.readFileSync(diffs[0], 'utf8');
   // The real content, not merely non-empty: an empty-but-present file would
   // satisfy a length check and give the reviewer nothing.
@@ -245,7 +255,7 @@ test('the reviewer is spawned with the constructed scope, carrying the report ve
   const prompt = f.created[0].systemPrompt;
   assert.ok(prompt.includes(REPORT), "the hand's report rides the scope verbatim");
   assert.ok(prompt.includes(repo.baseSha + '..HEAD'), 'the review range is in the scope');
-  assert.ok(prompt.includes('review-t1.diff'), 'the diff path is in the scope');
+  assert.ok(prompt.includes('review-t1-r1.diff'), 'the diff path is in the scope');
   assert.ok(prompt.includes('VERDICT'), 'the verdict grammar is in the scope');
 });
 
@@ -366,6 +376,156 @@ test('escalation tears nothing down and clears the loop hold', async () => {
   assert.strictEqual(t.state, 'done', 'the escalation does not reopen or cancel the ticket');
   assert.ok(!('loopStep' in t), 'the loop no longer holds a ticket it handed to a human');
   assert.match(f.esc()[0].body, /Nothing was torn down/);
+});
+
+test('an escalation the lead never RECEIVED keeps the hold, so the watchdog re-surfaces it', async () => {
+  // The fixture's default stub returns {queued:true} unconditionally, which pins
+  // that escalate was CALLED, not that the lead was REACHED. _gatedDeliver really
+  // returns {error} when the lead has no live session. Clearing the hold before
+  // reading that is how a ticket nobody is ever told about is produced: no
+  // reviewer was spawned, the sweep can no longer see it, and the only trace is
+  // a log line.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });   // zero commits -> check 1 fails -> escalation
+  f.m._gatedDeliver = (target, sender, body) => { f.gated.push({ target, sender, body }); return { error: 'no such agent "lead"' }; };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+
+  assert.strictEqual(f.one().loopStep, 'verify', 'an undelivered escalation must NOT release the hold');
+  // And the hold is what keeps it visible: the sweep must still nudge it.
+  f.gated.length = 0;
+  f.m._gatedDeliver = (target, sender, body, urgent, tag, onWrite) => {
+    f.gated.push({ target, sender, body });
+    if (typeof onWrite === 'function') onWrite();
+    return { queued: true };
+  };
+  const old = Date.now() - (60 * 60 * 1000);
+  const t = f.one();
+  f.tstore.save(f.team.root, [{ ...t, lastActivityAt: old, nudgedAt: null }]);
+  f.m._sweepTeamTickets(f.team, Date.now());
+
+  const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
+  assert.strictEqual(nudges.length, 1, 'the ticket is still in flight and still nudgeable');
+});
+
+test('a HELD delivery that never parked also keeps the hold', async () => {
+  // The second reachable failure: shouldHoldDm holds and the target cannot park
+  // (a codex lead, or one _dead mid-restart), so _gatedDeliver returns {held}
+  // with no parkId — nobody was reached. A park IS durable and does count.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.m._gatedDeliver = (target, sender, body) => { f.gated.push({ target, sender, body }); return { held: 'busy' }; };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+
+  assert.strictEqual(f.one().loopStep, 'verify', 'a held-but-unparked escalation reached nobody');
+});
+
+test('a PARKED escalation is durable, so it does release the hold', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.m._gatedDeliver = (target, sender, body) => { f.gated.push({ target, sender, body }); return { parked: 'park-1' }; };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+
+  assert.ok(!('loopStep' in f.one()), 'a park is a written file the seat drains — the lead will get it');
+});
+
+test('closing a ticket that was already nudged starts a fresh stall episode', async () => {
+  // The MF2 interleaving: seat goes quiet, watchdog stamps nudgedAt, the lead
+  // closes for the dead hand (a path _taskDone explicitly supports), verify then
+  // dies. Nothing outside the loop can clear nudgedAt after `done`
+  // (_touchTicketActivity skips anything not open), so without a clear at the
+  // stamp site the sweep sees an in-flight ticket it refuses to nudge, forever.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  const old = Date.now() - (60 * 60 * 1000);
+  f.tstore.save(f.team.root, [{ ...f.one(), lastActivityAt: old, nudgedAt: Date.now() }]);
+  assert.ok(f.one().nudgedAt, 'ENTER: the ticket enters already nudged');
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'closing for the dead hand' });
+
+  assert.strictEqual(f.one().nudgedAt, null, 'opening an in-flight phase spends a fresh nudge');
+
+  // And prove the consequence, not just the field: a stalled sweep still fires.
+  const t = f.one();
+  f.tstore.save(f.team.root, [{ ...t, loopStep: 'verify', lastActivityAt: old, nudgedAt: null }]);
+  f.gated.length = 0;
+  f.m._sweepTeamTickets(f.team, Date.now());
+  const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
+  assert.strictEqual(nudges.length, 1, 'a dead verify step is still surfaced');
+});
+
+test('accept clears the hold, so a late verdict cannot land on torn-down work', async () => {
+  // The MF3 interleaving: the lead accepts before the verdict returns, which
+  // retires the seat, removes the worktree and deletes the branch. A surviving
+  // loopStep would let the late verdict through, stamping a REWORK with a bumped
+  // reviewRound onto merged-and-deleted work while telling the lead nothing.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'review' }]);
+  f.m.destroy = async () => ({ ok: true, worktreeRemoved: true });
+  f.m.archive = async () => {};
+
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', body: '' }, () => {});
+
+  const t = f.one();
+  assert.ok(t.acceptedAt, 'ENTER: the ticket really was accepted');
+  assert.ok(!('loopStep' in t), 'accept ends the loop hold');
+
+  // The consequence: the late verdict now falls through to the lead instead.
+  const landed = f.m._landVerdictOnTicket(f.seat('rev', repo.dir), 't1', '- **VERDICT**: REWORK\n- **MUST-FIX**: too late');
+  assert.strictEqual(landed, null, 'a verdict cannot be placed on an accepted ticket');
+  assert.ok(!('verdict' in f.one()), 'and nothing was stamped onto it');
+});
+
+test('reject clears the hold too', () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'review' }]);
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'fix the bound' });
+
+  const t = f.one();
+  assert.strictEqual(t.state, 'open', 'ENTER: the ticket really was reopened');
+  assert.ok(!('loopStep' in t), 'a reopened ticket is tracked on the ordinary path, not as loop-held');
+});
+
+test('an unbriefed reviewer escalates rather than reviewing nothing', async () => {
+  // The spawn SUCCEEDS but warns the seat booted without its role prompt, so it
+  // does not know the verdict grammar or that it must emit one. That arrives on
+  // the success reply, which the error branch never sees.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, noReviewerPrompt: true });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'the lead is told the review will not happen');
+  assert.match(esc[0].body, /boots UNBRIEFED/);
+});
+
+test('the nudge for a loop-held ticket names the STEP, not the finished hand', () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const old = Date.now() - (60 * 60 * 1000);
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'review', lastActivityAt: old, nudgedAt: null }]);
+
+  f.m._sweepTeamTickets(f.team, Date.now());
+
+  const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
+  assert.strictEqual(nudges.length, 1, 'ENTER: the in-flight ticket was nudged');
+  // "hand quiet 45m" points at the wrong actor: the hand already reported.
+  assert.match(nudges[0].body, /loop is stuck at "review"/);
+  assert.ok(!/team-hand quiet/.test(nudges[0].body), 'the finished seat must not be blamed');
 });
 
 test('a spawn refusal becomes an escalation, never silence', async () => {

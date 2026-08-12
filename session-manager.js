@@ -151,7 +151,7 @@ const REVIEWER_FALLBACK = {
     CLODEX_SPAWNER_HINT: 'off',
   },
 };
-const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, ticketStarted, branchSlug } = require('./tickets-store');
+const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, ticketStarted, ticketInFlight, branchSlug } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { buildReviewScope } = require('./ticket-review-scope');
 const { findRepoRoot } = require('./project-root');
@@ -4679,7 +4679,7 @@ function createSessionManager(deps) {
       // design removes. `loopStep` is what distinguishes a ticket the loop is
       // still holding from one that is genuinely finished; an ad-hoc review of a
       // long-closed ticket has no loopStep and still correctly falls through.
-      if (ticket.state !== 'open' && !(ticket.state === 'done' && ticket.loopStep)) return null;
+      if (!ticketInFlight(ticket)) return null;
       ticket.verdict = m[1].toUpperCase();
       ticket.mustFix = extractMustFix(verdict);
       ticket.reviewRound = (Number(ticket.reviewRound) || 0) + 1;
@@ -6226,7 +6226,19 @@ function createSessionManager(deps) {
       // process that dies between the close and a later stamp would leave a
       // ticket nothing ever nudges — the one outcome this design must not have.
       const loopEligible = !!(ticket.worktree && ticket.worktree.branch && ticket.worktree.baseSha);
-      if (loopEligible) ticket.loopStep = 'verify';
+      if (loopEligible) {
+        ticket.loopStep = 'verify';
+        // Opening an in-flight phase is a NEW stall episode, so it spends a fresh
+        // nudge — the same argument `_setLoopStep` makes, and it must be made here
+        // too because this is the only stamp site the sweep cannot recover from.
+        // After `done`, nothing else clears `nudgedAt`: `_touchTicketActivity`
+        // skips any ticket that is not `open`. So a ticket already nudged while
+        // open (seat went quiet, watchdog fired, lead closed it for the dead hand
+        // — a path this handler explicitly supports) would enter the loop
+        // permanently un-nudgeable, and a verify step that then dies is the
+        // never-surfaced ticket this design must not have.
+        ticket.nudgedAt = null;
+      }
       ticketsStore.save(team.root, tickets);
       this._reconcileTickets(team);
       const doneSeat = this._ticketAssigneeSeat(team, ticket);
@@ -6379,7 +6391,11 @@ function createSessionManager(deps) {
       if (!taskDir) {
         return { ok: false, path: null, error: `ticket ${ticket.id} has no resolvable task dir to write the diff into (taskDir: ${ticket.taskDir || 'none'})` };
       }
-      const file = path.join(taskDir, `review-${ticket.id}.diff`);
+      // The round is in the NAME so round 2 does not overwrite round 1: round 1's
+      // diff is the one artifact a round 2 reviewer might want to diff against,
+      // and it is unrecoverable once the branch moves on.
+      const round = (Number(ticket.reviewRound) || 0) + 1;
+      const file = path.join(taskDir, `review-${ticket.id}-r${round}.diff`);
       try {
         ensureDir(taskDir);
         fs.writeFileSync(file, text);
@@ -6417,6 +6433,16 @@ function createSessionManager(deps) {
         ticketId,
         onReply: (msg) => {
           const m = String(msg == null ? '' : msg);
+          // An UNBRIEFED reviewer is a review that will not happen: the seat
+          // spawns and boots without its role prompt, so it does not know the
+          // verdict grammar or that it must emit one. That arrives on the SUCCESS
+          // reply, so it needs its own test — the error branch below never sees
+          // it, and a log line about it reaches nobody who can install the prompt.
+          if (/boots UNBRIEFED/.test(m)) {
+            this._escalateTicket(team, ticketId, 'review: spawn', m,
+              'verify passed, the diff was written and a reviewer seat WAS spawned — but without its role prompt it may never emit a verdict');
+            return;
+          }
           if (/^error:/i.test(m)) {
             this._escalateTicket(team, ticketId, 'review: spawn', m,
               'verify passed and the diff was written; the reviewer spawn was refused');
@@ -6431,12 +6457,22 @@ function createSessionManager(deps) {
     //
     // Tears nothing down, by design: the tree, the branch and the seat stay
     // exactly as they are, because the lead's first act on an escalation is to
-    // look at them. It also clears `loopStep` — the loop is no longer holding
-    // the ticket once a human has been asked, and leaving it set would keep the
-    // watchdog nudging about a ticket already on the lead's desk.
+    // look at them.
+    //
+    // ORDER IS LOAD-BEARING: deliver FIRST, and clear `loopStep` only once the
+    // delivery is durable. Clearing it first drops the ticket out of the sweep's
+    // in-flight test, so an escalation the lead never received leaves a ticket
+    // nobody is ever told about — no reviewer was spawned, no nudge can fire, and
+    // the only trace is a log line. `_gatedDeliver` fails in two reachable ways:
+    // `{error}` when the lead has no live session, and `{held}` with NO park when
+    // the hold verdict lands on a target that cannot park (a codex lead, or one
+    // `_dead` mid-restart). A park IS durable — it is a written file the seat
+    // drains — so `parked` counts as reached and `held` does not.
+    //
+    // On failure the hold STAYS, which is what hands the ticket to the watchdog:
+    // it re-surfaces once the lead is reachable, which is the whole point of §E.
     _escalateTicket(team, ticketId, step, evidence, tried) {
       try {
-        this._setLoopStep(team, ticketId, null);
         const body = [
           `[ticket ${ticketId} ESCALATED] the loop stopped at: ${step}`,
           '',
@@ -6445,7 +6481,17 @@ function createSessionManager(deps) {
           '',
           'Nothing was torn down — the worktree, the branch and the seat are exactly as they were.',
         ].join('\n');
-        this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticketId} ESCALATED]`);
+        const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticketId} ESCALATED]`);
+        const reached = !!(r && (r.queued || r.parked));
+        if (reached) {
+          this._setLoopStep(team, ticketId, null);
+        } else {
+          const why = (r && (r.error || r.held)) || 'unknown delivery failure';
+          // log.error, not info: this is the arm where a human must eventually
+          // look, and the ticket is deliberately left marked in-flight so the
+          // stall sweep keeps it visible until the lead can be reached.
+          log.error('ticket', `ticket ${ticketId} escalation at ${step} did NOT reach ${team.lead} (${why}) — loopStep kept so the watchdog re-surfaces it`);
+        }
         this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} escalated: ${step}` });
         log.info('intent', `ticket ${ticketId} escalated at ${step}: ${evidence}`);
       } catch (e) {
@@ -6651,6 +6697,11 @@ function createSessionManager(deps) {
       ticket.closedBy = null;          // cleared alongside closedAt — it is open again
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;
+      // Reopening ends the loop's hold for the same reason accept does: the
+      // ticket is `open` again, so the sweep tracks it on the ordinary path and a
+      // stale step would otherwise let a late verdict land on a ticket the lead
+      // has already sent back.
+      delete ticket.loopStep;
       ticketsStore.save(team.root, tickets);
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} rejected] ${reason}`, true);
@@ -6760,6 +6811,16 @@ function createSessionManager(deps) {
         ticket.acceptedBy = session.name;
         if (note) ticket.acceptNote = note;
         ticket.lastActivityAt = ticket.acceptedAt;
+        // Accept ENDS the loop's hold, and both writes below must say so.
+        // An accept can land while a review is still out (the lead does not wait
+        // for the verdict), and this path retires the seat, removes the worktree
+        // and deletes the branch. A `loopStep` surviving that lets the late
+        // verdict through `_landVerdictOnTicket`'s done+loopStep arm, stamping a
+        // REWORK — with a bumped reviewRound — onto merged-and-deleted work,
+        // while review-done takes its landed branch and tells the lead nothing.
+        // Cleared, a late verdict cannot be placed and correctly falls through
+        // to the lead, who is the one who can act on it.
+        delete ticket.loopStep;
         // Re-read: the teardown below stamped revival onto its own copy.
         const fresh = ticketsStore.load(team.root);
         const row = fresh.find((t) => t.id === ticket.id);
@@ -6768,6 +6829,7 @@ function createSessionManager(deps) {
           row.acceptedBy = ticket.acceptedBy;
           if (note) row.acceptNote = note;
           row.lastActivityAt = ticket.lastActivityAt;
+          delete row.loopStep;
           ticketsStore.save(team.root, fresh);
         } else {
           ticketsStore.save(team.root, tickets);
@@ -7017,11 +7079,10 @@ function createSessionManager(deps) {
         // decision back to them once per stall threshold.
         // `done` stopped being terminal when the loop started running past it: a
         // done ticket with a live `loopStep` has checks running or a review in
-        // flight, and if that step dies nothing else ever nudges anyone. That is
-        // the one state added here — a done ticket WITHOUT a loopStep is finished
-        // and stays exempt, exactly as before.
-        const inFlight = t.state === 'open' || (t.state === 'done' && !!t.loopStep);
-        if (!inFlight || t.assignee == null || t.parked) continue; // backlog/parked/closed exempt
+        // flight, and if that step dies nothing else ever nudges anyone. The
+        // predicate is shared with the stamp below and with the verdict landing —
+        // see ticketInFlight; divergence between them is silent, not loud.
+        if (!ticketInFlight(t) || t.assignee == null || t.parked) continue; // backlog/parked/closed exempt
         const last = t.lastActivityAt || t.openedAt || now;
         if (now - last < stallMs) continue;
         if (t.nudgedAt) continue; // one nudge per stall episode
@@ -7037,8 +7098,15 @@ function createSessionManager(deps) {
         // concurrent write.
         const tid = t.id;
         const seenAt = t.lastActivityAt || null;
+        // A loop-held ticket names the STEP, not the seat: the hand is finished
+        // and the loop is what is stuck, so "hand quiet 45m" points the lead at
+        // the wrong actor entirely — the first thing to check differs completely
+        // between a silent seat and a dead verify step.
+        const stalled = (t.state === 'done' && t.loopStep)
+          ? `the ticket loop is stuck at "${t.loopStep}" — no progress for ${humanizeAge(now - last)} (the hand already reported; nothing was torn down)`
+          : `${t.role || t.assignee} quiet ${humanizeAge(now - last)}`;
         this._gatedDeliver(team.lead, 'ticket-watchdog',
-          `[ticket ${tid}] stalled: ${t.role || t.assignee} quiet ${humanizeAge(now - last)}`, false, '',
+          `[ticket ${tid}] stalled: ${stalled}`, false, '',
           () => {
             try {
               const fresh = ticketsStore.load(team.root);
@@ -7049,12 +7117,12 @@ function createSessionManager(deps) {
               // seat that speaks inside this window ends the stall. Stamping anyway
               // spends the next episode's one nudge before it starts, and only
               // activity clears it — which never comes during a stall.
-              // Mirrors the eligibility test at the top of the loop, and MUST:
-              // this guard decides whether the one nudge is spent, so a shape the
-              // loop nudges but this refuses to stamp re-nudges every single
-              // sweep — the one-nudge-per-episode rule, inverted, on precisely
-              // the in-flight tickets the sweep was just extended to cover.
-              if (!(rec.state === 'open' || (rec.state === 'done' && !!rec.loopStep))) return;
+              // The SAME predicate as the eligibility test above, and it must
+              // stay the same one: this guard decides whether the one nudge is
+              // spent, so a shape the loop nudges but this refuses to stamp
+              // re-nudges every single sweep — the one-nudge-per-episode rule,
+              // inverted, on precisely the in-flight tickets §E added.
+              if (!ticketInFlight(rec)) return;
               if ((rec.lastActivityAt || null) !== seenAt) return;
               rec.nudgedAt = Date.now();
               ticketsStore.save(team.root, fresh);

@@ -16,7 +16,21 @@
 // parser accepts: that parser is line-anchored on VERDICT and reads MUST-FIX as
 // a section, so a scope that asked for a different shape here would produce
 // verdicts the loop silently fails to land.
+// The emit line is PART OF THE GRAMMAR, not decoration around it: this block
+// claims to be the authority on how to answer, and a reviewer that writes four
+// perfect sections without emitting the intent reports to nobody and retires
+// nothing. It works today only because the role prompt happens to carry the
+// verb — but the scope survives a prompt edit, and an unbriefed reviewer
+// (a missing role prompt is a warned, reachable state) has nothing else.
 const VERDICT_GRAMMAR = [
+  'Emit your verdict as the LAST thing you do, with the four sections below as its body:',
+  '',
+  '    [agent:review-done] <your full verdict, in the format below>',
+  '    [agent:end]',
+  '',
+  'That single intent delivers the verdict and retires you. A pass that never emits',
+  'it reports to nobody.',
+  '',
   '- **VERDICT**: ACCEPT | REWORK — one line, unambiguous.',
   '- **MUST-FIX**: each blocking defect as its own item, with a `file:line` anchor',
   '  and why it is wrong (the failing interleaving / the unmet case / the broken',
@@ -113,13 +127,21 @@ function buildReviewScope({ ticket, diffPath = null, taskDir = null } = {}) {
   const round = Number(t.reviewRound) || 0;
   if (round >= 1) {
     const mustFix = text(t.mustFix);
-    out.push(`THIS IS ROUND ${round + 1}. Round ${round} returned REWORK. Its MUST-FIX items were, verbatim:`);
+    // Derived, never assumed: a round 2 can follow an ACCEPT the lead rejected
+    // anyway. Stating "returned REWORK" unconditionally opens the scope with a
+    // falsehood the reviewer cannot check, and contradicts the settled-ground
+    // sentence below it.
+    const prior = text(t.verdict).toUpperCase();
+    const priorClause = prior === 'REWORK' ? ` Round ${round} returned REWORK.`
+      : prior === 'ACCEPT' ? ` Round ${round} returned ACCEPT, and the lead sent it back anyway.`
+        : '';
+    out.push(`THIS IS ROUND ${round + 1}.${priorClause} The MUST-FIX items on record from round ${round} were, verbatim:`);
     out.push('');
-    out.push(mustFix || '(round 1 recorded no MUST-FIX text)');
+    out.push(mustFix || `(round ${round} recorded no MUST-FIX text)`);
     out.push('');
-    out.push(`Round ${round} ACCEPTED everything else in this change. Review whether those MUST-FIX items are now `
+    out.push(`Round ${round} raised nothing else against this change. Review whether those MUST-FIX items are now `
       + 'genuinely fixed, plus any NEW defect the fixes introduced. Do not re-open settled ground: raising a fresh '
-      + 'MUST-FIX against code round 1 already passed, and which this round did not touch, is out of scope.');
+      + `MUST-FIX against code round ${round} already passed, and which this round did not touch, is out of scope.`);
     out.push('');
   }
 
