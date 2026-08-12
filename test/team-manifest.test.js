@@ -180,7 +180,7 @@ test('loadManifest: a version-1 file carrying the cut keys loads clean, dropping
   // WHOLE object: a partial probe would read right past a key that survived the
   // cut in the returned shape while the schema claims it is gone.
   assert.deepStrictEqual(m.roles.reviewer, {
-    template: 'sonnet-review', prompt: null, brief: null, worktree: false,
+    template: 'sonnet-review', prompt: null, brief: null, dispatch: 'standing',
   }, 'the cut keys are absent from the normalized def, not carried as null');
   assert.strictEqual(m.version, 1, 'no version field → version 1');
   assert.strictEqual(m.watchdogMs, 600000, 'watchdogMs override still carried');
@@ -195,7 +195,7 @@ test('loadManifest: a version-1 file carrying the cut keys loads clean, dropping
 // every 60s per live seat — so an ungated warn is a console line several times a
 // minute, forever, for one legacy file. Bounded twice: deduped per (file, keys),
 // and gated on version, which is what lets a rewrite clear it for good.
-test('loadManifest: the drop warning is emitted once per key set, and a v2 file is silent', () => {
+test('loadManifest: the drop warning is emitted once per key set, and a current-version file is silent', () => {
   const home = mkHome();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
   mkTeam(home, 'shop', {
@@ -218,7 +218,7 @@ test('loadManifest: the drop warning is emitted once per key set, and a v2 file 
   const home2 = mkHome();
   const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
   mkTeam(home2, 'shop', {
-    version: 2, root: root2, lead: 'lead',
+    version: 3, root: root2, lead: 'lead',
     roles: { lead: {}, runner: { brief: 'r', invented: 'x' } },
   });
   const tm2 = createTeamManifest({ fs, clodexHome: home2 });
@@ -273,12 +273,12 @@ test('a mutator migrates EVERY role off the cut fields, including reserved ones,
   assert.deepStrictEqual(onDisk.roles.reviewer, { prompt: 'clodex-team-reviewer' },
     'the RESERVED role healed: the cut keys left the file even though no mutator may address it');
   assert.deepStrictEqual(onDisk.roles.hand,
-    { template: 'clodex-hand-seat', prompt: 'clodex-team-hand', worktree: true },
-    'ephemeral is gone from hand; worktree, which the schema still models, is untouched');
+    { template: 'clodex-hand-seat', prompt: 'clodex-team-hand', dispatch: 'worktree' },
+    'ephemeral is gone from hand; the worktree opt-in survived as the dispatch enum');
   assert.deepStrictEqual(onDisk.roles.designer,
     { template: 'fable-design', brief: 'designs things' },
     'the edited role took the patch and lost its cut keys');
-  assert.strictEqual(onDisk.version, 2, 'and the file now declares the schema it was rewritten against');
+  assert.strictEqual(onDisk.version, 3, 'and the file now declares the schema it was rewritten against');
 
   const warned = [];
   console.warn = (msg) => warned.push(String(msg));
@@ -329,31 +329,146 @@ test('loadManifest: a version-1 lead role with instantiate: subagent no longer t
 // downstream consumer reads, so a field that silently stops being emitted (or
 // arrives undefined rather than false) reads as "not opted in" at every call
 // site — indistinguishable from a real opt-out.
-test('loadManifest: role worktree opt-in normalizes to a boolean, default false', () => {
+test('loadManifest: role dispatch normalizes to the enum, default standing', () => {
   const home = mkHome();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
   mkTeam(home, 'shop', {
     root, lead: 'lead',
     roles: {
       lead: {},
-      hand: { worktree: true },
+      hand: { dispatch: 'worktree' },
       helper: {},
     },
   });
   const tm = createTeamManifest({ fs, clodexHome: home });
   const m = tm.loadManifest('shop');
   assert.deepStrictEqual(m.roles.hand, {
-    template: null, prompt: null, brief: null, worktree: true,
+    template: null, prompt: null, brief: null, dispatch: 'worktree',
   }, 'opted-in role def in full');
   assert.deepStrictEqual(m.roles.helper, {
-    template: null, prompt: null, brief: null, worktree: false,
-  }, 'absent worktree is FALSE, not undefined — undefined reads as opted-out at every consumer');
-  // A non-boolean is a loud manifest error, not a truthy opt-in: `worktree: "no"`
-  // must never enable the thing it plainly denies.
+    template: null, prompt: null, brief: null, dispatch: 'standing',
+  }, 'absent dispatch is the STANDING string, not undefined — undefined reads as neither value at a consumer that compares');
+  // An off-enum value is a loud manifest error, not a truthy opt-in:
+  // `dispatch: "no"` must never enable the thing it plainly denies, and
+  // `dispatch: true` must not be laundered by the boolean this replaced.
+  for (const bad of ['no', true, 'Worktree']) {
+    const h = mkHome();
+    mkTeam(h, 'shop', { root, lead: 'lead', roles: { lead: {}, hand: { dispatch: bad } } });
+    assert.throws(() => createTeamManifest({ fs, clodexHome: h }).loadManifest('shop'),
+      /dispatch must be one of standing, worktree/, `dispatch: ${JSON.stringify(bad)} must throw`);
+  }
+});
+
+// The regression the version-3 migration exists to prevent. `worktree` is in
+// CUT_ROLE_FIELDS, so the migration DELETES it; if that delete runs before the
+// carry-over, every role that opted into a worktree silently becomes standing —
+// no throw, no warning, and the only symptom is hands landing in the shared
+// checkout weeks later.
+test('v2 → v3: a role\'s `worktree: true` carries over to dispatch BEFORE the cut delete', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const file = path.join(home, 'teams', 'shop', 'team.json');
+  mkTeam(home, 'shop', {
+    version: 2,
+    root, lead: 'lead',
+    roles: {
+      lead: { prompt: 'clodex-team-lead' },
+      hand: { template: 'clodex-hand-seat', worktree: true },
+      helper: { worktree: false },
+      quiet: {},
+    },
+  });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const before = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.strictEqual(before.roles.hand.worktree, true,
+    'ENTER: the fixture is a v2 file whose hand role genuinely opted in on disk — without that key this test migrates nothing and every assertion below is vacuous');
+
+  tm.setRole('shop', 'quiet', { brief: 'unrelated edit' });
+
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.deepStrictEqual(onDisk.roles.hand, { template: 'clodex-hand-seat', dispatch: 'worktree' },
+    'the opt-in became the enum and the old key left the file');
+  assert.deepStrictEqual(onDisk.roles.helper, {},
+    '`worktree: false` migrates to ABSENT, not to an explicit "standing" — absent already reads as standing');
+  assert.deepStrictEqual(onDisk.roles.quiet, { brief: 'unrelated edit' },
+    'a role that never carried the key gains nothing');
+  assert.strictEqual(onDisk.version, 3, 'the file declares the schema it was rewritten against');
+
+  // The behavioural half: it is not enough that the KEY moved — the migrated
+  // role must still resolve as a worktree role at the dispatch gate.
+  const m = tm.loadManifest('shop');
+  assert.strictEqual(m.roles.hand.dispatch, 'worktree',
+    'the migrated hand role still dispatches to a worktree — this is the assertion the delete-before-carry bug fails');
+  assert.strictEqual(m.roles.helper.dispatch, 'standing', 'the opted-out role reads as standing');
+});
+
+// Reserved roles were excluded at DISPATCH before this ticket, so `worktree: true`
+// on lead/reviewer was already a claim that did nothing. Carrying it into a schema
+// whose front door refuses to write it would migrate a lie into a stricter world.
+test('v2 → v3: a reserved role\'s `worktree: true` is dropped, not carried', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const file = path.join(home, 'teams', 'shop', 'team.json');
+  mkTeam(home, 'shop', {
+    version: 2,
+    root, lead: 'lead',
+    roles: {
+      lead: { worktree: true },
+      reviewer: { worktree: true, prompt: 'clodex-team-reviewer' },
+      hand: {},
+    },
+  });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf-8')).roles.lead.worktree, true,
+    'ENTER: the reserved role genuinely carries the opt-in on disk to begin with');
+
+  tm.setRole('shop', 'hand', { brief: 'x' });
+
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.deepStrictEqual(onDisk.roles.lead, {}, 'lead lost the key without gaining a dispatch value');
+  assert.deepStrictEqual(onDisk.roles.reviewer, { prompt: 'clodex-team-reviewer' },
+    'reviewer likewise — its other fields are untouched');
+  assert.strictEqual(tm.loadManifest('shop').roles.lead.dispatch, 'standing',
+    'the reserved role reads as standing, which is what it already behaved as');
+});
+
+// The front door must refuse what the resolver already refuses, or team.json
+// grows values that read as policy and do nothing.
+test('addRole/setRole/createTeam refuse a worktree dispatch on a reserved role', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'lead' });
+
+  assert.throws(() => tm.addRole('shop', 'reviewer', { dispatch: 'worktree', prompt: 'clodex-team-reviewer' }),
+    /operator-owned|standing/, 'reviewer cannot be defined as a worktree role');
+  assert.throws(() => tm.setRole('shop', 'lead', { dispatch: 'worktree' }),
+    /operator-owned/, 'setRole bounces every reserved-role edit already');
+
   const home2 = mkHome();
-  mkTeam(home2, 'shop', { root, lead: 'lead', roles: { lead: {}, hand: { worktree: 'no' } } });
-  assert.throws(() => createTeamManifest({ fs, clodexHome: home2 }).loadManifest('shop'),
-    /worktree must be a boolean/);
+  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj2-'));
+  assert.throws(() => createTeamManifest({ fs, clodexHome: home2 }).createTeam({
+    name: 'shop2', root: root2, lead: 'lead', roles: { lead: { dispatch: 'worktree' } },
+  }), /cannot dispatch to a worktree/, 'a brand-new file cannot be BORN naming lead a worktree role');
+
+  // An ordinary role is the control: the refusal is about the reserved key, not
+  // about the value, and a blanket refusal would pass every assertion above.
+  const m = tm.addRole('shop', 'runner', { dispatch: 'worktree' });
+  assert.strictEqual(m.roles.runner.dispatch, 'worktree', 'an ordinary role takes the value');
+});
+
+test('setRole refuses an off-enum dispatch, naming the field', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'lead' });
+  tm.addRole('shop', 'runner', {});
+  assert.throws(() => tm.setRole('shop', 'runner', { dispatch: 'sometimes' }),
+    /dispatch must be one of standing, worktree/);
+  // And the legitimate values land, both directions — a refusal that also
+  // refused the good values would satisfy the throw above.
+  assert.strictEqual(tm.setRole('shop', 'runner', { dispatch: 'worktree' }).roles.runner.dispatch, 'worktree');
+  assert.strictEqual(tm.setRole('shop', 'runner', { dispatch: 'standing' }).roles.runner.dispatch, 'standing');
 });
 
 test('loadManifest rejects bad shapes with pointed errors', () => {
@@ -373,7 +488,7 @@ test('loadManifest rejects bad shapes with pointed errors', () => {
     [{ root: '/p', lead: 'lead', roles: { lead: { template: 42 } } }, /template must be a string/],
     [{ root: '/p', lead: 'lead', roles: { lead: { prompt: 42 } } }, /prompt must be a string/],
     [{ root: '/p', lead: 'lead', roles: { lead: { brief: 42 } } }, /brief must be a string/],
-    [{ root: '/p', lead: 'lead', roles: { lead: { worktree: 'yes' } } }, /worktree must be a boolean/],
+    [{ root: '/p', lead: 'lead', roles: { lead: { dispatch: 'yes' } } }, /dispatch must be one of standing, worktree/],
     // NOTE: the five cut fields are NOT here. A bad value on a key the schema no
     // longer models is dropped with a warning, not thrown — see the version-1
     // compatibility tests above. Adding a throw back here would take the team
@@ -482,9 +597,9 @@ test('cwdInProject: a plain directory containing a .git FILE does not smuggle me
 const teamFixture = () => ({
   name: 'shop', root: '/Users/me/shop', lead: 'boss',
   roles: {
-    lead: { template: 'fable-lead', prompt: null, brief: null, worktree: false },
-    hand: { template: null, prompt: null, brief: null, worktree: false },
-    reviewer: { template: 'sonnet-review', prompt: null, brief: null, worktree: false },
+    lead: { template: 'fable-lead', prompt: null, brief: null, dispatch: 'standing' },
+    hand: { template: null, prompt: null, brief: null, dispatch: 'standing' },
+    reviewer: { template: 'sonnet-review', prompt: null, brief: null, dispatch: 'standing' },
   },
 });
 
@@ -522,7 +637,7 @@ test('matchSeatRole: a numeric suffix strips with or without a separator, and an
   // A role may legitimately end in a digit. Stripping first would resolve its
   // own seat to a DIFFERENT role, which is worse than not resolving at all.
   const digitRole = teamFixture();
-  digitRole.roles.hand2 = { template: null, prompt: null, brief: null, worktree: false };
+  digitRole.roles.hand2 = { template: null, prompt: null, brief: null, dispatch: 'standing' };
   assert.strictEqual(matchSeatRole(digitRole, 'shop-hand2'), 'hand2');
   assert.strictEqual(matchSeatRole(digitRole, 'shop-hand2-2'), 'hand2');
   assert.strictEqual(matchSeatRole(digitRole, 'shop-hand3'), 'hand');
@@ -663,7 +778,7 @@ test('createTeam writes the default manifest and adopts the lead seat', () => {
   // constant on the one spawn path that can enforce it. A scaffolded `tools:`
   // here restated it as data the manifest looked authoritative over and wasn't.
   assert.ok(!('tools' in team.roles.reviewer), 'the cap is code, not a scaffolded field');
-  assert.strictEqual(team.version, 2, 'a freshly written manifest carries the current version');
+  assert.strictEqual(team.version, 3, 'a freshly written manifest carries the current version');
   // The lead SEAT binds to the lead role; <team>-<role> seats bind hand/reviewer.
   assert.strictEqual(matchSeatRole(team, 'clodex'), 'lead');
   assert.strictEqual(matchSeatRole(team, 'shop-hand'), 'hand');
@@ -810,7 +925,7 @@ test('a hand-authored role `tools` is dropped, never stored as a restriction', (
   // addRole no longer bounces it — the def normalizes without the key at all.
   const team = tm.addRole('shop', 'runner', { brief: 'a runner', tools: ['Read'] });
   assert.deepStrictEqual(team.roles.runner, {
-    template: null, prompt: null, brief: 'a runner', worktree: false,
+    template: null, prompt: null, brief: 'a runner', dispatch: 'standing',
   }, 'the normalized def carries no tools key in any form');
 
   // ON DISK, which is the claim in this test's title and the only one that
@@ -874,7 +989,7 @@ test('setRole edits the editable fields, ignores everything else, preserves unmo
   // `strictEqual(x, null)` on it would fail loudly but one on `undefined` reads
   // as an absence that was never asserted.
   assert.deepStrictEqual(team.roles.runner, {
-    template: null, prompt: 'new-runner', brief: 'new brief', worktree: false,
+    template: null, prompt: 'new-runner', brief: 'new brief', dispatch: 'standing',
   }, 'only the editable fields land; the cut ones are ignored');
   // Confirm on-disk raw took none of them, and kept the unmodeled one.
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
@@ -1007,9 +1122,9 @@ function schemaViolations(payload, schema) {
 }
 
 const ROLES = () => ({
-  lead: { brief: 'the lead', prompt: null, template: null, worktree: false },
-  hand: { brief: 'the hand', prompt: null, template: 'clodex-team-hand', worktree: false },
-  reviewer: { brief: 'the reviewer', prompt: null, template: null, worktree: false },
+  lead: { brief: 'the lead', prompt: null, template: null, dispatch: 'standing' },
+  hand: { brief: 'the hand', prompt: null, template: 'clodex-team-hand', dispatch: 'standing' },
+  reviewer: { brief: 'the reviewer', prompt: null, template: null, dispatch: 'standing' },
 });
 const TEAM = () => ({ name: 'shop', root: '/r', lead: 'clodex', roles: ROLES() });
 

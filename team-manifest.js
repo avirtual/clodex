@@ -15,37 +15,51 @@ const ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
 // Bumped when the ROLE schema loses or gains a key. 2 dropped the five fields no
-// resolver consumed (instantiate, standing, tools, type, ephemeral); a file
-// without one is a version-1 file, which is why absent reads as 1 rather than
+// resolver consumed (instantiate, standing, tools, type, ephemeral); 3 replaced
+// the `worktree` boolean with the `dispatch` enum. A file without one is a
+// version-1 file, which is why absent reads as 1 rather than
 // current — a current-by-default would let a stale file claim to be new.
-const MANIFEST_VERSION = 2;
+const MANIFEST_VERSION = 3;
 
 // Everything a role def may carry. Anything else is dropped at load with a
 // warning rather than throwing: team.json is agent-writable and old files carry
 // the version-1 keys, so a hard failure here would read as "no team" everywhere
 // (every caller resolves teams inside a best-effort catch).
-const ROLE_KEYS = new Set(['template', 'prompt', 'brief', 'worktree']);
+const ROLE_KEYS = new Set(['template', 'prompt', 'brief', 'dispatch']);
+
+// What dispatching a ticket to this role DOES. The predecessor was named
+// `worktree`, after one artifact of the behaviour rather than the behaviour, and
+// that is what let it read as an implementation detail nobody needed a front
+// door for. Absent reads as `standing`.
+const ROLE_DISPATCH_VALUES = new Set(['standing', 'worktree']);
+const DEFAULT_ROLE_DISPATCH = 'standing';
 
 // Schema fields NO front door sets, each with the reason it is exempt. The
 // legibility test asserts EDITABLE_ROLE_FIELDS ∪ this ≡ ROLE_KEYS, so a new
 // field is either reachable or listed here with a reason — never merely absent.
-// `worktree`'s current semantics are superseded by per-ticket isolation; it is
-// left as-is until that lands, and this entry is what makes the gap loud.
-const UNREACHABLE_ROLE_FIELDS = new Set(['worktree']);
+// EMPTY is the intended steady state, not a leftover: the one entry it ever held
+// was closed by giving that field a front door. Do not delete the constant —
+// the next field that wants an exemption has to add itself back explicitly.
+const UNREACHABLE_ROLE_FIELDS = new Set([]);
 
-// The five fields version 2 deleted. Named rather than derived as "anything not
+// The fields a version bump deleted (five in v2, plus v3's `worktree`). Named
+// rather than derived as "anything not
 // in ROLE_KEYS", because the mutators DELETE these from disk: a derived set would
 // silently grow to include hand-authored keys nobody asked us to remove, and the
 // migration would become data loss. Every one of these is already dropped at
 // load by every reader that routes through loadManifest, so removing it from the
 // file changes no behavior there — only the bytes. scripts/clodex-team.js parses
 // team.json itself and does NOT route through here; keep it off these fields.
-const CUT_ROLE_FIELDS = ['instantiate', 'standing', 'tools', 'type', 'ephemeral'];
+//
+// `worktree` is cut-AND-REPLACED, not cut: migrateRoles carries its value onto
+// `dispatch` BEFORE this delete runs. Reorder those two and every live role that
+// opted into a worktree silently stops getting one, with nothing failing.
+const CUT_ROLE_FIELDS = ['instantiate', 'standing', 'tools', 'type', 'ephemeral', 'worktree'];
 
 // Every role field a front door (setRole, the Add Role form, the popover row
 // model) may set. Exported so the legibility test compares the real list against
 // the schema instead of a copy that can drift from it.
-const EDITABLE_ROLE_FIELDS = ['brief', 'prompt', 'template'];
+const EDITABLE_ROLE_FIELDS = ['brief', 'dispatch', 'prompt', 'template'];
 
 // team.json is agent-writable and these role keys are trusted downstream, so the
 // mutators below must never create, destroy or rename them; only the operator
@@ -86,23 +100,40 @@ function normalizeRoleDef(roleName, def, file) {
   if (def.brief != null && typeof def.brief !== 'string') {
     throw new Error(`role "${roleName}" brief must be a string (${file})`);
   }
-  if (def.worktree != null && typeof def.worktree !== 'boolean') {
-    throw new Error(`role "${roleName}" worktree must be a boolean (${file})`);
+  if (def.dispatch != null && !ROLE_DISPATCH_VALUES.has(def.dispatch)) {
+    throw new Error(`role "${roleName}" dispatch must be one of ${[...ROLE_DISPATCH_VALUES].join(', ')} (${file})`);
   }
   return {
     template: def.template ?? null,
     prompt: def.prompt ?? null,
     brief: def.brief ?? null,
-    // Opt in to branch-per-ticket: a ticket dispatched to this role mints its own
-    // branch, spawns a seat in a git worktree on it, and re-pins the ticket from
-    // the ROLE to that seat. Enforced — session-manager reads it on the dispatch
-    // path — so addRole is allowed to write it.
+    // What a ticket dispatched to this role does. `standing` delivers the spec to
+    // the live seat holding the role; `worktree` mints its own branch, spawns a
+    // one-shot seat in a git worktree on it, and re-pins the ticket from the ROLE
+    // to that seat. Enforced — session-manager reads it on the dispatch path.
+    //
+    // Absent is `standing`, matching the strictness of the boolean this replaced:
+    // anything that is not explicitly the worktree value dispatches to a standing
+    // seat, so an unmigrated file behaves as it always did.
     //
     // Per-role and per-team on purpose, not a flag on `task add`: the lead would
     // have to remember it on every dispatch, and the one dispatch that forgets
     // lands a hand in the shared checkout holding a spec that assumes isolation.
-    worktree: def.worktree === true,
+    dispatch: def.dispatch ?? DEFAULT_ROLE_DISPATCH,
   };
+}
+
+// lead and reviewer are STANDING roles: the lead is the team's durable context
+// and the reviewer is invoked on demand against work that already exists, so
+// neither has a ticket that wants its own tree. Refused where roles are DEFINED
+// rather than only at dispatch time — but the dispatch-time resolver still holds
+// the same line, because team.json is hand-editable and a file that predates
+// this check must not start minting trees for them.
+function assertDispatchAllowed(roleName, def, file) {
+  if (!def || typeof def !== 'object') return;
+  if (RESERVED_ROLE_KEYS.has(roleName) && def.dispatch === 'worktree') {
+    throw new Error(`the "${roleName}" role is standing — it cannot dispatch to a worktree (${file})`);
+  }
 }
 
 // Keys a role def carries that this schema no longer models, for the load-time
@@ -178,6 +209,19 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (!roles) return raw;
     for (const [roleName, def] of Object.entries(roles)) {
       if (!def || typeof def !== 'object' || Array.isArray(def)) continue;
+      // CARRY-OVER BEFORE DELETE. `worktree` is in CUT_ROLE_FIELDS, so the loop
+      // below removes it; reading it after that runs yields undefined and every
+      // role that opted into a worktree quietly becomes standing, with no error
+      // anywhere. v2 `false`/absent migrates to ABSENT rather than an explicit
+      // "standing" — absent already reads as standing, so writing the default
+      // would be noise on disk.
+      //
+      // Reserved roles are excepted: `worktree: true` on lead/reviewer was
+      // already refused at dispatch, so carrying it would migrate a claim that
+      // was never true into a schema where the front door refuses to write it.
+      if (def.worktree === true && def.dispatch == null && !RESERVED_ROLE_KEYS.has(roleName)) {
+        def.dispatch = 'worktree';
+      }
       for (const k of CUT_ROLE_FIELDS) {
         if (k in def) delete def[k];
       }
@@ -408,7 +452,13 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // Caller roles are picked down to the schema for the same reason addRole's
     // are: a brand-new file must not be born carrying a field no resolver reads.
     const seedRoles = {};
-    for (const [k, v] of Object.entries(callerRoles || defaultRoles)) seedRoles[k] = pickRoleKeys(v);
+    for (const [k, v] of Object.entries(callerRoles || defaultRoles)) {
+      seedRoles[k] = pickRoleKeys(v);
+      // createTeam takes an arbitrary caller `roles` object, so it is a write
+      // path too — without this a brand-new file could be born naming lead as a
+      // worktree role, which every other door refuses.
+      assertDispatchAllowed(k, seedRoles[k], file);
+    }
     const manifest = {
       version: MANIFEST_VERSION,
       lead,
@@ -425,6 +475,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`role name "${roleName}" must match ${ROLE_RE} (${team.file})`);
     }
     const normalized = normalizeRoleDef(roleName, def, team.file);
+    assertDispatchAllowed(roleName, normalized, team.file);
     if (normalized.template != null && !NAME_RE.test(normalized.template)) {
       throw new Error(`role "${roleName}" template must be a library-template name matching ${NAME_RE} (${team.file})`);
     }
@@ -476,6 +527,12 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // wire this field into auto-instantiate without that gate.
     if ('template' in clean && (typeof clean.template !== 'string' || !NAME_RE.test(clean.template))) {
       throw new Error(`role "${roleName}" template must be a library-template name matching ${NAME_RE} (${team.file})`);
+    }
+    // Validated here as well as in normalizeRoleDef below, in `template`'s shape:
+    // the patch is the front door, and a caller that sends a junk value should be
+    // refused by the door it knocked on, naming the field it got wrong.
+    if ('dispatch' in clean && !ROLE_DISPATCH_VALUES.has(clean.dispatch)) {
+      throw new Error(`role "${roleName}" dispatch must be one of ${[...ROLE_DISPATCH_VALUES].join(', ')} (${team.file})`);
     }
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
@@ -699,4 +756,5 @@ module.exports = {
   createTeamManifest, matchSeatRole, formatTeamBlock, formatRoster,
   formatCompositionDelta, STOCK_ROLE_DEFS, TEAM_FILE,
   ROLE_KEYS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
+  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH,
 };

@@ -18,7 +18,7 @@ test('teamRoleRows: one row per role in key order, reserved keys marked read-onl
     roles: {
       lead: { brief: 'the lead', prompt: 'clodex-team-lead' },
       reviewer: { brief: 'the reviewer' },
-      runner: { brief: 'runs things', prompt: 'p', template: 'fable-lead' },
+      runner: { brief: 'runs things', prompt: 'p', template: 'fable-lead', dispatch: 'worktree' },
       bare: {},
     },
   };
@@ -32,8 +32,11 @@ test('teamRoleRows: one row per role in key order, reserved keys marked read-onl
   // Descriptive fields surfaced; missing ones normalize to ''. WHOLE row: the
   // legibility test pins this model's keys against the schema, and a partial
   // probe here would let a field the row shows but nothing sets slip through.
-  assert.deepStrictEqual(rows[2], { key: 'runner', brief: 'runs things', prompt: 'p', template: 'fable-lead', readOnly: false });
-  assert.deepStrictEqual(rows[3], { key: 'bare', brief: '', prompt: '', template: '', readOnly: false });
+  assert.deepStrictEqual(rows[2], { key: 'runner', brief: 'runs things', prompt: 'p', template: 'fable-lead', dispatch: 'worktree', readOnly: false });
+  // `dispatch` normalizes to 'standing', NOT to '': absent IS standing on disk,
+  // and a blank would leave the row's picker with no selected option, which
+  // buildSavePatch then drops — a Save that silently declines to save.
+  assert.deepStrictEqual(rows[3], { key: 'bare', brief: '', prompt: '', template: '', dispatch: 'standing', readOnly: false });
 });
 
 test('teamRoleRows: an absent/empty manifest yields no rows (no throw)', () => {
@@ -75,6 +78,28 @@ test('buildSavePatch: sends brief/prompt (blank clears) but OMITS a blank templa
   // form values normalize to '' without throwing.
   assert.deepStrictEqual(buildSavePatch({ brief: '', prompt: '', template: '' }), { brief: '', prompt: '' });
   assert.deepStrictEqual(buildSavePatch({}), { brief: '', prompt: '' });
+});
+
+test('buildSavePatch: sends `dispatch` for BOTH enum values, drops an off-enum one', () => {
+  // `standing` must be sent, not treated as a blank-and-omit like `template`:
+  // the picker has no empty state, so omitting the default would make
+  // worktree → standing unreachable from the only door that can undo it.
+  assert.deepStrictEqual(
+    buildSavePatch({ brief: 'b', prompt: 'p', dispatch: 'standing' }),
+    { brief: 'b', prompt: 'p', dispatch: 'standing' },
+  );
+  assert.deepStrictEqual(
+    buildSavePatch({ brief: 'b', prompt: 'p', dispatch: '  worktree  ' }),
+    { brief: 'b', prompt: 'p', dispatch: 'worktree' },
+    'trimmed like every other value',
+  );
+  // A value the backend would throw on is dropped rather than forwarded — the
+  // throw would take the brief/prompt edits sent alongside it down too.
+  for (const bad of ['', 'sometimes', undefined]) {
+    const p = buildSavePatch({ brief: 'b', prompt: 'p', dispatch: bad });
+    assert.ok(!('dispatch' in p), `off-enum dispatch ${JSON.stringify(bad)} is omitted`);
+    assert.deepStrictEqual(p, { brief: 'b', prompt: 'p' }, 'and the rest of the patch is unharmed');
+  }
 });
 
 test('reservedRoleNote: newcomer-facing lock reason for lead/reviewer, safe generic otherwise', () => {
