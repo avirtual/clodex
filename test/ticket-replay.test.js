@@ -690,6 +690,11 @@ test('replay re-pins an inherited ticket to the seat that actually received it',
   const lead = await app1.spawn('lead');
   await app1.spawn('team-hand-1');
   app1.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+  // t308: the pin is made by the DISPATCH, so it needs the second step. The
+  // ENTER was pinning "a live seat holds this ticket before the process dies" —
+  // the dead pin the replay is supposed to inherit — and that is unchanged; an
+  // add-only ticket carries the role key and never had a pin to inherit at all.
+  app1.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   assert.strictEqual(world.tickets().find((t) => t.id === 't1').assignee, 'team-hand-1',
     'ENTER: pinned to the first seat, or there is no dead pin to inherit');
   await settled(app1, 'team-hand-1');
@@ -723,6 +728,11 @@ test('two seats on one role: the spec goes once, to the seat that resolves', asy
   await app1.spawn('team-hand-1');
   await app1.spawn('team-hand-2');
   app1.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+  // t308: `role` is written by the dispatch, not by `add` — that asymmetry is
+  // deliberate (it is how `start` knows a ticket has already been started), so
+  // this ENTER now needs the second step. What it pins is untouched: the ticket
+  // is filed under a ROLE, which is what makes two seats answer for it.
+  app1.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   assert.strictEqual(world.tickets().find((t) => t.id === 't1').role, 'hand',
     'ENTER: the ROLE is what the ticket was filed under — the case is two seats answering for it');
   await settled(app1, 'team-hand-1');

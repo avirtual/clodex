@@ -129,7 +129,11 @@ test('create() mints from the record label, and both spawn paths seed it before 
     `expected exactly 2 wireLabel seeds (reviewer + ticket seat), found ${seeds.length}`);
 
   for (const [label, seedRe, createRe] of [
-    ['reviewer', /reviewFor: session\.name,\n\s*\.\.\.\(reviewLabel \?/, /name, type, cwd, shape\.extraArgs, null, shape\.workspaceId,/],
+    // t308 put `reviewTicket` on this same stub, between the two anchored lines.
+    // Re-anchored THROUGH it rather than gap-matched: the property is that the
+    // seed rides the reviewFor upsert specifically, and a `[\s\S]*?` bridge would
+    // also accept a wireLabel seeded on some other nearby object.
+    ['reviewer', /reviewFor: session\.name,\n(?:\s*\/\/[^\n]*\n)*\s*\.\.\.\(reviewTicket \? \{ reviewTicket \} : \{\}\),\n\s*\.\.\.\(reviewLabel \?/, /name, type, cwd, shape\.extraArgs, null, shape\.workspaceId,/],
     ['ticket seat', /name: seat\.name, ephemeral: true,\n\s*\.\.\.\(seatLabel \?/, /seat\.name, shape\.type, shape\.cwd,/],
   ]) {
     const seedAt = src.search(seedRe);
