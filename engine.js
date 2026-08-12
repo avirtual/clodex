@@ -18,6 +18,7 @@ const { confine } = require('./path-confine');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { resolveDisplayedPath } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
+const { runTicketsMigration } = require('./tickets-migrate');
 const { materializeExecScripts } = require('./bin-materialize');
 // Module-level, unlike the rest of pending-store's surface (required inside
 // createEngine): sweepSpilledMessages below is module-level so its exemption is
@@ -1782,6 +1783,15 @@ const toolCache = createToolCache({ whichBin });
     if (orphanRootFiles.length) log.info('migrate', `stray root-level flat artifacts (log-only): ${orphanRootFiles.join(', ')}`);
   } catch (e) {
     log.info('migrate', `legacy sweep skipped (${e && e.message})`);
+  }
+
+  // Same posture as the sweep above, and for the same reason: a board that fails
+  // to migrate is a board still readable at its old path, not a reason to refuse
+  // to start. Per-team markered and duplicate-proof, so a failed run retries.
+  try {
+    runTicketsMigration({ root: REGISTRY_DIR, fs, log });
+  } catch (e) {
+    log.info('migrate', `tickets migration skipped (${e && e.message})`);
   }
 
   try { manager.sweepReviewerGraveyard(); } catch (e) { log.info('migrate', `reviewer-graveyard sweep skipped (${e && e.message})`); }

@@ -543,7 +543,10 @@ function createSessionManager(deps) {
   const BOOT_DRAIN_SETTLE_MS = Number.isFinite(deps.bootDrainSettleMs) ? deps.bootDrainSettleMs : 750;
   const ROSTER_MAX_WAIT_MS = deps.rosterMaxWaitMs || 10000;
 
-  const ticketsStore = createTicketsStore({ fs, path });
+  // clodexHome is INJECTED, never left to the store's default: the board now
+  // resolves under it, so a test that repoints REGISTRY_DIR would otherwise read
+  // and write the operator's real ~/.clodex board.
+  const ticketsStore = createTicketsStore({ fs, path, clodexHome: REGISTRY_DIR });
 
   class SessionManager {
     constructor() {
@@ -2486,7 +2489,7 @@ function createSessionManager(deps) {
         return t;
       };
       const teamFor = (cwd) => { const t = resolvedTeamFor(cwd); return t ? t.name : null; };
-      const ticketsByDir = new Map();
+      const ticketsByRoot = new Map();
       // Memoized like the two above, and for a sharper reason: this runs per
       // (session × ticket), and _teamLiveSeats rebuilds a peerStatusLabel and a
       // proxy-poller snapshot for every live seat on each call.
@@ -2498,16 +2501,15 @@ function createSessionManager(deps) {
       const openTicketFor = (s) => {
         try {
           const t = resolvedTeamFor(s.cwd);
-          if (!t || !t.file) return null;
-          const dir = path.dirname(t.file);
-          if (!ticketsByDir.has(dir)) ticketsByDir.set(dir, ticketsStore.load(dir));
+          if (!t || !t.root) return null;
+          if (!ticketsByRoot.has(t.root)) ticketsByRoot.set(t.root, ticketsStore.load(t.root));
           const role = matchSeatRole(t, s.name);
           const live = liveSeatsFor(t);
           // Same filter as _reconcileTickets: this is the badge on first paint
           // and that is the badge on every change, so a term here that is
           // missing there shows a ticket until the next reconcile and then
           // drops it.
-          const open = ticketsByDir.get(dir).find((tk) => tk.state === 'open' && tk.assignee != null && !tk.parked
+          const open = ticketsByRoot.get(t.root).find((tk) => tk.state === 'open' && tk.assignee != null && !tk.parked
             && (tk.assignee === s.name || tk.assignee === role
               || this._ticketAssigneeSeat(t, tk, live) === s.name));
           return open ? open.id : null;
@@ -4406,8 +4408,7 @@ function createSessionManager(deps) {
       } catch { seats.add('<persisted-seat check unavailable>'); }
       const tickets = [];
       try {
-        const teamDir = path.dirname(team.file);
-        for (const tk of ticketsStore.load(teamDir)) {
+        for (const tk of ticketsStore.load(team.root)) {
           if (tk && tk.assignee === roleKey && tk.state === 'open') tickets.push(tk.id);
         }
       } catch { tickets.push('<ticket check unavailable>'); }
@@ -4696,15 +4697,14 @@ function createSessionManager(deps) {
       // rather than at each interior exit. The verbs that carry no body (assign,
       // list) fall out on the helper's empty-body guard.
       if (!team) { reply(`error: this session is not on a team (no team.json owns its cwd)${this._spillRejectedPayload(session, `task ${intent.sub}`, String(intent.body == null ? '' : intent.body).trim())}`); return; }
-      const teamDir = path.dirname(team.file);
       switch (intent.sub) {
-        case 'add': this._taskAdd(session, team, teamDir, intent, reply); break;
-        case 'assign': this._taskAssign(session, team, teamDir, intent, reply); break;
-        case 'done': this._taskDone(session, team, teamDir, intent, reply); break;
-        case 'reject': this._taskReject(session, team, teamDir, intent, reply); break;
-        case 'cancel': this._taskCancel(session, team, teamDir, intent, reply); break;
-        case 'park': this._taskPark(session, team, teamDir, intent, reply); break;
-        case 'list': this._taskList(session, team, teamDir, intent, reply); break;
+        case 'add': this._taskAdd(session, team, intent, reply); break;
+        case 'assign': this._taskAssign(session, team, intent, reply); break;
+        case 'done': this._taskDone(session, team, intent, reply); break;
+        case 'reject': this._taskReject(session, team, intent, reply); break;
+        case 'cancel': this._taskCancel(session, team, intent, reply); break;
+        case 'park': this._taskPark(session, team, intent, reply); break;
+        case 'list': this._taskList(session, team, intent, reply); break;
       }
     }
 
@@ -4859,10 +4859,10 @@ function createSessionManager(deps) {
     // disagree with the one delivery uses, and the disagreement is invisible —
     // this would list a ticket the delivery then refuses, and `_advanceSeat`
     // would report a hand-off that never happened.
-    _openTicketsFor(teamDir, team, seatName, excludeId = null) {
+    _openTicketsFor(team, seatName, excludeId = null) {
       const role = matchSeatRole(team, seatName);
       const live = this._teamLiveSeatNames(team.root);
-      return ticketsStore.load(teamDir)
+      return ticketsStore.load(team.root)
         .filter((t) => t.state === 'open' && t.id !== excludeId && t.assignee != null && !t.parked
           && (t.assignee === seatName || (role && t.assignee === role)
             || this._ticketAssigneeSeat(team, t, live) === seatName))
@@ -4877,8 +4877,8 @@ function createSessionManager(deps) {
     // and SAVES before calling, so the state filter already excludes it) — kept
     // because that is an ordering ACCIDENT, not a property of the helper: move the
     // advance above the save and without it the seat is handed back what it finished.
-    _advanceSeat(team, teamDir, seatName, closedId) {
-      const next = this._openTicketsFor(teamDir, team, seatName, closedId)[0];
+    _advanceSeat(team, seatName, closedId) {
+      const next = this._openTicketsFor(team, seatName, closedId)[0];
       if (!next) return null;
       // Handing a queued ticket to a seat IS its dispatch — the only one it gets —
       // so it re-pins like the two lead-driven paths. Reloaded from the store
@@ -4886,9 +4886,9 @@ function createSessionManager(deps) {
       // not the array on disk.
       if (this._repinTicketToSeat(team, next)) {
         try {
-          const all = ticketsStore.load(teamDir);
+          const all = ticketsStore.load(team.root);
           const t = all.find((x) => x.id === next.id);
-          if (t) { t.role = next.role; t.assignee = next.assignee; ticketsStore.save(teamDir, all); }
+          if (t) { t.role = next.role; t.assignee = next.assignee; ticketsStore.save(team.root, all); }
         } catch { /* best-effort: the pin is a measurement, never a reason the hand-off fails */ }
       }
       this._deliverTicketSpec(team, next, next.spec, 'clodex-team', true);
@@ -4915,8 +4915,7 @@ function createSessionManager(deps) {
       if (!session || !session.agentType || session._dead) return true;
       let team; try { team = resolveTeam(session.cwd); } catch { return true; }
       if (!team) return true;
-      const teamDir = path.dirname(team.file);
-      const open = this._openTicketsFor(teamDir, team, session.name);
+      const open = this._openTicketsFor(team, session.name);
       if (!open.length) return true;
       let held = false;
       for (const t of open) {
@@ -4952,7 +4951,7 @@ function createSessionManager(deps) {
         // ticket already arrives on close via _advanceSeat — a proven path.
         // Loaded HERE, after the delivery decided: an early load would be a wider
         // window for a concurrent clodex-team write to be clobbered by the save.
-        const tickets = ticketsStore.load(teamDir);
+        const tickets = ticketsStore.load(team.root);
         const rec = tickets.find((x) => x.id === t.id);
         if (!rec) return true;
         rec.deliveredTo = { seat: session.name, incarnation: session.incarnation, at: Date.now() };
@@ -4966,7 +4965,7 @@ function createSessionManager(deps) {
         // (the ordinary ticket-seat respawn, resolved above that gate), and the
         // re-pin is a no-op on it: `_repinTicketToSeat` bails on pinned-and-live.
         this._repinTicketToSeat(team, rec);
-        ticketsStore.save(teamDir, tickets);
+        ticketsStore.save(team.root, tickets);
         log.info('intent', `replayed ${t.id} to ${session.name} (respawn)`);
         return true;
       }
@@ -5430,7 +5429,7 @@ function createSessionManager(deps) {
     // No `def` parameter: the resolver derives the role def from (team, roleKey)
     // itself, and passing a second copy in would be exactly the duplicate source
     // this seam removes — a caller could hand in a def for a different role.
-    _spawnTicketSeat(opener, team, teamDir, ticket, roleKey, seat) {
+    _spawnTicketSeat(opener, team, ticket, roleKey, seat) {
       const reply = (msg) => this._injectText(opener, `[agent:task] ${msg}`, { parkable: true });
       // Reserved SYNCHRONOUSLY, before any await: two tickets opened in one lead
       // turn both run their taken-name check above before either create() lands,
@@ -5449,17 +5448,17 @@ function createSessionManager(deps) {
       // array may no longer be what is on disk.
       const unpin = () => {
         try {
-          const all = ticketsStore.load(teamDir);
+          const all = ticketsStore.load(team.root);
           const t = all.find((x) => x.id === ticket.id);
           if (!t) return;
           t.assignee = roleKey;
           delete t.role;
-          ticketsStore.save(teamDir, all);
+          ticketsStore.save(team.root, all);
         } catch { /* best-effort — the reply below is the operator-visible half */ }
       };
       const clearTicketTree = () => {
         try {
-          const all = ticketsStore.load(teamDir);
+          const all = ticketsStore.load(team.root);
           const t = all.find((x) => x.id === ticket.id);
           // Memory follows disk even on the early return. The catch's un-pin reads
           // `ticket.worktree` in memory while unpin() and this reload from the
@@ -5467,7 +5466,7 @@ function createSessionManager(deps) {
           // and the guard would skip an un-pin the on-disk state calls for.
           if (!t || !t.worktree) { delete ticket.worktree; return; }
           delete t.worktree;
-          ticketsStore.save(teamDir, all);
+          ticketsStore.save(team.root, all);
           delete ticket.worktree;
         } catch { /* best-effort */ }
       };
@@ -5549,9 +5548,9 @@ function createSessionManager(deps) {
           // because the spec is redelivered on a replay, and a seat that comes back
           // after a respawn needs the location as much as the first one did.
           try {
-            const all = ticketsStore.load(teamDir);
+            const all = ticketsStore.load(team.root);
             const rec = all.find((x) => x.id === ticket.id);
-            if (rec) { rec.worktree = wt; ticketsStore.save(teamDir, all); }
+            if (rec) { rec.worktree = wt; ticketsStore.save(team.root, all); }
             ticket.worktree = wt;
           } catch { /* best-effort — the spec below still carries it from `ticket` */ }
           const shape = this.resolveSeatShape(team, roleKey, 'ticket', opener);
@@ -5659,7 +5658,7 @@ function createSessionManager(deps) {
       });
     }
 
-    _taskAdd(session, team, teamDir, intent, reply) {
+    _taskAdd(session, team, intent, reply) {
       // Read before the permission check, not after: a non-lead's spec is the longest
       // payload any ticket verb carries, and the check below is the one rejection in
       // the system with no re-send to fall back on.
@@ -5671,7 +5670,7 @@ function createSessionManager(deps) {
         assignee = this._resolveAssignee(team, intent.who);
         if (!assignee) { reply(`error: "${intent.who}" is neither a team role nor a live seat on ${team.name}${this._spillRejectedPayload(session, 'task add', spec)}`); return; }
       }
-      const tickets = ticketsStore.load(teamDir);
+      const tickets = ticketsStore.load(team.root);
       const now = Date.now();
       // Written only when true: absent is the overwhelming majority and is what
       // every record predating this field carries, so a stored `parked: false`
@@ -5707,10 +5706,10 @@ function createSessionManager(deps) {
         // one exists and reports "no live seat" if not.
       }
       tickets.push(ticket);
-      ticketsStore.save(teamDir, tickets);
+      ticketsStore.save(team.root, tickets);
       if (seat) {
-        this._spawnTicketSeat(session, team, teamDir, ticket, assignee, seat);
-        this._reconcileTickets(team, teamDir);
+        this._spawnTicketSeat(session, team, ticket, assignee, seat);
+        this._reconcileTickets(team);
         log.info('intent', `task add by ${session.name} → ${ticket.id} (${assignee} → seat ${seat.name}, branch ${seat.branch})`);
         reply(`ticket ${ticket.id} → spawning ${seat.name} in a worktree on branch ${seat.branch}`);
         return;
@@ -5723,11 +5722,11 @@ function createSessionManager(deps) {
         // Re-saved only on an actual re-pin: the common cases (backlog, a
         // name-addressed seat, a role with nobody live) leave the record byte
         // identical, and a second write of identical bytes is pure churn.
-        if (this._repinTicketToSeat(team, ticket)) ticketsStore.save(teamDir, tickets);
+        if (this._repinTicketToSeat(team, ticket)) ticketsStore.save(team.root, tickets);
         const d = this._deliverTicketSpec(team, ticket, spec, session.name, true);
         suffix = this._ticketDeliverySuffix(d, assignee);
       }
-      this._reconcileTickets(team, teamDir);
+      this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee || '(backlog)', body: `ticket ${ticket.id} opened${parked ? ' (parked)' : ''}` });
       log.info('intent', `task add by ${session.name} → ${ticket.id} (${assignee || 'backlog'}${parked ? ', parked' : ''})`);
       if (parked) {
@@ -5737,11 +5736,11 @@ function createSessionManager(deps) {
       reply(assignee ? `ticket ${ticket.id} → ${assignee}${suffix}` : `ticket ${ticket.id} (backlog)`);
     }
 
-    _taskAssign(session, team, teamDir, intent, reply) {
+    _taskAssign(session, team, intent, reply) {
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can assign a ticket`); return; }
       if (!intent.id) { reply('error: assign needs a ticket id — [agent:task assign <id> <role|name>]'); return; }
       if (!intent.who) { reply('error: assign needs an assignee — [agent:task assign <id> <role|name>]'); return; }
-      const tickets = ticketsStore.load(teamDir);
+      const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot assign`); return; }
@@ -5822,9 +5821,9 @@ function createSessionManager(deps) {
       // role first — another ticket's hand, mid-work in a different branch.
       if (ownSeat) {
         ticket.assignee = ownSeat;
-        ticketsStore.save(teamDir, tickets);
+        ticketsStore.save(team.root, tickets);
         const d2 = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
-        this._reconcileTickets(team, teamDir);
+        this._reconcileTickets(team);
         this._broadcast('ipc-message', { type: 'task', from: session.name, to: ownSeat, body: `ticket ${ticket.id} re-sent` });
         log.info('intent', `task assign by ${session.name}: ${ticket.id} re-sent to its own seat ${ownSeat}`);
         reply(`ticket ${ticket.id} → ${ownSeat}${wasParked ? ' (unparked)' : ''} (its own seat, spec re-sent)${this._ticketDeliverySuffix(d2, ownSeat)}`);
@@ -5834,9 +5833,9 @@ function createSessionManager(deps) {
         if (minted.ok) {
           ticket.role = assignee;
           ticket.assignee = minted.name;
-          ticketsStore.save(teamDir, tickets);
-          this._spawnTicketSeat(session, team, teamDir, ticket, assignee, minted);
-          this._reconcileTickets(team, teamDir);
+          ticketsStore.save(team.root, tickets);
+          this._spawnTicketSeat(session, team, ticket, assignee, minted);
+          this._reconcileTickets(team);
           log.info('intent', `task assign by ${session.name}: ${ticket.id} → seat ${minted.name}, branch ${minted.branch}`);
           reply(`ticket ${ticket.id} → spawning ${minted.name} in a worktree on branch ${minted.branch}`);
           return;
@@ -5849,10 +5848,10 @@ function createSessionManager(deps) {
       // The two returning paths above are exempt by construction — the own-seat
       // re-send and the mint both keep a pin whose role is still the filed one.
       if (!this._repinTicketToSeat(team, ticket)) delete ticket.role;
-      ticketsStore.save(teamDir, tickets);
+      ticketsStore.save(team.root, tickets);
       const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
       const suffix = this._ticketDeliverySuffix(d, assignee);
-      this._reconcileTickets(team, teamDir);
+      this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee, body: `ticket ${ticket.id} assigned` });
       log.info('intent', `task assign by ${session.name}: ${ticket.id} ${prev || '(backlog)'}${wasParked ? ' (parked)' : ''} → ${assignee}`);
       const unparked = wasParked ? ' (unparked)' : '';
@@ -5863,13 +5862,13 @@ function createSessionManager(deps) {
       reply(reassigning ? `ticket ${ticket.id}: ${prevShown} → ${assignee}${unparked}${suffix}` : `ticket ${ticket.id} → ${assignee}${unparked}${suffix}`);
     }
 
-    _taskDone(session, team, teamDir, intent, reply) {
+    _taskDone(session, team, intent, reply) {
       // Read above the id check so a malformed command — where no id resolves and
       // there is nothing to attach the report to — still preserves it.
       const report = String(intent.body == null ? '' : intent.body).trim();
       if (!intent.id) { reply(`error: done needs a ticket id — [agent:task done <id>] <report>${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       if (!report) { reply('error: done needs a report — [agent:task done <id>] <what you did>'); return; }
-      const tickets = ticketsStore.load(teamDir);
+      const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open${this._spillRejectedPayload(session, 'task done', report)}`); return; }
@@ -5901,10 +5900,10 @@ function createSessionManager(deps) {
       ticket.closedAt = Date.now();
       ticket.closedBy = session.name;
       ticket.lastActivityAt = ticket.closedAt;
-      ticketsStore.save(teamDir, tickets);
-      this._reconcileTickets(team, teamDir);
+      ticketsStore.save(team.root, tickets);
+      this._reconcileTickets(team);
       const doneSeat = this._ticketAssigneeSeat(team, ticket);
-      const next = doneSeat ? this._advanceSeat(team, teamDir, doneSeat, ticket.id) : null;
+      const next = doneSeat ? this._advanceSeat(team, doneSeat, ticket.id) : null;
       const nextSuffix = next ? ` — next: ${next.id} delivered to ${doneSeat}` : '';
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: lead, body: `ticket ${ticket.id} done` });
       this._writeTicketCost(team, ticket);
@@ -6096,12 +6095,12 @@ function createSessionManager(deps) {
       });
     }
 
-    _taskReject(session, team, teamDir, intent, reply) {
+    _taskReject(session, team, intent, reply) {
       const reason = String(intent.body == null ? '' : intent.body).trim();
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can reject a ticket${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
       if (!intent.id) { reply(`error: reject needs a ticket id — [agent:task reject <id>] <reason>${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
       if (!reason) { reply('error: reject needs a reason — [agent:task reject <id>] <what to fix>'); return; }
-      const tickets = ticketsStore.load(teamDir);
+      const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
       if (ticket.state !== 'done') { reply(`error: reject reopens a DONE ticket; ${intent.id} is ${ticket.state}${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
@@ -6110,20 +6109,20 @@ function createSessionManager(deps) {
       ticket.closedBy = null;          // cleared alongside closedAt — it is open again
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;
-      ticketsStore.save(teamDir, tickets);
+      ticketsStore.save(team.root, tickets);
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} rejected] ${reason}`, true);
-      this._reconcileTickets(team, teamDir);
+      this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} rejected` });
       log.info('intent', `task reject ${ticket.id} by ${session.name} → reopened`);
       reply(`ticket ${ticket.id} reopened (rework) → ${ticket.role || ticket.assignee || 'unassigned'}`);
     }
 
-    _taskCancel(session, team, teamDir, intent, reply) {
+    _taskCancel(session, team, intent, reply) {
       const reason = String(intent.body == null ? '' : intent.body).trim();
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can cancel a ticket${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
       if (!intent.id) { reply(`error: cancel needs a ticket id — [agent:task cancel <id>] [reason]${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
-      const tickets = ticketsStore.load(teamDir);
+      const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot cancel${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
@@ -6131,11 +6130,11 @@ function createSessionManager(deps) {
       ticket.closedAt = Date.now();
       ticket.closedBy = session.name;  // one shape across both close verbs
       ticket.lastActivityAt = ticket.closedAt;
-      ticketsStore.save(teamDir, tickets);
+      ticketsStore.save(team.root, tickets);
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (reason && seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} cancelled] ${reason}`, false);
-      this._reconcileTickets(team, teamDir);
-      const next = seat ? this._advanceSeat(team, teamDir, seat, ticket.id) : null;
+      this._reconcileTickets(team);
+      const next = seat ? this._advanceSeat(team, seat, ticket.id) : null;
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} cancelled` });
       this._writeTicketCost(team, ticket);
       log.info('intent', `task cancel ${ticket.id} by ${session.name}`);
@@ -6150,10 +6149,10 @@ function createSessionManager(deps) {
     // names which way it went, so a lead cannot ask for the wrong direction.
     // Deliberately does NOT deliver on unpark — that is `assign`'s job, and a
     // second delivery path would let the two disagree about what a seat was told.
-    _taskPark(session, team, teamDir, intent, reply) {
+    _taskPark(session, team, intent, reply) {
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can park a ticket`); return; }
       if (!intent.id) { reply('error: park needs a ticket id — [agent:task park <id>]'); return; }
-      const tickets = ticketsStore.load(teamDir);
+      const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — only an open ticket can be parked`); return; }
@@ -6164,8 +6163,8 @@ function createSessionManager(deps) {
       // A parked ticket is exempt from the watchdog, so a stamp left behind
       // would spend the one nudge of the episode that starts when it unparks.
       ticket.nudgedAt = null;
-      ticketsStore.save(teamDir, tickets);
-      this._reconcileTickets(team, teamDir);
+      ticketsStore.save(team.root, tickets);
+      this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(backlog)', body: `ticket ${ticket.id} ${parking ? 'parked' : 'unparked'}` });
       log.info('intent', `task ${parking ? 'park' : 'unpark'} ${ticket.id} by ${session.name}`);
       reply(parking
@@ -6187,13 +6186,13 @@ function createSessionManager(deps) {
     // purpose — that script is materialized out of the repo as a flat basename copy
     // into run/bin/ and may require node builtins ONLY, so a shared module would fail
     // to resolve at run time. Change both together.
-    _taskList(session, team, teamDir, intent, reply) {
+    _taskList(session, team, intent, reply) {
       const filter = intent.filter || 'open';
       if (!TICKET_FILTERS.includes(filter)) {
         reply(`error: unknown filter "${filter}" — use one of: ${TICKET_FILTERS.join(', ')}`);
         return;
       }
-      const tickets = ticketsStore.load(teamDir).slice().sort((a, b) => {
+      const tickets = ticketsStore.load(team.root).slice().sort((a, b) => {
         const na = Number(String(a.id).replace(/^t/, '')) || 0;
         const nb = Number(String(b.id).replace(/^t/, '')) || 0;
         return na - nb;
@@ -6236,8 +6235,8 @@ function createSessionManager(deps) {
       reply(`${head}:\n${lines.join('\n')}${recentBlock}${tail}`);
     }
 
-    _reconcileTickets(team, teamDir) {
-      const tickets = ticketsStore.load(teamDir);
+    _reconcileTickets(team) {
+      const tickets = ticketsStore.load(team.root);
       const live = this._teamLiveSeatNames(team.root);
       for (const name of live) {
         const role = matchSeatRole(team, name);
@@ -6246,7 +6245,7 @@ function createSessionManager(deps) {
         const open = tickets.find((t) => t.state === 'open' && t.assignee != null && !t.parked
           && (t.assignee === name || t.assignee === role
             || this._ticketAssigneeSeat(team, t, live) === name));
-        if (open) this._ticketWatch.set(name, { teamDir, role, teamRoot: team.root });
+        if (open) this._ticketWatch.set(name, { root: team.root, role });
         else this._ticketWatch.delete(name);
         this._broadcast('session-ticket', { name, ticket: open ? open.id : null });
       }
@@ -6255,13 +6254,13 @@ function createSessionManager(deps) {
     _touchTicketActivity(name) {
       const w = this._ticketWatch.get(name);
       if (!w) return;
-      const tickets = ticketsStore.load(w.teamDir);
+      const tickets = ticketsStore.load(w.root);
       let changed = false;
       const now = Date.now();
       // `team` is needed to resolve a degraded pin; without it an inherited ticket
       // never refreshes `lastActivityAt` and the watchdog nudges the lead about
       // work somebody is actively doing.
-      let team = null; try { team = resolveTeam(w.teamRoot || ''); } catch { team = null; }
+      let team = null; try { team = resolveTeam(w.root || ''); } catch { team = null; }
       // Walked ONCE for the whole loop, not once per ticket: this runs on every
       // non-idle activity edge and both the team resolve and the seat walk are
       // filesystem work.
@@ -6275,7 +6274,7 @@ function createSessionManager(deps) {
           changed = true;
         }
       }
-      if (changed) ticketsStore.save(w.teamDir, tickets);
+      if (changed) ticketsStore.save(w.root, tickets);
     }
 
     startTicketWatchdog(intervalMs = 60000) {
@@ -6285,22 +6284,43 @@ function createSessionManager(deps) {
     }
 
     _sweepTickets(now = Date.now()) {
-      const seen = new Set();
+      // TWO dedup keys, because the two calls below are scoped differently and
+      // collapsing them under one key breaks whichever loses.
+      //
+      // The SWEEP is per BOARD: the board is the project's, so two different teams
+      // rooted at one project must nudge ONCE between them, not twice about the
+      // same stalled ticket. Note that this makes `watchdogMs` iteration-order
+      // dependent when two teams share a root — whichever team is reached first
+      // governs the stall window for that pass.
+      //
+      // RECONCILE is per TEAM: it walks _teamLiveSeatNames(team.root), which is
+      // project-scoped and therefore already returns the OTHER team's seats, but
+      // resolves each one's role with matchSeatRole(team, name). Deduping it by
+      // root means the second team never gets its pass, so its role-assigned seats
+      // resolve to no role against the first team's manifest and are silently
+      // stripped — _ticketWatch.delete plus a `session-ticket: null` broadcast
+      // every sweep, with nothing to restore them. Keyed by team.file, each team
+      // reconciles against its own manifest.
+      const sweptBoards = new Set();
+      const reconciledTeams = new Set();
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead) continue;
         let team; try { team = resolveTeam(s.cwd); } catch { team = null; }
         if (!team) continue;
-        const teamDir = path.dirname(team.file);
-        if (seen.has(teamDir)) continue;
-        seen.add(teamDir);
-        this._sweepTeamTickets(team, teamDir, now);
-        this._reconcileTickets(team, teamDir); // self-heal the watch map + badges post-restart
+        if (!sweptBoards.has(team.root)) {
+          sweptBoards.add(team.root);
+          this._sweepTeamTickets(team, now);
+        }
+        if (!reconciledTeams.has(team.file)) {
+          reconciledTeams.add(team.file);
+          this._reconcileTickets(team); // self-heal the watch map + badges post-restart
+        }
       }
     }
 
-    _sweepTeamTickets(team, teamDir, now) {
+    _sweepTeamTickets(team, now) {
       const stallMs = (typeof team.watchdogMs === 'number' && team.watchdogMs > 0) ? team.watchdogMs : TICKET_STALL_MS;
-      const tickets = ticketsStore.load(teamDir);
+      const tickets = ticketsStore.load(team.root);
       for (const t of tickets) {
         // Parked is exempt for the same reason backlog is: nothing was dispatched,
         // so quiet is the expected state and a nudge would report the lead's own
@@ -6325,7 +6345,7 @@ function createSessionManager(deps) {
           `[ticket ${tid}] stalled: ${t.role || t.assignee} quiet ${humanizeAge(now - last)}`, false, '',
           () => {
             try {
-              const fresh = ticketsStore.load(teamDir);
+              const fresh = ticketsStore.load(team.root);
               const rec = fresh.find((x) => x.id === tid);
               if (!rec || rec.nudgedAt) return;      // closed, or another sweep won
               // The stamp must identify the EPISODE it was decided for, not just the
@@ -6336,7 +6356,7 @@ function createSessionManager(deps) {
               if (rec.state !== 'open') return;
               if ((rec.lastActivityAt || null) !== seenAt) return;
               rec.nudgedAt = Date.now();
-              ticketsStore.save(teamDir, fresh);
+              ticketsStore.save(team.root, fresh);
             } catch (e) { log.error('ticket', `nudge stamp for ${tid} failed: ${e.message}`); }
           });
       }

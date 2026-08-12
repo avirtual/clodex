@@ -6,6 +6,25 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
+
+// Core's clodex-paths.projectDirFor, RE-DERIVED rather than required. A require
+// cannot work here: bin-materialize.js copies this script flat by basename into
+// <REGISTRY_DIR>/bin/, so `../clodex-paths` would resolve to ~/.clodex/clodex-paths.js
+// and throw MODULE_NOT_FOUND at load — killing every verb, not just this one —
+// and in the packaged app the source is sealed in app.asar, which is why
+// materialization exists at all. Node builtins only, same rule as the constants
+// duplicated below.
+//
+// Keep byte-equivalent to core: sha256 over the RESOLVED path, never the
+// realpath. A "cleaner" realpath here would hash a symlinked root as its target,
+// read a directory no writer wrote, and print an EMPTY board rather than error.
+// test/clodex-team.test.js pins this against core, including a symlinked root.
+function projectDirFor(root, projectPath) {
+  const real = path.resolve(projectPath);
+  const hash = crypto.createHash('sha256').update(real).digest('hex').slice(0, 8);
+  return path.join(root, 'projects', `${path.basename(real)}-${hash}`);
+}
 
 const CLODEX_HOME = process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex');
 const TEAMS_DIR = path.join(CLODEX_HOME, 'teams');
@@ -108,9 +127,10 @@ function humanizeAge(ms) {
 }
 
 // Filter vocabulary — MUST match session-manager.js TICKET_FILTERS. Duplicated,
-// not shared: this script is materialized into run/bin/ as a flat basename copy
-// (bin-materialize.js materializeExecScripts) and may require node builtins ONLY, so a
-// shared module would not resolve at run time.
+// not shared, for the reason given at projectDirFor above: this script is
+// materialized into run/bin/ as a flat basename copy (bin-materialize.js
+// materializeExecScripts) and may require node builtins ONLY, so a shared module
+// would not resolve at run time.
 const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
 
 // Recently-closed window on the default board — MUST match session-manager.js
@@ -255,7 +275,7 @@ function doTickets(payload) {
   }
   let tickets = [];
   try {
-    const arr = JSON.parse(fs.readFileSync(path.join(TEAMS_DIR, team.name, 'tickets.json'), 'utf-8'));
+    const arr = JSON.parse(fs.readFileSync(path.join(projectDirFor(CLODEX_HOME, team.root), 'tickets.json'), 'utf-8'));
     if (Array.isArray(arr)) tickets = arr;
   } catch { /* no registry yet — empty */ }
   if (!tickets.length) say(`team ${team.name}: no tickets`);

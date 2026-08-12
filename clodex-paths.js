@@ -62,7 +62,18 @@
 // If the grammar below changes, update the Codex hook template in cli-hooks.js.
 
 const path = require('path');
+const os = require('os');
 const crypto = require('crypto');
+
+// The ~/.clodex root a caller falls back to when nothing injected one. Lives
+// here, not in team-manifest.js, because both a TEAMS module and a project-scoped
+// one (tickets-store) need it: importing it from teams would make the project
+// board depend on the team subsystem it was decoupled from. Every in-app caller
+// injects REGISTRY_DIR instead, which deliberately does NOT read CLODEX_HOME —
+// see engine.js's note at createTeamManifest.
+function defaultClodexHome() {
+  return process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex');
+}
 
 // kind → the unsuffixed basename inside run/<name>/.
 const KINDS = {
@@ -140,10 +151,11 @@ function runDirFor(root, name) {
   return path.join(root, 'run', name);
 }
 
-// The per-PROJECT artifact dir: ~/.clodex/projects/<leaf>-<hash8>/. Team task
-// artifacts (specs, journals, design notes) live here, NOT in the user's own
-// repo — Clodex never writes a user project file, and a `tasks/` convention
-// baked into a product other people clone would push our process into theirs.
+// The per-PROJECT artifact dir: ~/.clodex/projects/<leaf>-<hash8>/. Task
+// artifacts (specs, journals, design notes) and the TICKET BOARD
+// (tickets.json — tickets-store.js) live here, NOT in the user's own repo —
+// Clodex never writes a user project file, and a `tasks/` convention baked into
+// a product other people clone would push our process into theirs.
 //
 // The leaf is for a human browsing ~/.clodex/projects; the hash is what makes
 // it correct. Bare leaves collide silently — every second checkout is named
@@ -190,5 +202,5 @@ function legacySuffixes() {
 
 module.exports = {
   KINDS, LEGACY_SUFFIXES, runDirFor, pathFor, legacyPathsFor, legacySuffixes,
-  projectDirFor, taskDirFor,
+  projectDirFor, taskDirFor, defaultClodexHome,
 };

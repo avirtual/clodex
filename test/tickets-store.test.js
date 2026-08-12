@@ -7,37 +7,94 @@ const os = require('os');
 const path = require('path');
 
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = require('../tickets-store');
+const { projectDirFor } = require('../clodex-paths');
 
-function tmpTeamDir() {
+function tmpHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-tickets-'));
 }
 
+// A project ROOT is now the store's key — any absolute path will do, since the
+// board dir is derived from it by hashing, not by existing on disk.
+function tmpRoot() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-proj-'));
+}
+
 test('tickets-store: a missing registry loads as empty (never throws)', () => {
-  const store = createTicketsStore();
-  assert.deepStrictEqual(store.load(tmpTeamDir()), []);
+  const store = createTicketsStore({ clodexHome: tmpHome() });
+  assert.deepStrictEqual(store.load(tmpRoot()), []);
+});
+
+test('tickets-store: the board resolves to the PROJECT dir, not any team dir', () => {
+  const home = tmpHome();
+  const root = tmpRoot();
+  const store = createTicketsStore({ clodexHome: home });
+  // The one authority on the grammar is clodex-paths; this asserts the store
+  // agrees with it rather than re-deriving <leaf>-<hash8> in a second place.
+  assert.strictEqual(store.ticketsPath(root), path.join(projectDirFor(home, root), 'tickets.json'));
+  store.save(root, [{ id: 't1' }]);
+  assert.ok(fs.existsSync(path.join(projectDirFor(home, root), 'tickets.json')));
+});
+
+test('tickets-store: two projects under one home get two separate boards', () => {
+  const home = tmpHome();
+  const a = tmpRoot();
+  const b = tmpRoot();
+  const store = createTicketsStore({ clodexHome: home });
+  store.save(a, [{ id: 't1', title: 'a-work' }]);
+  store.save(b, [{ id: 't1', title: 'b-work' }]);
+  assert.deepStrictEqual(store.load(a), [{ id: 't1', title: 'a-work' }]);
+  assert.deepStrictEqual(store.load(b), [{ id: 't1', title: 'b-work' }]);
 });
 
 test('tickets-store: save then load round-trips, atomic write leaves no temp file', () => {
-  const dir = tmpTeamDir();
-  const store = createTicketsStore();
+  const home = tmpHome();
+  const root = tmpRoot();
+  const store = createTicketsStore({ clodexHome: home });
   const tickets = [{ id: 't1', title: 'a', state: 'open' }];
-  store.save(dir, tickets);
-  assert.deepStrictEqual(store.load(dir), tickets);
-  assert.deepStrictEqual(fs.readdirSync(dir), ['tickets.json'], 'no lingering .tmp from the atomic rename');
+  store.save(root, tickets);
+  assert.deepStrictEqual(store.load(root), tickets);
+  assert.deepStrictEqual(fs.readdirSync(projectDirFor(home, root)), ['tickets.json'],
+    'no lingering .tmp from the atomic rename');
 });
 
-test('tickets-store: save creates the team dir if absent (ensureDir)', () => {
-  const parent = tmpTeamDir();
-  const dir = path.join(parent, 'nested', 'team');
-  const store = createTicketsStore();
-  store.save(dir, [{ id: 't1' }]);
-  assert.ok(fs.existsSync(path.join(dir, 'tickets.json')));
+test('tickets-store: save creates the project dir if absent (ensureDir)', () => {
+  const home = path.join(tmpHome(), 'nested', 'home');
+  const root = tmpRoot();
+  const store = createTicketsStore({ clodexHome: home });
+  store.save(root, [{ id: 't1' }]);
+  assert.ok(fs.existsSync(path.join(projectDirFor(home, root), 'tickets.json')));
 });
 
 test('tickets-store: a corrupt registry loads as empty, not a throw', () => {
-  const dir = tmpTeamDir();
-  fs.writeFileSync(path.join(dir, 'tickets.json'), '{ not json');
-  assert.deepStrictEqual(createTicketsStore().load(dir), []);
+  const home = tmpHome();
+  const root = tmpRoot();
+  const store = createTicketsStore({ clodexHome: home });
+  fs.mkdirSync(projectDirFor(home, root), { recursive: true });
+  fs.writeFileSync(path.join(projectDirFor(home, root), 'tickets.json'), '{ not json');
+  assert.deepStrictEqual(store.load(root), []);
+});
+
+// Three states, not two. A later refactor that reads `parked` as "the same as
+// unassigned" collapses the middle one, and the record on disk is the only place
+// the distinction lives: `parked` is written ONLY when true, so absent-vs-false
+// must round-trip as absent (every pre-field record on the live board has no
+// `parked` key at all).
+test('tickets-store: null-assignee, parked-assigned and delivered-assigned are three DISTINCT round-tripping shapes', () => {
+  const home = tmpHome();
+  const root = tmpRoot();
+  const store = createTicketsStore({ clodexHome: home });
+  const backlog = { id: 't1', state: 'open', assignee: null };
+  const parked = { id: 't2', state: 'open', assignee: 'hand', parked: true };
+  const delivered = { id: 't3', state: 'open', assignee: 'hand' };
+  store.save(root, [backlog, parked, delivered]);
+  const back = store.load(root);
+  assert.deepStrictEqual(back, [backlog, parked, delivered]);
+  // `parked` absent stays ABSENT, never normalized to false.
+  assert.ok(!Object.prototype.hasOwnProperty.call(back[0], 'parked'));
+  assert.ok(!Object.prototype.hasOwnProperty.call(back[2], 'parked'));
+  // The two "nobody is working on this right now" states are not each other.
+  assert.notDeepStrictEqual(back[0], back[1]);
+  assert.notDeepStrictEqual(back[1], back[2]);
 });
 
 test('nextTicketId: monotonic from the max, never reuses even past a gap', () => {
