@@ -4568,11 +4568,29 @@ function createSessionManager(deps) {
         } catch { /* preflight is best-effort — a stat error is not a spawn blocker */ }
       }
 
+      // The scope rides the seat's CONSTRUCTED PROMPT, not the dm below. A dm is a
+      // delivery, and the one seat that cannot reliably take a delivery is a brand
+      // new one: the park drains into the CLI's boot re-render, which wipes it, and
+      // the t194 fallback then finds the park claimed and correctly concludes
+      // nothing is owed. Measured six times in one day — seat alive, zero tokens,
+      // transcript target never created, scope gone. A prompt is present before the
+      // first turn instead of being written at it, so there is no window to lose it
+      // in. It also survives /clear and /compact, which a delivered dm does not:
+      // create() persists this as `systemPrompt` and refreshPrompt replays it, so a
+      // reviewer that compacts mid-review still knows what it is reviewing.
+      const reviewBrief = [
+        'REVIEW SCOPE — this is the specific work you were spawned to review.',
+        '',
+        scope,
+        '',
+        `Report your verdict with [agent:review-done] <verdict>, which returns it to ${session.name} and retires you.`,
+      ].join('\n');
+
       setImmediate(async () => {
         try {
           await this.create(
             name, type, cwd, shape.extraArgs, null, shape.workspaceId,
-            null, false, session.proxy ?? null, shape.agents, shape.denyBuiltins, shape.disabledTools,
+            reviewBrief, false, session.proxy ?? null, shape.agents, shape.denyBuiltins, shape.disabledTools,
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
           );
@@ -4584,7 +4602,13 @@ function createSessionManager(deps) {
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
           });
-          this._deliverParkedActive(name, session.name, scope, 'dm');
+          // Kept, and deliberately CONTENTLESS: the prompt above carries the scope,
+          // but a prompt alone never makes the CLI take a turn. This is the nudge
+          // that starts it. Losing this one to the boot re-render costs a start, not
+          // the scope — and the t194 fallback re-drains it; losing the scope with it
+          // was the failure. Do not re-inline the scope here: two copies would
+          // disagree the moment one is edited, and the dm copy is the losable one.
+          this._deliverParkedActive(name, session.name, 'Your review scope is in your system prompt. Begin.', 'dm');
           this._broadcast('ipc-message', {
             type: 'team-review', from: session.name, to: name, body: `review → ${name} @ ${cwd}`,
           });

@@ -3778,9 +3778,16 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
   assert.strictEqual(name, 'team-reviewer-1', 'first reviewer name matches the role key');
   assert.strictEqual(type, 'claude', 'the cold reviewer ALWAYS spawns claude — code-side, so the tools cap is enforceable');
   assert.strictEqual(cwd, '/proj', 'cwd defaults to team root');
-  // The handler passes NO inline system body — the reviewer's briefing rides as
-  // the REPLACEMENT system prompt (systemPromptFile below), not an inline body.
-  assert.strictEqual(sysBody, null, 'no explicit inline briefing');
+  // T5: the SCOPE rides the inline system body. The role brief still arrives as
+  // the replacement system prompt (systemPromptFile below) — that is the seat's
+  // standing "how to review"; this is the per-ticket "what to review", and the two
+  // are different channels on purpose. It was a dm until six seats in one day were
+  // measured alive at zero tokens with the scope gone: a park drained into the
+  // CLI's boot re-render is wiped, and the t194 fallback then sees the park
+  // claimed and correctly concludes nothing is owed. Pinned end-to-end in
+  // test/review-scope-in-prompt.test.js, which asserts the BAKED bytes.
+  assert.ok(sysBody && sysBody.includes('check the boot-race fix'),
+    'the scope must ride the constructed prompt — a dm is written at a turn the wedged seat never takes');
   // T51 lean-reviewer: the role prompt (def.prompt) is passed as the REPLACEMENT
   // system prompt (--system-prompt-file), and create()'s auto role-prompt append
   // dedupes itself against it, so the briefing lands once as the system prompt.
@@ -3805,11 +3812,20 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
   const rec = persistence.get('team-reviewer-1');
   assert.strictEqual(rec.ephemeral, true);
   assert.strictEqual(rec.reviewFor, 'lead');
-  // Scope delivered as an ACTIVE-CLASS PARK (T54): parked (no spawn-time PTY
-  // write — the mode-2004 boot-race that ate the T40/T42 scopes stays fixed) but
-  // turn-earning, so the boot-ready rising edge drains it WITHOUT a human
-  // ✉-click (the operator-reported stall). It does NOT ride the passive path.
-  assert.deepStrictEqual(parkedActive, [{ name: 'team-reviewer-1', sender: 'lead', body: 'check the boot-race fix', mtype: 'dm' }]);
+  // An ACTIVE-CLASS PARK still fires (T54): parked rather than written at spawn —
+  // the mode-2004 boot-race that ate the T40/T42 scopes stays fixed — but
+  // turn-earning, so the boot-ready rising edge drains it WITHOUT a human ✉-click.
+  // T5 emptied its BODY: a system prompt alone never makes the CLI take a turn, so
+  // this is now the start signal and nothing more. Losing it costs a start, which
+  // the t194 fallback re-drains; losing it when it carried the scope cost the
+  // review. The body must NOT restate the scope — two copies disagree the moment
+  // one is edited, and this is the copy that can be wiped.
+  assert.strictEqual(parkedActive.length, 1, 'exactly one nudge, on the active (turn-earning) path');
+  assert.strictEqual(parkedActive[0].name, 'team-reviewer-1');
+  assert.strictEqual(parkedActive[0].sender, 'lead');
+  assert.strictEqual(parkedActive[0].mtype, 'dm');
+  assert.ok(!parkedActive[0].body.includes('check the boot-race fix'),
+    'the nudge must not carry the scope — that is the losable channel this change moved off');
   assert.deepStrictEqual(passive, [], 'scope no longer rides the passive (never-earns-a-turn) path');
   assert.deepStrictEqual(delivered, [], 'no active inject for the scope');
   assert.ok(injected.some((t) => /spawned team-reviewer-1/.test(t)), 'lead gets a confirmation naming the seat');
