@@ -5,7 +5,14 @@
 // engine.js inside a catch-and-log so a failure degrades to a log line.
 //
 // COPY, then mark. The source file is never moved or deleted — nothing reads it
-// after this, and it stays as a cold backup for a migration nobody can re-run.
+// after this, and it stays as a cold backup.
+//
+// The marker records that the INITIAL copy happened; it does NOT suppress later
+// passes. Copy-once-then-mark assumed a static source, and the source is not
+// static while work is in flight: the first copy ran two minutes before a ticket
+// closed, so the destination got a snapshot of an open ticket that the marker
+// then guaranteed could never be corrected. Every run now reconciles as well as
+// merges — see reconcileBoard.
 //
 // The marker is PER-TEAM, not global: a global one would permanently block a
 // team that first appears on disk after the migration has run once.
@@ -100,13 +107,60 @@ function mergeBoards(dest, source, teamName) {
   return out;
 }
 
-// Migrate every team under <root>/teams/. Idempotent twice over: the per-team
-// marker short-circuits a second run, and mergeBoards duplicates nothing even
-// when the marker was deleted by hand. Returns a per-team summary for the log.
+// PURE. Given the merged board and one team's source board, replace any
+// destination record whose source counterpart is STRICTLY NEWER by
+// `lastActivityAt` — that destination record is a snapshot taken while the work
+// was still moving. Returns { board, reconciled }.
+//
+// WHY THIS SELF-TERMINATES, and why it needs no end-date, version check or
+// second marker: after cutover nothing writes the team board any more, so its
+// `lastActivityAt` values are frozen while the project board's keep advancing on
+// every touch. Source-strictly-newer therefore goes false for every record and
+// stays false — the reconcile becomes a permanent no-op by construction.
+//
+// Replacement is WHOLESALE but keeps the destination's identity and provenance
+// (`id`, `originTeam`, `formerId`, `migratedAt`). The id especially: it is a
+// public reference naming branch names, artifact dirs and commit messages, so
+// taking the source's id back would silently re-point every one of them.
+function reconcileBoard(board, source, teamName) {
+  const byKey = new Map();
+  for (const src of source || []) {
+    if (!src || typeof src !== 'object' || Array.isArray(src)) continue;
+    const k = `${teamName}/${src.id}`;
+    if (!byKey.has(k)) byKey.set(k, src);   // same first-wins rule as the merge
+  }
+  let reconciled = 0;
+  const out = (board || []).map((dest) => {
+    const key = originKey(dest);
+    if (!key) return dest;                  // native record: not ours to reconcile
+    const src = byKey.get(key);
+    if (!src) return dest;
+    // A dest with no usable timestamp is an unedited copy — every write path in
+    // session-manager stamps `lastActivityAt`, so anything edited AFTER the
+    // migration carries one. A source with no usable timestamp never wins.
+    const s = Number(src.lastActivityAt);
+    const d = Number(dest.lastActivityAt);
+    if (!Number.isFinite(s)) return dest;
+    if (Number.isFinite(d) && s <= d) return dest;
+    reconciled += 1;
+    const rec = { ...src, originTeam: dest.originTeam, id: dest.id };
+    // Deleted rather than copied when the destination lacks them, so a stale
+    // `formerId`/`migratedAt` carried on the SOURCE cannot leak in as provenance.
+    if ('formerId' in dest) rec.formerId = dest.formerId; else delete rec.formerId;
+    if ('migratedAt' in dest) rec.migratedAt = dest.migratedAt; else delete rec.migratedAt;
+    return rec;
+  });
+  return { board: out, reconciled };
+}
+
+// Migrate every team under <root>/teams/. Idempotent twice over: mergeBoards
+// duplicates nothing (provenance, not the marker, is what makes it so) and the
+// reconcile only ever moves a record forward to a strictly newer source.
+// Returns a per-team summary for the log.
 function runTicketsMigration({ root, fs = require('fs'), log = null } = {}) {
   const teamsDir = path.join(root, 'teams');
   const store = createTicketsStore({ fs, clodexHome: root });
-  const result = { migrated: 0, teams: [] };
+  const result = { migrated: 0, reconciled: 0, teams: [] };
 
   let names;
   try { names = fs.readdirSync(teamsDir); } catch { return result; }
@@ -117,10 +171,6 @@ function runTicketsMigration({ root, fs = require('fs'), log = null } = {}) {
     const srcPath = path.join(teamDir, TICKETS_FILE);
     try {
       if (!fs.existsSync(srcPath)) continue;
-      if (fs.existsSync(path.join(teamDir, MARKER))) {
-        result.teams.push({ team: name, skipped: 'already migrated' });
-        continue;
-      }
       let manifest;
       try { manifest = JSON.parse(fs.readFileSync(path.join(teamDir, TEAM_FILE), 'utf-8')); } catch { manifest = null; }
       const projectRoot = manifest && typeof manifest.root === 'string' ? manifest.root : '';
@@ -147,13 +197,18 @@ function runTicketsMigration({ root, fs = require('fs'), log = null } = {}) {
       const before = readDestination(fs, store.ticketsPath(projectRoot));
       const merged = mergeBoards(before, source, name);
       const added = merged.length - before.length;
+      const { board, reconciled } = reconcileBoard(merged, source, name);
       // Saved even when nothing was added, so the marker can never be written
       // over a board the save would have failed to create.
-      store.save(projectRoot, merged);
-      fs.writeFileSync(path.join(teamDir, MARKER), `${new Date().toISOString()}\n`);
+      store.save(projectRoot, board);
+      const markerPath = path.join(teamDir, MARKER);
+      // Stamped only the first time: it dates the INITIAL copy, and rewriting it
+      // on every launch would erase the one timestamp that says when that was.
+      if (!fs.existsSync(markerPath)) fs.writeFileSync(markerPath, `${new Date().toISOString()}\n`);
       result.migrated += added;
-      result.teams.push({ team: name, added, projectRoot });
-      if (log) log.info('migrate', `tickets: team ${name} → ${projectRoot} (${added} record(s) copied of ${source.length})`);
+      result.reconciled += reconciled;
+      result.teams.push({ team: name, added, reconciled, projectRoot });
+      if (log) log.info('migrate', `tickets: team ${name} → ${projectRoot} (${added} record(s) copied of ${source.length}, ${reconciled} re-synced)`);
     } catch (e) {
       // Per-team, so one unreadable team cannot cost the others their migration.
       result.teams.push({ team: name, error: (e && e.message) || 'unknown error' });
@@ -163,4 +218,4 @@ function runTicketsMigration({ root, fs = require('fs'), log = null } = {}) {
   return result;
 }
 
-module.exports = { runTicketsMigration, mergeBoards, originKey, readDestination, MARKER };
+module.exports = { runTicketsMigration, mergeBoards, reconcileBoard, originKey, readDestination, MARKER };
