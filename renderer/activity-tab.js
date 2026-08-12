@@ -23,12 +23,15 @@
 // instead of leaking a visible timer, which is the opposite of what the
 // contract is for.
 //
-// DOM-bound, so no unit tests per the R1 rule — the feed state machine and the
-// live/done/drop policy live in lib/ where they are tested.
+// DOM-bound, so no unit tests per the R1 rule — the feed state machine, the
+// live/done/drop policy and the badge state machine live in lib/ where they are
+// tested. The one thing here that is NOT DOM-bound and is still pinned by a test
+// is the order inside `renderChips`; see the comment above the mount guard.
 
 const { esc, fmtCountdown, fmtUsd } = require('./lib/format');
 const { createSubagentFeed } = require('./lib/subagent-feed');
 const { classifySubagent } = require('./lib/subagent-policy');
+const { createBadgeState, feedKeyOf } = require('./lib/activity-badge');
 
 // Latency only, not correctness: turns accumulate in the main-process ring
 // whether or not we poll, so a slower cadence delays rows, it does not lose
@@ -53,13 +56,6 @@ const ICON = {
 // is only ever cleaned by `dropParent`.
 const MAX_RETAINED_FEEDS = 20;
 
-// One key space for both halves of the UI — a chip and its feed must agree, and
-// a parent session name plus a child key is the only identifier the wire gives.
-// The space is a safe separator BECAUSE session names cannot contain one
-// (`[a-zA-Z0-9._-]{1,64}`), which is also what makes `dropParent`'s prefix match
-// exact rather than a guess.
-const feedKeyOf = (name, key) => `${name} ${key}`;
-
 function createActivityTab({ host, proxyState, proxyPollMs }) {
   let chipsEl = null;
   let bodyEl = null;
@@ -75,35 +71,11 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
   let notify = (level) => { queuedNotifies.push(level); };
 
   const feeds = new Map();      // feedKey -> { name, key, label, feed }
-  // Badge state, all three re-armed on every onHide: the badge counts subagents
-  // that did something while the operator was NOT LOOKING, so its unit is the
-  // away-period, not the window. `awayReq` is each sub's `requests` count as the
-  // away-period began and `lastReq` the newest seen, so "took a turn since you
-  // looked away" is answerable with no fetch at all.
-  //
-  // `requests` deliberately, even though the feed now counts turns itself: it
-  // rides the free 5s chip payload, whereas the feed poll is stopped while
-  // hidden — which is exactly when the badge has to work. It is used ONLY as an
-  // advanced/not-advanced edge here and is never rendered as a turn count;
-  // `requests` counts forwarded REQUESTS and the ring counts completed turns, so
-  // the two legitimately disagree and only one may reach the screen (`seq`).
-  const notified = new Set();   // subs already badged in the CURRENT away-period
-  const lastReq = new Map();    // feedKey -> newest `requests` seen
-  const awayReq = new Map();    // feedKey -> `requests` when this away-period began
-  // feedKey -> a monotonic stamp taken when the key is FIRST observed. The chip
-  // strip orders by this and never by anything the wire controls: the payload
-  // arrives in RECENCY order (proxylab meta.py sorts sub_agents by last_seen
-  // descending) and that order permutes every time two subs take turns, so
-  // rendering it directly makes chips trade places under the operator's cursor
-  // every 5s. Position is an operator affordance — you learn where a chip is —
-  // and it must be stable for the life of the window, including after the sub
-  // ends. Never renumbered, so an ended chip keeps its slot.
-  const firstSeen = new Map();
-  let seenSeq = 0;
-  function stamp(fk) {
-    if (!firstSeen.has(fk)) firstSeen.set(fk, ++seenSeq);
-    return firstSeen.get(fk);
-  }
+  // The badge state machine and the chip-order stamps (lib/activity-badge.js).
+  // `feeds` deliberately stays here: it holds rendered history, is pruned on a
+  // different rule, and the badge answers its question without ever reading it.
+  const badge = createBadgeState();
+  const stamp = badge.stamp;
   let selected = null;          // feedKey | null
   let pollTimer = null;
   let tickTimer = null;
@@ -167,53 +139,15 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
     return l ? l.state : 'ended';
   }
 
-  // Badge accounting, deliberately DOM-FREE and ahead of the mount guard below.
-  // The host mounts only the first registered tenant, and this one registers
-  // second — so on a fresh window the pane does not exist until the operator
-  // selects the tab. A badge that only counts once you have looked at the tab is
-  // the feature inverted: its whole job is to report the tab you are NOT on.
-  //
-  // The badge counts SUBAGENTS THAT DID SOMETHING WHILE THE OPERATOR WAS AWAY,
-  // which is not the same as new subagents: three subs that appeared while the
-  // tab was open and then ran for ten minutes are not new, and a badge keyed on
-  // novelty reads 0 for all of it. Both halves of "did something" count — a sub
-  // first observed this away-period, and a known sub whose turn count advanced.
-  //
-  // Still at most ONCE per sub per away-period, never per turn: a per-turn badge
-  // ticks several times a minute per sub and stops meaning anything.
+  // The DOM-free half of badge accounting is the leaf's; what stays here is the
+  // notify call and keeping the labels fresh. Runs ahead of the mount guard in
+  // `renderChips` — see the comment there, which is the load-bearing ordering.
   function noticeSubs(live) {
+    const badged = badge.notice(live);
+    for (let i = 0; i < badged.length; i++) notify('activity');
     for (const [fk, l] of live) {
-      // Stamped HERE, in payload-iteration order, rather than lazily in the sort
-      // comparator: a comparator assigns in whatever order it happens to visit
-      // pairs, which would make the very first ordering depend on the sort
-      // algorithm. This also runs while the pane is unmounted, so a sub observed
-      // before the operator ever opened the tab still keeps its slot.
-      stamp(fk);
-      const req = typeof l.sub.requests === 'number' ? l.sub.requests : null;
-      // Absent from the snapshot = not seen when this away-period began, so its
-      // mere presence is the activity. `requests` can be null on the wire, and a
-      // sub we can never count turns for badges on appearance only.
-      const fresh = !awayReq.has(fk);
-      const base = awayReq.get(fk);
-      const advanced = !fresh && req !== null && typeof base === 'number' && req > base;
-      if (req !== null) lastReq.set(fk, req);
-      if ((fresh || advanced) && !notified.has(fk)) {
-        notified.add(fk);
-        notify('activity');
-      }
       if (feeds.has(fk)) feedFor(l.name, l.key, l.label); // keep the label fresh
     }
-  }
-
-  // Re-arm for the next away-period. Called on onHide ONLY: an away-period is
-  // bounded by the operator looking away and looking back, and the host's badge
-  // clear on show is the other half of the same edge. Snapshotting here rather
-  // than counting from zero is what keeps a sub that was already mid-run from
-  // badging for turns the operator watched happen.
-  function armBadge() {
-    notified.clear();
-    awayReq.clear();
-    for (const [fk, n] of lastReq) awayReq.set(fk, n);
   }
 
   function buildChip(fk, meta) {
@@ -257,6 +191,11 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
 
   function renderChips() {
     const live = liveSubs();
+    // ABOVE the unmount guard, deliberately, and pinned by a test. The host
+    // mounts only the first registered tenant and this one registers second, so
+    // on a fresh window the pane does not exist until the operator selects the
+    // tab. A badge that only counts once you have looked at the tab is the
+    // feature inverted: its whole job is to report the tab you are NOT on.
     noticeSubs(live);
     pruneFeeds(live);
     if (!chipsEl) return; // unmounted — the badge accounting above still ran
@@ -530,7 +469,7 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
     },
     onHide() {
       stopPolling();
-      armBadge();
+      badge.arm();
     },
     selection: () => host.domSelection(bodyEl),
   });
@@ -568,18 +507,7 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
       feeds.delete(fk);
       if (selected === fk) { selected = null; renderFeed(); }
     }
-    for (const fk of [...notified]) {
-      if (fk.startsWith(`${name} `)) notified.delete(fk);
-    }
-    for (const fk of [...lastReq.keys()]) {
-      if (fk.startsWith(`${name} `)) { lastReq.delete(fk); awayReq.delete(fk); }
-    }
-    // Same cleanup as `notified`, and for the same reason: the parent is gone,
-    // so these keys can never be observed again. `seenSeq` is deliberately NOT
-    // rewound — reusing a stamp would place a future chip in a dead one's slot.
-    for (const fk of [...firstSeen.keys()]) {
-      if (fk.startsWith(`${name} `)) firstSeen.delete(fk);
-    }
+    badge.dropParent(name);
     renderChips();
   }
 

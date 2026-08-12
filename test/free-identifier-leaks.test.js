@@ -255,6 +255,11 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/activity-tab.js',
   'renderer/lib/subagent-feed.js',
   'renderer/lib/subagent-policy.js',
+  // The badge state machine (t210), the third leaf out of the same tenant. The
+  // reverse scan is the one that matters here: activity-tab.js kept `feeds` and
+  // the notify call but gave away `notified`/`lastReq`/`awayReq`/`firstSeen`, so
+  // a leftover reference to any of those is the case this catches.
+  'renderer/lib/activity-badge.js',
   // The drawer's clodexctl tenant (t214). It holds NO logic renderer.js gave
   // up, so the reverse scan is the quiet one here; the forward scan is the
   // point — the pane must reach main only through `window.api`, and a
