@@ -5251,6 +5251,10 @@ function createSessionManager(deps) {
           // Reviewer-only concept: no cap applies off the review path, so there is
           // no allowlist to report. Present so both purposes return one key set.
           effectiveTools: null,
+          // null even when the template DOES carry `tools`: this field means "what
+          // the reviewer cap was asked to intersect", and off the review path
+          // nothing is asked of the cap — reporting a request no arm honored would
+          // invite a caller to act on it.
           requestedTools: null,
           // The template's systemPromptFile does NOT displace `def.prompt`: for
           // claude both ride --append-system-prompt-file and create() dedupes them
@@ -5333,11 +5337,13 @@ function createSessionManager(deps) {
         // in REVIEWER_TOOL_CAP order, and inverting the denylist would print it in
         // CLAUDE_TOOLS order instead — a silent change to operator-facing text.
         effectiveTools,
-        // Carried so the caller can tell "the template asked for nothing usable"
-        // from "the template asked for nothing at all": both leave beyondCap
-        // reportable, but only the first must refuse the spawn, and `[]` vs the
-        // full cap in effectiveTools is not enough — a template could name the
-        // cap's own members and still be a narrowing, not a refusal.
+        // Carried so the refusal can PRINT the exact list the template asked for
+        // without borrowing beyondCap, whose meaning is "what you overreached for"
+        // — identical content in the refusal state today, but a future edit to one
+        // message would silently change the other. It also lets the guard state its
+        // precondition instead of resting on REVIEWER_TOOL_CAP staying non-empty:
+        // effectiveTools is [] iff a request missed the cap entirely, and only
+        // because the no-request branch takes a non-empty constant.
         requestedTools,
         systemPromptFile,
         appendPromptFiles: [],

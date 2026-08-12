@@ -257,10 +257,9 @@ test('a reviewer template requesting Bash has it dropped, and the overreach is r
 
 // t299: the resolver still RESOLVES this shape — the refusal is the caller's,
 // because only the caller owns the name reservation it must bail ahead of. What
-// the resolver owes is the pair that lets the caller tell this state apart from
-// "no tools requested at all", which resolves to the same empty-ish look
-// nowhere else: both leave beyondCap non-empty and neither is distinguishable
-// from effectiveTools alone.
+// the resolver owes is the pair the refusal reports on: the empty intersection
+// it keys off, and the list the template actually asked for, which the message
+// prints and which is recoverable from nothing else the shape carries.
 test('a reviewer template whose tools miss the cap entirely resolves to NO tools, and says it was asked', () => {
   const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', tools: ['Bash'] }]);
   const team = teamWith({ reviewer: { template: 'rv' } });
