@@ -210,10 +210,18 @@ function shape(t, now, stallMs) {
   // and num() has already turned every genuinely absent value into null.
   const lastActivityAt = num(t.lastActivityAt) ?? openedAt;
   const quietMs = lastActivityAt === null ? null : Math.max(0, now - lastActivityAt);
+  // `assignee` stays the RAW field, because `stalled` and `backlog` below key off
+  // "is anyone on the hook", which is what it answers. `shownFor` is the display
+  // name and prefers the ROLE the ticket was filed under: core re-pins `assignee`
+  // to a concrete seat at delivery, so rendering it raw makes this viewer name a
+  // seat where both boards name the role.
   const assignee = str(t.assignee);
+  const role = str(t.role);
   return {
     id: str(t.id) || '(no id)',
     title: str(t.title) || '(untitled)',
+    role,
+    shownFor: role || assignee,
     // Uncapped on purpose. A length limit here drops the tail of a spec with
     // nothing on screen to say so; the renderer caps the HEIGHT in CSS, where
     // the rest of the body is a scroll away rather than gone.

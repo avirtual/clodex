@@ -669,6 +669,37 @@ test('a held delivery leaves the replay armed, and a later edge still lands it',
 
 // _openTicketsFor matches a role ticket to EVERY seat filling that role, but
 // _deliverTicketSpec re-resolves it to the first live one. Multi-seat roles are
+// Replay is the OTHER hand-off, and handing a queued ticket to a seat IS its
+// dispatch — so it re-pins like advance does. Left un-pinned, an inherited ticket
+// keeps naming the dead seat, and its close bills that seat's lifetime ledger for
+// work a sibling did.
+test('replay re-pins an inherited ticket to the seat that actually received it', async () => {
+  const world = mkWorld();
+  const app1 = boot(world);
+  const lead = await app1.spawn('lead');
+  await app1.spawn('team-hand-1');
+  app1.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+  assert.strictEqual(world.tickets().find((t) => t.id === 't1').assignee, 'team-hand-1',
+    'ENTER: pinned to the first seat, or there is no dead pin to inherit');
+  await settled(app1, 'team-hand-1');
+  app1.stop();
+
+  // The pinned seat never comes back; a SIBLING of the same role boots instead.
+  const app2 = boot(world);
+  try {
+    await app2.spawn('team-hand-2');
+    await settled(app2, 'team-hand-2');
+    await new Promise((r) => setTimeout(r, 60));
+
+    assert.match(app2.seen('team-hand-2'), /BUILD THE WIDGET/,
+      'ENTER: the sibling must actually receive the spec, or the re-pin below is about an undelivered ticket');
+    const t = world.tickets().find((x) => x.id === 't1');
+    assert.strictEqual(t.assignee, 'team-hand-2',
+      'the record names the seat that got the work, not the dead one it was pinned to');
+    assert.strictEqual(t.role, 'hand', 'and still carries the role it was filed under');
+  } finally { app2.stop(); }
+});
+
 // first class (`-N` suffixes are stripped when matching), so without a guard the
 // second seat's replay hands seat #1 a duplicate and then stamps the record with a
 // seat that received nothing — which also breaks the once-per-incarnation bound.

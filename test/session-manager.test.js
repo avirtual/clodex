@@ -10606,6 +10606,11 @@ test('t295: an inherited ticket gives the sibling a badge and keeps its stall cl
   assert.ok(f.broadcasts.some((b) => b.channel === 'session-ticket'
     && b.msg.name === 'team-hand-2' && b.msg.ticket === 't1'),
     'ENTER: the badge names the inherited ticket, or reconcile did not reach it');
+  // list() is FIRST PAINT and reconcile is every change. A term in one and not
+  // the other is the inverse drift of the parked case: no badge until the next
+  // reconcile, then one appears. Both must carry the degraded pin.
+  assert.strictEqual(f.m.list().find((s) => s.name === 'team-hand-2').ticket, 't1',
+    'first paint agrees with reconcile about the inherited ticket');
 
   const ts = f.load(); ts[0].lastActivityAt = 1; tstore.save(f.teamDir, ts);
   f.m._touchTicketActivity('team-hand-2');

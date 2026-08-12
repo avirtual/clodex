@@ -157,7 +157,7 @@ module.exports.activate = (rhost) => {
       // An unassigned open ticket is backlog, not an unlabelled row: it is a
       // different action for the lead (assign) than a stalled assigned one.
       const who = el('span', t.assignee ? 'tv-assignee' : 'tv-assignee tv-unassigned',
-        t.assignee || 'unassigned');
+        t.shownFor || t.assignee || 'unassigned');
       meta.appendChild(who);
       meta.appendChild(el('span', 'tv-age', opts && opts.closed
         ? `closed ${t.closedAt === null ? 'at an unknown time' : `${humanizeAge(t.now - t.closedAt)} ago`}`

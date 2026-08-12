@@ -133,11 +133,16 @@ function classesOf(node, out = []) {
 }
 
 function shaped(id, over = {}) {
-  return {
+  const base = {
     id, title: `title ${id}`, spec: `spec of ${id}`, state: 'open', assignee: 'hand', taskDir: '',
+    role: '',
     opener: 'lead', closedBy: '', openedAt: 1, closedAt: null, lastActivityAt: 1,
     ageMs: HOUR, quietMs: HOUR, nudged: false, stalled: false, backlog: false, ...over,
   };
+  // Derived AFTER the overrides, mirroring the engine (`role || assignee`), so a
+  // case that overrides `assignee` alone — the unassigned row, every pre-t295
+  // fixture — does not silently keep a stale display name from the default.
+  return { shownFor: base.role || base.assignee, ...base };
 }
 
 function boardRes(over = {}) {
@@ -248,6 +253,24 @@ test('a team whose registry is broken shows an error marker, never a count', asy
 });
 
 // ── what the board is for ───────────────────────────────────────────────────
+
+// Core re-pins `assignee` to a concrete seat at delivery; both boards render the
+// filed ROLE. A viewer rendering the pin raw names a seat for the ticket the
+// others call `hand`.
+test('a re-pinned row renders the ROLE, so the viewer and the two boards name the same thing', async () => {
+  await withDom({
+    teams: { ok: true, teams: [{ team: 'alpha', open: 1, stalled: 0 }] },
+    board: boardRes({
+      open: [shaped('t1', { assignee: 'team-hand-9', role: 'hand', shownFor: 'hand' })],
+      counts: { ...boardRes().counts, open: 1 },
+    }),
+  }, ({ root }) => {
+    const text = textOf(root).join('\n');
+    assert.match(text, /\bhand\b/, 'ENTER: the row rendered its assignee cell');
+    assert.doesNotMatch(text, /team-hand-9/,
+      'the seat pin must not surface — the board and the exec leaf both show the role');
+  });
+});
 
 test('the open list renders id, title, assignee, ages and artifact path', async () => {
   await withDom({

@@ -2472,7 +2472,8 @@ function createSessionManager(deps) {
           // missing there shows a ticket until the next reconcile and then
           // drops it.
           const open = ticketsByDir.get(dir).find((tk) => tk.state === 'open' && tk.assignee != null && !tk.parked
-            && (tk.assignee === s.name || tk.assignee === role));
+            && (tk.assignee === s.name || tk.assignee === role
+              || this._ticketAssigneeSeat(t, tk) === s.name));
           return open ? open.id : null;
         } catch { return null; }
       };
@@ -4720,18 +4721,22 @@ function createSessionManager(deps) {
     // ticket to a sibling would drop it in another branch's checkout. A dead
     // worktree seat has its own explicit recovery, which names the two real exits
     // rather than guessing a new holder.
-    _ticketAssigneeSeat(team, ticket) {
+    // `liveNames` lets a caller in a LOOP walk the live seats once instead of once
+    // per ticket. Both reads here are filesystem work, and `_touchTicketActivity`
+    // runs on every non-idle activity edge — much hotter than the listers.
+    _ticketAssigneeSeat(team, ticket, liveNames = null) {
       const a = ticket && ticket.assignee;
       if (!a) return null;
+      const live = liveNames || this._teamLiveSeatNames(team.root);
       const isRoleKey = (k) => !!(k && team.roles && Object.prototype.hasOwnProperty.call(team.roles, k));
       const firstSeatFor = (roleKey) => {
-        for (const name of this._teamLiveSeatNames(team.root)) {
+        for (const name of live) {
           if (matchSeatRole(team, name) === roleKey) return name;
         }
         return null;
       };
       if (isRoleKey(a)) return firstSeatFor(a);
-      if (this._teamLiveSeatNames(team.root).includes(a)) return a;
+      if (live.includes(a)) return a;
       if (ticket.worktree || !isRoleKey(ticket.role)) return null;
       return firstSeatFor(ticket.role);
     }
@@ -4846,10 +4851,11 @@ function createSessionManager(deps) {
     // would report a hand-off that never happened.
     _openTicketsFor(teamDir, team, seatName, excludeId = null) {
       const role = matchSeatRole(team, seatName);
+      const live = this._teamLiveSeatNames(team.root);
       return ticketsStore.load(teamDir)
         .filter((t) => t.state === 'open' && t.id !== excludeId && t.assignee != null && !t.parked
           && (t.assignee === seatName || (role && t.assignee === role)
-            || this._ticketAssigneeSeat(team, t) === seatName))
+            || this._ticketAssigneeSeat(team, t, live) === seatName))
         .sort((a, b) => (a.openedAt || 0) - (b.openedAt || 0)
           || (Number(String(a.id).replace(/^t/, '')) || 0) - (Number(String(b.id).replace(/^t/, '')) || 0));
     }
@@ -4940,6 +4946,14 @@ function createSessionManager(deps) {
         const rec = tickets.find((x) => x.id === t.id);
         if (!rec) return true;
         rec.deliveredTo = { seat: session.name, incarnation: session.incarnation, at: Date.now() };
+        // Replay is the OTHER hand-off, so it re-pins for the same reason advance
+        // does: handing a queued ticket to a seat IS its dispatch. Without this a
+        // ticket inherited from a dead seat keeps naming that seat, and its cost
+        // lands on a ledger belonging to something that never did the work.
+        // Rides this save, which is already the post-delivery reload. Worktree
+        // tickets never reach here — the resolver's `!worktree` gate keeps a
+        // degraded one off this path entirely.
+        this._repinTicketToSeat(team, rec);
         ticketsStore.save(teamDir, tickets);
         log.info('intent', `replayed ${t.id} to ${session.name} (respawn)`);
         return true;
@@ -5745,13 +5759,26 @@ function createSessionManager(deps) {
         // non-ephemeral, any restart that did not delete it) makes that a
         // confident wrong number rather than an empty one.
         //
-        // `unknown`, not the closer: the seat branch has no `deliveredTo`
-        // falsifier to cross-check a closer against, so crediting one would be a
-        // guess wearing a measurement's clothes. One declared-unknown row is
-        // cheap; a wrong number poisons every rollup that sums it.
+        // `unknown`, not the closer: the seat branch has no closer-side evidence
+        // to promote, so crediting one would be a guess wearing a measurement's
+        // clothes. One declared-unknown row is cheap; a wrong number poisons
+        // every rollup that sums it.
         const closedBy = ticket.closedBy;
         if (ticket.role && closedBy && closedBy !== team.lead && closedBy !== assignee
             && matchSeatRole(team, closedBy) === ticket.role) {
+          return { seatName: null, entry: null, attribution: 'unknown' };
+        }
+        // The same `deliveredTo` falsifier the role branch carries, and it is
+        // needed here for a case the closer test above cannot see: the LEAD
+        // closing a replay-inherited ticket short-circuits that test, and closing
+        // on a seat's behalf is the dominant habit. Replay hands a degraded ticket
+        // to a sibling and stamps the seat it reached WITHOUT re-pinning, so the
+        // record names a dead seat while another did the work. The stamp is
+        // written only by replay and only to the seat the resolver named, so a
+        // disagreement here implies precisely that case and cannot misfire on an
+        // exactly-pinned seat that closed its own ticket.
+        const deliveredSeat = ticket.deliveredTo && ticket.deliveredTo.seat;
+        if (deliveredSeat && deliveredSeat !== assignee) {
           return { seatName: null, entry: null, attribution: 'unknown' };
         }
         return at(assignee, 'seat');
@@ -5887,7 +5914,7 @@ function createSessionManager(deps) {
       this._reconcileTickets(team, teamDir);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} rejected` });
       log.info('intent', `task reject ${ticket.id} by ${session.name} → reopened`);
-      reply(`ticket ${ticket.id} reopened (rework) → ${ticket.assignee || 'unassigned'}`);
+      reply(`ticket ${ticket.id} reopened (rework) → ${ticket.role || ticket.assignee || 'unassigned'}`);
     }
 
     _taskCancel(session, team, teamDir, intent, reply) {
@@ -5940,8 +5967,12 @@ function createSessionManager(deps) {
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(backlog)', body: `ticket ${ticket.id} ${parking ? 'parked' : 'unparked'}` });
       log.info('intent', `task ${parking ? 'park' : 'unpark'} ${ticket.id} by ${session.name}`);
       reply(parking
-        ? `ticket ${ticket.id} parked — held out of dispatch; [agent:task assign ${ticket.id} ${ticket.assignee || '<role|name>'}] releases it`
-        : `ticket ${ticket.id} unparked → ${ticket.assignee || 'backlog'} — the spec was NOT re-sent; use [agent:task assign ${ticket.id} <role|name>] to deliver it`);
+        // The ROLE, not the pin: `_resolveAssignee` takes a role key or a LIVE
+        // seat, so suggesting a pin that has degraded (its seat is gone) hands
+        // back a command that bounces — an unusable recovery in the one reply
+        // whose whole job is to name the way out.
+        ? `ticket ${ticket.id} parked — held out of dispatch; [agent:task assign ${ticket.id} ${ticket.role || ticket.assignee || '<role|name>'}] releases it`
+        : `ticket ${ticket.id} unparked → ${ticket.role || ticket.assignee || 'backlog'} — the spec was NOT re-sent; use [agent:task assign ${ticket.id} <role|name>] to deliver it`);
     }
 
     // Default view is OPEN plus a capped recently-CLOSED section (done only) and a
@@ -6005,13 +6036,14 @@ function createSessionManager(deps) {
 
     _reconcileTickets(team, teamDir) {
       const tickets = ticketsStore.load(teamDir);
-      for (const name of this._teamLiveSeatNames(team.root)) {
+      const live = this._teamLiveSeatNames(team.root);
+      for (const name of live) {
         const role = matchSeatRole(team, name);
         // Degraded pins resolve through `_ticketAssigneeSeat` here too, or the
         // seat that inherited a dead one's queue gets no badge for work it holds.
         const open = tickets.find((t) => t.state === 'open' && t.assignee != null && !t.parked
           && (t.assignee === name || t.assignee === role
-            || this._ticketAssigneeSeat(team, t) === name));
+            || this._ticketAssigneeSeat(team, t, live) === name));
         if (open) this._ticketWatch.set(name, { teamDir, role, teamRoot: team.root });
         else this._ticketWatch.delete(name);
         this._broadcast('session-ticket', { name, ticket: open ? open.id : null });
@@ -6028,10 +6060,14 @@ function createSessionManager(deps) {
       // never refreshes `lastActivityAt` and the watchdog nudges the lead about
       // work somebody is actively doing.
       let team = null; try { team = resolveTeam(w.teamRoot || ''); } catch { team = null; }
+      // Walked ONCE for the whole loop, not once per ticket: this runs on every
+      // non-idle activity edge and both the team resolve and the seat walk are
+      // filesystem work.
+      const live = team ? this._teamLiveSeatNames(team.root) : null;
       for (const t of tickets) {
         if (t.state !== 'open') continue;
         if (t.assignee === name || (w.role && t.assignee === w.role)
-          || (team && this._ticketAssigneeSeat(team, t) === name)) {
+          || (team && this._ticketAssigneeSeat(team, t, live) === name)) {
           t.lastActivityAt = now;
           if (t.nudgedAt) t.nudgedAt = null;
           changed = true;
@@ -6084,7 +6120,7 @@ function createSessionManager(deps) {
         const tid = t.id;
         const seenAt = t.lastActivityAt || null;
         this._gatedDeliver(team.lead, 'ticket-watchdog',
-          `[ticket ${tid}] stalled: ${t.assignee} quiet ${humanizeAge(now - last)}`, false, '',
+          `[ticket ${tid}] stalled: ${t.role || t.assignee} quiet ${humanizeAge(now - last)}`, false, '',
           () => {
             try {
               const fresh = ticketsStore.load(teamDir);

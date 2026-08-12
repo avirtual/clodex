@@ -403,6 +403,40 @@ test('a pinned seat that did not close, and a sibling of its role that did, reso
   rig.cleanup();
 });
 
+// The closer test above cannot see this one: closing on a seat's behalf is the
+// LEAD's dominant habit, and a lead closer short-circuits it. Replay hands a
+// degraded ticket to a sibling and stamps `deliveredTo` WITHOUT re-pinning, so
+// the record can name a dead seat while another did the work — and the lead then
+// closes it. Without the falsifier that publishes the dead seat's lifetime ledger
+// and wireLabel with `seatResolved: true`.
+test('a pin contradicted by deliveredTo resolves to nothing, even when the LEAD closes', async () => {
+  const rig = mkRoleRig();
+  rig.m._writeTicketCost(rig.team, {
+    id: 't31', role: 'hand', assignee: 'team-hand-1', state: 'done', closedBy: 'team-lead',
+    deliveredTo: { seat: 'team-hand-2', incarnation: 1, at: 5 },
+    taskDir: 'tasks/pin-vs-delivered', openedAt: 1, closedAt: 2,
+  });
+  await settle();
+  const rec = rig.read('pin-vs-delivered');
+  assert.strictEqual(rec.ticket, 't31');   // ENTER, as above
+  assert.deepStrictEqual([rec.sessions.attribution, rec.seat, rec.usd], ['unknown', null, null],
+    'the spec went to hand-2 while the pin says hand-1 — the pin is not evidence of who spent');
+  assert.notStrictEqual(rec.usd, 11, "the pinned seat's ledger is not this ticket's cost");
+
+  // The CONTROL: a CORROBORATING deliveredTo must not block an exact pin, or the
+  // falsifier would unknown-out every replayed ticket that was never inherited.
+  rig.m._writeTicketCost(rig.team, {
+    id: 't32', role: 'hand', assignee: 'team-hand-1', state: 'done', closedBy: 'team-lead',
+    deliveredTo: { seat: 'team-hand-1', incarnation: 1, at: 5 },
+    taskDir: 'tasks/pin-agrees', openedAt: 1, closedAt: 2,
+  });
+  await settle();
+  const agree = rig.read('pin-agrees');
+  assert.deepStrictEqual([agree.sessions.attribution, agree.seat, agree.usd], ['seat', 'team-hand-1', 11],
+    'an agreeing deliveredTo leaves the exact pin exact');
+  rig.cleanup();
+});
+
 test('a role ticket inherits no worktree from a seat that is working another ticket', async () => {
   // The worktree is gated INDEPENDENTLY of the ledger: it comes from the
   // persistence record, so a guessed seat mid-way through some other ticket
