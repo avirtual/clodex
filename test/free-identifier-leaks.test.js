@@ -76,6 +76,16 @@ const SCANNED_MODULES = [
   'session-restore.js',
   'session-discovery.js',
   'git-worktree.js',
+  // The ticket loop's review scope builder (t309). A pure string leaf — the
+  // record and the diff path arrive as arguments, which is what lets the scope's
+  // contents be asserted without a session, a team or a git repo.
+  'ticket-review-scope.js',
+  // The ticket record store (t309). Scanned for the same reason the scope is:
+  // `ticketInFlight` was extracted here from two literal copies in
+  // session-manager.js, and a dangling reference left by that kind of move is
+  // caught by nothing else in this file — session-manager.js is not in the
+  // reverse-scan list. `fs`/`path` arrive as parameters, so it is a pure leaf.
+  'tickets-store.js',
   'session-meta.js',
   // The ⓘ panel's data layer (t-sessioninfo). Every source it reads — fs,
   // readline, homedir, the registry dir, userData — arrives injected, which is
@@ -300,6 +310,15 @@ const WHITELIST = {
   // shorthand's empty parameter list without adding the method name to defs — so
   // a definition reads as a use. Nothing to inject; the module is clean.
   'plugin-host-engine.js': new Set(['isAlive']),
+  // Both ARE injected — `createTicketsStore({ fs = require('fs'), path =
+  // require('path'), … })` — and the scan still reports them, because
+  // ownDefinitions' param matcher is `\(([^()]*)\)`: it cannot span the nested
+  // parens of a `require(...)` default, so the parameter list fails to match as
+  // a whole and every name in it is lost from defs. Verify before extending
+  // this: a name here that is NOT a factory param with a call-expression
+  // default is a real leak being silenced. Narrow by construction — it does not
+  // touch `ticketInFlight`, which is what this module is scanned for.
+  'tickets-store.js': new Set(['fs', 'path']),
 };
 
 function moduleScopeNames(src) {

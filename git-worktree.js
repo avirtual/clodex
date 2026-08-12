@@ -358,7 +358,37 @@ async function commitsOnBranch(cwd, branch, base = null) {
   return { ok: true, count: n, base: against };
 }
 
+// The diff a cold reviewer actually reads, as text.
+//
+// `--text` is not style and must not be dropped: a single NUL byte anywhere in
+// a changed file makes git print "Binary files a/x and b/x differ" instead of
+// the hunks, and a reviewer handed that reviews nothing while truthfully
+// reporting that it read the diff. Forcing text yields a readable (if noisy)
+// diff in that case, which a reviewer can see is noisy.
+//
+// A LARGER maxBuffer than git()'s default, because the failure is silent in the
+// same way: execFile kills the child on overflow and the diff comes back
+// truncated at a hunk boundary that looks like a legitimate end of diff.
+// `ok:false` on overflow is the point — a partial diff must never be written as
+// if it were whole.
+//
+// Both refs are verified before the diff so a gone base SHA (rebased, gc'd)
+// lands as a legible error rather than git's bare exit 128.
+async function diffText(cwd, base, head, { maxBuffer = 32 * 1024 * 1024 } = {}) {
+  const repo = await repoToplevel(cwd);
+  if (!repo) return { ok: false, text: null, error: 'not a git repository' };
+  if (!base || !head) return { ok: false, text: null, error: 'no base or head given' };
+  for (const ref of [base, head]) {
+    const v = await git(repo, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+    if (!v.ok) return { ok: false, text: null, error: `ref does not resolve: ${ref}` };
+  }
+  const r = await git(repo, ['diff', '--text', `${base}..${head}`], { maxBuffer });
+  if (!r.ok) return { ok: false, text: null, error: (r.stderr || 'git diff failed').trim() };
+  return { ok: true, text: r.stdout };
+}
+
 module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
   defaultBranch, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
+  diffText,
 };
