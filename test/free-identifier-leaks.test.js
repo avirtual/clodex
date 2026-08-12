@@ -255,6 +255,15 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/activity-tab.js',
   'renderer/lib/subagent-feed.js',
   'renderer/lib/subagent-policy.js',
+  // The badge state machine (t210), the third leaf out of the same tenant.
+  // FORWARD scan only, which is all this list buys: the reverse (dangling-ref)
+  // gate is the scope loop further down, and activity-tab.js is not in it — so a
+  // leftover `notified`/`lastReq`/`awayReq` in the tenant after the extraction
+  // would be caught by NEITHER gate here, those names being ones renderer.js
+  // never defined. That case is covered behaviourally instead, by
+  // test/activity-tab-badge-order.test.js: it loads the real module, so a
+  // leftover reference throws a ReferenceError on the first refreshChips.
+  'renderer/lib/activity-badge.js',
   // The drawer's clodexctl tenant (t214). It holds NO logic renderer.js gave
   // up, so the reverse scan is the quiet one here; the forward scan is the
   // point — the pane must reach main only through `window.api`, and a

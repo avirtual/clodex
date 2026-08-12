@@ -350,7 +350,11 @@ adapter that hosts it. The modules below are what the engine assembles.
   chips share this one copy so they cannot disagree), `subagent-feed.js`
   (the accumulating turn feed as pure state, folding `proxy:subagentFeed` replies
   into what the operator has seen; the cursor IS the dedup, and the feed owns no
-  running/done opinion of its own — that is the policy leaf's).
+  running/done opinion of its own — that is the policy leaf's),
+  `activity-badge.js` (the badge state machine: which subagents did something
+  while the operator was NOT looking, so the away-period is the unit and
+  wirescope's `requests` is an advanced/not-advanced edge that never reaches
+  the screen).
 - **Islands** (own state + DOM, `init*(deps)`): `drawer-host.js` (the bottom
   drawer as a TAB HOST — owns collapsed state, the tab strip, badges, the
   `#main` layout contract and pane swapping; tenants register with

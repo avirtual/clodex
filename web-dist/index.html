@@ -22773,30 +22773,11 @@ helper=${d.helperPath}`;
     }
   });
 
-  // renderer/activity-tab.js
-  var require_activity_tab = __commonJS({
-    "renderer/activity-tab.js"(exports, module) {
-      var { esc, fmtCountdown, fmtUsd } = require_format();
-      var { createSubagentFeed } = require_subagent_feed();
-      var { classifySubagent } = require_subagent_policy();
-      var DETAIL_MS = 1500;
-      var ICON = {
-        tool: '<span class="subagent-icon" aria-hidden="true">&#128296;</span>',
-        text: '<span class="subagent-icon" aria-hidden="true">&#128172;</span>',
-        think: '<span class="subagent-icon" aria-hidden="true">&#129504;</span>',
-        alert: '<span class="subagent-icon" aria-hidden="true">&#9888;&#65039;</span>'
-      };
-      var MAX_RETAINED_FEEDS = 20;
+  // renderer/lib/activity-badge.js
+  var require_activity_badge = __commonJS({
+    "renderer/lib/activity-badge.js"(exports, module) {
       var feedKeyOf = (name, key) => `${name} ${key}`;
-      function createActivityTab({ host, proxyState, proxyPollMs }) {
-        let chipsEl = null;
-        let bodyEl = null;
-        let asOfEl = null;
-        const queuedNotifies = [];
-        let notify = (level) => {
-          queuedNotifies.push(level);
-        };
-        const feeds = /* @__PURE__ */ new Map();
+      function createBadgeState() {
         const notified = /* @__PURE__ */ new Set();
         const lastReq = /* @__PURE__ */ new Map();
         const awayReq = /* @__PURE__ */ new Map();
@@ -22806,6 +22787,84 @@ helper=${d.helperPath}`;
           if (!firstSeen.has(fk)) firstSeen.set(fk, ++seenSeq);
           return firstSeen.get(fk);
         }
+        function notice(live) {
+          const badged = [];
+          for (const [fk, l] of live) {
+            stamp(fk);
+            const sub = l && l.sub;
+            const req = sub && typeof sub.requests === "number" ? sub.requests : null;
+            const fresh = !awayReq.has(fk);
+            const base = awayReq.get(fk);
+            const advanced = !fresh && req !== null && typeof base === "number" && req > base;
+            if (req !== null) lastReq.set(fk, req);
+            if ((fresh || advanced) && !notified.has(fk)) {
+              notified.add(fk);
+              badged.push(fk);
+            }
+          }
+          return badged;
+        }
+        function arm() {
+          notified.clear();
+          awayReq.clear();
+          for (const [fk, n] of lastReq) awayReq.set(fk, n);
+        }
+        function dropParent(name) {
+          const prefix = `${name} `;
+          for (const fk of [...notified]) {
+            if (fk.startsWith(prefix)) notified.delete(fk);
+          }
+          for (const fk of [...lastReq.keys()]) {
+            if (fk.startsWith(prefix)) {
+              lastReq.delete(fk);
+              awayReq.delete(fk);
+            }
+          }
+          for (const fk of [...firstSeen.keys()]) {
+            if (fk.startsWith(prefix)) firstSeen.delete(fk);
+          }
+        }
+        function snapshot() {
+          return {
+            notified: [...notified],
+            lastReq: Object.fromEntries(lastReq),
+            awayReq: Object.fromEntries(awayReq),
+            firstSeen: Object.fromEntries(firstSeen),
+            seenSeq
+          };
+        }
+        return { stamp, notice, arm, dropParent, snapshot };
+      }
+      module.exports = { createBadgeState, feedKeyOf };
+    }
+  });
+
+  // renderer/activity-tab.js
+  var require_activity_tab = __commonJS({
+    "renderer/activity-tab.js"(exports, module) {
+      var { esc, fmtCountdown, fmtUsd } = require_format();
+      var { createSubagentFeed } = require_subagent_feed();
+      var { classifySubagent } = require_subagent_policy();
+      var { createBadgeState, feedKeyOf } = require_activity_badge();
+      var DETAIL_MS = 1500;
+      var ICON = {
+        tool: '<span class="subagent-icon" aria-hidden="true">&#128296;</span>',
+        text: '<span class="subagent-icon" aria-hidden="true">&#128172;</span>',
+        think: '<span class="subagent-icon" aria-hidden="true">&#129504;</span>',
+        alert: '<span class="subagent-icon" aria-hidden="true">&#9888;&#65039;</span>'
+      };
+      var MAX_RETAINED_FEEDS = 20;
+      function createActivityTab({ host, proxyState, proxyPollMs }) {
+        let chipsEl = null;
+        let bodyEl = null;
+        let asOfEl = null;
+        const queuedNotifies = [];
+        let notify = (level) => {
+          queuedNotifies.push(level);
+        };
+        const feeds = /* @__PURE__ */ new Map();
+        const badge = createBadgeState();
+        const stamp = badge.stamp;
         let selected = null;
         let pollTimer = null;
         let tickTimer = null;
@@ -22856,24 +22915,11 @@ helper=${d.helperPath}`;
           return l ? l.state : "ended";
         }
         function noticeSubs(live) {
+          const badged = badge.notice(live);
+          for (let i = 0; i < badged.length; i++) notify("activity");
           for (const [fk, l] of live) {
-            stamp(fk);
-            const req = typeof l.sub.requests === "number" ? l.sub.requests : null;
-            const fresh = !awayReq.has(fk);
-            const base = awayReq.get(fk);
-            const advanced = !fresh && req !== null && typeof base === "number" && req > base;
-            if (req !== null) lastReq.set(fk, req);
-            if ((fresh || advanced) && !notified.has(fk)) {
-              notified.add(fk);
-              notify("activity");
-            }
             if (feeds.has(fk)) feedFor(l.name, l.key, l.label);
           }
-        }
-        function armBadge() {
-          notified.clear();
-          awayReq.clear();
-          for (const [fk, n] of lastReq) awayReq.set(fk, n);
         }
         function buildChip(fk, meta) {
           const chip = document.createElement("button");
@@ -23080,7 +23126,7 @@ helper=${d.helperPath}`;
           },
           onHide() {
             stopPolling();
-            armBadge();
+            badge.arm();
           },
           selection: () => host.domSelection(bodyEl)
         });
@@ -23107,18 +23153,7 @@ helper=${d.helperPath}`;
               renderFeed();
             }
           }
-          for (const fk of [...notified]) {
-            if (fk.startsWith(`${name} `)) notified.delete(fk);
-          }
-          for (const fk of [...lastReq.keys()]) {
-            if (fk.startsWith(`${name} `)) {
-              lastReq.delete(fk);
-              awayReq.delete(fk);
-            }
-          }
-          for (const fk of [...firstSeen.keys()]) {
-            if (fk.startsWith(`${name} `)) firstSeen.delete(fk);
-          }
+          badge.dropParent(name);
           renderChips();
         }
         return { openActivityFeed, refreshChips: renderChips, dropParent };
