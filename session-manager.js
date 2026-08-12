@@ -4462,14 +4462,25 @@ function createSessionManager(deps) {
         ? ` — requested [${shape.beyondCap.join(', ')}] beyond the reviewer cap [${REVIEWER_TOOL_CAP.join(', ')}] — requires operator approval; spawned with [${shape.effectiveTools.join(', ')}]`
         : '';
 
-      // A template whose `tools` misses the cap ENTIRELY is a broken config, not a
-      // narrowing: effectiveTools is [], so disabledTools inverts to every tool and
-      // the seat spawns unable to read the diff. Refuse rather than fall back to the
-      // full cap — the template is agent-writable, and widening past what it asked
-      // for is the one direction that must never be automatic. Refused BEFORE the
+      // Two refusals, one ruling: a `tools` the cap cannot honor must NOT fall back
+      // to the full cap. The only fallback available grants more than the template
+      // asked for, the template is agent-writable, and widening past the request is
+      // the one direction that must never be automatic. Both refuse BEFORE the
       // name-mint loop below: that loop's synchronous upsert IS the reservation, so
-      // bailing after it burns a reviewer name permanently. Reported via reply(),
-      // not thrown, for the same reason as the resolveSeatShape catch above.
+      // bailing after it burns a reviewer name permanently. Both report via reply(),
+      // not throw, for the same reason as the resolveSeatShape catch above.
+      // They are disjoint by construction — malformed carries requestedTools: null —
+      // so the order between them cannot change which message fires.
+
+      // A wrong TYPE is a syntax error to fix, and telling an author to add cap
+      // members to a string sends them to the wrong edit — hence its own message.
+      if (shape.toolsMalformed) {
+        reply(`error: reviewer template "${templateName}" has a "tools" that is not an array (${typeof (shape.tpl && shape.tpl.tools)}) — it cannot be intersected with the reviewer cap [${REVIEWER_TOOL_CAP.join(', ')}], and falling back to the full cap would grant more than the template asked for; no reviewer spawned (make "tools" an array, or remove it to accept the full cap)`);
+        return;
+      }
+      // A well-formed list the cap intersects emptily — including `[]` — is a list
+      // to fix: effectiveTools is [], so disabledTools inverts to every tool and the
+      // seat would spawn unable to read the diff it reviews.
       if (shape.requestedTools && shape.effectiveTools.length === 0) {
         reply(`error: reviewer template "${templateName}" requests tools [${shape.requestedTools.join(', ')}], none of which are within the reviewer cap [${REVIEWER_TOOL_CAP.join(', ')}] — the seat would spawn with no tools at all and could not read the diff; no reviewer spawned (fix the template's "tools")`);
         return;
@@ -5256,6 +5267,9 @@ function createSessionManager(deps) {
           // nothing is asked of the cap — reporting a request no arm honored would
           // invite a caller to act on it.
           requestedTools: null,
+          // Same posture: nothing off the review path judges the template's
+          // `tools` at all, so there is no malformation to report.
+          toolsMalformed: false,
           // The template's systemPromptFile does NOT displace `def.prompt`: for
           // claude both ride --append-system-prompt-file and create() dedupes them
           // by name equality, so passing both is how a template-shaped seat still
@@ -5287,10 +5301,31 @@ function createSessionManager(deps) {
       // used to be a second source here and it was inert on every other role,
       // which is what made a `tools:` on a hand read as a restriction and enforce
       // nothing.
-      const requestedTools = (Array.isArray(tpl && tpl.tools) && tpl.tools.length) ? tpl.tools : null;
-      const effectiveTools = requestedTools
-        ? REVIEWER_TOOL_CAP.filter((t) => requestedTools.includes(t))
-        : REVIEWER_TOOL_CAP.slice();
+      // THREE states, not two: only an ABSENT `tools` takes the full cap. An empty
+      // array and a wrong-typed value both used to collapse to the same null as
+      // absent, so a template that asked for nothing — or asked malformedly —
+      // spawned with every capped tool. That is the widening direction, reached by
+      // a typo, on a file agents can write.
+      // `null` counts as absent: it is JSON's conventional "no value", and a
+      // template round-tripped through a writer that emits nulls for missing
+      // fields must not start refusing. Safe only while NO editor writes `tools` —
+      // if it ever joins EDITOR_OWNED, a cleared control emitting null starts
+      // meaning "the operator removed every tool", and reading that as "take the
+      // full cap" is the widening this guard exists to kill. Move null to the
+      // malformed/empty arm at the same time.
+      const rawTools = tpl && tpl.tools;
+      const toolsMalformed = rawTools != null && !Array.isArray(rawTools);
+      // `[]` survives as `[]` here, and reaches the same empty intersection a
+      // disjoint list does — one refusal covers both.
+      const requestedTools = Array.isArray(rawTools) ? rawTools : null;
+      // Fail-closed on malformed, so the SHAPE alone cannot spawn a widened seat
+      // even if a future caller forgets the refusal. Only the caller can make it
+      // visible, and only the caller can bail before the name is minted.
+      const effectiveTools = toolsMalformed
+        ? []
+        : (requestedTools
+          ? REVIEWER_TOOL_CAP.filter((t) => requestedTools.includes(t))
+          : REVIEWER_TOOL_CAP.slice());
       const beyondCap = requestedTools
         ? requestedTools.filter((t) => !REVIEWER_TOOL_CAP.includes(t))
         : [];
@@ -5340,11 +5375,19 @@ function createSessionManager(deps) {
         // Carried so the refusal can PRINT the exact list the template asked for
         // without borrowing beyondCap, whose meaning is "what you overreached for"
         // — identical content in the refusal state today, but a future edit to one
-        // message would silently change the other. It also lets the guard state its
-        // precondition instead of resting on REVIEWER_TOOL_CAP staying non-empty:
-        // effectiveTools is [] iff a request missed the cap entirely, and only
-        // because the no-request branch takes a non-empty constant.
+        // message would silently change the other. It also states the guard's
+        // precondition, which effectiveTools alone no longer carries: [] arises in
+        // three ways — a well-formed request that intersects the cap emptily, `[]`
+        // itself, and a malformed `tools` (fail-closed above) — but NEVER for an
+        // absent/null `tools`, which takes the non-empty constant. So the guard
+        // below needs requestedTools truthy to mean "a real request emptied out";
+        // malformed carries requestedTools: null and is refused separately.
         requestedTools,
+        // A separate key, not inferable from requestedTools being null: null also
+        // means "absent", which takes the full cap. The caller must refuse one and
+        // not the other, and re-reading tpl.tools to tell them apart would put a
+        // second copy of this type judgment at the call site.
+        toolsMalformed,
         systemPromptFile,
         appendPromptFiles: [],
         execCommands: [],
