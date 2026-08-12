@@ -581,6 +581,28 @@ test('tickets-viewer: an unassigned ticket keeps an empty assignee rather than a
   } finally { cleanup(); }
 });
 
+// Core re-pins `assignee` to a concrete seat at delivery and keeps the filed ROLE
+// in `role`. Both boards render the role, so a viewer rendering the pin raw names
+// a seat for the same ticket the others call `hand`. `assignee` stays raw because
+// `stalled`/`backlog` key off "is anyone on the hook", which is what it answers.
+test('tickets-viewer: a re-pinned ticket shows the ROLE it was filed under, not the seat pin', async () => {
+  const { host, teams, cleanup } = boot();
+  try {
+    const dir = mkTeam(teams, 'alpha');
+    writeTickets(dir, [
+      ticket('t1', { assignee: 'team-hand-9', role: 'hand' }),
+      ticket('t2', { assignee: 'team-hand-9' }),   // no role — the un-pinned shape
+    ]);
+    const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
+    const byId = Object.fromEntries(res.open.map((t) => [t.id, t]));
+    assert.equal(byId.t1.shownFor, 'hand', 'the role is what the board shows');
+    assert.equal(byId.t1.assignee, 'team-hand-9', 'the pin survives for stall/backlog logic');
+    assert.equal(byId.t1.backlog, false, 'ENTER: a pinned ticket is not backlog');
+    assert.equal(byId.t2.shownFor, 'team-hand-9',
+      'with no role there is nothing to prefer — the pin is the only name it has');
+  } finally { cleanup(); }
+});
+
 // ── recently closed, on core's terms ────────────────────────────────────────
 
 test('tickets-viewer: recently-closed is DONE only, newest first, inside a 24h window', async () => {
