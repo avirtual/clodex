@@ -310,15 +310,6 @@ const WHITELIST = {
   // shorthand's empty parameter list without adding the method name to defs — so
   // a definition reads as a use. Nothing to inject; the module is clean.
   'plugin-host-engine.js': new Set(['isAlive']),
-  // Both ARE injected — `createTicketsStore({ fs = require('fs'), path =
-  // require('path'), … })` — and the scan still reports them, because
-  // ownDefinitions' param matcher is `\(([^()]*)\)`: it cannot span the nested
-  // parens of a `require(...)` default, so the parameter list fails to match as
-  // a whole and every name in it is lost from defs. Verify before extending
-  // this: a name here that is NOT a factory param with a call-expression
-  // default is a real leak being silenced. Narrow by construction — it does not
-  // touch `ticketInFlight`, which is what this module is scanned for.
-  'tickets-store.js': new Set(['fs', 'path']),
 };
 
 function moduleScopeNames(src) {
@@ -364,27 +355,50 @@ function ownDefinitions(rawSrc) {
       if (/^\w+$/.test(n)) defs.add(n);
     }
   }
-  // Function/method parameters, including destructured factory deps objects —
-  // matches `function f(a, { b, c } = {})` across lines, method shorthand, and
-  // arrows with parenthesized params. Over-collection here only weakens
-  // detection for same-named locals; it cannot create false alarms — BUT a
-  // control-flow head like `if (name === activeSession) {` also matches
-  // `word ( … ) {`, and absorbing its condition into own-defs silently HID a
-  // real missing injection (files-popover.js needed activeSession; the scan
-  // stayed green). So the leading token is captured and control keywords are
-  // excluded — a `\w+(` head that is if/for/while/switch/catch/return/do/…/an
-  // operator keyword is a statement, not a call/definition, and its parens hold
-  // an expression, never a parameter list. `function(` (anonymous) still counts.
-  const CONTROL_KW = new Set([
-    'if', 'for', 'while', 'switch', 'catch', 'return', 'do', 'else',
-    'typeof', 'await', 'new', 'in', 'of', 'instanceof', 'void', 'delete', 'yield',
-  ]);
-  for (const m of src.matchAll(/(?:\bfunction\s*\w*|(\w+))\s*\(([^()]*)\)\s*(?:\{|=>)/gs)) {
-    if (m[1] && CONTROL_KW.has(m[1])) continue;
-    for (const p of m[2].split(',')) {
-      const cleaned = p.replace(/[{}[\]]/g, ' ');
-      for (const word of cleaned.split(/[\s=:,]+/)) {
-        if (/^[a-zA-Z_$][\w$]*$/.test(word)) defs.add(word);
+  // Function/method parameters, including destructured factory deps objects.
+  // This shares the reverse gate's balanced-paren walk instead of running a
+  // `\(([^()]*)\)` matcher: that character class cannot cross a nested paren, so
+  // a signature whose default is a CALL —
+  // `createTicketsStore({ fs = require('fs'), path = require('path'), x } = {})`
+  // — failed to match as a whole and lost EVERY name in the group, x included.
+  // Those then read as free identifiers and false-alarmed, which is what the
+  // tickets-store whitelist entry existed to silence. The reverse gate had
+  // already replaced the same matcher for the same reason (see collectParams).
+  for (const p of collectParams(src)) defs.add(p);
+  for (const p of collectMethodParams(src)) defs.add(p);
+  return defs;
+}
+
+// A `\w+(…) {` head, balanced-paren: method shorthand and object-literal
+// methods, which the arrow/`function` heads in collectParams do not cover. The
+// trailing `{`/`=>` is what separates a DEFINITION from a call — `foo(a, b)`
+// alone must never contribute its arguments as defs. Control keywords are
+// excluded on top of that: `if (name === activeSession) {` also matches
+// `word (…) {`, and absorbing its condition into own-defs silently HID a real
+// missing injection (files-popover.js needed activeSession; the scan stayed
+// green). A `\w+(` head that is if/for/while/…/an operator keyword is a
+// statement, and its parens hold an expression, never a parameter list.
+const CONTROL_KW = new Set([
+  'if', 'for', 'while', 'switch', 'catch', 'return', 'do', 'else',
+  'typeof', 'await', 'new', 'in', 'of', 'instanceof', 'void', 'delete', 'yield',
+]);
+function collectMethodParams(code) {
+  const defs = new Set();
+  for (const m of code.matchAll(/\b([a-zA-Z_$][\w$]*)\s*\(/g)) {
+    if (CONTROL_KW.has(m[1])) continue;
+    const open = m.index + m[0].length - 1;
+    let depth = 0;
+    for (let k = open; k < code.length; k++) {
+      if (code[k] === '(') depth++;
+      else if (code[k] === ')') {
+        depth--;
+        if (depth === 0) {
+          let t = k + 1;
+          while (t < code.length && /\s/.test(code[t])) t++;
+          const body = code[t] === '{' || (code[t] === '=' && code[t + 1] === '>');
+          if (body) addIds(code.slice(open + 1, k), defs);
+          break;
+        }
       }
     }
   }
@@ -725,6 +739,34 @@ test('ownDefinitions does not absorb a control-flow condition as a parameter', (
   for (const kw of ['for', 'while', 'switch', 'catch', 'return']) {
     const d = ownDefinitions(`${kw} (x === sneaky) {}`);
     assert.ok(!d.has('sneaky'), `${kw}-condition token was absorbed as a param`);
+  }
+});
+
+test('ownDefinitions keeps every param of a factory with call-expression defaults', () => {
+  // The `\(([^()]*)\)` matcher could not cross the nested parens of a
+  // `require(...)` default, so the group failed to match AS A WHOLE and every
+  // name in it was lost — including the ones with no default at all. That is
+  // what made tickets-store.js's injected fs/path read as free identifiers.
+  const defs = ownDefinitions(
+    "function createTicketsStore({ fs = require('fs'), path = require('path'), clodexHome } = {}) {\n}",
+  );
+  for (const n of ['fs', 'path', 'clodexHome']) {
+    assert.ok(defs.has(n), `call-defaulted param list lost ${n}`);
+  }
+  // A plain CALL is not a definition — its arguments must not become defs, or
+  // the gate goes blind on every name that appears as an argument anywhere.
+  const callDefs = ownDefinitions('start(freeName, otherFree);');
+  assert.ok(!callDefs.has('freeName'), 'call argument absorbed as a param');
+  assert.ok(!callDefs.has('otherFree'), 'call argument absorbed as a param');
+});
+
+test('ownDefinitions collects method-shorthand params', () => {
+  // collectParams covers arrows and `function (…)`, not object/class method
+  // shorthand — which the replaced regex did cover. Losing it would newly
+  // false-alarm on any shorthand method's parameters.
+  const defs = ownDefinitions('const o = {\n  onData(chunk, { flush } = {}) { return chunk; },\n};');
+  for (const n of ['chunk', 'flush']) {
+    assert.ok(defs.has(n), `method-shorthand param list lost ${n}`);
   }
 });
 
