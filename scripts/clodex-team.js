@@ -80,12 +80,8 @@ function doRoster(payload) {
   const roles = Object.entries(manifest.roles || {})
     .map(([r, def]) => {
       const star = r === manifest.lead ? '*' : '';
-      const inst = (def && def.instantiate) || 'session';
       const tmpl = def && typeof def.template === 'string' ? def.template : null;
-      const parts = [];
-      if (tmpl) parts.push(`tmpl=${tmpl}`);
-      if (tmpl || inst !== 'session') parts.push(inst);
-      return `${r}${star}${parts.length ? `(${parts.join(',')})` : ''}`;
+      return `${r}${star}${tmpl ? `(tmpl=${tmpl})` : ''}`;
     })
     .join(' ') || '(none)';
   const live = [];
