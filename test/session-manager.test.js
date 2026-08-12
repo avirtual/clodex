@@ -4480,6 +4480,74 @@ test('team-review (T52): a TEMPLATE NARROWER than the cap is honored (narrows, n
   assert.ok(disabledTools.includes('Grep') && disabledTools.includes('Glob'),
     'cap tools the template dropped are disabled — narrowing below the cap is honored');
   assert.ok(!injected.some((t) => /beyond the reviewer cap/.test(t)), 'no operator-approval line when nothing exceeds the cap');
+  // t299: a partial intersection is a NARROWING and must survive the
+  // empty-intersection refusal. Named here rather than left to the spawn
+  // assertion above, because a refusal that over-caught would take out every
+  // narrowing template and this is the case that separates the two.
+  assert.ok(!injected.some((t) => /none of which are within the reviewer cap/.test(t)),
+    'a template that keeps ONE cap tool is honored, not refused');
+});
+
+// --- t299: a template whose `tools` misses the cap entirely is REFUSED ---
+//
+// `effectiveTools` = [] inverts to a denylist of every tool, so the seat spawns
+// unable to read the diff it was spawned to review — a reviewer that can only
+// make things up, at the cost of a full seat and the lead's wait. The template
+// is agent-writable, so falling back to the FULL cap is the one repair that must
+// never be automatic: it would grant more than the template asked for. Refuse.
+//
+// This state is not producible from the GUI (collectFormConfig writes no `tools`
+// key and `tools` is not in EDITOR_OWNED), only by authoring the template JSON —
+// which is exactly the reachability the cap itself exists for, and exactly how
+// the beyond-cap sibling above is reached.
+test('team-review (t299): a template whose tools miss the cap entirely is refused, and burns no reviewer name', async () => {
+  // EXISTENCE FIRST. The absence assertion below is equally true of a fixture
+  // that never mints anything, so prove the mint DOES happen on this fixture
+  // before claiming its absence means something.
+  const ok = mkReview({ reviewTemplate: { tools: ['Read'] } });
+  ok.m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  ok.m._handleTeamReview(ok.m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.ok(ok.persistence.get('team-reviewer-1'),
+    'ENTER: an accepted template DOES mint team-reviewer-1 on this fixture');
+
+  const { m, injected, created, persistence } = mkReview({ reviewTemplate: { tools: ['Bash'] } });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(created, [], 'no seat spawned — a reviewer with no tools is worse than no reviewer');
+  // The name-mint loop's synchronous upsert IS the reservation, so a refusal
+  // placed after it would leave this record behind and every later review would
+  // number one higher, silently and forever.
+  assert.strictEqual(persistence.get('team-reviewer-1'), null,
+    'and no reviewer name was burned — the refusal lands BEFORE the name-mint loop');
+  // Exact text, not a substring of it: the operator needs BOTH lists side by
+  // side to see that the sets are disjoint, and a looser finder would pass
+  // against a message naming only one of them.
+  assert.deepStrictEqual(injected, [
+    '[agent:team-review] error: reviewer template "clodex-team-reviewer" requests tools [Bash], '
+    + 'none of which are within the reviewer cap [Read, Grep, Glob] — the seat would spawn with no '
+    + 'tools at all and could not read the diff; no reviewer spawned (fix the template\'s "tools")',
+  ], 'the lead is told what was asked, what is allowed, and that nothing spawned');
+});
+
+// The refusal keys on requestedTools, so the no-`tools` branch is the one it
+// must not touch: absent asks for nothing and takes the full cap, which shares
+// none of the broken state's symptoms but every one of a naive `!length` test's.
+test('team-review (t299): a template with NO tools key still spawns with the full cap', async () => {
+  const { m, injected, created, persistence } = mkReview({
+    reviewTemplates: [{ name: 'clodex-team-reviewer', systemPromptFile: 'clodex-team-reviewer', intents: [] }],
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
+  assert.ok(persistence.get('team-reviewer-1'), 'ENTER: and its name was minted');
+  const disabledTools = created[0][11];
+  assert.ok(!disabledTools.includes('Read') && !disabledTools.includes('Grep') && !disabledTools.includes('Glob'),
+    'the full cap is live — asking for nothing is not asking for nothing usable');
+  assert.ok(!injected.some((t) => /none of which are within the reviewer cap/.test(t)),
+    'and no refusal fires on the branch that never made a request');
 });
 
 // T52: template omits tools → the role manifest's tools drive (fallback), still
