@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- Asking for a test run while one is already going now says so, instead of
+  timing out. The refusal existed but could never be seen: the script waited the
+  full 120 seconds before printing it, and the exec entry killed the run at
+  exactly 120 seconds, so the caller got an unexplained timeout. It now gives up
+  after 30 seconds and reports which run holds the suite and how long it has been
+  going — enough to tell a healthy run from a wedged one.
+
 - The Tickets panel no longer needs a team, and can now edit the board. It used
   to find boards by walking the list of teams, so a project without one showed
   nothing at all; it now lists projects directly, with team membership shown as
