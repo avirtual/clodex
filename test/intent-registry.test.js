@@ -77,7 +77,7 @@ function parseIntentLegacy(rawLine) {
   const rebootMatch = cleaned.match(/^\[agent:reboot\]\s*(.*)/s);
   if (rebootMatch) return { type: 'reboot', body: rebootMatch[1] };
 
-  const taskMatch = cleaned.match(/^\[agent:task\s+(add|assign|done|reject|cancel|park|list)\b([^\]]*)\]\s*(.*)/s);
+  const taskMatch = cleaned.match(/^\[agent:task\s+(add|assign|done|reject|cancel|accept|park|list)\b([^\]]*)\]\s*(.*)/s);
   if (taskMatch) {
     const sub = taskMatch[1];
     const argToks = taskMatch[2].trim().split(/\s+/).filter(Boolean);
@@ -204,6 +204,7 @@ const ADVERSARIAL = [
   '[agent:task assign t1 bob]', '[agent:task assign t1]', '[agent:task assign]',
   '[agent:task done t1] report', '[agent:task reject t1] why',
   '[agent:task cancel t1]', '[agent:task cancel t1] why', '[agent:task list]',
+  '[agent:task accept t1]', '[agent:task accept t1] note', '[agent:task accept]',
   '[agent:task list] trailing', '[agent:task foo]', '[agent:task]',
   '[agent:task added t1]',
   '[agent:task park t1]', '[agent:task park t1] why', '[agent:task park]',
@@ -293,6 +294,9 @@ test('bodyMode is decided per PARSED intent: task add captures, task assign does
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task done t1] report')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task reject t1] why')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task cancel t1]')), 'greedy');
+  // The acceptance NOTE is the body, so a non-greedy mode would truncate it at
+  // the first newline and silently store half a rationale.
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task accept t1] note')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task assign t1 bob]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task list]')), 'none');
 });
@@ -341,15 +345,16 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   // explicitly rather than folded into legacyGreedy above, so the legacy record
   // stays a record and a second silent widening still fails here.
   const deliberatelyWidened = (i) => i.type === 'context' && i.sub === 'clear';
-  // Verbs that did not EXIST when the legacy chain was frozen would go here —
-  // the list is empty, and that is a claim rather than an omission. `term exec`
-  // was the only entry: it shipped greedy, then narrowed to line-scoped, so it
-  // now agrees with the legacy oracle's silence by capturing nothing. Keeping
-  // the slot named means a future verb that captures has somewhere honest to
-  // land; folding one into legacyGreedy would forge the record, and folding it
+  // Verbs that did not EXIST when the legacy chain was frozen. `term exec` was
+  // the previous occupant: it shipped greedy, then narrowed to line-scoped, so
+  // it now agrees with the legacy oracle's silence by capturing nothing.
+  // Folding an entry into legacyGreedy would forge the record, and folding it
   // into deliberatelyWidened would call it a change to something that never
-  // existed.
-  const newSinceLegacy = () => false;
+  // existed — this slot is the honest landing place.
+  //
+  // t305 `task accept`: post-legacy, and greedy because its body is the
+  // acceptance note.
+  const newSinceLegacy = (i) => i.type === 'task' && i.sub === 'accept';
   let sawTerm = 0;
   for (const line of CORPUS) {
     const i = parseIntent(line);

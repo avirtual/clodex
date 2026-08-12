@@ -63,6 +63,14 @@ visible rather than silently lost.
   cannot see. This is the only verb that moves a ticket backwards.
 - `[agent:task cancel <id>]` — you drop it; the reason rides in the body.
   Terminal, unlike reject.
+- `[agent:task accept <id>]` — you have read the report and it stands. This is
+  the cleanup verb: on a DONE ticket with a branch, it checks whether that
+  branch is actually merged and, only if it is, retires the seat, removes its
+  worktree and deletes the branch. Not merged (or the check could not run) and
+  it removes NOTHING — the seat is archived, tree and branch kept, and the
+  reply says so. Merge first, then accept again. It is separate from `done` on
+  purpose: `done` is the assignee reporting, and tearing its seat down there
+  would kill a still-warm hand before you had read a word or sent rework.
 - `[agent:task list]` — the OPEN board, then the tickets closed most recently
   (a capped handful, so it stays short), then a count of everything else it
   hid, done and cancelled separately. The board only grows, so add a filter to

@@ -297,3 +297,115 @@ test('commitsOnBranch degrades to a null count, never a false zero', { skip: !gi
   assert.equal(noRepo.count, null);
   fs.rmSync(repo, { recursive: true, force: true });
 });
+
+// --- t305: the merge gate that licenses every destructive cleanup step ---
+
+// ONE repo, TWO branches, opposite answers. A fixture where both branches are
+// ancestors (or neither is) exercises one arm twice and stays green while the
+// gate is broken in the direction that deletes unmerged work — so the ancestry
+// of each is asserted with raw git BEFORE isMerged is asked, and the two answers
+// are pinned against each other.
+test('isMerged: merged vs unmerged, proved distinct before the question is asked', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const run = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
+  const base = execFileSync('git', ['-C', repo, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  const inTree = await wt.createWorktree(repo, 't900-merged');
+  assert.equal(inTree.ok, true, inTree.error);
+  fs.writeFileSync(path.join(inTree.path, 'merged.txt'), 'work\n');
+  execFileSync('git', ['-C', inTree.path, 'add', '-A'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', inTree.path, 'commit', '-qm', 'ticket work'], { stdio: 'ignore' });
+
+  const outTree = await wt.createWorktree(repo, 't901-unmerged');
+  assert.equal(outTree.ok, true, outTree.error);
+  fs.writeFileSync(path.join(outTree.path, 'unmerged.txt'), 'work\n');
+  execFileSync('git', ['-C', outTree.path, 'add', '-A'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', outTree.path, 'commit', '-qm', 'unreviewed work'], { stdio: 'ignore' });
+
+  run('merge', '-q', '--no-ff', '-m', 'merge the ticket', 't900-merged');
+
+  // ENTER, both directions: raw git, independent of the function under test.
+  // Without these the two assertions below could be agreeing about one branch.
+  const ancestor = (b) => {
+    try { execFileSync('git', ['-C', repo, 'merge-base', '--is-ancestor', b, base], { stdio: 'ignore' }); return true; }
+    catch { return false; }
+  };
+  assert.strictEqual(ancestor('t900-merged'), true, 'ENTER: the merged branch really IS an ancestor of the base');
+  assert.strictEqual(ancestor('t901-unmerged'), false, 'ENTER: the unmerged branch really is NOT');
+
+  const yes = await wt.isMerged(repo, 't900-merged');
+  assert.deepStrictEqual([yes.ok, yes.merged, yes.base], [true, true, base]);
+  const no = await wt.isMerged(repo, 't901-unmerged');
+  assert.deepStrictEqual([no.ok, no.merged, no.base], [true, false, base]);
+
+  await wt.removeWorktree(inTree.path);
+  await wt.removeWorktree(outTree.path);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// `ok:false` is the third outcome and must never collapse onto `merged`. Every
+// degradation here would, if read as merged, license deleting a tree.
+test('isMerged: an unanswerable check is ok:false, never merged', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const gone = await wt.isMerged(repo, 'no-such-branch');
+  assert.strictEqual(gone.ok, false, 'a branch that does not resolve is unknown');
+  assert.notStrictEqual(gone.merged, true, 'and above all not merged');
+  assert.match(gone.error, /does not resolve/);
+
+  const noBranch = await wt.isMerged(repo, null);
+  assert.deepStrictEqual([noBranch.ok, noBranch.merged], [false, undefined]);
+
+  const noRepo = await wt.isMerged(os.tmpdir(), 't1');
+  assert.deepStrictEqual([noRepo.ok, noRepo.merged], [false, undefined]);
+
+  const badBase = await wt.isMerged(repo, 'HEAD', 'no-such-base');
+  assert.strictEqual(badBase.ok, false, 'an unresolvable BASE is unknown too');
+  assert.notStrictEqual(badBase.merged, true);
+
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// -d, not -D: git's own merged-check is a second gate behind the caller's, and
+// the two disagreeing means the caller's premise was wrong.
+test('deleteBranch: removes a merged branch and REFUSES an unmerged one', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const run = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
+  const branches = () => execFileSync('git', ['-C', repo, 'branch', '--format=%(refname:short)'], { encoding: 'utf8' })
+    .split('\n').map((s) => s.trim()).filter(Boolean);
+
+  const inTree = await wt.createWorktree(repo, 't902-merged');
+  fs.writeFileSync(path.join(inTree.path, 'm.txt'), 'work\n');
+  execFileSync('git', ['-C', inTree.path, 'add', '-A'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', inTree.path, 'commit', '-qm', 'work'], { stdio: 'ignore' });
+  const outTree = await wt.createWorktree(repo, 't903-unmerged');
+  fs.writeFileSync(path.join(outTree.path, 'u.txt'), 'work\n');
+  execFileSync('git', ['-C', outTree.path, 'add', '-A'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', outTree.path, 'commit', '-qm', 'work'], { stdio: 'ignore' });
+  run('merge', '-q', '--no-ff', '-m', 'merge', 't902-merged');
+  // The trees must go first: git refuses to delete a branch checked out anywhere.
+  await wt.removeWorktree(inTree.path);
+  await wt.removeWorktree(outTree.path);
+
+  // ENTER: both branches exist right now, so a later absence is this call's doing.
+  assert.ok(branches().includes('t902-merged') && branches().includes('t903-unmerged'),
+    'ENTER: both branches are present before either delete');
+
+  const ok = await wt.deleteBranch(repo, 't902-merged');
+  assert.strictEqual(ok.ok, true, ok.error);
+  assert.ok(!branches().includes('t902-merged'), 'the merged branch is gone');
+
+  const refused = await wt.deleteBranch(repo, 't903-unmerged');
+  assert.strictEqual(refused.ok, false, 'an unmerged branch is refused, not forced');
+  assert.ok(branches().includes('t903-unmerged'), 'and it survives the refusal');
+
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// `--is-ancestor` answers NO by exiting 1, which is indistinguishable from a
+// failure through `ok` alone. isMerged's three-way split is built on this field.
+test('git(): carries the exit code, so "no" is separable from "could not tell"', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const okr = await wt.isMerged(repo, 'HEAD', 'HEAD');
+  assert.deepStrictEqual([okr.ok, okr.merged], [true, true], 'HEAD is trivially its own ancestor (exit 0)');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
