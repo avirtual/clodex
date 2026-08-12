@@ -4404,72 +4404,40 @@ function createSessionManager(deps) {
       if (!def) { reply(`error: team "${team.name}" has no "reviewer" role to spawn`); return; }
 
       const templateName = def.template || DEFAULT_REVIEWER_TEMPLATE;
-      let reviewTpl = null;
-      try { reviewTpl = getTemplates().list().find((t) => t && t.name === templateName) || null; }
-      catch { reviewTpl = null; }
+      // Caught, because this handler is reached from an unawaited async
+      // _handleIntent: an uncaught throw here becomes an unhandled rejection and
+      // the lead is told NOTHING. The resolver's purpose guard is deliberately
+      // fail-closed, and fail-closed is only useful if it is also fail-visible.
+      let shape;
+      try {
+        shape = this.resolveSeatShape(team, 'reviewer', 'review', session);
+      } catch (err) {
+        // Not err.message alone: a non-Error throw would report "error: undefined",
+        // which tells the lead nothing at all.
+        reply(`error: ${err && err.message ? err.message : String(err)}`);
+        return;
+      }
+      const reviewTpl = shape.tpl;
+      const type = shape.type;
+      const cwd = shape.cwd;
       const tplWarn = reviewTpl
         ? ''
         : ` — NOTE: reviewer template "${templateName}" not found in the library; spawned from built-in defaults (install it to customize)`;
-
-      let reviewerSystemPrompt =
-        (reviewTpl && typeof reviewTpl.systemPromptFile === 'string' && reviewTpl.systemPromptFile)
-          ? reviewTpl.systemPromptFile
-          : (def.prompt || REVIEWER_FALLBACK.systemPromptFile);
-      // Defense-in-depth (T52 nit): the template is agent-writable and its
-      // systemPromptFile flows into resolveSystemPromptFile → promptLibrary._file,
-      // a bare path.join with no confinement — a stem like "../../../../etc/x"
-      // escapes library/prompts/system. This is a PRE-EXISTING, non-escalating gap
-      // (def.prompt already flowed through the same resolver, and a system prompt
-      // only INSTRUCTS — it grants no tool/intent/env, all of which stay capped),
-      // but since T52 makes the template the canonical prompt source, reject a
-      // traversing/absolute stem HERE (not in the shared resolver — don't widen the
-      // blast radius) and fall back to the shipped default with a loud warn.
-      let promptEscapeWarn = '';
-      if (reviewerSystemPrompt.includes('/') || reviewerSystemPrompt.includes('\\') || reviewerSystemPrompt.includes('..')) {
-        promptEscapeWarn = ` — NOTE: reviewer systemPromptFile "${reviewerSystemPrompt}" contains a path separator or "..", which could escape library/prompts/system; ignored, using the built-in default "${REVIEWER_FALLBACK.systemPromptFile}"`;
-        reviewerSystemPrompt = REVIEWER_FALLBACK.systemPromptFile;
-      }
-
-      const reviewerIntents = withoutPrivilegedIntentsFor(
-        Array.isArray(reviewTpl && reviewTpl.intents) ? reviewTpl.intents : REVIEWER_FALLBACK.intents,
-      );
-
-      const rawReviewerEnv =
-        (reviewTpl && reviewTpl.env && typeof reviewTpl.env === 'object' && !Array.isArray(reviewTpl.env))
-          ? reviewTpl.env : REVIEWER_FALLBACK.env;
-      const reviewerEnv = {};
-      const droppedEnvKeys = [];
-      for (const [k, v] of Object.entries(rawReviewerEnv)) {
-        if (REVIEWER_ENV_ALLOWLIST.has(k)) reviewerEnv[k] = String(v == null ? '' : v);
-        else droppedEnvKeys.push(k);
-      }
-      const envWarn = droppedEnvKeys.length
-        ? ` — reviewer template env keys [${droppedEnvKeys.join(', ')}] are outside the allowed set [${[...REVIEWER_ENV_ALLOWLIST].join(', ')}] — dropped (env is an authority surface; requires operator approval)`
+      const reviewerSystemPrompt = shape.systemPromptFile;
+      const promptEscapeWarn = shape.promptEscaped
+        ? ` — NOTE: reviewer systemPromptFile "${shape.promptEscaped}" contains a path separator or "..", which could escape library/prompts/system; ignored, using the built-in default "${REVIEWER_FALLBACK.systemPromptFile}"`
         : '';
-
-      // C2 (T29 Slice 2): the cold reviewer ALWAYS spawns as claude. This is CODE,
-      // not a manifest field: only create()'s claude arm consumes disabledTools
-      // (via setupClaudeHook), so a codex reviewer would spawn UNCAPPED — codex
-      // ignores the denylist entirely, and the tools cap would silently evaporate.
-      // Forcing claude here is the choke point that makes the cap real.
-      const type = 'claude';
-      const cwd = team.root;
-      // The reviewer TEMPLATE may narrow the cap; nothing widens it. The role def
-      // used to be a second source here and it was inert on every other role,
-      // which is what made a `tools:` on a hand read as a restriction and enforce
-      // nothing.
-      const requestedTools = (Array.isArray(reviewTpl && reviewTpl.tools) && reviewTpl.tools.length)
-        ? reviewTpl.tools
-        : null;
-      const effectiveTools = requestedTools
-        ? REVIEWER_TOOL_CAP.filter((t) => requestedTools.includes(t))
-        : REVIEWER_TOOL_CAP.slice();
-      const beyondCap = requestedTools
-        ? requestedTools.filter((t) => !REVIEWER_TOOL_CAP.includes(t))
-        : [];
-      const disabledTools = CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t));
-      const capWarn = beyondCap.length
-        ? ` — requested [${beyondCap.join(', ')}] beyond the reviewer cap [${REVIEWER_TOOL_CAP.join(', ')}] — requires operator approval; spawned with [${effectiveTools.join(', ')}]`
+      // Two reasons, never merged: an unknown key is an authority question, a
+      // non-string value is a template typo. Telling the operator to seek
+      // approval for a key that is already allowed sends them to the wrong fix.
+      const envWarn = (shape.envDropped.length
+        ? ` — reviewer template env keys [${shape.envDropped.join(', ')}] are outside the allowed set [${[...REVIEWER_ENV_ALLOWLIST].join(', ')}] — dropped (env is an authority surface; requires operator approval)`
+        : '')
+        + (shape.envBadType.length
+          ? ` — reviewer template env keys [${shape.envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)`
+          : '');
+      const capWarn = shape.beyondCap.length
+        ? ` — requested [${shape.beyondCap.join(', ')}] beyond the reviewer cap [${REVIEWER_TOOL_CAP.join(', ')}] — requires operator approval; spawned with [${shape.effectiveTools.join(', ')}]`
         : '';
 
       let n = 1;
@@ -4510,17 +4478,13 @@ function createSessionManager(deps) {
         } catch { /* preflight is best-effort — a stat error is not a spawn blocker */ }
       }
 
-      const leadArgs = (getPersistence().get(session.name)?.extraArgs) || [];
-      const postureArgs = leadArgs.includes('--dangerously-skip-permissions')
-        ? ['--dangerously-skip-permissions'] : [];
-
-
       setImmediate(async () => {
         try {
           await this.create(
-            name, type, cwd, postureArgs, null, session.workspaceId || DEFAULT_WORKSPACE_ID,
-            null, false, session.proxy ?? null, [], [], disabledTools, [], [],
-            reviewerSystemPrompt, [], [], reviewerIntents, reviewerEnv, true,
+            name, type, cwd, shape.extraArgs, null, shape.workspaceId,
+            null, false, session.proxy ?? null, shape.agents, shape.denyBuiltins, shape.disabledTools,
+            shape.disabledSkills, shape.injectSkills,
+            reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
           );
           // AFTER create(), not before: setStripLevel resolves the entry by name
           // and silently no-ops if it isn't there yet. The spawn-intent path
@@ -5098,10 +5062,15 @@ function createSessionManager(deps) {
       if (!tpl) return null;
       const env = {};
       let sessionEnv = null;
+      // Two DISTINCT reasons, reported separately: an unknown key needs operator
+      // approval, a bad value type needs an edit. Collapsing them tells the
+      // operator to seek approval for a key they already have.
       const dropped = [];
+      const badType = [];
       if (tpl.env && typeof tpl.env === 'object' && !Array.isArray(tpl.env)) {
         for (const [k, v] of Object.entries(tpl.env)) {
-          if (!REVIEWER_ENV_ALLOWLIST.has(k) || typeof v !== 'string') { dropped.push(k); continue; }
+          if (!REVIEWER_ENV_ALLOWLIST.has(k)) { dropped.push(k); continue; }
+          if (typeof v !== 'string') { badType.push(k); continue; }
           env[k] = v;
         }
         if (Object.keys(env).length) sessionEnv = env;
@@ -5120,7 +5089,162 @@ function createSessionManager(deps) {
         intents: withoutPrivilegedIntentsFor(Array.isArray(tpl.intents) ? tpl.intents : null),
         sessionEnv,
         envDropped: dropped,
+        envBadType: badType,
         noWire: tpl.noWire === true,
+      };
+    }
+
+    // The ONE seat shape both team spawn paths pass to create(). They diverged
+    // silently twice — the review path hand-rolled a second copy of the env
+    // allowlist filter against the same constant, so either copy could be edited
+    // without the other. `purpose` selects the reviewer's hard rules; everything
+    // else resolves identically for both.
+    //
+    // `opener` is the session doing the spawning (the lead). It is not derivable
+    // from (team, roleKey): `type` and `workspaceId` are inherited from it, and so
+    // is the permission posture.
+    resolveSeatShape(team, roleKey, purpose, opener) {
+      // Explicit, because the switch below is otherwise FAIL-OPEN: `!review`
+      // takes the ticket arm, so a typo'd 'reviewer' at a future call site would
+      // spawn a reviewer with no tool cap, no forced claude and no env fallback,
+      // and nothing would fail. This method is the choke point that makes the cap
+      // real, so an unrecognized purpose must not resolve to the weaker seat.
+      if (purpose !== 'ticket' && purpose !== 'review') {
+        throw new Error(`resolveSeatShape: unknown purpose "${purpose}" (expected 'ticket' or 'review')`);
+      }
+      const def = (team && team.roles && team.roles[roleKey]) || null;
+      const review = purpose === 'review';
+      const shape = this._templateShape(
+        review ? ((def && def.template) || DEFAULT_REVIEWER_TEMPLATE) : (def && def.template),
+      );
+      const tpl = (shape && shape.tpl) || null;
+      const leadArgs = (getPersistence().get(opener.name)?.extraArgs) || [];
+      const postureArgs = leadArgs.includes('--dangerously-skip-permissions')
+        ? ['--dangerously-skip-permissions'] : [];
+      const workspaceId = opener.workspaceId || DEFAULT_WORKSPACE_ID;
+
+      if (!review) {
+        return {
+          // The seat's type comes from the opener, not from the role: a role that
+          // wants codex hands names a codex TEMPLATE. The role field that used to
+          // sit here was honored verbatim on this path and overridden with a
+          // warning on the review path.
+          type: opener.type || 'claude',
+          // The REPO, not the worktree. The seat is TOLD where its tree is and goes
+          // there itself. Booting it in the worktree would bind the seat's whole
+          // identity — transcript, project root, team block, recent-cwd — to one
+          // branch's checkout, which is removed when the ticket's session is deleted.
+          cwd: team.root,
+          tpl,
+          extraArgs: (shape && shape.extraArgs) || postureArgs,
+          agents: (shape && shape.agents) || [],
+          denyBuiltins: (shape && shape.denyBuiltins) || [],
+          disabledTools: (shape && shape.disabledTools) || [],
+          disabledSkills: (shape && shape.disabledSkills) || [],
+          injectSkills: (shape && shape.injectSkills) || [],
+          // Reviewer-only concept: no cap applies off the review path, so there is
+          // no allowlist to report. Present so both purposes return one key set.
+          effectiveTools: null,
+          // The template's systemPromptFile does NOT displace `def.prompt`: for
+          // claude both ride --append-system-prompt-file and create() dedupes them
+          // by name equality, so passing both is how a template-shaped seat still
+          // gets its role delta.
+          systemPromptFile: (def && def.prompt) || (shape && shape.systemPromptFile) || null,
+          appendPromptFiles: (shape && shape.appendPromptFiles) || [],
+          execCommands: (shape && shape.execCommands) || [],
+          // `[]` (everything gated) is a real value that must apply; null means the
+          // seat keeps the living all-enabled default. Not interchangeable.
+          intents: shape ? shape.intents : null,
+          env: (shape && shape.sessionEnv) || null,
+          envDropped: (shape && shape.envDropped) || [],
+          envBadType: (shape && shape.envBadType) || [],
+          beyondCap: [],
+          promptEscaped: null,
+          workspaceId,
+          ephemeral: true,
+        };
+      }
+
+      // C2 (T29 Slice 2): the cold reviewer ALWAYS spawns as claude. This is CODE,
+      // not a manifest field: only create()'s claude arm consumes disabledTools
+      // (via setupClaudeHook), so a codex reviewer would spawn UNCAPPED — codex
+      // ignores the denylist entirely, and the tools cap would silently evaporate.
+      // Forcing claude here is the choke point that makes the cap real.
+      const type = 'claude';
+
+      // The reviewer TEMPLATE may narrow the cap; nothing widens it. The role def
+      // used to be a second source here and it was inert on every other role,
+      // which is what made a `tools:` on a hand read as a restriction and enforce
+      // nothing.
+      const requestedTools = (Array.isArray(tpl && tpl.tools) && tpl.tools.length) ? tpl.tools : null;
+      const effectiveTools = requestedTools
+        ? REVIEWER_TOOL_CAP.filter((t) => requestedTools.includes(t))
+        : REVIEWER_TOOL_CAP.slice();
+      const beyondCap = requestedTools
+        ? requestedTools.filter((t) => !REVIEWER_TOOL_CAP.includes(t))
+        : [];
+
+      // Presence test only — _templateShape still owns the FILTERING. The
+      // fallback hinges on whether the template supplied an env object at all,
+      // which is not recoverable from the filtered result: a template whose keys
+      // were every one of them dropped yields the same empty result as a template
+      // with no env, and those two must not resolve alike (the first asked for an
+      // env and got none of it; the second never asked, and takes the default).
+      const tplSuppliedEnv = !!(tpl && tpl.env && typeof tpl.env === 'object' && !Array.isArray(tpl.env));
+
+      let systemPromptFile =
+        (tpl && typeof tpl.systemPromptFile === 'string' && tpl.systemPromptFile)
+          ? tpl.systemPromptFile
+          : ((def && def.prompt) || REVIEWER_FALLBACK.systemPromptFile);
+      // Defense-in-depth (T52 nit): the template is agent-writable and its
+      // systemPromptFile flows into resolveSystemPromptFile → promptLibrary._file,
+      // a bare path.join with no confinement — a stem like "../../../../etc/x"
+      // escapes library/prompts/system. This is a PRE-EXISTING, non-escalating gap
+      // (def.prompt already flowed through the same resolver, and a system prompt
+      // only INSTRUCTS — it grants no tool/intent/env, all of which stay capped),
+      // but since T52 makes the template the canonical prompt source, reject a
+      // traversing/absolute stem HERE (not in the shared resolver — don't widen the
+      // blast radius) and fall back to the shipped default. The rejected stem rides
+      // back on `promptEscaped` because the caller warns about it loudly.
+      let promptEscaped = null;
+      if (systemPromptFile.includes('/') || systemPromptFile.includes('\\') || systemPromptFile.includes('..')) {
+        promptEscaped = systemPromptFile;
+        systemPromptFile = REVIEWER_FALLBACK.systemPromptFile;
+      }
+
+      return {
+        type,
+        cwd: team.root,
+        tpl,
+        extraArgs: postureArgs,
+        agents: [],
+        denyBuiltins: [],
+        disabledTools: CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t)),
+        disabledSkills: [],
+        injectSkills: [],
+        // Carried, not recomputed from disabledTools: the warning below prints it
+        // in REVIEWER_TOOL_CAP order, and inverting the denylist would print it in
+        // CLAUDE_TOOLS order instead — a silent change to operator-facing text.
+        effectiveTools,
+        systemPromptFile,
+        appendPromptFiles: [],
+        execCommands: [],
+        // `[]`, not null: the reviewer's fallback gates every intent. See the
+        // ticket arm — the two values mean opposite things to create().
+        intents: (shape && Array.isArray(shape.intents)) ? shape.intents : [],
+        // An object always, never null — and the fallback applies whenever the
+        // TEMPLATE supplied no usable env, not merely when the template is
+        // missing: a reviewer that booted without CLODEX_DISABLE_IPC_PROMPT gets
+        // the full protocol prompt it was configured not to have.
+        // REVIEWER_FALLBACK.env needs no allowlist pass: it IS the shipped set the
+        // allowlist was drawn from, and unlike a template it is not agent-writable.
+        env: tplSuppliedEnv ? { ...((shape && shape.sessionEnv) || {}) } : { ...REVIEWER_FALLBACK.env },
+        envDropped: (shape && shape.envDropped) || [],
+        envBadType: (shape && shape.envBadType) || [],
+        beyondCap,
+        promptEscaped,
+        workspaceId,
+        ephemeral: true,
       };
     }
 
@@ -5134,7 +5258,10 @@ function createSessionManager(deps) {
       if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
     }
 
-    _spawnTicketSeat(opener, team, teamDir, ticket, roleKey, def, seat) {
+    // No `def` parameter: the resolver derives the role def from (team, roleKey)
+    // itself, and passing a second copy in would be exactly the duplicate source
+    // this seam removes — a caller could hand in a def for a different role.
+    _spawnTicketSeat(opener, team, teamDir, ticket, roleKey, seat) {
       const reply = (msg) => this._injectText(opener, `[agent:task] ${msg}`, { parkable: true });
       // Reserved SYNCHRONOUSLY, before any await: two tickets opened in one lead
       // turn both run their taken-name check above before either create() lands,
@@ -5258,40 +5385,24 @@ function createSessionManager(deps) {
             if (rec) { rec.worktree = wt; ticketsStore.save(teamDir, all); }
             ticket.worktree = wt;
           } catch { /* best-effort — the spec below still carries it from `ticket` */ }
-          const leadArgs = (getPersistence().get(opener.name)?.extraArgs) || [];
-          const postureArgs = leadArgs.includes('--dangerously-skip-permissions')
-            ? ['--dangerously-skip-permissions'] : [];
-          // cwd is the REPO, not the worktree. The seat is TOLD where its tree is
-          // (the spec head below) and goes there itself. Booting it in the worktree
-          // instead would bind the seat's whole identity — transcript, project root,
-          // team block, recent-cwd — to one branch's checkout, and that checkout is
-          // removed when the ticket's session is deleted.
-          // The role's template, honored. Its systemPromptFile does NOT displace
-          // `def.prompt`: for claude both ride --append-system-prompt-file and
-          // create() dedupes them by name equality, so passing both is how a
-          // template-shaped seat still gets its role delta.
-          const shape = this._templateShape(def.template);
+          const shape = this.resolveSeatShape(team, roleKey, 'ticket', opener);
           await this.create(
-            // The seat's type comes from the opener, not from the role: a role
-            // that wants codex hands names a codex TEMPLATE. The role field that
-            // used to sit here was honored verbatim on this path and overridden
-            // with a warning on the review path.
-            seat.name, opener.type || 'claude', team.root,
-            (shape && shape.extraArgs) || postureArgs, null,
-            opener.workspaceId || DEFAULT_WORKSPACE_ID, null, false, opener.proxy ?? null,
-            (shape && shape.agents) || [], (shape && shape.denyBuiltins) || [],
-            (shape && shape.disabledTools) || [], (shape && shape.disabledSkills) || [],
-            (shape && shape.injectSkills) || [],
-            def.prompt || (shape && shape.systemPromptFile) || null,
-            (shape && shape.appendPromptFiles) || [],
-            (shape && shape.execCommands) || [],
-            shape ? shape.intents : null,
+            seat.name, shape.type, shape.cwd,
+            shape.extraArgs, null,
+            shape.workspaceId, null, false, opener.proxy ?? null,
+            shape.agents, shape.denyBuiltins,
+            shape.disabledTools, shape.disabledSkills,
+            shape.injectSkills,
+            shape.systemPromptFile,
+            shape.appendPromptFiles,
+            shape.execCommands,
+            shape.intents,
             // Stops at the 20th positional: `noWire` is deliberately NOT threaded
             // from the template here. A ticket seat is one Clodex spawns on the
             // lead's behalf with no operator checkbox behind it, and a template is
             // agent-writable — so honoring it would let a template silently blind
             // the wire that measures what this seat costs. Pinned by t189.
-            (shape && shape.sessionEnv) || null, true,
+            shape.env, true,
           );
           this._applyTemplatePersistence(seat.name, shape);
           // FIRST, before anything else that can throw. Between create() and this
@@ -5310,7 +5421,16 @@ function createSessionManager(deps) {
             type: 'task', from: opener.name, to: seat.name, body: `ticket ${ticket.id} → ${seat.name} @ ${wt.path}`,
           });
           log.info('intent', `ticket ${ticket.id} ${reused ? 'respawned' : 'spawned'} ${seat.name} (${roleKey}) on branch ${wt.branch} @ ${wt.path}`);
-          reply(`ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name)}`);
+          // The env drops ride the reply here too. A silently ignored env key is
+          // the bug the allowlist's own comment names, and this path dropped one
+          // without a word while the review and spawn paths both announced it.
+          const envWarn = (shape.envDropped.length
+            ? ` — template env keys [${shape.envDropped.join(', ')}] are outside the allowed set [${[...REVIEWER_ENV_ALLOWLIST].join(', ')}] — dropped (env is an authority surface; requires operator approval)`
+            : '')
+            + (shape.envBadType.length
+              ? ` — template env keys [${shape.envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)`
+              : '');
+          reply(`ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name)}${envWarn}`);
         } catch (err) {
           const live = this.sessions.has(seat.name);
           if (!live) getPersistence().remove(seat.name);
@@ -5420,7 +5540,7 @@ function createSessionManager(deps) {
       tickets.push(ticket);
       ticketsStore.save(teamDir, tickets);
       if (seat) {
-        this._spawnTicketSeat(session, team, teamDir, ticket, assignee, wtDef, seat);
+        this._spawnTicketSeat(session, team, teamDir, ticket, assignee, seat);
         this._reconcileTickets(team, teamDir);
         log.info('intent', `task add by ${session.name} → ${ticket.id} (${assignee} → seat ${seat.name}, branch ${seat.branch})`);
         reply(`ticket ${ticket.id} → spawning ${seat.name} in a worktree on branch ${seat.branch}`);
@@ -5539,7 +5659,7 @@ function createSessionManager(deps) {
           ticket.role = assignee;
           ticket.assignee = minted.name;
           ticketsStore.save(teamDir, tickets);
-          this._spawnTicketSeat(session, team, teamDir, ticket, assignee, wtDef, minted);
+          this._spawnTicketSeat(session, team, teamDir, ticket, assignee, minted);
           this._reconcileTickets(team, teamDir);
           log.info('intent', `task assign by ${session.name}: ${ticket.id} → seat ${minted.name}, branch ${minted.branch}`);
           reply(`ticket ${ticket.id} → spawning ${minted.name} in a worktree on branch ${minted.branch}`);

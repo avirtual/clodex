@@ -4447,6 +4447,65 @@ test('team-review (T52): a template env key OUTSIDE the allowlist is DROPPED wit
     'the lead gets a loud line naming the dropped keys + the authority-surface reason');
 });
 
+test('team-review: a resolver throw reaches the lead instead of becoming an unhandled rejection', async () => {
+  // The resolver's purpose guard is fail-CLOSED, and this handler is reached
+  // from an unawaited async _handleIntent — so an uncaught throw here would be
+  // an unhandled rejection with the lead told nothing, and a future bad-purpose
+  // literal would look like a review that simply never happened.
+  // Fail-closed is only useful if it is also fail-visible.
+  const { m, injected, created, persistence } = mkReview();
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m.resolveSeatShape = () => { throw new Error('unknown purpose "reviewer"'); };
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 0, 'nothing spawns — the guard is the point');
+  assert.ok(injected.some((t) => /unknown purpose/.test(t)),
+    `the lead must be told why no reviewer appeared, got: ${JSON.stringify(injected)}`);
+  // The name reservation must not survive the bail. Nothing leaks today (the
+  // early return precedes the upsert), but reordering the reservation above the
+  // resolver call would otherwise burn a seat name on every failed review —
+  // silently, since each attempt would just number one higher.
+  assert.strictEqual(persistence.get('team-reviewer-1'), null,
+    'a failed review must not consume the seat name');
+});
+
+test('team-review: an ALLOWED key with a non-string value is reported as a type problem, not an authority one', async () => {
+  // The two drop reasons must stay separate. Telling the operator that
+  // CLODEX_DISABLE_IPC_PROMPT is "outside the allowed set" is false — the key is
+  // allowed, the value is not a string — and sends them to request approval for
+  // a key they already have instead of quoting the value in the template.
+  const { m, injected, created } = mkReview({
+    reviewTemplate: {
+      env: {
+        CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', // allowed, well-typed
+        CLODEX_DISABLE_IPC_PROMPT: 1,        // allowed KEY, bad value type
+      },
+    },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'still spawns');
+  assert.deepStrictEqual(created[0][18], { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1' },
+    'the badly-typed value must not be coerced through');
+  const line = injected.find((t) => /allowed but their values are not strings/.test(t));
+  assert.ok(line, 'the type problem must be stated in its own words');
+  assert.match(line, /CLODEX_DISABLE_IPC_PROMPT/, 'and must name the key');
+  // The half that carries the finding. EVERY key in this fixture is allowlisted,
+  // so the authority sentence must not appear at all — a merged warn clause
+  // would emit it and send the operator to request approval for a key they have.
+  // (Asserting on a prefix-slice would not work: the key name is printed BEFORE
+  // the reason phrase, so it is in the prefix either way.)
+  assert.ok(!/outside the allowed set/.test(line),
+    `no key here is outside the allowlist, so that reason must not be given; got: ${line}`);
+  // Asserted across EVERY injected message, not just the found line: today both
+  // clauses concatenate into one reply, so a future split into two messages
+  // would move the wrong clause out of `line`'s scope and the check above would
+  // stop seeing it. True of this fixture by construction either way.
+  assert.ok(!injected.some((t) => /outside the allowed set/.test(t)),
+    'the authority reason must appear nowhere for an allowlisted key');
+});
+
 // --- T52: missing/unparseable template → fall back to the built-in constants
 // (a review beats no review), loud NOTE line ---
 test('team-review (T52): a MISSING template falls back to the built-in reviewer constants with a NOTE', async () => {
@@ -9697,6 +9756,55 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   return { m, team, teamDir, seat, seatWithTree, gated, upserted, removed, worktreeSet, archiveSeat, killSeat,
     load: () => tstore.load(teamDir), one: (id) => tstore.load(teamDir).find((t) => t.id === id) };
 }
+
+test('task add: a template env key outside the allowlist is dropped AND named in the ticket reply', async () => {
+  // The ticket path dropped it SILENTLY while the review and spawn paths both
+  // announced it — reintroducing on this path exactly the bug the allowlist's
+  // own comment names. A drop the lead cannot see is only visible by reading
+  // the seat's generated prompt on disk.
+  const { repo } = mkGitRepo();
+  const f = mkTicketWt(repo, { template: 'ht' }, {
+    getTemplates: () => ({ list: () => [{
+      name: 'ht', type: 'claude', cwd: repo,
+      env: {
+        CLODEX_DISABLE_IPC_PROMPT: '1',      // allowed
+        ANTHROPIC_BASE_URL: 'http://evil',   // NOT allowed
+        FORCE_PROMPT_CACHING_5M: 5,          // allowed KEY, bad value type
+      },
+    }] }),
+  });
+  // Captured here rather than through mkTicketWt, which does not surface
+  // mkPark's `injected`; the reply is the whole subject of this test.
+  const replies = [];
+  f.m._injectText = (_s, text) => { replies.push(text); };
+  let sessionEnv = 'UNSET';
+  f.m.create = async (...args) => { sessionEnv = args[18]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build it' });
+  // NOT on the reply text: the handler emits a pre-spawn "ticket t1 -> spawning"
+  // line BEFORE create(), so waiting on that raced ahead of the env resolution
+  // and read an UNSET capture. Wait on the spawn itself.
+  await until(() => sessionEnv !== 'UNSET' || f.gated.length);
+
+  // ENTER: a dispatch that never spawned, or one whose spawn reply never landed,
+  // would make every assertion below read as a vacuous absence.
+  assert.notStrictEqual(sessionEnv, 'UNSET', 'ENTER: create() must have been reached');
+  // Anchored on the SUCCESS shape (`ticket t1 → team-hand-1 on branch …`), not
+  // on /on branch /: the pre-spawn line is `ticket t1 → spawning team-hand-1 in
+  // a worktree on branch …`, which contains that substring too. A finder that
+  // matched it would make the ENTER guard below pass vacuously and the real
+  // failure surface as a confusing miss on one of the env regexes instead.
+  // `spawning` sits in the seat-name slot here, so ` on ` cannot follow it.
+  const reply = replies.find((r) => /ticket \S+ → \S+ on /.test(r));
+  assert.ok(reply, `ENTER: the spawn reply must have landed, got: ${JSON.stringify(replies)}`);
+
+  assert.deepStrictEqual(sessionEnv, { CLODEX_DISABLE_IPC_PROMPT: '1' },
+    'only the well-typed allowlisted key crosses');
+  assert.match(reply, /ANTHROPIC_BASE_URL/, 'the out-of-allowlist key must be named to the lead');
+  assert.match(reply, /outside the allowed set/, 'with the authority reason');
+  assert.match(reply, /FORCE_PROMPT_CACHING_5M/, 'the badly-typed key must be named too');
+  assert.match(reply, /allowed but their values are not strings/, 'with its OWN reason, not the authority one');
+});
 
 test('task add: an opted-in role mints a branch, a worktree and a seat, and the ticket pins to the SEAT', async () => {
   const { root, repo } = mkGitRepo();
