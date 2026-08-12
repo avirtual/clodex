@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- Ticket boards copied to the new per-project location now re-sync themselves.
+  The copy ran once and was then locked, so a board copied while a ticket was
+  still being worked kept the half-finished version forever — one ticket showed
+  as open after it had been closed, and the stall watchdog nudged about it. Each
+  launch now refreshes any record the old board has a newer version of, and stops
+  doing anything once the old board goes quiet.
+
 - Bundled wirescope updated to v0.6.51. The `/_session` view labelled each block
   with its position in the request payload, which looked like a count of how many
   times that message had been sent and was not one — a request carrying a message
