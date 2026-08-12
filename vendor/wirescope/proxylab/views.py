@@ -1,5 +1,6 @@
 import html
 import json
+import os
 import re
 import time
 
@@ -535,6 +536,133 @@ def _turn_clock(session_id, render_ts=None):
     return out
 
 
+def _is_real_call(summ):
+    """Does this captured request represent a REAL main-line API call whose
+    payload is part of the session's growing conversation?
+
+    Excludes two populations that would otherwise shift every ordinal after
+    them:
+      * SUBAGENT lines — they share the parent's session_id but carry their own
+        private message array (see meta.py's main-line identity guard).
+      * one-message UTILITY SIDE-CALLS — the CLI's title probe and the
+        WebFetch/WebSearch summarizers (transforms._sidecall_kind) are one-shot
+        requests with their own tiny payload, no cache lineage and no relation
+        to the conversation. Shape: a single message with at most one tool
+        (WebFetch ships 0, WebSearch ships 1). Measured on the live corpus:
+        every such capture had n_messages <= 1, and every real agent turn had
+        both a full tool roster and a growing message array, so the pair
+        (n_tools <= 1 AND n_messages <= 1) separates them cleanly.
+
+    Reads ONLY the capture's tail `summary` (report._tail_summary) — no body."""
+    if (summ or {}).get("role") not in ("parent", "unknown", None):
+        return False
+    return not ((summ.get("n_tools") or 0) <= 1
+                and (summ.get("n_messages") or 0) <= 1)
+
+
+def _call_ordinals(session_id, from_stem=None):
+    """Which API CALL first carried each message of the rendered payload:
+    {"debut": {message_index -> call number (1-based)}, "calls": [{n, ts}]}.
+
+    WHY THIS EXISTS. The `#N` on every block used to be the message's INDEX in
+    the payload array, which reads like a round-trip counter and is not one: a
+    single request that ships a dm plus its accompanying SessionStart system
+    message renders as `#0` and `#1` and looks like two API calls. It was one.
+    The index answers "where in the array", never "when did this happen" — and
+    "what happened when" is the only question this page is read for.
+
+    THE MEASUREMENT. Every request capture records `summary.n_messages` (built
+    by the writer as `len(obj["messages"])`, see server.py), so the length of
+    the conversation at each call is known exactly and for free. Within one
+    lineage that length only GROWS, so the series of lengths IS the debut map:
+    a message at index i first shipped on the earliest call whose n_messages
+    exceeded i. No body is ever parsed and no content is compared.
+
+    COST IS BOUNDED BY THE LINEAGE, NOT THE SESSION. The walk runs NEWEST-FIRST
+    and stops as soon as the lineage is covered, so it reads the current
+    lineage's captures and nothing else: measured 3 ms on a 20-request session,
+    51 ms (51 reads) on a 9,901-request one — the big session is cheap precisely
+    because a compact left only ~50 live calls. A forward full-directory scan of
+    the same session costs 7.5 s, which is the "expensive scanning" this avoids.
+
+    LINEAGE SCOPING, and why the break is on `n > prev` and NOT `n >= prev`.
+    /clear and compact restart the message count on a stable session_id, so the
+    directory holds several runs and only the newest is the one being rendered.
+    Walking back, a capture LONGER than the one after it belongs to a discarded
+    lineage and ends the walk. Equal lengths must NOT end it: a retry, or a turn
+    the model answered without the payload growing, legitimately repeats a
+    length, and breaking there truncated the map to a single call — measured on
+    5 of 53 live sessions (a0936f84: 1 call recovered instead of 73). With the
+    strict-greater break the map agreed with a full forward scan on 4,448 of
+    4,448 messages across 53 live sessions; with `>=` only 71.6% agreed.
+
+    `from_stem` clamps to a rendered PAST turn (the `?turn=` navigator): newer
+    captures are skipped so an old turn is never numbered against later calls.
+    Ordering is by mtime, which matched the records' own `ts` ordering on all
+    15,137 captures checked; the monotonicity break re-validates it per step.
+
+    Returns empty when the capture dir is absent — callers render without
+    ordinals rather than guessing."""
+    from proxylab import report as report_mod            # lazy: avoid import cycle
+    d = core_mod._session_dir(session_id)
+    if not d.is_dir():
+        return {"debut": {}, "calls": []}
+    try:
+        ents = [(e.stat().st_mtime, e.name, e.path) for e in os.scandir(d)
+                if e.name.endswith(".request.json")]
+    except OSError:
+        return {"debut": {}, "calls": []}
+    ents.sort(reverse=True)                       # newest first: walk back in time
+    if from_stem:
+        want = from_stem + ".request.json"
+        for k, (_, name, _p) in enumerate(ents):
+            if name == want:
+                ents = ents[k:]                   # drop captures newer than the view
+                break
+    calls, prev = [], None
+    for mtime, _name, path in ents:
+        summ = report_mod._tail_summary(path)
+        if summ is None or not _is_real_call(summ):
+            continue
+        n = summ.get("n_messages") or 0
+        if prev is not None and n > prev:
+            break                                 # older, longer lineage — stop
+        ts = report_mod._epoch(report_mod._head_ts(path)) or mtime
+        calls.append({"n": n, "ts": ts})
+        prev = n
+        if n <= 2:
+            break                                 # reached this lineage's first call
+    calls.reverse()
+    debut = {}
+    for k, c in enumerate(calls, start=1):
+        for i in range(c["n"]):
+            debut.setdefault(i, k)
+    return {"debut": debut, "calls": calls}
+
+
+def _call_label(i, debut, n_calls):
+    """The per-block label: which API CALL first carried this message, and — the
+    carriage fact the whole proxy exists to price — how many calls have re-sent
+    it since. `call 3 ×16` = it debuted on the 3rd round trip and has now been
+    paid for on 16 of them.
+
+    Falls back to the bare payload index when no ordinal is known (capture dir
+    swept, or a message the walk couldn't attribute), which is exactly what this
+    page rendered before — a missing ordinal degrades the label, never the page.
+    The index stays in the tooltip either way: it is still how you locate a
+    block in the raw JSON."""
+    k = debut.get(i)
+    if not k:
+        return (f'<span title="payload index {i} — no captured call to '
+                f'attribute it to">#{i}</span>')
+    carried = n_calls - k + 1
+    times = (f' <span class="dim" title="re-sent on {carried} API calls since '
+             f'(every one paid to carry it)">&times;{carried}</span>'
+             if carried > 1 else '')
+    return (f'<span title="first sent on API call {k} of {n_calls} · '
+            f'payload index {i}">call {k}</span>{times}')
+
+
 def _turn_weights(items, is_start):
     """Per-turn CARRIAGE: how much each turn ADDED to the context window, keyed
     by turn number (1-based, the same numbering the timeline renders — `is_start`
@@ -612,14 +740,15 @@ def _load_request_by_index(session_id, i):
     the index is out of range or the capture is unreadable. i is clamped."""
     turns = _main_line_turns(session_id)
     n = len(turns)
-    nav = {"i": None, "n": n, "prev": None, "next": None, "seq": None, "ts": None}
+    nav = {"i": None, "n": n, "prev": None, "next": None, "seq": None,
+           "ts": None, "stem": None}
     if not n:
         return None, None, None, nav
     if i < 0:                              # Python-style: -1 = latest turn
         i = n + i
     i = max(0, min(i, n - 1))
     t = turns[i]
-    nav.update({"i": i, "seq": t["seq"], "ts": t["ts"],
+    nav.update({"i": i, "seq": t["seq"], "ts": t["ts"], "stem": t["stem"],
                 "prev": i - 1 if i > 0 else None,
                 "next": i + 1 if i < n - 1 else None})
     d = core_mod._session_dir(session_id)
@@ -1149,6 +1278,18 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
         n_turns = meta_mod._turn_stats(obj)["turns_in_context"]
         turns_link = (f'<span>turns <b><a href="#turn-{n_turns}">{n_turns}'
                       f'</a></b></span>' if n_turns else '')
+        # which API CALL first carried each message — the block labels below.
+        # A payload index is NOT a round-trip counter (a dm and the system
+        # message that arrived with it are ONE call); this maps index -> call.
+        # Lineage-bounded walk, no bodies parsed. Empty = labels fall back to
+        # the bare index, which is what the page showed before.
+        ordinals = _call_ordinals(sid, from_stem=(nav or {}).get("stem"))
+        debut, n_calls = ordinals["debut"], len(ordinals["calls"])
+        # TURNS vs CALLS are different counts and the page must not conflate
+        # them: a turn is one prompt from the operator, a call is one billed
+        # round trip, and one turn is many calls (every tool step is its own).
+        calls_span = (f'<span>API calls <b>{n_calls}</b></span>' if n_calls
+                      else '')
         # Token sizing is receipt-calibrated (tokest): per-segment densities,
         # image blocks priced by pixel area, level fitted to this turn's
         # cache_read+cache_write anchor. The old flat ch/4 ran ~33% under and
@@ -1159,7 +1300,7 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                f'<span>tools <b>{len(tools)}</b> &approx;{e(_fmt_tok(cal["tools"]))} tok</span>'
                f'<span>system <b>{len(sysb)}</b> blocks &approx;{e(_fmt_tok(cal["system"]))} tok</span>'
                f'<span>messages <b>{len(msgs)}</b> &approx;{e(_fmt_tok(cal["messages"]))} tok</span>'
-               f'{turns_link}'
+               f'{turns_link}{calls_span}'
                f'<span class="dim">tok {"calibrated to this turn&rsquo;s receipt" if cal["anchor"] else "estimated (no receipt yet)"}</span></p>')
         # post-reset (`/clear`/slash-command) snapshot note — keeps a fresh
         # boundary turn from reading as a render bug (esp. on the sub-view).
@@ -1239,7 +1380,8 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                 bt = b.get("type")
                 mcc = b.get("cache_control") or mcc
                 pin = " &#128204;" if b.get("cache_control") else ""
-                lbl = f'<span class="role">#{i} {e(role)}{pin}</span>'
+                lbl = f'<span class="role">{_call_label(i, debut, n_calls)} '
+                lbl += f'{e(role)}{pin}</span>'
                 if bt == "text":
                     txt = b.get("text") or ""
                     rem = (' <span class="warn">[system-reminder]</span>'
