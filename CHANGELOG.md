@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- Bundled wirescope updated to v0.6.51. The `/_session` view labelled each block
+  with its position in the request payload, which looked like a count of how many
+  times that message had been sent and was not one — a request carrying a message
+  plus the system message alongside it showed as two calls when only one crossed
+  the wire. Blocks now read `call 3 x16`: which call first carried it, and how
+  many have re-sent it since. The header gains an API-calls count next to turns.
+
 - The ticket board now belongs to the PROJECT rather than to the team, so two
   teams working one repo share one board instead of each keeping a private list
   the other cannot see. Existing boards migrate themselves on first launch: your
