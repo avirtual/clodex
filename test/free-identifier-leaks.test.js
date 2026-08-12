@@ -76,6 +76,10 @@ const SCANNED_MODULES = [
   'session-restore.js',
   'session-discovery.js',
   'git-worktree.js',
+  // The ticket loop's review scope builder (t309). A pure string leaf — the
+  // record and the diff path arrive as arguments, which is what lets the scope's
+  // contents be asserted without a session, a team or a git repo.
+  'ticket-review-scope.js',
   'session-meta.js',
   // The ⓘ panel's data layer (t-sessioninfo). Every source it reads — fs,
   // readline, homedir, the registry dir, userData — arrives injected, which is

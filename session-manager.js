@@ -6185,6 +6185,14 @@ function createSessionManager(deps) {
       ticket.state = 'done';
       ticket.closedAt = Date.now();
       ticket.closedBy = session.name;
+      // The report is persisted AS WELL AS delivered, never instead of: the
+      // delivery above is what reaches the lead, and this is what survives both
+      // agents dying. It is also the only place the hand's own flagged guesses
+      // and deviations exist in a form the review scope can quote verbatim —
+      // a message is losable, and paraphrasing them loses exactly the part a
+      // cold reviewer cannot reconstruct.
+      ticket.report = report;
+      ticket.reportedBy = session.name;
       ticket.lastActivityAt = ticket.closedAt;
       ticketsStore.save(team.root, tickets);
       this._reconcileTickets(team);
