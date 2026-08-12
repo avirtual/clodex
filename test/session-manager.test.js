@@ -3584,7 +3584,7 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
   const [name, type, cwd, extraArgs, resumeId, ws, sysBody, fork, proxy, agents, denyB, disabledTools,
     disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, execCommands, intents, sessionEnv] = created[0];
   assert.strictEqual(name, 'team-reviewer-1', 'first reviewer name matches the role key');
-  assert.strictEqual(type, 'claude', 'defaults to claude when role.type is null');
+  assert.strictEqual(type, 'claude', 'the cold reviewer ALWAYS spawns claude — code-side, so the tools cap is enforceable');
   assert.strictEqual(cwd, '/proj', 'cwd defaults to team root');
   // The handler passes NO inline system body — the reviewer's briefing rides as
   // the REPLACEMENT system prompt (systemPromptFile below), not an inline body.

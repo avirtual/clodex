@@ -153,7 +153,7 @@ function readManifest(teamDir) {
  * board, not a gate. The subset is one-directional and stays honest under
  * drift — what it names, core also rejects; what core rejects and it misses
  * renders as it does today, with no warning. It never calls a manifest good.
- * Not checked here: per-role shapes and the lead role's `instantiate`.
+ * Not checked here: per-role shapes.
  */
 function manifestWarning(m) {
   if (typeof m.root !== 'string' || !path.isAbsolute(m.root)) return `${TEAM_FILE} "root" is not an absolute path — core would refuse this team`;

@@ -72,7 +72,7 @@ function launch(home, payload) {
 test('roster: resolves team by cwd, lists roles + live-in-project', async () => {
   const home = mkHome();
   const proj = path.join(home, 'proj');
-  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, dev: {}, reviewer: { instantiate: 'subagent' } } });
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, dev: {}, reviewer: {} } });
   reg(home, 'alead', path.join(proj, 'sub'));
   reg(home, 'adev', proj);
   reg(home, 'outsider', path.join(home, 'elsewhere'));
@@ -80,30 +80,57 @@ test('roster: resolves team by cwd, lists roles + live-in-project', async () => 
   const r1 = await launch(home, { action: 'roster', agent: 'alead' });
   assert.strictEqual(r1.code, 0, `roster exits 0: ${r1.err}`);
   assert.match(r1.err, /team proj \(root /, `names the team: ${r1.err}`);
-  // Space-separated roles; lead starred; a bare session role is just its name; a
-  // non-session role carries a parenthetical instantiate annotation.
-  assert.match(r1.err, /roles: lead\* dev reviewer\(subagent\) \(\*=lead\)/, `roles annotated: ${r1.err}`);
+  // Space-separated roles; lead starred; a role with no template is just its name.
+  assert.match(r1.err, /roles: lead\* dev reviewer \(\*=lead\)/, `roles annotated: ${r1.err}`);
   assert.match(r1.err, /live: adev,alead/, `live join by cwd (sorted, no outsider): ${r1.err}`);
 });
 
-test('roster: per-role template + instantiate annotations (spawn-by-template)', async () => {
+test('roster: per-role template annotation (spawn-by-template)', async () => {
   const home = mkHome();
   const proj = path.join(home, 'proj');
-  // A team a lead reads to resolve role → template for [agent:spawn template:Y]:
-  //   lead      — session default, no template → bare name (starred)
-  //   worker    — has a template, session → tmpl + instantiate both shown
-  //   reviewer  — subagent, no template → just the instantiate
-  //   runner    — template + subagent → both
+  // A team a lead reads to resolve role → template for [agent:spawn template:Y].
+  // `template` is the ONLY annotation left: t292 cut `instantiate` from the role
+  // schema, so a fixture seeding it here would pin a field loadManifest strips.
+  //   lead     — no template → bare name (starred)
+  //   worker   — has a template → tmpl=
+  //   reviewer — no template → bare name
   mkTeam(home, 'proj', proj, { lead: 'lead', roles: {
     lead: {},
-    worker: { template: 'hand', instantiate: 'session' },
-    reviewer: { instantiate: 'subagent' },
-    runner: { template: 'haiku-run', instantiate: 'subagent' },
+    worker: { template: 'hand' },
+    reviewer: {},
+    runner: { template: 'haiku-run' },
   } });
   reg(home, 'alead', proj);
   const r = await launch(home, { action: 'roster', agent: 'alead' });
   assert.strictEqual(r.code, 0, r.err);
-  assert.match(r.err, /roles: lead\* worker\(tmpl=hand,session\) reviewer\(subagent\) runner\(tmpl=haiku-run,subagent\) \(\*=lead\)/, r.err);
+  assert.match(r.err, /roles: lead\* worker\(tmpl=hand\) reviewer runner\(tmpl=haiku-run\) \(\*=lead\)/, r.err);
+});
+
+// The property the roster must hold, not just the string it happens to emit:
+// this script parses team.json ITSELF instead of routing through loadManifest,
+// so it is the one reader that can still SEE a field the schema cut. t292
+// deleted five (instantiate, standing, tools, type, ephemeral) and doRoster
+// kept rendering `instantiate` for a full release — the annotation silently
+// vanished post-migration and no test noticed, because every fixture that
+// could have caught it was asserting the annotation was THERE.
+//
+// A role carrying cut fields must therefore render bare. Seeding two of them
+// makes this fail the day someone re-adds a bypassing read of either.
+test('roster: a role carrying cut schema fields renders with NO annotation', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: {
+    lead: {},
+    reviewer: { instantiate: 'subagent', tools: ['Read', 'Grep'] },
+  } });
+  reg(home, 'alead', proj);
+  const r = await launch(home, { action: 'roster', agent: 'alead' });
+  assert.strictEqual(r.code, 0, r.err);
+  // ENTER: the fixture reached the roster line at all. Without this the absence
+  // assertions below are equally true of a roster that printed no roles.
+  assert.match(r.err, /roles: .*\breviewer\b/, `the seeded role reached the line: ${r.err}`);
+  assert.doesNotMatch(r.err, /reviewer\(/, `no annotation on a role whose only fields are cut ones: ${r.err}`);
+  assert.doesNotMatch(r.err, /subagent|Read|Grep/, `no cut field's VALUE leaks into the line: ${r.err}`);
 });
 
 test('roster: no team containing cwd replies honestly, exit 0', async () => {
