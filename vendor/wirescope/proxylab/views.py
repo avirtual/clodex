@@ -640,17 +640,75 @@ def _call_ordinals(session_id, from_stem=None):
     return {"debut": debut, "calls": calls}
 
 
-def _call_label(i, debut, n_calls):
-    """The per-block label: which API CALL first carried this message, and — the
-    carriage fact the whole proxy exists to price — how many calls have re-sent
-    it since. `call 3 ×16` = it debuted on the 3rd round trip and has now been
-    paid for on 16 of them.
+def _is_tool_result_only(mm):
+    """A user message that is nothing but tool_result blocks — i.e. the CLI
+    handing back what the model ASKED FOR, not anything a human said."""
+    c = (mm or {}).get("content")
+    if not isinstance(c, list) or not c:
+        return False
+    return all(isinstance(b, dict) and b.get("type") == "tool_result"
+               for b in c)
 
-    Falls back to the bare payload index when no ordinal is known (capture dir
-    swept, or a message the walk couldn't attribute), which is exactly what this
-    page rendered before — a missing ordinal degrades the label, never the page.
-    The index stays in the tooltip either way: it is still how you locate a
-    block in the raw JSON."""
+
+def _call_causes(msgs, debut, n_calls):
+    """WHO initiated each API call: the operator, or the model itself.
+
+    WHY THIS MATTERS MORE THAN THE COUNT. The API has ONE request shape but two
+    causes. A call whose payload ends in a real user turn is one the operator
+    asked for. A call whose payload ends in tool_result blocks is one the
+    MODEL's own previous response demanded, by emitting tool_use — nobody asked
+    for it, and the CLI is only closing the loop the model opened. Both re-carry
+    the entire window at full price, so the ratio between them is the answer to
+    "I asked six things, why did this cost 47 round trips": the fan-out is the
+    agent's own choice to go look at one more file, priced per look.
+
+    FREE — no extra I/O. The renderer has already parsed the payload, and the
+    debut map says which messages each call INTRODUCED; within a live lineage
+    those messages are all still present by construction (that is what monotonic
+    growth means). So the trigger of call k is simply the LAST user message that
+    debuted on it — "last user" and not "last message", because a trailing
+    mid-conversation `role:"system"` roster (the opus-4.8 wire shape) can debut
+    after the trigger without being one.
+
+    Returns {"cause": {call -> "operator"|"model"}, "trigger": {msg index ->
+    call}}. A call that debuted NO user message (a retry, or a turn that grew
+    the payload by nothing) is absent from `cause` rather than guessed at:
+    operator + model can be < the call count, and the header says so."""
+    trigger = {}
+    for i, mm in enumerate(msgs):
+        k = debut.get(i)
+        if k and k <= n_calls and (mm or {}).get("role") == "user":
+            trigger[k] = i                        # later user msg wins the call
+    cause = {k: ("model" if _is_tool_result_only(msgs[i]) else "operator")
+             for k, i in trigger.items()}
+    return {"cause": cause, "trigger": {i: k for k, i in trigger.items()}}
+
+
+def _call_label(i, debut, n_calls, role=None, cause=None):
+    """The per-block label: WHEN this block happened, and — the carriage fact
+    the whole proxy exists to price — how many calls have re-sent it since.
+    `call 3 ×16` = it debuted on the 3rd round trip and has been paid for on 16.
+
+    ASSISTANT BLOCKS ARE LABELLED BY THEIR EMITTER, NOT THEIR CARRIAGE. Every
+    block first appears on the wire in the REQUEST of some call, which is what
+    the debut map measures — but that is only when a block was first re-sent,
+    not when it happened. An assistant message was produced by the model as the
+    RESPONSE to the previous call and merely ships back as input on this one
+    (wire-proven: capture 058's response emitted two `Bash` tool_use at
+    12:29:13; 059's request carries that identical assistant message at
+    messages[6] at 12:29:30). Labelling it `call k` would date it 17 s late and
+    credit it to the wrong round trip, so it renders `reply k-1`.
+    tool_result blocks stay on `call k`: they were written by the CLI locally,
+    cost no API call of their own, and first reach the wire exactly there.
+
+    When k is 1 the emitting response predates the captured lineage (a resumed
+    or swept session), so there is no `k-1` to name and the label falls back to
+    the carriage form with a tooltip that says which fact it is stating.
+
+    Falls back to the bare payload index when no ordinal is known, which is what
+    this page rendered before — a missing ordinal degrades the label, never the
+    page. The index stays in the tooltip either way: it is still how you locate
+    a block in the raw JSON."""
     k = debut.get(i)
     if not k:
         return (f'<span title="payload index {i} — no captured call to '
@@ -659,8 +717,29 @@ def _call_label(i, debut, n_calls):
     times = (f' <span class="dim" title="re-sent on {carried} API calls since '
              f'(every one paid to carry it)">&times;{carried}</span>'
              if carried > 1 else '')
+    if role == "assistant":
+        if k > 1:
+            return (f'<span title="the model emitted this as the RESPONSE to '
+                    f'API call {k - 1}; it first ships back as input on call '
+                    f'{k} of {n_calls} · payload index {i}">reply {k - 1}'
+                    f'</span>{times}')
+        return (f'<span title="first carried on API call 1 of {n_calls} — the '
+                f'response that emitted it predates the captured lineage '
+                f'(resumed or swept session) · payload index {i}">call 1'
+                f'</span>{times}')
+    # the block that TRIGGERED a call gets its cause: a tool_result trigger
+    # means the model asked for this round trip, not the operator.
+    mark = ''
+    if cause == "model":
+        mark = (' <span class="dim" title="MODEL-INITIATED call: this '
+                'tool_result closes a loop the model&rsquo;s own previous '
+                'response opened. Nobody asked for this round trip, and it '
+                're-carries the whole window like any other.">&#8635;</span>')
+    elif cause == "operator":
+        mark = (' <span class="dim" title="OPERATOR-INITIATED call: a real '
+                'user turn opened this round trip.">&#9679;</span>')
     return (f'<span title="first sent on API call {k} of {n_calls} · '
-            f'payload index {i}">call {k}</span>{times}')
+            f'payload index {i}">call {k}</span>{mark}{times}')
 
 
 def _turn_weights(items, is_start):
@@ -1285,11 +1364,34 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
         # the bare index, which is what the page showed before.
         ordinals = _call_ordinals(sid, from_stem=(nav or {}).get("stem"))
         debut, n_calls = ordinals["debut"], len(ordinals["calls"])
+        # WHO asked for each call — operator, or the model itself (see
+        # _call_causes). Derived from `debut` + the already-parsed payload, so
+        # it costs nothing beyond the walk above.
+        causes = _call_causes(msgs, debut, n_calls)
+        cause_of, trigger_at = causes["cause"], causes["trigger"]
+        n_op = sum(1 for v in cause_of.values() if v == "operator")
+        n_md = sum(1 for v in cause_of.values() if v == "model")
         # TURNS vs CALLS are different counts and the page must not conflate
         # them: a turn is one prompt from the operator, a call is one billed
         # round trip, and one turn is many calls (every tool step is its own).
-        calls_span = (f'<span>API calls <b>{n_calls}</b></span>' if n_calls
-                      else '')
+        # `n_op` is deliberately NOT reconciled against `n_turns` — that counts
+        # prompts present in the window (a resumed session can carry many on
+        # call 1), this counts calls an operator opened within the captured
+        # lineage. Two honest numbers of different things; making one derive
+        # from the other would let a disagreement pass as a render bug.
+        rest = n_calls - n_op - n_md
+        calls_span = (
+            f'<span title="billed round trips in this lineage: {n_op} the '
+            f'operator asked for, {n_md} the model initiated itself'
+            + (f', {rest} that added no message (retries)" ' if rest else '" ')
+            + f'>API calls <b>{n_calls}</b></span>') if n_calls else ''
+        # THE FAN-OUT is the number nobody could see before: how many billed
+        # round trips each thing you asked for actually cost.
+        fan_span = (f'<span title="each operator-initiated call cost '
+                    f'{n_calls / n_op:.1f} billed round trips on average — the '
+                    f'model&rsquo;s own tool loops, every one re-carrying the '
+                    f'whole window at full price">fan-out <b>&times;'
+                    f'{n_calls / n_op:.1f}</b></span>') if n_op else ''
         # Token sizing is receipt-calibrated (tokest): per-segment densities,
         # image blocks priced by pixel area, level fitted to this turn's
         # cache_read+cache_write anchor. The old flat ch/4 ran ~33% under and
@@ -1300,7 +1402,7 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                f'<span>tools <b>{len(tools)}</b> &approx;{e(_fmt_tok(cal["tools"]))} tok</span>'
                f'<span>system <b>{len(sysb)}</b> blocks &approx;{e(_fmt_tok(cal["system"]))} tok</span>'
                f'<span>messages <b>{len(msgs)}</b> &approx;{e(_fmt_tok(cal["messages"]))} tok</span>'
-               f'{turns_link}{calls_span}'
+               f'{turns_link}{calls_span}{fan_span}'
                f'<span class="dim">tok {"calibrated to this turn&rsquo;s receipt" if cal["anchor"] else "estimated (no receipt yet)"}</span></p>')
         # post-reset (`/clear`/slash-command) snapshot note — keeps a fresh
         # boundary turn from reading as a render bug (esp. on the sub-view).
@@ -1380,7 +1482,13 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
                 bt = b.get("type")
                 mcc = b.get("cache_control") or mcc
                 pin = " &#128204;" if b.get("cache_control") else ""
-                lbl = f'<span class="role">{_call_label(i, debut, n_calls)} '
+                # cause only decorates the block that TRIGGERED the call (the
+                # last user message it introduced) — tagging every block of a
+                # message would repeat the same fact per tool_result.
+                bcause = cause_of.get(trigger_at.get(i)) if i in trigger_at \
+                    else None
+                lbl = (f'<span class="role">'
+                       f'{_call_label(i, debut, n_calls, role, bcause)} ')
                 lbl += f'{e(role)}{pin}</span>'
                 if bt == "text":
                     txt = b.get("text") or ""

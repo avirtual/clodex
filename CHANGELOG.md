@@ -13,6 +13,19 @@ blocks a release.
 
 ## Unreleased
 
+- Reporting a ticket done now runs the review, instead of asking the lead to.
+  `[agent:task done]` recorded the report and stopped there: the lead had to
+  notice the ticket, check the branch existed and carried commits, materialize
+  the diff, assemble a scope out of the spec and the report, and only then spawn
+  the reviewer — six manual steps per ticket, every one of them the same. Closing
+  a ticket now verifies its tree (the branch exists, the base is an ancestor of
+  its HEAD, there are commits to look at), writes the diff, builds the review
+  scope from the ticket's own spec and report, and spawns the cold reviewer
+  itself. Anything that stops it — a missing branch, no commits, a base that
+  drifted, a reviewer that cannot be spawned — is escalated to the lead with what
+  it found and what it had already done, so a loop that stops says why. The lead
+  still merges, and still only after a verdict.
+
 - The terminal's shell refusal no longer reads as a version treadmill. When your
   shell is a bash too old to report command results, the message used to name two
   version numbers and point at Homebrew — which reads as "your machine is behind"
