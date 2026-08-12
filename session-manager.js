@@ -156,6 +156,7 @@ const teamCost = require('./team-cost');
 const { buildReviewScope } = require('./ticket-review-scope');
 const { findRepoRoot } = require('./project-root');
 const { projectDirFor } = require('./clodex-paths');
+const { readTail, lastToolFrom, formatStallBody } = require('./stall-evidence');
 // Aliased deliberately: the manager has its OWN trackedSessionIds() method with
 // a different contract (every id across all sessions, no argument). This is the
 // per-entry union, and the two must not be mistaken for each other.
@@ -558,6 +559,10 @@ function createSessionManager(deps) {
       this._relayRosters = new Map();
       this._lastPendingCounts = new Map();
       this._ticketWatch = new Map();
+      // Ticket ids with a stall probe in flight. The probe is async (git), so
+      // without this two overlapping sweeps both pass the escalation gate and
+      // alarm twice on one stall.
+      this._stallProbing = new Set();
       this._wire = null;       // in-process tee (WIRE_SHADOW only in W1)
       this._shadow = null;     // wire-vs-jsonl intent differ
       this._wireTelemetry = null; // W2 step-4 dark bridge (wire-telemetry.js)
@@ -7061,6 +7066,10 @@ function createSessionManager(deps) {
       if (this._ticketWatchdogTimer.unref) this._ticketWatchdogTimer.unref();
     }
 
+    // Returns a promise resolving when every board's stall probe has finished.
+    // The reconcile pass below does NOT wait on it — badges must not sit behind a
+    // git call — so the return is for callers that need the sweep to have
+    // completed (the tests) rather than an ordering the runtime depends on.
     _sweepTickets(now = Date.now()) {
       // TWO dedup keys, because the two calls below are scoped differently and
       // collapsing them under one key breaks whichever loses.
@@ -7081,22 +7090,64 @@ function createSessionManager(deps) {
       // reconciles against its own manifest.
       const sweptBoards = new Set();
       const reconciledTeams = new Set();
+      const sweeps = [];
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead) continue;
         let team; try { team = resolveTeam(s.cwd); } catch { team = null; }
         if (!team) continue;
         if (!sweptBoards.has(team.root)) {
           sweptBoards.add(team.root);
-          this._sweepTeamTickets(team, now);
+          // Deliberately not awaited: the sweep now makes git calls, and the
+          // reconcile below maintains the sidebar badges — holding those behind a
+          // slow probe would stall the UI on a repo under load. Overlap is
+          // handled by _stallProbing, not by serializing the pass.
+          sweeps.push(this._sweepTeamTickets(team, now).catch((e) => log.error('ticket', `stall sweep failed: ${e.message}`)));
         }
         if (!reconciledTeams.has(team.file)) {
           reconciledTeams.add(team.file);
           this._reconcileTickets(team); // self-heal the watch map + badges post-restart
         }
       }
+      return Promise.all(sweeps);
     }
 
-    _sweepTeamTickets(team, now) {
+    // Evidence for a stalled seat's alarm: what its last tool call was and how it
+    // ended, whether its branch carries commits, whether its tree is dirty.
+    //
+    // Every probe is best-effort and a failure DROPS its field rather than
+    // guessing. The alarm's whole job is to be trustworthy enough to act on
+    // without a hand probe; a wrong field spends that trust to save a git call.
+    //
+    // `dirty` is never returned without `tool` being attempted, because dirty
+    // alone is what the lead reasoned from on t312 and it is identical for a seat
+    // writing and a seat killed mid-write.
+    async _stallEvidence(team, ticket) {
+      const out = { tool: null, commits: null, dirty: null };
+      const seat = this._ticketAssigneeSeat(team, ticket);
+      if (seat) {
+        try {
+          const link = pathFor(REGISTRY_DIR, seat, 'transcript');
+          out.tool = lastToolFrom(readTail(fs, fs.realpathSync(link)));
+        } catch { /* no transcript, codex, or unreadable — omit the field */ }
+      }
+      const wt = ticket.worktree || null;
+      if (wt && wt.branch) {
+        const r = await gitWorktree.commitsOnBranch(team.root, wt.branch, wt.baseSha || null)
+          .catch(() => ({ ok: false }));
+        if (r && r.ok && typeof r.count === 'number') out.commits = r.count;
+      }
+      if (wt && wt.path) {
+        const d = await gitWorktree.isDirty(wt.path).catch(() => ({ ok: false }));
+        if (d && d.ok) out.dirty = d.dirty === true;
+      }
+      return out;
+    }
+
+    // Async since t322: the alarm body carries git facts, and git is async. The
+    // caller (_sweepTickets) does not await — a slow probe must not delay the
+    // reconcile pass behind it — so overlapping sweeps are possible and
+    // `_stallProbing` is what keeps them from double-nudging.
+    async _sweepTeamTickets(team, now) {
       const stallMs = (typeof team.watchdogMs === 'number' && team.watchdogMs > 0) ? team.watchdogMs : TICKET_STALL_MS;
       const tickets = ticketsStore.load(team.root);
       for (const t of tickets) {
@@ -7111,11 +7162,34 @@ function createSessionManager(deps) {
         if (!ticketInFlight(t) || t.assignee == null || t.parked) continue; // backlog/parked/closed exempt
         const last = t.lastActivityAt || t.openedAt || now;
         if (now - last < stallMs) continue;
-        if (t.nudgedAt) continue; // one nudge per stall episode
-        // `nudgedAt` is read back at the top of this loop to spend the ONE nudge a
-        // stall episode gets, so a stamp taken from the return silences the watchdog
-        // forever on exactly the ticket it exists to surface — a nudge wiped by a
-        // boot re-render costs the alarm entirely.
+        // NOT one nudge per episode any more (t322). `nudgedAt` is cleared only by
+        // seat ACTIVITY, which by definition never comes during a stall, so a
+        // single alarm the lead dismissed bought permanent silence: measured on
+        // t312, where the 30m alarm was waved off and the remaining 28 minutes of
+        // a 55.7m stall raised nothing at all.
+        //
+        // Geometric instead: re-alarm once the quiet has DOUBLED since the alarm
+        // that was already sent. Lands at 30m, 60m, 120m, 240m — log2 in stall
+        // duration, so an all-night stall speaks ~5 times rather than 16 and a
+        // dead ticket can never flood the lead's prompt stream. The first repeat
+        // at 60m is the earliest that is not just re-asking, with identical
+        // evidence, a question the lead answered minutes ago.
+        //
+        // `prevAge <= 0` means the stamp predates this episode's activity, so it
+        // falls THROUGH and alarms: a fresh episode has not spoken yet.
+        const prevAge = t.nudgedAt ? t.nudgedAt - last : 0;
+        if (prevAge > 0 && (now - last) < prevAge * 2) continue;
+        // A repeat, and it must SAY it is one. An unmarked repeat reads as a new
+        // stall and invites the lead to re-answer what it already answered.
+        const repeat = t.nudgedAt ? 1 : 0;
+        // A ticket already being probed by an overlapping sweep is skipped rather
+        // than double-nudged: the git probes below are async, so two sweeps can
+        // both pass this gate before either stamps.
+        if (this._stallProbing.has(t.id)) continue;
+        // `nudgedAt` is read back at the top of this loop to time the NEXT alarm,
+        // so a stamp taken from the return silences the watchdog on exactly the
+        // ticket it exists to surface — a nudge wiped by a boot re-render costs
+        // the alarm entirely.
         // The stamp therefore rides onWrite, which fires LATER than this loop (the
         // queue writes after its gates). It cannot mutate `t`: that object is this
         // sweep's snapshot and nothing saves it. So it re-loads, stamps and saves on
@@ -7124,20 +7198,46 @@ function createSessionManager(deps) {
         // concurrent write.
         const tid = t.id;
         const seenAt = t.lastActivityAt || null;
+        const seenNudge = t.nudgedAt || null;
         // A loop-held ticket names the STEP, not the seat: the hand is finished
         // and the loop is what is stuck, so "hand quiet 45m" points the lead at
         // the wrong actor entirely — the first thing to check differs completely
-        // between a silent seat and a dead verify step.
-        const stalled = (t.state === 'done' && t.loopStep)
-          ? `the ticket loop is stuck at "${t.loopStep}" — no progress for ${humanizeAge(now - last)} (the hand already reported; nothing was torn down)`
-          : `${t.role || t.assignee} quiet ${humanizeAge(now - last)}`;
+        // between a silent seat and a dead verify step. It gets no seat evidence
+        // for the same reason: the hand's last tool call is not what is stuck.
+        const loopHeld = t.state === 'done' && !!t.loopStep;
+        let body;
+        if (loopHeld) {
+          const head = repeat > 0 ? `[ticket ${tid}] STILL stalled (repeat ${repeat}): ` : `[ticket ${tid}] stalled: `;
+          body = `${head}the ticket loop is stuck at "${t.loopStep}" — no progress for ${humanizeAge(now - last)} (the hand already reported; nothing was torn down)`;
+        } else {
+          this._stallProbing.add(tid);
+          let ev = { tool: null, commits: null, dirty: null };
+          try { ev = await this._stallEvidence(team, t); } catch { /* alarm without evidence beats no alarm */ }
+          finally { this._stallProbing.delete(tid); }
+          // Re-read after the await: the seat may have woken while git ran, and
+          // an alarm about a seat that is now working is the false positive this
+          // ticket exists to stop producing.
+          const after = ticketsStore.load(team.root).find((x) => x.id === tid);
+          if (!after || !ticketInFlight(after) || (after.lastActivityAt || null) !== seenAt) continue;
+          body = formatStallBody({
+            ticketId: tid, who: t.role || t.assignee, age: humanizeAge(now - last),
+            repeat, tool: ev.tool, commits: ev.commits, dirty: ev.dirty,
+          });
+        }
         this._gatedDeliver(team.lead, 'ticket-watchdog',
-          `[ticket ${tid}] stalled: ${stalled}`, false, '',
+          body, false, '',
           () => {
             try {
               const fresh = ticketsStore.load(team.root);
               const rec = fresh.find((x) => x.id === tid);
-              if (!rec || rec.nudgedAt) return;      // closed, or another sweep won
+              // NOT `if (rec.nudgedAt) return` any more: on a re-escalation the
+              // field is legitimately set, and refusing to re-stamp it would
+              // freeze the doubling clock at the first alarm's age — every later
+              // sweep would then pass the gate and nudge, inverting the rule.
+              // The guard is instead "nobody else stamped since we decided",
+              // which is the same shape as the lastActivityAt check below.
+              if (!rec) return;                                  // closed
+              if ((rec.nudgedAt || null) !== seenNudge) return;  // another sweep won
               // The stamp must identify the EPISODE it was decided for, not just the
               // ticket: _touchTicketActivity clears `nudgedAt` on any activity, so a
               // seat that speaks inside this window ends the stall. Stamping anyway
@@ -7150,7 +7250,13 @@ function createSessionManager(deps) {
               // inverted, on precisely the in-flight tickets §E added.
               if (!ticketInFlight(rec)) return;
               if ((rec.lastActivityAt || null) !== seenAt) return;
-              rec.nudgedAt = Date.now();
+              // `now`, not Date.now(): the doubling gate reads this back as
+              // `nudgedAt - lastActivityAt` to size the NEXT alarm, so it has to
+              // be the instant the sweep judged, not the instant the delivery
+              // happened to be written. Wall-clock here also makes the escalation
+              // schedule untestable — the gate would measure a drift the caller
+              // cannot control rather than the age the sweep decided on.
+              rec.nudgedAt = now;
               ticketsStore.save(team.root, fresh);
             } catch (e) { log.error('ticket', `nudge stamp for ${tid} failed: ${e.message}`); }
           });
