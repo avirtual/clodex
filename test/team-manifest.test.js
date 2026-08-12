@@ -42,9 +42,9 @@ function validManifest(root) {
     root,
     lead: 'lead',
     roles: {
-      lead: { template: 'fable-lead', standing: 'prompts/lead.md' },
-      reviewer: { template: 'sonnet-review', instantiate: 'subagent' },
-      runner: { template: 'haiku-runner', ephemeral: true },
+      lead: { template: 'fable-lead' },
+      reviewer: { template: 'sonnet-review' },
+      runner: { template: 'haiku-runner' },
     },
   };
 }
@@ -127,12 +127,10 @@ test('loadManifest applies defaults and returns name/root', () => {
   assert.strictEqual(m.name, 'shop');
   assert.strictEqual(m.root, path.resolve(root));
   assert.strictEqual(m.lead, 'lead');
-  assert.strictEqual(m.roles.lead.instantiate, 'session');
-  assert.strictEqual(m.roles.lead.ephemeral, false);
-  assert.strictEqual(m.roles.reviewer.instantiate, 'subagent');
-  assert.strictEqual(m.roles.runner.ephemeral, true);
-  assert.strictEqual(m.roles.runner.standing, null);
+  assert.strictEqual(m.roles.lead.template, 'fable-lead');
+  assert.strictEqual(m.roles.reviewer.template, 'sonnet-review');
   assert.strictEqual(m.roles.lead.prompt, null, 'prompt defaults to null when absent');
+  assert.strictEqual(m.version, 1, 'a file with no version IS a version-1 file');
 });
 
 test('loadManifest carries an optional role prompt through the shape', () => {
@@ -151,23 +149,180 @@ test('loadManifest carries an optional role prompt through the shape', () => {
   assert.strictEqual(m.roles.dev.prompt, null);
 });
 
-test('loadManifest carries optional role tools + type through the shape (default null)', () => {
+// team.json is agent-writable and version-1 files exist on disk carrying the five
+// cut keys. A load that THREW on one would not read as "this role has a stale
+// field" — every caller resolves teams inside a best-effort catch, so it reads as
+// "this cwd is on no team" at every call site, and the whole team layer vanishes
+// over a key nothing consumes. Warn and drop.
+test('loadManifest: a version-1 file carrying the cut keys loads clean, dropping them', () => {
   const home = mkHome();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
   mkTeam(home, 'shop', {
     root, lead: 'lead', watchdogMs: 600000,
     roles: {
-      lead: { template: 'fable-lead' }, // no tools/type → null
-      reviewer: { instantiate: 'subagent', tools: ['Read', 'Grep', 'Glob'], type: 'claude' },
+      lead: { template: 'fable-lead' },
+      // Every cut field at once, including the `instantiate: subagent` that used
+      // to be REQUIRED to be `session` on the lead role and would have thrown.
+      reviewer: {
+        template: 'sonnet-review', instantiate: 'subagent',
+        tools: ['Read', 'Grep', 'Glob'], type: 'claude',
+        standing: 'prompts/rev.md', ephemeral: true,
+      },
     },
   });
   const tm = createTeamManifest({ fs, clodexHome: home });
-  const m = tm.loadManifest('shop');
-  assert.deepStrictEqual(m.roles.reviewer.tools, ['Read', 'Grep', 'Glob'], 'tools allowlist carried');
-  assert.strictEqual(m.roles.reviewer.type, 'claude', 'type carried');
-  assert.strictEqual(m.roles.lead.tools, null, 'tools defaults to null when absent');
-  assert.strictEqual(m.roles.lead.type, null, 'type defaults to null when absent');
-  assert.strictEqual(m.watchdogMs, 600000, 'watchdogMs override carried');
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (msg) => warned.push(String(msg));
+  let m;
+  try { m = tm.loadManifest('shop'); } finally { console.warn = realWarn; }
+
+  // WHOLE object: a partial probe would read right past a key that survived the
+  // cut in the returned shape while the schema claims it is gone.
+  assert.deepStrictEqual(m.roles.reviewer, {
+    template: 'sonnet-review', prompt: null, brief: null, worktree: false,
+  }, 'the cut keys are absent from the normalized def, not carried as null');
+  assert.strictEqual(m.version, 1, 'no version field → version 1');
+  assert.strictEqual(m.watchdogMs, 600000, 'watchdogMs override still carried');
+  assert.strictEqual(warned.length, 1, 'ENTER: exactly one warning line was emitted');
+  for (const k of ['instantiate', 'tools', 'type', 'standing', 'ephemeral']) {
+    assert.match(warned[0], new RegExp(`reviewer\\.${k}`), `the warning names reviewer.${k}`);
+  }
+});
+
+// The warn's two bounds, and `version`'s reason to exist. loadManifest has no
+// cache and resolveTeam loads EVERY team on EVERY call — _sweepTickets runs it
+// every 60s per live seat — so an ungated warn is a console line several times a
+// minute, forever, for one legacy file. Bounded twice: deduped per (file, keys),
+// and gated on version, which is what lets a rewrite clear it for good.
+test('loadManifest: the drop warning is emitted once per key set, and a v2 file is silent', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  mkTeam(home, 'shop', {
+    root, lead: 'lead',
+    roles: { lead: {}, runner: { brief: 'r', tools: ['Read'] } },
+  });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (msg) => warned.push(String(msg));
+  try {
+    for (let i = 0; i < 5; i++) tm.loadManifest('shop');
+  } finally { console.warn = realWarn; }
+  assert.strictEqual(warned.length, 1, 'five loads of the same stale file warn ONCE, not five times');
+  assert.match(warned[0], /runner\.tools/, 'ENTER: the warning is the one about the stale key under test');
+
+  // A file that DECLARES the current version is silent even carrying an unknown
+  // key: that is a hand-added key on today's schema (the legibility gate's job),
+  // not the migration this warning exists for.
+  const home2 = mkHome();
+  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  mkTeam(home2, 'shop', {
+    version: 2, root: root2, lead: 'lead',
+    roles: { lead: {}, runner: { brief: 'r', invented: 'x' } },
+  });
+  const tm2 = createTeamManifest({ fs, clodexHome: home2 });
+  const warned2 = [];
+  console.warn = (msg) => warned2.push(String(msg));
+  let m2;
+  try { m2 = tm2.loadManifest('shop'); } finally { console.warn = realWarn; }
+  assert.deepStrictEqual(warned2, [], 'a current-version file does not warn');
+  assert.ok(!('invented' in m2.roles.runner), 'ENTER: the unknown key was still DROPPED — silence is not acceptance');
+});
+
+// `version`'s consumer, end to end: a legacy file warns until a mutator rewrites
+// it clean, then goes quiet permanently. Without the migration the drop is merely
+// suppressed; with it the system heals, which is the whole argument for the field
+// existing at all under a rule that forbids declarations nothing reads.
+//
+// THE REAL SHAPE, not a convenient one. The v1 stock scaffold put the cut keys on
+// `reviewer` — this fixture is the operator's own live team.json — and every
+// mutator refuses the reserved roles. A migration that only cleans the role being
+// edited can therefore never fire on the one file that motivated the warning:
+// `reviewer` stays stale forever, `clean` stays false forever, and the mechanism
+// is inert while claiming to be self-healing.
+test('a mutator migrates EVERY role off the cut fields, including reserved ones, and stamps', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const file = path.join(home, 'teams', 'shop', 'team.json');
+  mkTeam(home, 'shop', {
+    root, lead: 'clodex',
+    roles: {
+      lead: { prompt: 'clodex-team-lead' },
+      hand: { template: 'clodex-hand-seat', prompt: 'clodex-team-hand', ephemeral: true, worktree: true },
+      // Reserved AND stale: unreachable by addRole, setRole, removeRole and
+      // renameRole alike. If this role does not heal, nothing does.
+      reviewer: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', tools: ['Read', 'Grep', 'Glob'] },
+      designer: { instantiate: 'session', ephemeral: true, template: 'fable-design' },
+    },
+  });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const realWarn = console.warn;
+  console.warn = () => {};
+  try {
+    assert.strictEqual(tm.loadManifest('shop').version, 1, 'ENTER: starts as a version-1 file');
+    const before = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    assert.ok('tools' in before.roles.reviewer && 'instantiate' in before.roles.reviewer,
+      'ENTER: the reserved role genuinely carries the cut keys on disk to begin with');
+    // A mutation on an UNRELATED, non-reserved role: the migration must not
+    // require touching the stale role, because the stale role cannot be touched.
+    tm.setRole('shop', 'designer', { brief: 'designs things' });
+  } finally { console.warn = realWarn; }
+
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.deepStrictEqual(onDisk.roles.reviewer, { prompt: 'clodex-team-reviewer' },
+    'the RESERVED role healed: the cut keys left the file even though no mutator may address it');
+  assert.deepStrictEqual(onDisk.roles.hand,
+    { template: 'clodex-hand-seat', prompt: 'clodex-team-hand', worktree: true },
+    'ephemeral is gone from hand; worktree, which the schema still models, is untouched');
+  assert.deepStrictEqual(onDisk.roles.designer,
+    { template: 'fable-design', brief: 'designs things' },
+    'the edited role took the patch and lost its cut keys');
+  assert.strictEqual(onDisk.version, 2, 'and the file now declares the schema it was rewritten against');
+
+  const warned = [];
+  console.warn = (msg) => warned.push(String(msg));
+  try { tm.loadManifest('shop'); } finally { console.warn = realWarn; }
+  assert.deepStrictEqual(warned, [], 'the healed file is silent forever, not merely deduped for this process');
+});
+
+// The migration is NAMED, not derived. A hand-authored key outside the cut set is
+// data we do not model but were never asked to delete — deriving the strip as
+// "anything not in ROLE_KEYS" would turn a migration into data loss, and would
+// also stamp a file that still carries something a reader drops.
+test('the migration strips only the NAMED cut fields, leaving hand-authored keys and the stamp off', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const file = path.join(home, 'teams', 'shop', 'team.json');
+  mkTeam(home, 'shop', {
+    root, lead: 'lead',
+    roles: { lead: {}, runner: { brief: 'r' }, other: { brief: 'o', tools: ['Read'], customField: 'keepme' } },
+  });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const realWarn = console.warn;
+  console.warn = () => {};
+  try { tm.setRole('shop', 'runner', { brief: 'r2' }); } finally { console.warn = realWarn; }
+
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.strictEqual(onDisk.roles.runner.brief, 'r2', 'ENTER: the edit landed');
+  assert.deepStrictEqual(onDisk.roles.other, { brief: 'o', customField: 'keepme' },
+    'the cut key went; the unmodeled hand-authored one stayed');
+  assert.ok(!('version' in onDisk),
+    'and the file does not claim to be migrated while it still carries a key every reader drops');
+});
+
+// The lead role specifically: `instantiate: subagent` on it was a hard throw.
+test('loadManifest: a version-1 lead role with instantiate: subagent no longer throws', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  mkTeam(home, 'shop', { root, lead: 'lead', roles: { lead: { instantiate: 'subagent' } } });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const realWarn = console.warn;
+  console.warn = () => {};
+  let m;
+  try { m = tm.loadManifest('shop'); } finally { console.warn = realWarn; }
+  assert.strictEqual(m.name, 'shop', 'the team still resolves — a stale key must not take the team layer down');
+  assert.ok(!('instantiate' in m.roles.lead), 'the key is dropped, not honored');
 });
 
 // Whole-object, not a field probe: normalizeRoleDef builds the def every
@@ -181,19 +336,17 @@ test('loadManifest: role worktree opt-in normalizes to a boolean, default false'
     root, lead: 'lead',
     roles: {
       lead: {},
-      hand: { instantiate: 'session', worktree: true },
-      helper: { instantiate: 'session' },
+      hand: { worktree: true },
+      helper: {},
     },
   });
   const tm = createTeamManifest({ fs, clodexHome: home });
   const m = tm.loadManifest('shop');
   assert.deepStrictEqual(m.roles.hand, {
-    template: null, standing: null, prompt: null, instantiate: 'session',
-    ephemeral: false, brief: null, tools: null, type: null, worktree: true,
+    template: null, prompt: null, brief: null, worktree: true,
   }, 'opted-in role def in full');
   assert.deepStrictEqual(m.roles.helper, {
-    template: null, standing: null, prompt: null, instantiate: 'session',
-    ephemeral: false, brief: null, tools: null, type: null, worktree: false,
+    template: null, prompt: null, brief: null, worktree: false,
   }, 'absent worktree is FALSE, not undefined — undefined reads as opted-out at every consumer');
   // A non-boolean is a loud manifest error, not a truthy opt-in: `worktree: "no"`
   // must never enable the thing it plainly denies.
@@ -217,15 +370,15 @@ test('loadManifest rejects bad shapes with pointed errors', () => {
     [{ root: '/p', lead: 'lead', roles: [] }, /"roles" must be an object/],
     [{ root: '/p', lead: 'lead', roles: { dev: {} } }, /roles must include a "lead" role/],
     [{ root: '/p', lead: 'lead', roles: { lead: {}, 'bad name': {} } }, /role name "bad name"/],
-    [{ root: '/p', lead: 'lead', roles: { lead: {}, dev: { instantiate: 'daemon' } } }, /instantiate must be/],
-    [{ root: '/p', lead: 'lead', roles: { lead: { instantiate: 'subagent' } } }, /lead role "lead" must have instantiate: session/],
     [{ root: '/p', lead: 'lead', roles: { lead: { template: 42 } } }, /template must be a string/],
     [{ root: '/p', lead: 'lead', roles: { lead: { prompt: 42 } } }, /prompt must be a string/],
     [{ root: '/p', lead: 'lead', roles: { lead: { brief: 42 } } }, /brief must be a string/],
-    [{ root: '/p', lead: 'lead', roles: { lead: { tools: 'Read' } } }, /tools must be an array of strings/],
-    [{ root: '/p', lead: 'lead', roles: { lead: { tools: ['Read', 7] } } }, /tools must be an array of strings/],
-    [{ root: '/p', lead: 'lead', roles: { lead: { tools: [] } } }, /tools must not be empty/],
-    [{ root: '/p', lead: 'lead', roles: { lead: { type: 42 } } }, /type must be a string/],
+    [{ root: '/p', lead: 'lead', roles: { lead: { worktree: 'yes' } } }, /worktree must be a boolean/],
+    // NOTE: the five cut fields are NOT here. A bad value on a key the schema no
+    // longer models is dropped with a warning, not thrown — see the version-1
+    // compatibility tests above. Adding a throw back here would take the team
+    // layer down on exactly the old files that motivated the drop.
+    //
     // NOTE: watchdogMs no longer THROWS on a bad value — it's CLAMPED at consume
     // (T29 C3): a hand-written bad value must never break a team's resolution.
     // See the dedicated clamp test below.
@@ -329,9 +482,9 @@ test('cwdInProject: a plain directory containing a .git FILE does not smuggle me
 const teamFixture = () => ({
   name: 'shop', root: '/Users/me/shop', lead: 'boss',
   roles: {
-    lead: { template: 'fable-lead', standing: null, prompt: null, instantiate: 'session', ephemeral: false, brief: null },
-    hand: { template: null, standing: null, prompt: null, instantiate: 'session', ephemeral: false, brief: null },
-    reviewer: { template: 'sonnet-review', standing: null, prompt: null, instantiate: 'subagent', ephemeral: false, brief: null },
+    lead: { template: 'fable-lead', prompt: null, brief: null, worktree: false },
+    hand: { template: null, prompt: null, brief: null, worktree: false },
+    reviewer: { template: 'sonnet-review', prompt: null, brief: null, worktree: false },
   },
 });
 
@@ -369,7 +522,7 @@ test('matchSeatRole: a numeric suffix strips with or without a separator, and an
   // A role may legitimately end in a digit. Stripping first would resolve its
   // own seat to a DIFFERENT role, which is worse than not resolving at all.
   const digitRole = teamFixture();
-  digitRole.roles.hand2 = { template: null, standing: null, prompt: null, instantiate: 'session', ephemeral: false, brief: null };
+  digitRole.roles.hand2 = { template: null, prompt: null, brief: null, worktree: false };
   assert.strictEqual(matchSeatRole(digitRole, 'shop-hand2'), 'hand2');
   assert.strictEqual(matchSeatRole(digitRole, 'shop-hand2-2'), 'hand2');
   assert.strictEqual(matchSeatRole(digitRole, 'shop-hand3'), 'hand');
@@ -438,7 +591,7 @@ test('spawn-callsite: role prompt rides after the team block, best-effort', () =
     roles: {
       lead: { template: 'fable-lead' },
       dev: { template: null }, // no prompt
-      reviewer: { template: 'sonnet-review', instantiate: 'subagent', prompt: 'clodex-team-reviewer' },
+      reviewer: { template: 'sonnet-review', prompt: 'clodex-team-reviewer' },
       ghost: { prompt: 'no-such-prompt' }, // names a prompt whose file is absent
     },
   });
@@ -503,14 +656,14 @@ test('createTeam writes the default manifest and adopts the lead seat', () => {
   assert.strictEqual(team.root, path.resolve(root));
   assert.strictEqual(team.lead, 'clodex');
   assert.strictEqual(team.roles.lead.prompt, 'clodex-team-lead');
-  assert.strictEqual(team.roles.lead.instantiate, 'session');
   assert.ok(team.roles.lead.brief, 'lead gets a stock brief');
   assert.strictEqual(team.roles.hand.prompt, 'clodex-team-hand');
-  assert.strictEqual(team.roles.hand.instantiate, 'session');
-  assert.strictEqual(team.roles.reviewer.instantiate, 'subagent');
   assert.strictEqual(team.roles.reviewer.prompt, 'clodex-team-reviewer');
-  assert.deepStrictEqual(team.roles.reviewer.tools, ['Read', 'Grep', 'Glob'],
-    'stock reviewer is a read-only subagent');
+  // The reviewer's read-only cap is REVIEWER_TOOL_CAP in session-manager, a code
+  // constant on the one spawn path that can enforce it. A scaffolded `tools:`
+  // here restated it as data the manifest looked authoritative over and wasn't.
+  assert.ok(!('tools' in team.roles.reviewer), 'the cap is code, not a scaffolded field');
+  assert.strictEqual(team.version, 2, 'a freshly written manifest carries the current version');
   // The lead SEAT binds to the lead role; <team>-<role> seats bind hand/reviewer.
   assert.strictEqual(matchSeatRole(team, 'clodex'), 'lead');
   assert.strictEqual(matchSeatRole(team, 'shop-hand'), 'hand');
@@ -532,7 +685,7 @@ test('createTeam honors caller-supplied roles over the default scaffold', () => 
   // (hand + reviewer tools) must NOT be merged in.
   const team = tm.createTeam({
     name: 'shop', root, lead: 'clodex',
-    roles: { lead: { prompt: 'my-lead' }, runner: { instantiate: 'subagent', prompt: 'my-runner' } },
+    roles: { lead: { prompt: 'my-lead' }, runner: { prompt: 'my-runner' } },
   });
   assert.strictEqual(team.roles.lead.prompt, 'my-lead');
   assert.strictEqual(team.roles.runner.prompt, 'my-runner');
@@ -602,6 +755,9 @@ test('addRole refuses to MINT lead/reviewer when the key is absent (C1), no-ops 
 
   // A re-join of the stock reviewer def that's ALREADY on disk is a no-op (the
   // existing-and-equal branch), NOT a mint — must not be blocked by the C1 guard.
+  // The `tools` here is a version-1 caller (an older clodex-team, a stale script)
+  // re-riding the stock def: it must still resolve to the no-op, since the cut key
+  // normalizes away on both sides rather than making the defs differ.
   const stockReviewer = { ...STOCK_ROLE_DEFS.reviewer, tools: ['Read', 'Grep', 'Glob'] };
   assert.doesNotThrow(() => tm.addRole('shop', 'reviewer', stockReviewer));
 
@@ -639,39 +795,64 @@ test('addRole (C4/MF2) rejects a template that is not a bare library-template NA
   assert.strictEqual(team.roles.runner.template, 'fable-lead');
 });
 
-// F008 defect 2. `tools` is enforced on ONE role — the cold reviewer — and is
-// inert everywhere else. That was true, undocumented and unpinned, so a manifest
-// could grant itself a restriction nothing applied. These pin the scope in both
-// directions: the reviewer keeps its allowlist, and the front door refuses to
-// write one anywhere else.
-test('addRole REFUSES tools on a non-reviewer role, and the reviewer keeps its allowlist', () => {
+// F008's successor. `tools` was enforced on ONE role and inert everywhere else,
+// and the apparatus that managed that lie (the empty-array guard, the addRole
+// refusal) existed only because the field did. The field is gone: a hand-authored
+// `tools` is now dropped like any other unmodeled key, and the reviewer's cap is
+// code. What must NOT come back is a stored allowlist that reads as a restriction
+// and enforces nothing.
+test('a hand-authored role `tools` is dropped, never stored as a restriction', () => {
   const home = mkHome();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
 
-  assert.throws(
-    () => tm.addRole('shop', 'runner', { brief: 'a runner', tools: ['Read'] }),
-    /cannot declare tools/,
-    'a tools allowlist nothing enforces must not be storable',
-  );
-  // And the refusal is total — no half-written role left behind.
+  // addRole no longer bounces it — the def normalizes without the key at all.
+  const team = tm.addRole('shop', 'runner', { brief: 'a runner', tools: ['Read'] });
+  assert.deepStrictEqual(team.roles.runner, {
+    template: null, prompt: null, brief: 'a runner', worktree: false,
+  }, 'the normalized def carries no tools key in any form');
+
+  // ON DISK, which is the claim in this test's title and the only one that
+  // matters: normalizing on the way OUT would leave `"tools": ["Read"]` in
+  // team.json, dropped by every reader and believed by every author. Asserting
+  // the return alone reads right past that — the refusal this replaced existed
+  // precisely to keep the bytes off the file.
+  const file = path.join(home, 'teams', 'shop', 'team.json');
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.ok(onDisk.roles && onDisk.roles.runner, 'ENTER: the role reached the file');
+  assert.deepStrictEqual(onDisk.roles.runner, { brief: 'a runner' },
+    'the WHOLE stored def: only the schema keys the caller supplied, with no tools in any form');
+
+  // The reviewer likewise declares none: its cap is REVIEWER_TOOL_CAP in code.
+  assert.ok(!('tools' in team.roles.reviewer), 'the reviewer cap is not a manifest field');
+  assert.ok(!('tools' in onDisk.roles.reviewer), 'nor does the scaffold write one');
+});
+
+// createTeam is the other verbatim write: a caller-supplied roles map went to
+// disk unfiltered, so a team could be BORN carrying the fields addRole refuses.
+test('createTeam picks caller roles down to the schema before writing', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({
+    name: 'shop',
+    root,
+    lead: 'clodex',
+    roles: {
+      lead: { prompt: 'clodex-team-lead', instantiate: 'session' },
+      runner: { brief: 'r', tools: ['Read'], type: 'codex', standing: 's', invented: 1 },
+    },
+  });
   const onDisk = JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf-8'));
-  assert.ok(!('runner' in onDisk.roles), 'the refused role was not written');
-
-  // Without tools the same role is fine — the bounce is about the field, not the role.
-  const team = tm.addRole('shop', 'runner', { brief: 'a runner' });
-  assert.strictEqual(team.roles.runner.tools, null);
-
-  // The scaffolded reviewer — the one role whose tools IS read (session-manager
-  // intersects it with REVIEWER_TOOL_CAP) — keeps its allowlist.
-  assert.ok(Array.isArray(team.roles.reviewer.tools) && team.roles.reviewer.tools.length > 0,
-    'the reviewer allowlist survives, because it is the one that is enforced');
+  assert.ok(onDisk.roles && onDisk.roles.runner, 'ENTER: the caller roles reached the file');
+  assert.deepStrictEqual(onDisk.roles.lead, { prompt: 'clodex-team-lead' });
+  assert.deepStrictEqual(onDisk.roles.runner, { brief: 'r' });
 });
 
 // --- setRole / removeRole / renameRole: T29 Layer A metadata mutators -------
 // Pure JSON edits with the C1/C4/C6 guards. C5 (seat fail-close) is Slice 2.
-test('setRole edits descriptive fields, strips tools/type (C6), preserves unmodeled raw', () => {
+test('setRole edits the editable fields, ignores everything else, preserves unmodeled raw', () => {
   const home = mkHome();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
   const tm = createTeamManifest({ fs, clodexHome: home });
@@ -683,18 +864,23 @@ test('setRole edits descriptive fields, strips tools/type (C6), preserves unmode
   raw0.roles.runner.customField = 'keepme';
   fs.writeFileSync(file, JSON.stringify(raw0, null, 2));
 
-  // Edit brief + prompt; also echo tools/type (C6 must STRIP them, not write).
+  // Edit brief + prompt; also echo the cut fields, which must not be written.
   const team = tm.setRole('shop', 'runner', {
-    brief: 'new brief', prompt: 'new-runner', tools: ['Bash'], type: 'codex',
+    brief: 'new brief', prompt: 'new-runner',
+    tools: ['Bash'], type: 'codex', instantiate: 'subagent', standing: 's', ephemeral: true,
   });
-  assert.strictEqual(team.roles.runner.brief, 'new brief', 'brief edited');
-  assert.strictEqual(team.roles.runner.prompt, 'new-runner', 'prompt edited');
-  assert.strictEqual(team.roles.runner.tools, null, 'C6: tools NOT written (stripped)');
-  assert.strictEqual(team.roles.runner.type, null, 'C6: type NOT written (stripped)');
-  // Confirm on-disk raw carries neither the stripped authority fields nor lost the unmodeled one.
+  // WHOLE object: a field probe would read past a cut key that came back through
+  // the patch, since a key nothing models arrives as undefined and every
+  // `strictEqual(x, null)` on it would fail loudly but one on `undefined` reads
+  // as an absence that was never asserted.
+  assert.deepStrictEqual(team.roles.runner, {
+    template: null, prompt: 'new-runner', brief: 'new brief', worktree: false,
+  }, 'only the editable fields land; the cut ones are ignored');
+  // Confirm on-disk raw took none of them, and kept the unmodeled one.
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
-  assert.ok(!('tools' in onDisk.roles.runner), 'tools absent on disk');
-  assert.ok(!('type' in onDisk.roles.runner), 'type absent on disk');
+  for (const k of ['tools', 'type', 'instantiate', 'standing', 'ephemeral']) {
+    assert.ok(!(k in onDisk.roles.runner), `${k} absent on disk`);
+  }
   assert.strictEqual(onDisk.roles.runner.customField, 'keepme', 'unmodeled raw field preserved');
 });
 
@@ -821,9 +1007,9 @@ function schemaViolations(payload, schema) {
 }
 
 const ROLES = () => ({
-  lead: { instantiate: 'session', brief: 'the lead', prompt: null, template: null, standing: null, ephemeral: false },
-  hand: { instantiate: 'session', brief: 'the hand', prompt: null, template: 'clodex-team-hand', standing: null, ephemeral: false },
-  reviewer: { instantiate: 'subagent', brief: 'the reviewer', prompt: null, template: null, standing: null, ephemeral: false },
+  lead: { brief: 'the lead', prompt: null, template: null, worktree: false },
+  hand: { brief: 'the hand', prompt: null, template: 'clodex-team-hand', worktree: false },
+  reviewer: { brief: 'the reviewer', prompt: null, template: null, worktree: false },
 });
 const TEAM = () => ({ name: 'shop', root: '/r', lead: 'clodex', roles: ROLES() });
 

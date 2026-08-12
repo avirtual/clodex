@@ -16,9 +16,9 @@ test('teamRoleRows: one row per role in key order, reserved keys marked read-onl
   const manifest = {
     name: 'shop',
     roles: {
-      lead: { instantiate: 'session', brief: 'the lead', prompt: 'clodex-team-lead' },
-      reviewer: { instantiate: 'subagent', brief: 'the reviewer' },
-      runner: { instantiate: 'session', brief: 'runs things', prompt: 'p', template: 'fable-lead' },
+      lead: { brief: 'the lead', prompt: 'clodex-team-lead' },
+      reviewer: { brief: 'the reviewer' },
+      runner: { brief: 'runs things', prompt: 'p', template: 'fable-lead' },
       bare: {},
     },
   };
@@ -29,9 +29,11 @@ test('teamRoleRows: one row per role in key order, reserved keys marked read-onl
   assert.strictEqual(rows[1].readOnly, true, 'reviewer read-only');
   assert.strictEqual(rows[2].readOnly, false, 'runner editable');
   assert.strictEqual(rows[3].readOnly, false, 'bare editable');
-  // Descriptive fields surfaced; missing ones normalize to '' + instantiate default.
-  assert.deepStrictEqual(rows[2], { key: 'runner', brief: 'runs things', prompt: 'p', template: 'fable-lead', instantiate: 'session', readOnly: false });
-  assert.deepStrictEqual(rows[3], { key: 'bare', brief: '', prompt: '', template: '', instantiate: 'session', readOnly: false });
+  // Descriptive fields surfaced; missing ones normalize to ''. WHOLE row: the
+  // legibility test pins this model's keys against the schema, and a partial
+  // probe here would let a field the row shows but nothing sets slip through.
+  assert.deepStrictEqual(rows[2], { key: 'runner', brief: 'runs things', prompt: 'p', template: 'fable-lead', readOnly: false });
+  assert.deepStrictEqual(rows[3], { key: 'bare', brief: '', prompt: '', template: '', readOnly: false });
 });
 
 test('teamRoleRows: an absent/empty manifest yields no rows (no throw)', () => {
