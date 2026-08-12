@@ -5094,6 +5094,12 @@ function mkTasks(extra = {}) {
   const overrides = {
     fs: fsReal, path: pathReal, countPending: countPendingReal,
     REGISTRY_DIR: home,
+    // Injected because the stall alarm reads the seat's transcript through it.
+    // Left out, `pathFor` is undefined inside the manager and the evidence probe
+    // throws into its own best-effort catch — the alarm still fires, so the only
+    // symptom is a silently missing field. That is the exact failure shape the
+    // evidence exists to prevent, reproduced in the fixture.
+    pathFor: pathForReal,
     resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj' : null),
     ...extra,
@@ -5556,7 +5562,7 @@ test('t82 a DELIVERED spec still confirms cleanly, with no scary NOTE appended',
     'the happy path must stay quiet — a NOTE on every dispatch would train the lead to ignore the ones that matter');
 });
 
-test('t82 a HELD watchdog nudge does not consume the one-per-episode nudge', () => {
+test('t82 a HELD watchdog nudge does not consume the one-per-episode nudge', async () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
@@ -5567,7 +5573,7 @@ test('t82 a HELD watchdog nudge does not consume the one-per-episode nudge', () 
   f.tstore.save(f.team.root, ts);
   // Held: the lead is un-parkable, so it never sees the nudge.
   f.m._gatedDeliver = () => ({ held: 'blocked on a permission dialog' });
-  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
+  await f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
   assert.strictEqual(f.one('t1').nudgedAt, null,
     'a held nudge reaches nobody, so it must not burn the single nudge this stall episode gets — otherwise the alarm is silently spent');
   // Parked, by contrast, DOES arrive on the lead's next turn and counts — a park is
@@ -5576,12 +5582,12 @@ test('t82 a HELD watchdog nudge does not consume the one-per-episode nudge', () 
     if (typeof onWrite === 'function') onWrite();
     return { parked: 'pk-9', reason: 'idle' };
   };
-  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
+  await f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
   assert.ok(typeof f.one('t1').nudgedAt === 'number',
     'a parked nudge DOES count — it drains on the lead`s next turn, so re-nudging would duplicate it');
 });
 
-test('t168 a nudge QUEUED but never written does not spend the stall episode', () => {
+test('t168 a nudge QUEUED but never written does not spend the stall episode', async () => {
   // The A3 half of t168. `nudgedAt` is read back to spend the one nudge a stall
   // episode gets, so stamping it from _gatedDeliver's synchronous return silences
   // the watchdog forever on exactly the ticket it exists to surface — the bytes sit
@@ -5597,11 +5603,11 @@ test('t168 a nudge QUEUED but never written does not spend the stall episode', (
   f.tstore.save(f.team.root, ts);
   let calls = 0;
   f.m._gatedDeliver = () => { calls++; return { queued: true }; };  // accepted; never written
-  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
+  await f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
   assert.strictEqual(calls, 1, 'ENTER: the sweep must have attempted a nudge, or the assertion below is vacuous');
   assert.strictEqual(f.one('t1').nudgedAt, null,
     'queued is not delivered — a nudge whose write never happened must leave the episode UNSPENT');
-  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
+  await f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
   assert.strictEqual(calls, 2, 'and the next sweep re-nudges, because the alarm was never actually raised');
 });
 
@@ -5613,7 +5619,7 @@ test('t168 a nudge QUEUED but never written does not spend the stall episode', (
 // only activity clears the field and activity is precisely what a stall lacks.
 // Both halves are required: the first alone proves a stamp was skipped, which a
 // stamp that never happens also satisfies.
-test('t168 rework: a nudge written AFTER the seat spoke does not spend the NEW episode', () => {
+test('t168 rework: a nudge written AFTER the seat spoke does not spend the NEW episode', async () => {
   const f = mkTasks();
   f.seat('lead'); const hand = f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
@@ -5624,7 +5630,7 @@ test('t168 rework: a nudge written AFTER the seat spoke does not spend the NEW e
   let calls = 0;
   // Models the real gap: accepted by the queue, written some time later.
   f.m._gatedDeliver = (t_, s_, b_, u_, tag_, onWrite) => { calls++; captured = onWrite; return { queued: true }; };
-  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
+  await f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
   assert.strictEqual(calls, 1, 'ENTER: the sweep found the stall and enqueued a nudge');
   assert.strictEqual(typeof captured, 'function', 'ENTER: the stamp rides onWrite, so there is something to fire late');
   // The seat speaks while the nudge is still in the queue. Real path, not a poke
@@ -5639,7 +5645,7 @@ test('t168 rework: a nudge written AFTER the seat spoke does not spend the NEW e
   // And the alarm is still armed: the next stall must reach the lead.
   stall();
   f.m._gatedDeliver = (t_, s_, b_, u_, tag_, onWrite) => { calls++; if (typeof onWrite === 'function') onWrite(); return { queued: true }; };
-  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
+  await f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
   assert.strictEqual(calls, 2, 'the next stall nudges — a skipped stamp that also killed the alarm would be no better than stamping');
   assert.ok(typeof f.one('t1').nudgedAt === 'number', 'and THAT nudge, written in its own episode, spends it');
 });
@@ -5662,7 +5668,7 @@ test('t168 _gatedDeliver reports QUEUED, not delivered — the write happens lat
     'and the old key must be GONE — a caller left reading `.delivered` would silently see undefined and treat every success as a failure');
 });
 
-test('t82 the watchdog nudge itself stays passive (decision: alarm to the lead, but not a work assignment)', () => {
+test('t82 the watchdog nudge itself stays passive (decision: alarm to the lead, but not a work assignment)', async () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
@@ -5671,7 +5677,7 @@ test('t82 the watchdog nudge itself stays passive (decision: alarm to the lead, 
   ts[0].lastActivityAt = Date.now() - (stallMs * 4);
   f.tstore.save(f.team.root, ts);
   f.gated.length = 0; f.urgents.length = 0;
-  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
+  await f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
   assert.strictEqual(f.gated.length, 1, 'ENTER: the sweep found the stalled ticket and nudged');
   assert.strictEqual(f.urgents[0], false,
     'the watchdog fires on a SCHEDULE against a possibly-idle lead; waking it every sweep re-bills a full context to report a ticket that has been quiet for hours');
@@ -6789,7 +6795,7 @@ test('list(): the assignee seat carries its open ticket id (sidebar badge seed)'
 
 // --- watchdog: stall nudges the lead once per episode; backlog exempt ---------
 
-test('watchdog: a stalled ASSIGNED ticket nudges the lead ONCE; a second sweep is silent', () => {
+test('watchdog: a stalled ASSIGNED ticket nudges the lead ONCE; a second sweep is silent', async () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
@@ -6798,23 +6804,23 @@ test('watchdog: a stalled ASSIGNED ticket nudges the lead ONCE; a second sweep i
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000; // 1h ago
   f.tstore.save(f.team.root, arr);
   f.gated.length = 0;
-  f.m._sweepTickets(Date.now());
+  await f.m._sweepTickets(Date.now());
   const nudges = f.gated.filter((g) => g.target === 'lead' && /stalled/.test(g.body));
   assert.strictEqual(nudges.length, 1, 'exactly one nudge to the lead');
   assert.ok(typeof f.one('t1').nudgedAt === 'number', 'ticket marked nudged');
   f.gated.length = 0;
-  f.m._sweepTickets(Date.now());
+  await f.m._sweepTickets(Date.now());
   assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 0, 'no second nudge in the same episode');
 });
 
-test('watchdog: activity resets the stall episode (nudge fires again after a re-stall)', () => {
+test('watchdog: activity resets the stall episode (nudge fires again after a re-stall)', async () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   let arr = f.load();
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
   f.tstore.save(f.team.root, arr);
-  f.m._sweepTickets(Date.now());
+  await f.m._sweepTickets(Date.now());
   assert.ok(f.one('t1').nudgedAt, 'nudged');
   // A turn on the assignee seat resets the episode.
   f.m._emitActivity('team-hand', 'thinking', false);
@@ -6825,7 +6831,7 @@ test('watchdog: activity resets the stall episode (nudge fires again after a re-
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
   f.tstore.save(f.team.root, arr);
   f.gated.length = 0;
-  f.m._sweepTickets(Date.now());
+  await f.m._sweepTickets(Date.now());
   assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1, 're-nudged after the reset');
 });
 
@@ -6954,14 +6960,14 @@ test('task park: lead-gated, open-only, and bounces an unknown id', () => {
   assert.ok(f.injected.some((x) => /is done, not open/.test(x)), 'a closed ticket cannot be parked');
 });
 
-test('parking clears nudgedAt, so the unpark starts a fresh stall episode', () => {
+test('parking clears nudgedAt, so the unpark starts a fresh stall episode', async () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   const arr = f.load();
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
   f.tstore.save(f.team.root, arr);
-  f.m._sweepTickets(Date.now());
+  await f.m._sweepTickets(Date.now());
   assert.ok(f.one('t1').nudgedAt, 'ENTER: stamped by the watchdog');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
   // A stamp left behind would spend the one nudge of the episode that begins
@@ -6970,7 +6976,7 @@ test('parking clears nudgedAt, so the unpark starts a fresh stall episode', () =
   assert.strictEqual(f.one('t1').nudgedAt, null, 'the stale stamp is cleared');
 });
 
-test('watchdog: a PARKED stalled ticket is EXEMPT even though it has an assignee', () => {
+test('watchdog: a PARKED stalled ticket is EXEMPT even though it has an assignee', async () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'parked' });
@@ -6978,7 +6984,7 @@ test('watchdog: a PARKED stalled ticket is EXEMPT even though it has an assignee
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
   f.tstore.save(f.team.root, arr);
   f.gated.length = 0;
-  f.m._sweepTickets(Date.now());
+  await f.m._sweepTickets(Date.now());
   // The assignee is set, so ONLY the parked term can be exempting this — which
   // is what makes this different from the backlog case below.
   assert.strictEqual(f.one('t1').assignee, 'hand', 'ENTER: assigned, so the backlog exemption does not apply');
@@ -7011,7 +7017,7 @@ test('task list marks a parked row, so an open list cannot read as work in fligh
   assert.match(out, /t2 \[open\] hand/, 'and the live row is unchanged');
 });
 
-test('watchdog: a BACKLOG (unassigned) stalled ticket is EXEMPT', () => {
+test('watchdog: a BACKLOG (unassigned) stalled ticket is EXEMPT', async () => {
   const f = mkTasks();
   f.seat('lead');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'backlog' });
@@ -7019,12 +7025,12 @@ test('watchdog: a BACKLOG (unassigned) stalled ticket is EXEMPT', () => {
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
   f.tstore.save(f.team.root, arr);
   f.gated.length = 0;
-  f.m._sweepTickets(Date.now());
+  await f.m._sweepTickets(Date.now());
   assert.deepStrictEqual(f.gated.filter((g) => /stalled/.test(g.body)), [], 'backlog tickets never nudge');
   assert.strictEqual(f.one('t1').nudgedAt, null);
 });
 
-test('watchdog: a per-team watchdogMs override tightens the stall window', () => {
+test('watchdog: a per-team watchdogMs override tightens the stall window', async () => {
   const f = mkTasks();
   f.team.watchdogMs = 1000; // 1s
   f.seat('lead'); f.seat('team-hand');
@@ -7033,8 +7039,154 @@ test('watchdog: a per-team watchdogMs override tightens the stall window', () =>
   arr[0].lastActivityAt = Date.now() - 5000; // 5s ago — past 1s, well within the 30m default
   f.tstore.save(f.team.root, arr);
   f.gated.length = 0;
-  f.m._sweepTickets(Date.now());
+  await f.m._sweepTickets(Date.now());
   assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1, 'the tighter override fires the nudge');
+});
+
+// --- t322: the alarm re-escalates, and it carries evidence ------------------
+//
+// Both halves come from one measured incident. On t312 the watchdog fired at 30m
+// with "hand quiet 30m", the lead dismissed it as benign after seeing a dirty
+// worktree, and the remaining 28 minutes of a 55.7m stall raised NOTHING —
+// `nudgedAt` is cleared only by seat activity, which never comes during a stall.
+
+test('t322 a stall that keeps stalling speaks again once the quiet has DOUBLED', async () => {
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const quiet = Date.now() - stallMs;          // t0: the seat's last activity
+  const arr = f.load();
+  arr[0].lastActivityAt = quiet;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+
+  const at = (mins) => quiet + mins * 60 * 1000;
+  await f.m._sweepTickets(at(30));
+  assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1, 'the first alarm fires at the window');
+
+  // The measured regression: after the lead dismissed the 30m alarm, nothing
+  // spoke again for the rest of the stall.
+  await f.m._sweepTickets(at(31));
+  await f.m._sweepTickets(at(45));
+  assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1,
+    'it does not re-alarm every sweep — that is the flood the one-shot rule existed to prevent');
+
+  await f.m._sweepTickets(at(60));
+  const nudges = f.gated.filter((g) => /stalled/.test(g.body));
+  assert.strictEqual(nudges.length, 2, 'but at DOUBLE the quiet it speaks again');
+  assert.match(nudges[1].body, /STILL stalled \(repeat 1\)/, 'and the repeat says it is one');
+  assert.match(nudges[1].body, /quiet 1h/, 'carrying the updated idle time, not the first alarm`s');
+
+  await f.m._sweepTickets(at(90));
+  assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 2, 'quiet again until the next doubling');
+  await f.m._sweepTickets(at(120));
+  assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 3, 'which lands at 2h — 30m, 1h, 2h');
+});
+
+test('t322 a FIRST alarm is never labelled a repeat, even with a stale nudgedAt', async () => {
+  // `_stampTicketRevival` writes `lastActivityAt` without clearing `nudgedAt` —
+  // the one `lastActivityAt` writer that does not. So a ticket can enter a fresh
+  // stall episode carrying a stamp older than its own last activity. The gate
+  // treats that as "this episode has not spoken yet" and alarms; reading the raw
+  // field for the label then calls that first alarm a repeat.
+  //
+  // It self-heals after one alarm (the next stamp is current), which is why it
+  // needs a pin: the window is one message wide and the message is the lie —
+  // telling the lead it already answered something it never saw.
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const arr = f.load();
+  const quiet = Date.now() - stallMs * 2;
+  arr[0].lastActivityAt = quiet;
+  arr[0].nudgedAt = quiet - 60_000;   // stamped BEFORE the activity: a previous episode's
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+  await f.m._sweepTickets(Date.now());
+
+  const nudges = f.gated.filter((g) => /stalled/.test(g.body));
+  assert.strictEqual(nudges.length, 1, 'ENTER: the stale stamp does not suppress the alarm — it still fires');
+  assert.doesNotMatch(nudges[0].body, /STILL stalled|repeat/,
+    'and it is the first alarm of this episode, so it must not claim to be a repeat');
+});
+
+test('t322 the alarm carries the seat`s last tool, and never dirty on its own', async () => {
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+
+  // A transcript ending in a tool_use with NO tool_result: the t312 shape, where
+  // a SIGKILL ended the turn holding the call.
+  const runDir = pathReal.join(f.home, 'run', 'team-hand');
+  fsReal.mkdirSync(runDir, { recursive: true });
+  const real = pathReal.join(runDir, 'real.jsonl');
+  fsReal.writeFileSync(real, [
+    JSON.stringify({ message: { content: [{ type: 'tool_use', name: 'Read', id: 'x1' }] } }),
+    JSON.stringify({ message: { content: [{ type: 'tool_result', tool_use_id: 'x1', is_error: false }] } }),
+    JSON.stringify({ message: { content: [{ type: 'tool_use', name: 'Bash', id: 'x2' }] } }),
+  ].join('\n') + '\n');
+  fsReal.symlinkSync(real, pathReal.join(runDir, 'transcript.jsonl'));
+
+  const arr = f.load();
+  arr[0].lastActivityAt = Date.now() - stallMs * 2;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+  await f.m._sweepTickets(Date.now());
+
+  const nudges = f.gated.filter((g) => /stalled/.test(g.body));
+  // ENTER: the alarm under test survived the reduction. Every assertion below is
+  // about the CONTENT of a nudge, and all of them are vacuously true of none.
+  assert.strictEqual(nudges.length, 1, 'ENTER: the stalled ticket produced exactly one alarm');
+  assert.match(nudges[0].body, /last tool Bash never returned/,
+    'the discriminator the lead lacked on t312 — a call that never came back');
+  assert.doesNotMatch(nudges[0].body, /last tool Read/, 'the completed call before it is not the story');
+});
+
+test('t322 an unreadable transcript drops the field rather than guessing', async () => {
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const arr = f.load();
+  arr[0].lastActivityAt = Date.now() - stallMs * 2;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+  // No transcript symlink exists at all for this seat.
+  await f.m._sweepTickets(Date.now());
+
+  const nudges = f.gated.filter((g) => /stalled/.test(g.body));
+  assert.strictEqual(nudges.length, 1, 'ENTER: the alarm still fires without evidence — evidence is an enrichment, not a gate');
+  assert.doesNotMatch(nudges[0].body, /last tool/, 'and it claims nothing about a tool it could not read');
+});
+
+test('t322 a seat that wakes while the git probe runs is not alarmed about', async () => {
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const arr = f.load();
+  arr[0].lastActivityAt = Date.now() - stallMs * 2;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+  // The probe is async, so the seat can speak inside it. _touchTicketActivity is
+  // what would really do this; the write is equivalent and does not need a wire.
+  f.m._stallEvidence = async () => {
+    const live = f.load();
+    live[0].lastActivityAt = Date.now();
+    f.tstore.save(f.team.root, live);
+    return { tool: null, commits: null, dirty: null };
+  };
+  await f.m._sweepTickets(Date.now());
+  assert.deepStrictEqual(f.gated.filter((g) => /stalled/.test(g.body)), [],
+    'a seat that came back mid-probe is working, and an alarm about it is the false positive this ticket is about');
 });
 
 // --- [agent:team <verb>] — T29 Layer A Slice 2 metadata mutation ------------
@@ -11567,7 +11719,7 @@ test('t295: an inherited ticket gives the sibling a badge and keeps its stall cl
 // manifest, so every sweep deletes their watch entry and broadcasts a null badge,
 // with no later pass to put them back. Silent, and it costs a working seat its
 // stall detection.
-test('sweep: two teams on one project sweep the board ONCE but reconcile SEPARATELY', () => {
+test('sweep: two teams on one project sweep the board ONCE but reconcile SEPARATELY', async () => {
   const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-2team-'));
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const mkT = (name) => ({
@@ -11610,7 +11762,7 @@ test('sweep: two teams on one project sweep the board ONCE but reconcile SEPARAT
   const realSweep = m._sweepTeamTickets.bind(m);
   m._sweepTeamTickets = (team, now) => { sweeps += 1; return realSweep(team, now); };
 
-  m._sweepTickets(Date.now());
+  await m._sweepTickets(Date.now());
 
   assert.strictEqual(sweeps, 1, 'the shared board is swept once, not once per team');
   // ENTER: the reduction below is a filter on a broadcast channel. If reconcile

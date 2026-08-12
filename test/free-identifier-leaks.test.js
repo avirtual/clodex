@@ -86,6 +86,11 @@ const SCANNED_MODULES = [
   // caught by nothing else in this file — session-manager.js is not in the
   // reverse-scan list. `fs`/`path` arrive as parameters, so it is a pure leaf.
   'tickets-store.js',
+  // The stall alarm's evidence reader (t322). `fs` arrives as a parameter and
+  // the manager reads it through the deps object, so a `log.`/`path.` reaching
+  // back into the coordinator scope from here would otherwise ship green —
+  // nothing else in this file guards it.
+  'stall-evidence.js',
   'session-meta.js',
   // The ⓘ panel's data layer (t-sessioninfo). Every source it reads — fs,
   // readline, homedir, the registry dir, userData — arrives injected, which is

@@ -411,7 +411,7 @@ test('an escalation the lead never RECEIVED keeps the hold, so the watchdog re-s
   const old = Date.now() - (60 * 60 * 1000);
   const t = f.one();
   f.tstore.save(f.team.root, [{ ...t, lastActivityAt: old, nudgedAt: null }]);
-  f.m._sweepTeamTickets(f.team, Date.now());
+  await f.m._sweepTeamTickets(f.team, Date.now());
 
   const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
   assert.strictEqual(nudges.length, 1, 'the ticket is still in flight and still nudgeable');
@@ -463,7 +463,7 @@ test('closing a ticket that was already nudged starts a fresh stall episode', as
   const t = f.one();
   f.tstore.save(f.team.root, [{ ...t, loopStep: 'verify', lastActivityAt: old, nudgedAt: null }]);
   f.gated.length = 0;
-  f.m._sweepTeamTickets(f.team, Date.now());
+  await f.m._sweepTeamTickets(f.team, Date.now());
   const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
   assert.strictEqual(nudges.length, 1, 'a dead verify step is still surfaced');
 });
@@ -585,13 +585,13 @@ test('an escalation with no live seat behind it still RELEASES the hold', async 
   assert.strictEqual(ticketInFlight(t), false, 'the ticket is finished with the lead');
 });
 
-test('the nudge for a loop-held ticket names the STEP, not the finished hand', () => {
+test('the nudge for a loop-held ticket names the STEP, not the finished hand', async () => {
   const repo = mkRepo();
   const f = mkLoop({ repo });
   const old = Date.now() - (60 * 60 * 1000);
   f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'review', lastActivityAt: old, nudgedAt: null }]);
 
-  f.m._sweepTeamTickets(f.team, Date.now());
+  await f.m._sweepTeamTickets(f.team, Date.now());
 
   const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
   assert.strictEqual(nudges.length, 1, 'ENTER: the in-flight ticket was nudged');
@@ -727,7 +727,7 @@ test('a ticket with no worktree closes exactly as before — no loop, no loopSte
 
 // ── §E: the watchdog hole ──────────────────────────────────────────────────
 
-test('a done ticket the loop still holds is swept; a finished one is not', () => {
+test('a done ticket the loop still holds is swept; a finished one is not', async () => {
   const repo = mkRepo();
   const f = mkLoop({ repo });
   const old = Date.now() - (60 * 60 * 1000);
@@ -736,7 +736,7 @@ test('a done ticket the loop still holds is swept; a finished one is not', () =>
     { ...f.one(), id: 'finished', state: 'done', lastActivityAt: old, nudgedAt: null },
   ]);
 
-  f.m._sweepTeamTickets(f.team, Date.now());
+  await f.m._sweepTeamTickets(f.team, Date.now());
 
   const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
   // ENTER: the interesting row survived the reduction. A sweep that produced no
@@ -745,15 +745,15 @@ test('a done ticket the loop still holds is swept; a finished one is not', () =>
   assert.match(nudges[0].body, /\[ticket held\]/, 'and it is the held one, not the finished one');
 });
 
-test('an in-flight done ticket still gets ONE nudge per episode, not one per sweep', () => {
+test('an in-flight done ticket still gets ONE nudge per episode, not one per sweep', async () => {
   const repo = mkRepo();
   const f = mkLoop({ repo });
   const old = Date.now() - (60 * 60 * 1000);
   f.tstore.save(f.team.root, [{ ...f.one(), id: 'held', state: 'done', loopStep: 'review', lastActivityAt: old, nudgedAt: null }]);
 
-  f.m._sweepTeamTickets(f.team, Date.now());
-  f.m._sweepTeamTickets(f.team, Date.now());
-  f.m._sweepTeamTickets(f.team, Date.now());
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  await f.m._sweepTeamTickets(f.team, Date.now());
 
   const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
   // The onWrite stamp guard has to accept this shape too. If it still tested
