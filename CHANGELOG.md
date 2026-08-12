@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- The Tickets panel no longer needs a team, and can now edit the board. It used
+  to find boards by walking the list of teams, so a project without one showed
+  nothing at all; it now lists projects directly, with team membership shown as
+  extra detail where it exists. Tickets can be opened, re-specced, assigned to a
+  live session, closed and cancelled from the panel — previously it was
+  read-only and every change had to go through an agent. Editing is desktop-only;
+  the browser frontend stays read-only. Note that closing a ticket here does not
+  hand the seat its next ticket or write the cost record, which `[agent:task
+  done]` still does.
+
 - Tickets no longer require a team. `[agent:task add/list/done/...]` used to
   refuse outright unless a `team.json` owned the session's directory, so filing
   a note to yourself meant first inventing a team to be your own lead. The verbs
