@@ -13,7 +13,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { runTicketsMigration, mergeBoards, MARKER } = require('../tickets-migrate');
+const { runTicketsMigration, mergeBoards, reconcileBoard, MARKER } = require('../tickets-migrate');
 const { createTicketsStore } = require('../tickets-store');
 const { projectDirFor } = require('../clodex-paths');
 
@@ -56,19 +56,27 @@ test('tickets-migrate: a team board is COPIED onto its project board, source lef
   assert.strictEqual(res.migrated, 2);
 });
 
-test('tickets-migrate: a SECOND run is a no-op — the marker short-circuits it', () => {
+// The pass is no longer SKIPPED on the second run — it reruns and reconciles —
+// but it must still change nothing when the source has not moved. The marker's
+// timestamp is checked too: it dates the initial copy, and a run that restamps
+// it destroys the only record of when that was.
+test('tickets-migrate: a SECOND run changes nothing when the source has not moved', () => {
   const home = mkHome();
   const root = '/proj/alpha';
-  mkTeam(home, 'alpha', { root, tickets: [{ id: 't1', state: 'open' }] });
+  const teamDir = mkTeam(home, 'alpha', { root, tickets: [{ id: 't1', state: 'open', lastActivityAt: 1000 }] });
   const store = createTicketsStore({ clodexHome: home });
 
   runTicketsMigration({ root: home, fs });
   const first = store.load(root);
+  assert.strictEqual(first.length, 1, 'ENTER: the first run must have populated the board');
+  const stamp = fs.readFileSync(path.join(teamDir, MARKER), 'utf-8');
   const res = runTicketsMigration({ root: home, fs });
 
   assert.deepStrictEqual(store.load(root), first, 'the board is byte-identical after the second run');
   assert.strictEqual(res.migrated, 0);
-  assert.deepStrictEqual(res.teams, [{ team: 'alpha', skipped: 'already migrated' }]);
+  assert.deepStrictEqual(res.teams, [{ team: 'alpha', added: 0, reconciled: 0, projectRoot: root }]);
+  assert.strictEqual(fs.readFileSync(path.join(teamDir, MARKER), 'utf-8'), stamp,
+    'the marker still dates the INITIAL copy, not the latest pass');
 });
 
 test('tickets-migrate: with the marker DELETED by hand, a re-run still adds nothing (provenance, not the marker)', () => {
@@ -189,7 +197,7 @@ test('mergeBoards: a NATIVE destination record does not suppress a team record w
 
 test('tickets-migrate: no teams dir at all is a silent no-op', () => {
   const res = runTicketsMigration({ root: mkHome(), fs });
-  assert.deepStrictEqual(res, { migrated: 0, teams: [] });
+  assert.deepStrictEqual(res, { migrated: 0, reconciled: 0, teams: [] });
 });
 
 test('tickets-migrate: an unparseable source board contributes nothing rather than throwing', () => {
@@ -298,6 +306,183 @@ test('tickets-migrate: an ABSENT destination board is empty, not an error', () =
 
   const res = runTicketsMigration({ root: home, fs });
 
-  assert.deepStrictEqual(res.teams, [{ team: 'alpha', added: 1, projectRoot: root }]);
+  assert.deepStrictEqual(res.teams, [{ team: 'alpha', added: 1, reconciled: 0, projectRoot: root }]);
   assert.strictEqual(createTicketsStore({ clodexHome: home }).load(root).length, 1);
+});
+
+// ── reconcile-by-recency (t302) ────────────────────────────────────────────────
+// The incident: the copy ran two minutes before a ticket closed, so the
+// destination got a snapshot of work still in flight and the marker guaranteed
+// that snapshot could never be corrected. Every case below stages exactly that
+// shape — a destination record that is STALE, asserted stale before the run —
+// because a fixture where source and destination already agree tests nothing.
+
+test('tickets-migrate: a destination snapshot taken mid-flight is RE-SYNCED from a newer source', () => {
+  const home = mkHome();
+  const root = '/proj/alpha';
+  const teamDir = mkTeam(home, 'alpha', { root, tickets: [{ id: 't1', state: 'open', lastActivityAt: 1000 }] });
+  const store = createTicketsStore({ clodexHome: home });
+
+  runTicketsMigration({ root: home, fs });   // the mid-flight snapshot
+
+  // The team board moves on: the ticket closes AFTER the copy was taken.
+  fs.writeFileSync(path.join(teamDir, 'tickets.json'), JSON.stringify([
+    { id: 't1', state: 'done', closedBy: 'hand', lastActivityAt: 2000 },
+  ]));
+
+  // ENTER: the destination must really be stale before the run, or the assertion
+  // after it is satisfied by a fixture that never needed reconciling.
+  const before = store.load(root);
+  assert.deepStrictEqual(before, [{ id: 't1', state: 'open', lastActivityAt: 1000, originTeam: 'alpha' }],
+    'ENTER: the destination holds the STALE open snapshot going in');
+
+  const res = runTicketsMigration({ root: home, fs });
+
+  assert.deepStrictEqual(store.load(root), [
+    { id: 't1', state: 'done', closedBy: 'hand', lastActivityAt: 2000, originTeam: 'alpha' },
+  ], 'the whole record is replaced from the newer source, provenance kept');
+  assert.strictEqual(res.reconciled, 1);
+  assert.strictEqual(res.migrated, 0, 'a re-sync is not an arrival — nothing was added');
+});
+
+test('tickets-migrate: a destination NEWER than the source is left alone', () => {
+  const home = mkHome();
+  const root = '/proj/alpha';
+  mkTeam(home, 'alpha', { root, tickets: [{ id: 't1', state: 'open', lastActivityAt: 1000 }] });
+  const store = createTicketsStore({ clodexHome: home });
+
+  runTicketsMigration({ root: home, fs });
+
+  // Post-cutover work: the PROJECT board advances, the frozen team board does not.
+  const advanced = [{ id: 't1', state: 'done', closedBy: 'lead', lastActivityAt: 9000, originTeam: 'alpha' }];
+  store.save(root, advanced);
+  assert.strictEqual(store.load(root)[0].lastActivityAt, 9000, 'ENTER: the destination is the newer side going in');
+
+  const res = runTicketsMigration({ root: home, fs });
+
+  assert.deepStrictEqual(store.load(root), advanced,
+    'the frozen team board must never drag a live project record backwards');
+  assert.strictEqual(res.reconciled, 0);
+});
+
+// The self-termination property, driven rather than argued: once the destination
+// has moved past the frozen source, repeated runs are permanent no-ops. This is
+// what replaces an end-date, a version check and a second marker.
+test('tickets-migrate: reconcile self-terminates — once the destination leads, further runs are no-ops', () => {
+  const home = mkHome();
+  const root = '/proj/alpha';
+  const teamDir = mkTeam(home, 'alpha', { root, tickets: [{ id: 't1', state: 'open', lastActivityAt: 1000 }] });
+  const store = createTicketsStore({ clodexHome: home });
+
+  runTicketsMigration({ root: home, fs });
+  fs.writeFileSync(path.join(teamDir, 'tickets.json'), JSON.stringify([
+    { id: 't1', state: 'done', lastActivityAt: 2000 },
+  ]));
+  const resynced = runTicketsMigration({ root: home, fs });
+  assert.strictEqual(resynced.reconciled, 1, 'ENTER: a re-sync must have happened, or termination is vacuous');
+
+  // The project board now advances on its own; the team board is frozen forever.
+  store.save(root, [{ ...store.load(root)[0], state: 'open', lastActivityAt: 3000 }]);
+  const settled = store.load(root);
+
+  for (let i = 0; i < 3; i++) {
+    const res = runTicketsMigration({ root: home, fs });
+    assert.strictEqual(res.reconciled, 0, `run ${i + 2} must reconcile nothing`);
+    assert.deepStrictEqual(store.load(root), settled, `run ${i + 2} must not touch the board`);
+  }
+});
+
+test('tickets-migrate: a re-sync keeps the RE-ISSUED id and its provenance, not the source id', () => {
+  const home = mkHome();
+  const root = '/proj/shared';
+  mkTeam(home, 'alpha', { root, tickets: [{ id: 't1', state: 'open', lastActivityAt: 1000 }] });
+  const betaDir = mkTeam(home, 'beta', { root, tickets: [{ id: 't1', state: 'open', spec: 'beta', lastActivityAt: 1000 }] });
+  const store = createTicketsStore({ clodexHome: home });
+
+  runTicketsMigration({ root: home, fs });
+  const moved = store.load(root).find((t) => t.originTeam === 'beta');
+  assert.strictEqual(moved.id, 't2', 'ENTER: beta\'s record must really have been re-issued');
+  assert.strictEqual(moved.formerId, 't1');
+  assert.strictEqual(moved.state, 'open', 'ENTER: and its destination copy is the stale one');
+
+  fs.writeFileSync(path.join(betaDir, 'tickets.json'), JSON.stringify([
+    { id: 't1', state: 'done', spec: 'beta', lastActivityAt: 5000 },
+  ]));
+
+  const res = runTicketsMigration({ root: home, fs });
+
+  const after = store.load(root).find((t) => t.originTeam === 'beta');
+  assert.strictEqual(res.reconciled, 1);
+  assert.strictEqual(after.state, 'done', 'the newer content arrived');
+  assert.strictEqual(after.id, 't2', 'the id every branch name and artifact dir already uses is kept');
+  assert.strictEqual(after.formerId, 't1', 'and its provenance survives the replacement');
+  assert.strictEqual(store.load(root).length, 2, 'a re-sync replaces in place — it never appends');
+});
+
+test('reconcileBoard: a NATIVE destination record is never reconciled against a same-id source', () => {
+  // A native record has no originTeam, so it is not this team's to overwrite —
+  // even when the team's own t1 happens to be newer.
+  const dest = [{ id: 't1', state: 'open', lastActivityAt: 1 }];
+  const { board, reconciled } = reconcileBoard(dest, [{ id: 't1', state: 'done', lastActivityAt: 9999 }], 'alpha');
+  assert.strictEqual(reconciled, 0);
+  assert.deepStrictEqual(board, dest, 'the project\'s own ticket is not a stale copy of anyone\'s');
+});
+
+test('reconcileBoard: equal timestamps do not reconcile — strictly newer, or nothing', () => {
+  const dest = [{ id: 't1', state: 'open', lastActivityAt: 500, originTeam: 'alpha' }];
+  const { board, reconciled } = reconcileBoard(dest, [{ id: 't1', state: 'done', lastActivityAt: 500 }], 'alpha');
+  assert.strictEqual(reconciled, 0);
+  assert.deepStrictEqual(board, dest, 'an equal stamp is the same write — replacing on it would churn every launch');
+});
+
+test('reconcileBoard: a source with no usable timestamp never wins', () => {
+  const dest = [{ id: 't1', state: 'done', lastActivityAt: 500, originTeam: 'alpha' }];
+  for (const bad of [undefined, null, 'yesterday', NaN]) {
+    const { board, reconciled } = reconcileBoard(dest, [{ id: 't1', state: 'open', lastActivityAt: bad }], 'alpha');
+    assert.strictEqual(reconciled, 0, `lastActivityAt=${String(bad)} must not reconcile`);
+    assert.deepStrictEqual(board, dest);
+  }
+});
+
+// A destination that has NO timestamp is an unmodified copy — every write path
+// in session-manager stamps lastActivityAt — so a stamped source is the newer of
+// the two and must win. Without this the exact records the migration copied
+// before the field existed would be frozen stale forever.
+test('reconcileBoard: a destination with no timestamp loses to a stamped source', () => {
+  const dest = [{ id: 't1', state: 'open', originTeam: 'alpha' }];
+  const { board, reconciled } = reconcileBoard(dest, [{ id: 't1', state: 'done', lastActivityAt: 5 }], 'alpha');
+  assert.strictEqual(reconciled, 1);
+  assert.deepStrictEqual(board, [{ id: 't1', state: 'done', lastActivityAt: 5, originTeam: 'alpha' }]);
+});
+
+// Provenance is taken from the DESTINATION, deleted when absent there — a
+// formerId sitting on the source (the team board is hand-editable, and a record
+// re-issued in some other migration carries one) must not be adopted as this
+// board's provenance.
+test('reconcileBoard: a source formerId/migratedAt does not leak into the replacement', () => {
+  const dest = [{ id: 't1', state: 'open', lastActivityAt: 1, originTeam: 'alpha' }];
+  const src = [{ id: 't1', state: 'done', lastActivityAt: 2, formerId: 't99', migratedAt: 'bogus' }];
+  const { board, reconciled } = reconcileBoard(dest, src, 'alpha');
+  assert.strictEqual(reconciled, 1, 'ENTER: the replacement must have happened for the absence below to mean anything');
+  assert.deepStrictEqual(board, [{ id: 't1', state: 'done', lastActivityAt: 2, originTeam: 'alpha' }]);
+});
+
+// Ruling 2 keeps must-fix 3 from the t301 review intact: the reconcile path runs
+// AFTER readDestination, so an unreadable destination is still a per-team error
+// with no marker and no save — the reconcile must not open a way around it.
+test('tickets-migrate: reconcile does not bypass the unreadable-destination guard', () => {
+  const home = mkHome();
+  const root = '/proj/alpha';
+  mkTeam(home, 'alpha', { root, tickets: [{ id: 't1', state: 'done', lastActivityAt: 9999 }] });
+  const destFile = path.join(projectDirFor(home, root), 'tickets.json');
+  fs.mkdirSync(path.dirname(destFile), { recursive: true });
+  fs.writeFileSync(destFile, '{ not json');
+  fs.writeFileSync(path.join(home, 'teams', 'alpha', MARKER), 'already migrated\n');
+
+  const res = runTicketsMigration({ root: home, fs });
+
+  const alpha = res.teams.find((t) => t.team === 'alpha');
+  assert.ok(alpha && alpha.error, 'ENTER: a corrupt destination is still an ERROR on a marked team');
+  assert.strictEqual(fs.readFileSync(destFile, 'utf-8'), '{ not json', 'and is never overwritten');
+  assert.strictEqual(res.reconciled, 0);
 });

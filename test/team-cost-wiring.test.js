@@ -14,9 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { createSessionManager } = require('../session-manager');
-const { createTicketsStore } = require('../tickets-store');
 const { resolveProxyAgentId } = require('../proxy-util');
-const tstore = createTicketsStore();
 
 // A persistence double that behaves like the real store on the two operations
 // the labeling path uses: upsert spread-merges, get returns the merged entry.
