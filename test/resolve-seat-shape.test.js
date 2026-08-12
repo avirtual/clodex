@@ -162,6 +162,52 @@ test('review purpose: the whole shape, WITH a template (the production config)',
   assert.strictEqual(shape.tpl.name, 'rv', 'the template rides along for _applyTemplatePersistence');
 });
 
+test('ticket purpose: the whole shape, WITH a template', () => {
+  // The ticket arm's other pins are all field subsets, so a field wired to the
+  // wrong source ONLY when shape is non-null (effectiveTools, beyondCap,
+  // promptEscaped are the candidates) would slip past every one of them.
+  // Same over-stuffed template as the review pin — here almost all of it is
+  // honored, which is the difference between the two arms.
+  const m = managerWith([{
+    name: 'ht', type: 'claude', cwd: '/repo',
+    tools: ['Read', 'Grep'],           // no cap off the review path: inert here
+    intents: ['dm'],
+    env: { CLODEX_DISABLE_IPC_PROMPT: '1' },
+    systemPromptFile: 'tpl-brief',
+    agents: ['a'], denyBuiltins: ['d'], disabledTools: ['X'],
+    disabledSkills: ['s'], injectSkills: ['i'],
+    appendPromptFiles: ['ap'], execCommands: ['ec'], extraArgs: ['--foo'],
+  }], { leadArgs: ['--dangerously-skip-permissions'] });
+  const team = teamWith({ hand: { worktree: true, template: 'ht', prompt: 'role-brief' } });
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+  assert.deepStrictEqual(shape, {
+    type: 'claude',
+    cwd: '/repo',
+    tpl: shape.tpl,
+    extraArgs: ['--foo'],
+    agents: ['a'],
+    denyBuiltins: ['d'],
+    disabledTools: ['X'],
+    disabledSkills: ['s'],
+    injectSkills: ['i'],
+    // Reviewer-only concepts, inert on this arm even with a template present.
+    effectiveTools: null,
+    beyondCap: [],
+    promptEscaped: null,
+    // The ROLE prompt wins over the template's.
+    systemPromptFile: 'role-brief',
+    appendPromptFiles: ['ap'],
+    execCommands: ['ec'],
+    intents: ['dm'],
+    env: { CLODEX_DISABLE_IPC_PROMPT: '1' },
+    envDropped: [],
+    envBadType: [],
+    workspaceId: 'ws-7',
+    ephemeral: true,
+  });
+  assert.strictEqual(shape.tpl.name, 'ht', 'the template rides along for _applyTemplatePersistence');
+});
+
 // --- the reviewer's three hard rules, now properties of the resolver ---
 
 test('a reviewer template naming type codex still resolves claude', () => {
@@ -266,9 +312,17 @@ test('an unknown purpose throws rather than resolving the weaker seat', () => {
       `purpose ${JSON.stringify(bad)} must not silently resolve`);
   }
   // The two legal values still work — a guard that rejected everything would
-  // also pass the assertions above.
-  assert.strictEqual(m.resolveSeatShape(team, 'reviewer', 'review', LEAD).type, 'claude');
-  assert.strictEqual(m.resolveSeatShape(team, 'hand', 'ticket', LEAD).type, 'claude');
+  // also pass the assertions above. Asserted on effectiveTools, NOT on type:
+  // type is 'claude' on both arms, so it proves only "did not throw" and a
+  // mutant inverting `const review = purpose === 'review'` would survive.
+  assert.deepStrictEqual(
+    m.resolveSeatShape(team, 'reviewer', 'review', LEAD).effectiveTools, REVIEWER_CAP,
+    "'review' must take the review arm, not merely resolve",
+  );
+  assert.strictEqual(
+    m.resolveSeatShape(team, 'hand', 'ticket', LEAD).effectiveTools, null,
+    "'ticket' must take the ticket arm — no cap applies off the review path",
+  );
 });
 
 // --- preserved details a refactor is most likely to smooth away ---

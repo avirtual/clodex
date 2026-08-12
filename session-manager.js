@@ -4404,7 +4404,17 @@ function createSessionManager(deps) {
       if (!def) { reply(`error: team "${team.name}" has no "reviewer" role to spawn`); return; }
 
       const templateName = def.template || DEFAULT_REVIEWER_TEMPLATE;
-      const shape = this.resolveSeatShape(team, 'reviewer', 'review', session);
+      // Caught, because this handler is reached from an unawaited async
+      // _handleIntent: an uncaught throw here becomes an unhandled rejection and
+      // the lead is told NOTHING. The resolver's purpose guard is deliberately
+      // fail-closed, and fail-closed is only useful if it is also fail-visible.
+      let shape;
+      try {
+        shape = this.resolveSeatShape(team, 'reviewer', 'review', session);
+      } catch (err) {
+        reply(`error: ${err.message}`);
+        return;
+      }
       const reviewTpl = shape.tpl;
       const type = shape.type;
       const cwd = shape.cwd;
@@ -5409,7 +5419,16 @@ function createSessionManager(deps) {
             type: 'task', from: opener.name, to: seat.name, body: `ticket ${ticket.id} → ${seat.name} @ ${wt.path}`,
           });
           log.info('intent', `ticket ${ticket.id} ${reused ? 'respawned' : 'spawned'} ${seat.name} (${roleKey}) on branch ${wt.branch} @ ${wt.path}`);
-          reply(`ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name)}`);
+          // The env drops ride the reply here too. A silently ignored env key is
+          // the bug the allowlist's own comment names, and this path dropped one
+          // without a word while the review and spawn paths both announced it.
+          const envWarn = (shape.envDropped.length
+            ? ` — template env keys [${shape.envDropped.join(', ')}] are outside the allowed set [${[...REVIEWER_ENV_ALLOWLIST].join(', ')}] — dropped (env is an authority surface; requires operator approval)`
+            : '')
+            + (shape.envBadType.length
+              ? ` — template env keys [${shape.envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)`
+              : '');
+          reply(`ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name)}${envWarn}`);
         } catch (err) {
           const live = this.sessions.has(seat.name);
           if (!live) getPersistence().remove(seat.name);
