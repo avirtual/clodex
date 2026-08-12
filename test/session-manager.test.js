@@ -11009,3 +11009,70 @@ test('t295: an inherited ticket gives the sibling a badge and keeps its stall cl
   assert.notStrictEqual(f.one('t1').lastActivityAt, 1,
     'the sibling\'s activity refreshes the inherited ticket — otherwise the watchdog nudges over live work');
 });
+
+// Two teams rooted at ONE project. The board is the project's, so the SWEEP must
+// collapse to one pass (nudging twice about one stalled ticket is the bug that
+// collapse fixes) — but RECONCILE must not, because it resolves roles against a
+// specific manifest. Deduping reconcile by root as well leaves the second team
+// unreconciled, and since _teamLiveSeatNames is project-scoped it has already
+// returned that team's seats: they resolve to no role against the FIRST team's
+// manifest, so every sweep deletes their watch entry and broadcasts a null badge,
+// with no later pass to put them back. Silent, and it costs a working seat its
+// stall detection.
+test('sweep: two teams on one project sweep the board ONCE but reconcile SEPARATELY', () => {
+  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-2team-'));
+  const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
+  const mkT = (name) => ({
+    name, root: '/proj', lead: `${name}-lead`, watchdogMs: null,
+    file: pathReal.join(home, 'teams', name, 'team.json'),
+    roles: { lead: { instantiate: 'session' }, hand: { instantiate: 'session' } },
+  });
+  const alpha = mkT('alpha');
+  const beta = mkT('beta');
+  // Beta's role is NAMED DIFFERENTLY on purpose. The ticket below is assigned by
+  // ROLE, and role resolution is the only thing the missing reconcile pass costs:
+  // a ticket pinned to a seat NAME matches by name in _reconcileTickets no matter
+  // which team's manifest is in hand, so a name-pinned fixture passes with the
+  // defect present. That was the first draft of this test, and it did.
+  beta.roles = { lead: { instantiate: 'session' }, scout: { instantiate: 'session' } };
+  const teamOf = (cwd) => (cwd && cwd.startsWith('/proj') ? (cwd.includes('beta') ? beta : alpha) : null);
+  const { m } = mkPark({
+    fs: fsReal, path: pathReal, countPending: countPendingReal, REGISTRY_DIR: home,
+    resolveTeam: (cwd) => teamOf(cwd),
+    findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj' : null),
+  });
+  const broadcasts = [];
+  m._broadcast = (channel, msg) => broadcasts.push({ channel, msg });
+  m._gatedDeliver = () => ({ queued: true });
+  m._sendToSession = () => {};
+  const seat = (name, cwd) => m.sessions.set(name, {
+    name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle',
+  });
+  seat('alpha-lead', '/proj'); seat('alpha-hand', '/proj');
+  seat('beta-lead', '/proj/beta'); seat('beta-scout', '/proj/beta');
+
+  // One open ticket per team, both on the single project board. t2 is assigned to
+  // beta's ROLE, which only beta's manifest can resolve.
+  tstore.save('/proj', [
+    { id: 't1', state: 'open', assignee: 'alpha-hand', role: 'hand', openedAt: Date.now(), lastActivityAt: Date.now() },
+    { id: 't2', state: 'open', assignee: 'scout', role: 'scout', openedAt: Date.now(), lastActivityAt: Date.now() },
+  ]);
+
+  let sweeps = 0;
+  const realSweep = m._sweepTeamTickets.bind(m);
+  m._sweepTeamTickets = (team, now) => { sweeps += 1; return realSweep(team, now); };
+
+  m._sweepTickets(Date.now());
+
+  assert.strictEqual(sweeps, 1, 'the shared board is swept once, not once per team');
+  // ENTER: the reduction below is a filter on a broadcast channel. If reconcile
+  // never ran for either team the list would be empty, and "no seat was stripped"
+  // is vacuously true of an empty list.
+  const badges = broadcasts.filter((b) => b.channel === 'session-ticket');
+  assert.ok(badges.length >= 4, `ENTER: every live seat got a badge decision (${badges.length})`);
+  const last = (name) => badges.filter((b) => b.msg.name === name).pop();
+  assert.strictEqual(last('alpha-hand').msg.ticket, 't1', 'alpha reconciles against its own manifest');
+  assert.strictEqual(last('beta-scout').msg.ticket, 't2',
+    'and so does beta — deduping reconcile by root nulls this, because `scout` is not a role in alpha manifest');
+  assert.ok(m._ticketWatch.has('beta-scout'), 'the second team keeps its watch entry');
+});

@@ -6280,19 +6280,37 @@ function createSessionManager(deps) {
     }
 
     _sweepTickets(now = Date.now()) {
-      const seen = new Set();
+      // TWO dedup keys, because the two calls below are scoped differently and
+      // collapsing them under one key breaks whichever loses.
+      //
+      // The SWEEP is per BOARD: the board is the project's, so two different teams
+      // rooted at one project must nudge ONCE between them, not twice about the
+      // same stalled ticket. Note that this makes `watchdogMs` iteration-order
+      // dependent when two teams share a root — whichever team is reached first
+      // governs the stall window for that pass.
+      //
+      // RECONCILE is per TEAM: it walks _teamLiveSeatNames(team.root), which is
+      // project-scoped and therefore already returns the OTHER team's seats, but
+      // resolves each one's role with matchSeatRole(team, name). Deduping it by
+      // root means the second team never gets its pass, so its role-assigned seats
+      // resolve to no role against the first team's manifest and are silently
+      // stripped — _ticketWatch.delete plus a `session-ticket: null` broadcast
+      // every sweep, with nothing to restore them. Keyed by team.file, each team
+      // reconciles against its own manifest.
+      const sweptBoards = new Set();
+      const reconciledTeams = new Set();
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead) continue;
         let team; try { team = resolveTeam(s.cwd); } catch { team = null; }
         if (!team) continue;
-        // Deduped by PROJECT ROOT, not by team: the board is the project's, so two
-        // DIFFERENT teams rooted at one project sweep it ONCE between them. That
-        // collapse is the point — sweeping one board twice double-nudges the lead
-        // about the same stalled ticket. Re-splitting this per team restores that.
-        if (seen.has(team.root)) continue;
-        seen.add(team.root);
-        this._sweepTeamTickets(team, now);
-        this._reconcileTickets(team); // self-heal the watch map + badges post-restart
+        if (!sweptBoards.has(team.root)) {
+          sweptBoards.add(team.root);
+          this._sweepTeamTickets(team, now);
+        }
+        if (!reconciledTeams.has(team.file)) {
+          reconciledTeams.add(team.file);
+          this._reconcileTickets(team); // self-heal the watch map + badges post-restart
+        }
       }
     }
 

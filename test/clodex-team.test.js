@@ -415,6 +415,47 @@ test('listing parity: the duplicated window and cap constants agree at source', 
   }
 });
 
+// The script cannot require clodex-paths: bin-materialize.js flat-copies it by
+// basename into <REGISTRY_DIR>/bin/, where `../clodex-paths` does not exist, and
+// in the packaged app the source is inside app.asar. So projectDirFor is
+// re-derived there, and this is the enforcement that re-derivation otherwise
+// lacks — nothing else checks that the copy still agrees with its original.
+//
+// Same reasoning as test/tickets-viewer-path-parity.test.js, and the same reason
+// it matters more than the constants above: a diverged hash does not error, it
+// reads a directory nobody wrote and prints an EMPTY board. A silently empty
+// ticket listing is the failure mode this pins.
+//
+// Scraped and evaluated rather than required, because requiring the script runs
+// main(). The function is self-contained (path + crypto), so it evaluates
+// standalone once those are handed to it.
+test('projectDirFor parity: the script re-derivation agrees with core clodex-paths', () => {
+  const core = require('../clodex-paths').projectDirFor;
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const m = src.match(/function projectDirFor\(root, projectPath\) \{[\s\S]*?\n\}/);
+  assert.ok(m, 'ENTER: found projectDirFor in the script — a rename must not silently skip this test');
+  const scripted = Function('path', 'crypto', `${m[0]}; return projectDirFor;`)(path, require('crypto'));
+
+  const home = path.join(os.tmpdir(), 'parity-home');
+  for (const r of ['/Users/x/projects/wb-wrap-ui', '/tmp/a b/proj with spaces', '/tmp/../tmp/proj', 'rel/proj']) {
+    assert.strictEqual(scripted(home, r), core(home, r), `diverged on ${r}`);
+  }
+
+  // THE case a realpath "fix" on either side would break, and the only one where
+  // resolve() and realpath() disagree. Asserting parity alone is not enough: both
+  // copies drifting the same way would still be equal, so pin that neither
+  // follows the link.
+  const tmp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-parity-'));
+  const real = path.join(tmp, 'real-project');
+  const link = path.join(tmp, 'link-to-project');
+  fs.mkdirSync(real);
+  fs.symlinkSync(real, link);
+  assert.strictEqual(scripted(home, link), core(home, link), 'diverged on a symlinked root');
+  assert.notStrictEqual(scripted(home, link), core(home, real),
+    'a symlinked root must hash as itself, not as its target — otherwise realpath crept in');
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
 test('listing parity: holds on each explicit filter too', async () => {
   const home = mkHome();
   const proj = path.join(home, 'proj');

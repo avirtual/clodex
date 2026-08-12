@@ -46,6 +46,32 @@ function originKey(rec) {
   return `${rec.originTeam}/${rec.formerId != null ? rec.formerId : rec.id}`;
 }
 
+// The destination board, or a THROW. Only a genuinely absent file reads as an
+// empty board; anything else — an unreadable file, malformed JSON, a JSON value
+// that is not an array — is raised so the caller records a per-team error and
+// writes no marker. The alternative (treating unreadable as empty) silently
+// overwrites the operator's own records with source-only content, which is the
+// one outcome this module must never produce.
+function readDestination(fs, file) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf-8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return [];
+    throw new Error(`destination board ${file} exists but could not be read (${(e && e.code) || (e && e.message)})`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`destination board ${file} is not valid JSON — refusing to overwrite it`);
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error(`destination board ${file} does not contain a ticket array — refusing to overwrite it`);
+  }
+  return parsed;
+}
+
 // PURE. Given the destination board and one team's source board, return the
 // merged array. Destination records are returned untouched, in order, first.
 function mergeBoards(dest, source, teamName) {
@@ -111,7 +137,14 @@ function runTicketsMigration({ root, fs = require('fs'), log = null } = {}) {
         if (Array.isArray(parsed)) source = parsed;
       } catch { source = []; }
 
-      const before = store.load(projectRoot);
+      // Read the DESTINATION directly rather than through store.load, which is
+      // best-effort and answers [] for corrupt JSON and for a transient read error
+      // (EACCES, EMFILE at startup) alike. Merging onto that [] and saving would
+      // atomically replace a board that merely failed to READ with source-only
+      // content, destroying the operator's own records — in the one module whose
+      // whole design is copy-never-move. Present-but-unreadable is a per-team
+      // error: no marker, so the next launch retries.
+      const before = readDestination(fs, store.ticketsPath(projectRoot));
       const merged = mergeBoards(before, source, name);
       const added = merged.length - before.length;
       // Saved even when nothing was added, so the marker can never be written
@@ -130,4 +163,4 @@ function runTicketsMigration({ root, fs = require('fs'), log = null } = {}) {
   return result;
 }
 
-module.exports = { runTicketsMigration, mergeBoards, originKey, MARKER };
+module.exports = { runTicketsMigration, mergeBoards, originKey, readDestination, MARKER };

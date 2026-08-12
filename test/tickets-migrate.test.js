@@ -230,3 +230,74 @@ test('tickets-migrate: a team whose SAVE throws does not cost another team its m
   assert.ok(!fs.existsSync(path.join(home, 'teams', 'wedged', MARKER)),
     'and the failed team is NOT marked, so a later run retries it');
 });
+
+// The destination is read DIRECTLY, not through store.load, which is best-effort
+// and cannot distinguish "no board yet" from "board is there but I could not read
+// it". Merging onto the [] that best-effort read returns and then saving replaces
+// the operator's own board with source-only content — the exact opposite of this
+// module's copy-never-move contract, and silent.
+test('tickets-migrate: a CORRUPT destination board is never overwritten', () => {
+  const home = mkHome();
+  const root = '/proj/alpha';
+  mkTeam(home, 'alpha', { root, tickets: [{ id: 't1', state: 'open' }] });
+  const destFile = path.join(projectDirFor(home, root), 'tickets.json');
+  fs.mkdirSync(path.dirname(destFile), { recursive: true });
+  fs.writeFileSync(destFile, '{ this is not valid json');
+
+  const res = runTicketsMigration({ root: home, fs });
+
+  const alpha = res.teams.find((t) => t.team === 'alpha');
+  assert.ok(alpha && alpha.error, 'ENTER: the team must be recorded as an ERROR, not silently migrated');
+  assert.strictEqual(fs.readFileSync(destFile, 'utf-8'), '{ this is not valid json',
+    'the unreadable destination survives byte for byte');
+  assert.ok(!fs.existsSync(path.join(home, 'teams', 'alpha', MARKER)),
+    'no marker, so the next launch retries once the operator has fixed the board');
+  assert.strictEqual(res.migrated, 0);
+});
+
+// The same defect with a live board rather than a corrupt one: this is what the
+// operator actually loses if "unreadable" is treated as "empty".
+test('tickets-migrate: an UNREADABLE destination keeps its native records', () => {
+  const home = mkHome();
+  const root = '/proj/alpha';
+  const native = [{ id: 't1', state: 'open', title: 'the project own ticket' }];
+  mkTeam(home, 'alpha', { root, tickets: [{ id: 't1', state: 'open', title: 'the team ticket' }] });
+  const destFile = path.join(projectDirFor(home, root), 'tickets.json');
+  fs.mkdirSync(path.dirname(destFile), { recursive: true });
+  fs.writeFileSync(destFile, JSON.stringify(native));
+  fs.chmodSync(destFile, 0o000);
+
+  // Probe the PRECONDITION, not the outcome. Running as root defeats chmod, and
+  // this case then cannot be staged at all. Deciding that by asking whether the
+  // migration reported an error would make the skip fire on exactly the failure
+  // under test — the first draft did that and passed against the unfixed code.
+  let staged = true;
+  try { fs.readFileSync(destFile, 'utf-8'); staged = false; } catch { staged = true; }
+
+  let res;
+  try {
+    res = runTicketsMigration({ root: home, fs });
+  } finally {
+    fs.chmodSync(destFile, 0o600);
+  }
+  if (!staged) return; // running as root; the file stayed readable
+
+  const alpha = res.teams.find((t) => t.team === 'alpha');
+  assert.ok(alpha && alpha.error, 'ENTER: the unreadable destination must be an error');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(destFile, 'utf-8')), native,
+    'the native records are still there — this is the data the bug would have destroyed');
+  assert.ok(!fs.existsSync(path.join(home, 'teams', 'alpha', MARKER)), 'not marked, so it retries');
+});
+
+// The guard must not fire on the ordinary case, or it blocks every first-ever
+// migration: a destination that has never existed is an empty board, not an error.
+test('tickets-migrate: an ABSENT destination board is empty, not an error', () => {
+  const home = mkHome();
+  const root = '/proj/alpha';
+  mkTeam(home, 'alpha', { root, tickets: [{ id: 't1', state: 'open' }] });
+
+  const res = runTicketsMigration({ root: home, fs });
+
+  assert.deepStrictEqual(res.teams, [{ team: 'alpha', added: 1, projectRoot: root }]);
+  assert.strictEqual(createTicketsStore({ clodexHome: home }).load(root).length, 1);
+});
