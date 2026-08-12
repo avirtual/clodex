@@ -69,6 +69,7 @@ test('ticket purpose: the whole shape, with no template', () => {
     injectSkills: [],
     effectiveTools: null,
     requestedTools: null,
+    toolsMalformed: false,
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
     execCommands: [],
@@ -103,6 +104,7 @@ test('review purpose: the whole shape, with no template', () => {
     // null, not the cap: the no-template fallback asked for nothing, which is
     // what distinguishes it from a template that asked for nothing USABLE.
     requestedTools: null,
+    toolsMalformed: false,
     systemPromptFile: 'clodex-team-reviewer',
     appendPromptFiles: [],
     execCommands: [],
@@ -152,6 +154,7 @@ test('review purpose: the whole shape, WITH a template (the production config)',
     injectSkills: [],
     effectiveTools: ['Read', 'Grep'],
     requestedTools: ['Read', 'Grep'],
+    toolsMalformed: false,
     systemPromptFile: 'rv-brief',
     appendPromptFiles: [],
     execCommands: [],
@@ -201,6 +204,7 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     // resolver never honored would invite a caller to act on it.
     effectiveTools: null,
     requestedTools: null,
+    toolsMalformed: false,
     beyondCap: [],
     promptEscaped: null,
     // The ROLE prompt wins over the template's.
@@ -270,6 +274,53 @@ test('a reviewer template whose tools miss the cap entirely resolves to NO tools
   // a denylist of EVERY tool, so the seat could not read the diff it reviews.
   assert.deepStrictEqual(shape.disabledTools, CLAUDE_TOOLS.slice(),
     'an empty allowlist disables every tool — the seat would be unable to read');
+});
+
+// --- t300: `tools` has THREE states here, and only ABSENT takes the full cap ---
+//
+// `[]` and a wrong-typed value both used to collapse to the same null as absent,
+// so the widening fallback fired for a template that asked for nothing or asked
+// malformedly. The three tests below are one per state, because the states differ
+// in which field carries the answer: an empty array is a real (empty) REQUEST, a
+// non-array is a TYPE fault with no request to report, and absent is neither.
+test('t300: a reviewer template with tools: [] asks for nothing and gets nothing — NOT the full cap', () => {
+  const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', tools: [] }]);
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(shape.effectiveTools, [], 'an empty list is an empty grant, never a full one');
+  // `[]`, not null: it IS a request, just an empty one, which is what routes it
+  // into t299's existing empty-intersection refusal instead of a new message.
+  assert.deepStrictEqual(shape.requestedTools, [], 'an empty array is a request, not an absence');
+  assert.strictEqual(shape.toolsMalformed, false, 'an empty array is well-typed — the remedy is a list, not a type fix');
+});
+
+test('t300: a reviewer template whose tools is a STRING is malformed, and grants nothing', () => {
+  const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', tools: 'Read' }]);
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.strictEqual(shape.toolsMalformed, true, 'a non-array is a type fault the caller must report as one');
+  // Fail-closed in the SHAPE, not only in the handler: a future caller that skips
+  // the refusal must not get a widened seat out of this.
+  assert.deepStrictEqual(shape.effectiveTools, [], 'a malformed request grants nothing — never the full cap');
+  assert.strictEqual(shape.requestedTools, null, 'there is no well-formed request to report');
+  assert.deepStrictEqual(shape.disabledTools, CLAUDE_TOOLS.slice(), 'and every tool is denied');
+});
+
+// The branch the fix must NOT touch: absent is the documented default and T52
+// pins it. `null` rides here deliberately — JSON's conventional "no value", so a
+// template round-tripped through a writer that emits nulls must not start
+// refusing. That is a judgment call, and this is where it is pinned.
+test('t300: an ABSENT tools — and an explicit null — still take the full cap', () => {
+  const absent = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo' }]);
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  const a = absent.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(a.effectiveTools, REVIEWER_CAP, 'absent is the documented default: the full cap');
+  assert.strictEqual(a.toolsMalformed, false, 'and absent is not a malformation');
+
+  const nul = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', tools: null }]);
+  const n = nul.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(n.effectiveTools, REVIEWER_CAP, 'an explicit null reads as absent, not as a fault');
+  assert.strictEqual(n.toolsMalformed, false, 'null is JSON "no value" — treating it as a type fault would refuse a round-tripped template');
 });
 
 test('a reviewer template cannot widen past the cap even naming every tool', () => {

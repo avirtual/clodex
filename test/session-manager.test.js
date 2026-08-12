@@ -4550,6 +4550,87 @@ test('team-review (t299): a template with NO tools key still spawns with the ful
     'and no refusal fires on the branch that never made a request');
 });
 
+// --- t300: a malformed `tools` must not silently WIDEN to the full cap ---
+//
+// `[]` and a non-array both used to collapse to the same null as absent, taking
+// the full-cap fallback — so a typo GRANTED authority. Both refuse now, for one
+// reason: the only fallback available is the full cap, which is more than either
+// asked for, and templates are agent-writable. They get DIFFERENT messages
+// because they have different remedies (fix the list vs. fix the type), which is
+// the t297 rule about never merging two reasons into one operator-facing line.
+//
+// Reachability (measured, not inferred): no GUI control writes `tools`, but
+// `templates.save()`'s merge-preserve carries it forward because `tools` is not
+// in EDITOR_OWNED — so a hand-edited malformed value SURVIVES an ordinary GUI
+// edit-in-place, and the dialog renders no control that could clear it.
+test('team-review (t300): tools: [] is refused, not widened to the full cap', async () => {
+  // EXISTENCE FIRST: prove this fixture DOES mint before reading anything into
+  // the absence below.
+  const ok = mkReview({ reviewTemplate: { tools: ['Read'] } });
+  ok.m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  ok.m._handleTeamReview(ok.m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.ok(ok.persistence.get('team-reviewer-1'),
+    'ENTER: an accepted template DOES mint team-reviewer-1 on this fixture');
+
+  const { m, injected, created, persistence } = mkReview({ reviewTemplate: { tools: [] } });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(created, [], 'no seat spawned — an empty list is not a licence to grant everything');
+  assert.strictEqual(persistence.get('team-reviewer-1'), null,
+    'and no reviewer name was burned — the refusal lands before the name-mint loop');
+  // Routed into t299's EXISTING empty-intersection message, whose remedy ("fix
+  // the template\'s tools") is the right one for an empty list. Exact text: a
+  // substring finder could not tell this from the malformed message below.
+  assert.deepStrictEqual(injected, [
+    '[agent:team-review] error: reviewer template "clodex-team-reviewer" requests tools [], '
+    + 'none of which are within the reviewer cap [Read, Grep, Glob] — the seat would spawn with no '
+    + 'tools at all and could not read the diff; no reviewer spawned (fix the template\'s "tools")',
+  ], 'the empty-list refusal reuses the empty-intersection message');
+});
+
+test('team-review (t300): a STRING tools is refused as a TYPE fault, with its own remedy', async () => {
+  const ok = mkReview({ reviewTemplate: { tools: ['Read'] } });
+  ok.m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  ok.m._handleTeamReview(ok.m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.ok(ok.persistence.get('team-reviewer-1'), 'ENTER: this fixture DOES mint when the template is accepted');
+
+  const { m, injected, created, persistence } = mkReview({ reviewTemplate: { tools: 'Read' } });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(created, [], 'no seat spawned — a malformed request must not resolve to the full cap');
+  assert.strictEqual(persistence.get('team-reviewer-1'), null, 'and no reviewer name was burned');
+  // The message must name the TYPE and ask for an array. Asserted as exact text
+  // because the discriminating property is which of the two refusals fired, and
+  // both contain the template name and the cap.
+  assert.deepStrictEqual(injected, [
+    '[agent:team-review] error: reviewer template "clodex-team-reviewer" has a "tools" that is not '
+    + 'an array (string) — it cannot be intersected with the reviewer cap [Read, Grep, Glob], and '
+    + 'falling back to the full cap would grant more than the template asked for; no reviewer '
+    + 'spawned (make "tools" an array, or remove it to accept the full cap)',
+  ], 'the type fault gets its own remedy, not the fix-the-list one');
+});
+
+// The branch the fix must not touch, driven through the HANDLER rather than the
+// resolver: `null` reads as absent, so the seat spawns with the full cap and no
+// refusal fires. A guard written `rawTools !== undefined` would refuse here.
+test('team-review (t300): an explicit tools: null still spawns with the full cap', async () => {
+  const { m, injected, created, persistence } = mkReview({ reviewTemplate: { tools: null } });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
+  assert.ok(persistence.get('team-reviewer-1'), 'ENTER: and its name was minted');
+  const disabledTools = created[0][11];
+  assert.ok(!disabledTools.includes('Read') && !disabledTools.includes('Grep') && !disabledTools.includes('Glob'),
+    'the full cap is live — an explicit null is "no value", not a fault');
+  assert.ok(!injected.some((t) => /not an array|none of which are within/.test(t)),
+    'and neither refusal fires');
+});
+
 // T52: template omits tools → the role manifest's tools drive (fallback), still
 // capped. Proves template > role > built-in precedence for the tools field.
 // t292: `tools` left the role schema. A def that still carries one (a version-1
