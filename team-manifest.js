@@ -56,13 +56,20 @@ const UNREACHABLE_ROLE_FIELDS = new Set([]);
 // opted into a worktree silently stops getting one, with nothing failing.
 const CUT_ROLE_FIELDS = ['instantiate', 'standing', 'tools', 'type', 'ephemeral', 'worktree'];
 
-// Cut from the schema but STILL READ. The load-time warning partitions on this:
-// every other cut field enforces nothing, and saying so is the whole point of
-// that line — but `worktree` is resolved onto `dispatch` in normalizeRoleDef, so
-// telling a reader it configures nothing invites them to delete it and silently
-// converts every worktree role to standing. A key belongs here for exactly as
-// long as a compatibility branch reads it, and leaves when that branch does.
-const HONORED_CUT_FIELDS = new Set(['worktree']);
+// Cut from the schema but SOMETIMES still read, mapped to the remedy a reader
+// should write instead. A key belongs here for exactly as long as a
+// compatibility branch reads it, and leaves when that branch does.
+//
+// Membership is only a GATE: it says "this key can be honored, so measure
+// whether it was", never "this occurrence is honored". `worktree` is read only
+// when it is exactly `true`, on a non-reserved role, with no explicit
+// `dispatch` — so `worktree: false`, `worktree: true` on lead/reviewer, and
+// `worktree: true` beside a `dispatch` are all INERT, and telling their owner
+// to "write dispatch instead" would talk them into minting worktrees nobody
+// asked for or into hand-authoring a value every write path refuses. The
+// remedy travels with the key so the map cannot grow a member whose advice
+// nobody wrote.
+const HONORED_CUT_FIELDS = new Map([['worktree', 'dispatch: "worktree"']]);
 
 // Every role field a front door (setRole, the Add Role form, the popover row
 // model) may set. Exported so the legibility test compares the real list against
@@ -164,10 +171,14 @@ function assertDispatchAllowed(roleName, def, file) {
 // v2 file loud until a mutator rewrites it. It must NOT be excluded to spare it
 // the warning: the file would then load silently while still carrying a key
 // whose meaning lives in a compatibility branch, which is the state the warning
-// exists for. It is still READ (normalizeRoleDef resolves it onto `dispatch`),
-// so the caller partitions it into HONORED_CUT_FIELDS and gives it a line
-// saying it takes effect — telling a reader it "enforces nothing" is what makes
-// deleting it look safe.
+// exists for. It is SOMETIMES read (normalizeRoleDef resolves it onto
+// `dispatch`, but only for an exact `true` on a non-reserved role with no
+// explicit `dispatch`), so the caller partitions by MEASURED EFFECT — it
+// re-normalizes with the key removed and compares — and HONORED_CUT_FIELDS
+// membership only gates whether that measurement is worth making. Naming the
+// key would be wrong in both directions: "enforces nothing" makes deleting a
+// live opt-in look safe, and "still read" points the owner of an inert
+// occurrence at a change they never asked for.
 function unknownRoleKeys(def) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) return [];
   return Object.keys(def).filter((k) => !ROLE_KEYS.has(k));
@@ -327,13 +338,37 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       if (!ROLE_RE.test(roleName)) {
         throw new Error(`role name "${roleName}" must match ${ROLE_RE} (${file})`);
       }
+      // Partitioned by MEASURED EFFECT, not by key name: honoring is conditional
+      // on the value, the role and the absence of an explicit `dispatch`, so a
+      // name-only test claims "this still takes effect" over occurrences where it
+      // does not — and the remedy that line carries is actively harmful there.
+      // Removing the key and re-normalizing is the only test that tracks the
+      // branch instead of restating it, and it stays honest for a future member
+      // whose condition nobody here anticipated.
+      //
+      // Safe by two properties, both checked at source: `without` is a SUBSET of
+      // `def` and `k` is never in ROLE_KEYS, so no validator that passed on `def`
+      // can throw on `without` (every throw reads a modeled key); and
+      // normalizeRoleDef returns a fixed-key-order literal, which is what makes
+      // the stringify comparison sound — addRole's no-op check already leans on it.
+      const normalized = normalizeRoleDef(roleName, def, file);
       for (const k of unknownRoleKeys(def)) {
-        const bucket = HONORED_CUT_FIELDS.has(k) ? droppedHonored
-          : CUT_ROLE_FIELDS.includes(k) ? droppedCut
-            : dropped;
-        bucket.push(`${roleName}.${k}`);
+        let honored = false;
+        if (HONORED_CUT_FIELDS.has(k)) {
+          const without = { ...def };
+          delete without[k];
+          honored = JSON.stringify(normalizeRoleDef(roleName, without, file)) !== JSON.stringify(normalized);
+        }
+        if (honored) {
+          // The remedy rides with the occurrence, not with the message: one line
+          // may name several keys, and a single hardcoded "write X instead" is
+          // wrong the moment the map holds two entries.
+          droppedHonored.push(`${roleName}.${k} (write \`${HONORED_CUT_FIELDS.get(k)}\` instead)`);
+          continue;
+        }
+        (CUT_ROLE_FIELDS.includes(k) ? droppedCut : dropped).push(`${roleName}.${k}`);
       }
-      roles[roleName] = normalizeRoleDef(roleName, def, file);
+      roles[roleName] = normalized;
     }
     // Absent reads as 1, not as current: a file written before the version
     // existed IS a version-1 file, and defaulting to current would let a stale
@@ -370,9 +405,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // dropped FROM and may still believe the file means something. The point of
     // the line is that the field changes no behaviour anywhere.
     //
-    // Reaches HONORED_CUT_FIELDS never — that text would be a lie about a key a
-    // compatibility branch still reads, and a reader who acts on it loses the
-    // opt-in silently. The partition is what keeps this sentence true.
+    // Reaches a key whose removal CHANGED the normalized def never — that text
+    // would be a lie about a live opt-in, and a reader who acts on it loses the
+    // opt-in silently. The effect test above, not the key name, is what keeps
+    // this sentence true: an inert `worktree` belongs here and gets it rightly.
     if (droppedCut.length) {
       const seen = `cut|${file}|${droppedCut.join(',')}`;
       if (!warnedDrops.has(seen)) {
@@ -389,7 +425,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       const seen = `honored|${file}|${droppedHonored.join(',')}`;
       if (!warnedDrops.has(seen)) {
         warnedDrops.add(seen);
-        console.warn(`team "${name}": these role keys are RETIRED but STILL READ — they are not modeled by this schema, yet a compatibility branch still honors them, so deleting one CHANGES BEHAVIOUR: ${droppedHonored.join(', ')} — write \`dispatch: "worktree"\` instead; a future schema will stop reading them (${file})`);
+        console.warn(`team "${name}": these role keys are RETIRED but STILL READ — they are not modeled by this schema, yet a compatibility branch honors them HERE, so deleting one CHANGES BEHAVIOUR: ${droppedHonored.join(', ')}; a future schema will stop reading them (${file})`);
       }
     }
     // team.json is agent-writable, so a hand-written watchdogMs is neutralized at

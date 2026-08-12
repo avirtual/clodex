@@ -34,7 +34,8 @@ const path = require('node:path');
 const os = require('node:os');
 
 const {
-  ROLE_KEYS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, CUT_ROLE_FIELDS, createTeamManifest,
+  ROLE_KEYS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, CUT_ROLE_FIELDS,
+  HONORED_CUT_FIELDS, createTeamManifest,
 } = require('../team-manifest');
 const { teamRoleRows } = require('../renderer/lib/team-roles');
 
@@ -161,5 +162,16 @@ test('legibility: the schema is exactly the four surviving fields', () => {
     assert.ok(!ROLE_KEYS.has(cut),
       `"${cut}" was cut because no single resolver consumed it on every spawn path; `
       + 'reintroducing it needs the resolver first, not a normalizeRoleDef line');
+  }
+
+  // HONORED ⊆ CUT, or the file never stops warning. migrateRoles deletes only
+  // CUT_ROLE_FIELDS members, so a key honored-but-not-cut is never removed;
+  // `clean` therefore never goes true, the version never stamps, and the load
+  // warns forever on a file no mutator can fix.
+  for (const k of HONORED_CUT_FIELDS.keys()) {
+    assert.ok(CUT_ROLE_FIELDS.includes(k),
+      `"${k}" is honored-but-not-cut: migrateRoles would never delete it, so the manifest `
+      + 'could never stamp clean and would warn on every load forever');
+    assert.ok(!ROLE_KEYS.has(k), `"${k}" is read by a compatibility branch, not modeled by the schema`);
   }
 });
