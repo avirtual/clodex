@@ -519,9 +519,9 @@ test('t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls', ()
   // reach it. So adding an export is a deliberate act with a visible failure
   // here, and this list must be updated in company with plugins/plugin-api.md §4.
   assert.deepStrictEqual(Object.keys(host.lib.gitWorktree).sort(), [
-    'createWorktree', 'defaultBranch', 'defaultWorktreePath', 'isDirty',
-    'listWorktrees', 'removeWorktree', 'repoInfo', 'repoToplevel',
-  ], 'host.lib.gitWorktree lends exactly these eight — widening it is a published API change');
+    'commitsOnBranch', 'createWorktree', 'defaultBranch', 'defaultWorktreePath',
+    'isDirty', 'listWorktrees', 'removeWorktree', 'repoInfo', 'repoToplevel',
+  ], 'host.lib.gitWorktree lends exactly these nine — widening it is a published API change');
 
   let delegated = null;
   const origList = realLeaf.listWorktrees;

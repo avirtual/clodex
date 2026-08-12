@@ -9732,8 +9732,13 @@ test('task add: an opted-in role mints a branch, a worktree and a seat, and the 
   const t = f.one('t1');
   assert.strictEqual(t.assignee, 'team-hand-1', 'ticket pins to the SEAT, not the role');
   assert.strictEqual(t.role, 'hand', 'the originating role is preserved');
-  assert.deepStrictEqual(f.worktreeSet, [{ name: 'team-hand-1', wt: { path: wtPath, branch: 't1-build-the-widget' } }],
-    'the worktree is recorded, or Delete Session… cannot remove it');
+  // baseSha asserted as a SHAPE, not a value (it is the lead's HEAD, which the
+  // fixture moves): a null one silently sends the close-time commit count to its
+  // merge-base fallback, which answers differently on a merged branch.
+  assert.deepStrictEqual(
+    f.worktreeSet.map((w) => ({ ...w, wt: { ...w.wt, baseSha: typeof w.wt.baseSha } })),
+    [{ name: 'team-hand-1', wt: { path: wtPath, branch: 't1-build-the-widget', baseSha: 'string' } }],
+    'the worktree is recorded (with its fork point), or Delete Session… cannot remove it');
   assert.strictEqual(t.worktree.path, wtPath, 'the ticket carries the tree, so a REPLAY can re-tell a respawned seat');
 
   // The seat cannot find a tree it is not told about: git puts it BESIDE the repo,

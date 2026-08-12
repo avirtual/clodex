@@ -129,6 +129,12 @@ const REVIEWER_FALLBACK = {
   },
 };
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = require('./tickets-store');
+const teamCost = require('./team-cost');
+const { projectDirFor } = require('./clodex-paths');
+// Aliased deliberately: the manager has its OWN trackedSessionIds() method with
+// a different contract (every id across all sessions, no argument). This is the
+// per-entry union, and the two must not be mistaken for each other.
+const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
@@ -220,7 +226,12 @@ const RECENT_DONE_LABEL = `${RECENT_DONE_MS / (60 * 60 * 1000)}h`;
 // A field a restart can legitimately reset (rosterSentAt on a fresh
 // restart) must stay caller-controlled.
 // test/preserve-across-restart.test.js pins that every caller gets these.
-const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants'];
+// `wireLabel` is here for the same reason: it is seeded ONLY at the team-spawn
+// mint, nothing regrows it, and create() re-mints the proxy agent id from
+// `entry.wireLabel || name`. Dropped by an in-place restart, the seat's whole
+// remaining spend bills to an unlabeled route and its ticket's COST.json reads
+// a null label — the ticket looks free because the money went somewhere else.
+const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel'];
 
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
 // re-register over — when the process it names is dead, OR when it names OUR OWN
@@ -1042,7 +1053,20 @@ function createSessionManager(deps) {
         const taken = new Set();
         for (const e of getPersistence().list()) if (e.proxyAgent) taken.add(e.proxyAgent);
         for (const s of this.sessions.values()) if (s.proxyAgent) taken.add(s.proxyAgent);
-        proxyAgent = resolveProxyAgentId({ name, fork, existing: getPersistence().get(name), taken });
+        // The wire label, not the seat name, is what the id is minted FROM when
+        // the spawn path seeded one (team ticket seats and reviewers do, via
+        // their pre-create upsert). A seat name outlives its ticket — it is
+        // recycled, retired, renamed — so spend keyed by it cannot be rolled up
+        // per ticket after the fact. `<team>.<ticket>.<role>` in the proxy route
+        // segment makes the attribution durable at the point it is billed.
+        //
+        // Only the EXTERNAL proxy id carries this. The in-process wire's
+        // registerAgent() keeps taking the bare name: `t.agent` is a sessions-map
+        // key at ~10 call sites and wire-telemetry prunes against that map, so a
+        // divergent label there would silently drop every telemetry record.
+        const existingEntry = getPersistence().get(name);
+        const labelFrom = (existingEntry && existingEntry.wireLabel) || name;
+        proxyAgent = resolveProxyAgentId({ name: labelFrom, fork, existing: existingEntry, taken });
       }
 
       // CLODEX_SPAWNER_HINT=off|on — suppress (or force) wirescope's [wirescope]
@@ -4460,7 +4484,21 @@ function createSessionManager(deps) {
       // This also carries the seat's identity fields (drives review-done's guard +
       // the team-retire discard disposition); create()'s own upsert spread-merges
       // over this stub, and the restart-preserve seam re-seeds it after a kill().
-      getPersistence().upsert({ name, ephemeral: true, reviewFor: session.name });
+      // `wireLabel` rides the SAME synchronous stub as the name reservation, and
+      // that is the ordering that makes it work: create() reads it back off the
+      // record to mint the proxy agent id, so a label written after the deferred
+      // create() would label nothing. The round is the reviewer seat's own index
+      // (n was post-incremented by the loop above), which is what keeps round 2's
+      // spend off round 1's label — the §4 cache-ordering claim is only testable
+      // if the rounds are separable.
+      const reviewRound = n - 1;
+      const reviewLabel = teamCost.reviewWireLabelFor({
+        team: team.name, ticketId: teamCost.ticketIdFromScope(scope), round: reviewRound,
+      });
+      getPersistence().upsert({
+        name, ephemeral: true, reviewFor: session.name,
+        ...(reviewLabel ? { wireLabel: reviewLabel } : {}),
+      });
 
       let promptWarn = '';
       if (reviewerSystemPrompt) {
@@ -5033,7 +5071,11 @@ function createSessionManager(deps) {
       // whole mechanism exists to prevent. _taskAssign refuses earlier and names
       // the holder; this is the backstop for every other caller.
       if (this._ticketTreeHolder(wt.path)) return null;
-      return { path: wt.path, branch: wt.branch };
+      // baseSha carried through: it was captured when the tree was MINTED and is
+      // unrecoverable here, so dropping it on reuse quietly downgrades the
+      // close-time commit count to its merge-base fallback for exactly the
+      // tickets that outlived a seat.
+      return { path: wt.path, branch: wt.branch, ...(wt.baseSha ? { baseSha: wt.baseSha } : {}) };
     }
 
     // Mint the worktree, spawn the seat, then hand it the spec. Async and
@@ -5097,7 +5139,15 @@ function createSessionManager(deps) {
       // Reserved SYNCHRONOUSLY, before any await: two tickets opened in one lead
       // turn both run their taken-name check above before either create() lands,
       // and the persistence stub is what makes the second one see the first.
-      getPersistence().upsert({ name: seat.name, ephemeral: true });
+      // Same ordering contract as the reviewer's stub: the label must be on the
+      // record BEFORE the deferred create() reads it back to mint the proxy id.
+      const seatLabel = teamCost.wireLabelFor({
+        team: team.name, ticketId: ticket.id, role: roleKey,
+      });
+      getPersistence().upsert({
+        name: seat.name, ephemeral: true,
+        ...(seatLabel ? { wireLabel: seatLabel } : {}),
+      });
       // Un-pin the ticket back to its role. Reloaded from the store rather than
       // mutating the caller's array: this runs after the caller returned, so that
       // array may no longer be what is on disk.
@@ -5193,7 +5243,10 @@ function createSessionManager(deps) {
                 : `ticket ${ticket.id}: worktree "${seat.branch}" could not be created (${(r && r.error) || 'unknown'}) — no seat spawned, ticket left assigned to "${roleKey}"`);
               return;
             }
-            wt = { path: r.path, branch: r.branch };
+            // baseSha is the fork point, captured HERE because it is unrecoverable
+            // later: the ref this forked from is 'HEAD', which has moved by the time
+            // the ticket closes and counts its commits against it.
+            wt = { path: r.path, branch: r.branch, ...(r.baseSha ? { baseSha: r.baseSha } : {}) };
           }
           // Recorded on the TICKET, which is what _deliverTicketSpec reads to tell
           // the seat where to work. On the ticket rather than only on the session
@@ -5536,8 +5589,160 @@ function createSessionManager(deps) {
       const next = doneSeat ? this._advanceSeat(team, teamDir, doneSeat, ticket.id) : null;
       const nextSuffix = next ? ` — next: ${next.id} delivered to ${doneSeat}` : '';
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: lead, body: `ticket ${ticket.id} done` });
+      this._writeTicketCost(team, ticket);
       log.info('intent', `task done ${ticket.id} by ${session.name} → ${lead}`);
       reply((isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`) + nextSuffix);
+    }
+
+    // Which seat's ledger a closing ticket's cost belongs to.
+    //
+    // NOT `_ticketAssigneeSeat`: that resolves a role to the FIRST live seat
+    // holding it in sessions-map order, which on a team with three live hands
+    // (the normal case) picks a seat at random and stamps the result as
+    // measured. A guessed seat is worse than none — it publishes a foreign
+    // lifetime ledger and a foreign wireLabel under this ticket's id, and
+    // nothing downstream can tell it from a measurement.
+    //
+    // `closedBy` is evidence only when the closer HOLDS the ticket's role.
+    // Preferring it unconditionally is the trap: `_taskCancel` is lead-only and
+    // the lead can also close a `task done` for a seat that no longer can, so
+    // closedBy is frequently the LEAD, whose record is the largest ledger in the
+    // system. That trades a foreign hand's spend for the lead's whole life.
+    //
+    // The lead is excluded even when it legitimately holds the ticket's role —
+    // `matchSeatRole(team, team.lead)` returns 'lead' unconditionally, so a
+    // `lead`-assigned ticket would otherwise satisfy the guard exactly. The
+    // lifetime-sum shape this rollup uses is an approximation that only holds
+    // for a SHORT-LIVED actor: an ephemeral hand's lifetime is roughly one
+    // ticket, while the lead's spans every ticket in the project — and would be
+    // counted again into the next lead ticket, and the next. Approximately right
+    // for a hand is categorically wrong for the lead.
+    //
+    // Everything else is UNKNOWN, on purpose. A declared unknown costs one
+    // ticket's row in a rollup; a confident wrong number poisons every rollup
+    // that sums it.
+    _costSeatFor(team, ticket) {
+      const at = (name, attribution) => {
+        const entry = (name && getPersistence().get(name)) || null;
+        // The NAME survives a missing record: a seat archived or deleted after
+        // the close has no ledger, but it is still the join key back to its
+        // other artifacts. `seatResolved: false` carries the no-ledger fact.
+        return entry ? { seatName: name, entry, attribution }
+          : { seatName: name || null, entry: null, attribution: 'unknown' };
+      };
+      const assignee = ticket && ticket.assignee;
+      if (!assignee) return { seatName: null, entry: null, attribution: 'unknown' };
+      const isRole = !!(team.roles && Object.prototype.hasOwnProperty.call(team.roles, assignee));
+      if (!isRole) return at(assignee, 'seat');
+      const closedBy = ticket.closedBy;
+      // deliveredTo is a FALSIFIER only. Any role-holder may close another's
+      // ticket, so a closer who is not the seat the spec went to is not evidence
+      // of who spent. Its ABSENCE is evidence of nothing — it is on a small
+      // minority of closed tickets, and reading absence as disagreement would
+      // unknown-out most of them.
+      const delivered = ticket.deliveredTo && ticket.deliveredTo.seat;
+      if (closedBy && closedBy !== team.lead && matchSeatRole(team, closedBy) === assignee
+          && !(delivered && delivered !== closedBy)) {
+        return at(closedBy, 'role-closer');
+      }
+      return { seatName: null, entry: null, attribution: 'unknown' };
+    }
+
+    // COST.json — the per-ticket rollup (DESIGN.md §7.1), written at close.
+    //
+    // Deferred and fully best-effort: the commit count shells out to git, and a
+    // rollup is a measurement, never a reason a ticket fails to close. Every
+    // failure mode here (no taskDir, an unreadable totals file, a git error, an
+    // unwritable dir) costs this one artifact and nothing else.
+    //
+    // Written even when the ledger is empty, because the WASTE counters are the
+    // half of the record that has to exist for the zero-commit case — a ticket
+    // that closed having burned a worktree and produced nothing is precisely the
+    // t290 case being graded, and skipping it would make the counter measure
+    // only the tickets that did work.
+    //
+    // The taskDir is RESOLVED, never trusted: it is spec text, and no ticket in
+    // the live store carries an absolute one. Writing it verbatim mkdir -p's a
+    // literal `~` under the process cwd and the artifact silently never lands.
+    _writeTicketCost(team, ticket) {
+      if (!ticket || !ticket.taskDir) return;
+      let taskDir = null;
+      try {
+        taskDir = teamCost.resolveTaskDir({
+          taskDir: ticket.taskDir,
+          projectDir: projectDirFor(REGISTRY_DIR, team.root),
+          projectsRoot: path.join(REGISTRY_DIR, 'projects'),
+          homedir: os.homedir(),
+        });
+      } catch (e) {
+        // An escaping taskDir is a refusal to write, loudly — not a fallback to
+        // some safer path, which would put the artifact where nobody looks.
+        log.info('intent', `COST.json refused for ${ticket.id}: ${e.message}`);
+        return;
+      }
+      if (!taskDir) return;
+      setImmediate(async () => {
+        try {
+          const { seatName, entry, attribution } = this._costSeatFor(team, ticket);
+          const seatResolved = !!entry;
+          const sessionIds = entrySessionIds(entry);
+          let totals = null;
+          try {
+            totals = JSON.parse(fs.readFileSync(path.join(getUserDataPath(), 'wire-totals.json'), 'utf8'));
+          } catch { /* no ledger yet — the rollup degrades to its waste half */ }
+          const ledger = teamCost.sumSessions(totals, sessionIds);
+          ledger.ids = sessionIds;
+
+          // The ticket's own tree first: it is the ticket's tree by construction.
+          // The record's is a fallback and counts ONLY for an exactly-pinned
+          // seat — on an inferred seat it is that seat's CURRENT tree, and even
+          // on an exact but long-lived name-addressed one it may be a tree the
+          // seat carries for itself. Either way it reports `worktreeMinted: true`
+          // with a commit count taken on some other branch. For a minted ticket
+          // seat the two are the same object, so this ordering is inert there.
+          const wt = ticket.worktree || (attribution === 'seat' && entry && entry.worktree) || null;
+          let commits = null;
+          let commitsBase = null;
+          if (wt && wt.branch) {
+            try {
+              // The mint-time fork SHA when the record has one. Without it
+              // commitsOnBranch falls back to a merge-base; it never counts
+              // against the main checkout's live HEAD, which answers wrongly in
+              // both directions.
+              const r = await gitWorktree.commitsOnBranch(team.root, wt.branch, wt.baseSha || null);
+              if (r && typeof r.count === 'number') { commits = r.count; commitsBase = r.base || null; }
+            } catch { /* a git failure costs the commit count, not the record */ }
+          }
+
+          let orphans = null;
+          try {
+            const listed = await gitWorktree.listWorktrees(team.root);
+            if (listed && listed.ok) {
+              orphans = teamCost.orphanedCheckouts({
+                worktrees: listed.worktrees,
+                records: getPersistence().list(),
+                // git prints realpath'd paths, records carry the path as created
+                // (/tmp vs /private/tmp) — a raw compare reports a live tree as
+                // an orphan.
+                real: (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } },
+              });
+            }
+          } catch { /* sweep failure costs counter (b), not the record */ }
+
+          const rec = teamCost.costRecord({
+            // `seat` is the RESOLVED name, not the ticket's `assignee`: a
+            // role-assigned ticket's assignee is 'hand', which names no seat and
+            // could not be joined back to the spend it is reporting.
+            ticket: { ...ticket, assignee: seatName || null, wireLabel: (entry && entry.wireLabel) || null },
+            team: team.name, ledger, worktree: wt, commits, commitsBase,
+            orphans, seatResolved, attribution,
+          });
+          ensureDir(taskDir);
+          fs.writeFileSync(path.join(taskDir, teamCost.COST_FILE), JSON.stringify(rec, null, 2));
+        } catch (e) {
+          log.info('intent', `COST.json not written for ${ticket && ticket.id}: ${e.message}`);
+        }
+      });
     }
 
     _taskReject(session, team, teamDir, intent, reply) {
@@ -5581,6 +5786,7 @@ function createSessionManager(deps) {
       this._reconcileTickets(team, teamDir);
       const next = seat ? this._advanceSeat(team, teamDir, seat, ticket.id) : null;
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} cancelled` });
+      this._writeTicketCost(team, ticket);
       log.info('intent', `task cancel ${ticket.id} by ${session.name}`);
       reply(`ticket ${ticket.id} cancelled${next ? ` — next: ${next.id} delivered to ${seat}` : ''}`);
     }

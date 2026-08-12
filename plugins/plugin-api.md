@@ -852,7 +852,7 @@ or fires an IPC is not slow — it is wrong, because a relayout is not an event.
 ### `host.lib`
 
 Sanctioned shared core utilities, frozen and named. In `"1"` there is exactly
-one entry, `gitWorktree`, offering eight functions. All are `async` except
+one entry, `gitWorktree`, offering nine functions. All are `async` except
 `defaultWorktreePath`, and all are best-effort: they return a shaped result or
 `null` rather than throwing.
 
@@ -865,6 +865,7 @@ one entry, `gitWorktree`, offering eight functions. All are `async` except
 | `defaultWorktreePath(repoTop, branch)` | **Sync.** A safe default sibling path for a new worktree, `<repo>/../<repo>-<branch>`. Branch slashes become dashes. |
 | `createWorktree(cwd, branch, opts)` | Creates a worktree. With no explicit target the sibling default is chosen and disambiguated with a numeric suffix if taken. |
 | `removeWorktree(worktreePath)` | `{ ok }` or `{ ok: false, error }`. Refuses to remove the main working tree — the path must be a registered *linked* worktree. |
+| `commitsOnBranch(cwd, branch, base)` | `{ ok, count, base }` — how many commits `branch` carries beyond `base`. With no `base`, or one that no longer resolves (rebased, gc'd), it falls back to a merge base rather than counting against the checkout's live HEAD, which answers wrongly in both directions. |
 | `isDirty(worktreePath)` | `{ ok, dirty }` or `{ ok: false, error }`. Whether the tree holds work git would track — uncommitted or untracked. Honors `.gitignore`, so output in an ignored path reads clean. Committed work is deliberately excluded: it lives on the branch and survives the checkout. |
 
 You receive **bound wrappers**, not the module itself: the members cannot be
