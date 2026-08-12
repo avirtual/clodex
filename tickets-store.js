@@ -143,4 +143,127 @@ function branchSlug(title) {
   return s.replace(/^-+|-+$/g, '');
 }
 
-module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, branchSlug, TICKETS_FILE };
+// The MUST-FIX section of a reviewer verdict, verbatim, or null when there is
+// none. Sectioned by HEADER LINE rather than by scanning for the first `NITS`
+// anywhere: a must-fix item routinely names the word (`this nit is blocking`,
+// `CHECKED nothing here`), and a substring cut there silently truncates the
+// blocking list — which is the half the rework round is built from.
+//
+// A section whose body is only a "none" placeholder returns null, so a reviewer
+// writing `MUST-FIX: none` beside an ACCEPT does not hand the loop an empty
+// rework body to deliver.
+// Header-vs-item is decided by BULLET AND BOLD, not by what follows the keyword.
+// A separator rule cannot do it: `- CHECKED: I could not verify this` (an item)
+// and `MUST-FIX: the ordering is wrong` (a header carrying its only item inline)
+// are the same shape under "keyword then punctuation", so any such rule either
+// drops the blocking list or stops reading inline headers. Six real item shapes
+// were extracting to null this way.
+//
+// The discriminator comes from the producer — resources/library/prompts/system/
+// clodex-team-reviewer.md's "Verdict format" section — where headers are bold and
+// unbulleted (`**MUST-FIX**`, `**VERDICT**: ACCEPT`) and items carry a bullet or
+// a number and are not bold-wrapped:
+//   bold-delimited keyword  -> header wherever it appears, bullet or not;
+//   bulleted/numbered       -> header only if the keyword is the WHOLE line;
+//   neither                 -> header unless a word follows the keyword, which is
+//                              prose (`VERDICT parsing accepts a quoted line`).
+// The third arm is the only one where the separator carries any weight, and it
+// is kept precisely because there is no bullet there to read instead.
+//
+// `*` is consumed as a bullet only when it is not the first half of `**`, or
+// `**MUST-FIX**` reads as a bulleted line whose remainder is `MUST-FIX**` and the
+// most common header form in the corpus stops matching.
+const LINE_MARKER_RE = /^[ \t]*(?:(?:[-+>]|\*(?!\*)|\d+[.)])[ \t]*)+/;
+const SECTION_KEYWORD_RE = /^(MUST[-\s]?FIX|NITS?|CHECKED|VERDICT)\b/i;
+const INLINE_LEAD_RE = /^[ \t]*(?:\*\*|__)?[ \t]*[:\-—]?[ \t]*/;
+
+// null for an item/prose line, else { keyword, tail } — `tail` is the inline
+// first item (`MUST-FIX: the guard is inverted`), '' when the header stands alone.
+function sectionHeader(line) {
+  const s = String(line == null ? '' : line);
+  const marker = LINE_MARKER_RE.exec(s);
+  const rest = marker ? s.slice(marker[0].length) : s.replace(/^[ \t]*/, '');
+
+  const bold = /^(\*\*|__)/.exec(rest);
+  const body = bold ? rest.slice(bold[1].length) : rest;
+  const kw = SECTION_KEYWORD_RE.exec(body);
+  if (!kw) return null;
+  const after = body.slice(kw[0].length);
+
+  if (bold) {
+    // The closing delimiter may sit after a separator the reviewer bolded along
+    // with the keyword (`**MUST-FIX:**`).
+    const close = new RegExp(`^[ \\t]*[:\\-—]?[ \\t]*${bold[1] === '**' ? '\\*\\*' : '__'}`).exec(after);
+    if (!close) return null;   // an unterminated `**` is emphasis mid-sentence, not a header
+    return { keyword: kw[1], tail: after.slice(close[0].length).replace(INLINE_LEAD_RE, '').trim() };
+  }
+  if (marker) {
+    return /^[ \t]*[:.\-—]?[ \t]*$/.test(after) ? { keyword: kw[1], tail: '' } : null;
+  }
+  return /^[ \t]*(?:[^ \tA-Za-z0-9]|$)/.test(after)
+    ? { keyword: kw[1], tail: after.replace(INLINE_LEAD_RE, '').trim() }
+    : null;
+}
+
+function extractMustFix(verdictText) {
+  const lines = String(verdictText == null ? '' : verdictText).split('\n');
+  const body = [];
+  let inSection = false;
+  for (const line of lines) {
+    const h = sectionHeader(line);
+    if (h) {
+      const isMustFix = /^MUST/i.test(h.keyword);
+      if (inSection && !isMustFix) break;   // the next section closes this one
+      if (isMustFix) {
+        inSection = true;
+        // The header line carries the first item when the reviewer wrote it
+        // inline (`MUST-FIX: the guard is inverted`), which is the common shape
+        // for a single-item list.
+        if (h.tail) body.push(h.tail);
+      }
+      continue;
+    }
+    if (inSection) body.push(line);
+  }
+  const out = body.join('\n').trim();
+  if (!out) return null;
+  return /^(?:none|n\/a|-+|—)\.?$/i.test(out) ? null : out;
+}
+
+// Has this ticket been DISPATCHED? First-class state, because everything
+// downstream of the add/start split keys off it, and inferring it from
+// `dispatch:'worktree'` plus the absence of `ticket.worktree` is a derived
+// signal that goes silently wrong the moment a non-worktree role needs the same
+// distinction.
+//
+// The three legacy arms exist because every ticket in a live tickets.json was
+// dispatched by the OLD `add` and carries no `startedAt`. Reading those as
+// never-started drops them out of `_openTicketsFor`, so replay and `_advanceSeat`
+// stop seeing real in-flight work on the first launch after upgrade — strictly
+// worse than the collision being fixed here.
+//
+// The KEY'S PRESENCE is the format discriminator, which is why `_taskAdd` writes
+// `startedAt: null` explicitly: an unstarted new ticket carries the key holding
+// null, a pre-upgrade record has no key at all, and nothing else tells them
+// apart. Absent defaults to STARTED because the two errors are not symmetric —
+// a false "started" only refuses a `start` (and `assign` still re-sends), while
+// a false "unstarted" silently re-delivers in-flight specs into occupied trees.
+//
+// `parked` carves the one legacy shape that provably never dispatched: the old
+// `add` returned before delivering when parked. Without it the documented
+// park-then-release flow would refuse to start on the first post-upgrade launch.
+//
+// `role`/`worktree` are kept as a second reading, not as the primary one: they
+// are written only by a dispatch path, but `_repinTicketToSeat` declines to
+// write `role` when the assignee is a SEAT NAME rather than a role key, so an
+// old name-addressed ticket dispatched with neither field set. Those records are
+// caught by the absent-key arm, not by this one.
+function ticketStarted(ticket) {
+  if (!ticket) return false;
+  if (ticket.startedAt != null) return true;
+  if (ticket.role || (ticket.worktree && ticket.worktree.path)) return true;
+  if (!Object.prototype.hasOwnProperty.call(ticket, 'startedAt')) return !ticket.parked;
+  return false;
+}
+
+module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, ticketStarted, branchSlug, TICKETS_FILE };

@@ -706,7 +706,9 @@ function leadActionLine(team) {
     sessionRoles.push(role);
   }
   const parts = [];
-  if (sessionRoles.length) parts.push('Dispatch: [agent:task add <role>] <spec> — it starts the seat IMMEDIATELY. To file one for later, [agent:task add park <role>] <spec>: the assignee is recorded, the spec is not delivered, and [agent:task assign <id> <role>] releases it. A "do not start" line in the body is NOT read by anything.');
+  // The "Dispatch:" prefix is the token three roster tests assert the ABSENCE of
+  // for a non-lead seat. Rewording the line without it defangs all three silently.
+  if (sessionRoles.length) parts.push('Dispatch: TWO steps. [agent:task add <role>] <spec> writes the ticket and starts NOTHING, then [agent:task start <id>] mints its tree and seat and delivers the spec. A "do not start" line in the body is NOT read by anything — an unstarted ticket is simply one you have not started.');
   // Spells out that the intent does the spawning. A lead reading "Review:
   // [agent:team-review]" next to a roster line that said `reviewer (subagent)`
   // reached for its harness subagent tool instead — which gets a reviewer with

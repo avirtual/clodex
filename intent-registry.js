@@ -106,7 +106,7 @@ function parseReboot(cleaned) {
 }
 
 function parseTask(cleaned) {
-  const m = cleaned.match(/^\[agent:task\s+(add|assign|done|reject|cancel|accept|park|list)\b([^\]]*)\]\s*(.*)/s);
+  const m = cleaned.match(/^\[agent:task\s+(add|assign|start|done|reject|cancel|accept|park|list)\b([^\]]*)\]\s*(.*)/s);
   if (!m) return null;
   const sub = m[1];
   const argToks = m[2].trim().split(/\s+/).filter(Boolean);
@@ -124,7 +124,7 @@ function parseTask(cleaned) {
   }
   if (sub === 'assign') return { type: 'task', sub, id: argToks[0] || null, who: argToks[1] || null, body: '' };
   if (sub === 'list') return { type: 'task', sub, id: null, who: null, filter: argToks[0] || null, body: '' };
-  if (sub === 'park') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
+  if (sub === 'park' || sub === 'start') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
   return { type: 'task', sub, id: argToks[0] || null, who: null, body };
 }
 
