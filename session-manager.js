@@ -153,6 +153,7 @@ const REVIEWER_FALLBACK = {
 };
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, ticketStarted, branchSlug } = require('./tickets-store');
 const teamCost = require('./team-cost');
+const { buildReviewScope } = require('./ticket-review-scope');
 const { findRepoRoot } = require('./project-root');
 const { projectDirFor } = require('./clodex-paths');
 // Aliased deliberately: the manager has its OWN trackedSessionIds() method with
@@ -4460,7 +4461,13 @@ function createSessionManager(deps) {
     // happens to mention a ticket id would otherwise divert its verdict to that
     // ticket and the asker would be told nothing.
     _handleTeamReview(session, body, opts = {}) {
-      const reply = (msg) => this._injectText(session, `[agent:team-review] ${msg}`, { parkable: true });
+      // The loop calls this AS the lead (it is lead-gated), so without a diversion
+      // every spawn reply would print in the lead's terminal — a second path to
+      // the lead beside escalation, which the loop's design forbids. onReply
+      // diverts, and must never suppress: the same reply carries the template and
+      // tool-cap refusals, and the loop turns those into escalations.
+      const onReply = (opts && typeof opts.onReply === 'function') ? opts.onReply : null;
+      const reply = onReply || ((msg) => this._injectText(session, `[agent:team-review] ${msg}`, { parkable: true }));
       const reviewTicket = (opts && opts.ticketId) || null;
       const scope = String(body == null ? '' : body).trim();
       if (!scope) { reply('error: a review scope is required — [agent:team-review] <what to review>'); return; }
@@ -4664,12 +4671,26 @@ function createSessionManager(deps) {
       // is over, so stamping one would revive a finished ticket's review fields
       // and leave the board showing a round nobody can act on. Null falls through
       // to the lead, who is the one who can.
-      if (ticket.state !== 'open') return null;
+      //
+      // `done` + a live `loopStep` is the ONE exception, and it is not a
+      // loosening: the loop spawns its reviewer AFTER `task done` has already
+      // written state `done`, so under the plain guard every loop verdict would
+      // fall through to the lead — which is precisely the round trip this whole
+      // design removes. `loopStep` is what distinguishes a ticket the loop is
+      // still holding from one that is genuinely finished; an ad-hoc review of a
+      // long-closed ticket has no loopStep and still correctly falls through.
+      if (ticket.state !== 'open' && !(ticket.state === 'done' && ticket.loopStep)) return null;
       ticket.verdict = m[1].toUpperCase();
       ticket.mustFix = extractMustFix(verdict);
       ticket.reviewRound = (Number(ticket.reviewRound) || 0) + 1;
       ticket.reviewedAt = Date.now();
       ticket.lastActivityAt = ticket.reviewedAt;
+      // The loop's hand-off point: the verdict is the step the loop was waiting
+      // on, so it no longer holds the ticket and the watchdog must stop treating
+      // it as in-flight. Cleared here rather than in the caller because this is
+      // the write that makes the verdict durable — a clear in a caller that
+      // throws first would leave a landed verdict permanently marked in-flight.
+      delete ticket.loopStep;
       // A verdict is progress, so it closes the stall episode the review opened —
       // otherwise the watchdog spends its one nudge on a ticket that just moved.
       ticket.nudgedAt = null;
@@ -6194,6 +6215,18 @@ function createSessionManager(deps) {
       ticket.report = report;
       ticket.reportedBy = session.name;
       ticket.lastActivityAt = ticket.closedAt;
+      // The loop only runs on a ticket that has its own tree: every check below
+      // it (commits on the branch, base still an ancestor, a diff) is a question
+      // about a branch, and a ticket worked in the shared checkout has none. Those
+      // close exactly as they did before this ticket — `done` stays terminal for
+      // them, and no loopStep means the watchdog change below cannot see them.
+      //
+      // Stamped BEFORE the save, in the same write that closes the ticket: the
+      // step is what tells the watchdog this `done` is still in flight, and a
+      // process that dies between the close and a later stamp would leave a
+      // ticket nothing ever nudges — the one outcome this design must not have.
+      const loopEligible = !!(ticket.worktree && ticket.worktree.branch && ticket.worktree.baseSha);
+      if (loopEligible) ticket.loopStep = 'verify';
       ticketsStore.save(team.root, tickets);
       this._reconcileTickets(team);
       const doneSeat = this._ticketAssigneeSeat(team, ticket);
@@ -6203,6 +6236,221 @@ function createSessionManager(deps) {
       this._writeTicketCost(team, ticket);
       log.info('intent', `task done ${ticket.id} by ${session.name} → ${lead}`);
       reply((isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`) + nextSuffix);
+      // Fired AFTER the reply, and deliberately not awaited: this handler is
+      // synchronous and the checks shell out to git, so awaiting them here would
+      // hold the intent handler open across several subprocesses and delay the
+      // hand's own confirmation behind work the hand is not waiting for.
+      if (loopEligible) this._runTicketLoop(team, ticket.id);
+    }
+
+    // The loop step `task done` opens: verify the tree, then spawn the review.
+    //
+    // Escalation is the ONLY way out of here that reaches the lead — every
+    // failure arm below funnels through _escalateTicket, and a second "tell the
+    // lead" path added here would reintroduce the round trip the whole design
+    // removes. It tears NOTHING down on any arm: the tree, the branch and the
+    // seat are exactly what the lead looks at first.
+    async _runTicketLoop(team, ticketId) {
+      const fail = (step, evidence, tried) => this._escalateTicket(team, ticketId, step, evidence, tried);
+      try {
+        const ticket = this._loadTicket(team, ticketId);
+        // Gone or already moved on: another path (cancel, accept, a second done)
+        // owns it now, and re-driving a step against a stale snapshot is how two
+        // reviewers end up on one ticket.
+        if (!ticket || ticket.loopStep !== 'verify') return;
+        const wt = ticket.worktree || {};
+        const branch = wt.branch;
+        const baseSha = wt.baseSha;
+
+        // CHECK 1 — commits on the branch. Zero means the hand worked somewhere
+        // nobody can see, and a reviewer would be handed an empty range.
+        const commits = await gitWorktree.commitsOnBranch(team.root, branch, baseSha)
+          .catch((e) => ({ ok: false, count: null, error: e.message }));
+        if (!commits.ok) {
+          fail('verify: commits-on-branch', `git could not count commits on ${branch} since ${baseSha}: ${commits.error}`,
+            `ran commitsOnBranch(${branch}, ${baseSha})`);
+          return;
+        }
+        if (commits.count === 0) {
+          fail('verify: commits-on-branch', `branch ${branch} has 0 commits beyond ${baseSha} — the ticket was closed with nothing committed`,
+            `ran commitsOnBranch(${branch}, ${baseSha}); no reviewer spawned`);
+          return;
+        }
+
+        // CHECK 2 — the base is still an ancestor of the branch. A rebase or a
+        // reset under the hand means the tree is not the one the spec was
+        // written against, and every line number in the spec is then suspect.
+        //
+        // ARGUMENTS DELIBERATELY IN THIS ORDER: isMerged(cwd, X, Y) asks
+        // "is X an ancestor of Y", so asking whether the BASE is contained in
+        // the BRANCH is isMerged(root, baseSha, branch). It reads backwards and
+        // it is not — swapping it asks whether the branch is already merged into
+        // its own base, which is true only when the hand did nothing.
+        const anc = await gitWorktree.isMerged(team.root, baseSha, branch)
+          .catch((e) => ({ ok: false, error: e.message }));
+        if (!anc.ok) {
+          fail('verify: base-is-ancestor', `git could not confirm ${baseSha} is an ancestor of ${branch}: ${anc.error}`,
+            `ran isMerged(${baseSha}, ${branch})`);
+          return;
+        }
+        if (!anc.merged) {
+          fail('verify: base-is-ancestor', `${baseSha} is NOT an ancestor of ${branch} — the branch was rebased or reset, so it is no longer the tree the spec was written against`,
+            `ran isMerged(${baseSha}, ${branch}); no reviewer spawned`);
+          return;
+        }
+
+        // CHECK 3 — the diff materializes, non-empty. This is also the artifact
+        // the reviewer reads, so the check and the deliverable are the same
+        // operation: a diff that cannot be written is a review that cannot happen.
+        const diff = await gitWorktree.diffText(team.root, baseSha, branch)
+          .catch((e) => ({ ok: false, text: null, error: e.message }));
+        if (!diff.ok) {
+          fail('verify: diff', `git diff --text ${baseSha}..${branch} failed: ${diff.error}`,
+            `ran diffText(${baseSha}, ${branch})`);
+          return;
+        }
+        if (!diff.text || !diff.text.trim()) {
+          fail('verify: diff', `git diff --text ${baseSha}..${branch} is empty despite ${commits.count} commit(s) on the branch — there is nothing to review`,
+            `ran commitsOnBranch (${commits.count}) then diffText, both succeeded`);
+          return;
+        }
+
+        const written = this._writeTicketDiff(team, ticket, diff.text);
+        if (!written.ok) {
+          fail('verify: diff', `the diff could not be written for the reviewer to read: ${written.error}`,
+            `ran diffText (${diff.text.length} bytes) then tried to write ${written.path || 'the task dir'}`);
+          return;
+        }
+
+        this._setLoopStep(team, ticketId, 'review');
+        this._spawnTicketReview(team, ticketId, written.path);
+      } catch (e) {
+        // The catch-all is an escalation, never a swallow: an unexpected throw
+        // here leaves a ticket marked in-flight, and the watchdog's one nudge is
+        // a worse way to learn about it than being told the exception.
+        fail('verify', `the loop threw: ${e && e.message ? e.message : String(e)}`, 'no reviewer spawned');
+      }
+    }
+
+    _loadTicket(team, ticketId) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        return tickets.find((t) => t.id === ticketId) || null;
+      } catch { return null; }
+    }
+
+    // Re-load, mutate, save — never a mutation of a caller's snapshot. The loop
+    // awaits git between reads, which is a wide enough window for another writer
+    // (a verdict, a cancel) to land in, and saving a stale array would silently
+    // revert it.
+    _setLoopStep(team, ticketId, step) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec) return;
+        if (step) rec.loopStep = step; else delete rec.loopStep;
+        rec.lastActivityAt = Date.now();
+        // Advancing a step IS progress, so it ends the stall episode: without
+        // this a slow but healthy loop spends its one nudge while working.
+        rec.nudgedAt = null;
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `loopStep ${step} for ${ticketId} failed: ${e.message}`);
+      }
+    }
+
+    // The materialized diff, written beside the ticket's other artifacts.
+    //
+    // The taskDir is RESOLVED through the same confinement _writeTicketCost uses
+    // and for the same reason: it is spec TEXT, an agent wrote it, and a `~` or a
+    // `..` in it would otherwise be joined into a path outside the projects root.
+    _writeTicketDiff(team, ticket, text) {
+      let taskDir = null;
+      try {
+        taskDir = teamCost.resolveTaskDir({
+          taskDir: ticket.taskDir,
+          projectDir: projectDirFor(REGISTRY_DIR, team.root),
+          projectsRoot: path.join(REGISTRY_DIR, 'projects'),
+          homedir: os.homedir(),
+        });
+      } catch (e) {
+        return { ok: false, path: null, error: `task dir refused: ${e.message}` };
+      }
+      if (!taskDir) {
+        return { ok: false, path: null, error: `ticket ${ticket.id} has no resolvable task dir to write the diff into (taskDir: ${ticket.taskDir || 'none'})` };
+      }
+      const file = path.join(taskDir, `review-${ticket.id}.diff`);
+      try {
+        ensureDir(taskDir);
+        fs.writeFileSync(file, text);
+      } catch (e) {
+        return { ok: false, path: file, error: e.message };
+      }
+      return { ok: true, path: file, error: null };
+    }
+
+    // Spawn the loop's reviewer through the EXISTING team-review path, with the
+    // constructed scope as its body. Not a hand-rolled spawn: that path already
+    // owns the reviewer template, the tool cap, the name reservation and the
+    // reviewTicket seed that routes the verdict back to the ticket.
+    _spawnTicketReview(team, ticketId, diffPath) {
+      const ticket = this._loadTicket(team, ticketId);
+      if (!ticket) return;
+      // _handleTeamReview is lead-gated and replies into the CALLING session, so
+      // it must be called as the lead. A lead that is not live is a genuine
+      // blocker for this step — there is no session to spawn from.
+      const leadSession = this.sessions.get(team.lead);
+      if (!leadSession) {
+        this._escalateTicket(team, ticketId, 'review: spawn',
+          `the team lead ${team.lead} has no live session to spawn a reviewer from`,
+          'verify passed and the diff was written; no reviewer spawned');
+        return;
+      }
+      const scope = buildReviewScope({ ticket, diffPath });
+      // onReply diverts _handleTeamReview's reply away from the lead's terminal.
+      // Diverted, NOT suppressed: that reply is also how every spawn refusal
+      // (a broken reviewer template, an empty tool intersection) is reported, and
+      // swallowing it would turn a failed spawn into a ticket that is marked
+      // under review with no reviewer — silence in exactly the case that needs a
+      // human. Errors become escalations; a success is logged.
+      this._handleTeamReview(leadSession, scope, {
+        ticketId,
+        onReply: (msg) => {
+          const m = String(msg == null ? '' : msg);
+          if (/^error:/i.test(m)) {
+            this._escalateTicket(team, ticketId, 'review: spawn', m,
+              'verify passed and the diff was written; the reviewer spawn was refused');
+            return;
+          }
+          log.info('intent', `ticket ${ticketId} review spawned: ${m}`);
+        },
+      });
+    }
+
+    // The one channel out of the loop to the lead.
+    //
+    // Tears nothing down, by design: the tree, the branch and the seat stay
+    // exactly as they are, because the lead's first act on an escalation is to
+    // look at them. It also clears `loopStep` — the loop is no longer holding
+    // the ticket once a human has been asked, and leaving it set would keep the
+    // watchdog nudging about a ticket already on the lead's desk.
+    _escalateTicket(team, ticketId, step, evidence, tried) {
+      try {
+        this._setLoopStep(team, ticketId, null);
+        const body = [
+          `[ticket ${ticketId} ESCALATED] the loop stopped at: ${step}`,
+          '',
+          `EVIDENCE: ${evidence}`,
+          `ALREADY TRIED: ${tried}`,
+          '',
+          'Nothing was torn down — the worktree, the branch and the seat are exactly as they were.',
+        ].join('\n');
+        this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticketId} ESCALATED]`);
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} escalated: ${step}` });
+        log.info('intent', `ticket ${ticketId} escalated at ${step}: ${evidence}`);
+      } catch (e) {
+        log.error('ticket', `escalation for ${ticketId} failed: ${e.message}`);
+      }
     }
 
     // Which seat's ledger a closing ticket's cost belongs to.
@@ -6767,7 +7015,13 @@ function createSessionManager(deps) {
         // Parked is exempt for the same reason backlog is: nothing was dispatched,
         // so quiet is the expected state and a nudge would report the lead's own
         // decision back to them once per stall threshold.
-        if (t.state !== 'open' || t.assignee == null || t.parked) continue; // backlog/parked/closed exempt
+        // `done` stopped being terminal when the loop started running past it: a
+        // done ticket with a live `loopStep` has checks running or a review in
+        // flight, and if that step dies nothing else ever nudges anyone. That is
+        // the one state added here — a done ticket WITHOUT a loopStep is finished
+        // and stays exempt, exactly as before.
+        const inFlight = t.state === 'open' || (t.state === 'done' && !!t.loopStep);
+        if (!inFlight || t.assignee == null || t.parked) continue; // backlog/parked/closed exempt
         const last = t.lastActivityAt || t.openedAt || now;
         if (now - last < stallMs) continue;
         if (t.nudgedAt) continue; // one nudge per stall episode
@@ -6795,7 +7049,12 @@ function createSessionManager(deps) {
               // seat that speaks inside this window ends the stall. Stamping anyway
               // spends the next episode's one nudge before it starts, and only
               // activity clears it — which never comes during a stall.
-              if (rec.state !== 'open') return;
+              // Mirrors the eligibility test at the top of the loop, and MUST:
+              // this guard decides whether the one nudge is spent, so a shape the
+              // loop nudges but this refuses to stamp re-nudges every single
+              // sweep — the one-nudge-per-episode rule, inverted, on precisely
+              // the in-flight tickets the sweep was just extended to cover.
+              if (!(rec.state === 'open' || (rec.state === 'done' && !!rec.loopStep))) return;
               if ((rec.lastActivityAt || null) !== seenAt) return;
               rec.nudgedAt = Date.now();
               ticketsStore.save(team.root, fresh);
