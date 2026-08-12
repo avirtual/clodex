@@ -1939,11 +1939,17 @@ const tick = () => new Promise((r) => setTimeout(r, 10));
 
 function mkSpawn(templatesList, persistedEntries = {}) {
   const stripCalls = [], acCalls = [];
+  // Both setters resolve the entry BY NAME and no-op when it is absent, so the
+  // fixture must too: a recorder that captured the call unconditionally would
+  // record a write that the real store would have thrown away, and every
+  // "the template's level reached the seat" assertion downstream would still
+  // pass with the call moved BEFORE create(). `minted` is what create() makes.
+  const minted = new Set(Object.keys(persistedEntries));
   const persistence = {
     list: () => [],
     get: (n) => persistedEntries[n] || null,
-    setStripLevel: (n, l) => stripCalls.push([n, l]),
-    setAutoCompact: (n, on) => acCalls.push([n, on]),
+    setStripLevel: (n, l) => { if (minted.has(n)) stripCalls.push([n, l]); },
+    setAutoCompact: (n, on) => { if (minted.has(n)) acCalls.push([n, on]); },
   };
   const m = mk({
     getPersistence: () => persistence,
@@ -1960,7 +1966,7 @@ function mkSpawn(templatesList, persistedEntries = {}) {
   m._injectText = (_s, text) => replies.push(text);
   m._sendToSession = () => {};
   m._broadcast = () => {};
-  m.create = async (...args) => { created.push(args); };
+  m.create = async (...args) => { created.push(args); minted.add(args[0]); };
   const spawner = { name: 'clodex', type: 'claude', workspaceId: 'default', proxy: null };
   return { m, created, replies, stripCalls, acCalls, spawner };
 }
@@ -3577,6 +3583,14 @@ function mkReview(extra = {}) {
       if (!e) return;
       if (level === 1 || level === 2) e.stripLevel = level; else delete e.stripLevel;
     },
+    // Same by-name, no-op-when-absent shape as setStripLevel, and for the same
+    // reason: a fixture that wrote unconditionally would make a call moved
+    // BEFORE create() look like it worked.
+    setAutoCompact: (n, on) => {
+      const e = store.find((x) => x.name === n);
+      if (!e) return;
+      if (on === false) e.autoCompact = false; else delete e.autoCompact;
+    },
   };
   const overrides = {
     resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? team : null),
@@ -4361,6 +4375,50 @@ test('team-review: the template stripLevel lands on the seat, and only after cre
   assert.ok(entry.ephemeral === true && entry.reviewFor === 'lead',
     'and the identity seed survived the later setStripLevel write');
   assert.ok(!injected.some((t) => /error/i.test(t)), 'no error surfaced to the lead');
+});
+
+// t297 Part B: `autoCompact: false` was inert on the review path — the site
+// applied stripLevel only — so a reviewer template that opted out of
+// auto-compact got compacted anyway, on exactly the seat type the template was
+// written for. Same post-create() ordering claim as stripLevel above, driven
+// through setAutoCompact because that is the setter this test's claim rides on.
+test('team-review (t297): the template autoCompact:false lands on the seat, and only after create()', async () => {
+  const { m, injected, created, persistence } = mkReview({
+    reviewTemplate: { autoCompact: false },
+  });
+  let createDone = false;
+  const realSetAutoCompact = persistence.setAutoCompact;
+  persistence.setAutoCompact = (n, on) => {
+    if (!createDone) return; // pre-create(): no record yet, so the write is lost
+    realSetAutoCompact(n, on);
+  };
+  m.create = async (...args) => { created.push(args); createDone = true; };
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
+  const entry = persistence.get(created[0][0]);
+  assert.ok(entry, 'ENTER: the seat has a persistence entry to carry the opt-out');
+  assert.strictEqual(entry.autoCompact, false,
+    'the template opted out of auto-compact and the seat honors it');
+  assert.ok(entry.ephemeral === true && entry.reviewFor === 'lead',
+    'and the identity seed survived the later write');
+  assert.ok(!injected.some((t) => /error/i.test(t)), 'no error surfaced to the lead');
+});
+
+// The opt-OUT is the only stored value: a template that says nothing must leave
+// the key ABSENT, or it freezes "on" onto the record and autoCompactOf can no
+// longer tell a deliberate choice from a default.
+test('team-review (t297): a template with no autoCompact leaves the key ABSENT, not written true', async () => {
+  const { m, created, persistence } = mkReview();
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
+  const entry = persistence.get(created[0][0]);
+  assert.ok(entry, 'ENTER: the seat has a persistence entry');
+  assert.ok(!('autoCompact' in entry),
+    'the shipped default carries no autoCompact, so the key stays absent and the default applies');
 });
 
 // A template with no stripLevel must not write one: absent is a real value

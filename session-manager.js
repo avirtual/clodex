@@ -4364,10 +4364,10 @@ function createSessionManager(deps) {
           if (wt) {
             try { getPersistence().setWorktree(name, wt); } catch { /* best-effort */ }
           }
-          if (tpl) {
-            if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
-            if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
-          }
+          // No resolveSeatShape on this path — the template here can be a bare
+          // JSON file the spawner named, not a library entry — so the writer is
+          // handed the one field it reads.
+          this._applyTemplatePersistence(name, { tpl });
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd: spawnCwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
           });
@@ -4511,14 +4511,11 @@ function createSessionManager(deps) {
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
           );
-          // AFTER create(), not before: setStripLevel resolves the entry by name
-          // and silently no-ops if it isn't there yet. The spawn-intent path
-          // applies the template's level the same way; a reviewer that skipped
-          // this ran unstripped no matter what the template said, which is
-          // invisible from inside the seat.
-          if (reviewTpl && (reviewTpl.stripLevel === 1 || reviewTpl.stripLevel === 2)) {
-            getPersistence().setStripLevel(name, reviewTpl.stripLevel);
-          }
+          // AFTER create(), not before: the setters resolve the entry by name and
+          // silently no-op if it isn't there yet. A reviewer that skipped this ran
+          // unstripped no matter what the template said, which is invisible from
+          // inside the seat.
+          this._applyTemplatePersistence(name, shape);
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
           });
