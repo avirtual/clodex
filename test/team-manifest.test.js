@@ -15,7 +15,7 @@ const path = require('path');
 
 const {
   createTeamManifest, matchSeatRole, formatTeamBlock, formatRoster,
-  formatCompositionDelta, STOCK_ROLE_DEFS, CUT_ROLE_FIELDS, MANIFEST_VERSION,
+  formatCompositionDelta, STOCK_ROLE_DEFS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, MANIFEST_VERSION,
 } = require('../team-manifest');
 
 // A fresh fake ~/.clodex per helper call, so tests don't cross-contaminate.
@@ -266,15 +266,16 @@ test('loadManifest: a retired role field warns even on a CURRENT-version file, a
 
 // Every member, not just `tools`: the next inert field is the next wasted round,
 // and iterating the exported constant means a field added to it cannot ship
-// silent. `worktree` is carried onto `dispatch` before the delete, so it is
-// asserted for its WARNING only — its migration is pinned separately.
-test('loadManifest: every CUT_ROLE_FIELDS member warns as retired on a current-version file', () => {
+// silent. The VALUE is the honored one (`true`) rather than a placeholder — a
+// value chosen so the compatibility branch cannot fire is how the first cut of
+// this test pinned a message that was false for `worktree`.
+test('loadManifest: every CUT_ROLE_FIELDS member warns on a current-version file, truthfully', () => {
   for (const field of CUT_ROLE_FIELDS) {
     const home = mkHome();
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
     mkTeam(home, 'shop', {
       version: MANIFEST_VERSION, root, lead: 'lead',
-      roles: { lead: {}, runner: { brief: 'r', [field]: 'x' } },
+      roles: { lead: {}, runner: { brief: 'r', [field]: true } },
     });
     const tm = createTeamManifest({ fs, clodexHome: home });
     const warned = [];
@@ -285,9 +286,78 @@ test('loadManifest: every CUT_ROLE_FIELDS member warns as retired on a current-v
 
     assert.strictEqual(warned.length, 1, `ENTER: a current-version file carrying "${field}" warned`);
     assert.match(warned[0], new RegExp(`runner\\.${field}`), `the warning names runner.${field}`);
-    assert.match(warned[0], /IGNORED/, `the "${field}" warning says the field is ignored`);
     assert.ok(!(field in m.roles.runner), `"${field}" is still dropped from the normalized def`);
+
+    // The partition, asserted from the constant rather than by naming the key:
+    // a field promoted into HONORED_CUT_FIELDS later must not keep the
+    // "enforces nothing" line just because this loop hardcoded the old split.
+    if (HONORED_CUT_FIELDS.has(field)) {
+      assert.doesNotMatch(warned[0], /enforces or configures nothing/,
+        `"${field}" is still READ — the warning must not claim it does nothing`);
+      assert.match(warned[0], /STILL READ/, `the "${field}" warning says it still takes effect`);
+    } else {
+      assert.match(warned[0], /IGNORED/, `the "${field}" warning says the field is ignored`);
+    }
   }
+});
+
+// The trap this ticket's first cut walked into. `worktree: true` is the ONE cut
+// key still resolved onto `dispatch`, so a warning telling a reader it changes
+// nothing gets the key deleted and every worktree role silently becomes
+// standing — hands landing in the shared checkout weeks later. Both versions are
+// covered because v2 is the live migration population: those files carry
+// `worktree: true` and used to receive the milder line.
+for (const version of [MANIFEST_VERSION, 2]) {
+  test(`loadManifest: \`worktree: true\` is warned as STILL READ, never as inert (version ${version})`, () => {
+    const home = mkHome();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+    mkTeam(home, 'shop', {
+      version, root, lead: 'lead',
+      roles: { lead: {}, hand: { brief: 'h', worktree: true } },
+    });
+    const tm = createTeamManifest({ fs, clodexHome: home });
+    const warned = [];
+    const realWarn = console.warn;
+    console.warn = (msg) => warned.push(String(msg));
+    let m;
+    try { m = tm.loadManifest('shop'); } finally { console.warn = realWarn; }
+
+    // The compatibility branch really fired — without this the assertion below
+    // would pass over a fixture where `worktree` was inert after all, which is
+    // exactly how the false message shipped green the first time.
+    assert.strictEqual(m.roles.hand.dispatch, 'worktree',
+      'ENTER: the key under test IS honored — it resolved onto dispatch');
+    assert.strictEqual(warned.length, 1, 'exactly one line was emitted');
+    assert.match(warned[0], /hand\.worktree/, 'the warning names the role and the field');
+    assert.doesNotMatch(warned[0], /enforces or configures nothing/,
+      'the inert-field wording must never be emitted for a key that is still read');
+    assert.match(warned[0], /STILL READ/, 'it says the key still takes effect');
+    assert.match(warned[0], /CHANGES BEHAVIOUR/, 'it warns that deleting the key is not safe');
+    assert.match(warned[0], /dispatch/, 'it names the replacement to write instead');
+  });
+}
+
+// A v1 file with one retired and one never-modeled key emits TWO lines, not one:
+// the populations carry contradictory messages and a refactor that merges them
+// would have to make one of the two texts false.
+test('loadManifest: retired and unknown keys on one file warn separately', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  mkTeam(home, 'shop', {
+    root, lead: 'lead',
+    roles: { lead: {}, runner: { brief: 'r', tools: ['Read'], invented: 'x' } },
+  });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (msg) => warned.push(String(msg));
+  let m;
+  try { m = tm.loadManifest('shop'); } finally { console.warn = realWarn; }
+
+  assert.strictEqual(warned.length, 2, 'ENTER: two lines, one per population');
+  assert.ok(warned.some((w) => /runner\.tools/.test(w) && /IGNORED/.test(w)), 'the retired key got the retired line');
+  assert.ok(warned.some((w) => /runner\.invented/.test(w) && /no longer models/.test(w)), 'the unknown key got the unknown line');
+  assert.ok(!('tools' in m.roles.runner) && !('invented' in m.roles.runner), 'both keys still dropped');
 });
 
 // Same bound as the unknown-key warn: loadManifest has no cache and resolveTeam

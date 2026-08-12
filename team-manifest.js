@@ -56,6 +56,14 @@ const UNREACHABLE_ROLE_FIELDS = new Set([]);
 // opted into a worktree silently stops getting one, with nothing failing.
 const CUT_ROLE_FIELDS = ['instantiate', 'standing', 'tools', 'type', 'ephemeral', 'worktree'];
 
+// Cut from the schema but STILL READ. The load-time warning partitions on this:
+// every other cut field enforces nothing, and saying so is the whole point of
+// that line — but `worktree` is resolved onto `dispatch` in normalizeRoleDef, so
+// telling a reader it configures nothing invites them to delete it and silently
+// converts every worktree role to standing. A key belongs here for exactly as
+// long as a compatibility branch reads it, and leaves when that branch does.
+const HONORED_CUT_FIELDS = new Set(['worktree']);
+
 // Every role field a front door (setRole, the Add Role form, the popover row
 // model) may set. Exported so the legibility test compares the real list against
 // the schema instead of a copy that can drift from it.
@@ -152,12 +160,14 @@ function assertDispatchAllowed(roleName, def, file) {
 // warning. Returned rather than warned in place: normalizeRoleDef runs on the
 // write paths too, where a drop is the caller's answer, not a console line.
 //
-// `worktree` is reported here like any other unmodeled key, and that keeps a
-// stale v2 file loud until a mutator rewrites it — but unlike the rest it is
-// still READ (normalizeRoleDef resolves it onto `dispatch`), so the warning's
-// "ignoring" wording is not true of this one key. Do not "fix" that by excluding
-// it: the file would then load silently while still carrying a key whose meaning
-// lives in a compatibility branch, which is the state the warning exists for.
+// `worktree` is reported here like any other unmodeled key, which keeps a stale
+// v2 file loud until a mutator rewrites it. It must NOT be excluded to spare it
+// the warning: the file would then load silently while still carrying a key
+// whose meaning lives in a compatibility branch, which is the state the warning
+// exists for. It is still READ (normalizeRoleDef resolves it onto `dispatch`),
+// so the caller partitions it into HONORED_CUT_FIELDS and gives it a line
+// saying it takes effect — telling a reader it "enforces nothing" is what makes
+// deleting it look safe.
 function unknownRoleKeys(def) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) return [];
   return Object.keys(def).filter((k) => !ROLE_KEYS.has(k));
@@ -310,12 +320,18 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // is the measured case: it looks like a capability restriction, enforces
     // nothing, and cost a reader a full round before this warned.
     const droppedCut = [];
+    // Third population, not a special case of the second: a key that is still
+    // READ cannot share a line whose text is "this enforces nothing".
+    const droppedHonored = [];
     for (const [roleName, def] of Object.entries(rolesIn)) {
       if (!ROLE_RE.test(roleName)) {
         throw new Error(`role name "${roleName}" must match ${ROLE_RE} (${file})`);
       }
       for (const k of unknownRoleKeys(def)) {
-        (CUT_ROLE_FIELDS.includes(k) ? droppedCut : dropped).push(`${roleName}.${k}`);
+        const bucket = HONORED_CUT_FIELDS.has(k) ? droppedHonored
+          : CUT_ROLE_FIELDS.includes(k) ? droppedCut
+            : dropped;
+        bucket.push(`${roleName}.${k}`);
       }
       roles[roleName] = normalizeRoleDef(roleName, def, file);
     }
@@ -353,11 +369,27 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // Says IGNORED, not "dropped": a reader who sees "dropped" asks what it was
     // dropped FROM and may still believe the file means something. The point of
     // the line is that the field changes no behaviour anywhere.
+    //
+    // Reaches HONORED_CUT_FIELDS never — that text would be a lie about a key a
+    // compatibility branch still reads, and a reader who acts on it loses the
+    // opt-in silently. The partition is what keeps this sentence true.
     if (droppedCut.length) {
       const seen = `cut|${file}|${droppedCut.join(',')}`;
       if (!warnedDrops.has(seen)) {
         warnedDrops.add(seen);
         console.warn(`team "${name}": these role keys are IGNORED — they are retired fields this schema no longer honors, and setting them enforces or configures nothing: ${droppedCut.join(', ')} (${file})`);
+      }
+    }
+    // Ungated on version for the same reason as the line above, but the OPPOSITE
+    // message: this key still takes effect. It names the replacement because the
+    // only safe edit is a rewrite, not a delete — and it warns rather than going
+    // quiet because the meaning lives in a compatibility branch that will
+    // eventually be removed, at which point a silent file would change behaviour.
+    if (droppedHonored.length) {
+      const seen = `honored|${file}|${droppedHonored.join(',')}`;
+      if (!warnedDrops.has(seen)) {
+        warnedDrops.add(seen);
+        console.warn(`team "${name}": these role keys are RETIRED but STILL READ — they are not modeled by this schema, yet a compatibility branch still honors them, so deleting one CHANGES BEHAVIOUR: ${droppedHonored.join(', ')} — write \`dispatch: "worktree"\` instead; a future schema will stop reading them (${file})`);
       }
     }
     // team.json is agent-writable, so a hand-written watchdogMs is neutralized at
@@ -813,6 +845,6 @@ module.exports = {
   formatCompositionDelta, STOCK_ROLE_DEFS, TEAM_FILE,
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
-  ROLE_KEYS, CUT_ROLE_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
+  ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
   ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH,
 };
