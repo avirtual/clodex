@@ -304,11 +304,19 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     }
     const roles = {};
     const dropped = [];
+    // Split from `dropped` because the two warn under DIFFERENT conditions (see
+    // the version gate below), not merely with different wording. A cut field
+    // once had meaning and still READS as policy — `tools: ["Read"]` on a role
+    // is the measured case: it looks like a capability restriction, enforces
+    // nothing, and cost a reader a full round before this warned.
+    const droppedCut = [];
     for (const [roleName, def] of Object.entries(rolesIn)) {
       if (!ROLE_RE.test(roleName)) {
         throw new Error(`role name "${roleName}" must match ${ROLE_RE} (${file})`);
       }
-      for (const k of unknownRoleKeys(def)) dropped.push(`${roleName}.${k}`);
+      for (const k of unknownRoleKeys(def)) {
+        (CUT_ROLE_FIELDS.includes(k) ? droppedCut : dropped).push(`${roleName}.${k}`);
+      }
       roles[roleName] = normalizeRoleDef(roleName, def, file);
     }
     // Absent reads as 1, not as current: a file written before the version
@@ -328,10 +336,28 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // silent by design — that is a hand-added key on today's schema, which the
     // legibility gate covers; the warn exists for the migration, not as a linter.
     if (dropped.length && version < MANIFEST_VERSION) {
-      const seen = `${file}|${dropped.join(',')}`;
+      const seen = `unknown|${file}|${dropped.join(',')}`;
       if (!warnedDrops.has(seen)) {
         warnedDrops.add(seen);
         console.warn(`team "${name}": ignoring role keys this schema no longer models — ${dropped.join(', ')} (${file})`);
+      }
+    }
+    // NOT under the version gate, unlike the unknown-key warn above. A cut field
+    // reads as authority and enforces nothing, and the version stamp is exactly
+    // what hides the dangerous case: a file claiming the CURRENT schema while
+    // still carrying `reviewer.tools` dropped in total silence, which is the
+    // shape that burned a reader. The gate's rationale — "the warn exists for
+    // the migration, not as a linter" — holds for a key this schema never
+    // modelled; it does not hold for one it deliberately retired.
+    //
+    // Says IGNORED, not "dropped": a reader who sees "dropped" asks what it was
+    // dropped FROM and may still believe the file means something. The point of
+    // the line is that the field changes no behaviour anywhere.
+    if (droppedCut.length) {
+      const seen = `cut|${file}|${droppedCut.join(',')}`;
+      if (!warnedDrops.has(seen)) {
+        warnedDrops.add(seen);
+        console.warn(`team "${name}": these role keys are IGNORED — they are retired fields this schema no longer honors, and setting them enforces or configures nothing: ${droppedCut.join(', ')} (${file})`);
       }
     }
     // team.json is agent-writable, so a hand-written watchdogMs is neutralized at
@@ -785,6 +811,8 @@ function formatCompositionDelta(teamName, verb, { seat = null, role = null } = {
 module.exports = {
   createTeamManifest, matchSeatRole, formatTeamBlock, formatRoster,
   formatCompositionDelta, STOCK_ROLE_DEFS, TEAM_FILE,
-  ROLE_KEYS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
+  // Exported so the retired-field warn test iterates the REAL list — a copy in
+  // the test would keep passing over a field added here and never warned about.
+  ROLE_KEYS, CUT_ROLE_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
   ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH,
 };
