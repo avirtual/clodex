@@ -1490,12 +1490,6 @@ body {
 .team-role-key {
   font-weight: 600;
 }
-.team-role-inst {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-dim);
-}
 .team-role-badge {
   font-size: 10px;
   color: var(--text-dim);
@@ -25398,7 +25392,6 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           brief: def && def.brief || "",
           prompt: def && def.prompt || "",
           template: def && def.template || "",
-          instantiate: def && def.instantiate || "session",
           readOnly: RESERVED_ROLE_KEYS.has(key)
         }));
       }
@@ -25508,9 +25501,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             el.dataset.role = row.key;
             if (row.readOnly) {
               el.classList.add("read-only");
-              el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-inst">${esc(row.instantiate)}</span><span class="team-role-badge" title="Managed by Clodex \u2014 you don't need to change anything here">managed by Clodex</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div>`;
+              el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-badge" title="Managed by Clodex \u2014 you don't need to change anything here">managed by Clodex</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div>`;
             } else {
-              el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-inst">${esc(row.instantiate)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
+              el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
               el.querySelector('input[data-f="brief"]').value = row.brief;
               const sel = el.querySelector('select[data-f="prompt"]');
               {
@@ -25527,11 +25520,15 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 if (row.prompt && !promptNames.includes(row.prompt)) {
                   const missing = document.createElement("option");
                   missing.value = row.prompt;
-                  if (promptsListingOk) {
-                    missing.textContent = `${row.prompt} (missing from library)`;
-                  } else {
+                  if (!promptsListingOk) {
                     missing.textContent = row.prompt;
                     missing.title = "library listing unavailable";
+                  } else if (allPromptNames.includes(row.prompt)) {
+                    missing.textContent = `${row.prompt} (not an append-rail prompt)`;
+                    missing.title = `this prompt exists but does not declare "rail: append", so it can't compose onto a role`;
+                  } else {
+                    missing.textContent = `${row.prompt} (missing from library)`;
+                    missing.title = "no system prompt by this name is installed";
                   }
                   sel.appendChild(missing);
                 }
@@ -25564,6 +25561,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           await refresh(teamName());
         }
         let promptNames = [];
+        let allPromptNames = [];
         let promptsListingOk = true;
         async function populatePromptOptions() {
           let res;
@@ -25575,6 +25573,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           promptsListingOk = !!(res && res.ok);
           const prompts = res && res.prompts || [];
           promptNames = prompts;
+          allPromptNames = res && res.all || [];
           addPrompt.innerHTML = '<option value="">(no prompt)</option>';
           for (const p of prompts) {
             const opt = document.createElement("option");
@@ -25643,7 +25642,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             setStatus(v.error, true);
             return;
           }
-          const def = { instantiate: "session" };
+          const def = {};
           if (addPrompt.value) def.prompt = addPrompt.value;
           if (v.template) def.template = v.template;
           const brief = addBrief.value.trim();
