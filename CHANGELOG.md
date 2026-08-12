@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- A stalled ticket's alarm now tells you what the seat was actually doing. It
+  names the seat's last tool call — and distinguishes a call still in flight
+  from one that died mid-write — alongside the branch's commit count and
+  whether the tree is dirty. A dirty worktree on its own never separated a
+  working seat from one killed mid-turn, which is how a genuinely dead seat
+  got dismissed as busy.
+- A stall that nobody answers now re-escalates on a doubling schedule
+  (30m, 1h, 2h, 4h) instead of speaking once and going quiet. The doubling is
+  what keeps an unattended stall visible without flooding the prompt stream:
+  an 8-hour stall speaks about five times, not sixteen.
+
 - A retired role field in `team.json` now says so on load, instead of vanishing
   once the file claims a current schema version. `roles.reviewer.tools` looks
   like a capability restriction and enforces nothing — the real cap is in code —
