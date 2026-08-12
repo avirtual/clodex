@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- How a role gets its work is now a named choice you can see and change. Whether
+  a ticket went to the role's live seat or minted a fresh one in its own branch
+  and checkout used to be a `worktree: true` boolean that only a hand-edit of
+  `team.json` could set — a field with two behaviours, one of which had no name.
+  It is now `dispatch`, set from the team popover's Roles section: `standing`
+  hands the spec to the seat already holding the role, `worktree` gives the
+  ticket its own branch, tree and teammate. Existing team files keep their
+  setting; the old key is still read, so a file nobody has edited behaves as it
+  did before, and is rewritten the next time any role changes.
+
 - Ticket branch names are readable again. The branch was slugged from the
   ticket's first line, which is also where the dispatch format asks for a link to
   the task folder and where a lead naturally writes the ticket number — so the
@@ -123,7 +133,7 @@ blocks a release.
   suggesting a recovery command name the role too — suggesting a seat that has
   since gone would hand back a command that bounces.
 - A team role now declares only the four things something actually reads:
-  `template`, `prompt`, `brief`, and `worktree`. The other five —
+  `template`, `prompt`, `brief`, and `dispatch`. The other five —
   `instantiate`, `standing`, `tools`, `type`, `ephemeral` — were declarations no
   spawn path consumed, so setting one changed nothing while reading exactly like
   configuration. `tools` was the worst of them: a role that appeared to cap a
