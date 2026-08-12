@@ -131,8 +131,8 @@ test('create() mints from the record label, and both spawn paths seed it before 
     `expected exactly 2 wireLabel seeds (reviewer + ticket seat), found ${seeds.length}`);
 
   for (const [label, seedRe, createRe] of [
-    ['reviewer', /reviewFor: session\.name,\n\s*\.\.\.\(reviewLabel \?/, /name, type, cwd, postureArgs/],
-    ['ticket seat', /name: seat\.name, ephemeral: true,\n\s*\.\.\.\(seatLabel \?/, /seat\.name, opener\.type \|\| 'claude'/],
+    ['reviewer', /reviewFor: session\.name,\n\s*\.\.\.\(reviewLabel \?/, /name, type, cwd, shape\.extraArgs, null, shape\.workspaceId,/],
+    ['ticket seat', /name: seat\.name, ephemeral: true,\n\s*\.\.\.\(seatLabel \?/, /seat\.name, shape\.type, shape\.cwd,/],
   ]) {
     const seedAt = src.search(seedRe);
     const createAt = src.search(createRe);
