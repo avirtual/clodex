@@ -15,7 +15,7 @@ const path = require('path');
 
 const {
   createTeamManifest, matchSeatRole, formatTeamBlock, formatRoster,
-  formatCompositionDelta, STOCK_ROLE_DEFS,
+  formatCompositionDelta, STOCK_ROLE_DEFS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, MANIFEST_VERSION,
 } = require('../team-manifest');
 
 // A fresh fake ~/.clodex per helper call, so tests don't cross-contaminate.
@@ -228,6 +228,223 @@ test('loadManifest: the drop warning is emitted once per key set, and a current-
   try { m2 = tm2.loadManifest('shop'); } finally { console.warn = realWarn; }
   assert.deepStrictEqual(warned2, [], 'a current-version file does not warn');
   assert.ok(!('invented' in m2.roles.runner), 'ENTER: the unknown key was still DROPPED — silence is not acceptance');
+});
+
+// A RETIRED field is not an unknown one, and the difference is the version gate.
+// `tools: [...]` on a role reads as a capability restriction and enforces
+// nothing — the reviewer's real cap is REVIEWER_TOOL_CAP in session-manager —
+// and under the gate above a file stamped with the current version dropped it in
+// total silence. That is the trap at its worst: the stamp makes the file look
+// current while it still carries a field that reads as policy. So the cut-field
+// warn is deliberately NOT version-gated.
+test('loadManifest: a retired role field warns even on a CURRENT-version file, and says it is ignored', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  mkTeam(home, 'shop', {
+    version: MANIFEST_VERSION, root, lead: 'lead',
+    roles: { lead: {}, reviewer: { prompt: 'rev', tools: ['Read', 'Grep', 'Glob'] } },
+  });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (msg) => warned.push(String(msg));
+  let m;
+  try { m = tm.loadManifest('shop'); } finally { console.warn = realWarn; }
+
+  assert.strictEqual(warned.length, 1, 'ENTER: the current-version file with a retired key DID warn');
+  assert.match(warned[0], /reviewer\.tools/, 'the warning names the role and the field');
+  assert.match(warned[0], /IGNORED/, 'it says the field is ignored, not merely that it was dropped');
+  assert.match(warned[0], /enforces or configures nothing/, 'it says the field does nothing — the reason it misleads');
+  assert.ok(warned[0].includes(path.join(home, 'teams', 'shop', 'team.json')), 'it names the file to edit');
+
+  // Additive: the drop itself is unchanged. A warning that also started
+  // preserving the field would hand a live restriction to code that ignores it.
+  assert.deepStrictEqual(m.roles.reviewer, {
+    template: null, prompt: 'rev', brief: null, dispatch: 'standing',
+  }, 'the retired key is still dropped — the warning changed nothing about behaviour');
+});
+
+// Every member, not just `tools`: the next inert field is the next wasted round,
+// and iterating the exported constant means a field added to it cannot ship
+// silent. The VALUE is the honored one (`true`) rather than a placeholder — a
+// value chosen so the compatibility branch cannot fire is how the first cut of
+// this test pinned a message that was false for `worktree`.
+test('loadManifest: every CUT_ROLE_FIELDS member warns on a current-version file, truthfully', () => {
+  for (const field of CUT_ROLE_FIELDS) {
+    const home = mkHome();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+    mkTeam(home, 'shop', {
+      version: MANIFEST_VERSION, root, lead: 'lead',
+      roles: { lead: {}, runner: { brief: 'r', [field]: true } },
+    });
+    const tm = createTeamManifest({ fs, clodexHome: home });
+    const warned = [];
+    const realWarn = console.warn;
+    console.warn = (msg) => warned.push(String(msg));
+    let m;
+    try { m = tm.loadManifest('shop'); } finally { console.warn = realWarn; }
+
+    assert.strictEqual(warned.length, 1, `ENTER: a current-version file carrying "${field}" warned`);
+    assert.match(warned[0], new RegExp(`runner\\.${field}`), `the warning names runner.${field}`);
+    assert.ok(!(field in m.roles.runner), `"${field}" is still dropped from the normalized def`);
+
+    // The partition, asserted from the constant rather than by naming the key:
+    // a field promoted into HONORED_CUT_FIELDS later must not keep the
+    // "enforces nothing" line just because this loop hardcoded the old split.
+    // Keyed off the MEASURED effect, the same question the code asks — not off
+    // membership, which only gates whether the question is worth asking. The
+    // baseline is what the role normalizes to carrying no cut key at all, so
+    // "took effect" means exactly "the def came out different".
+    const changed = JSON.stringify(m.roles.runner)
+      !== JSON.stringify({ template: null, prompt: null, brief: 'r', dispatch: 'standing' });
+    assert.strictEqual(changed, HONORED_CUT_FIELDS.has(field),
+      `ENTER: seeded as \`true\` on a plain role, "${field}" ${HONORED_CUT_FIELDS.has(field) ? 'DID' : 'did not'} change the normalized def`);
+    if (changed) {
+      assert.doesNotMatch(warned[0], /enforces or configures nothing/,
+        `"${field}" took effect here — the warning must not claim it does nothing`);
+      assert.match(warned[0], /STILL READ/, `the "${field}" warning says it still takes effect`);
+    } else {
+      assert.match(warned[0], /IGNORED/, `the "${field}" warning says the field is ignored`);
+    }
+  }
+});
+
+// The trap this ticket's first cut walked into. `worktree: true` is the ONE cut
+// key still resolved onto `dispatch`, so a warning telling a reader it changes
+// nothing gets the key deleted and every worktree role silently becomes
+// standing — hands landing in the shared checkout weeks later. Both versions are
+// covered because v2 is the live migration population: those files carry
+// `worktree: true` and used to receive the milder line.
+for (const version of [MANIFEST_VERSION, 2]) {
+  test(`loadManifest: \`worktree: true\` is warned as STILL READ, never as inert (version ${version})`, () => {
+    const home = mkHome();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+    mkTeam(home, 'shop', {
+      version, root, lead: 'lead',
+      roles: { lead: {}, hand: { brief: 'h', worktree: true } },
+    });
+    const tm = createTeamManifest({ fs, clodexHome: home });
+    const warned = [];
+    const realWarn = console.warn;
+    console.warn = (msg) => warned.push(String(msg));
+    let m;
+    try { m = tm.loadManifest('shop'); } finally { console.warn = realWarn; }
+
+    // The compatibility branch really fired — without this the assertion below
+    // would pass over a fixture where `worktree` was inert after all, which is
+    // exactly how the false message shipped green the first time.
+    assert.strictEqual(m.roles.hand.dispatch, 'worktree',
+      'ENTER: the key under test IS honored — it resolved onto dispatch');
+    assert.strictEqual(warned.length, 1, 'exactly one line was emitted');
+    assert.match(warned[0], /hand\.worktree/, 'the warning names the role and the field');
+    assert.doesNotMatch(warned[0], /enforces or configures nothing/,
+      'the inert-field wording must never be emitted for a key that is still read');
+    assert.match(warned[0], /STILL READ/, 'it says the key still takes effect');
+    assert.match(warned[0], /CHANGES BEHAVIOUR/, 'it warns that deleting the key is not safe');
+    assert.match(warned[0], /dispatch: "worktree"/, 'it names the replacement to write instead');
+  });
+}
+
+// The other half of the same sentence, and the round-2 defect pointing the other
+// way. `worktree` is honored ONLY as an exact `true`, on a non-reserved role,
+// with no explicit `dispatch` — so these three occurrences are inert, and the
+// STILL READ line would be false for each. Its remedy is the harm: told to
+// "write dispatch: \"worktree\" instead", the owner of a `worktree: false` role
+// converts a standing role into one that mints branches nobody asked for, and
+// the owner of a reserved role hand-authors a value assertDispatchAllowed
+// refuses at every write path.
+for (const [label, roleName, def, why] of [
+  ['a false value', 'helper', { worktree: false }, 'only an exact `true` is read'],
+  ['a reserved role', 'lead', { worktree: true }, 'lead/reviewer never honored the legacy key'],
+  ['an explicit dispatch', 'hand', { worktree: true, dispatch: 'standing' }, 'an explicit dispatch wins'],
+]) {
+  test(`loadManifest: an INERT \`worktree\` (${label}) gets the ignored line, never the still-read one`, () => {
+    const home = mkHome();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+    mkTeam(home, 'shop', {
+      version: MANIFEST_VERSION, root, lead: 'lead',
+      roles: { lead: {}, ...{ [roleName]: def } },
+    });
+    const tm = createTeamManifest({ fs, clodexHome: home });
+    const warned = [];
+    const realWarn = console.warn;
+    console.warn = (msg) => warned.push(String(msg));
+    let m;
+    try { m = tm.loadManifest('shop'); } finally { console.warn = realWarn; }
+
+    // The occurrence really IS inert — without this the wording assertions could
+    // pass over a fixture where the branch fired after all.
+    assert.strictEqual(m.roles[roleName].dispatch, 'standing',
+      `ENTER: the key did not take effect here (${why})`);
+    assert.strictEqual(warned.length, 1, 'exactly one line was emitted');
+    assert.match(warned[0], new RegExp(`${roleName}\\.worktree`), 'the warning names the role and the field');
+    assert.doesNotMatch(warned[0], /CHANGES BEHAVIOUR/,
+      'an inert occurrence must not be described as one whose deletion changes behaviour');
+    assert.doesNotMatch(warned[0], /write `dispatch/,
+      'and must not carry a remedy that would CHANGE the role');
+    assert.match(warned[0], /IGNORED/, 'it gets the inert line, which is true of it');
+  });
+}
+
+// A v1 file with one retired and one never-modeled key emits TWO lines, not one:
+// the populations carry contradictory messages and a refactor that merges them
+// would have to make one of the two texts false.
+test('loadManifest: retired and unknown keys on one file warn separately', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  mkTeam(home, 'shop', {
+    root, lead: 'lead',
+    roles: { lead: {}, runner: { brief: 'r', tools: ['Read'], invented: 'x' } },
+  });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (msg) => warned.push(String(msg));
+  let m;
+  try { m = tm.loadManifest('shop'); } finally { console.warn = realWarn; }
+
+  assert.strictEqual(warned.length, 2, 'ENTER: two lines, one per population');
+  assert.ok(warned.some((w) => /runner\.tools/.test(w) && /IGNORED/.test(w)), 'the retired key got the retired line');
+  assert.ok(warned.some((w) => /runner\.invented/.test(w) && /no longer models/.test(w)), 'the unknown key got the unknown line');
+  assert.ok(!('tools' in m.roles.runner) && !('invented' in m.roles.runner), 'both keys still dropped');
+});
+
+// Same bound as the unknown-key warn: loadManifest has no cache and resolveTeam
+// loads every team on every call, so an ungated line is console spam forever.
+// The two warns are deduped under NAMESPACED keys — sharing a key would let a
+// file whose unknown and retired sets stringify alike silence one of them.
+test('loadManifest: the retired-field warning is emitted once per file, and a clean manifest is silent', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  mkTeam(home, 'shop', {
+    version: MANIFEST_VERSION, root, lead: 'lead',
+    roles: { lead: {}, runner: { brief: 'r', tools: ['Read'] } },
+  });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (msg) => warned.push(String(msg));
+  try {
+    for (let i = 0; i < 5; i++) tm.loadManifest('shop');
+  } finally { console.warn = realWarn; }
+  assert.strictEqual(warned.length, 1, 'five loads of the same file warn ONCE, not five times');
+  assert.match(warned[0], /runner\.tools/, 'ENTER: the one line is the retired-field warning under test');
+
+  // A manifest carrying no retired field says nothing — the warn must not
+  // become background noise every team pays on every resolve.
+  const home2 = mkHome();
+  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  mkTeam(home2, 'shop', {
+    version: MANIFEST_VERSION, root: root2, lead: 'lead',
+    roles: { lead: {}, runner: { brief: 'r', dispatch: 'worktree' } },
+  });
+  const tm2 = createTeamManifest({ fs, clodexHome: home2 });
+  const warned2 = [];
+  console.warn = (msg) => warned2.push(String(msg));
+  let m2;
+  try { m2 = tm2.loadManifest('shop'); } finally { console.warn = realWarn; }
+  assert.deepStrictEqual(warned2, [], 'a clean current-version manifest is silent');
+  assert.strictEqual(m2.roles.runner.dispatch, 'worktree', 'ENTER: the clean file really did load its role');
 });
 
 // `version`'s consumer, end to end: a legacy file warns until a mutator rewrites

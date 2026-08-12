@@ -34,7 +34,8 @@ const path = require('node:path');
 const os = require('node:os');
 
 const {
-  ROLE_KEYS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, createTeamManifest,
+  ROLE_KEYS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, CUT_ROLE_FIELDS,
+  HONORED_CUT_FIELDS, createTeamManifest,
 } = require('../team-manifest');
 const { teamRoleRows } = require('../renderer/lib/team-roles');
 
@@ -149,11 +150,28 @@ test('legibility: the schema is exactly the four surviving fields', () => {
   assert.deepStrictEqual(sorted(ROLE_KEYS), ['brief', 'dispatch', 'prompt', 'template'],
     'the role schema is four fields: the seat\'s shape source, its standing instructions, '
     + 'the human label, and what dispatching a ticket to the role does');
-  // `worktree` is in this list as a CUT field: it was replaced by `dispatch`, and
-  // re-adding the boolean would give the migration two sources to disagree over.
-  for (const cut of ['instantiate', 'standing', 'tools', 'type', 'ephemeral', 'worktree']) {
+  // Membership pin FIRST, then the real constant: iterating CUT_ROLE_FIELDS
+  // alone would silently stop checking a field someone removed from it, and the
+  // literal alone stops checking a field someone adds. `worktree` is a cut field
+  // — it was replaced by `dispatch`, and re-adding the boolean would give the
+  // migration two sources to disagree over.
+  assert.deepStrictEqual([...CUT_ROLE_FIELDS].sort(),
+    ['ephemeral', 'instantiate', 'standing', 'tools', 'type', 'worktree'],
+    'the cut list itself is pinned — a field leaving it must come through here');
+  for (const cut of CUT_ROLE_FIELDS) {
     assert.ok(!ROLE_KEYS.has(cut),
       `"${cut}" was cut because no single resolver consumed it on every spawn path; `
       + 'reintroducing it needs the resolver first, not a normalizeRoleDef line');
+  }
+
+  // HONORED ⊆ CUT, or the file never stops warning. migrateRoles deletes only
+  // CUT_ROLE_FIELDS members, so a key honored-but-not-cut is never removed;
+  // `clean` therefore never goes true, the version never stamps, and the load
+  // warns forever on a file no mutator can fix.
+  for (const k of HONORED_CUT_FIELDS.keys()) {
+    assert.ok(CUT_ROLE_FIELDS.includes(k),
+      `"${k}" is honored-but-not-cut: migrateRoles would never delete it, so the manifest `
+      + 'could never stamp clean and would warn on every load forever');
+    assert.ok(!ROLE_KEYS.has(k), `"${k}" is read by a compatibility branch, not modeled by the schema`);
   }
 });
