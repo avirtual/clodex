@@ -153,6 +153,7 @@ const REVIEWER_FALLBACK = {
 };
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = require('./tickets-store');
 const teamCost = require('./team-cost');
+const { findRepoRoot } = require('./project-root');
 const { projectDirFor } = require('./clodex-paths');
 // Aliased deliberately: the manager has its OWN trackedSessionIds() method with
 // a different contract (every id across all sessions, no argument). This is the
@@ -2278,6 +2279,41 @@ function createSessionManager(deps) {
       try { const t = resolveTeam(cwd); return t ? t.name : null; } catch { return null; }
     }
 
+    // The ONE board key / live-seat scope derivation (t303). Team-first: when a
+    // team owns the cwd its root is returned unchanged, byte for byte, so the
+    // team path never moves boards. Only a teamless cwd falls through to the
+    // repo root.
+    //
+    // Every ticket handler funnels through this rather than reaching for
+    // `team.root` or `findProjectRoot` directly. A second ad-hoc derivation is
+    // how a solo session and a team'd session in the same repo end up on
+    // different boards — each correct read alone, and neither visible to the
+    // other.
+    _projectRootFor(cwd) {
+      let team = null;
+      try { team = resolveTeam(cwd); } catch { team = null; }
+      if (team) return team.root;
+      try { return findRepoRoot(cwd, { fs }); } catch { return null; }
+    }
+
+    // A stand-in "team" for a session no team.json owns, in the shape the verbs
+    // already read — so the solo case is a different VALUE, not a second code
+    // path through seven handlers.
+    //
+    // `lead` is the sender: solo has exactly one actor, so every lead-only gate
+    // becomes a no-op rather than a refusal. `roles` is null, which makes the
+    // role machinery inert by construction — `matchSeatRole` and
+    // `_ticketWorktreeRole` both bail on a falsy `roles`, so `_resolveAssignee`
+    // is left with its live-seat branch, and a solo assign names a live session.
+    // `solo` marks the context for the three dispatch helpers that must NOT run
+    // here (see `_reconcileTickets`).
+    // Returns null outside a git repo — the caller turns that into the refusal.
+    _soloContext(session) {
+      const root = this._projectRootFor(session && session.cwd);
+      if (!root) return null;
+      return { name: path.basename(root), root, lead: session.name, roles: null, solo: true };
+    }
+
     // `{ name, label }` — the warmth label is computed here, not in
     // team-manifest: that module is a pure leaf and warmth is a wire-layer
     // property (proxy snapshot + activity state), so it crosses as data.
@@ -2285,7 +2321,10 @@ function createSessionManager(deps) {
       const seats = [];
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead) continue;
-        let root; try { root = findProjectRoot(s.cwd); } catch { root = null; }
+        // `_projectRootFor`, not `findProjectRoot`: the latter is team-derived and
+        // answers null for a teamless session, which would leave a solo board with
+        // no live seats at all and make `[agent:task assign]` unable to name one.
+        let root; try { root = this._projectRootFor(s.cwd); } catch { root = null; }
         if (!root || root !== teamRoot) continue;
         let label = null;
         try {
@@ -4692,11 +4731,22 @@ function createSessionManager(deps) {
       const reply = (msg) => this._injectText(session, `[agent:task] ${msg}${stale}`, { parkable: true });
       let team;
       try { team = resolveTeam(session.cwd); } catch { team = null; }
+      // No team is the SOLO case, not an error (t303): tickets are the primitive
+      // and teams consume them, so a lone operator must be able to file one
+      // without instantiating a team to be their own lead. `_soloContext` returns
+      // a stand-in with the same shape the verbs already read.
+      //
+      // The refusal that REMAINS is "no project": outside a git repo there is
+      // nothing to key a board to. It is deliberately not a cwd fallback — a
+      // wrong board is silent forever, a refusal is read once.
       // The first rejecting return a ticket command meets, and the only one reached
       // before the verb runs — so the payload invariant holds at the entry point
       // rather than at each interior exit. The verbs that carry no body (assign,
       // list) fall out on the helper's empty-body guard.
-      if (!team) { reply(`error: this session is not on a team (no team.json owns its cwd)${this._spillRejectedPayload(session, `task ${intent.sub}`, String(intent.body == null ? '' : intent.body).trim())}`); return; }
+      if (!team) {
+        team = this._soloContext(session);
+        if (!team) { reply(`error: this session is not on a team and is not inside a git repository — a ticket needs a project to belong to${this._spillRejectedPayload(session, `task ${intent.sub}`, String(intent.body == null ? '' : intent.body).trim())}`); return; }
+      }
       switch (intent.sub) {
         case 'add': this._taskAdd(session, team, intent, reply); break;
         case 'assign': this._taskAssign(session, team, intent, reply); break;
@@ -4706,6 +4756,14 @@ function createSessionManager(deps) {
         case 'park': this._taskPark(session, team, intent, reply); break;
         case 'list': this._taskList(session, team, intent, reply); break;
       }
+    }
+
+    // Solo has no roles, so naming one as a possibility sends the operator
+    // looking for a vocabulary that does not exist here.
+    _assigneeMissText(team, who) {
+      return (team && team.solo)
+        ? `"${who}" is not a live session in ${team.name} — with no team, an assignee is a live session name`
+        : `"${who}" is neither a team role nor a live seat on ${team.name}`;
     }
 
     _resolveAssignee(team, who) {
@@ -4878,6 +4936,7 @@ function createSessionManager(deps) {
     // because that is an ordering ACCIDENT, not a property of the helper: move the
     // advance above the save and without it the seat is handed back what it finished.
     _advanceSeat(team, seatName, closedId) {
+      if (team && team.solo) return null;
       const next = this._openTicketsFor(team, seatName, closedId)[0];
       if (!next) return null;
       // Handing a queued ticket to a seat IS its dispatch — the only one it gets —
@@ -5668,7 +5727,7 @@ function createSessionManager(deps) {
       let assignee = null;
       if (intent.who) {
         assignee = this._resolveAssignee(team, intent.who);
-        if (!assignee) { reply(`error: "${intent.who}" is neither a team role nor a live seat on ${team.name}${this._spillRejectedPayload(session, 'task add', spec)}`); return; }
+        if (!assignee) { reply(`error: ${this._assigneeMissText(team, intent.who)}${this._spillRejectedPayload(session, 'task add', spec)}`); return; }
       }
       const tickets = ticketsStore.load(team.root);
       const now = Date.now();
@@ -5745,7 +5804,7 @@ function createSessionManager(deps) {
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot assign`); return; }
       const assignee = this._resolveAssignee(team, intent.who);
-      if (!assignee) { reply(`error: "${intent.who}" is neither a team role nor a live seat on ${team.name}`); return; }
+      if (!assignee) { reply(`error: ${this._assigneeMissText(team, intent.who)}`); return; }
       const prev = ticket.assignee;
       // Captured before the re-pin below rewrites it — the reply reports where the
       // ticket came FROM, which is the role it was filed under.
@@ -6235,7 +6294,13 @@ function createSessionManager(deps) {
       reply(`${head}:\n${lines.join('\n')}${recentBlock}${tail}`);
     }
 
+    // Solo no-ops here, and in `_advanceSeat` — NOT because there is nothing to
+    // reconcile, but because these walk seats by ROLE to dispatch specs. A solo
+    // board's "live seats" are every agent session in the repo, none of which
+    // enrolled in anything; falling through would deliver specs to sessions that
+    // never opted in. Not delivering is the recoverable failure.
     _reconcileTickets(team) {
+      if (team && team.solo) return;
       const tickets = ticketsStore.load(team.root);
       const live = this._teamLiveSeatNames(team.root);
       for (const name of live) {
