@@ -13,6 +13,22 @@ blocks a release.
 
 ## Unreleased
 
+- Filing a ticket and starting it are now two acts. `[agent:task add]` wrote the
+  ticket and immediately minted its branch, its checkout and its teammate, so a
+  lead who wanted to think about a ticket before running it had to remember to
+  park it — and "do not start yet" written in the body was read by nobody. `add`
+  now writes the ticket and starts nothing; `[agent:task start <id>]` mints the
+  tree and the seat and delivers the spec. A ticket you have not started is
+  simply one you have not started, and the board says so.
+
+- A cold reviewer's verdict on a ticket now lands on the ticket. It was delivered
+  to the lead as a message, so the finding of a full review existed only in one
+  agent's conversation: if that agent compacted, or the reviewer's report arrived
+  while it was busy, the verdict was gone and the review had to be paid for
+  again. The verdict, its must-fixes and its round number are written to the
+  ticket record, which outlives every seat involved. A review you asked for
+  yourself with `[agent:team-review]` still reports back to you, unchanged.
+
 - A cold reviewer now boots already knowing what it is reviewing. The scope you
   pass to `[agent:team-review]` was sent to the new seat as a message, which meant
   it arrived at the seat's first turn — and a message written while the CLI is
