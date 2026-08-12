@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- A cold review is now refused, with an explanation, when the reviewer template
+  asks for tools that share nothing with what a reviewer is allowed
+  (`Read`/`Grep`/`Glob`). That combination used to spawn a reviewer with every
+  tool disabled — a seat that could not open the diff it was reviewing, and
+  reported on it anyway. The refusal names what the template asked for and what
+  is allowed, and no reviewer name is consumed. Templates that narrow to some of
+  the allowed tools, or name none at all, are unaffected.
 - A reviewer template's auto-compact opt-out now applies to the reviewer seat.
   Turning auto-compact off in a template used for cold reviews had no effect —
   the setting was read on other spawn paths and skipped on that one, so the seat
