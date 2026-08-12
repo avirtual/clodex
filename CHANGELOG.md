@@ -13,6 +13,20 @@ blocks a release.
 
 ## Unreleased
 
+- Finishing a ticket is now one step. `[agent:task accept <id>]` closes it,
+  retires the seat, removes its worktree and deletes its branch — but only after
+  git confirms the branch really is merged into the base. If it is not merged, or
+  if the check cannot run at all, nothing is removed and it says why. Accepting
+  also records which session did the work, so a seat can be brought back later
+  for a hotfix instead of being reconstructed from scratch.
+
+- Retiring a seat no longer claims a directory has uncommitted work when it
+  simply is not there any more. Removing a merged worktree before retiring its
+  seat — the correct order — made the confirmation report uncommitted changes in
+  a directory that had just been deleted, and tell you to go commit them. It now
+  distinguishes a tree it could not inspect from one that is genuinely dirty.
+  Both still archive the seat rather than discarding it.
+
 - Asking for a test run while one is already going now says so, instead of
   timing out. The refusal existed but could never be seen: the script waited the
   full 120 seconds before printing it, and the exec entry killed the run at
