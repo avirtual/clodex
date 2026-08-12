@@ -112,14 +112,23 @@ function normalizeRoleDef(roleName, def, file) {
     // one-shot seat in a git worktree on it, and re-pins the ticket from the ROLE
     // to that seat. Enforced — session-manager reads it on the dispatch path.
     //
-    // Absent is `standing`, matching the strictness of the boolean this replaced:
-    // anything that is not explicitly the worktree value dispatches to a standing
-    // seat, so an unmigrated file behaves as it always did.
+    // The v2 `worktree: true` boolean is READ here, not merely migrated. Migration
+    // runs on mutator WRITES, so a file nobody edits would otherwise keep opting a
+    // role into a worktree on disk while every dispatch quietly went to a standing
+    // seat — silent, because `standing` is a legitimate value nothing warns about.
+    // The reader has to understand the file it is handed; migrateRoles then makes
+    // the disk say what this already resolved. Delete this and a v2 team.json
+    // silently changes behaviour the moment it loads.
+    //
+    // Reserved roles are excepted, matching migrateRoles: `worktree: true` on
+    // lead/reviewer was already refused at dispatch, so honoring it here would
+    // invent an opt-in that never took effect.
     //
     // Per-role and per-team on purpose, not a flag on `task add`: the lead would
     // have to remember it on every dispatch, and the one dispatch that forgets
     // lands a hand in the shared checkout holding a spec that assumes isolation.
-    dispatch: def.dispatch ?? DEFAULT_ROLE_DISPATCH,
+    dispatch: def.dispatch
+      ?? ((def.worktree === true && !RESERVED_ROLE_KEYS.has(roleName)) ? 'worktree' : DEFAULT_ROLE_DISPATCH),
   };
 }
 
@@ -139,6 +148,13 @@ function assertDispatchAllowed(roleName, def, file) {
 // Keys a role def carries that this schema no longer models, for the load-time
 // warning. Returned rather than warned in place: normalizeRoleDef runs on the
 // write paths too, where a drop is the caller's answer, not a console line.
+//
+// `worktree` is reported here like any other unmodeled key, and that keeps a
+// stale v2 file loud until a mutator rewrites it — but unlike the rest it is
+// still READ (normalizeRoleDef resolves it onto `dispatch`), so the warning's
+// "ignoring" wording is not true of this one key. Do not "fix" that by excluding
+// it: the file would then load silently while still carrying a key whose meaning
+// lives in a compatibility branch, which is the state the warning exists for.
 function unknownRoleKeys(def) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) return [];
   return Object.keys(def).filter((k) => !ROLE_KEYS.has(k));

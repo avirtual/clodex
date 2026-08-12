@@ -359,6 +359,77 @@ test('loadManifest: role dispatch normalizes to the enum, default standing', () 
   }
 });
 
+// The regression that shipped and had to be caught against real data: migration
+// runs on mutator WRITES, so a v2 team.json nobody edits is read by loadManifest
+// exactly as it sits. If the READER does not understand the legacy key, every
+// role that opted into a worktree dispatches to a standing seat instead — with
+// no warning, because `standing` is a legitimate value. NO MUTATOR IS CALLED IN
+// THIS TEST; that absence is the whole point.
+test('loadManifest: an UNMIGRATED v2 `worktree: true` dispatches to a worktree without any write', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const file = path.join(home, 'teams', 'shop', 'team.json');
+  mkTeam(home, 'shop', {
+    version: 2,
+    root, lead: 'lead',
+    roles: {
+      lead: { prompt: 'clodex-team-lead' },
+      hand: { template: 'clodex-hand-seat', worktree: true },
+      helper: { worktree: false },
+      quiet: {},
+    },
+  });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const realWarn = console.warn;
+  console.warn = () => {};
+  let m;
+  try { m = tm.loadManifest('shop'); } finally { console.warn = realWarn; }
+
+  assert.strictEqual(m.roles.hand.dispatch, 'worktree',
+    'an unmigrated opt-in must still dispatch to a worktree — otherwise merging this schema '
+    + 'silently stops every live hand role getting a tree, which is the data loss the '
+    + 'cut-outright option was rejected for');
+  // The negatives keep this from being "always worktree": a role that opted OUT,
+  // and one that never carried the key, must both read as standing.
+  assert.strictEqual(m.roles.helper.dispatch, 'standing', '`worktree: false` reads as standing');
+  assert.strictEqual(m.roles.quiet.dispatch, 'standing', 'a role without the key reads as standing');
+  // A reserved role's stale opt-in is NOT honored, matching migrateRoles: it was
+  // already inert at dispatch, so reading it now would invent an opt-in.
+  assert.strictEqual(m.roles.lead.dispatch, 'standing', 'a reserved role never reads as a worktree role');
+
+  // ENTER, asserted AFTER the load so it also proves the read did not rewrite:
+  // the file must still be the untouched v2 fixture. A loadManifest that quietly
+  // migrated on disk would make every assertion above true for the wrong reason.
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.strictEqual(onDisk.version, 2, 'ENTER: the file is still a v2 file — no write happened');
+  assert.strictEqual(onDisk.roles.hand.worktree, true,
+    'ENTER: the legacy key is still on disk and was READ, not migrated');
+  assert.ok(!('dispatch' in onDisk.roles.hand), 'ENTER: nothing wrote the new key to the file');
+});
+
+// An explicit `dispatch` is the authority when both keys are present: the legacy
+// read is a fallback for files that predate the enum, never an override of one.
+test('loadManifest: an explicit dispatch wins over a stale `worktree` boolean', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  mkTeam(home, 'shop', {
+    version: 2, root, lead: 'lead',
+    roles: {
+      lead: {},
+      // The contradiction a half-finished hand-edit leaves behind.
+      hand: { worktree: true, dispatch: 'standing' },
+      other: { worktree: false, dispatch: 'worktree' },
+    },
+  });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const realWarn = console.warn;
+  console.warn = () => {};
+  let m;
+  try { m = tm.loadManifest('shop'); } finally { console.warn = realWarn; }
+  assert.strictEqual(m.roles.hand.dispatch, 'standing', 'the enum wins, not the legacy boolean');
+  assert.strictEqual(m.roles.other.dispatch, 'worktree', 'and in the other direction too');
+});
+
 // The regression the version-3 migration exists to prevent. `worktree` is in
 // CUT_ROLE_FIELDS, so the migration DELETES it; if that delete runs before the
 // carry-over, every role that opted into a worktree silently becomes standing —
