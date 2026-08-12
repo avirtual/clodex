@@ -48,7 +48,13 @@ function createPluginHostEngine(deps) {
 // WITHHELD is the safe default for anything that MUTATES refs. A plugin holding
 // `deleteBranch` could destroy a branch core never asked it to touch, and a
 // worktree's branch is where a seat's only committed work lives.
-  const LIB_GIT_WITHHELD = new Set(['deleteBranch', 'isMerged']);
+//
+// `diffText` is withheld on a second ground: every lent member returns METADATA
+// — paths, branches, counts, a dirty flag — and it returns file CONTENT, for any
+// repo path the caller names, whether or not Clodex ever opened it. Core added
+// it for the ticket loop; no plugin has asked. Lending is a published API that
+// narrowing later would break, so it stays withheld until something needs it.
+  const LIB_GIT_WITHHELD = new Set(['deleteBranch', 'isMerged', 'diffText']);
   const libGitWorktree = Object.freeze(Object.fromEntries(
     Object.keys(gitWorktree || {})
       .filter((k) => typeof gitWorktree[k] === 'function' && !LIB_GIT_WITHHELD.has(k))

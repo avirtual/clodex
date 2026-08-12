@@ -853,7 +853,7 @@ or fires an IPC is not slow — it is wrong, because a relayout is not an event.
 
 Sanctioned shared core utilities, frozen and named. In `"1"` there is exactly
 one entry, `gitWorktree`, offering the nine functions below (the module
-exports two more, withheld — see the membership rule). All are `async` except
+exports three more, withheld — see the membership rule). All are `async` except
 `defaultWorktreePath`, and all are best-effort: they return a shaped result or
 `null` rather than throwing.
 
@@ -881,6 +881,12 @@ Core using a function is necessary but not sufficient. Anything that **mutates
 refs** is withheld even though core calls it: `git-worktree.js` also exports
 `isMerged` and `deleteBranch`, and neither reaches `host.lib`. A plugin able to
 delete a branch could destroy the only copy of an agent seat's committed work.
+
+`diffText` is withheld on a second ground, and it is the one to predict from:
+everything lent here returns **metadata** — paths, branches, counts, a dirty
+flag — while it returns **file content**, for any repo path the caller names.
+Core added it for its own ticket loop. A function that reads out the contents of
+a repo is not lent because core happens to call it; ask, with the use case.
 Every function the module exports is either lent or explicitly withheld, and the
 partition is test-pinned — a new export fails the suite until it is classified,
 so it can never arrive here by default.

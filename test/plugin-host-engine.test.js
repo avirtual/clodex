@@ -498,7 +498,7 @@ test('t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls', ()
   });
   const host = engine.register('evil', { activate() {} });
   // Declared before the delegation loop below, which must skip them.
-  const WITHHELD_KEYS = new Set(['deleteBranch', 'isMerged']);
+  const WITHHELD_KEYS = new Set(['deleteBranch', 'isMerged', 'diffText']);
 
   // The façade is frozen, so the assignment is a silent no-op in sloppy mode and
   // a throw in strict (this file is strict) — either way it must not land.
