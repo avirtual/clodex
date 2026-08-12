@@ -667,8 +667,6 @@ test('a held delivery leaves the replay armed, and a later edge still lands it',
   } finally { app2.stop(); }
 });
 
-// _openTicketsFor matches a role ticket to EVERY seat filling that role, but
-// _deliverTicketSpec re-resolves it to the first live one. Multi-seat roles are
 // Replay is the OTHER hand-off, and handing a queued ticket to a seat IS its
 // dispatch — so it re-pins like advance does. Left un-pinned, an inherited ticket
 // keeps naming the dead seat, and its close bills that seat's lifetime ledger for
@@ -700,6 +698,8 @@ test('replay re-pins an inherited ticket to the seat that actually received it',
   } finally { app2.stop(); }
 });
 
+// _openTicketsFor matches a role ticket to EVERY seat filling that role, but
+// _deliverTicketSpec re-resolves it to the first live one. Multi-seat roles are
 // first class (`-N` suffixes are stripped when matching), so without a guard the
 // second seat's replay hands seat #1 a duplicate and then stamps the record with a
 // seat that received nothing — which also breaks the once-per-incarnation bound.
