@@ -265,9 +265,13 @@ test('a re-pinned row renders the ROLE, so the viewer and the two boards name th
       counts: { ...boardRes().counts, open: 1 },
     }),
   }, ({ root }) => {
-    const text = textOf(root).join('\n');
-    assert.match(text, /\bhand\b/, 'ENTER: the row rendered its assignee cell');
-    assert.doesNotMatch(text, /team-hand-9/,
+    const cells = textOf(root);
+    // Exact element text, not a match against the joined tree: `/\bhand\b/` also
+    // hits INSIDE `team-hand-9` (a hyphen is a word boundary), so a regex guard
+    // here would pass on the very pin the assertion below forbids and the whole
+    // property would ride on that `doesNotMatch` alone.
+    assert.ok(cells.includes('hand'), 'ENTER: the row rendered its assignee cell as the role');
+    assert.doesNotMatch(cells.join('\n'), /team-hand-9/,
       'the seat pin must not surface — the board and the exec leaf both show the role');
   });
 });

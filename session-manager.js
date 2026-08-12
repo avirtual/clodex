@@ -2460,6 +2460,14 @@ function createSessionManager(deps) {
       };
       const teamFor = (cwd) => { const t = resolvedTeamFor(cwd); return t ? t.name : null; };
       const ticketsByDir = new Map();
+      // Memoized like the two above, and for a sharper reason: this runs per
+      // (session × ticket), and _teamLiveSeats rebuilds a peerStatusLabel and a
+      // proxy-poller snapshot for every live seat on each call.
+      const liveByRoot = new Map();
+      const liveSeatsFor = (t) => {
+        if (!liveByRoot.has(t.root)) liveByRoot.set(t.root, this._teamLiveSeatNames(t.root));
+        return liveByRoot.get(t.root);
+      };
       const openTicketFor = (s) => {
         try {
           const t = resolvedTeamFor(s.cwd);
@@ -2467,13 +2475,14 @@ function createSessionManager(deps) {
           const dir = path.dirname(t.file);
           if (!ticketsByDir.has(dir)) ticketsByDir.set(dir, ticketsStore.load(dir));
           const role = matchSeatRole(t, s.name);
+          const live = liveSeatsFor(t);
           // Same filter as _reconcileTickets: this is the badge on first paint
           // and that is the badge on every change, so a term here that is
           // missing there shows a ticket until the next reconcile and then
           // drops it.
           const open = ticketsByDir.get(dir).find((tk) => tk.state === 'open' && tk.assignee != null && !tk.parked
             && (tk.assignee === s.name || tk.assignee === role
-              || this._ticketAssigneeSeat(t, tk) === s.name));
+              || this._ticketAssigneeSeat(t, tk, live) === s.name));
           return open ? open.id : null;
         } catch { return null; }
       };
@@ -4950,9 +4959,11 @@ function createSessionManager(deps) {
         // does: handing a queued ticket to a seat IS its dispatch. Without this a
         // ticket inherited from a dead seat keeps naming that seat, and its cost
         // lands on a ledger belonging to something that never did the work.
-        // Rides this save, which is already the post-delivery reload. Worktree
-        // tickets never reach here — the resolver's `!worktree` gate keeps a
-        // degraded one off this path entirely.
+        // Rides this save, which is already the post-delivery reload. A DEGRADED
+        // worktree ticket never reaches here — the resolver's `!worktree` gate
+        // keeps it off this path. One pinned to its own live seat does reach it
+        // (the ordinary ticket-seat respawn, resolved above that gate), and the
+        // re-pin is a no-op on it: `_repinTicketToSeat` bails on pinned-and-live.
         this._repinTicketToSeat(team, rec);
         ticketsStore.save(teamDir, tickets);
         log.info('intent', `replayed ${t.id} to ${session.name} (respawn)`);
