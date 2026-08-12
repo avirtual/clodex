@@ -106,6 +106,33 @@ test('roster: per-role template annotation (spawn-by-template)', async () => {
   assert.match(r.err, /roles: lead\* worker\(tmpl=hand\) reviewer runner\(tmpl=haiku-run\) \(\*=lead\)/, r.err);
 });
 
+// The property the roster must hold, not just the string it happens to emit:
+// this script parses team.json ITSELF instead of routing through loadManifest,
+// so it is the one reader that can still SEE a field the schema cut. t292
+// deleted five (instantiate, standing, tools, type, ephemeral) and doRoster
+// kept rendering `instantiate` for a full release — the annotation silently
+// vanished post-migration and no test noticed, because every fixture that
+// could have caught it was asserting the annotation was THERE.
+//
+// A role carrying cut fields must therefore render bare. Seeding two of them
+// makes this fail the day someone re-adds a bypassing read of either.
+test('roster: a role carrying cut schema fields renders with NO annotation', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: {
+    lead: {},
+    reviewer: { instantiate: 'subagent', tools: ['Read', 'Grep'] },
+  } });
+  reg(home, 'alead', proj);
+  const r = await launch(home, { action: 'roster', agent: 'alead' });
+  assert.strictEqual(r.code, 0, r.err);
+  // ENTER: the fixture reached the roster line at all. Without this the absence
+  // assertions below are equally true of a roster that printed no roles.
+  assert.match(r.err, /roles: .*\breviewer\b/, `the seeded role reached the line: ${r.err}`);
+  assert.doesNotMatch(r.err, /reviewer\(/, `no annotation on a role whose only fields are cut ones: ${r.err}`);
+  assert.doesNotMatch(r.err, /subagent|Read|Grep/, `no cut field's VALUE leaks into the line: ${r.err}`);
+});
+
 test('roster: no team containing cwd replies honestly, exit 0', async () => {
   const home = mkHome();
   const proj = path.join(home, 'proj');
