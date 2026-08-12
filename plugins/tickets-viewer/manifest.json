@@ -2,16 +2,18 @@
   "id": "tickets-viewer",
   "name": "Tickets",
   "hostApi": "1",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "entry": {
     "engine": "engine.js",
     "renderer": "renderer.js"
   },
   "style": "style.css",
   "enabledByDefault": false,
-  "announce": "Read-only board of a team's tickets: what is open, who holds it, how long it has been quiet, and where its spec lives on disk. Closing and reassigning stay with [agent:task …].",
+  "announce": "The project ticket board: what is open, who holds it, how long it has been quiet, and where its spec lives on disk. Opens, edits, assigns, closes and cancels tickets. No team required. Closing here does NOT drain the seat's queue or write COST.json the way [agent:task …] does.",
   "surfaces": {
+    "projects": "any",
     "teams": "any",
-    "board": "any"
+    "board": "any",
+    "sessions": "any"
   }
 }
