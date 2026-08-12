@@ -74,11 +74,12 @@ function addRoleWritableFields() {
   tm.addRole('shop', 'runner', {
     // The full surviving schema...
     template: 'fable-lead', prompt: 'p', brief: 'b', dispatch: 'worktree',
-    // ...every field a version bump cut, including the boolean `dispatch`
-    // replaced (a def offering BOTH must land only the enum, or the migration's
-    // carry-over would have a second source to disagree with)...
+    // ...every field a version bump cut EXCEPT `worktree`, which addRole now
+    // refuses loudly rather than dropping (pinned in team-manifest.test.js):
+    // pickRoleKeys would drop it without emitting a `dispatch`, so a def
+    // carrying it would store a standing role and report success...
     instantiate: 'session', standing: 'prompts/s.md', tools: ['Read'],
-    type: 'codex', ephemeral: true, worktree: true,
+    type: 'codex', ephemeral: true,
     // ...and one nobody ever declared, so the check is not a denylist.
     invented: 'x',
   });

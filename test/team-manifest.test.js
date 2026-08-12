@@ -454,7 +454,11 @@ test('v2 → v3: a role\'s `worktree: true` carries over to dispatch BEFORE the 
   assert.strictEqual(before.roles.hand.worktree, true,
     'ENTER: the fixture is a v2 file whose hand role genuinely opted in on disk — without that key this test migrates nothing and every assertion below is vacuous');
 
-  tm.setRole('shop', 'quiet', { brief: 'unrelated edit' });
+  // Stubbed like every other v2-fixture test here: the load emits a real drop
+  // line for the legacy keys, which is noise in the run output, not a finding.
+  const realWarn = console.warn;
+  console.warn = () => {};
+  try { tm.setRole('shop', 'quiet', { brief: 'unrelated edit' }); } finally { console.warn = realWarn; }
 
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
   assert.deepStrictEqual(onDisk.roles.hand, { template: 'clodex-hand-seat', dispatch: 'worktree' },
@@ -526,6 +530,33 @@ test('addRole/setRole/createTeam refuse a worktree dispatch on a reserved role',
   // about the value, and a blanket refusal would pass every assertion above.
   const m = tm.addRole('shop', 'runner', { dispatch: 'worktree' });
   assert.strictEqual(m.roles.runner.dispatch, 'worktree', 'an ordinary role takes the value');
+});
+
+// The legacy key is readable on the LOAD path but must never enter through a
+// WRITE. pickRoleKeys drops it and emits no `dispatch`, so without this throw the
+// call stores a STANDING role and answers {ok:true} — the caller's opt-in
+// discarded with no error anywhere, which is the exact failure shape this ticket
+// exists to end.
+test('addRole refuses the legacy `worktree` key rather than silently dropping it', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'lead' });
+
+  assert.throws(() => tm.addRole('shop', 'runner', { worktree: true }),
+    /"worktree" was replaced by "dispatch"/,
+    'the refusal names the replacement — a bare "unknown field" would leave the caller guessing');
+  // `worktree: false` is refused too: it is equally a caller believing in a key
+  // that no longer exists, and accepting it would teach that the key still works.
+  assert.throws(() => tm.addRole('shop', 'runner2', { worktree: false }),
+    /"worktree" was replaced by "dispatch"/);
+  // Nothing was written by either refusal.
+  const raw = JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf-8'));
+  assert.ok(!raw.roles.runner && !raw.roles.runner2, 'the refused roles did not land on disk');
+
+  // The control: the same intent spelled the new way succeeds, so the throw is
+  // about the dead key and not about worktree dispatch in general.
+  assert.strictEqual(tm.addRole('shop', 'runner', { dispatch: 'worktree' }).roles.runner.dispatch, 'worktree');
 });
 
 test('setRole refuses an off-enum dispatch, naming the field', () => {

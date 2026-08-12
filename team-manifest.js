@@ -120,9 +120,12 @@ function normalizeRoleDef(roleName, def, file) {
     // the disk say what this already resolved. Delete this and a v2 team.json
     // silently changes behaviour the moment it loads.
     //
-    // Reserved roles are excepted, matching migrateRoles: `worktree: true` on
-    // lead/reviewer was already refused at dispatch, so honoring it here would
-    // invent an opt-in that never took effect.
+    // The LEGACY key is not honored on a reserved role, matching migrateRoles:
+    // `worktree: true` on lead/reviewer was already refused at dispatch, so
+    // reading it now would invent an opt-in that never took effect. An EXPLICIT
+    // `dispatch: "worktree"` hand-written on lead is a different case and is
+    // returned as written — the write paths refuse it and the dispatch resolver
+    // refuses it, so scrubbing it here would only hide a hand-edit from view.
     //
     // Per-role and per-team on purpose, not a flag on `task add`: the lead would
     // have to remember it on every dispatch, and the one dispatch that forgets
@@ -489,6 +492,15 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const team = loadManifest(teamName); // throws if the team is missing
     if (!ROLE_RE.test(roleName)) {
       throw new Error(`role name "${roleName}" must match ${ROLE_RE} (${team.file})`);
+    }
+    // The legacy key is READ on the load path (a v2 file on disk must keep
+    // working), but it must never enter through a WRITE: pickRoleKeys drops it
+    // and emits no `dispatch`, so an addRole carrying `worktree: true` would
+    // store a standing role and answer {ok:true} — the opt-in discarded with no
+    // error. Throwing names the replacement instead of silently disagreeing
+    // with the caller.
+    if (def && typeof def === 'object' && !Array.isArray(def) && 'worktree' in def) {
+      throw new Error(`role "${roleName}": "worktree" was replaced by "dispatch" — use dispatch: "worktree" (${team.file})`);
     }
     const normalized = normalizeRoleDef(roleName, def, team.file);
     assertDispatchAllowed(roleName, normalized, team.file);
