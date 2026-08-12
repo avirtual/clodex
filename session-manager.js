@@ -151,7 +151,7 @@ const REVIEWER_FALLBACK = {
     CLODEX_SPAWNER_HINT: 'off',
   },
 };
-const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, branchSlug } = require('./tickets-store');
+const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, branchSlug } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { findRepoRoot } = require('./project-root');
 const { projectDirFor } = require('./clodex-paths');
@@ -4454,8 +4454,14 @@ function createSessionManager(deps) {
       return { seats: [...seats], tickets };
     }
 
-    _handleTeamReview(session, body) {
+    // `opts.ticketId` marks this review as a TICKET's, which routes its verdict to
+    // the ticket record instead of back to the asker. It is a caller's explicit
+    // claim, never derived from the scope text: an ad-hoc review whose prose
+    // happens to mention a ticket id would otherwise divert its verdict to that
+    // ticket and the asker would be told nothing.
+    _handleTeamReview(session, body, opts = {}) {
       const reply = (msg) => this._injectText(session, `[agent:team-review] ${msg}`, { parkable: true });
+      const reviewTicket = (opts && opts.ticketId) || null;
       const scope = String(body == null ? '' : body).trim();
       if (!scope) { reply('error: a review scope is required — [agent:team-review] <what to review>'); return; }
 
@@ -4555,6 +4561,12 @@ function createSessionManager(deps) {
       });
       getPersistence().upsert({
         name, ephemeral: true, reviewFor: session.name,
+        // Rides the SAME synchronous stub as reviewFor, for the same reason the
+        // label does: review-done reads it back off the record, so a field written
+        // after the deferred create() would route nothing. `reviewFor` stays
+        // regardless — it is still the seat's identity (review-done's guard) and
+        // the fallback destination when the ticket cannot be resolved.
+        ...(reviewTicket ? { reviewTicket } : {}),
         ...(reviewLabel ? { wireLabel: reviewLabel } : {}),
       });
 
@@ -4622,6 +4634,38 @@ function createSessionManager(deps) {
       });
     }
 
+    // Write a parsed verdict onto its ticket, or null when it cannot be placed —
+    // no team owns the reviewer's cwd, no such ticket, or the verdict text names
+    // neither ACCEPT nor REWORK. Every null is a fall-through to the lead, so a
+    // reviewer that answered off-grammar still reaches a human rather than
+    // silently stamping a ticket with a verdict nobody chose.
+    //
+    // `reviewRound` counts on the TICKET, not off the reviewer seat's name index:
+    // the round has to survive the reviewer AND the hand dying, and a seat index
+    // is gone with the seat.
+    _landVerdictOnTicket(session, ticketId, verdict) {
+      const m = /\bVERDICT\b\W*\b(ACCEPT|REWORK)\b/i.exec(verdict);
+      if (!m) return null;
+      let team;
+      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      if (!team) return null;
+      let tickets;
+      try { tickets = ticketsStore.load(team.root); } catch { return null; }
+      const ticket = tickets.find((t) => t.id === ticketId);
+      if (!ticket) return null;
+      ticket.verdict = m[1].toUpperCase();
+      ticket.mustFix = extractMustFix(verdict);
+      ticket.reviewRound = (Number(ticket.reviewRound) || 0) + 1;
+      ticket.reviewedAt = Date.now();
+      ticket.lastActivityAt = ticket.reviewedAt;
+      // A verdict is progress, so it closes the stall episode the review opened —
+      // otherwise the watchdog spends its one nudge on a ticket that just moved.
+      ticket.nudgedAt = null;
+      try { ticketsStore.save(team.root, tickets); } catch { return null; }
+      this._reconcileTickets(team);
+      return { verdict: ticket.verdict, mustFix: ticket.mustFix, reviewRound: ticket.reviewRound };
+    }
+
     _handleReviewDone(session, body) {
       const reply = (msg) => this._injectText(session, `[agent:review-done] ${msg}`, { parkable: true });
       const verdict = String(body == null ? '' : body).trim();
@@ -4633,6 +4677,26 @@ function createSessionManager(deps) {
         return;
       }
       const lead = rec.reviewFor;
+      // A TICKET review's verdict lands on the ticket record, not on the lead: the
+      // loop reads it from there, and a record survives both agents dying while a
+      // dm survives neither. `reviewFor` is untouched — an ad-hoc
+      // [agent:team-review] still reports to whoever asked.
+      // Falls THROUGH to the lead delivery below when the ticket cannot be
+      // resolved or the verdict does not parse: a verdict is a cold review's
+      // entire output, and losing it costs more than a misrouted one.
+      let landedOn = null;
+      if (rec.reviewTicket) landedOn = this._landVerdictOnTicket(session, rec.reviewTicket, verdict);
+      if (landedOn) {
+        this._broadcast('ipc-message', {
+          type: 'review-done', from: session.name, to: rec.reviewTicket, body: `verdict → ticket ${rec.reviewTicket}`,
+        });
+        log.info('intent', `review-done ${session.name} → ticket ${rec.reviewTicket} (${landedOn.verdict}, round ${landedOn.reviewRound}); retiring (discard)`);
+        this._sendToSession(session.name, 'session:context-action', {
+          action: 'retired', name: session.name, disposition: 'discard',
+        });
+        this.kill(session.name);
+        return;
+      }
       const r = this._gatedDeliver(lead, session.name, verdict, false);
       if (r && r.error) {
         reply(`error: ${r.error} — verdict NOT delivered, seat kept live; re-fire [agent:review-done] once ${lead} is reachable`);
@@ -4774,6 +4838,7 @@ function createSessionManager(deps) {
       switch (intent.sub) {
         case 'add': this._taskAdd(session, team, intent, reply); break;
         case 'assign': this._taskAssign(session, team, intent, reply); break;
+        case 'start': this._taskStart(session, team, intent, reply); break;
         case 'done': this._taskDone(session, team, intent, reply); break;
         case 'reject': this._taskReject(session, team, intent, reply); break;
         case 'cancel': this._taskCancel(session, team, intent, reply); break;
@@ -5776,56 +5841,114 @@ function createSessionManager(deps) {
       };
       const taskDir = extractTaskDir(spec);
       if (taskDir) ticket.taskDir = taskDir;
-      // Branch-per-ticket: an opted-in ROLE gets its own branch, its own worktree
-      // and its own seat. The ticket is re-pinned from the role to that seat name
-      // BEFORE the save, because _ticketAssigneeSeat resolves a role to the FIRST
-      // live seat holding it — leaving it role-assigned would route the NEXT
-      // ticket to this one's seat, sitting in the wrong branch's checkout, which
-      // is the collision the worktree exists to prevent. It also makes the seat
-      // one-shot by construction: _openTicketsFor matches seat-or-role, so a
-      // seat-pinned ticket set leaves _advanceSeat nothing to hand a retired seat.
-      const wtDef = (assignee && !parked) ? this._ticketWorktreeRole(team, assignee) : null;
-      let seat = null;
-      if (wtDef) {
-        const minted = this._mintTicketSeat(team, assignee, ticket);
-        if (minted.ok) {
-          seat = minted;
-          ticket.role = assignee;   // the role survives the re-pin, for the roster and reconcile
-          ticket.assignee = seat.name;
-        }
-        // A mint failure is NOT fatal to the ticket: it stays role-assigned and
-        // takes the ordinary delivery path below, which reaches a live seat if
-        // one exists and reports "no live seat" if not.
-      }
       tickets.push(ticket);
       ticketsStore.save(team.root, tickets);
-      if (seat) {
-        this._spawnTicketSeat(session, team, ticket, assignee, seat);
-        this._reconcileTickets(team);
-        log.info('intent', `task add by ${session.name} → ${ticket.id} (${assignee} → seat ${seat.name}, branch ${seat.branch})`);
-        reply(`ticket ${ticket.id} → spawning ${seat.name} in a worktree on branch ${seat.branch}`);
-        return;
-      }
-      let suffix = '';
-      // Parking is the whole point of the flag: the assignee is RECORDED and the
-      // spec is deliberately NOT delivered, so filing who a ticket is for stops
-      // being the same act as telling them to start.
-      if (assignee && !parked) {
-        // Re-saved only on an actual re-pin: the common cases (backlog, a
-        // name-addressed seat, a role with nobody live) leave the record byte
-        // identical, and a second write of identical bytes is pure churn.
-        if (this._repinTicketToSeat(team, ticket)) ticketsStore.save(team.root, tickets);
-        const d = this._deliverTicketSpec(team, ticket, spec, session.name, true);
-        suffix = this._ticketDeliverySuffix(d, assignee);
-      }
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee || '(backlog)', body: `ticket ${ticket.id} opened${parked ? ' (parked)' : ''}` });
       log.info('intent', `task add by ${session.name} → ${ticket.id} (${assignee || 'backlog'}${parked ? ', parked' : ''})`);
+      // WRITES ONLY. `add` used to mint the seat and deliver the spec itself,
+      // which left no seam between "the work is written down" and "the work is
+      // running" — and every later loop step has to hang off that seam. Dispatch
+      // now lives in `_taskStart` alone; two spawn paths for one job is the
+      // defect this split exists to avoid, so do not restore a delivery here.
       if (parked) {
-        reply(`ticket ${ticket.id} parked${assignee ? ` for ${assignee}` : ' (backlog)'} — spec NOT delivered; [agent:task assign ${ticket.id} ${assignee || '<role|name>'}] dispatches it`);
+        reply(`ticket ${ticket.id} parked${assignee ? ` for ${assignee}` : ' (backlog)'} — spec NOT delivered; [agent:task start ${ticket.id}] dispatches it`);
         return;
       }
-      reply(assignee ? `ticket ${ticket.id} → ${assignee}${suffix}` : `ticket ${ticket.id} (backlog)`);
+      reply(assignee
+        ? `ticket ${ticket.id} → ${assignee} (not started) — [agent:task start ${ticket.id}] mints its tree and seat and delivers the spec`
+        : `ticket ${ticket.id} (backlog)`);
+    }
+
+    // The dispatch half `add` used to do inline. Split out so there is a seam
+    // between writing a ticket and running it: everything downstream (verify,
+    // review, auto-reject) keys off the moment work STARTS, and inside `add`
+    // that moment was indistinguishable from the write.
+    //
+    // Deliberately NOT a second `assign`: assign moves a ticket and re-sends a
+    // spec to a seat that may already hold one, start is the one-shot that mints.
+    // The re-send case is left to assign, and the refusals below name it.
+    _taskStart(session, team, intent, reply) {
+      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can start a ticket`); return; }
+      if (!intent.id) { reply('error: start needs a ticket id — [agent:task start <id>]'); return; }
+      const tickets = ticketsStore.load(team.root);
+      const ticket = tickets.find((t) => t.id === intent.id);
+      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
+      if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — only an open ticket can be started`); return; }
+      if (!ticket.assignee) { reply(`error: ticket ${intent.id} is backlog (no assignee) — [agent:task assign ${intent.id} <role|name>] files AND dispatches it`); return; }
+      const assignee = ticket.assignee;
+      // The role the ticket was FILED under, which is what mints the seat name and
+      // resolves the worktree opt-in. On an unstarted ticket `assignee` still holds
+      // it; `role` is only written once a dispatch path has re-pinned.
+      const roleKey = ticket.role || assignee;
+      const live = this._teamLiveSeatNames(team.root);
+      // Started-ness is read off the re-pin, not off a new field: `role` is written
+      // ONLY by a dispatch path, so role-set-and-pinned-elsewhere means this ticket
+      // has already been started once. A name-addressed ticket carries a seat name
+      // with no `role` and is correctly still startable.
+      if (ticket.role && assignee !== ticket.role && live.includes(assignee)) {
+        reply(`error: ticket ${intent.id} is already started — seat ${assignee} is live and holds it; [agent:task assign ${intent.id} ${ticket.role}] re-sends the spec to it`);
+        return;
+      }
+      const wtDef = this._ticketWorktreeRole(team, roleKey);
+      const minted = wtDef ? this._mintTicketSeat(team, roleKey, ticket) : null;
+      // Taken by THIS ticket's own seat, which the liveness check above proved is
+      // not live. Nothing here can fix it, for the same reason as in `assign`:
+      // _spawnTicketSeat calls create() directly, so respawning would overwrite a
+      // record that still exists and split one name across two sidebar rows.
+      if (minted && minted.taken && minted.name === assignee) {
+        log.info('intent', `task start by ${session.name}: ${ticket.id} held — seat ${assignee} exists but is not live`);
+        reply(`ticket ${ticket.id} is pinned to ${assignee}, whose session exists but is archived or dead — nothing was started. `
+          + `Unarchive it from the sidebar (its spec replays on resume), or Delete Session… to release the name and start again — `
+          + `that also deletes its worktree, so anything the seat left UNCOMMITTED in ${ticket.worktree && ticket.worktree.path ? ticket.worktree.path : 'that tree'} is lost (committed work survives on the branch).`);
+        return;
+      }
+      // Same occupancy refusal `assign` makes, and above every write below it for
+      // the same reason: two agents editing one checkout and committing onto one
+      // branch is the collision the whole worktree mechanism exists to prevent.
+      if (ticket.worktree && ticket.worktree.path) {
+        const dest = (minted && minted.ok) ? minted.name : this._ticketAssigneeSeat(team, ticket);
+        const holder = this._ticketTreeHolder(ticket.worktree.path);
+        if (holder && holder !== dest) {
+          log.info('intent', `task start by ${session.name}: ${ticket.id} refused — tree held by ${holder}`);
+          reply(`ticket ${ticket.id}: its worktree is held by ${holder}, which is still live — retire or delete that seat first, then start it. Nothing was changed.`);
+          return;
+        }
+      }
+      // Start IS the dispatch, so it unparks — parking means "not started yet",
+      // and a started ticket left flagged stays exempt from the stall watchdog,
+      // which is the one backstop a dead loop step has.
+      const wasParked = !!ticket.parked;
+      delete ticket.parked;
+      ticket.lastActivityAt = Date.now();
+      ticket.nudgedAt = null;   // dispatch starts a fresh stall episode
+      const unparked = wasParked ? ' (unparked)' : '';
+      if (wtDef && minted.ok) {
+        // Re-pinned from the role to the seat BEFORE the save, because
+        // _ticketAssigneeSeat resolves a role to the FIRST live seat holding it —
+        // leaving it role-assigned would route the NEXT ticket to this one's seat,
+        // sitting in the wrong branch's checkout.
+        ticket.role = roleKey;
+        ticket.assignee = minted.name;
+        ticketsStore.save(team.root, tickets);
+        this._spawnTicketSeat(session, team, ticket, roleKey, minted);
+        this._reconcileTickets(team);
+        this._broadcast('ipc-message', { type: 'task', from: session.name, to: minted.name, body: `ticket ${ticket.id} started` });
+        log.info('intent', `task start by ${session.name}: ${ticket.id} → seat ${minted.name}, branch ${minted.branch}`);
+        reply(`ticket ${ticket.id}${unparked} → spawning ${minted.name} in a worktree on branch ${minted.branch}`);
+        return;
+      }
+      // A mint failure is NOT fatal: the ticket stays role-assigned and takes the
+      // ordinary delivery path, which reaches a live seat if one exists and
+      // reports "no live seat" if not.
+      if (!this._repinTicketToSeat(team, ticket)) delete ticket.role;
+      ticketsStore.save(team.root, tickets);
+      const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
+      const suffix = this._ticketDeliverySuffix(d, roleKey);
+      this._reconcileTickets(team);
+      this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee, body: `ticket ${ticket.id} started` });
+      log.info('intent', `task start by ${session.name}: ${ticket.id} → ${ticket.assignee}${wasParked ? ' (unparked)' : ''}`);
+      reply(`ticket ${ticket.id} → ${roleKey}${unparked}${suffix}`);
     }
 
     _taskAssign(session, team, intent, reply) {

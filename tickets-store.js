@@ -143,4 +143,42 @@ function branchSlug(title) {
   return s.replace(/^-+|-+$/g, '');
 }
 
-module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, branchSlug, TICKETS_FILE };
+// The MUST-FIX section of a reviewer verdict, verbatim, or null when there is
+// none. Sectioned by HEADER LINE rather than by scanning for the first `NITS`
+// anywhere: a must-fix item routinely names the word (`this nit is blocking`,
+// `CHECKED nothing here`), and a substring cut there silently truncates the
+// blocking list — which is the half the rework round is built from.
+//
+// A section whose body is only a "none" placeholder returns null, so a reviewer
+// writing `MUST-FIX: none` beside an ACCEPT does not hand the loop an empty
+// rework body to deliver.
+const VERDICT_SECTION_RE = /^\s*(?:[-*>\s]*)(?:\*\*|__)?\s*(MUST[-\s]?FIX|NITS?|CHECKED|VERDICT)\b/i;
+
+function extractMustFix(verdictText) {
+  const lines = String(verdictText == null ? '' : verdictText).split('\n');
+  const body = [];
+  let inSection = false;
+  for (const line of lines) {
+    const h = VERDICT_SECTION_RE.exec(line);
+    if (h) {
+      const isMustFix = /^MUST/i.test(h[1]);
+      if (inSection && !isMustFix) break;   // the next section closes this one
+      if (isMustFix) {
+        inSection = true;
+        // The header line carries the first item when the reviewer wrote it
+        // inline (`MUST-FIX: the guard is inverted`), which is the common shape
+        // for a single-item list.
+        const tail = line.slice(h.index + h[0].length).replace(/^(?:\*\*|__)?\s*[:\-—]?\s*/, '').trim();
+        if (tail) body.push(tail);
+        continue;
+      }
+      continue;
+    }
+    if (inSection) body.push(line);
+  }
+  const out = body.join('\n').trim();
+  if (!out) return null;
+  return /^(?:none|n\/a|-+|—)\.?$/i.test(out) ? null : out;
+}
+
+module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, branchSlug, TICKETS_FILE };

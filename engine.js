@@ -1195,7 +1195,7 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
 // the record). rosterSentAt is conversation-scoped, so a FRESH restart must NOT
 // carry it. createdAt is birth time and must carry across every restart —
 // create() falls back to Date.now(), re-minting it and reordering "created" sort.
-    const preserveFields = ['ephemeral', 'reviewFor', 'createdAt'];
+    const preserveFields = ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt'];
     if (!(opts && opts.fresh)) preserveFields.push('rosterSentAt');
     manager._preserveAcrossRestart(name, entry, preserveFields);
     const created = await manager.create(name, entry.type, entry.cwd, entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [], Array.isArray(entry.execCommands) ? entry.execCommands : [], Array.isArray(entry.intents) ? entry.intents : null, (entry.env && typeof entry.env === 'object') ? entry.env : null, false, entry.noWire === true);
@@ -1287,7 +1287,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
       await manager.kill(name);
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
-    manager._preserveAcrossRestart(name, beforeKill, ['rosterSentAt', 'ephemeral', 'reviewFor', 'createdAt']);
+    manager._preserveAcrossRestart(name, beforeKill, ['rosterSentAt', 'ephemeral', 'reviewFor', 'reviewTicket', 'createdAt']);
     const created = await manager.create(name, beforeKill.type, beforeKill.cwd, extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.execCommands) ? beforeKill.execCommands : [], nextIntents, (nextEnv && Object.keys(nextEnv).length) ? nextEnv : null, false, beforeKill.noWire === true);
     const argsLvl = stripLevelOf(beforeKill);
     if (argsLvl >= 1) persistence.setStripLevel(name, argsLvl);
