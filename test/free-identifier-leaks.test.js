@@ -303,9 +303,9 @@ const RENDERER_SCANNED_MODULES = [
 const WHITELIST = {
   // `isAlive` is engine.js's (`:524`, destructured off createAgentTransport), so
   // it entered this scan the moment engine.js joined MAIN_SCOPE. But
-  // plugin-host-engine.js does not REFERENCE it: `:208` is `isAlive() {`, an
+  // plugin-host-engine.js does not REFERENCE it: `isAlive() {` is an
   // object-literal method shorthand on the frozen handle sessionHandle() returns,
-  // and the only other hit (`:117`) is a comment. The lexer drops `key:` object
+  // and the only other hit is a comment. The lexer drops `key:` object
   // keys but not method shorthand, and ownDefinitions' param matcher reads the
   // shorthand's empty parameter list without adding the method name to defs — so
   // a definition reads as a use. Nothing to inject; the module is clean.
