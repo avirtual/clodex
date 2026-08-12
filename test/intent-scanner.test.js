@@ -299,6 +299,12 @@ test('parseIntent: task assign / done / reject / cancel / list', () => {
     { type: 'task', sub: 'cancel', id: 't7', who: null, body: 'nvm' });
   assert.deepStrictEqual(parseIntent('[agent:task cancel t7]'),
     { type: 'task', sub: 'cancel', id: 't7', who: null, body: '' });
+  // t305: accept takes an id and an OPTIONAL note, so both shapes must parse —
+  // a bare accept is the common one and must not degrade to a null id.
+  assert.deepStrictEqual(parseIntent('[agent:task accept t7] merged, thanks'),
+    { type: 'task', sub: 'accept', id: 't7', who: null, body: 'merged, thanks' });
+  assert.deepStrictEqual(parseIntent('[agent:task accept t7]'),
+    { type: 'task', sub: 'accept', id: 't7', who: null, body: '' });
   // t80: bare list carries filter:null (the handler defaults it to open); an
   // explicit bracket arg is carried through for the handler to validate.
   assert.deepStrictEqual(parseIntent('[agent:task list]'),

@@ -4753,6 +4753,14 @@ function createSessionManager(deps) {
         case 'done': this._taskDone(session, team, intent, reply); break;
         case 'reject': this._taskReject(session, team, intent, reply); break;
         case 'cancel': this._taskCancel(session, team, intent, reply); break;
+        // Async alone among the verbs: the merge gate is a git call and every
+        // destructive step is downstream of its answer. Caught here for the same
+        // reason team-retire's is — a floating rejection tears nothing down and
+        // tells no one, leaving the lead waiting on a confirmation that never comes.
+        case 'accept': this._taskAccept(session, team, intent, reply).catch((e) => {
+          log.warn('intent', `task accept ${intent.id} by ${session.name} failed: ${e.message}`);
+          reply(`error: accept ${intent.id || ''} failed: ${e.message} — nothing was removed`);
+        }); break;
         case 'park': this._taskPark(session, team, intent, reply); break;
         case 'list': this._taskList(session, team, intent, reply); break;
       }
@@ -6200,6 +6208,148 @@ function createSessionManager(deps) {
       reply(`ticket ${ticket.id} cancelled${next ? ` — next: ${next.id} delivered to ${seat}` : ''}`);
     }
 
+    // Write the revival link onto the TICKET, at the last moment it is knowable.
+    //
+    // The board is the durable index; nothing else is. `assignee` is a seat NAME
+    // and seat names RECYCLE (`_mintTicketSeat` derives them from role + ticket
+    // number), so it does not identify the session that did the work. On a
+    // discard the persistence record — the only other holder of the session id —
+    // is dropped outright, and on an archive it survives only until the seat is
+    // deleted. Stamping here makes "revive whoever did t301" a lookup instead of
+    // archaeology in a lead context that dies at its next compact.
+    //
+    // Called BEFORE teardown on BOTH dispositions. On discard the stamp is the
+    // only surviving trace, and it still names the branch and commit a hotfix
+    // would start from.
+    _stampTicketRevival(team, seatName, extra = null) {
+      if (!team || !team.root || !seatName) return null;
+      let rec = null;
+      try { rec = getPersistence().get(seatName); } catch { rec = null; }
+      let tickets;
+      try { tickets = ticketsStore.load(team.root); } catch { return null; }
+      // The ticket this seat was minted for: the pin is the seat name, and a
+      // ticket already accepted is not re-stamped by a later retire of the same
+      // seat — the first stamp names the session that did the work.
+      const ticket = tickets.find((t) => t.assignee === seatName && !t.revival);
+      if (!ticket) return null;
+      const wt = rec && rec.worktree ? rec.worktree : null;
+      ticket.revival = {
+        seat: seatName,
+        sessionId: (rec && rec.sessionId) || null,
+        branch: (wt && wt.branch) || null,
+        worktree: (wt && wt.path) || null,
+        baseSha: (wt && wt.baseSha) || null,
+        at: Date.now(),
+        ...(extra || {}),
+      };
+      ticket.lastActivityAt = Date.now();
+      try { ticketsStore.save(team.root, tickets); } catch { return null; }
+      return ticket;
+    }
+
+    // `[agent:task accept <id>]` — the lead's acknowledgement, and the only verb
+    // that tears anything down.
+    //
+    // NOT folded into `done`: `done` is emitted by the ASSIGNEE and carries its
+    // report, so retiring on it would kill the seat the instant it reports —
+    // before the lead has read a word, and before the two rework rounds a reject
+    // exists to send. Acceptance is the lead's judgement and arrives later.
+    //
+    // Every destructive step is gated on ONE fact — `merge-base --is-ancestor`.
+    // Once the branch is in, the tree protects nothing and the seat has nothing
+    // to resume into; until then the seat is archived and tree and branch are
+    // kept. A check that could not RUN is treated as not merged: `ok:false` is
+    // absence of evidence, and inferring "merged" from it deletes unmerged work.
+    async _taskAccept(session, team, intent, reply) {
+      const note = String(intent.body == null ? '' : intent.body).trim();
+      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can accept a ticket${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
+      if (!intent.id) { reply(`error: accept needs a ticket id — [agent:task accept <id>] [note]${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
+      const tickets = ticketsStore.load(team.root);
+      const ticket = tickets.find((t) => t.id === intent.id);
+      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
+      // Accepting un-reported work is how a half-finished branch gets its tree
+      // deleted, so the state is named in the refusal rather than coerced.
+      if (ticket.state !== 'done') { reply(`error: accept closes out a DONE ticket; ${intent.id} is ${ticket.state} — it has not been reported yet${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
+
+      // The branch comes from the SEAT'S RECORD, never from the ticket id: the
+      // name is minted with a title slug (`_mintTicketSeat`), so the id alone
+      // cannot reconstruct it and a guessed branch name would fail the gate and
+      // report an accepted ticket as unmerged.
+      const seatName = ticket.assignee || null;
+      let rec = null;
+      try { rec = seatName ? getPersistence().get(seatName) : null; } catch { rec = null; }
+      const branch = (rec && rec.worktree && rec.worktree.branch) || (ticket.worktree && ticket.worktree.branch) || null;
+
+      const finish = (msg) => {
+        ticket.acceptedAt = Date.now();
+        ticket.acceptedBy = session.name;
+        if (note) ticket.acceptNote = note;
+        ticket.lastActivityAt = ticket.acceptedAt;
+        // Re-read: the teardown below stamped revival onto its own copy.
+        const fresh = ticketsStore.load(team.root);
+        const row = fresh.find((t) => t.id === ticket.id);
+        if (row) {
+          row.acceptedAt = ticket.acceptedAt;
+          row.acceptedBy = ticket.acceptedBy;
+          if (note) row.acceptNote = note;
+          row.lastActivityAt = ticket.lastActivityAt;
+          ticketsStore.save(team.root, fresh);
+        } else {
+          ticketsStore.save(team.root, tickets);
+        }
+        this._broadcast('ipc-message', { type: 'task', from: session.name, to: seatName || '(unassigned)', body: `ticket ${ticket.id} accepted` });
+        log.info('intent', `task accept ${ticket.id} by ${session.name}: ${msg}`);
+        reply(msg);
+      };
+
+      // No branch to reason about (a ticket worked in the main checkout): there
+      // is no tree to remove and no ref to delete, so acceptance is the stamp
+      // alone. Retiring the seat here would be a teardown the merge fact never
+      // licensed.
+      if (!branch) {
+        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
+        finish(`ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was torn down${seatName ? ` (${seatName} left as it is)` : ''}`);
+        return;
+      }
+
+      const m = await gitWorktree.isMerged(team.root, branch).catch((e) => ({ ok: false, error: e.message }));
+
+      if (!m.ok) {
+        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
+        if (seatName && this.sessions.has(seatName)) await this.archive(seatName);
+        finish(`ticket ${ticket.id} accepted, but the merge check could NOT run for branch ${branch} (${m.error || 'unknown error'}) — treated as NOT merged: `
+          + `${seatName ? `${seatName} was archived, and its ` : 'its '}worktree and branch were KEPT. Nothing was removed.`);
+        return;
+      }
+
+      if (!m.merged) {
+        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
+        if (seatName && this.sessions.has(seatName)) await this.archive(seatName);
+        finish(`ticket ${ticket.id} accepted, but branch ${branch} is NOT merged into ${m.base} — `
+          + `${seatName ? `${seatName} was archived (resumable), and its ` : 'its '}worktree and branch were KEPT. `
+          + `Merge it, then [agent:task accept ${ticket.id}] again to clean up.`);
+        return;
+      }
+
+      // Merged: the four steps. Stamp FIRST — destroy() drops the record the
+      // session id lives in, so after it the link is unrecoverable.
+      if (seatName) this._stampTicketRevival(team, seatName, { accepted: true, mergedInto: m.base });
+      let removed = null;
+      if (seatName && (this.sessions.has(seatName) || rec)) {
+        const r = await this.destroy(seatName).catch((e) => ({ ok: false, error: e.message }));
+        removed = r || null;
+      }
+      const del = await gitWorktree.deleteBranch(team.root, branch).catch((e) => ({ ok: false, error: e.message }));
+      const parts = [];
+      if (seatName) {
+        parts.push(removed && removed.worktreeRemoved ? `${seatName} retired and its worktree removed`
+          : removed && removed.error ? `${seatName} retired but its worktree could NOT be removed (${removed.error})`
+            : `${seatName} retired`);
+      }
+      parts.push(del.ok ? `branch ${branch} deleted` : `branch ${branch} could NOT be deleted (${del.error})`);
+      finish(`ticket ${ticket.id} accepted — merged into ${m.base}; ${parts.join('; ')}.`);
+    }
+
     // Park an ALREADY-OPEN ticket, or the unpark direction if it is parked. A
     // flag settable only at file time would be write-once, leaving cancel-and-
     // refile as the only way to change a lead's mind — which is the cost this
@@ -7194,7 +7344,16 @@ function createSessionManager(deps) {
       // An UNREADABLE tree (git missing, path gone) also downgrades: `ok:false`
       // is not evidence of a clean tree, and archiving something discardable is
       // recoverable while the reverse is not.
+      // Two paths to the SAME downgrade, and they must stay distinguishable at
+      // the confirmation: "git says this tree has changes" and "git could not
+      // look at this tree" archive alike, but only the first is something the
+      // operator can go and commit. Telling them to commit a tree that no longer
+      // exists is the failure this split exists to prevent — and it is the
+      // NORMAL path, since correct cleanup order (merge, remove tree, retire
+      // seat) reaches the retire with the tree already gone.
       let dirtyPath = null;
+      let uncheckedPath = null;
+      let uncheckedWhy = null;
       // Captured here because kill() drops the persistence record: by the time
       // the confirmation is built, the record this path came from is gone.
       let discardPath = null;
@@ -7204,10 +7363,18 @@ function createSessionManager(deps) {
         if (wt) {
           discardPath = wt;
           const d = await gitWorktree.isDirty(wt).catch((e) => ({ ok: false, error: e.message }));
-          if (!d.ok || d.dirty) { discard = false; dirtyPath = wt; }
+          if (!d.ok) { discard = false; uncheckedPath = wt; uncheckedWhy = d.error || 'git could not read the tree'; }
+          else if (d.dirty) { discard = false; dirtyPath = wt; }
         }
       }
       const disposition = discard ? 'discard' : 'archive';
+      // Before teardown, while the persistence record still holds the session id:
+      // destroy() drops it, and then the link from ticket to session is gone for
+      // good. Same reason discardPath is captured above.
+      try {
+        const t = resolveTeam(target.cwd);
+        if (t) this._stampTicketRevival(t, targetName, { disposition });
+      } catch { /* the stamp is a convenience; a retire must not fail on it */ }
       this._sendToSession(targetName, 'session:context-action', { action: 'retired', name: targetName, disposition });
       this._broadcast('ipc-message', {
         ts: Date.now(), from: requesterName, to: targetName, kind: 'retire',
@@ -7232,6 +7399,13 @@ function createSessionManager(deps) {
           confirm = `retired ${targetName} (ARCHIVED, not discarded — ${dirtyPath} has uncommitted work). `
             + 'A discard would have deleted that tree. Resume it from the sidebar, commit or clear that tree, '
             + 'then retire again to discard.';
+        } else if (uncheckedPath) {
+          // Deliberately does NOT tell the operator to go commit anything: the
+          // commonest way to land here is a tree that is already gone, and an
+          // instruction to commit in it names a directory that cannot be opened.
+          confirm = `retired ${targetName} (ARCHIVED, not discarded — ${uncheckedPath} could not be inspected: ${uncheckedWhy}). `
+            + 'That is usually a tree already removed. Archiving was the safe choice: an unreadable tree is not evidence of a clean one, '
+            + `and the seat stays resumable. If ${uncheckedPath} is gone and you want the record dropped, delete the session from the sidebar.`;
         } else if (!discard) {
           confirm = `retired ${targetName} (resumable from the sidebar or on next project open)`;
         } else if (r && r.worktreeRemoved) {

@@ -12,10 +12,16 @@ const os = require('os');
 const fs = require('fs');
 const { execFile } = require('child_process');
 
+// `code` is the process exit status, and it is not redundant with `ok`: git's
+// query commands answer NO by exiting nonzero, so a plain boolean cannot
+// separate "git ran and said no" (1) from "git could not answer" (128, ENOENT).
+// `isMerged` turns on exactly that distinction. Null when the process never ran
+// (spawn failure carries a string errno, not a status).
 function git(cwd, args, { maxBuffer = 4 * 1024 * 1024 } = {}) {
   return new Promise((resolve) => {
     execFile('git', ['-C', cwd, ...args], { maxBuffer }, (err, stdout, stderr) => {
-      resolve({ ok: !err, stdout: stdout || '', stderr: stderr || (err && err.message) || '' });
+      const code = err ? (typeof err.code === 'number' ? err.code : null) : 0;
+      resolve({ ok: !err, code, stdout: stdout || '', stderr: stderr || (err && err.message) || '' });
     });
   });
 }
@@ -128,6 +134,57 @@ async function defaultBranch(repo) {
   const cur = await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']);
   const name = cur.ok && cur.stdout.trim();
   return name && name !== 'HEAD' ? name : null;
+}
+
+// Is `branch` already contained in `base`? The one FACT that makes a ticket
+// branch's worktree safe to delete: once it holds, every commit on the branch is
+// reachable from the base, so the tree and the branch ref protect nothing.
+//
+// Three outcomes, never two. `--is-ancestor` reports its answer through the exit
+// STATUS — 0 yes, 1 no — and reserves anything else for "I could not tell"
+// (unknown ref, no repo, git missing). Collapsing that onto `ok` would read a
+// broken repo as a merged branch and delete an unmerged tree, so the unknown
+// case is returned as `{ ok: false }` and every caller must treat it as NOT
+// merged. Never infer merged from a failed check.
+//
+// Both refs are verified first so a typo or a deleted branch lands in the
+// unknown arm with a legible error rather than as a bare exit 128.
+//
+// `base` defaults to the MAIN checkout's current HEAD branch — deliberately the
+// branch the operator is actually merging into, not `defaultBranch()`, whose
+// origin/HEAD preference would answer about a ref this repo may never merge to.
+async function isMerged(cwd, branch, base = null) {
+  const repo = await repoToplevel(cwd);
+  if (!repo) return { ok: false, error: 'not a git repository' };
+  if (!branch) return { ok: false, error: 'no branch given' };
+  let against = base && String(base).trim() ? String(base).trim() : null;
+  if (!against) {
+    const cur = await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const name = cur.ok && cur.stdout.trim();
+    if (!name || name === 'HEAD') return { ok: false, error: 'no base ref (main checkout is detached)' };
+    against = name;
+  }
+  for (const ref of [branch, against]) {
+    const v = await git(repo, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+    if (!v.ok) return { ok: false, base: against, error: `ref does not resolve: ${ref}` };
+  }
+  const r = await git(repo, ['merge-base', '--is-ancestor', branch, against]);
+  if (r.code === 0) return { ok: true, merged: true, base: against };
+  if (r.code === 1) return { ok: true, merged: false, base: against };
+  return { ok: false, base: against, error: (r.stderr || `merge-base exited ${r.code}`).trim() };
+}
+
+// Delete a branch ref. `-d`, never `-D`: git's own merged-check is a second,
+// independent gate behind the caller's, and the two disagreeing means the
+// caller's premise was wrong — exactly when refusing beats forcing. A refusal
+// comes back as `{ ok:false, error }` and the branch survives.
+async function deleteBranch(cwd, branch) {
+  const repo = await repoToplevel(cwd);
+  if (!repo) return { ok: false, error: 'not a git repository' };
+  if (!branch) return { ok: false, error: 'no branch given' };
+  const r = await git(repo, ['branch', '-d', branch]);
+  if (!r.ok) return { ok: false, error: (r.stderr || 'git branch -d failed').trim() };
+  return { ok: true };
 }
 
 // Repo metadata for the New Session dialog: whether `cwd` is in a git work tree,
@@ -303,5 +360,5 @@ async function commitsOnBranch(cwd, branch, base = null) {
 
 module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
-  defaultBranch, repoInfo, listWorktrees, commitsOnBranch,
+  defaultBranch, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
 };

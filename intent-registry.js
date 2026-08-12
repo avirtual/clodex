@@ -106,7 +106,7 @@ function parseReboot(cleaned) {
 }
 
 function parseTask(cleaned) {
-  const m = cleaned.match(/^\[agent:task\s+(add|assign|done|reject|cancel|park|list)\b([^\]]*)\]\s*(.*)/s);
+  const m = cleaned.match(/^\[agent:task\s+(add|assign|done|reject|cancel|accept|park|list)\b([^\]]*)\]\s*(.*)/s);
   if (!m) return null;
   const sub = m[1];
   const argToks = m[2].trim().split(/\s+/).filter(Boolean);
@@ -188,7 +188,7 @@ const CORE_ROWS = [
   { type: 'team-review', parse: parseTeamReview, bodyMode: GREEDY },
   { type: 'review-done', parse: parseReviewDone, bodyMode: GREEDY },
   { type: 'reboot', parse: parseReboot, bodyMode: NONE },
-  { type: 'task', parse: parseTask, bodyMode: (i) => (i.sub === 'add' || i.sub === 'done' || i.sub === 'reject' || i.sub === 'cancel' ? 'greedy' : 'none') },
+  { type: 'task', parse: parseTask, bodyMode: (i) => (i.sub === 'add' || i.sub === 'done' || i.sub === 'reject' || i.sub === 'cancel' || i.sub === 'accept' ? 'greedy' : 'none') },
   { type: 'team', parse: parseTeam, bodyMode: (i) => (i.sub === 'role-add' || i.sub === 'role-set' ? 'greedy' : 'none') },
   { type: 'spawn', parse: parseSpawn, bodyMode: NONE },
 ].map((r) => Object.freeze({

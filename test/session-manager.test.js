@@ -2818,6 +2818,104 @@ test('team-retire: an UNREADABLE worktree also downgrades to an archive', async 
   assert.deepStrictEqual(removed, [], 'nor its tree removed');
 });
 
+// t305 ruling 3. The dirty-check conflates "git says there are changes" with
+// "git could not look", and the confirmation then asserted the first as FACT:
+// "<path> has uncommitted work … commit or clear that tree". Observed live three
+// times in one session, always against a tree the lead had ALREADY REMOVED after
+// merging — which is the correct cleanup order, so this is the normal path.
+// Telling the operator to go commit in a directory that does not exist is the
+// defect; both cases still archive.
+//
+// The tree is really removed here rather than mocked: a stubbed `{ok:false}`
+// tests the branch but not the condition that produces it in the field.
+test('team-retire: a tree that is GONE says so, and never claims uncommitted work', async () => {
+  const repoDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-retire-'));
+  const runGit = (...a) => require('child_process').execFileSync('git', ['-C', repoDir, ...a], { stdio: 'ignore' });
+  runGit('init', '-q');
+  runGit('config', 'user.email', 't@example.com');
+  runGit('config', 'user.name', 'Test');
+  fsReal.writeFileSync(pathReal.join(repoDir, 'a.txt'), 'hi\n');
+  runGit('add', '-A');
+  runGit('commit', '-qm', 'init');
+  const realWt = require('../git-worktree');
+  const made = await realWt.createWorktree(repoDir, 't904');
+  assert.strictEqual(made.ok, true, made.error);
+  // The lead's correct cleanup order: merge, then remove the tree, then retire.
+  await realWt.removeWorktree(made.path);
+  // ENTER: the tree really is gone and the REAL isDirty really cannot answer.
+  // Without this the test could be asserting the new wording against a readable
+  // tree that simply happens to be clean.
+  assert.ok(!fsReal.existsSync(made.path), 'ENTER: the worktree directory is actually gone');
+  const probe = await realWt.isDirty(made.path);
+  assert.strictEqual(probe.ok, false, 'ENTER: the real isDirty returns ok:false for it — the observed condition');
+
+  const removed = [];
+  const { m, PENDING_DIR, archived, killed } = mkRetire(
+    { '/proj/a': '/proj', '/proj/r': '/proj' },
+    { '/proj': { lead: {}, runner: {} } },
+    {
+      getPersistence: () => ({
+        list: () => [],
+        get: (n) => (n === 'team-runner'
+          ? { name: n, ephemeral: true, worktree: { path: made.path, branch: 't904' } } : null),
+      }),
+      gitWorktree: {
+        removeWorktree: async (p) => { removed.push(p); return { ok: true }; },
+        isDirty: realWt.isDirty,     // the real probe against the real absent tree
+      },
+    },
+  );
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  await new Promise((r) => setTimeout(r, 100));
+
+  assert.deepStrictEqual(archived, ['team-runner'], 'behaviour is unchanged: still the conservative archive');
+  assert.deepStrictEqual(killed, [], 'and never killed');
+  assert.deepStrictEqual(removed, [], 'nothing removed');
+  const parked = drainPending(PENDING_DIR, 'lead', 't');
+  assert.strictEqual(parked.length, 1, 'ENTER: the confirmation was delivered');
+  assert.doesNotMatch(parked[0], /has uncommitted work/,
+    'the sentence that lied: this tree does not exist, so it cannot have uncommitted work');
+  assert.doesNotMatch(parked[0], /commit or clear that tree/,
+    'and it must not send the operator to commit inside a directory that is gone');
+  assert.match(parked[0], /could not be inspected/, 'it names what actually happened');
+  assert.match(parked[0], new RegExp(made.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'and which path');
+
+  fsReal.rmSync(repoDir, { recursive: true, force: true });
+});
+
+// The dirty case must keep saying "commit", or fixing the lie above would have
+// removed the one instruction that IS correct when the tree is really dirty.
+test('team-retire: a genuinely DIRTY tree still tells the operator to commit it', async () => {
+  const { m, PENDING_DIR } = mkRetire(
+    { '/proj/a': '/proj', '/proj/r': '/proj' },
+    { '/proj': { lead: {}, runner: {} } },
+    {
+      getPersistence: () => ({
+        list: () => [],
+        get: (n) => (n === 'team-runner'
+          ? { name: n, ephemeral: true, worktree: { path: '/wt/t905', branch: 't905' } } : null),
+      }),
+      gitWorktree: {
+        removeWorktree: async () => ({ ok: true }),
+        isDirty: async () => ({ ok: true, dirty: true }),
+      },
+    },
+  );
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  await new Promise((r) => setTimeout(r, 50));
+  const parked = drainPending(PENDING_DIR, 'lead', 't');
+  assert.strictEqual(parked.length, 1, 'ENTER: the confirmation was delivered');
+  assert.match(parked[0], /has uncommitted work/, 'a real dirty tree is still reported as such');
+  assert.match(parked[0], /commit or clear that tree/, 'with the instruction that is correct for it');
+  assert.doesNotMatch(parked[0], /could not be inspected/, 'and not the could-not-check wording');
+});
+
 // A removal failure must name the tree the operator has to clean up by hand.
 // removeWorktree's error strings carry no path, so interpolating only the error
 // produced "remove it by hand" with no "it" — and the record that held the path
@@ -5904,6 +6002,159 @@ test('task cancel: works on an assigned ticket (reason to assignee) and a backlo
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', who: null, body: '' });
   assert.strictEqual(f.one('t2').state, 'cancelled', 'backlog ticket cancels too');
   assert.deepStrictEqual(f.gated, [], 'no reason + no live assignee → no delivery');
+});
+
+// ---------------------------------------------------------------------------
+// t305 `[agent:task accept]`: the ONLY verb that tears anything down, and every
+// step of it is downstream of one fact — `merge-base --is-ancestor`. The tests
+// that matter are the ones proving nothing is removed when that fact is absent
+// or unknowable, since the failure is silent and irreversible.
+// ---------------------------------------------------------------------------
+
+// Records what accept did, so each test asserts the WHOLE set of destructive
+// actions rather than the one it happens to care about — a step firing in the
+// unmerged case is exactly the bug, and a partial assertion reads around it.
+function mkAccept(mergedAnswer, extra = {}) {
+  const destroyed = [];
+  const archived = [];
+  const deleted = [];
+  const asked = [];
+  const f = mkTasks({
+    getPersistence: () => ({
+      list: () => [],
+      get: (n) => (n === 'team-hand'
+        ? { name: n, sessionId: 'sess-abc', worktree: { path: '/wt/t1', branch: 't1-build-the-widget', baseSha: 'deadbeef' } }
+        : null),
+    }),
+    gitWorktree: {
+      isMerged: async (root, branch) => { asked.push({ root, branch }); return mergedAnswer; },
+      deleteBranch: async (root, branch) => { deleted.push(branch); return { ok: true }; },
+      removeWorktree: async () => ({ ok: true }),
+    },
+    ...extra,
+  });
+  f.m.destroy = async (name) => { destroyed.push(name); return { ok: true, worktreeRemoved: true }; };
+  f.m.archive = async (name) => { archived.push(name); };
+  return { ...f, destroyed, archived, deleted, asked };
+}
+
+function openAndDone(f) {
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped' });
+}
+
+test('task accept: a MERGED branch retires the seat, removes the tree and deletes the branch', async () => {
+  const f = mkAccept({ ok: true, merged: true, base: 'master' });
+  openAndDone(f);
+  // ENTER: the ticket really is DONE before accept runs. Accept refuses anything
+  // else, so a fixture that never closed it would exercise the bounce and every
+  // assertion below about teardown would be vacuous.
+  assert.strictEqual(f.one('t1').state, 'done', 'ENTER: the ticket is done, so accept reaches its gate');
+  f.injected.length = 0;
+
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: 'good work' },
+    (msg) => f.injected.push(msg));
+
+  // The branch is read from the SEAT RECORD, never rebuilt from the ticket id:
+  // the name carries a title slug the id cannot reconstruct.
+  assert.deepStrictEqual(f.asked, [{ root: '/proj', branch: 't1-build-the-widget' }],
+    'the gate is asked about the recorded branch, in the main checkout');
+  assert.deepStrictEqual(f.destroyed, ['team-hand'], 'the seat is destroyed (tree goes with it)');
+  assert.deepStrictEqual(f.archived, [], 'and not merely archived');
+  assert.deepStrictEqual(f.deleted, ['t1-build-the-widget'], 'the branch ref is deleted');
+  const t = f.one('t1');
+  assert.strictEqual(t.acceptedBy, 'lead');
+  assert.ok(t.acceptedAt > 0);
+  assert.strictEqual(t.acceptNote, 'good work');
+  assert.match(f.injected.join('\n'), /accepted — merged into master/);
+});
+
+// The destructive direction is the one that cannot be undone, so this is the
+// test that matters most: an unmerged branch must lose NOTHING.
+test('task accept: an UNMERGED branch removes nothing and says so', async () => {
+  const f = mkAccept({ ok: true, merged: false, base: 'master' });
+  openAndDone(f);
+  assert.strictEqual(f.one('t1').state, 'done', 'ENTER: done, so the gate is reached');
+  f.injected.length = 0;
+
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+
+  assert.deepStrictEqual(f.destroyed, [], 'nothing destroyed');
+  assert.deepStrictEqual(f.deleted, [], 'no branch deleted');
+  assert.deepStrictEqual(f.archived, ['team-hand'], 'the seat is archived — resumable, tree kept');
+  const msg = f.injected.join('\n');
+  assert.match(msg, /is NOT merged into master/);
+  assert.match(msg, /KEPT/, 'the reply states the tree and branch survive');
+  assert.match(msg, /accept t1\] again/, 'and names the way to finish once it is merged');
+});
+
+// ok:false is absence of evidence. Reading it as merged would delete unmerged
+// work on a failed git call.
+test('task accept: a check that could NOT run is treated as not merged', async () => {
+  const f = mkAccept({ ok: false, error: 'git unavailable' });
+  openAndDone(f);
+  assert.strictEqual(f.one('t1').state, 'done', 'ENTER: done, so the gate is reached');
+  f.injected.length = 0;
+
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+
+  assert.deepStrictEqual([f.destroyed, f.deleted], [[], []], 'an unanswerable check destroys nothing');
+  assert.deepStrictEqual(f.archived, ['team-hand']);
+  const msg = f.injected.join('\n');
+  assert.match(msg, /could NOT run/);
+  assert.match(msg, /treated as NOT merged/);
+  assert.match(msg, /Nothing was removed/);
+});
+
+test('task accept: lead-only, and only on a DONE ticket', async () => {
+  const f = mkAccept({ ok: true, merged: true, base: 'master' });
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget' });
+
+  // Non-lead: refused outright.
+  f.injected.length = 0;
+  await f.m._taskAccept(f.seat('team-hand'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+  assert.match(f.injected.join('\n'), /only the team lead \(lead\) can accept/);
+  assert.deepStrictEqual([f.destroyed, f.deleted, f.archived], [[], [], []], 'a non-lead tears nothing down');
+
+  // Lead, but the ticket is still OPEN: accepting un-reported work is how a
+  // half-finished branch gets its tree deleted.
+  f.injected.length = 0;
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+  assert.match(f.injected.join('\n'), /t1 is open — it has not been reported yet/);
+  assert.deepStrictEqual([f.destroyed, f.deleted, f.archived], [[], [], []], 'an open ticket tears nothing down');
+  assert.deepStrictEqual(f.asked, [], 'and the merge gate is never even consulted');
+});
+
+// t305 ruling 4: the board is the durable index. `assignee` is a seat name and
+// seat names recycle, so without this stamp nothing links a ticket to the
+// session that did the work — and destroy() drops the record that holds it.
+test('task accept: the revival link is stamped BEFORE teardown, so a discard cannot outrun it', async () => {
+  const f = mkAccept({ ok: true, merged: true, base: 'master' });
+  openAndDone(f);
+  // The stamp must already be on disk when destroy runs: after it, the record
+  // holding the session id is gone and the link is unrecoverable.
+  let stampAtDestroy = null;
+  f.m.destroy = async (name) => {
+    stampAtDestroy = f.one('t1').revival || null;
+    return { ok: true, worktreeRemoved: true };
+  };
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+
+  assert.ok(stampAtDestroy, 'ENTER: the stamp was already persisted when teardown began');
+  assert.strictEqual(stampAtDestroy.sessionId, 'sess-abc', 'the session id a hotfix would revive');
+  assert.strictEqual(stampAtDestroy.seat, 'team-hand');
+  assert.strictEqual(stampAtDestroy.branch, 't1-build-the-widget');
+  assert.strictEqual(stampAtDestroy.baseSha, 'deadbeef');
+  assert.strictEqual(stampAtDestroy.worktree, '/wt/t1');
+  // And it survives the accept, which rewrites the row.
+  assert.strictEqual(f.one('t1').revival.sessionId, 'sess-abc', 'the stamp survives the acceptance write');
 });
 
 // ---------------------------------------------------------------------------
