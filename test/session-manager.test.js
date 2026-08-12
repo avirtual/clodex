@@ -6227,6 +6227,11 @@ test('t89 done ADVANCES the seat: the next held ticket is delivered, urgently', 
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec one' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec two' });
+  // t308: advance hands over STARTED tickets only, so the queued one needs its
+  // dispatch step too. An added-but-unstarted ticket is deliberately invisible
+  // to the advance — otherwise `add` still dispatches, just via a later edge.
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   f.gated.length = 0; f.urgents.length = 0;
 
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'the report' });
@@ -6259,6 +6264,8 @@ test('t89 _advanceSeat never hands back the ticket just closed, even before the 
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the one being closed' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the genuine next' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   f.gated.length = 0;
 
   // Called DIRECTLY with t1 still open — the shape the helper would see if the
@@ -6278,6 +6285,10 @@ test('t89 the advance is FIFO, not id order — oldest first when the two disagr
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'closing this one' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'minted second, but OLDER' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'minted third, but NEWER' });
+  // t308: all three started — the advance only considers started tickets, and
+  // leaving either candidate unstarted would decide the ordering question by
+  // exclusion instead of by the comparator this test exists to pin.
+  for (const id of ['t1', 't2', 't3']) f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id, body: '' });
   // Force openedAt to CONTRADICT id order: t3 is older than t2. Without this the
   // two orderings agree and the test cannot tell which one the product used.
   const tickets = f.tstore.load(f.team.root);
@@ -6326,6 +6337,8 @@ test('t89 the advance follows the TICKET`s seat, so a lead closing over a silent
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec one' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec two' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   f.gated.length = 0; f.urgents.length = 0;
 
   // The LEAD closes the hand's ticket (the permitted-actor path). The seat that
@@ -6343,6 +6356,8 @@ test('t89 cancel advances too — it frees the seat exactly as done does', () =>
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec one' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec two' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   f.gated.length = 0; f.urgents.length = 0;
 
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't1', body: 'never mind' });
@@ -6854,8 +6869,20 @@ test('a parked ticket is invisible to _openTicketsFor, so advance SKIPS it', () 
   // the head of the FIFO after t1 closes. This is t119's "real dispatches queue
   // behind parked ones", and the fix must skip t2 without reordering t3.
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'first' });
-  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'parked one' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'parked one' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'third' });
+  // t308: all three are STARTED, and t2 is parked AFTER the fact rather than at
+  // add. Both halves are deliberate. `start` unparks, so a park-at-add t2 could
+  // not also be started — and an UNSTARTED t2 would be dropped by the new
+  // started-ness term, which would leave this test green while proving nothing
+  // about `parked`. Parking a started ticket is the shape `[agent:task park]`
+  // produces anyway, and it keeps t2's openedAt between its siblings.
+  for (const id of ['t1', 't2', 't3']) f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id, body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't2', who: null, body: '' });
+  assert.strictEqual(f.one('t2').parked, true, 'ENTER: t2 really is parked');
+  assert.ok(f.one('t2').startedAt != null,
+    'ENTER: and it is STARTED — so `parked` is the only term that can exclude it below, '
+    + 'which is the property this test is here to pin');
   assert.deepStrictEqual(f.m._openTicketsFor(f.team, 'team-hand').map((t) => t.id), ['t1', 't3'],
     'the parked ticket is dropped from the queue entirely');
   f.gated.length = 0;
@@ -6896,7 +6923,7 @@ test('[agent:task park] toggles an already-open ticket both ways', () => {
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
-  assert.strictEqual(f.gated.length, 1, 'dispatched on add');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: dispatched on START — add wrote the ticket and delivered nothing');
   f.gated.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
   assert.strictEqual(f.one('t1').parked, true, 'parked after the fact');
@@ -10709,6 +10736,11 @@ test('advance: the queued ticket handed to a seat on close is re-pinned to it', 
   const lead = f.m.sessions.get('lead');
   f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'first job' });
   f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'second job' });
+  // t308: both dispatched, since the advance now only sees started tickets. The
+  // `standing` dispatch mode means neither mints a seat, so t2 stays role-assigned
+  // through its start — which is exactly the precondition the ENTER below wants.
+  f.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
   assert.strictEqual(f.one('t2').assignee, 'hand', 'ENTER: t2 must still be role-assigned before the seat exists');
 
@@ -11226,6 +11258,99 @@ test('task assign: a seat that spawned then failed onto a REUSED tree takes the 
   });
   assert.deepStrictEqual(naming, ['team-builder-1'],
     'and it is the ONLY record naming it — a second row lets Delete Session… remove the tree under the live seat');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// ── task start: the worktree arm's two refusals ────────────────────────────
+// Every other _taskStart test runs on the non-worktree fixture, so both of these
+// refusals — the ones guarding the collision this whole field exists to prevent
+// — were reachable only through `assign` in the suite. Same hazard, same guards,
+// but `start` is now the verb a lead reaches for, so it needs its own pins.
+
+test('task start: a tree still held by a live seat is refused, and nothing is changed', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  const said = [];
+  f.m._injectText = (s, t) => { said.push(t); };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  const tree = f.one('t1').worktree;
+  assert.ok(tree && tree.path, 'ENTER: the worktree arm really ran — on the standing fixture there would be no tree to contend');
+
+  // The contended shape: the ticket's own seat is GONE (killed, so its name is
+  // free again and a fresh mint would succeed), but another live seat has since
+  // been pointed at the tree the ticket still names. A start that trusted the
+  // free name would spawn a second agent into an occupied checkout, which is the
+  // collision the whole worktree mechanism exists to prevent.
+  // It has to be a DIFFERENT seat: when the ticket's own live seat holds the
+  // tree, "already started" is the correct diagnosis, not occupancy.
+  f.killSeat('team-hand-1');
+  f.seatWithTree('team-other-9', tree);
+  assert.strictEqual(f.m._ticketTreeHolder(tree.path), 'team-other-9',
+    'ENTER: a live seat that is NOT the ticket`s own holds the tree');
+  assert.ok(!f.m.sessions.has('team-hand-1') && !f.upserted.includes('team-hand-1'),
+    'ENTER: and the ticket`s own seat name is free, so nothing but the occupancy guard can refuse this');
+
+  said.length = 0; f.gated.length = 0;
+  const before = JSON.stringify(f.one('t1'));
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  for (let i = 0; i < 15; i++) await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(said.length, 1, 'ENTER: exactly one reply to assert on');
+  // Not just the NAME: the taken-but-not-live reply carries it too, so a bare
+  // name match cannot tell the occupancy refusal from the archived-seat one.
+  assert.match(said[0], /is held by/, 'the OCCUPANCY refusal, not the archived-seat reply');
+  assert.match(said[0], /team-other-9/, 'and it names who holds the tree — the lead cannot clear it without knowing');
+  assert.deepStrictEqual(f.gated, [],
+    'nothing is delivered — least of all the WORK IN: line of a tree another seat is committing in');
+  assert.strictEqual(JSON.stringify(f.one('t1')), before,
+    'and the record is byte-identical: the refusal sits above every field start writes, so "Nothing was changed" is true of the board too');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The seat name is derived from the ticket id, so a record under it that OUTLIVED
+// its session means this ticket already has a seat. Nothing here can fix it:
+// _spawnTicketSeat calls create() directly, bypassing the nameConflict front door,
+// so respawning would overwrite the record and split one name across two rows.
+test('task start: a taken-but-dead seat name is refused with the recovery named, not respawned', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  const said = [];
+  f.m._injectText = (s, t) => { said.push(t); };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  // Archived, not killed: archive KEEPS the persistence record, which is what
+  // holds the derived name while nothing answers for it. A kill would free the
+  // name and this path would be unreachable.
+  f.archiveSeat('team-hand-1');
+  const all = f.tstore.load(f.team.root);
+  all.find((t) => t.id === 't1').startedAt = null;
+  f.tstore.save(f.team.root, all);
+  assert.ok(!f.m.sessions.has('team-hand-1'), 'ENTER: the seat is not live');
+  assert.ok(f.upserted.includes('team-hand-1'), 'ENTER: but its RECORD survives, which is what keeps the name taken');
+
+  said.length = 0; f.gated.length = 0;
+  const createdBefore = f.upserted.slice();
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  for (let i = 0; i < 15; i++) await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(said.length, 1, 'ENTER: exactly one reply to assert on');
+  assert.match(said[0], /archived or dead/, 'the taken-but-dead reply, not the occupancy one');
+  // The recovery has to be USABLE: no amount of re-starting reaches one, so the
+  // reply names the two exits that do.
+  assert.match(said[0], /Unarchive it/, 'and names unarchiving, which replays the spec on resume');
+  assert.match(said[0], /Delete Session/, 'and the destructive alternative');
+  assert.match(said[0], /UNCOMMITTED/,
+    'with the data loss spelled out — a lead choosing Delete Session… on this advice destroys the seat`s uncommitted work');
+  assert.deepStrictEqual(f.upserted, createdBefore, 'no second record is minted over the surviving one');
+  assert.deepStrictEqual(f.gated, [], 'and nothing is delivered to a name nothing answers for');
+  assert.ok(!f.m.sessions.has('team-hand-1'), 'no seat was respawned');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 

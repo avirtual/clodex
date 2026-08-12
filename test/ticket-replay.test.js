@@ -770,7 +770,15 @@ test('with two tickets open, a respawn delivers only the head', async () => {
   await app1.spawn('team-hand');
   app1.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nfirst' });
   app1.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'PAINT THE SHED\nsecond' });
+  // t308: replay delivers STARTED tickets only, so both need the dispatch step —
+  // an added-but-unstarted ticket is deliberately invisible to it. What this test
+  // pins is untouched: with two in the queue, a respawn hands over exactly one.
+  app1.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  app1.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   assert.strictEqual(world.tickets().filter((t) => t.state === 'open').length, 2, 'ENTER: two open');
+  assert.strictEqual(world.tickets().filter((t) => t.startedAt != null).length, 2,
+    'ENTER: and BOTH are started — with either one unstarted the head assertion below '
+    + 'would pass for the wrong reason, since replay would have had only one candidate');
   app1.stop();
 
   const app2 = boot(world);

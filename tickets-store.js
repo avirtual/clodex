@@ -152,7 +152,21 @@ function branchSlug(title) {
 // A section whose body is only a "none" placeholder returns null, so a reviewer
 // writing `MUST-FIX: none` beside an ACCEPT does not hand the loop an empty
 // rework body to deliver.
-const VERDICT_SECTION_RE = /^\s*(?:[-*>\s]*)(?:\*\*|__)?\s*(MUST[-\s]?FIX|NITS?|CHECKED|VERDICT)\b/i;
+// The trailing lookahead is what makes this a HEADER matcher rather than a
+// first-token matcher, and it is load-bearing in one direction: a must-fix ITEM
+// whose first token is a section word (`- NITS are being treated as blocking`)
+// closed the section, and when that item was the FIRST one the whole extraction
+// returned null — an empty rework round, which tells the hand nothing. Requiring
+// a separator or end-of-line after the keyword is what separates the item from
+// the header, since the bullet/quote decoration is identical on both.
+// A lookahead, not consumed, so `h[0]` still ends at the keyword and the
+// inline-tail slice below keeps working unchanged.
+//
+// Both branches spell out the horizontal run rather than sharing one `[ \t]*`
+// before a negated class: `[ \t]*` backtracks to zero width, and then a plain
+// "not a letter" lookahead is satisfied by the very space it was meant to skip
+// — which passes every item this guard exists to reject.
+const VERDICT_SECTION_RE = /^\s*[-*>\s]*(?:\*\*|__)?\s*(MUST[-\s]?FIX|NITS?|CHECKED|VERDICT)\b(?=(?:\*\*|__)?(?:[ \t]*[^ \tA-Za-z0-9]|[ \t]*$))/i;
 
 function extractMustFix(verdictText) {
   const lines = String(verdictText == null ? '' : verdictText).split('\n');
@@ -181,4 +195,40 @@ function extractMustFix(verdictText) {
   return /^(?:none|n\/a|-+|—)\.?$/i.test(out) ? null : out;
 }
 
-module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, branchSlug, TICKETS_FILE };
+// Has this ticket been DISPATCHED? First-class state, because everything
+// downstream of the add/start split keys off it, and inferring it from
+// `dispatch:'worktree'` plus the absence of `ticket.worktree` is a derived
+// signal that goes silently wrong the moment a non-worktree role needs the same
+// distinction.
+//
+// The three legacy arms exist because every ticket in a live tickets.json was
+// dispatched by the OLD `add` and carries no `startedAt`. Reading those as
+// never-started drops them out of `_openTicketsFor`, so replay and `_advanceSeat`
+// stop seeing real in-flight work on the first launch after upgrade — strictly
+// worse than the collision being fixed here.
+//
+// The KEY'S PRESENCE is the format discriminator, which is why `_taskAdd` writes
+// `startedAt: null` explicitly: an unstarted new ticket carries the key holding
+// null, a pre-upgrade record has no key at all, and nothing else tells them
+// apart. Absent defaults to STARTED because the two errors are not symmetric —
+// a false "started" only refuses a `start` (and `assign` still re-sends), while
+// a false "unstarted" silently re-delivers in-flight specs into occupied trees.
+//
+// `parked` carves the one legacy shape that provably never dispatched: the old
+// `add` returned before delivering when parked. Without it the documented
+// park-then-release flow would refuse to start on the first post-upgrade launch.
+//
+// `role`/`worktree` are kept as a second reading, not as the primary one: they
+// are written only by a dispatch path, but `_repinTicketToSeat` declines to
+// write `role` when the assignee is a SEAT NAME rather than a role key, so an
+// old name-addressed ticket dispatched with neither field set. Those records are
+// caught by the absent-key arm, not by this one.
+function ticketStarted(ticket) {
+  if (!ticket) return false;
+  if (ticket.startedAt != null) return true;
+  if (ticket.role || (ticket.worktree && ticket.worktree.path)) return true;
+  if (!Object.prototype.hasOwnProperty.call(ticket, 'startedAt')) return !ticket.parked;
+  return false;
+}
+
+module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, ticketStarted, branchSlug, TICKETS_FILE };

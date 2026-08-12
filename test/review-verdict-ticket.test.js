@@ -224,6 +224,13 @@ test('reviewTicket survives an in-place restart (engine preserveFields)', () => 
   const lists = src.match(/\[[^\]]*'reviewFor'[^\]]*\]/g) || [];
   // ENTER: both call sites were found. A zero-length match would make the loop
   // below vacuously true — the exact shape CLAUDE.md warns about.
+  //
+  // TWO is engine.js-only BY CONSTRUCTION, not a claim about the codebase: this
+  // reads one file, so a preserve site added in another module is outside what
+  // the count can see. A third _preserveAcrossRestart call already exists
+  // elsewhere and is deliberately not covered here (it does not carry reviewFor,
+  // so it is not on this seam). Widening the scan to the whole tree is the
+  // change to make if that stops being true — not bumping this number.
   assert.strictEqual(lists.length, 2, `expected 2 preserve lists, found ${lists.length}`);
   for (const l of lists) {
     assert.match(l, /'reviewTicket'/,
@@ -424,4 +431,97 @@ test('extractMustFix: a placeholder body is null, not an empty rework', () => {
 test('extractMustFix: CHECKED and VERDICT both close the section', () => {
   assert.strictEqual(extractMustFix('MUST-FIX\n- the item\nCHECKED\n- not an item'), '- the item');
   assert.strictEqual(extractMustFix('MUST-FIX\n- the item\nVERDICT: REWORK'), '- the item');
+});
+
+// The header test above covers the section word MID-LINE ("this NITS-looking one
+// is blocking"), which the substring scan it replaced already handled. The case
+// that actually breaks is the word as the item's FIRST TOKEN: bullet decoration
+// is identical on a header and an item, so `- NITS are blocking` read as a
+// header. When such an item came first the whole extraction returned null, and a
+// null must-fix dispatches a rework round that tells the hand nothing.
+test('extractMustFix: an item whose FIRST TOKEN is a section word does not close the section', () => {
+  assert.strictEqual(
+    extractMustFix('VERDICT: REWORK\n\nMUST-FIX\n- NITS are being treated as blocking here\n- and the guard is inverted\n\nNITS\n- naming'),
+    '- NITS are being treated as blocking here\n- and the guard is inverted',
+    'a bulleted item starting with NITS is an ITEM — the header form is `NITS` alone or `NITS:`');
+
+  // The sharpest shape: that item is the ONLY one. Under the first-token bug the
+  // section closed before collecting anything and the result was null, so the
+  // rework round carried no body at all.
+  assert.strictEqual(
+    extractMustFix('VERDICT: REWORK\n\nMUST-FIX\n- CHECKED the sweep, it drops the row'),
+    '- CHECKED the sweep, it drops the row',
+    'a single item starting with a section word must not extract to null');
+
+  // Unbulleted, and with the section-word items at both ends.
+  assert.strictEqual(
+    extractMustFix('MUST-FIX\nVERDICT parsing accepts a quoted line\nthe guard is inverted\nNITS mentioned as blocking\n\nCHECKED\n- a thing'),
+    'VERDICT parsing accepts a quoted line\nthe guard is inverted\nNITS mentioned as blocking');
+});
+
+test('extractMustFix: the real header forms still close the section', () => {
+  // The guard above must not have retired the header match itself. Each of these
+  // is a header a reviewer writes, and each must still end the must-fix body.
+  for (const h of ['NITS', 'NITS:', '**NITS**', '- NITS', '> NITS', 'NITS —', 'CHECKED', 'CHECKED:', 'VERDICT: ACCEPT']) {
+    assert.strictEqual(extractMustFix(`MUST-FIX\n- the item\n${h}\n- not an item`), '- the item',
+      `"${h}" is a HEADER and must close the section`);
+  }
+});
+
+// ── the verdict match is line-anchored ─────────────────────────────────────
+
+test('a QUOTED previous verdict does not win over the reviewer`s own', async () => {
+  const f = mkVerdict();
+  openTicket(f);
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+
+  // §3 feeds round 1's verdict into round 2's scope, so the previous verdict
+  // arrives quoted INSIDE the new body. An unanchored match takes the first
+  // mention anywhere in the text — which is the old round's, and it would land
+  // an ACCEPT on a ticket the reviewer just sent back.
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name),
+    'Round 1 said:\n> VERDICT: ACCEPT\n> looks right\n\nI disagree.\n\nVERDICT: REWORK\nMUST-FIX: the guard is inverted');
+
+  const t = f.one('t1');
+  assert.strictEqual(t.verdict, 'REWORK',
+    'the reviewer`s OWN verdict decides — reading the quoted one accepts work that was just rejected');
+  assert.strictEqual(t.mustFix, 'the guard is inverted');
+});
+
+test('ordinary verdict decoration is still accepted, so the anchor did not narrow the grammar', async () => {
+  for (const line of ['VERDICT: ACCEPT', '  VERDICT: ACCEPT', '**VERDICT**: ACCEPT', '- VERDICT: ACCEPT', 'VERDICT — ACCEPT', 'verdict: accept']) {
+    const f = mkVerdict();
+    openTicket(f);
+    const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+    await f.m._handleReviewDone(f.m.sessions.get(rec.name), `some preamble\n\n${line}\n\nMUST-FIX: none`);
+    assert.strictEqual(f.one('t1').verdict, 'ACCEPT', `"${line}" must still parse — a verdict that stops parsing falls through to the lead silently`);
+  }
+});
+
+// ── a closed ticket takes no verdict ───────────────────────────────────────
+
+test('a verdict for a ticket that is no longer open falls through to the lead', async () => {
+  const f = mkVerdict();
+  openTicket(f);
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+  // ENTER: the seat is on the TICKET route and the ticket RESOLVES, so the only
+  // thing that can send this to the lead is the state check. Without both, this
+  // passes on a tree with no ticket route at all.
+  assert.strictEqual(rec.reviewTicket, 't1');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't1', body: 'never mind' });
+  assert.strictEqual(f.one('t1').state, 'cancelled', 'ENTER: the ticket really left the open state');
+  const before = f.one('t1');
+  f.gated.length = 0;
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT\nlooks right');
+
+  const t = f.one('t1');
+  assert.ok(!('verdict' in t), 'a closed ticket is not stamped — the loop step is over and nobody would act on it');
+  assert.ok(!('reviewRound' in t), 'and no round is burned');
+  assert.strictEqual(t.lastActivityAt, before.lastActivityAt, 'its clock is untouched');
+  assert.strictEqual(t.closedAt, before.closedAt, 'and it stays closed');
+  assert.strictEqual(f.gated.length, 1,
+    'the verdict still reaches the lead — the review was real work, and the lead is who can act on a closed ticket');
+  assert.strictEqual(f.gated[0].target, 'lead');
+  assert.match(f.gated[0].body, /VERDICT: ACCEPT/);
 });

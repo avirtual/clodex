@@ -151,7 +151,7 @@ const REVIEWER_FALLBACK = {
     CLODEX_SPAWNER_HINT: 'off',
   },
 };
-const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, branchSlug } = require('./tickets-store');
+const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, ticketStarted, branchSlug } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { findRepoRoot } = require('./project-root');
 const { projectDirFor } = require('./clodex-paths');
@@ -4644,7 +4644,14 @@ function createSessionManager(deps) {
     // the round has to survive the reviewer AND the hand dying, and a seat index
     // is gone with the seat.
     _landVerdictOnTicket(session, ticketId, verdict) {
-      const m = /\bVERDICT\b\W*\b(ACCEPT|REWORK)\b/i.exec(verdict);
+      // Line-anchored, because §3 feeds round 1's verdict into round 2's review
+      // scope: the previous verdict arrives QUOTED inside the new body, so an
+      // unanchored match takes the first mention anywhere in the text and can
+      // land the OLD round's ACCEPT on a ticket the reviewer just sent back.
+      // Bullets and bold are allowed as decoration; `>` is deliberately NOT —
+      // a quoted line is exactly the shape being excluded, and it is the one
+      // piece of decoration that carries that meaning.
+      const m = /^[ \t]*(?:[-*][ \t]*)?(?:\*\*|__)?[ \t]*\bVERDICT\b\W*\b(ACCEPT|REWORK)\b/im.exec(verdict);
       if (!m) return null;
       let team;
       try { team = resolveTeam(session.cwd); } catch { team = null; }
@@ -4653,6 +4660,11 @@ function createSessionManager(deps) {
       try { tickets = ticketsStore.load(team.root); } catch { return null; }
       const ticket = tickets.find((t) => t.id === ticketId);
       if (!ticket) return null;
+      // A closed ticket takes no verdict: the seat was retired and the loop step
+      // is over, so stamping one would revive a finished ticket's review fields
+      // and leave the board showing a round nobody can act on. Null falls through
+      // to the lead, who is the one who can.
+      if (ticket.state !== 'open') return null;
       ticket.verdict = m[1].toUpperCase();
       ticket.mustFix = extractMustFix(verdict);
       ticket.reviewRound = (Number(ticket.reviewRound) || 0) + 1;
@@ -4662,7 +4674,13 @@ function createSessionManager(deps) {
       // otherwise the watchdog spends its one nudge on a ticket that just moved.
       ticket.nudgedAt = null;
       try { ticketsStore.save(team.root, tickets); } catch { return null; }
-      this._reconcileTickets(team);
+      // Wrapped because the verdict is ALREADY SAVED above: an escaping throw
+      // here would abandon _handleReviewDone before it retires the reviewer,
+      // leaving a landed verdict with a live reviewer seat still holding the
+      // ticket — a half-completed loop step, which nothing downstream reconciles.
+      // Badges are recomputed on the next mutation; a stranded seat is not.
+      try { this._reconcileTickets(team); }
+      catch (e) { log.error('intent', `ticket ${ticketId}: verdict saved but reconcile failed: ${e.message}`); }
       return { verdict: ticket.verdict, mustFix: ticket.mustFix, reviewRound: ticket.reviewRound };
     }
 
@@ -5014,11 +5032,23 @@ function createSessionManager(deps) {
     // disagree with the one delivery uses, and the disagreement is invisible —
     // this would list a ticket the delivery then refuses, and `_advanceSeat`
     // would report a hand-off that never happened.
+    // `ticketStarted` is the third exclusion, alongside backlog and parked, and it
+    // is here rather than in the badge filters on purpose. Both callers DISPATCH
+    // what this returns — advance pushes the head at a seat that just closed one,
+    // replay re-delivers on respawn — and an added-but-unstarted ticket assigned
+    // to a ROLE matches every seat filling that role, so without this the spec of
+    // a ticket that has no tree of its own is delivered into the checkout of one
+    // that does. That is `add` still dispatching, by a later edge; the seam
+    // `task start` exists to create leaks without it.
+    // The two badge filters (`_reconcileTickets` and the session-list builder)
+    // deliberately do NOT carry this term: a filed ticket is worth showing on the
+    // row, and those two must move together or the badge flickers between paints.
     _openTicketsFor(team, seatName, excludeId = null) {
       const role = matchSeatRole(team, seatName);
       const live = this._teamLiveSeatNames(team.root);
       return ticketsStore.load(team.root)
         .filter((t) => t.state === 'open' && t.id !== excludeId && t.assignee != null && !t.parked
+          && ticketStarted(t)
           && (t.assignee === seatName || (role && t.assignee === role)
             || this._ticketAssigneeSeat(team, t, live) === seatName))
         .sort((a, b) => (a.openedAt || 0) - (b.openedAt || 0)
@@ -5610,6 +5640,14 @@ function createSessionManager(deps) {
           if (!t) return;
           t.assignee = roleKey;
           delete t.role;
+          // The dispatch is being rolled back, so the record of it goes too. Both
+          // callers reach here only when the ticket has NO tree left to point at,
+          // which is the same condition that makes it genuinely unstarted — and a
+          // ticket left stamped would be refused by `start` forever, reachable
+          // only through `assign`. Memory follows disk for the same reason
+          // clearTicketTree does it: the catch below reads the in-memory copy.
+          t.startedAt = null;
+          ticket.startedAt = null;
           ticketsStore.save(team.root, all);
         } catch { /* best-effort — the reply below is the operator-visible half */ }
       };
@@ -5837,6 +5875,11 @@ function createSessionManager(deps) {
         id: nextTicketId(tickets), title: ticketTitle(spec), spec,
         assignee, opener: session.name, state: 'open',
         openedAt: now, closedAt: null, lastActivityAt: now, nudgedAt: null,
+        // Written as an explicit null, against the convention `parked` follows
+        // two lines down, and that asymmetry is the point: `ticketStarted` reads
+        // an ABSENT key as a pre-upgrade record that the old `add` dispatched.
+        // Omitting it here would file every new ticket as already started.
+        startedAt: null,
         ...(parked ? { parked: true } : {}),
       };
       const taskDir = extractTaskDir(spec);
@@ -5881,22 +5924,27 @@ function createSessionManager(deps) {
       // resolves the worktree opt-in. On an unstarted ticket `assignee` still holds
       // it; `role` is only written once a dispatch path has re-pinned.
       const roleKey = ticket.role || assignee;
-      const live = this._teamLiveSeatNames(team.root);
-      // Started-ness is read off the re-pin, not off a new field: `role` is written
-      // ONLY by a dispatch path, so role-set-and-pinned-elsewhere means this ticket
-      // has already been started once. A name-addressed ticket carries a seat name
-      // with no `role` and is correctly still startable.
-      if (ticket.role && assignee !== ticket.role && live.includes(assignee)) {
-        reply(`error: ticket ${intent.id} is already started — seat ${assignee} is live and holds it; [agent:task assign ${intent.id} ${ticket.role}] re-sends the spec to it`);
-        return;
-      }
       const wtDef = this._ticketWorktreeRole(team, roleKey);
       const minted = wtDef ? this._mintTicketSeat(team, roleKey, ticket) : null;
-      // Taken by THIS ticket's own seat, which the liveness check above proved is
-      // not live. Nothing here can fix it, for the same reason as in `assign`:
+      // ORDER: the two specific diagnoses below run BEFORE the general
+      // already-started refusal, and that is not a style choice. Both of them
+      // describe states that only a DISPATCHED ticket can be in — its seat name
+      // is taken, its tree is occupied — so with the general check first they
+      // become unreachable, and the lead is told "already started, re-send with
+      // assign" about a seat that is archived or a tree held by someone else.
+      // Both are advice that cannot work. Safe to mint above them: _mintTicketSeat
+      // only derives a name and tests whether it is taken; it writes nothing.
+      // Taken by THIS ticket's own seat, which means an earlier dispatch's record
+      // outlived its session (archived, or a natural exit).
+      // Nothing here can fix it, for the same reason as in `assign`:
       // _spawnTicketSeat calls create() directly, so respawning would overwrite a
       // record that still exists and split one name across two sidebar rows.
-      if (minted && minted.taken && minted.name === assignee) {
+      // NOT-LIVE is tested here rather than inherited from an earlier refusal:
+      // `taken` is true of a live seat too, and this reply tells the lead to
+      // Unarchive or Delete Session… — destructive advice about a seat that is
+      // in fact running. The occupancy refusal below is the one that owns that
+      // case, so the two must not be separated by ordering alone.
+      if (minted && minted.taken && minted.name === assignee && !this.sessions.has(assignee)) {
         log.info('intent', `task start by ${session.name}: ${ticket.id} held — seat ${assignee} exists but is not live`);
         reply(`ticket ${ticket.id} is pinned to ${assignee}, whose session exists but is archived or dead — nothing was started. `
           + `Unarchive it from the sidebar (its spec replays on resume), or Delete Session… to release the name and start again — `
@@ -5915,6 +5963,19 @@ function createSessionManager(deps) {
           return;
         }
       }
+      // The general refusal, last: everything above it is a MORE specific reading
+      // of the same "this ticket has already been dispatched" fact, and a lead
+      // told only the general one has no way to reach the recovery.
+      // Read off the recorded fact, not inferred from the re-pin: `role` is a
+      // dispatch-only marker, right for the shapes that re-pin and wrong for the
+      // ones that do not, and start is the one-shot so it must answer for all.
+      if (ticketStarted(ticket)) {
+        // "holds it", not "is held by": the occupancy refusal above owns that
+        // phrasing, and the two replies are told apart by it across the suite.
+        const holder = this._ticketAssigneeSeat(team, ticket) || assignee;
+        reply(`error: ticket ${intent.id} is already started — ${holder} holds it; [agent:task assign ${intent.id} ${ticket.role || assignee}] re-sends the spec to it`);
+        return;
+      }
       // Start IS the dispatch, so it unparks — parking means "not started yet",
       // and a started ticket left flagged stays exempt from the stall watchdog,
       // which is the one backstop a dead loop step has.
@@ -5922,6 +5983,10 @@ function createSessionManager(deps) {
       delete ticket.parked;
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;   // dispatch starts a fresh stall episode
+      // Stamped above BOTH arms and above every save below, so no path can
+      // dispatch without recording that it did — an unstamped dispatched ticket
+      // is startable a second time, which is the tree collision this fixes.
+      ticket.startedAt = ticket.lastActivityAt;
       const unparked = wasParked ? ' (unparked)' : '';
       if (wtDef && minted.ok) {
         // Re-pinned from the role to the seat BEFORE the save, because
@@ -6031,6 +6096,12 @@ function createSessionManager(deps) {
       // delivered yet still invisible to advance, replay and the badge.
       const wasParked = !!ticket.parked;
       delete ticket.parked;
+      // Assign is the OTHER dispatch path, so it records the dispatch for the same
+      // reason start does — an assigned-but-unstamped ticket is still `start`able,
+      // and starting it mints a second seat onto the tree this assign just sent a
+      // hand into. Not re-stamped when it is already set: this is the moment work
+      // FIRST started, and a re-send must not restate it (§4/§5 measure from it).
+      if (!ticketStarted(ticket)) ticket.startedAt = ticket.lastActivityAt;
       // Stay pinned to the live seat. Un-pinning would route the spec, and the
       // WORK IN: line naming this ticket's tree, to whichever seat answers for the
       // role first — another ticket's hand, mid-work in a different branch.
