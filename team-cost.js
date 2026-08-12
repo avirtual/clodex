@@ -215,6 +215,10 @@ const COST_VERSION = 1;
 //   'seat'        — the ticket named a persistence record. Exact.
 //   'role-closer' — the ticket named a role and the closer held that role.
 //   'unknown'     — no seat; the ledger fields are null.
+// Unset defaults to 'unknown', never to 'seat': a caller that forgot the
+// argument has not resolved anything, and the failure has to be the one that
+// under-claims. Defaulting to the value consumers are told is exact would let a
+// future call site publish a guess as a measurement by omission.
 function costRecord({
   ticket, team, ledger, worktree = null, commits = null, commitsBase = null,
   orphans = null, seatResolved = true, attribution = null, now = Date.now(),
@@ -239,7 +243,7 @@ function costRecord({
     sessions: {
       ids: l.ids || [], known: l.known, total: l.total,
       tokensKnown: num(l.tokensKnown), seatResolved: !!seatResolved,
-      attribution: attribution || (seatResolved ? 'seat' : 'unknown'),
+      attribution: attribution || 'unknown',
     },
     tokens: {
       input: measured(l.inputTokens),

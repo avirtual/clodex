@@ -5610,21 +5610,42 @@ function createSessionManager(deps) {
     // closedBy is frequently the LEAD, whose record is the largest ledger in the
     // system. That trades a foreign hand's spend for the lead's whole life.
     //
+    // The lead is excluded even when it legitimately holds the ticket's role —
+    // `matchSeatRole(team, team.lead)` returns 'lead' unconditionally, so a
+    // `lead`-assigned ticket would otherwise satisfy the guard exactly. The
+    // lifetime-sum shape this rollup uses is an approximation that only holds
+    // for a SHORT-LIVED actor: an ephemeral hand's lifetime is roughly one
+    // ticket, while the lead's spans every ticket in the project — and would be
+    // counted again into the next lead ticket, and the next. Approximately right
+    // for a hand is categorically wrong for the lead.
+    //
     // Everything else is UNKNOWN, on purpose. A declared unknown costs one
     // ticket's row in a rollup; a confident wrong number poisons every rollup
     // that sums it.
     _costSeatFor(team, ticket) {
       const at = (name, attribution) => {
         const entry = (name && getPersistence().get(name)) || null;
+        // The NAME survives a missing record: a seat archived or deleted after
+        // the close has no ledger, but it is still the join key back to its
+        // other artifacts. `seatResolved: false` carries the no-ledger fact.
         return entry ? { seatName: name, entry, attribution }
-          : { seatName: null, entry: null, attribution: 'unknown' };
+          : { seatName: name || null, entry: null, attribution: 'unknown' };
       };
       const assignee = ticket && ticket.assignee;
       if (!assignee) return { seatName: null, entry: null, attribution: 'unknown' };
       const isRole = !!(team.roles && Object.prototype.hasOwnProperty.call(team.roles, assignee));
       if (!isRole) return at(assignee, 'seat');
       const closedBy = ticket.closedBy;
-      if (closedBy && matchSeatRole(team, closedBy) === assignee) return at(closedBy, 'role-closer');
+      // deliveredTo is a FALSIFIER only. Any role-holder may close another's
+      // ticket, so a closer who is not the seat the spec went to is not evidence
+      // of who spent. Its ABSENCE is evidence of nothing — it is on a small
+      // minority of closed tickets, and reading absence as disagreement would
+      // unknown-out most of them.
+      const delivered = ticket.deliveredTo && ticket.deliveredTo.seat;
+      if (closedBy && closedBy !== team.lead && matchSeatRole(team, closedBy) === assignee
+          && !(delivered && delivered !== closedBy)) {
+        return at(closedBy, 'role-closer');
+      }
       return { seatName: null, entry: null, attribution: 'unknown' };
     }
 
@@ -5673,11 +5694,14 @@ function createSessionManager(deps) {
           const ledger = teamCost.sumSessions(totals, sessionIds);
           ledger.ids = sessionIds;
 
-          // The record's worktree counts ONLY for an exactly-pinned seat. On an
-          // inferred one it is that seat's CURRENT tree — whatever ticket it
-          // moved on to — so taking it reports `worktreeMinted: true` with a
-          // commit count computed on another ticket's branch.
-          const wt = (attribution === 'seat' && entry && entry.worktree) || ticket.worktree || null;
+          // The ticket's own tree first: it is the ticket's tree by construction.
+          // The record's is a fallback and counts ONLY for an exactly-pinned
+          // seat — on an inferred seat it is that seat's CURRENT tree, and even
+          // on an exact but long-lived name-addressed one it may be a tree the
+          // seat carries for itself. Either way it reports `worktreeMinted: true`
+          // with a commit count taken on some other branch. For a minted ticket
+          // seat the two are the same object, so this ordering is inert there.
+          const wt = ticket.worktree || (attribution === 'seat' && entry && entry.worktree) || null;
           let commits = null;
           let commitsBase = null;
           if (wt && wt.branch) {

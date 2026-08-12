@@ -200,6 +200,19 @@ test('costRecord: an unresolved seat measures NOTHING — never an authoritative
   // attribution from one inferred off the closer — the two are not equally
   // trustworthy and a consumer that cannot tell them apart averages them.
   assert.strictEqual(rec.sessions.attribution, 'unknown');
+
+  // And an unset `attribution` must NOT default to 'seat', the one value
+  // consumers are told is exact. A future caller that forgets the argument
+  // should under-claim, never over-claim.
+  const forgetful = tc.costRecord({
+    ticket: { id: 't295', assignee: 'clodex-hand-9', state: 'done' },
+    team: 'clodex', ledger: tc.sumSessions({ sessions: { s: { cost: 1 } } }, ['s']),
+  });
+  assert.strictEqual(forgetful.sessions.attribution, 'unknown',
+    'an omitted attribution is a caller that did not resolve, not an exact seat');
+  // ENTER: the ledger really did resolve, so the assertion above is about the
+  // DEFAULT and not about an empty record.
+  assert.strictEqual(forgetful.usd, 1);
   assert.deepStrictEqual(
     [rec.usd, rec.requests, rec.turns, rec.refusals],
     [null, null, null, null],
