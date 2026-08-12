@@ -7151,15 +7151,23 @@ function createSessionManager(deps) {
       const stallMs = (typeof team.watchdogMs === 'number' && team.watchdogMs > 0) ? team.watchdogMs : TICKET_STALL_MS;
       const tickets = ticketsStore.load(team.root);
       for (const t of tickets) {
-        // Parked is exempt for the same reason backlog is: nothing was dispatched,
-        // so quiet is the expected state and a nudge would report the lead's own
-        // decision back to them once per stall threshold.
+        // UNSTARTED is the exemption, not unassigned: `add` writes the ROLE NAME
+        // into `assignee`, so a ticket the lead filed as backlog and never
+        // dispatched is indistinguishable from a live one under an `assignee`
+        // test. Seven such tickets alarmed in one burst before ticketStarted
+        // drew the line here — and against the t322 ladder each would have gone
+        // on repeating at 30m/60m/120m/240m forever, since no seat exists to go
+        // quiet. `parked` stays as its own term: a parked ticket can already
+        // have started, so ticketStarted does not cover it. The `assignee` term
+        // stays too, narrowed to what it was always meant to catch: a legacy
+        // record with no `startedAt` key reads as STARTED, so an unassigned one
+        // would newly alarm about a seat that cannot be resolved.
         // `done` stopped being terminal when the loop started running past it: a
         // done ticket with a live `loopStep` has checks running or a review in
         // flight, and if that step dies nothing else ever nudges anyone. The
         // predicate is shared with the stamp below and with the verdict landing —
         // see ticketInFlight; divergence between them is silent, not loud.
-        if (!ticketInFlight(t) || t.assignee == null || t.parked) continue; // backlog/parked/closed exempt
+        if (!ticketInFlight(t) || t.assignee == null || !ticketStarted(t) || t.parked) continue; // unstarted/unassigned/parked/closed exempt
         const last = t.lastActivityAt || t.openedAt || now;
         if (now - last < stallMs) continue;
         // NOT one nudge per episode any more (t322). `nudgedAt` is cleared only by

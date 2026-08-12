@@ -5566,6 +5566,7 @@ test('t82 a HELD watchdog nudge does not consume the one-per-episode nudge', asy
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   const stallMs = 60 * 60 * 1000;
   const past = Date.now() - (stallMs * 4);
   const ts = f.load();
@@ -5597,6 +5598,7 @@ test('t168 a nudge QUEUED but never written does not spend the stall episode', a
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   const stallMs = 60 * 60 * 1000;
   const ts = f.load();
   ts[0].lastActivityAt = Date.now() - (stallMs * 4);
@@ -5623,6 +5625,7 @@ test('t168 rework: a nudge written AFTER the seat spoke does not spend the NEW e
   const f = mkTasks();
   f.seat('lead'); const hand = f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   const stallMs = 60 * 60 * 1000;
   const stall = () => { const ts = f.load(); ts[0].lastActivityAt = Date.now() - (stallMs * 4); f.tstore.save(f.team.root, ts); };
   stall();
@@ -5672,6 +5675,7 @@ test('t82 the watchdog nudge itself stays passive (decision: alarm to the lead, 
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   const stallMs = 60 * 60 * 1000;
   const ts = f.load();
   ts[0].lastActivityAt = Date.now() - (stallMs * 4);
@@ -6799,6 +6803,7 @@ test('watchdog: a stalled ASSIGNED ticket nudges the lead ONCE; a second sweep i
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   // Age the ticket well past the default stall window.
   const arr = f.load();
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000; // 1h ago
@@ -6817,6 +6822,7 @@ test('watchdog: activity resets the stall episode (nudge fires again after a re-
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   let arr = f.load();
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
   f.tstore.save(f.team.root, arr);
@@ -6964,6 +6970,7 @@ test('parking clears nudgedAt, so the unpark starts a fresh stall episode', asyn
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   const arr = f.load();
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
   f.tstore.save(f.team.root, arr);
@@ -7030,11 +7037,86 @@ test('watchdog: a BACKLOG (unassigned) stalled ticket is EXEMPT', async () => {
   assert.strictEqual(f.one('t1').nudgedAt, null);
 });
 
+// --- t328: the exemption is UNSTARTED, not unassigned -----------------------
+//
+// Measured: seven backlog tickets alarmed in one burst (t313, t319-t321, t323,
+// t324, t326), every one filed by the lead and deliberately never started. The
+// gate read `assignee == null`, but `add` writes the ROLE NAME there, so a
+// filed-but-undispatched ticket was indistinguishable from a live one. Under the
+// t322 ladder each would have gone on repeating at 30m/60m/120m/240m forever,
+// because a ticket with no seat has nothing that can come back.
+//
+// The three tests below are one unit and must stay together: a gate that exempts
+// EVERYTHING passes the first and is worthless, so the started case pins the
+// other direction and the legacy case pins the arm the fix must not break.
+
+test('t328 watchdog: an ASSIGNED but unstarted backlog ticket is exempt', async () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  // `add` with no `start` — exactly how the seven were filed.
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'backlog' });
+  const arr = f.load();
+  arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+  // ENTER: the record really is the defect's shape. Without this the test could
+  // be exempting an unassigned ticket and pass for the pre-fix reason.
+  const t = f.one('t1');
+  assert.strictEqual(t.assignee, 'hand', 'ENTER: assignee is populated, so the old unassigned term cannot be what exempts it');
+  assert.strictEqual(t.startedAt, null, 'ENTER: and it was never started');
+  assert.ok(!t.parked, 'ENTER: nor parked — unstarted is the only term that can exempt it');
+  await f.m._sweepTickets(Date.now());
+  assert.deepStrictEqual(f.gated.filter((g) => /stalled/.test(g.body)), [],
+    'no seat holds it, so there is nothing that could go quiet and nothing to alarm about');
+  assert.strictEqual(f.one('t1').nudgedAt, null, 'and no stamp, so a later dispatch starts a clean episode');
+});
+
+test('t328 watchdog: a STARTED ticket whose seat goes quiet still alarms', async () => {
+  // The other direction, in the same unit as the exemption above. An exemption
+  // test alone is green under a gate that skips every ticket.
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const arr = f.load();
+  arr[0].lastActivityAt = Date.now() - stallMs * 2;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+  assert.ok(f.one('t1').startedAt != null, 'ENTER: dispatched, so the exemption must not reach it');
+  await f.m._sweepTickets(Date.now());
+  assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1,
+    'a dispatched seat that went quiet is the case the watchdog exists for');
+});
+
+test('t328 watchdog: a legacy record with no startedAt key still alarms', async () => {
+  // ticketStarted reads an ABSENT `startedAt` as started — those records predate
+  // the key and were dispatched by the old `add`, which delivered on write. If
+  // the fix read them as unstarted, every pre-upgrade ticket in flight would go
+  // silently unwatched, which is the failure the watchdog cannot have.
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const arr = f.load();
+  delete arr[0].startedAt;            // the pre-upgrade shape
+  arr[0].lastActivityAt = Date.now() - stallMs * 2;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+  assert.ok(!('startedAt' in f.one('t1')), 'ENTER: the key is absent on disk, not merely null');
+  await f.m._sweepTickets(Date.now());
+  assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1,
+    'the legacy arm is preserved — an old in-flight ticket is still watched');
+});
+
 test('watchdog: a per-team watchdogMs override tightens the stall window', async () => {
   const f = mkTasks();
   f.team.watchdogMs = 1000; // 1s
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   const arr = f.load();
   arr[0].lastActivityAt = Date.now() - 5000; // 5s ago — past 1s, well within the 30m default
   f.tstore.save(f.team.root, arr);
@@ -7056,6 +7138,7 @@ test('t322 a stall that keeps stalling speaks again once the quiet has DOUBLED',
   f.team.watchdogMs = stallMs;
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   const quiet = Date.now() - stallMs;          // t0: the seat's last activity
   const arr = f.load();
   arr[0].lastActivityAt = quiet;
@@ -7100,6 +7183,7 @@ test('t322 a FIRST alarm is never labelled a repeat, even with a stale nudgedAt'
   f.team.watchdogMs = stallMs;
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   const arr = f.load();
   const quiet = Date.now() - stallMs * 2;
   arr[0].lastActivityAt = quiet;
@@ -7120,6 +7204,7 @@ test('t322 the alarm carries the seat`s last tool, and never dirty on its own', 
   f.team.watchdogMs = stallMs;
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
 
   // A transcript ending in a tool_use with NO tool_result: the t312 shape, where
   // a SIGKILL ended the turn holding the call.
@@ -7154,6 +7239,7 @@ test('t322 an unreadable transcript drops the field rather than guessing', async
   f.team.watchdogMs = stallMs;
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   const arr = f.load();
   arr[0].lastActivityAt = Date.now() - stallMs * 2;
   f.tstore.save(f.team.root, arr);
@@ -7172,6 +7258,7 @@ test('t322 a seat that wakes while the git probe runs is not alarmed about', asy
   f.team.watchdogMs = stallMs;
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   const arr = f.load();
   arr[0].lastActivityAt = Date.now() - stallMs * 2;
   f.tstore.save(f.team.root, arr);
