@@ -151,7 +151,7 @@ const REVIEWER_FALLBACK = {
     CLODEX_SPAWNER_HINT: 'off',
   },
 };
-const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = require('./tickets-store');
+const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, branchSlug } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { findRepoRoot } = require('./project-root');
 const { projectDirFor } = require('./clodex-paths');
@@ -5177,8 +5177,7 @@ function createSessionManager(deps) {
       // ticket that already has a seat has no other way to learn which one without
       // re-deriving it, and a second copy of this rule is how the two drift.
       if (this.sessions.has(name) || getPersistence().get(name)) return { ok: false, taken: true, name, error: `seat name "${name}" is taken` };
-      const slug = String(ticket.title || '').toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
+      const slug = branchSlug(ticket.title);
       return { ok: true, name, branch: slug ? `${ticket.id}-${slug}` : String(ticket.id) };
     }
 

@@ -10478,6 +10478,44 @@ test('task add: an opted-in role mints a branch, a worktree and a seat, and the 
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
+// Wiring, not slug rules — those are pinned in tickets-store.test.js. What this
+// asserts is that the branch git actually checks out went through branchSlug:
+// _mintTicketSeat carried its own inline slugger for three tickets, and the
+// branches it minted embedded a task-dir path, a duplicated id, and once an id
+// the board never issued.
+test('task add: the minted branch carries the REAL ticket id and no id from the title', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  let createdName = null;
+  f.m.create = async (...args) => { createdName = args[0]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  // The first line a lead actually writes: an artifact link (which extractTaskDir
+  // needs there) plus a guessed id (which the lead cannot know before dispatch).
+  f.m._handleTask(f.m.sessions.get('lead'), {
+    type: 'task', sub: 'add', who: 'hand', id: null,
+    body: 't306 — tasks/t306-accept-and-retire/spec.md accept and retire\ndetail',
+  });
+  await until(() => createdName || f.gated.length);
+  assert.strictEqual(createdName, 'team-hand-1', 'ENTER: the seat must have spawned, or nothing below was reached');
+
+  const wtPath = f.worktreeSet.length ? f.worktreeSet[0].wt.path : null;
+  assert.ok(wtPath, 'ENTER: a worktree must have been created');
+  const head = require('node:child_process')
+    .execFileSync('git', ['-C', wtPath, 'rev-parse', '--abbrev-ref', 'HEAD'], { stdio: 'pipe' })
+    .toString().trim();
+  assert.strictEqual(head, 't1-accept-and-retire', 'the branch names the board`s id and the title`s words, nothing else');
+  // Stated as absences too: the two spans that leaked into real branch names.
+  assert.doesNotMatch(head, /t306/, 'the guessed id must not survive into the branch');
+  assert.doesNotMatch(head, /tasks/, 'nor the task-dir path');
+  // The artifact link still comes off the SAME line — the fix is in the slug,
+  // not in the line, and a change that stripped the path from the spec instead
+  // would pass every branch assertion above while breaking this.
+  assert.strictEqual(f.one('t1').taskDir, 'tasks/t306-accept-and-retire/spec.md',
+    'extractTaskDir still reads its path off that first line');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
 test('task add: a role WITHOUT the opt-in keeps the old role-assigned path', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo, { worktree: false });

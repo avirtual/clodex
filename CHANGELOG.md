@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- Ticket branch names are readable again. The branch was slugged from the
+  ticket's first line, which is also where the dispatch format asks for a link to
+  the task folder and where a lead naturally writes the ticket number — so the
+  branch ended up repeating the number, swallowing the folder path, or, when a
+  lead guessed the number before the board issued one, asserting a ticket that
+  does not exist. The slug now drops a leading number and any folder path, and
+  truncates on a word boundary rather than mid-word. The ticket's link to its
+  folder is unchanged; only the branch name is.
+
 - Finishing a ticket is now one step. `[agent:task accept <id>]` closes it,
   retires the seat, removes its worktree and deletes its branch — but only after
   git confirms the branch really is merged into the base. If it is not merged, or

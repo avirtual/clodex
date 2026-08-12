@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir } = require('../tickets-store');
+const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, branchSlug } = require('../tickets-store');
 const { projectDirFor } = require('../clodex-paths');
 
 function tmpHome() {
@@ -127,4 +127,59 @@ test('extractTaskDir: captures a tasks/<dir> path on the FIRST line only', () =>
   assert.strictEqual(extractTaskDir(`sweep ${abs} now`), abs);
   assert.strictEqual(extractTaskDir('~/.clodex/projects/api-1a2b3c4d/tasks/foo'),
     '~/.clodex/projects/api-1a2b3c4d/tasks/foo');
+});
+
+// The three branch names below were MINTED, not invented: each is what the
+// pre-strip slugger produced for a real dispatch. The caller prepends the real
+// ticket id to whatever comes back, so every assertion here is on the half that
+// follows it.
+test('branchSlug: the task-dir path on the first line is stripped, not slugged', () => {
+  // Minted for t302: `t302-tasks-t302-migration-resync-spec-md-the`. The
+  // documented dispatch format puts the path on this line, so this is the
+  // protocol being followed correctly and still producing a nonsense branch.
+  assert.strictEqual(
+    branchSlug('tasks/t302-migration-resync/spec.md — the migration re-sync'),
+    'the-migration-re-sync');
+  const abs = '/Users/x/.clodex/projects/api-1a2b3c4d/tasks/t7-thing/spec.md';
+  assert.strictEqual(branchSlug(`${abs} — rebuild the index`), 'rebuild-the-index');
+});
+
+test('branchSlug: a LEADING ticket id is dropped — the caller prepends the real one', () => {
+  // Duplicate case, minted for t303: `t303-t303-solo-verbs-the-ticket-intents`.
+  assert.strictEqual(branchSlug('t303 — solo verbs: the ticket intents'),
+    'solo-verbs-the-ticket-intents');
+  // WRONG-id case, minted for t305: the lead guessed t306 before the board
+  // minted t305, so the branch asserted two different ids and the wrong one was
+  // the readable half. This is why the slug must never trust an id in the title.
+  assert.strictEqual(branchSlug('t306 — accept-and-retire, merge-gated'),
+    'accept-and-retire-merge-gated');
+  // Only LEADING. An id inside the prose is part of what the title says.
+  assert.strictEqual(branchSlug('revert the t99 regression'), 'revert-the-t99-regression');
+  // Not an id: `t` followed by a non-digit, and a bare number.
+  assert.strictEqual(branchSlug('trim the buffer'), 'trim-the-buffer');
+  assert.strictEqual(branchSlug('305 things'), '305-things');
+});
+
+test('branchSlug: a long title truncates on a word boundary, not mid-word', () => {
+  // Asserted as an exact value: every bound worth stating here (<= 40, no
+  // dangling separator, a prefix of the full slug) is ALSO true of the plain
+  // slice(0, 40) this replaced, so a bounds-only test passes against the bug.
+  // The mid-word cut is what produced `…-migration-resync-spec-md-the`.
+  assert.strictEqual(
+    branchSlug('make the branch slugger stop trusting identifiers in titles'),
+    'make-the-branch-slugger-stop-trusting');
+  // A single word longer than the cap has no boundary to cut on, so the
+  // character cap still applies rather than emptying the slug.
+  assert.strictEqual(branchSlug('x'.repeat(80)), 'x'.repeat(40));
+  assert.strictEqual(branchSlug(`${'y'.repeat(45)} tail`), 'y'.repeat(40));
+});
+
+test('branchSlug: a title that is ONLY an id or a task dir slugs to empty, not to junk', () => {
+  // The caller falls back to the bare ticket id on empty, which is the correct
+  // outcome — a branch named for the id alone beats one named for a path.
+  assert.strictEqual(branchSlug('t305'), '');
+  assert.strictEqual(branchSlug('tasks/t305-foo/spec.md'), '');
+  assert.strictEqual(branchSlug(''), '');
+  assert.strictEqual(branchSlug(null), '');
+  assert.strictEqual(branchSlug(undefined), '');
 });

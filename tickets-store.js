@@ -99,12 +99,48 @@ function ticketTitle(specText) {
 // ticket written before that move carries the bare `tasks/<dir>` form. Matching
 // the absolute form FIRST matters: `tasks/` appears inside it, so trying the
 // bare pattern first would truncate an absolute path to its tail.
+const TASK_DIR_ABS_RE = /(?:~|\/)[A-Za-z0-9._/-]*\/tasks\/[A-Za-z0-9._/-]+/;
+const TASK_DIR_REL_RE = /tasks\/[A-Za-z0-9._/-]+/;
+
 function extractTaskDir(specText) {
   const firstLine = String(specText == null ? '' : specText).split('\n')[0] || '';
-  const abs = firstLine.match(/(?:~|\/)[A-Za-z0-9._/-]*\/tasks\/[A-Za-z0-9._/-]+/);
+  const abs = firstLine.match(TASK_DIR_ABS_RE);
   if (abs) return abs[0];
-  const m = firstLine.match(/tasks\/[A-Za-z0-9._/-]+/);
+  const m = firstLine.match(TASK_DIR_REL_RE);
   return m ? m[0] : null;
 }
 
-module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, TICKETS_FILE };
+// The branch-name half of the ticket's first line, which serves three consumers
+// with incompatible needs: it is the human title, it is where extractTaskDir
+// reads the artifact link, and it is what the branch is slugged from. Fixing
+// the SLUG rather than the line is deliberate — the line's shape is load-bearing
+// for the other two.
+//
+// Two spans are removed before slugging, both observed producing bad branches:
+//   - the task-dir path, because the documented dispatch format invites one onto
+//     exactly this line (it produced `t302-tasks-t302-migration-resync-spec-md-the`);
+//   - a LEADING ticket id, because the caller prepends the real id anyway. The
+//     lead cannot know the id before dispatch, so a title carrying one is either
+//     a duplicate or — as seen when a lead guessed the next id — a DIFFERENT id
+//     than the board minted, leaving a branch name that asserts two.
+// The id strip is case-INSENSITIVE, so a title legitimately opening with a
+// design label ("T5 — …") loses it. That is the accepted cost: a wrong id in a
+// branch name misroutes a `merge-base --is-ancestor` run by hand, a missing
+// label reads no worse than the rest of the slug.
+function branchSlug(title) {
+  let s = String(title == null ? '' : title);
+  s = s.replace(TASK_DIR_ABS_RE, ' ').replace(TASK_DIR_REL_RE, ' ');
+  s = s.replace(/^[^A-Za-z0-9]*t\d+\b/i, ' ');
+  s = s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (s.length > 40) {
+    const cut = s.slice(0, 41);
+    const at = cut.lastIndexOf('-');
+    // Word-boundary truncation, but only when a boundary leaves something to
+    // read: a first word longer than the cap has no `-` to cut on, and one at
+    // position 0 would empty the slug entirely.
+    s = at > 0 ? cut.slice(0, at) : s.slice(0, 40);
+  }
+  return s.replace(/^-+|-+$/g, '');
+}
+
+module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, branchSlug, TICKETS_FILE };
