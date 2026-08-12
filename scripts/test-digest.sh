@@ -47,9 +47,24 @@ while ! mkdir "$LOCK" 2>/dev/null; do
     rm -rf "$LOCK"
     continue
   fi
-  if [ "$waited" -ge 120 ]; then
-    printf 'another suite run is still going (pid %s) after %ss - not starting a second\n' \
-      "${holder:-unknown}" "$waited" 1>&2
+  if [ "$waited" -ge 30 ]; then
+    # STRICTLY under the exec entry's timeoutMs (120000ms), and not merely equal
+    # to it: an equal deadline means the exec SIGKILLs this child at the instant
+    # this message would print, so the caller gets "timed out after 120000ms" —
+    # the least informative outcome — and never learns a second run was the
+    # cause. That is what shipped, and it cost three misdiagnosed timeouts.
+    #
+    # 30s also beats waiting the full cap on purpose: the caller is an agent
+    # whose turn is billed while this blocks, and a suite that runs in ~24s is
+    # either nearly done or wedged. Long enough to inherit a finishing run,
+    # short enough that the answer arrives while it is still worth having.
+    #
+    # `ps -o etime=` rather than a stored start time: the holder may be a run
+    # this script never launched (npm test takes the same lock), so the process
+    # table is the only source that knows when it actually began.
+    started=$(ps -o etime= -p "${holder:-0}" 2>/dev/null | tr -d ' ')
+    printf 'another suite run is already going (pid %s, running %s) - waited %ss, not starting a second\n' \
+      "${holder:-unknown}" "${started:-unknown}" "$waited" 1>&2
     exit 1
   fi
   waited=$((waited + 2))

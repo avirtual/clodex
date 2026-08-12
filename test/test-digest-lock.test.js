@@ -106,13 +106,35 @@ test('lock: an interrupted run releases the lock via its trap', async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('lock: the shipped script still declares the timeout the exec entry must respect', () => {
+// The wait cap and the exec's timeoutMs are two numbers that must stay related,
+// and STRICTLY so. They shipped EQUAL (120s vs 120000ms), which is the one
+// relationship that guarantees the message never arrives: the exec's timer
+// SIGKILLs the child at the instant the script would print "another suite run is
+// already going", so the caller sees "timed out after 120000ms" and never learns
+// a second run was the cause. Three timeouts were misdiagnosed that way.
+const EXEC_TIMEOUT_MS = 120000;
+
+test('lock: the script gives up waiting STRICTLY before the exec entry kills it', () => {
   const src = fs.readFileSync(SCRIPT, 'utf-8');
-  // The wait cap and the exec's timeoutMs are two numbers that must stay
-  // related: if the script can wait longer than the exec allows, the exec dies
-  // first and reports a timeout for what is actually a queued run.
-  assert.match(src, /waited" -ge 120/,
-    'the script caps its wait at 120s; the clodex-run-tests exec entry allows 120000ms');
+  const m = /waited" -ge (\d+)/.exec(src);
+  // ENTER: a renamed variable or reshaped condition must fail loudly here rather
+  // than skip the comparison below and leave this test asserting nothing.
+  assert.ok(m, 'the script still caps its wait with a `waited" -ge <n>` guard');
+  const capMs = Number(m[1]) * 1000;
+  assert.ok(capMs < EXEC_TIMEOUT_MS,
+    `the script waits up to ${capMs}ms but the exec entry kills it at ${EXEC_TIMEOUT_MS}ms — `
+    + 'equal or greater means the caller gets an uninformative timeout instead of the lock message');
+});
+
+test('lock: the refusal names the holder and how long it has been running', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  // "already running" is only actionable if it says WHICH run and SINCE WHEN —
+  // otherwise the caller cannot tell a healthy in-flight suite from a wedge, and
+  // the lesson taken is "raise the timeout", which makes the next one longer.
+  assert.match(src, /another suite run is already going \(pid %s, running %s\)/,
+    'the refusal reports the holder pid and its elapsed run time');
+  assert.match(src, /ps -o etime= -p/,
+    'elapsed time comes from the process table: the holder may be an `npm test` this script never launched');
 });
 
 // ── the OTHER entry point ───────────────────────────────────────────────────
