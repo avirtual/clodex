@@ -152,39 +152,74 @@ function branchSlug(title) {
 // A section whose body is only a "none" placeholder returns null, so a reviewer
 // writing `MUST-FIX: none` beside an ACCEPT does not hand the loop an empty
 // rework body to deliver.
-// The trailing lookahead is what makes this a HEADER matcher rather than a
-// first-token matcher, and it is load-bearing in one direction: a must-fix ITEM
-// whose first token is a section word (`- NITS are being treated as blocking`)
-// closed the section, and when that item was the FIRST one the whole extraction
-// returned null — an empty rework round, which tells the hand nothing. Requiring
-// a separator or end-of-line after the keyword is what separates the item from
-// the header, since the bullet/quote decoration is identical on both.
-// A lookahead, not consumed, so `h[0]` still ends at the keyword and the
-// inline-tail slice below keeps working unchanged.
+// Header-vs-item is decided by BULLET AND BOLD, not by what follows the keyword.
+// A separator rule cannot do it: `- CHECKED: I could not verify this` (an item)
+// and `MUST-FIX: the ordering is wrong` (a header carrying its only item inline)
+// are the same shape under "keyword then punctuation", so any such rule either
+// drops the blocking list or stops reading inline headers. Six real item shapes
+// were extracting to null this way.
 //
-// Both branches spell out the horizontal run rather than sharing one `[ \t]*`
-// before a negated class: `[ \t]*` backtracks to zero width, and then a plain
-// "not a letter" lookahead is satisfied by the very space it was meant to skip
-// — which passes every item this guard exists to reject.
-const VERDICT_SECTION_RE = /^\s*[-*>\s]*(?:\*\*|__)?\s*(MUST[-\s]?FIX|NITS?|CHECKED|VERDICT)\b(?=(?:\*\*|__)?(?:[ \t]*[^ \tA-Za-z0-9]|[ \t]*$))/i;
+// The discriminator comes from the producer — resources/library/prompts/system/
+// clodex-team-reviewer.md's "Verdict format" section — where headers are bold and
+// unbulleted (`**MUST-FIX**`, `**VERDICT**: ACCEPT`) and items carry a bullet or
+// a number and are not bold-wrapped:
+//   bold-delimited keyword  -> header wherever it appears, bullet or not;
+//   bulleted/numbered       -> header only if the keyword is the WHOLE line;
+//   neither                 -> header unless a word follows the keyword, which is
+//                              prose (`VERDICT parsing accepts a quoted line`).
+// The third arm is the only one where the separator carries any weight, and it
+// is kept precisely because there is no bullet there to read instead.
+//
+// `*` is consumed as a bullet only when it is not the first half of `**`, or
+// `**MUST-FIX**` reads as a bulleted line whose remainder is `MUST-FIX**` and the
+// most common header form in the corpus stops matching.
+const LINE_MARKER_RE = /^[ \t]*(?:(?:[-+>]|\*(?!\*)|\d+[.)])[ \t]*)+/;
+const SECTION_KEYWORD_RE = /^(MUST[-\s]?FIX|NITS?|CHECKED|VERDICT)\b/i;
+const INLINE_LEAD_RE = /^[ \t]*(?:\*\*|__)?[ \t]*[:\-—]?[ \t]*/;
+
+// null for an item/prose line, else { keyword, tail } — `tail` is the inline
+// first item (`MUST-FIX: the guard is inverted`), '' when the header stands alone.
+function sectionHeader(line) {
+  const s = String(line == null ? '' : line);
+  const marker = LINE_MARKER_RE.exec(s);
+  const rest = marker ? s.slice(marker[0].length) : s.replace(/^[ \t]*/, '');
+
+  const bold = /^(\*\*|__)/.exec(rest);
+  const body = bold ? rest.slice(bold[1].length) : rest;
+  const kw = SECTION_KEYWORD_RE.exec(body);
+  if (!kw) return null;
+  const after = body.slice(kw[0].length);
+
+  if (bold) {
+    // The closing delimiter may sit after a separator the reviewer bolded along
+    // with the keyword (`**MUST-FIX:**`).
+    const close = new RegExp(`^[ \\t]*[:\\-—]?[ \\t]*${bold[1] === '**' ? '\\*\\*' : '__'}`).exec(after);
+    if (!close) return null;   // an unterminated `**` is emphasis mid-sentence, not a header
+    return { keyword: kw[1], tail: after.slice(close[0].length).replace(INLINE_LEAD_RE, '').trim() };
+  }
+  if (marker) {
+    return /^[ \t]*[:.\-—]?[ \t]*$/.test(after) ? { keyword: kw[1], tail: '' } : null;
+  }
+  return /^[ \t]*(?:[^ \tA-Za-z0-9]|$)/.test(after)
+    ? { keyword: kw[1], tail: after.replace(INLINE_LEAD_RE, '').trim() }
+    : null;
+}
 
 function extractMustFix(verdictText) {
   const lines = String(verdictText == null ? '' : verdictText).split('\n');
   const body = [];
   let inSection = false;
   for (const line of lines) {
-    const h = VERDICT_SECTION_RE.exec(line);
+    const h = sectionHeader(line);
     if (h) {
-      const isMustFix = /^MUST/i.test(h[1]);
+      const isMustFix = /^MUST/i.test(h.keyword);
       if (inSection && !isMustFix) break;   // the next section closes this one
       if (isMustFix) {
         inSection = true;
         // The header line carries the first item when the reviewer wrote it
         // inline (`MUST-FIX: the guard is inverted`), which is the common shape
         // for a single-item list.
-        const tail = line.slice(h.index + h[0].length).replace(/^(?:\*\*|__)?\s*[:\-—]?\s*/, '').trim();
-        if (tail) body.push(tail);
-        continue;
+        if (h.tail) body.push(h.tail);
       }
       continue;
     }

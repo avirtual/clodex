@@ -468,6 +468,73 @@ test('extractMustFix: the real header forms still close the section', () => {
   }
 });
 
+// The first attempt at the test above required a SEPARATOR after the keyword,
+// and that rule cannot decide this: `- CHECKED: I could not verify this` (an
+// item) and `MUST-FIX: the ordering is wrong` (a header carrying its only item
+// inline) are the same shape by it. Every item below extracted to null.
+//
+// What discriminates comes from the producer — resources/library/prompts/system/
+// clodex-team-reviewer.md's "Verdict format" — where headers are bold and items
+// are bulleted-and-plain. Each case here is a real item shape whose first token
+// is a section word AND which carries the punctuation a separator rule reads as
+// a header. The second item is what makes a truncation visible: a rule that
+// closes the section at the first line still returns something for the inline
+// forms, so asserting only "not null" would pass over the bug.
+test('extractMustFix: a bulleted item is an item however it is punctuated', () => {
+  const items = [
+    '- NITS-level in isolation, but blocking here: the lock',
+    '- NITS, but blocking: the lock',
+    '- CHECKED: I could not verify this one, so it blocks',
+    '- VERDICT-adjacent wording bug',
+    '- NITS/CHECKED overlap here',
+    '- CHECKED. This path has no coverage',
+    '1. NITS: this one is numbered, not bulleted',
+    '* CHECKED — an asterisk bullet is a bullet',
+  ];
+  for (const item of items) {
+    assert.strictEqual(
+      extractMustFix(`**MUST-FIX**\n${item}\n- second blocking item\n\n**NITS**\n- cosmetic`),
+      `${item}\n- second blocking item`,
+      `"${item}" is an ITEM — a rework round built from this must carry BOTH items`);
+  }
+});
+
+// The producer's own format section writes its headers bulleted AND bold
+// (`- **MUST-FIX**: ...`), so "bulleted" cannot disqualify a header on its own —
+// which is exactly why the rule is bold-first rather than bullet-first.
+test('extractMustFix: a bulleted BOLD header is still a header', () => {
+  assert.strictEqual(
+    extractMustFix('- **MUST-FIX**: the ordering is wrong\n- and the sweep drops the row\n\n- **NITS**: naming'),
+    'the ordering is wrong\n- and the sweep drops the row',
+    'the producer emits `- **MUST-FIX**: ...`; both halves must parse as one header');
+
+  assert.strictEqual(
+    extractMustFix('- **MUST-FIX**\n- the item\n\n- **CHECKED**\n- a thing'),
+    '- the item',
+    'a bulleted bold header standing alone opens and the next one closes');
+
+  // Bold that never CLOSES is emphasis running into a sentence, not a header —
+  // the shape an item takes when a reviewer starts stressing a word and does not
+  // stop. Reading it as a header closes the section on a blocking item.
+  assert.strictEqual(
+    extractMustFix('**MUST-FIX**\n- the item\n- **NITS are being treated as blocking here\n\n**NITS**\n- cosmetic'),
+    '- the item\n- **NITS are being treated as blocking here',
+    'an unterminated `**` is emphasis; the closed `**NITS**` below it is the header');
+});
+
+// The accepted cost of "bold wins": a reviewer who bolds a keyword INSIDE an
+// item (`- **NITS** are being treated as blocking`) has written the header shape
+// and the section closes there. Pinned rather than left unstated — it is the one
+// case the rule gets wrong, it is rare (the producer bolds keywords only as
+// headers), and the failure is a truncated list, so if it is ever seen in a real
+// verdict this is the test to change.
+test('extractMustFix: a bolded keyword mid-item closes the section (known cost)', () => {
+  assert.strictEqual(
+    extractMustFix('**MUST-FIX**\n- the item\n- **NITS** are being treated as blocking here'),
+    '- the item',
+    'bold wins over bullet, so an emphasized keyword inside an item reads as a header');
+});
+
 // ── the verdict match is line-anchored ─────────────────────────────────────
 
 test('a QUOTED previous verdict does not win over the reviewer`s own', async () => {
