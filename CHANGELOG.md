@@ -35,6 +35,12 @@ blocks a release.
 - Plugins can ask whether a worktree is dirty. `host.lib.gitWorktree.isDirty()`
   reports whether a checkout holds work git would track, so a plugin can warn
   before an action that would discard it.
+- A template's environment keys are now reported when they are refused, on
+  every path that spawns a team seat. A key outside the allowed set and a key
+  whose value is not a string are different problems, and they are now named
+  differently — previously an allowed key with a mistyped value was reported as
+  needing approval the operator already had. Ticket seats announce refused keys
+  too; they used to drop them silently while other paths said so.
 
 - Retiring a teammate no longer abandons its worktree. A discarded seat's
   checkout was left on disk with nothing pointing at it — retiring dropped the
