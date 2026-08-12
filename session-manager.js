@@ -4462,6 +4462,19 @@ function createSessionManager(deps) {
         ? ` — requested [${shape.beyondCap.join(', ')}] beyond the reviewer cap [${REVIEWER_TOOL_CAP.join(', ')}] — requires operator approval; spawned with [${shape.effectiveTools.join(', ')}]`
         : '';
 
+      // A template whose `tools` misses the cap ENTIRELY is a broken config, not a
+      // narrowing: effectiveTools is [], so disabledTools inverts to every tool and
+      // the seat spawns unable to read the diff. Refuse rather than fall back to the
+      // full cap — the template is agent-writable, and widening past what it asked
+      // for is the one direction that must never be automatic. Refused BEFORE the
+      // name-mint loop below: that loop's synchronous upsert IS the reservation, so
+      // bailing after it burns a reviewer name permanently. Reported via reply(),
+      // not thrown, for the same reason as the resolveSeatShape catch above.
+      if (shape.requestedTools && shape.effectiveTools.length === 0) {
+        reply(`error: reviewer template "${templateName}" requests tools [${shape.requestedTools.join(', ')}], none of which are within the reviewer cap [${REVIEWER_TOOL_CAP.join(', ')}] — the seat would spawn with no tools at all and could not read the diff; no reviewer spawned (fix the template's "tools")`);
+        return;
+      }
+
       let n = 1;
       let name;
       do { name = `${team.name}-reviewer-${n++}`; } while (this.sessions.has(name) || getPersistence().get(name));
@@ -5238,6 +5251,7 @@ function createSessionManager(deps) {
           // Reviewer-only concept: no cap applies off the review path, so there is
           // no allowlist to report. Present so both purposes return one key set.
           effectiveTools: null,
+          requestedTools: null,
           // The template's systemPromptFile does NOT displace `def.prompt`: for
           // claude both ride --append-system-prompt-file and create() dedupes them
           // by name equality, so passing both is how a template-shaped seat still
@@ -5319,6 +5333,12 @@ function createSessionManager(deps) {
         // in REVIEWER_TOOL_CAP order, and inverting the denylist would print it in
         // CLAUDE_TOOLS order instead — a silent change to operator-facing text.
         effectiveTools,
+        // Carried so the caller can tell "the template asked for nothing usable"
+        // from "the template asked for nothing at all": both leave beyondCap
+        // reportable, but only the first must refuse the spawn, and `[]` vs the
+        // full cap in effectiveTools is not enough — a template could name the
+        // cap's own members and still be a narrowing, not a refusal.
+        requestedTools,
         systemPromptFile,
         appendPromptFiles: [],
         execCommands: [],

@@ -68,6 +68,7 @@ test('ticket purpose: the whole shape, with no template', () => {
     disabledSkills: [],
     injectSkills: [],
     effectiveTools: null,
+    requestedTools: null,
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
     execCommands: [],
@@ -99,6 +100,9 @@ test('review purpose: the whole shape, with no template', () => {
     disabledSkills: [],
     injectSkills: [],
     effectiveTools: REVIEWER_CAP,
+    // null, not the cap: the no-template fallback asked for nothing, which is
+    // what distinguishes it from a template that asked for nothing USABLE.
+    requestedTools: null,
     systemPromptFile: 'clodex-team-reviewer',
     appendPromptFiles: [],
     execCommands: [],
@@ -147,6 +151,7 @@ test('review purpose: the whole shape, WITH a template (the production config)',
     disabledSkills: [],
     injectSkills: [],
     effectiveTools: ['Read', 'Grep'],
+    requestedTools: ['Read', 'Grep'],
     systemPromptFile: 'rv-brief',
     appendPromptFiles: [],
     execCommands: [],
@@ -191,7 +196,11 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     disabledSkills: ['s'],
     injectSkills: ['i'],
     // Reviewer-only concepts, inert on this arm even with a template present.
+    // requestedTools stays null though the template DOES carry `tools`: the
+    // ticket arm has no cap to intersect against, so reporting a request the
+    // resolver never honored would invite a caller to act on it.
     effectiveTools: null,
+    requestedTools: null,
     beyondCap: [],
     promptEscaped: null,
     // The ROLE prompt wins over the template's.
@@ -244,6 +253,24 @@ test('a reviewer template requesting Bash has it dropped, and the overreach is r
   assert.ok(shape.disabledTools.includes('Bash'), 'Bash must be denied');
   assert.deepStrictEqual(shape.effectiveTools, ['Read'], 'the template may NARROW the cap');
   assert.deepStrictEqual(shape.beyondCap, ['Bash'], 'the overreach must be reportable');
+});
+
+// t299: the resolver still RESOLVES this shape — the refusal is the caller's,
+// because only the caller owns the name reservation it must bail ahead of. What
+// the resolver owes is the pair that lets the caller tell this state apart from
+// "no tools requested at all", which resolves to the same empty-ish look
+// nowhere else: both leave beyondCap non-empty and neither is distinguishable
+// from effectiveTools alone.
+test('a reviewer template whose tools miss the cap entirely resolves to NO tools, and says it was asked', () => {
+  const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', tools: ['Bash'] }]);
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(shape.effectiveTools, [], 'nothing survives the intersection');
+  assert.deepStrictEqual(shape.requestedTools, ['Bash'], 'and the caller can name what was asked for');
+  // The consequence the refusal exists to prevent: an empty allowlist inverts to
+  // a denylist of EVERY tool, so the seat could not read the diff it reviews.
+  assert.deepStrictEqual(shape.disabledTools, CLAUDE_TOOLS.slice(),
+    'an empty allowlist disables every tool — the seat would be unable to read');
 });
 
 test('a reviewer template cannot widen past the cap even naming every tool', () => {
