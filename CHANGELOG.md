@@ -21,6 +21,13 @@ blocks a release.
   seat's tools did not, and the only real cap lives in code. Team files carrying
   the old fields are migrated in place the next time any role is edited, and are
   read correctly until then.
+- Ticket work now reports what it cost. Closing a ticket writes a `COST.json`
+  into its task directory: the spend of the seat that worked it, how many
+  commits landed on its branch, and two counters for the waste the rollup exists
+  to expose — work redone after a rejected review, and worktrees left behind by
+  retired seats. Where the seat that spent cannot be identified with certainty
+  the record says so rather than guessing, since a confident wrong number
+  poisons every total that sums it.
 - The `clodex-team` roster no longer annotates roles with a field the schema
   deleted. It read `team.json` directly rather than through the shared loader,
   so it had kept rendering `instantiate` — which would have silently vanished
