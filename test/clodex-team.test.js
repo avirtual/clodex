@@ -340,8 +340,13 @@ const HOUR = 60 * 60 * 1000;
 function parityBoard() {
   const now = Date.now();
   const rows = [
-    { id: 't1', title: 'still going', assignee: 'hand', state: 'open', openedAt: now - 40 * HOUR, closedAt: null },
-    { id: 't2', title: 'old close', assignee: 'hand', state: 'done', openedAt: now - 40 * HOUR, closedAt: now - 30 * HOUR },
+    // t295: RE-PINNED — `role` set and `assignee` a DIFFERENT seat name. Carried
+    // by existing rows rather than new ones, so the counts the ENTER guards below
+    // pin (cap overflow, done/cancelled totals) are unchanged. On a board where
+    // every row leaves `role` undefined both renderers collapse to `assignee`,
+    // and the parity pin cannot see them disagree about which of the two shows.
+    { id: 't1', title: 'still going', assignee: 'team-hand-9', role: 'hand', state: 'open', openedAt: now - 40 * HOUR, closedAt: null },
+    { id: 't2', title: 'old close', assignee: 'team-hand-9', role: 'hand', state: 'done', openedAt: now - 40 * HOUR, closedAt: now - 30 * HOUR },
     { id: 't3', title: 'dropped', assignee: 'hand', state: 'cancelled', openedAt: now - 40 * HOUR, closedAt: now - 2 * HOUR },
     // t174: open AND assigned AND parked — the row that renders identically to
     // t1 unless both implementations carry the marker.

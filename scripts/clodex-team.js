@@ -266,10 +266,15 @@ function doTickets(payload) {
   });
   const shown = filter === 'all' ? tickets : tickets.filter((t) => t.state === filter);
   const now = Date.now();
+  // Mirrors _taskList's `shownFor`: `assignee` is a delivery-time pin to a
+  // concrete seat, while the ROLE is what the lead filed the ticket under and
+  // what the board reads as. Rendering the pin here would make this leaf and the
+  // intent board name different things for the same ticket.
+  const shownFor = (t) => t.role || t.assignee || '—';
   const row = (t) =>
-    `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`;
+    `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`;
   const closedRow = (t) =>
-    `${t.id} [${t.state}] ${t.assignee || '—'} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}`;
+    `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}`;
   const lines = shown.map(row);
   const closed = filter === 'open' ? tickets.filter((t) => t.state !== 'open') : [];
   const doneAll = closed.filter((t) => t.state === 'done');

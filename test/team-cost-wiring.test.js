@@ -371,6 +371,38 @@ test('a closer who is not the seat the ticket was DELIVERED to resolves to nothi
   rig.cleanup();
 });
 
+// t295 made `assignee` a delivery-time PIN, which is exact evidence only while it
+// names the seat that worked. A pinned seat that dies degrades the ticket back to
+// its role, and a sibling holding that role may then close it — so the pin names
+// one seat while another did the work. The seat branch has no `deliveredTo`
+// falsifier, so this is the guard that keeps a dead seat's ledger off a
+// sibling's ticket.
+test('a pinned seat that did not close, and a sibling of its role that did, resolve to nothing', async () => {
+  const rig = mkRoleRig();
+  rig.m._writeTicketCost(rig.team, {
+    id: 't29', role: 'hand', assignee: 'team-hand-1', state: 'done', closedBy: 'team-hand-2',
+    taskDir: 'tasks/pin-inherited', openedAt: 1, closedAt: 2,
+  });
+  await settle();
+  const rec = rig.read('pin-inherited');
+  assert.strictEqual(rec.ticket, 't29');   // ENTER, as above
+  assert.deepStrictEqual([rec.sessions.attribution, rec.seat, rec.usd], ['unknown', null, null],
+    'hand-1 holds the pin but hand-2 closed it — billing the pin publishes a dead seat\'s ledger under another\'s work');
+  assert.notStrictEqual(rec.usd, 11, "the pinned seat's ledger is not this ticket's cost");
+
+  // The CONTROL: the pinned seat closing its OWN ticket is still exact. Without
+  // it the assertion above is satisfied by a tree that resolves nothing at all.
+  rig.m._writeTicketCost(rig.team, {
+    id: 't30', role: 'hand', assignee: 'team-hand-1', state: 'done', closedBy: 'team-hand-1',
+    taskDir: 'tasks/pin-own', openedAt: 1, closedAt: 2,
+  });
+  await settle();
+  const own = rig.read('pin-own');
+  assert.deepStrictEqual([own.sessions.attribution, own.seat, own.usd], ['seat', 'team-hand-1', 11],
+    'the seat that holds the pin and closed it is exactly attributable');
+  rig.cleanup();
+});
+
 test('a role ticket inherits no worktree from a seat that is working another ticket', async () => {
   // The worktree is gated INDEPENDENTLY of the ledger: it comes from the
   // persistence record, so a guessed seat mid-way through some other ticket

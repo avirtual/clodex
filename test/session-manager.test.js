@@ -4978,9 +4978,9 @@ test('t92 reassign: the prev → next reply carries the suffix too (its own word
   };
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'reviewer', body: '' });
   const note = f.injected.join('\n');
-  // `prev` is the delivery-time pin now, so the wording reports the seat it is
-  // moving OFF — still the reassign line, still distinct from the assign one.
-  assert.match(note, /ticket t1: team-hand → reviewer/, 'ENTER: this is the REASSIGN wording, a different reply line from the assign one above');
+  // Reports the ROLE it moved off, not the seat it was pinned to: a seat→role
+  // arrow would name a move the lead never made.
+  assert.match(note, /ticket t1: hand → reviewer/, 'ENTER: this is the REASSIGN wording, a different reply line from the assign one above');
   assert.match(note, /parked/,
     'the reassign branch builds its own reply string, so the suffix has to be pinned on it separately');
 });
@@ -5737,6 +5737,21 @@ test('t295: a dead seat does not take its pinned role tickets with it', () => {
   f.seat('team-hand-2');
   assert.deepStrictEqual(f.m._openTicketsFor(f.teamDir, f.team, 'team-hand-2').map((t) => t.id),
     ['t1', 't2'], 'the sibling holding the role picks up the dead seat\'s queue');
+
+  // VISIBILITY IS NOT DELIVERY. Listing the ticket while the resolver refuses it
+  // is the defect this test previously could not see: `_advanceSeat` logs a
+  // hand-off, delivers nothing, and the reply claims the sibling got its next
+  // ticket. So drive a real close→advance and assert the spec ARRIVES.
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('team-hand-2'), { type: 'task', sub: 'done', id: 't1', body: 'inherited and finished' });
+  assert.strictEqual(f.one('t1').state, 'done', 'the sibling can close what it inherited');
+  assert.deepStrictEqual(f.gated.map((g) => [g.target, g.body]),
+    [['lead', '[ticket t1 done] inherited and finished'],
+      ['team-hand-2', '[ticket t2] second']],
+    'the report goes to the lead and the NEXT ticket is actually delivered to the sibling');
+  // And the advance re-pins, so the record stops naming a seat that never worked it.
+  assert.strictEqual(f.one('t2').assignee, 'team-hand-2', 'the advanced ticket re-pins to its new seat');
+  assert.strictEqual(f.one('t2').role, 'hand', 'and keeps the role it was filed under');
 
   // While the pinned seat is LIVE the pin still binds: a sibling must not be able
   // to reach into another live seat's work.
@@ -10573,4 +10588,27 @@ test('task add: a worktree that cannot be created leaves the ticket on the role,
   assert.strictEqual(t.role, undefined, 'the stale role field is cleared with the pin');
   assert.ok(f.removed.includes('team-hand-1'), 'the reserved seat name is released');
   fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The badge and the stall clock have to follow an INHERITED ticket too. Without
+// the degradation reaching both, the sibling doing the work shows no ticket and
+// its activity never refreshes `lastActivityAt` — so the watchdog nudges the lead
+// about a ticket somebody is actively working.
+test('t295: an inherited ticket gives the sibling a badge and keeps its stall clock live', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'work' });
+  f.m.sessions.delete('team-hand');
+  f.seat('team-hand-2');
+  f.m._reconcileTickets(f.team, f.teamDir);
+  assert.strictEqual(f.m._ticketWatch.get('team-hand-2') != null, true,
+    'the sibling is watched for the ticket it inherited');
+  assert.ok(f.broadcasts.some((b) => b.channel === 'session-ticket'
+    && b.msg.name === 'team-hand-2' && b.msg.ticket === 't1'),
+    'ENTER: the badge names the inherited ticket, or reconcile did not reach it');
+
+  const ts = f.load(); ts[0].lastActivityAt = 1; tstore.save(f.teamDir, ts);
+  f.m._touchTicketActivity('team-hand-2');
+  assert.notStrictEqual(f.one('t1').lastActivityAt, 1,
+    'the sibling\'s activity refreshes the inherited ticket — otherwise the watchdog nudges over live work');
 });
