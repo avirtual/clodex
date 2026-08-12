@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- Tickets no longer require a team. `[agent:task add/list/done/...]` used to
+  refuse outright unless a `team.json` owned the session's directory, so filing
+  a note to yourself meant first inventing a team to be your own lead. The verbs
+  now work in any git repository, keyed to that repo's ticket board — the same
+  board a team in that repo would use, so tickets filed solo are still there
+  after a team is created. Outside a git repository the verbs still refuse,
+  since there is no project for a ticket to belong to.
+
 - Ticket boards copied to the new per-project location now re-sync themselves.
   The copy ran once and was then locked, so a board copied while a ticket was
   still being worked kept the half-finished version forever — one ticket showed
