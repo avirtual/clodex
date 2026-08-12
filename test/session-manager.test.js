@@ -4453,7 +4453,7 @@ test('team-review: a resolver throw reaches the lead instead of becoming an unha
   // an unhandled rejection with the lead told nothing, and a future bad-purpose
   // literal would look like a review that simply never happened.
   // Fail-closed is only useful if it is also fail-visible.
-  const { m, injected, created } = mkReview();
+  const { m, injected, created, persistence } = mkReview();
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m.resolveSeatShape = () => { throw new Error('unknown purpose "reviewer"'); };
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
@@ -4461,6 +4461,12 @@ test('team-review: a resolver throw reaches the lead instead of becoming an unha
   assert.strictEqual(created.length, 0, 'nothing spawns — the guard is the point');
   assert.ok(injected.some((t) => /unknown purpose/.test(t)),
     `the lead must be told why no reviewer appeared, got: ${JSON.stringify(injected)}`);
+  // The name reservation must not survive the bail. Nothing leaks today (the
+  // early return precedes the upsert), but reordering the reservation above the
+  // resolver call would otherwise burn a seat name on every failed review —
+  // silently, since each attempt would just number one higher.
+  assert.strictEqual(persistence.get('team-reviewer-1'), null,
+    'a failed review must not consume the seat name');
 });
 
 test('team-review: an ALLOWED key with a non-string value is reported as a type problem, not an authority one', async () => {
@@ -4492,6 +4498,12 @@ test('team-review: an ALLOWED key with a non-string value is reported as a type 
   // the reason phrase, so it is in the prefix either way.)
   assert.ok(!/outside the allowed set/.test(line),
     `no key here is outside the allowlist, so that reason must not be given; got: ${line}`);
+  // Asserted across EVERY injected message, not just the found line: today both
+  // clauses concatenate into one reply, so a future split into two messages
+  // would move the wrong clause out of `line`'s scope and the check above would
+  // stop seeing it. True of this fixture by construction either way.
+  assert.ok(!injected.some((t) => /outside the allowed set/.test(t)),
+    'the authority reason must appear nowhere for an allowlisted key');
 });
 
 // --- T52: missing/unparseable template → fall back to the built-in constants
@@ -9777,8 +9789,13 @@ test('task add: a template env key outside the allowlist is dropped AND named in
   // ENTER: a dispatch that never spawned, or one whose spawn reply never landed,
   // would make every assertion below read as a vacuous absence.
   assert.notStrictEqual(sessionEnv, 'UNSET', 'ENTER: create() must have been reached');
-  const reply = replies.find((r) => /on branch /.test(r) && /env keys/.test(r))
-    || replies.find((r) => /on branch /.test(r));
+  // Anchored on the SUCCESS shape (`ticket t1 → team-hand-1 on branch …`), not
+  // on /on branch /: the pre-spawn line is `ticket t1 → spawning team-hand-1 in
+  // a worktree on branch …`, which contains that substring too. A finder that
+  // matched it would make the ENTER guard below pass vacuously and the real
+  // failure surface as a confusing miss on one of the env regexes instead.
+  // `spawning` sits in the seat-name slot here, so ` on ` cannot follow it.
+  const reply = replies.find((r) => /ticket \S+ → \S+ on /.test(r));
   assert.ok(reply, `ENTER: the spawn reply must have landed, got: ${JSON.stringify(replies)}`);
 
   assert.deepStrictEqual(sessionEnv, { CLODEX_DISABLE_IPC_PROMPT: '1' },

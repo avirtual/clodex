@@ -4412,7 +4412,9 @@ function createSessionManager(deps) {
       try {
         shape = this.resolveSeatShape(team, 'reviewer', 'review', session);
       } catch (err) {
-        reply(`error: ${err.message}`);
+        // Not err.message alone: a non-Error throw would report "error: undefined",
+        // which tells the lead nothing at all.
+        reply(`error: ${err && err.message ? err.message : String(err)}`);
         return;
       }
       const reviewTpl = shape.tpl;
