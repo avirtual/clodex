@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- A reviewer template's auto-compact opt-out now applies to the reviewer seat.
+  Turning auto-compact off in a template used for cold reviews had no effect —
+  the setting was read on other spawn paths and skipped on that one, so the seat
+  compacted anyway with nothing to say it had. Templates that do not set the
+  field are unaffected.
+- A template environment key that is refused now says which of the two problems
+  it hit, on every path that spawns a seat. A key outside the allowed set needs
+  operator approval; a key whose value is not a string needs the value quoted.
+  One path reported the second as the first, sending operators to ask for
+  permission they already had.
 - Ticket cost is now attributed to the seat that actually did the work. A
   ticket filed against a role is recorded against the seat it was handed to,
   including when the original seat died and a sibling picked the work up on the
