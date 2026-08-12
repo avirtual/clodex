@@ -12,17 +12,40 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
-// Written ONLY by _internals.setTeamsRootForTest at the bottom of this file;
+// Written ONLY by _internals.setClodexHomeForTest at the bottom of this file;
 // nothing on the plugin's own code path assigns it, so in the app it is always
-// null and teamsRoot() is the expression below it.
-let teamsRootOverride = null;
+// null and clodexHome() is the expression below it.
+let clodexHomeOverride = null;
 
 // A bare homedir join, byte-identical to engine.js:133's REGISTRY_DIR. Reading
-// CLODEX_HOME here would make the board report on a different teams tree than
-// the app hosting it: core's root does not honour the variable.
+// CLODEX_HOME here would make the board report on a different tree than the app
+// hosting it: core's root does not honour the variable.
+//
+// The HOME, not the teams dir: teams/ is where a team is discovered, projects/
+// is where its board lives, and both hang off this one root.
+function clodexHome() {
+  return clodexHomeOverride || path.join(os.homedir(), '.clodex');
+}
+
 function teamsRoot() {
-  return teamsRootOverride || path.join(os.homedir(), '.clodex', 'teams');
+  return path.join(clodexHome(), 'teams');
+}
+
+/**
+ * Core's clodex-paths.projectDirFor, copied rather than required for the same
+ * reason `confine` below is: §12's lint refuses a require that leaves this
+ * directory, and §4's rule for a utility a plugin needs is to copy it in. Keep
+ * it byte-equivalent to core's — the leaf is cosmetic but the sha256-over-the-
+ * RESOLVED-path (never the realpath) is what makes this read the same directory
+ * the writer wrote, and a "cleaner" realpath here would silently point the
+ * board at a directory that does not exist.
+ */
+function projectDirFor(root, projectPath) {
+  const real = path.resolve(projectPath);
+  const hash = crypto.createHash('sha256').update(real).digest('hex').slice(0, 8);
+  return path.join(root, 'projects', `${path.basename(real)}-${hash}`);
 }
 
 const TICKETS_FILE = 'tickets.json';
@@ -87,11 +110,20 @@ let host = null;
  *
  * A missing file is the one read failure that genuinely IS empty — the file is
  * created by the first `[agent:task add]`.
+ *
+ * Takes the PROJECT ROOT, not a team dir: the board moved to the project and a
+ * team is now only where that root is read FROM.
  */
-function readTickets(teamDir) {
+function readTickets(projectRoot) {
+  if (typeof projectRoot !== 'string' || !projectRoot) {
+    // Not locatable is a read FAILURE, not an empty board — the manifest warning
+    // beside it explains why, and rendering "no tickets" here would report a
+    // board nobody can find as a team that has never opened one.
+    return { ok: false, error: `cannot locate ${TICKETS_FILE}: team.json names no project root` };
+  }
   let raw;
   try {
-    raw = fs.readFileSync(path.join(teamDir, TICKETS_FILE), 'utf8');
+    raw = fs.readFileSync(path.join(projectDirFor(clodexHome(), projectRoot), TICKETS_FILE), 'utf8');
   } catch (e) {
     if (e && e.code === 'ENOENT') return { ok: true, tickets: [], malformed: 0 };
     return { ok: false, error: `could not read ${TICKETS_FILE} (${(e && e.code) || (e && e.message) || 'unknown error'})` };
@@ -271,8 +303,14 @@ function board(teamName) {
   if (man.missing) return { ok: false, error: `no team "${teamName}" under ${teamsRoot()}` };
   if (man.error) return { ok: false, error: man.error };
 
-  const read = readTickets(dir);
-  if (!read.ok) return read;
+  // The board is the PROJECT's, so the manifest's `root` is what locates it —
+  // which makes an unusable team.json a READ failure now, where it used to be a
+  // warning beside a perfectly readable board. That is not a regression to route
+  // around: with no root there is no project, and the tickets are not somewhere
+  // else to be found. It fails loudly for the same reason an unparseable board
+  // does. The warning rides along so the row can say WHY.
+  const read = readTickets(man.manifest && man.manifest.root);
+  if (!read.ok) return man.warning ? { ...read, warning: man.warning } : read;
 
   const now = Date.now();
   const stallMs = stallMsFor(man.manifest);
@@ -366,7 +404,7 @@ function teams() {
       continue;
     }
 
-    const read = readTickets(dir);
+    const read = readTickets(man.manifest && man.manifest.root);
     if (!read.ok) {
       out.push({ team: d.name, error: read.error });
       continue;
@@ -410,10 +448,13 @@ module.exports.deactivate = () => {
 // ever calls activate/deactivate and the two ipc methods above.
 module.exports._internals = {
   confine, readTickets, readManifest, stallMsFor, shape, board, teams, teamsRoot,
+  clodexHome, projectDirFor,
   DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, RECENT_DONE_MS, RECENT_DONE_CAP,
-  // The teams tree is no longer env-derived, so a test needs a seam that is not
-  // an environment variable. Deliberately NOT on the host surface: hostApi is
-  // frozen at "1", and a plugin able to ask core where the teams live is a
-  // contract change. Pass null to restore the real root.
-  setTeamsRootForTest(dir) { teamsRootOverride = dir || null; },
+  // The tree is no longer env-derived, so a test needs a seam that is not an
+  // environment variable. It overrides the HOME rather than the teams dir, because
+  // teams/ and projects/ must move together — a test that repointed only teams/
+  // would read fixture manifests against the operator's real boards.
+  // Deliberately NOT on the host surface: hostApi is frozen at "1", and a plugin
+  // able to ask core where things live is a contract change. Pass null to restore.
+  setClodexHomeForTest(dir) { clodexHomeOverride = dir || null; },
 };

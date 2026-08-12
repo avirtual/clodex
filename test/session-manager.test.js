@@ -4924,17 +4924,20 @@ test('team-review: a team with no reviewer role bounces the lead', async () => {
 // --- [agent:task …] — team ticket protocol (Task 25) ------------------------
 // A team LEAD opens/directs tickets; an ASSIGNEE closes them; clodex owns the
 // registry (tickets.json), lifecycle, and stall watchdog. The fixture uses a REAL
-// temp team dir so the ticket store round-trips to disk (like the T24 prompt
-// preflight). Seats are named per the <team>-<role> convention so matchSeatRole
-// binds them; the lead seat is `lead` (team.lead).
+// temp clodex HOME so the ticket store round-trips to disk (like the T24 prompt
+// preflight); the board is the PROJECT's, so it resolves off `team.root` under
+// that home and the manager must be given the same home as REGISTRY_DIR or the
+// two halves of every assertion read different files. Seats are named per the
+// <team>-<role> convention so matchSeatRole binds them; the lead seat is `lead`
+// (team.lead).
 const ticketsMod = require('../tickets-store');
-const tstore = ticketsMod.createTicketsStore();
 
 function mkTasks(extra = {}) {
-  const teamDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-tk-'));
+  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-tk-'));
+  const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,
-    file: pathReal.join(teamDir, 'team.json'),
+    file: pathReal.join(home, 'teams', 'team', 'team.json'),
     roles: {
       lead: { instantiate: 'session', brief: 'the lead' },
       hand: { instantiate: 'session', brief: 'the hand' },
@@ -4943,6 +4946,7 @@ function mkTasks(extra = {}) {
   };
   const overrides = {
     fs: fsReal, path: pathReal, countPending: countPendingReal,
+    REGISTRY_DIR: home,
     resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj' : null),
     ...extra,
@@ -4971,9 +4975,9 @@ function mkTasks(extra = {}) {
     m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle', ...props });
     return m.sessions.get(name);
   };
-  const load = () => tstore.load(teamDir);
+  const load = () => tstore.load(team.root);
   const one = (id) => load().find((t) => t.id === id);
-  return { m, injected, gated, urgents, broadcasts, team, teamDir, seat, load, one };
+  return { m, injected, gated, urgents, broadcasts, team, home, tstore, seat, load, one };
 }
 
 test('task add (assigned): mints t1, delivers spec to the assignee seat, confirms to lead', () => {
@@ -5377,10 +5381,10 @@ test('t82 a HELD watchdog nudge does not consume the one-per-episode nudge', () 
   const past = Date.now() - (stallMs * 4);
   const ts = f.load();
   ts[0].lastActivityAt = past;
-  tstore.save(f.teamDir, ts);
+  f.tstore.save(f.team.root, ts);
   // Held: the lead is un-parkable, so it never sees the nudge.
   f.m._gatedDeliver = () => ({ held: 'blocked on a permission dialog' });
-  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
+  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
   assert.strictEqual(f.one('t1').nudgedAt, null,
     'a held nudge reaches nobody, so it must not burn the single nudge this stall episode gets — otherwise the alarm is silently spent');
   // Parked, by contrast, DOES arrive on the lead's next turn and counts — a park is
@@ -5389,7 +5393,7 @@ test('t82 a HELD watchdog nudge does not consume the one-per-episode nudge', () 
     if (typeof onWrite === 'function') onWrite();
     return { parked: 'pk-9', reason: 'idle' };
   };
-  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
+  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
   assert.ok(typeof f.one('t1').nudgedAt === 'number',
     'a parked nudge DOES count — it drains on the lead`s next turn, so re-nudging would duplicate it');
 });
@@ -5407,14 +5411,14 @@ test('t168 a nudge QUEUED but never written does not spend the stall episode', (
   const stallMs = 60 * 60 * 1000;
   const ts = f.load();
   ts[0].lastActivityAt = Date.now() - (stallMs * 4);
-  tstore.save(f.teamDir, ts);
+  f.tstore.save(f.team.root, ts);
   let calls = 0;
   f.m._gatedDeliver = () => { calls++; return { queued: true }; };  // accepted; never written
-  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
+  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
   assert.strictEqual(calls, 1, 'ENTER: the sweep must have attempted a nudge, or the assertion below is vacuous');
   assert.strictEqual(f.one('t1').nudgedAt, null,
     'queued is not delivered — a nudge whose write never happened must leave the episode UNSPENT');
-  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
+  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
   assert.strictEqual(calls, 2, 'and the next sweep re-nudges, because the alarm was never actually raised');
 });
 
@@ -5431,19 +5435,19 @@ test('t168 rework: a nudge written AFTER the seat spoke does not spend the NEW e
   f.seat('lead'); const hand = f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   const stallMs = 60 * 60 * 1000;
-  const stall = () => { const ts = f.load(); ts[0].lastActivityAt = Date.now() - (stallMs * 4); tstore.save(f.teamDir, ts); };
+  const stall = () => { const ts = f.load(); ts[0].lastActivityAt = Date.now() - (stallMs * 4); f.tstore.save(f.team.root, ts); };
   stall();
   let captured = null;
   let calls = 0;
   // Models the real gap: accepted by the queue, written some time later.
   f.m._gatedDeliver = (t_, s_, b_, u_, tag_, onWrite) => { calls++; captured = onWrite; return { queued: true }; };
-  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
+  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
   assert.strictEqual(calls, 1, 'ENTER: the sweep found the stall and enqueued a nudge');
   assert.strictEqual(typeof captured, 'function', 'ENTER: the stamp rides onWrite, so there is something to fire late');
   // The seat speaks while the nudge is still in the queue. Real path, not a poke
   // at the store: _reconcileTickets arms the watch map, _touchTicketActivity ends
   // the episode exactly as a PTY turn would.
-  f.m._reconcileTickets(f.team, f.teamDir);
+  f.m._reconcileTickets(f.team);
   f.m._touchTicketActivity(hand.name);
   assert.strictEqual(f.one('t1').nudgedAt, null, 'ENTER: activity ended the episode');
   captured();
@@ -5452,7 +5456,7 @@ test('t168 rework: a nudge written AFTER the seat spoke does not spend the NEW e
   // And the alarm is still armed: the next stall must reach the lead.
   stall();
   f.m._gatedDeliver = (t_, s_, b_, u_, tag_, onWrite) => { calls++; if (typeof onWrite === 'function') onWrite(); return { queued: true }; };
-  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
+  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
   assert.strictEqual(calls, 2, 'the next stall nudges — a skipped stamp that also killed the alarm would be no better than stamping');
   assert.ok(typeof f.one('t1').nudgedAt === 'number', 'and THAT nudge, written in its own episode, spends it');
 });
@@ -5482,9 +5486,9 @@ test('t82 the watchdog nudge itself stays passive (decision: alarm to the lead, 
   const stallMs = 60 * 60 * 1000;
   const ts = f.load();
   ts[0].lastActivityAt = Date.now() - (stallMs * 4);
-  tstore.save(f.teamDir, ts);
+  f.tstore.save(f.team.root, ts);
   f.gated.length = 0; f.urgents.length = 0;
-  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, f.teamDir, Date.now());
+  f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
   assert.strictEqual(f.gated.length, 1, 'ENTER: the sweep found the stalled ticket and nudged');
   assert.strictEqual(f.urgents[0], false,
     'the watchdog fires on a SCHEDULE against a possibly-idle lead; waking it every sweep re-bills a full context to report a ticket that has been quiet for hours');
@@ -5920,7 +5924,7 @@ test('t89 _advanceSeat never hands back the ticket just closed, even before the 
   // save first, so no caller can reach this; the guard is what keeps that an
   // ordering detail rather than a correctness dependency.
   assert.strictEqual(f.one('t1').state, 'open', 'ENTER: t1 is still open, so only closedId can exclude it');
-  const next = f.m._advanceSeat(f.team, f.teamDir, 'team-hand', 't1');
+  const next = f.m._advanceSeat(f.team, 'team-hand', 't1');
 
   assert.strictEqual(next.id, 't2', 'the closed ticket must not be handed back as the seat`s next work');
   assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'clodex-team', body: '[ticket t2] the genuine next' }]);
@@ -5934,10 +5938,10 @@ test('t89 the advance is FIFO, not id order — oldest first when the two disagr
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'minted third, but NEWER' });
   // Force openedAt to CONTRADICT id order: t3 is older than t2. Without this the
   // two orderings agree and the test cannot tell which one the product used.
-  const tickets = tstore.load(f.teamDir);
+  const tickets = f.tstore.load(f.team.root);
   tickets.find((t) => t.id === 't2').openedAt = 5000;
   tickets.find((t) => t.id === 't3').openedAt = 1000;
-  tstore.save(f.teamDir, tickets);
+  f.tstore.save(f.team.root, tickets);
   // ENTER: the disagreement is real — lowest id (t2) is NOT the oldest (t3).
   assert.ok(f.one('t3').openedAt < f.one('t2').openedAt, 'ENTER: openedAt disagrees with id order');
   f.gated.length = 0;
@@ -6052,7 +6056,7 @@ test('t295: a dead seat does not take its pinned role tickets with it', () => {
 
   f.m.sessions.delete('team-hand');
   f.seat('team-hand-2');
-  assert.deepStrictEqual(f.m._openTicketsFor(f.teamDir, f.team, 'team-hand-2').map((t) => t.id),
+  assert.deepStrictEqual(f.m._openTicketsFor(f.team, 'team-hand-2').map((t) => t.id),
     ['t1', 't2'], 'the sibling holding the role picks up the dead seat\'s queue');
 
   // VISIBILITY IS NOT DELIVERY. Listing the ticket while the resolver refuses it
@@ -6076,7 +6080,7 @@ test('t295: a dead seat does not take its pinned role tickets with it', () => {
   g.seat('lead'); g.seat('team-hand'); g.seat('team-hand-2');
   g.m._handleTask(g.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'held' });
   assert.strictEqual(g.one('t1').assignee, 'team-hand', 'ENTER: pinned to the first live seat');
-  assert.deepStrictEqual(g.m._openTicketsFor(g.teamDir, g.team, 'team-hand-2').map((t) => t.id),
+  assert.deepStrictEqual(g.m._openTicketsFor(g.team, 'team-hand-2').map((t) => t.id),
     [], 'a live seat\'s pinned ticket stays its own');
 });
 
@@ -6256,7 +6260,7 @@ function mkAged(rows) {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   const now = Date.now();
-  tstore.save(f.teamDir, rows.map((r, i) => ({
+  f.tstore.save(f.team.root, rows.map((r, i) => ({
     id: `t${i + 1}`,
     title: r.title || `ticket ${i + 1}`,
     assignee: 'hand',
@@ -6426,7 +6430,7 @@ test('watchdog: a stalled ASSIGNED ticket nudges the lead ONCE; a second sweep i
   // Age the ticket well past the default stall window.
   const arr = f.load();
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000; // 1h ago
-  tstore.save(f.teamDir, arr);
+  f.tstore.save(f.team.root, arr);
   f.gated.length = 0;
   f.m._sweepTickets(Date.now());
   const nudges = f.gated.filter((g) => g.target === 'lead' && /stalled/.test(g.body));
@@ -6443,7 +6447,7 @@ test('watchdog: activity resets the stall episode (nudge fires again after a re-
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   let arr = f.load();
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
-  tstore.save(f.teamDir, arr);
+  f.tstore.save(f.team.root, arr);
   f.m._sweepTickets(Date.now());
   assert.ok(f.one('t1').nudgedAt, 'nudged');
   // A turn on the assignee seat resets the episode.
@@ -6453,7 +6457,7 @@ test('watchdog: activity resets the stall episode (nudge fires again after a re-
   // Re-stall and sweep → nudges again.
   arr = f.load();
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
-  tstore.save(f.teamDir, arr);
+  f.tstore.save(f.team.root, arr);
   f.gated.length = 0;
   f.m._sweepTickets(Date.now());
   assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1, 're-nudged after the reset');
@@ -6496,7 +6500,7 @@ test('a parked ticket is invisible to _openTicketsFor, so advance SKIPS it', () 
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'first' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'parked one' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'third' });
-  assert.deepStrictEqual(f.m._openTicketsFor(f.teamDir, f.team, 'team-hand').map((t) => t.id), ['t1', 't3'],
+  assert.deepStrictEqual(f.m._openTicketsFor(f.team, 'team-hand').map((t) => t.id), ['t1', 't3'],
     'the parked ticket is dropped from the queue entirely');
   f.gated.length = 0;
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'done' });
@@ -6527,7 +6531,7 @@ test('task assign UNPARKS: assign is the dispatch, so the flag cannot survive it
   assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] the spec' }],
     'and the spec finally goes out');
   assert.ok(f.injected.some((x) => /unparked/.test(x)), 'the lead is told it was released');
-  assert.deepStrictEqual(f.m._openTicketsFor(f.teamDir, f.team, 'team-hand').map((x) => x.id), ['t1'],
+  assert.deepStrictEqual(f.m._openTicketsFor(f.team, 'team-hand').map((x) => x.id), ['t1'],
     'and it is back in the queue');
 });
 
@@ -6540,10 +6544,10 @@ test('[agent:task park] toggles an already-open ticket both ways', () => {
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
   assert.strictEqual(f.one('t1').parked, true, 'parked after the fact');
   assert.strictEqual(f.one('t1').state, 'open', 'still open');
-  assert.deepStrictEqual(f.m._openTicketsFor(f.teamDir, f.team, 'team-hand'), [], 'out of the queue');
+  assert.deepStrictEqual(f.m._openTicketsFor(f.team, 'team-hand'), [], 'out of the queue');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
   assert.ok(!('parked' in f.one('t1')), 'the second call unparks');
-  assert.deepStrictEqual(f.m._openTicketsFor(f.teamDir, f.team, 'team-hand').map((t) => t.id), ['t1'], 'back in the queue');
+  assert.deepStrictEqual(f.m._openTicketsFor(f.team, 'team-hand').map((t) => t.id), ['t1'], 'back in the queue');
   // Unpark deliberately does NOT re-send: assign owns delivery, and a second
   // delivery path would let the two disagree about what the seat was told.
   assert.deepStrictEqual(f.gated, [], 'neither direction delivers a spec');
@@ -6572,7 +6576,7 @@ test('parking clears nudgedAt, so the unpark starts a fresh stall episode', () =
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   const arr = f.load();
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
-  tstore.save(f.teamDir, arr);
+  f.tstore.save(f.team.root, arr);
   f.m._sweepTickets(Date.now());
   assert.ok(f.one('t1').nudgedAt, 'ENTER: stamped by the watchdog');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
@@ -6588,7 +6592,7 @@ test('watchdog: a PARKED stalled ticket is EXEMPT even though it has an assignee
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'parked' });
   const arr = f.load();
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
-  tstore.save(f.teamDir, arr);
+  f.tstore.save(f.team.root, arr);
   f.gated.length = 0;
   f.m._sweepTickets(Date.now());
   // The assignee is set, so ONLY the parked term can be exempting this — which
@@ -6629,7 +6633,7 @@ test('watchdog: a BACKLOG (unassigned) stalled ticket is EXEMPT', () => {
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'backlog' });
   const arr = f.load();
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
-  tstore.save(f.teamDir, arr);
+  f.tstore.save(f.team.root, arr);
   f.gated.length = 0;
   f.m._sweepTickets(Date.now());
   assert.deepStrictEqual(f.gated.filter((g) => /stalled/.test(g.body)), [], 'backlog tickets never nudge');
@@ -6643,7 +6647,7 @@ test('watchdog: a per-team watchdogMs override tightens the stall window', () =>
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   const arr = f.load();
   arr[0].lastActivityAt = Date.now() - 5000; // 5s ago — past 1s, well within the 30m default
-  tstore.save(f.teamDir, arr);
+  f.tstore.save(f.team.root, arr);
   f.gated.length = 0;
   f.m._sweepTickets(Date.now());
   assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1, 'the tighter override fires the nudge');
@@ -6657,10 +6661,12 @@ test('watchdog: a per-team watchdogMs override tightens the stall window', () =>
 // fail-close, mutator-error surfacing). Uses a real temp teamDir so _roleInUse's
 // ticketsStore.load round-trips.
 function mkTeamMut(extra = {}) {
-  const teamDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-teammut-'));
+  // Same home-not-team-dir shape as mkTasks: _roleInUse reads the PROJECT board.
+  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-teammut-'));
+  const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,
-    file: pathReal.join(teamDir, 'team.json'),
+    file: pathReal.join(home, 'teams', 'team', 'team.json'),
     roles: {
       lead: { instantiate: 'session', brief: 'the lead' },
       hand: { instantiate: 'session', brief: 'the hand' },
@@ -6671,6 +6677,7 @@ function mkTeamMut(extra = {}) {
   const calls = [];
   const overrides = {
     fs: fsReal, path: pathReal,
+    REGISTRY_DIR: home,
     resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj' : null),
     addRole: (t, r, def) => { calls.push(['addRole', t, r, def]); return team; },
@@ -6690,7 +6697,7 @@ function mkTeamMut(extra = {}) {
     m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, activityState: 'idle', ...props });
     return m.sessions.get(name);
   };
-  return { m, injected, calls, team, teamDir, seat };
+  return { m, injected, calls, team, home, tstore, seat };
 }
 
 test('team: lead role-add / role-set call the mutators with the parsed def/patch', () => {
@@ -6785,7 +6792,7 @@ test('_roleInUse: matches live + persisted seats and role-addressed open tickets
   f.seat('team-hand-1');     // live hand seat (unrelated to `runner`)
   // Role-addressed to runner: an OPEN ticket (blocks) + a done one (NON-blocking,
   // kept for history) + a cancelled one (NON-blocking) + a hand ticket (unrelated).
-  tstore.save(f.teamDir, [
+  f.tstore.save(f.team.root, [
     { id: 't1', assignee: 'runner', state: 'open' },
     { id: 't2', assignee: 'runner', state: 'cancelled' },
     { id: 't3', assignee: 'hand', state: 'open' },
@@ -9980,10 +9987,13 @@ test('spawn worktree: a bare `worktree:` is refused, never a silent unisolated s
 // on-disk shape.
 
 function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
-  const teamDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-twt-'));
+  // A temp clodex HOME, not a team dir: the board resolves under it off the
+  // project root, and it must be the same home the manager gets as REGISTRY_DIR.
+  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-twt-'));
+  const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: repo, lead: 'lead', watchdogMs: null,
-    file: pathReal.join(teamDir, 'team.json'),
+    file: pathReal.join(home, 'teams', 'team', 'team.json'),
     roles: {
       lead: { instantiate: 'session', brief: 'the lead', worktree: false },
       hand: { instantiate: 'session', brief: 'the hand', worktree: true, ...roleExtra },
@@ -10001,6 +10011,7 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   const wtByName = new Map();
   const m = mkPark({
     fs: fsReal, path: pathReal, os: osReal, countPending: countPendingReal,
+    REGISTRY_DIR: home,
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
     resolveTeam: (cwd) => (cwd && cwd.startsWith(repo) ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(repo) ? repo : null),
@@ -10074,8 +10085,8 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
     if (i >= 0) upserted.splice(i, 1);
     wtByName.delete(name);
   };
-  return { m, team, teamDir, seat, seatWithTree, gated, upserted, removed, worktreeSet, stripCalls, acCalls, archiveSeat, killSeat,
-    load: () => tstore.load(teamDir), one: (id) => tstore.load(teamDir).find((t) => t.id === id) };
+  return { m, team, home, tstore, seat, seatWithTree, gated, upserted, removed, worktreeSet, stripCalls, acCalls, archiveSeat, killSeat,
+    load: () => tstore.load(team.root), one: (id) => tstore.load(team.root).find((t) => t.id === id) };
 }
 
 test('task add: a template env key outside the allowlist is dropped AND named in the ticket reply', async () => {
@@ -10981,7 +10992,7 @@ test('t295: an inherited ticket gives the sibling a badge and keeps its stall cl
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'work' });
   f.m.sessions.delete('team-hand');
   f.seat('team-hand-2');
-  f.m._reconcileTickets(f.team, f.teamDir);
+  f.m._reconcileTickets(f.team);
   assert.strictEqual(f.m._ticketWatch.get('team-hand-2') != null, true,
     'the sibling is watched for the ticket it inherited');
   assert.ok(f.broadcasts.some((b) => b.channel === 'session-ticket'
@@ -10993,7 +11004,7 @@ test('t295: an inherited ticket gives the sibling a badge and keeps its stall cl
   assert.strictEqual(f.m.list().find((s) => s.name === 'team-hand-2').ticket, 't1',
     'first paint agrees with reconcile about the inherited ticket');
 
-  const ts = f.load(); ts[0].lastActivityAt = 1; tstore.save(f.teamDir, ts);
+  const ts = f.load(); ts[0].lastActivityAt = 1; f.tstore.save(f.team.root, ts);
   f.m._touchTicketActivity('team-hand-2');
   assert.notStrictEqual(f.one('t1').lastActivityAt, 1,
     'the sibling\'s activity refreshes the inherited ticket — otherwise the watchdog nudges over live work');

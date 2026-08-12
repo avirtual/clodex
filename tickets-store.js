@@ -1,49 +1,63 @@
 'use strict';
 
-// tickets-store.js — the team-scoped ticket registry (Task 25). Formal tickets
-// let a team LEAD attach tasks to members as tracked envelopes (opened, assigned,
-// closed by clodex itself) instead of lifecycle-by-dm-and-lead-discipline. It
-// FORMALIZES, not replaces, the <task-dir>/spec.md + notes.md artifact
-// convention: the ticket is registry + lifecycle + notification; specs/journals
-// stay files (an optional `taskDir` links the two). Those files live outside
-// the user's repo — see clodex-paths.taskDirFor.
+// tickets-store.js — the PROJECT ticket registry (Task 25; moved off the team in
+// t301). Formal tickets let a LEAD attach tasks to members as tracked envelopes
+// (opened, assigned, closed by clodex itself) instead of
+// lifecycle-by-dm-and-lead-discipline. It FORMALIZES, not replaces, the
+// <task-dir>/spec.md + notes.md artifact convention: the ticket is registry +
+// lifecycle + notification; specs/journals stay files (an optional `taskDir`
+// links the two). Those files live outside the user's repo — see
+// clodex-paths.taskDirFor.
 //
-// Storage: ~/.clodex/teams/<team>/tickets.json — a flat array of ticket records.
-// It lives under ~/.clodex (team-scoped, like team.json), NOT userData, because
-// it must be shared/visible to the clodex-team exec (a standalone process). Atomic
-// temp+rename write (fs-util.atomicWriteFileSync) per the stores.js persistence
-// idiom. Pure leaf (electron-free): required directly like team-manifest's
-// formatters. fs/path are injectable for tests but default to the real modules
-// (tickets are real on-disk state — tests point teamDir at a temp dir).
+// Storage: <clodexHome>/projects/<leaf>-<hash8>/tickets.json — a flat array of
+// ticket records, keyed by the PROJECT ROOT and resolved through
+// clodex-paths.projectDirFor, which is the single authority on that grammar (do
+// not re-join it here). It sits beside the project's task artifacts because a
+// ticket is a durable unit of work that outlives, and does not require, any
+// team: teams are one source of assignees, not the reason the board exists. It
+// lives under ~/.clodex, NOT userData, because it must be shared/visible to the
+// clodex-team exec (a standalone process). Atomic temp+rename write
+// (fs-util.atomicWriteFileSync) per the stores.js persistence idiom. Pure leaf
+// (electron-free): required directly like team-manifest's formatters. fs/path
+// are injectable for tests but default to the real modules (tickets are real
+// on-disk state — tests point clodexHome at a temp dir).
 //
-// INVARIANT (single-team id resolution): a session sits on AT MOST ONE team, so
-// id-only verbs resolve as (sender's team, id) — NEVER a global scan. The day
-// multi-team seats exist, ids become team-qualified (`clodex/t7`) BEFORE anything
-// else does.
+// INVARIANT (single-board id resolution): id-only verbs resolve as (sender's
+// project, id) — NEVER a global scan. Two teams rooted at one project now share
+// this board, which is why ids are never renumbered on a merge: an id is a
+// PUBLIC reference (branch names, artifact dirs, commit messages), so a
+// re-issued one still resolves, just to the wrong work. See tickets-migrate.js.
 
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
+const { projectDirFor, defaultClodexHome } = require('./clodex-paths');
 
 const TICKETS_FILE = 'tickets.json';
 
-function createTicketsStore({ fs = require('fs'), path = require('path') } = {}) {
-  function ticketsPath(teamDir) {
-    return path.join(teamDir, TICKETS_FILE);
+function createTicketsStore({ fs = require('fs'), path = require('path'), clodexHome } = {}) {
+  const home = clodexHome || defaultClodexHome();
+
+  function boardDir(projectRoot) {
+    return projectDirFor(home, projectRoot);
+  }
+
+  function ticketsPath(projectRoot) {
+    return path.join(boardDir(projectRoot), TICKETS_FILE);
   }
 
   // Best-effort load: a missing/unreadable/invalid file is an empty registry (a
-  // team that has never opened a ticket has no file). Never throws.
-  function load(teamDir) {
+  // project that has never opened a ticket has no file). Never throws.
+  function load(projectRoot) {
     try {
-      const arr = JSON.parse(fs.readFileSync(ticketsPath(teamDir), 'utf-8'));
+      const arr = JSON.parse(fs.readFileSync(ticketsPath(projectRoot), 'utf-8'));
       return Array.isArray(arr) ? arr : [];
     } catch {
       return [];
     }
   }
 
-  function save(teamDir, tickets) {
-    ensureDir(teamDir);
-    atomicWriteFileSync(ticketsPath(teamDir), JSON.stringify(tickets, null, 2));
+  function save(projectRoot, tickets) {
+    ensureDir(boardDir(projectRoot));
+    atomicWriteFileSync(ticketsPath(projectRoot), JSON.stringify(tickets, null, 2));
   }
 
   return { load, save, ticketsPath };

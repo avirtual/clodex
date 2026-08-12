@@ -9,10 +9,10 @@
 // a corrupt registry, fatal for a viewer. Most cases below are that distinction
 // from one side or the other.
 //
-// The engine derives its teams root from a bare homedir join, matching core's
+// The engine derives its clodex home from a bare homedir join, matching core's
 // REGISTRY_DIR — it deliberately does NOT read CLODEX_HOME, or the board would
 // report on a different tree than the app hosting it. So the seam here is
-// _internals.setTeamsRootForTest, not an environment variable.
+// _internals.setClodexHomeForTest, not an environment variable.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -24,14 +24,16 @@ const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
 const viewerEngine = require('../plugins/tickets-viewer/engine');
 
-const { DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, setTeamsRootForTest } = viewerEngine._internals;
+const { DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, setClodexHomeForTest } = viewerEngine._internals;
 const HOUR = 60 * 60 * 1000;
 
 function boot() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-tv-home-'));
   const teams = path.join(home, 'teams');
   fs.mkdirSync(teams, { recursive: true });
-  setTeamsRootForTest(teams);
+  // The HOME, not the teams dir: teams/ and projects/ must be repointed together
+  // or the fixture's manifests would be read against the operator's real boards.
+  setClodexHomeForTest(home);
 
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-tv-data-'));
   const removals = [];
@@ -54,7 +56,7 @@ function boot() {
   host.register('tickets-viewer', viewerEngine, { hostApi: HOST_API_VERSION });
 
   const cleanup = () => {
-    setTeamsRootForTest(null);
+    setClodexHomeForTest(null);
     fs.rmSync(home, { recursive: true, force: true });
     fs.rmSync(dataDir, { recursive: true, force: true });
   };
@@ -65,17 +67,39 @@ function boot() {
 // team to core (team-manifest's TEAM_FILE). The default manifest is one core's
 // loadManifest ACCEPTS, so a warning appearing anywhere below is a test that
 // asked for one rather than a property of the fixture.
+// The root is per-NAME, not the one shared '/tmp' it used to be: the board is
+// the project's now, so two fixture teams on one root would share one board and
+// every multi-team case below would silently be a single-board case.
 function mkTeam(teamsDir, name, teamJson = {}) {
   const dir = path.join(teamsDir, name);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'team.json'), JSON.stringify({
-    name, root: '/tmp', lead: 'lead', roles: { lead: {} }, ...teamJson,
+    name, root: `/proj/${name}`, lead: 'lead', roles: { lead: {} }, ...teamJson,
   }));
   return dir;
 }
 
+// Writes the board where the engine reads it — under the PROJECT dir named by
+// the team's own team.json, derived here the way the engine derives it. Takes
+// the team dir still, so the fixture reads the root from the same file the code
+// under test does rather than from a second copy a test could get wrong.
+function boardFile(teamDir) {
+  const home = path.dirname(path.dirname(teamDir));
+  const { root } = JSON.parse(fs.readFileSync(path.join(teamDir, 'team.json'), 'utf8'));
+  return path.join(viewerEngine._internals.projectDirFor(home, root), 'tickets.json');
+}
+
 function writeTickets(dir, tickets) {
-  fs.writeFileSync(path.join(dir, 'tickets.json'), JSON.stringify(tickets, null, 2));
+  writeRawBoard(dir, JSON.stringify(tickets, null, 2));
+}
+
+// The malformed cases write BYTES, not records — a board that does not parse is
+// precisely what several tests below are about, so it cannot go through JSON.
+function writeRawBoard(dir, text) {
+  const file = boardFile(dir);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text);
+  return file;
 }
 
 // Fields the PRODUCT does not compute are hand-written here; nothing this
@@ -101,7 +125,7 @@ test('tickets-viewer: the teams root ignores CLODEX_HOME and matches core\'s', (
   const prev = process.env.CLODEX_HOME;
   process.env.CLODEX_HOME = path.join(os.tmpdir(), 'clodex-tv-decoy-home');
   try {
-    setTeamsRootForTest(null);
+    setClodexHomeForTest(null);
     assert.equal(viewerEngine._internals.teamsRoot(), path.join(os.homedir(), '.clodex', 'teams'));
   } finally {
     if (prev === undefined) delete process.env.CLODEX_HOME; else process.env.CLODEX_HOME = prev;
@@ -125,7 +149,7 @@ test('tickets-viewer: an UNPARSEABLE tickets.json fails loudly instead of readin
   const { host, teams, cleanup } = boot();
   try {
     const dir = mkTeam(teams, 'alpha');
-    fs.writeFileSync(path.join(dir, 'tickets.json'), '{ this is not json');
+    writeRawBoard(dir, '{ this is not json');
     const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     // The exact assertion that separates this plugin from tickets-store.load():
     // load() would answer [] here and the board would look idle.
@@ -139,7 +163,7 @@ test('tickets-viewer: a tickets.json that is not an ARRAY fails too', async () =
   try {
     const dir = mkTeam(teams, 'alpha');
     // Valid JSON, wrong shape — the second thing load() silently swallows.
-    fs.writeFileSync(path.join(dir, 'tickets.json'), '{"t1":{"state":"open"}}');
+    writeRawBoard(dir, '{"t1":{"state":"open"}}');
     const res = await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
     assert.equal(res.ok, false);
     assert.match(res.error, /ticket array/);
@@ -179,7 +203,7 @@ test('tickets-viewer: one broken team does not hide the healthy ones', async () 
   const { host, teams, cleanup } = boot();
   try {
     const bad = mkTeam(teams, 'broken');
-    fs.writeFileSync(path.join(bad, 'tickets.json'), 'nonsense');
+    writeRawBoard(bad, 'nonsense');
     const good = mkTeam(teams, 'alpha');
     writeTickets(good, [ticket('t1')]);
 
@@ -248,6 +272,9 @@ test('tickets-viewer: a team.json core would REJECT is warned about, not rendere
     ];
     for (const [manifest, re] of cases) {
       const dir = mkTeam(teams, 'bad');
+      // Written BEFORE the board, because the board's location is derived from
+      // this file's `root` — the fixture must place the tickets where the
+      // manifest under test says they are, not where the default one did.
       fs.writeFileSync(path.join(dir, 'team.json'), JSON.stringify(manifest));
       writeTickets(dir, [ticket('t1')]);
       const res = await host.dispatch('tickets-viewer', 'board', ['bad'], 'desktop');
@@ -258,14 +285,17 @@ test('tickets-viewer: a team.json core would REJECT is warned about, not rendere
       assert.match(list.teams.find((t) => t.team === 'bad').warning, re);
     }
 
-    // A team.json that is not JSON at all: same treatment, not a board failure.
+    // A team.json that is not JSON at all is now a board FAILURE, not a warning
+    // beside a readable board — the board moved to the project, so team.json's
+    // `root` is the only thing that locates it and an unparseable one locates
+    // nothing. Rendering an empty board here would be the false green this
+    // plugin exists to avoid: the tickets are not gone, they are unfindable.
     const dir = mkTeam(teams, 'bad');
     fs.writeFileSync(path.join(dir, 'team.json'), '{ nope');
-    writeTickets(dir, [ticket('t1')]);
     const res = await host.dispatch('tickets-viewer', 'board', ['bad'], 'desktop');
-    assert.equal(res.ok, true);
-    assert.match(res.warning, /not valid JSON/);
-    assert.equal(res.stallMs, DEFAULT_STALL_MS, 'an unusable manifest still gets core\'s default threshold');
+    assert.equal(res.ok, false, 'a team whose manifest names no root has no locatable board');
+    assert.match(res.error, /names no project root/);
+    assert.match(res.warning, /not valid JSON/, 'and the row still says WHY the manifest is unusable');
 
     // The accept half, which is what catches a warning that fires on everything.
     const okDir = mkTeam(teams, 'good', { root: '/tmp', lead: 'lead', roles: { lead: {} } });
@@ -689,15 +719,19 @@ test('tickets-viewer: reading a board writes NOTHING to disk', async () => {
   try {
     const dir = mkTeam(teams, 'alpha');
     writeTickets(dir, [ticket('t1')]);
-    const file = path.join(dir, 'tickets.json');
+    // The PROJECT board is the file a write would land in now, so that is the
+    // directory this has to watch — watching the team dir would keep passing
+    // while the reader scribbled all over the board.
+    const file = boardFile(dir);
+    const boardDir = path.dirname(file);
     const before = fs.readFileSync(file, 'utf8');
-    const beforeEntries = fs.readdirSync(dir).sort();
+    const beforeEntries = fs.readdirSync(boardDir).sort();
 
     await host.dispatch('tickets-viewer', 'teams', [], 'desktop');
     await host.dispatch('tickets-viewer', 'board', ['alpha'], 'desktop');
 
     assert.equal(fs.readFileSync(file, 'utf8'), before, 'the registry is byte-identical after a read');
-    assert.deepEqual(fs.readdirSync(dir).sort(), beforeEntries, 'no file was created beside it');
+    assert.deepEqual(fs.readdirSync(boardDir).sort(), beforeEntries, 'no file was created beside it');
     assert.deepEqual(removals, [], 'the library seam is never touched');
   } finally { cleanup(); }
 });

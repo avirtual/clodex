@@ -4,8 +4,8 @@
 'use strict';
 
 const path = require('path');
-const os = require('os');
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
+const { defaultClodexHome } = require('./clodex-paths');
 
 const TEAM_FILE = 'team.json';
 const ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
@@ -60,10 +60,6 @@ const STOCK_ROLE_DEFS = {
   hand: { prompt: 'clodex-team-hand', brief: 'implementer; executes a spec to done, one distilled report per task.' },
   reviewer: { prompt: 'clodex-team-reviewer', brief: 'reviewer; an independent verification pass, invoked on demand.' },
 };
-
-function defaultClodexHome() {
-  return process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex');
-}
 
 // A field may live here only if exactly one resolver consumes it and every spawn
 // path reaches that resolver. Five fields failed that test and were cut:

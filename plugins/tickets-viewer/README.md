@@ -57,6 +57,12 @@ render differently, always — the second says what failed, in red. The same
 holds for the teams list itself: no `~/.clodex/teams` directory means "no teams
 yet", while a directory that exists and cannot be read is an error.
 
+The board itself is the PROJECT's, not the team's:
+`~/.clodex/projects/<leaf>-<hash8>/tickets.json`, located through the `root` in
+the team's `team.json`. A manifest that names no usable root is therefore a read
+FAILURE here rather than an empty board — with no project there is nowhere the
+tickets could be, and "no tickets" would be a false green.
+
 This is why the plugin reads `tickets.json` itself rather than through core's
 `tickets-store.load()`. That loader answers `[]` for a missing file, an
 unreadable one, invalid JSON and a non-array alike, which is correct for a

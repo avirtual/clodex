@@ -24,7 +24,6 @@ const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { createTicketsStore } = require('../tickets-store');
 
-const tstore = createTicketsStore();
 const CWD = os.tmpdir();
 
 // One durable world (team dir + persistence) that several managers open in turn.
@@ -32,10 +31,15 @@ const CWD = os.tmpdir();
 // making it per-manager would hand the fix a discriminator the real system does
 // not have.
 function mkWorld() {
-  const teamDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-tr-team-'));
+  // The clodex HOME is part of the durable world, not of a boot: the board lives
+  // under it (projects/<leaf>-<hash8>/tickets.json), so minting a fresh one per
+  // manager would hand every "second process" test an empty board and the replay
+  // it exists to prove would look correct while testing nothing.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-tr-home-'));
+  const tstore = createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,
-    file: path.join(teamDir, 'team.json'),
+    file: path.join(home, 'teams', 'team', 'team.json'),
     roles: {
       lead: { instantiate: 'session', brief: 'the lead' },
       hand: { instantiate: 'session', brief: 'the hand' },
@@ -50,7 +54,7 @@ function mkWorld() {
     setSessionId: () => {}, setStripLevel: () => {}, setLabel: () => {},
     setArchived: () => {}, setRosterSent: () => {},
   };
-  return { teamDir, team, persistence, tickets: () => tstore.load(teamDir) };
+  return { home, tstore, team, persistence, tickets: () => tstore.load(team.root) };
 }
 
 // A manager = one app process. `boot()` returns a fresh one over the same world.
@@ -66,7 +70,11 @@ function boot(world, opts = {}) {
   const keepFrom = new Map();
   let pending = null;                // the name create() is currently spawning
   const SessionManager = createSessionManager({
-    REGISTRY_DIR: root,
+    // The WORLD's home, not this boot's `root`: the board resolves under
+    // REGISTRY_DIR, and a per-boot one would give each "second process" a board
+    // with no tickets on it — every replay assertion below would then be checking
+    // that nothing is delivered from nothing.
+    REGISTRY_DIR: world.home,
     fs, path, pathFor, runDirFor,
     PENDING_DIR: path.join(root, 'pending'),
     MSG_DIR: path.join(root, 'messages'),
@@ -330,7 +338,7 @@ test('a closed ticket is never replayed', async () => {
   await assigned(world);
   const tickets = world.tickets();
   tickets.find((t) => t.id === 't1').state = 'done';
-  tstore.save(world.teamDir, tickets);
+  world.tstore.save(world.team.root, tickets);
 
   const app2 = boot(world);
   try {
@@ -347,7 +355,7 @@ test('a cancelled ticket is never replayed', async () => {
   await assigned(world);
   const tickets = world.tickets();
   tickets.find((t) => t.id === 't1').state = 'cancelled';
-  tstore.save(world.teamDir, tickets);
+  world.tstore.save(world.team.root, tickets);
 
   const app2 = boot(world);
   try {
@@ -776,7 +784,7 @@ test('a ticket with no spec is skipped rather than delivered empty', async () =>
   await assigned(world);
   const tickets = world.tickets();
   delete tickets.find((t) => t.id === 't1').spec;
-  tstore.save(world.teamDir, tickets);
+  world.tstore.save(world.team.root, tickets);
   // Compared rather than asserted null: the assigning process replays to itself
   // here (its own fallback fires immediately at INJECT_BOOT_MAXWAIT 0), so a stamp
   // already exists. What must hold is that THIS incarnation adds nothing.

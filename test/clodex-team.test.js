@@ -29,7 +29,8 @@ const os = require('os');
 const path = require('path');
 const cp = require('child_process');
 
-const { parseAndValidate } = require('../exec-schema');
+const { parseAndValidate } = require("../exec-schema");
+const { createTicketsStore } = require("../tickets-store");
 const { createSessionManager } = require('../session-manager');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'clodex-team.js');
@@ -316,17 +317,22 @@ function listingFacts(text) {
   return facts;
 }
 
-function mkTicketRegistry(home, teamName, tickets) {
-  fs.writeFileSync(path.join(home, 'teams', teamName, 'tickets.json'), JSON.stringify(tickets));
+// The board is the PROJECT's now, so the fixture writes it where BOTH readers
+// look: <home>/projects/<leaf>-<hash8>/tickets.json. Written through the store
+// rather than by hand, so a fixture can never disagree with the path grammar the
+// two implementations under parity both resolve through.
+function mkTicketRegistry(home, projectRoot, tickets) {
+  createTicketsStore({ clodexHome: home }).save(projectRoot, tickets);
 }
 
 // The intent-path rendering of the same registry, driven directly: _taskList
-// reads nothing off `session` and takes teamDir as an argument, so it needs no
-// PTY and no team resolution.
-function intentListing(teamDir, teamName, filter) {
-  const SM = createSessionManager({ fs, path });
+// reads nothing off `session`, so it needs no PTY and no team resolution — but it
+// now reads the board off `team.root` under the manager's REGISTRY_DIR, so both
+// have to be the fixture's.
+function intentListing(home, projectRoot, teamName, filter) {
+  const SM = createSessionManager({ fs, path, REGISTRY_DIR: home });
   let out = '';
-  new SM()._taskList({ name: 'lead' }, { name: teamName, lead: 'lead' }, teamDir,
+  new SM()._taskList({ name: 'lead' }, { name: teamName, root: projectRoot, lead: 'lead' },
     { filter }, (s) => { out = s; });
   return out;
 }
@@ -367,13 +373,12 @@ test('listing parity: the two implementations RENDER the same board (t100 — no
   mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, hand: {} } });
   reg(home, 'alead', proj);
   const rows = parityBoard();
-  mkTicketRegistry(home, 'proj', rows);
-  const teamDir = path.join(home, 'teams', 'proj');
+  mkTicketRegistry(home, proj, rows);
 
   const r = await launch(home, { action: 'tickets', agent: 'alead' });
   assert.strictEqual(r.code, 0, `tickets exits 0: ${r.err}`);
   const theirs = listingFacts(r.err);
-  const mine = listingFacts(intentListing(teamDir, 'proj', null));
+  const mine = listingFacts(intentListing(home, proj, "proj", null));
 
   // ENTER: the fixture must actually reach the interesting branches, or this
   // test would pass on two implementations that both render nothing.
@@ -415,13 +420,12 @@ test('listing parity: holds on each explicit filter too', async () => {
   const proj = path.join(home, 'proj');
   mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {} } });
   reg(home, 'alead', proj);
-  mkTicketRegistry(home, 'proj', parityBoard());
-  const teamDir = path.join(home, 'teams', 'proj');
+  mkTicketRegistry(home, proj, parityBoard());
 
   for (const filter of ['done', 'cancelled', 'all']) {
     const r = await launch(home, { action: 'tickets', agent: 'alead', filter });
     assert.strictEqual(r.code, 0, `${filter}: exits 0: ${r.err}`);
-    const mine = listingFacts(intentListing(teamDir, 'proj', filter));
+    const mine = listingFacts(intentListing(home, proj, "proj", filter));
     assert.ok(mine.length, `ENTER: ${filter} renders something`);
     // The chosen-slice rule is half of what parity means here: neither side may
     // grow a recent section or a count tail on an explicit filter.
@@ -441,7 +445,7 @@ test('tickets: the stale-host notice does not displace the tail as the delivered
   mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {} } });
   reg(home, 'alead', proj);
   const now = Date.now();
-  mkTicketRegistry(home, 'proj', [
+  mkTicketRegistry(home, proj, [
     { id: 't1', title: 'open one', assignee: 'hand', state: 'open', openedAt: now - 40 * HOUR, closedAt: null },
     { id: 't2', title: 'shipped', assignee: 'hand', state: 'done', openedAt: now - 40 * HOUR, closedAt: now - HOUR },
   ]);
@@ -472,11 +476,11 @@ test('listing parity: holds on a board with nothing open', async () => {
   // The no-open branch is a SEPARATE reply path in both files — the one place
   // the two could most easily drift, since each writes its own sentence there.
   const now = Date.now();
-  mkTicketRegistry(home, 'proj', [
+  mkTicketRegistry(home, proj, [
     { id: 't1', title: 'shipped', assignee: 'hand', state: 'done', openedAt: now - 40 * HOUR, closedAt: now - HOUR },
     { id: 't2', title: 'dropped', assignee: 'hand', state: 'cancelled', openedAt: now - 40 * HOUR, closedAt: now - HOUR },
   ]);
-  const mine = listingFacts(intentListing(path.join(home, 'teams', 'proj'), 'proj', null));
+  const mine = listingFacts(intentListing(home, proj, "proj", null));
   assert.ok(mine.includes('NO-OPEN'), 'ENTER: the no-open branch is the one under test');
   assert.ok(mine.includes('SECTION'), 'ENTER: and it still carries the recent section');
   const r = await launch(home, { action: 'tickets', agent: 'alead' });

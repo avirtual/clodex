@@ -7,6 +7,15 @@ const net = require('net');
 const path = require('path');
 const os = require('os');
 
+// The board is the PROJECT's, and clodex-paths is the one authority on where a
+// project's dir is. Required rather than re-joined: this is a standalone process
+// with no access to the store's module graph, but the path grammar itself is a
+// pure leaf (path/os/crypto only) and both files ship — package.json's "files"
+// carries `*.js` and this script by name. A second copy of the <leaf>-<hash8>
+// join here would drift from the one every writer uses, and the symptom would be
+// an empty board, not an error.
+const { projectDirFor } = require('../clodex-paths');
+
 const CLODEX_HOME = process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex');
 const TEAMS_DIR = path.join(CLODEX_HOME, 'teams');
 
@@ -255,7 +264,7 @@ function doTickets(payload) {
   }
   let tickets = [];
   try {
-    const arr = JSON.parse(fs.readFileSync(path.join(TEAMS_DIR, team.name, 'tickets.json'), 'utf-8'));
+    const arr = JSON.parse(fs.readFileSync(path.join(projectDirFor(CLODEX_HOME, team.root), 'tickets.json'), 'utf-8'));
     if (Array.isArray(arr)) tickets = arr;
   } catch { /* no registry yet — empty */ }
   if (!tickets.length) say(`team ${team.name}: no tickets`);
