@@ -5595,6 +5595,39 @@ function createSessionManager(deps) {
       reply((isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`) + nextSuffix);
     }
 
+    // Which seat's ledger a closing ticket's cost belongs to.
+    //
+    // NOT `_ticketAssigneeSeat`: that resolves a role to the FIRST live seat
+    // holding it in sessions-map order, which on a team with three live hands
+    // (the normal case) picks a seat at random and stamps the result as
+    // measured. A guessed seat is worse than none — it publishes a foreign
+    // lifetime ledger and a foreign wireLabel under this ticket's id, and
+    // nothing downstream can tell it from a measurement.
+    //
+    // `closedBy` is evidence only when the closer HOLDS the ticket's role.
+    // Preferring it unconditionally is the trap: `_taskCancel` is lead-only and
+    // the lead can also close a `task done` for a seat that no longer can, so
+    // closedBy is frequently the LEAD, whose record is the largest ledger in the
+    // system. That trades a foreign hand's spend for the lead's whole life.
+    //
+    // Everything else is UNKNOWN, on purpose. A declared unknown costs one
+    // ticket's row in a rollup; a confident wrong number poisons every rollup
+    // that sums it.
+    _costSeatFor(team, ticket) {
+      const at = (name, attribution) => {
+        const entry = (name && getPersistence().get(name)) || null;
+        return entry ? { seatName: name, entry, attribution }
+          : { seatName: null, entry: null, attribution: 'unknown' };
+      };
+      const assignee = ticket && ticket.assignee;
+      if (!assignee) return { seatName: null, entry: null, attribution: 'unknown' };
+      const isRole = !!(team.roles && Object.prototype.hasOwnProperty.call(team.roles, assignee));
+      if (!isRole) return at(assignee, 'seat');
+      const closedBy = ticket.closedBy;
+      if (closedBy && matchSeatRole(team, closedBy) === assignee) return at(closedBy, 'role-closer');
+      return { seatName: null, entry: null, attribution: 'unknown' };
+    }
+
     // COST.json — the per-ticket rollup (DESIGN.md §7.1), written at close.
     //
     // Deferred and fully best-effort: the commit count shells out to git, and a
@@ -5630,12 +5663,7 @@ function createSessionManager(deps) {
       if (!taskDir) return;
       setImmediate(async () => {
         try {
-          // A ticket assigned to a ROLE keeps `assignee: 'hand'`, and nothing is
-          // stored under a role name — only the worktree-seat path re-pins the
-          // assignee to a seat. Resolving through the role gives the seat that
-          // actually spent; failing to resolve makes the ledger UNKNOWN, not zero.
-          const seatName = this._ticketAssigneeSeat(team, ticket) || ticket.assignee;
-          const entry = (seatName && getPersistence().get(seatName)) || null;
+          const { seatName, entry, attribution } = this._costSeatFor(team, ticket);
           const seatResolved = !!entry;
           const sessionIds = entrySessionIds(entry);
           let totals = null;
@@ -5645,7 +5673,11 @@ function createSessionManager(deps) {
           const ledger = teamCost.sumSessions(totals, sessionIds);
           ledger.ids = sessionIds;
 
-          const wt = (entry && entry.worktree) || ticket.worktree || null;
+          // The record's worktree counts ONLY for an exactly-pinned seat. On an
+          // inferred one it is that seat's CURRENT tree — whatever ticket it
+          // moved on to — so taking it reports `worktreeMinted: true` with a
+          // commit count computed on another ticket's branch.
+          const wt = (attribution === 'seat' && entry && entry.worktree) || ticket.worktree || null;
           let commits = null;
           let commitsBase = null;
           if (wt && wt.branch) {
@@ -5680,7 +5712,7 @@ function createSessionManager(deps) {
             // could not be joined back to the spend it is reporting.
             ticket: { ...ticket, assignee: seatName || null, wireLabel: (entry && entry.wireLabel) || null },
             team: team.name, ledger, worktree: wt, commits, commitsBase,
-            orphans, seatResolved,
+            orphans, seatResolved, attribution,
           });
           ensureDir(taskDir);
           fs.writeFileSync(path.join(taskDir, teamCost.COST_FILE), JSON.stringify(rec, null, 2));

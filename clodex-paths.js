@@ -148,8 +148,13 @@ function runDirFor(root, name) {
 // The leaf is for a human browsing ~/.clodex/projects; the hash is what makes
 // it correct. Bare leaves collide silently — every second checkout is named
 // `api`, `web`, or `cli`, and two of them sharing an artifact dir is a failure
-// with no symptom. Hash the REALPATH so a symlinked checkout resolves to the
-// same dir as the thing it points at.
+// with no symptom.
+//
+// The hash is over the RESOLVED path, not the realpath: a symlinked checkout
+// therefore gets a different artifact dir from its target. Deliberate — every
+// project dir on disk was minted under this hashing, and switching to realpath
+// would silently relocate all of them, orphaning artifacts nobody asked to
+// move. Do not "fix" it without a migration.
 function projectDirFor(root, projectPath) {
   const real = path.resolve(projectPath);
   const hash = crypto.createHash('sha256').update(real).digest('hex').slice(0, 8);

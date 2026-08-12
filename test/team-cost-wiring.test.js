@@ -243,47 +243,164 @@ for (const [shape, taskDirOf] of [
   });
 }
 
-test('a ROLE-assigned ticket reports an unknown cost, never an authoritative $0', async () => {
-  // Only the worktree-seat path re-pins `assignee` to a seat name; a ticket
-  // assigned to a plain role keeps assignee:'hand', and nothing is stored under
-  // a role name. Resolved through the role it finds the seat; unresolvable, the
-  // record must say so rather than report a measured zero.
+// A ticket assigned to a ROLE keeps `assignee: 'hand'`, and nothing is stored
+// under a role name — only the worktree-seat path re-pins the assignee to a
+// seat. The obvious resolution, scanning live seats for one holding the role,
+// returns whichever seat the sessions map yields FIRST: on a team with three
+// live hands (the normal case, not an edge) that is a coin flip, and the
+// artifact stamped it `seatResolved: true`. A guessed seat is strictly worse
+// than no seat — it publishes a foreign lifetime ledger, a foreign wireLabel,
+// and through the record's own `worktree` a foreign BRANCH's commit count, none
+// of which anything downstream can tell from a measurement.
+//
+// So the resolution is ordered and NARROW, and the mode is recorded:
+//   'seat'        — assignee names a persistence record. Exact.
+//   'role-closer' — assignee is a role and the closer holds that role.
+//   'unknown'     — everything else. No guessed seat, null ledger.
+const ROLE_LEDGER = {
+  version: 1,
+  sessions: {
+    'sess-hand-1': { cost: 11, requests: 1, turns: 1, refusals: 0, inputTokens: 11, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    'sess-hand-2': { cost: 22, requests: 2, turns: 2, refusals: 0, inputTokens: 22, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    'sess-lead': { cost: 9999, requests: 9, turns: 9, refusals: 0, inputTokens: 99, outputTokens: 9, cacheReadTokens: 0, cacheWriteTokens: 0 },
+  },
+};
+
+// Three live hands and a lead, which is what this repo's own team looks like.
+const ROLE_SEATS = [
+  { name: 'team-hand-1', sessionId: 'sess-hand-1', wireLabel: 'team.t99.hand' },
+  { name: 'team-hand-2', sessionId: 'sess-hand-2', wireLabel: 'team.t50.hand' },
+  { name: 'team-hand-3' },
+  { name: 'team-lead', sessionId: 'sess-lead' },
+];
+
+function mkRoleRig(seats = ROLE_SEATS, gitWorktree = undefined) {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ud-'));
-  fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify(LEDGER));
+  fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify(ROLE_LEDGER));
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-repo-'));
   const { home, registryDir } = mkHome();
-  const projDir = projectDirFor(registryDir, repo);
-  const persistence = mkPersistence([{ name: 'team-hand-7', sessionId: 's1', wireLabel: 'team.t7.hand' }]);
-  const team = { name: 'team', root: repo, roles: { hand: {} } };
+  const persistence = mkPersistence(seats);
+  const { m } = mkManager({ persistence, userData, home, registryDir, gitWorktree });
+  m._teamLiveSeatNames = () => seats.map((s) => s.name);
+  return {
+    m,
+    team: { name: 'team', root: repo, lead: 'team-lead', roles: { lead: {}, hand: {} } },
+    read: (taskName) => JSON.parse(fs.readFileSync(
+      path.join(projectDirFor(registryDir, repo), 'tasks', taskName, 'COST.json'), 'utf8')),
+    cleanup: () => { for (const d of [userData, repo, home]) fs.rmSync(d, { recursive: true, force: true }); },
+  };
+}
 
-  const { m } = mkManager({ persistence, userData, home, registryDir });
-  m._teamLiveSeatNames = () => ['team-hand-7'];
-  m._writeTicketCost(team, {
-    id: 't10', role: 'hand', assignee: 'hand', state: 'done',
-    taskDir: 'tasks/role-assigned', openedAt: 1, closedAt: 2,
+test('a role ticket does not bill whichever seat holds the role first', async () => {
+  const rig = mkRoleRig();
+  rig.m._writeTicketCost(rig.team, {
+    id: 't20', role: 'hand', assignee: 'hand', state: 'done',
+    taskDir: 'tasks/role-many-seats', openedAt: 1, closedAt: 2,
   });
   await settle();
-  const found = JSON.parse(fs.readFileSync(path.join(projDir, 'tasks', 'role-assigned', 'COST.json'), 'utf8'));
-  assert.strictEqual(found.sessions.seatResolved, true, 'the role must resolve to its live seat');
-  assert.strictEqual(found.seat, 'team-hand-7', 'and the artifact names the SEAT, not the role');
-  assert.strictEqual(found.usd, 3.5, "and carries that seat's spend");
+  const rec = rig.read('role-many-seats');
+  // ENTER: the artifact was written at all. Every assertion below is an
+  // absence, and all of them are vacuously true of a file that never landed.
+  assert.strictEqual(rec.ticket, 't20');
+  assert.deepStrictEqual(
+    [rec.sessions.attribution, rec.sessions.seatResolved, rec.seat, rec.wireLabel, rec.usd],
+    ['unknown', false, null, null, null],
+    'three live hands is a coin flip: name no seat and measure nothing');
+  rig.cleanup();
+});
 
-  // Nobody live in the role: unknown, not zero.
-  const { m: m2 } = mkManager({ persistence: mkPersistence(), userData, home, registryDir });
-  m2._teamLiveSeatNames = () => [];
-  m2._writeTicketCost(team, {
-    id: 't11', role: 'hand', assignee: 'hand', state: 'done',
+test('a role ticket closed BY THE LEAD is unknown, not the lead\'s lifetime spend', async () => {
+  // The rejected fix was "prefer ticket.closedBy". `_taskCancel` is lead-only,
+  // and the lead can also close a `task done` on behalf of a seat that no longer
+  // can — so closedBy is frequently the lead, whose record is the largest ledger
+  // in the system. Taking it verbatim swaps a hand's spend for the lead's whole
+  // life. closedBy counts only when the closer HOLDS the ticket's role.
+  const rig = mkRoleRig();
+  rig.m._writeTicketCost(rig.team, {
+    id: 't21', role: 'hand', assignee: 'hand', state: 'done', closedBy: 'team-lead',
+    taskDir: 'tasks/role-closed-by-lead', openedAt: 1, closedAt: 2,
+  });
+  await settle();
+  const rec = rig.read('role-closed-by-lead');
+  assert.strictEqual(rec.ticket, 't21');   // ENTER, as above
+  assert.deepStrictEqual([rec.sessions.attribution, rec.seat, rec.usd], ['unknown', null, null]);
+  assert.notStrictEqual(rec.usd, 9999, "the lead's lifetime ledger is not this ticket's cost");
+  rig.cleanup();
+});
+
+test('a role ticket inherits no worktree from a seat that is working another ticket', async () => {
+  // The worktree is gated INDEPENDENTLY of the ledger: it comes from the
+  // persistence record, so a guessed seat mid-way through some other ticket
+  // reports worktreeMinted:true and a commit count taken on that other branch.
+  // A role ticket that never had a tree must read exactly as it did before this
+  // change — not minted.
+  const seats = ROLE_SEATS.map((s) => (s.name === 'team-hand-1'
+    ? { ...s, worktree: { path: '/tmp/wt-t99', branch: 't99', baseSha: 'ba5e' } } : s));
+  const rig = mkRoleRig(seats, {
+    listWorktrees: async () => ({ ok: true, repo: '/proj', worktrees: [] }),
+    commitsOnBranch: async () => ({ ok: true, count: 7, base: 'ba5e' }),
+  });
+  rig.m._writeTicketCost(rig.team, {
+    id: 't22', role: 'hand', assignee: 'hand', state: 'done',
+    taskDir: 'tasks/role-foreign-tree', openedAt: 1, closedAt: 2,
+  });
+  await settle();
+  const rec = rig.read('role-foreign-tree');
+  assert.strictEqual(rec.ticket, 't22');   // ENTER, as above
+  assert.deepStrictEqual(
+    [rec.waste.worktreeMinted, rec.waste.commits, rec.waste.zeroCommit, rec.waste.commitsBase],
+    [false, null, null, null],
+    "another ticket's checkout is not this ticket's waste");
+  rig.cleanup();
+});
+
+test('a role ticket closed by a seat holding that role bills THAT seat', async () => {
+  // The one case where closedBy is evidence: the closer holds the ticket's role,
+  // so it is a hand reporting its own work. `team-hand-1` is live first, so a
+  // first-live-seat scan would answer 11 here.
+  const rig = mkRoleRig();
+  rig.m._writeTicketCost(rig.team, {
+    id: 't23', role: 'hand', assignee: 'hand', state: 'done', closedBy: 'team-hand-2',
+    taskDir: 'tasks/role-closer', openedAt: 1, closedAt: 2,
+  });
+  await settle();
+  const rec = rig.read('role-closer');
+  assert.deepStrictEqual(
+    [rec.sessions.attribution, rec.sessions.seatResolved, rec.seat, rec.wireLabel, rec.usd],
+    ['role-closer', true, 'team-hand-2', 'team.t50.hand', 22]);
+  rig.cleanup();
+});
+
+test('a seat-pinned ticket is billed exactly, and an unstaffed role measures nothing', async () => {
+  // The exact case — the worktree flow re-pinned `assignee` to a seat name.
+  // Also the control for the tests above: they assert absences, and a resolver
+  // that resolved NOTHING would satisfy all of them.
+  const rig = mkRoleRig();
+  rig.m._writeTicketCost(rig.team, {
+    id: 't24', role: 'hand', assignee: 'team-hand-1', state: 'done', closedBy: 'team-lead',
+    taskDir: 'tasks/seat-pinned', openedAt: 1, closedAt: 2,
+  });
+  await settle();
+  const rec = rig.read('seat-pinned');
+  assert.deepStrictEqual(
+    [rec.sessions.attribution, rec.sessions.seatResolved, rec.seat, rec.usd],
+    ['seat', true, 'team-hand-1', 11],
+    'a pinned seat is exact, and closedBy does not override it');
+
+  // Nobody live in the role and no closer: unknown, not zero.
+  const bare = mkRoleRig([]);
+  bare.m._writeTicketCost(bare.team, {
+    id: 't25', role: 'hand', assignee: 'hand', state: 'done',
     taskDir: 'tasks/role-unstaffed', openedAt: 1, closedAt: 2,
   });
   await settle();
-  const miss = JSON.parse(fs.readFileSync(path.join(projDir, 'tasks', 'role-unstaffed', 'COST.json'), 'utf8'));
+  const miss = bare.read('role-unstaffed');
   assert.strictEqual(miss.sessions.seatResolved, false);
   assert.strictEqual(miss.usd, null, 'a seat that could not be found spent an UNKNOWN amount');
   assert.strictEqual(miss.tokens.input, null);
 
-  fs.rmSync(userData, { recursive: true, force: true });
-  fs.rmSync(repo, { recursive: true, force: true });
-  fs.rmSync(home, { recursive: true, force: true });
+  rig.cleanup();
+  bare.cleanup();
 });
 
 test('a taskDir that escapes the projects root writes nothing at all', async () => {

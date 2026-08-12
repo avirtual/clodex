@@ -241,7 +241,7 @@ async function listWorktrees(cwd) {
 // exactly what the counter grades, so a caller must not read falsy as unknown.
 // Unknown is `ok:false` / a null count.
 //
-// The base is NEVER the repo's live HEAD, which is what makes this readable at
+// The base is never the raw `HEAD` ref, which is what makes this readable at
 // all. `HEAD` is whatever branch the main checkout happens to sit on when the
 // ticket closes, and it flips the answer BOTH ways: a branch already merged
 // into HEAD counts 0 (the counter accuses the tickets that shipped), and a HEAD
@@ -249,6 +249,11 @@ async function listWorktrees(cwd) {
 // fork as work (the leak detector reports clean). So: the mint-time SHA when the
 // record carries one, else the merge base against the repo's default branch,
 // else unknown. `base` in the result names which was used.
+//
+// The merge-base path is only as stable as `defaultBranch()`, whose last resort
+// IS the current branch of the main checkout — so a repo with no origin/HEAD and
+// no main/master degrades to exactly the moving base described above. The
+// recorded `base` is what makes that case auditable rather than silent.
 async function commitsOnBranch(cwd, branch, base = null) {
   const repo = await repoToplevel(cwd);
   if (!repo || !branch) return { ok: false, count: null, error: 'no repo or branch' };

@@ -164,6 +164,7 @@ test('costRecord: the whole artifact shape, for a ticket that did work', () => {
     commits: 3,
     commitsBase: 'abc1234',
     orphans: { orphaned: 0, unclaimedNonMain: 2, claimedByArchived: 1 },
+    attribution: 'seat',
   });
   // The WHOLE object: this is the artifact's schema, and a field that silently
   // stops being written is exactly the failure a field-pick assertion misses.
@@ -172,7 +173,7 @@ test('costRecord: the whole artifact shape, for a ticket that did work', () => {
     ticket: 't293', team: 'clodex', role: 'hand', seat: 'clodex-hand-293',
     wireLabel: 'clodex.t293.hand', state: 'done',
     openedAt: 1000, closedAt: 61000, wallMs: 60000,
-    sessions: { ids: ['s1'], known: 1, total: 1, tokensKnown: 1, seatResolved: true },
+    sessions: { ids: ['s1'], known: 1, total: 1, tokensKnown: 1, seatResolved: true, attribution: 'seat' },
     tokens: { input: 1000, output: 300, cacheRead: 9000, cacheWrite: 0, cachedFraction: 0.9 },
     usd: 2.5, requests: 20, turns: 6, refusals: 0,
     waste: {
@@ -195,6 +196,10 @@ test('costRecord: an unresolved seat measures NOTHING — never an authoritative
     seatResolved: false,
   });
   assert.strictEqual(rec.sessions.seatResolved, false, 'the artifact must SAY the seat was not found');
+  // And WHICH resolution produced it, so a rollup can separate an exact seat
+  // attribution from one inferred off the closer — the two are not equally
+  // trustworthy and a consumer that cannot tell them apart averages them.
+  assert.strictEqual(rec.sessions.attribution, 'unknown');
   assert.deepStrictEqual(
     [rec.usd, rec.requests, rec.turns, rec.refusals],
     [null, null, null, null],
@@ -354,6 +359,20 @@ test('resolveTaskDir drops a file-shaped tail — a lead names the SPEC, not the
   // A deeper spec path keeps its intermediate dirs, losing only the file.
   assert.strictEqual(tc.resolveTaskDir({ taskDir: 'tasks/audit/specs/P4.md', ...RESOLVE_ENV }),
     '/home/u/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/audit/specs');
+  // ...and ONLY for the extensions a lead actually writes. Any-alnum-tail
+  // silently eats a level off legitimate deep dirs — `round.2` and `phase.a`
+  // are directories, not files, and dropping them writes the artifact one
+  // level up where nothing looks for it.
+  for (const dir of ['tasks/audit/round.2', 'tasks/audit/phase.a', 'tasks/audit/v2.beta']) {
+    assert.strictEqual(tc.resolveTaskDir({ taskDir: dir, ...RESOLVE_ENV }),
+      `/home/u/.clodex/projects/wb-wrap-ui-5bc8ce0a/${dir}`,
+      `${dir} is a directory whose name has a dot, not a file`);
+  }
+  for (const ext of ['md', 'json', 'txt', 'log', 'patch', 'diff']) {
+    assert.strictEqual(tc.resolveTaskDir({ taskDir: `tasks/audit/SPEC.${ext}`, ...RESOLVE_ENV }),
+      '/home/u/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/audit',
+      `.${ext} is a spec file the lead named instead of the dir`);
+  }
 });
 
 test('resolveTaskDir refuses to escape the projects root — taskDir is agent-written', () => {

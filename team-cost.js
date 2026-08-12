@@ -109,7 +109,13 @@ function resolveTaskDir({ taskDir, projectDir, projectsRoot, homedir }) {
 // segment is dropped. Only when something remains under `tasks/`: a task dir
 // legitimately named `foo.bar` at the top level is kept, because guessing wrong
 // there would place the artifact outside the task's dir entirely.
-const FILE_TAIL_RE = /\.[A-Za-z0-9]{1,8}$/;
+//
+// The extension list is CLOSED, not "any short alnum tail": a dir named
+// `round.2` or `v2.beta` is a directory, and eating its last level writes the
+// artifact one level up where nothing looks for it. Only what a lead actually
+// names a spec with. Widen it by adding an extension, never by loosening it
+// back to a charset.
+const FILE_TAIL_RE = /\.(?:md|json|txt|log|patch|diff)$/i;
 function stripFileTail(p) {
   const parts = p.split(path.sep);
   const i = parts.lastIndexOf('tasks');
@@ -202,9 +208,16 @@ const COST_VERSION = 1;
 // otherwise reads as "complete, nothing spent", and a ticket that burned real
 // money would be indistinguishable from a free one. That false zero is the
 // class this whole artifact exists to prevent.
+//
+// `attribution` carries HOW the seat was found, because the resolutions are not
+// equally trustworthy and a consumer that cannot separate them averages an
+// exact number with an inferred one:
+//   'seat'        — the ticket named a persistence record. Exact.
+//   'role-closer' — the ticket named a role and the closer held that role.
+//   'unknown'     — no seat; the ledger fields are null.
 function costRecord({
   ticket, team, ledger, worktree = null, commits = null, commitsBase = null,
-  orphans = null, seatResolved = true, now = Date.now(),
+  orphans = null, seatResolved = true, attribution = null, now = Date.now(),
 }) {
   const t = ticket || {};
   const openedAt = num(t.openedAt) || null;
@@ -226,6 +239,7 @@ function costRecord({
     sessions: {
       ids: l.ids || [], known: l.known, total: l.total,
       tokensKnown: num(l.tokensKnown), seatResolved: !!seatResolved,
+      attribution: attribution || (seatResolved ? 'seat' : 'unknown'),
     },
     tokens: {
       input: measured(l.inputTokens),
