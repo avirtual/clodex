@@ -62,6 +62,10 @@ function lastToolFrom(text) {
     if (!s || s[0] !== '{') continue;
     let d = null;
     try { d = JSON.parse(s); } catch { continue; }
+    // Subagent turns are a DIFFERENT actor's tool calls. Counting them names the
+    // subagent's tool as the seat's own — matching transcript.js, which skips
+    // them for the same reason.
+    if (d && d.isSidechain) continue;
     const content = d && d.message && d.message.content;
     if (!Array.isArray(content)) continue;
     for (const b of content) {

@@ -61,6 +61,31 @@ test('a truncated leading line is skipped, not fatal', () => {
   assert.deepStrictEqual(lastToolFrom(text), { tool: 'Bash', outcome: 'pending' });
 });
 
+test('a subagent`s tool call is not reported as the seat`s own', () => {
+  // isSidechain entries are a DIFFERENT actor's turns. A seat whose last activity
+  // was a Task subagent would otherwise have the subagent's tool named in its
+  // alarm — the alarm's whole value is being literally true about the seat.
+  // transcript.js skips them for the same reason.
+  const text = jsonl(
+    use('Bash', 'p1'),
+    { isSidechain: true, message: { content: [{ type: 'tool_use', name: 'Grep', id: 's1' }] } },
+    { isSidechain: true, message: { content: [{ type: 'tool_result', tool_use_id: 's1', is_error: false }] } },
+  );
+  assert.deepStrictEqual(lastToolFrom(text), { tool: 'Bash', outcome: 'pending' },
+    'the seat`s own unreturned Bash, not the subagent`s completed Grep');
+});
+
+test('a sidechain tool_result cannot close the seat`s own pending call', () => {
+  // The id-collision direction of the same rule: if sidechain results were
+  // collected, one carrying the seat's tool_use_id would flip a wedged `pending`
+  // to a reassuring `ok` — the alarm suppressing itself on another actor's work.
+  const text = jsonl(
+    use('Bash', 'x1'),
+    { isSidechain: true, message: { content: [{ type: 'tool_result', tool_use_id: 'x1', is_error: false }] } },
+  );
+  assert.deepStrictEqual(lastToolFrom(text), { tool: 'Bash', outcome: 'pending' });
+});
+
 test('the LAST tool wins when several completed calls precede it', () => {
   const t = lastToolFrom(jsonl(
     use('Read', 'e1'), result('e1', false),

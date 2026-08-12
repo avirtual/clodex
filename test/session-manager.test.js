@@ -7085,6 +7085,35 @@ test('t322 a stall that keeps stalling speaks again once the quiet has DOUBLED',
   assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 3, 'which lands at 2h — 30m, 1h, 2h');
 });
 
+test('t322 a FIRST alarm is never labelled a repeat, even with a stale nudgedAt', async () => {
+  // `_stampTicketRevival` writes `lastActivityAt` without clearing `nudgedAt` —
+  // the one `lastActivityAt` writer that does not. So a ticket can enter a fresh
+  // stall episode carrying a stamp older than its own last activity. The gate
+  // treats that as "this episode has not spoken yet" and alarms; reading the raw
+  // field for the label then calls that first alarm a repeat.
+  //
+  // It self-heals after one alarm (the next stamp is current), which is why it
+  // needs a pin: the window is one message wide and the message is the lie —
+  // telling the lead it already answered something it never saw.
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const arr = f.load();
+  const quiet = Date.now() - stallMs * 2;
+  arr[0].lastActivityAt = quiet;
+  arr[0].nudgedAt = quiet - 60_000;   // stamped BEFORE the activity: a previous episode's
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+  await f.m._sweepTickets(Date.now());
+
+  const nudges = f.gated.filter((g) => /stalled/.test(g.body));
+  assert.strictEqual(nudges.length, 1, 'ENTER: the stale stamp does not suppress the alarm — it still fires');
+  assert.doesNotMatch(nudges[0].body, /STILL stalled|repeat/,
+    'and it is the first alarm of this episode, so it must not claim to be a repeat');
+});
+
 test('t322 the alarm carries the seat`s last tool, and never dirty on its own', async () => {
   const f = mkTasks();
   const stallMs = 30 * 60 * 1000;

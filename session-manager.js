@@ -7181,7 +7181,16 @@ function createSessionManager(deps) {
         if (prevAge > 0 && (now - last) < prevAge * 2) continue;
         // A repeat, and it must SAY it is one. An unmarked repeat reads as a new
         // stall and invites the lead to re-answer what it already answered.
-        const repeat = t.nudgedAt ? 1 : 0;
+        //
+        // Derived from `prevAge`, NOT from the raw `nudgedAt`: the gate above
+        // treats a stamp predating the episode as "this episode has not spoken
+        // yet" and falls through to alarm, so reading the field directly labels
+        // that FIRST alarm a repeat. `_stampTicketRevival` reaches it — it writes
+        // `lastActivityAt` without clearing `nudgedAt`, unlike every other writer.
+        // The lie self-heals after one alarm, which is exactly why it needs a pin
+        // rather than a comment: telling the lead it already answered something it
+        // never saw is the confidently-wrong field this module exists to prevent.
+        const repeat = prevAge > 0 ? 1 : 0;
         // A ticket already being probed by an overlapping sweep is skipped rather
         // than double-nudged: the git probes below are async, so two sweeps can
         // both pass this gate before either stamps.
