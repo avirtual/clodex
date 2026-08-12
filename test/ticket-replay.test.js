@@ -365,8 +365,10 @@ test('a cancelled ticket is never replayed', async () => {
 test('a ticket assigned to a ROLE replays to the seat filling that role', async () => {
   const world = mkWorld();
   await assigned(world, 'hand');
-  assert.strictEqual(world.tickets().find((t) => t.id === 't1').assignee, 'hand',
-    'ENTER: the role, not the seat name, is what was persisted');
+  // Dispatched to a live seat, so the record carries the delivery-time pin and
+  // the role it was filed under. The replay resolves through both.
+  assert.strictEqual(world.tickets().find((t) => t.id === 't1').role, 'hand',
+    'ENTER: the role it was filed under is what was persisted');
 
   const app2 = boot(world);
   try {
@@ -677,8 +679,8 @@ test('two seats on one role: the spec goes once, to the seat that resolves', asy
   await app1.spawn('team-hand-1');
   await app1.spawn('team-hand-2');
   app1.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
-  assert.strictEqual(world.tickets().find((t) => t.id === 't1').assignee, 'hand',
-    'ENTER: the ROLE is the durable assignee — matching by seat name would not reach this case at all');
+  assert.strictEqual(world.tickets().find((t) => t.id === 't1').role, 'hand',
+    'ENTER: the ROLE is what the ticket was filed under — the case is two seats answering for it');
   await settled(app1, 'team-hand-1');
   app1.stop();
 

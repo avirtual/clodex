@@ -4665,7 +4665,11 @@ test('task add (assigned): mints t1, delivers spec to the assignee seat, confirm
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget\ndetail' });
   const t = f.one('t1');
   assert.ok(t, 'ticket persisted');
-  assert.strictEqual(t.assignee, 'hand', 'role stored as the durable assignee');
+  // Re-pinned at delivery: `role` is what the lead filed it under, `assignee` is
+  // the seat that actually received it, so the close-time cost path reads a seat
+  // instead of inferring one.
+  assert.strictEqual(t.assignee, 'team-hand', 'pinned to the seat that received it');
+  assert.strictEqual(t.role, 'hand', 'the filed role survives the pin');
   assert.strictEqual(t.state, 'open');
   assert.strictEqual(t.title, 'build the widget');
   assert.strictEqual(t.opener, 'lead');
@@ -4730,7 +4734,8 @@ test('task assign: a backlog ticket gets an assignee and the spec is delivered',
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'the spec' });
   f.gated.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'hand', body: '' });
-  assert.strictEqual(f.one('t1').assignee, 'hand');
+  assert.strictEqual(f.one('t1').assignee, 'team-hand', 'pinned to the seat the spec reached');
+  assert.strictEqual(f.one('t1').role, 'hand', 'filed under the role');
   assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] the spec' }]);
   assert.ok(f.injected.some((x) => /ticket t1 → hand/.test(x)));
 });
@@ -4741,7 +4746,8 @@ test('task reassign: TWO deliveries — old-assignee notice ORDERED BEFORE new-a
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   f.gated.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'reviewer', body: '' });
-  assert.strictEqual(f.one('t1').assignee, 'reviewer', 'reassigned to the new role');
+  assert.strictEqual(f.one('t1').assignee, 'team-reviewer-1', 'reassigned, pinned to the new role\'s seat');
+  assert.strictEqual(f.one('t1').role, 'reviewer', 'and filed under the new role');
   assert.strictEqual(f.gated.length, 2, 'exactly two deliveries');
   assert.strictEqual(f.gated[0].target, 'team-hand', 'OLD assignee notice first');
   assert.match(f.gated[0].body, /reassigned/);
@@ -4972,7 +4978,9 @@ test('t92 reassign: the prev → next reply carries the suffix too (its own word
   };
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'reviewer', body: '' });
   const note = f.injected.join('\n');
-  assert.match(note, /ticket t1: hand → reviewer/, 'ENTER: this is the REASSIGN wording, a different reply line from the assign one above');
+  // `prev` is the delivery-time pin now, so the wording reports the seat it is
+  // moving OFF — still the reassign line, still distinct from the assign one.
+  assert.match(note, /ticket t1: team-hand → reviewer/, 'ENTER: this is the REASSIGN wording, a different reply line from the assign one above');
   assert.match(note, /parked/,
     'the reassign branch builds its own reply string, so the suffix has to be pinned on it separately');
 });
@@ -5450,7 +5458,8 @@ test('task done: the LEAD closes a ticket assigned to SOMEONE ELSE (retired seat
   // The seat retires with its ticket open — the other half of the hole.
   f.m.sessions.delete('team-hand');
   const t0 = f.one('t1');
-  assert.strictEqual(t0.assignee, 'hand', 'window: assigned to a role the LEAD does not hold…');
+  assert.strictEqual(t0.assignee, 'team-hand', 'window: pinned to a retired seat of a role the LEAD does not hold…');
+  assert.strictEqual(t0.role, 'hand', '…filed under that role…');
   assert.notStrictEqual(t0.assignee, 'lead', '…so the sender is not the assignee by name…');
   assert.strictEqual(f.m.sessions.has('team-hand'), false, '…and no live seat holds that role either');
   f.gated.length = 0;
@@ -5514,7 +5523,8 @@ test('task reject: lead reopens a DONE ticket, reason to the assignee, assignee 
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'fix the edge case' });
   const t = f.one('t1');
   assert.strictEqual(t.state, 'open', 'reopened');
-  assert.strictEqual(t.assignee, 'hand', 'assignee kept');
+  assert.strictEqual(t.assignee, 'team-hand', 'assignee kept — reject does not re-route the ticket');
+  assert.strictEqual(t.role, 'hand', 'and its role is untouched');
   assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1 rejected] fix the edge case' }]);
 });
 
@@ -5633,7 +5643,7 @@ test('t89 the advance skips closed tickets and other seats` work', () => {
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the real next one' });
   // ENTER: the decoys are really in the states this test claims.
   assert.strictEqual(f.one('t2').state, 'cancelled', 'ENTER: t2 is closed');
-  assert.strictEqual(f.one('t3').assignee, 'reviewer', 'ENTER: t3 belongs to another seat');
+  assert.strictEqual(f.one('t3').assignee, 'team-reviewer-1', 'ENTER: t3 belongs to another seat');
   assert.strictEqual(f.one('t4').assignee, null, 'ENTER: t4 is backlog');
   f.gated.length = 0;
 
@@ -5706,6 +5716,36 @@ test('task: role-addressed ticket survives seat respawn (assignee stays the role
   f.m._handleTask(f.seat('team-hand-2'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'done by the new instance' });
   assert.strictEqual(f.one('t1').state, 'done', 'the new instance of the role can close it');
   assert.deepStrictEqual(f.gated, [{ target: 'lead', sender: 'team-hand-2', body: '[ticket t1 done] done by the new instance' }]);
+});
+
+// The pin is a RECORD of who received the work, never the only route back to the
+// ticket. Without the degradation this pins, a seat that dies holding a pin takes
+// its whole queue with it: both tickets name a seat nothing answers for, and the
+// sibling that replaced it sees an EMPTY queue — measured, before the fix.
+test('t295: a dead seat does not take its pinned role tickets with it', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'first' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'second' });
+  // ENTER: both must actually be pinned to the seat, or the recovery below is
+  // about ordinary role tickets and proves nothing.
+  assert.deepStrictEqual(f.load().map((t) => [t.id, t.assignee, t.role]),
+    [['t1', 'team-hand', 'hand'], ['t2', 'team-hand', 'hand']],
+    'ENTER: both tickets must be seat-pinned first');
+
+  f.m.sessions.delete('team-hand');
+  f.seat('team-hand-2');
+  assert.deepStrictEqual(f.m._openTicketsFor(f.teamDir, f.team, 'team-hand-2').map((t) => t.id),
+    ['t1', 't2'], 'the sibling holding the role picks up the dead seat\'s queue');
+
+  // While the pinned seat is LIVE the pin still binds: a sibling must not be able
+  // to reach into another live seat's work.
+  const g = mkTasks();
+  g.seat('lead'); g.seat('team-hand'); g.seat('team-hand-2');
+  g.m._handleTask(g.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'held' });
+  assert.strictEqual(g.one('t1').assignee, 'team-hand', 'ENTER: pinned to the first live seat');
+  assert.deepStrictEqual(g.m._openTicketsFor(g.teamDir, g.team, 'team-hand-2').map((t) => t.id),
+    [], 'a live seat\'s pinned ticket stays its own');
 });
 
 test('task guards: non-lead add/assign/cancel bounce; unknown id and assign-on-closed bounce', () => {
@@ -9764,10 +9804,120 @@ test('task add: a role WITHOUT the opt-in keeps the old role-assigned path', asy
   for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
   assert.strictEqual(created, false, 'no seat is spawned for a role that did not opt in');
   const t = f.one('t1');
-  assert.strictEqual(t.assignee, 'hand', 'ticket stays role-assigned');
-  assert.strictEqual(t.role, undefined, 'no role field is written on the unopted path');
+  // No worktree, but the same re-pin: the seat that got the spec is recorded, so
+  // the close-time cost path reads a seat instead of inferring one.
+  assert.strictEqual(t.assignee, 'team-hand', 'ticket pins to the seat that received it');
+  assert.strictEqual(t.role, 'hand', 'and keeps the role the lead filed it under');
   assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] ordinary work' }],
     'the existing live seat receives the spec as before');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// --- t295: role tickets re-pin to the seat that receives them ---
+// A ticket left on its role carries no record of WHICH seat spent, so the
+// close-time cost path can only infer one. These pin the four ways that can go
+// wrong: pinning to the lead, pinning to nobody, pinning so hard the ticket
+// cannot move again, and leaving a stale role behind when it does.
+
+test('task add: a role ticket with no live seat stays on the role — there is nothing to pin to', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo, { worktree: false });
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'nobody home' });
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  const t = f.one('t1');
+  // ENTER: the ticket must exist, or every assertion below is about undefined.
+  assert.ok(t, 'ENTER: the ticket must have been filed');
+  assert.strictEqual(t.assignee, 'hand', 'no live seat — the ticket stays addressable by role');
+  assert.strictEqual(t.role, undefined, 'and no role field is invented for a pin that did not happen');
+  assert.deepStrictEqual(f.gated, [], 'nothing was delivered');
+
+  // The CONTROL. Without it this test is an absence that is trivially true of a
+  // tree that never pins at all, so it would pass against the unfixed source and
+  // certify nothing. Same team, same role — the only difference is a live seat.
+  f.seat('team-hand');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'somebody home' });
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.one('t2').assignee, 'team-hand',
+    'the SAME role pins once a seat is live — so the un-pinned t1 above is about liveness, not about pinning being off');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The lead is excluded from cost attribution on purpose: its ledger spans every
+// ticket in the project. Pinning `lead` here would read downstream as an EXACT
+// seat pin and bill one ticket for the lead's entire lifetime — an honest
+// "unknown" replaced by a confidently wrong number.
+test('task add: a lead-held role ticket is NOT re-pinned to the lead', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo, { worktree: false });
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'lead', id: null, body: 'my own work' });
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  const t = f.one('t1');
+  assert.ok(t, 'ENTER: the ticket must have been filed');
+  assert.strictEqual(t.assignee, 'lead', 'the lead stays role-assigned, so cost reads it as unattributable');
+  assert.strictEqual(t.role, undefined, 'no pin, no role field');
+
+  // The CONTROL: a non-lead role on the same team, with a live seat, DOES pin.
+  // It is what makes the lead carve-out above a discrimination rather than an
+  // absence that any never-pinning tree satisfies.
+  f.seat('team-hand');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'delegated work' });
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.one('t2').assignee, 'team-hand',
+    'a non-lead role pins — so the lead exemption above is specific to the lead');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+test('task assign: a re-pinned ticket still moves to another seat, and back to the role', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo, { worktree: false });
+  f.seat('lead'); f.seat('team-hand'); f.seat('team-hand-2');
+  const lead = f.m.sessions.get('lead');
+  f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the work' });
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  // ENTER: the pin under test must have happened, or the moves below prove nothing.
+  assert.strictEqual(f.one('t1').assignee, 'team-hand', 'ENTER: the ticket must be seat-pinned first');
+  assert.strictEqual(f.one('t1').role, 'hand', 'ENTER: and carry its role');
+
+  // Move it to a DIFFERENT named seat. The role it was filed under no longer
+  // describes the assignment, so it must not be left on the record.
+  f.m._handleTask(lead, { type: 'task', sub: 'assign', who: 'team-hand-2', id: 't1', body: '' });
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.one('t1').assignee, 'team-hand-2', 'a pinned ticket can still be reassigned');
+  assert.strictEqual(f.one('t1').role, undefined, 'the stale role is cleared with the pin');
+
+  // And back to the role, which re-pins to whichever seat answers for it.
+  f.m._handleTask(lead, { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.one('t1').assignee, 'team-hand', 'assigning back to the role re-pins to a live seat');
+  assert.strictEqual(f.one('t1').role, 'hand', 'and records the role it was filed under again');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The queued hand-off is a dispatch like the other two, and the only one a
+// queued ticket ever gets. A ticket filed while nobody was live reaches its seat
+// here or not at all.
+test('advance: the queued ticket handed to a seat on close is re-pinned to it', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo, { worktree: false });
+  f.seat('lead');
+  const lead = f.m.sessions.get('lead');
+  f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'first job' });
+  f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'second job' });
+  for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.one('t2').assignee, 'hand', 'ENTER: t2 must still be role-assigned before the seat exists');
+
+  f.seat('team-hand');
+  f.gated.length = 0;
+  f.m._handleTask(lead, { type: 'task', sub: 'done', id: 't1', body: 'done with the first' });
+  for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r));
+
+  const t2 = f.one('t2');
+  assert.strictEqual(t2.assignee, 'team-hand', 'the advanced ticket pins to the seat it was handed to');
+  assert.strictEqual(t2.role, 'hand', 'and keeps the role it was filed under');
+  assert.deepStrictEqual(f.gated.map((g) => g.target), ['team-hand'],
+    'ENTER: the advance must actually have delivered, or the pin above is unrelated to a hand-off');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 

@@ -4716,6 +4716,32 @@ function createSessionManager(deps) {
       return this._teamLiveSeatNames(team.root).includes(a) ? a : null;
     }
 
+    // Re-pin a ROLE-assigned ticket to the concrete seat that is about to receive
+    // it, in the shape the worktree flow already uses: `role` keeps what the lead
+    // filed (the board and the cost rollup read it), `assignee` records who
+    // actually got the work. Without it a role ticket carries no record of which
+    // seat spent, and the close-time cost path can only infer one.
+    //
+    // Resolution goes through `_ticketAssigneeSeat` — the SAME resolver the
+    // delivery below uses — so the pin can never name a seat other than the one
+    // the spec reached. A second resolution here would be free to disagree, and
+    // the disagreement would be invisible: both halves look right alone.
+    //
+    // The LEAD is never pinned to. `_costSeatFor` excludes it on purpose (its
+    // ledger spans every ticket in the project, so the lifetime-sum shape is
+    // categorically wrong for it), and that exclusion keys off the assignee still
+    // being a role — writing `lead` here would read downstream as an exact seat
+    // pin and bill one ticket for the lead's entire life.
+    _repinTicketToSeat(team, ticket) {
+      const role = ticket && ticket.assignee;
+      if (!role || !(team.roles && Object.prototype.hasOwnProperty.call(team.roles, role))) return null;
+      const seat = this._ticketAssigneeSeat(team, ticket);
+      if (!seat || seat === team.lead) return null;
+      ticket.role = role;
+      ticket.assignee = seat;
+      return seat;
+    }
+
     // `replay` marks a REDELIVERY of a spec the seat may already have acted on.
     // Unmarked, the fix trades a silent drop for a silent double-execution: the
     // seat cannot tell a replay from a fresh assignment (that indistinguishability
@@ -4783,11 +4809,24 @@ function createSessionManager(deps) {
     // rather than sorted last, so it cannot occupy the head that advance takes
     // — a parked ticket must not make a live one wait, and ordering by a flag
     // would make dispatch order depend on it.
+    // A delivery-time pin RECORDS which seat received the work; it must not become
+    // the only way back to the ticket. A seat that dies holding a pin would
+    // otherwise take its whole queue with it — the tickets resolve to a name
+    // nothing answers for, and no sibling of the same role can see them.
+    //
+    // So the pin degrades to the role once the pinned seat is no longer live.
+    // Gated on `!t.worktree`, which is what keeps the worktree flow's one-shot
+    // property intact: a tree is bound to the seat that holds it, so handing a
+    // worktree ticket to a sibling would put it in another branch's checkout.
+    // A dead worktree seat has its own explicit recovery, which tells the lead
+    // the two real exits rather than guessing a new holder.
     _openTicketsFor(teamDir, team, seatName, excludeId = null) {
       const role = matchSeatRole(team, seatName);
+      const live = new Set(this._teamLiveSeatNames(team.root));
       return ticketsStore.load(teamDir)
         .filter((t) => t.state === 'open' && t.id !== excludeId && t.assignee != null && !t.parked
-          && (t.assignee === seatName || (role && t.assignee === role)))
+          && (t.assignee === seatName || (role && t.assignee === role)
+            || (role && t.role === role && !t.worktree && !live.has(t.assignee))))
         .sort((a, b) => (a.openedAt || 0) - (b.openedAt || 0)
           || (Number(String(a.id).replace(/^t/, '')) || 0) - (Number(String(b.id).replace(/^t/, '')) || 0));
     }
@@ -4802,6 +4841,17 @@ function createSessionManager(deps) {
     _advanceSeat(team, teamDir, seatName, closedId) {
       const next = this._openTicketsFor(teamDir, team, seatName, closedId)[0];
       if (!next) return null;
+      // Handing a queued ticket to a seat IS its dispatch — the only one it gets —
+      // so it re-pins like the two lead-driven paths. Reloaded from the store
+      // rather than saving the filtered array `_openTicketsFor` built, which is
+      // not the array on disk.
+      if (this._repinTicketToSeat(team, next)) {
+        try {
+          const all = ticketsStore.load(teamDir);
+          const t = all.find((x) => x.id === next.id);
+          if (t) { t.role = next.role; t.assignee = next.assignee; ticketsStore.save(teamDir, all); }
+        } catch { /* best-effort: the pin is a measurement, never a reason the hand-off fails */ }
+      }
       this._deliverTicketSpec(team, next, next.spec, 'clodex-team', true);
       log.info('intent', `seat ${seatName} advanced to ${next.id} after closing ${closedId}`);
       return next;
@@ -5431,6 +5481,10 @@ function createSessionManager(deps) {
       // spec is deliberately NOT delivered, so filing who a ticket is for stops
       // being the same act as telling them to start.
       if (assignee && !parked) {
+        // Re-saved only on an actual re-pin: the common cases (backlog, a
+        // name-addressed seat, a role with nobody live) leave the record byte
+        // identical, and a second write of identical bytes is pure churn.
+        if (this._repinTicketToSeat(team, ticket)) ticketsStore.save(teamDir, tickets);
         const d = this._deliverTicketSpec(team, ticket, spec, session.name, true);
         suffix = this._ticketDeliverySuffix(d, assignee);
       }
@@ -5546,6 +5600,13 @@ function createSessionManager(deps) {
           return;
         }
       }
+      // A stale `role` is cleared on the paths that do NOT re-pin, mirroring the
+      // worktree flow's un-pin: the lead has just re-filed this ticket against
+      // something else, so a role left from an earlier pin now names a role the
+      // ticket is no longer assigned under, and the board would keep rendering it.
+      // The two returning paths above are exempt by construction — the own-seat
+      // re-send and the mint both keep a pin whose role is still the filed one.
+      if (!this._repinTicketToSeat(team, ticket)) delete ticket.role;
       ticketsStore.save(teamDir, tickets);
       const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
       const suffix = this._ticketDeliverySuffix(d, assignee);
@@ -5567,9 +5628,21 @@ function createSessionManager(deps) {
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       const myRole = matchSeatRole(team, session.name);
-      const isAssignee = ticket.assignee != null && (ticket.assignee === session.name || ticket.assignee === myRole);
+      // Same degradation as `_openTicketsFor`, for the same reason: a seat that
+      // dies holding a pin must not take the ticket's closability with it. Closing
+      // is a permission question, so this reads the pin's ROLE — the seat that
+      // replaced the dead one under the same role is a legitimate closer.
+      const pinnedSeatLive = ticket.assignee != null
+        && this._teamLiveSeatNames(team.root).includes(ticket.assignee);
+      const isAssignee = ticket.assignee != null
+        && (ticket.assignee === session.name || ticket.assignee === myRole
+          || (myRole && ticket.role === myRole && !pinnedSeatLive));
       const isLead = team.lead === session.name;
-      if (!isAssignee && !isLead) { reply(`error: only ticket ${intent.id}'s assignee (${ticket.assignee || 'unassigned'}) or the team lead (${team.lead}) can close it${this._spillRejectedPayload(session, 'task done', report)}`); return; }
+      // Names the ROLE the ticket was filed under, not the delivery-time pin: the
+      // pin is an implementation fact about who received it, and a bounce that
+      // reports a seat name sends the reader chasing a seat instead of the role
+      // they filed against.
+      if (!isAssignee && !isLead) { reply(`error: only ticket ${intent.id}'s assignee (${ticket.role || ticket.assignee || 'unassigned'}) or the team lead (${team.lead}) can close it${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       const lead = team.lead;
       if (!isLead) {
         const r = this._gatedDeliver(lead, session.name, `[ticket ${ticket.id} done] ${report}`, false);
@@ -5849,10 +5922,14 @@ function createSessionManager(deps) {
       // A parked ticket is open and assigned and yet will not be dispatched, so
       // without a marker the open list is the one place that reads exactly like
       // a ticket in flight.
+      // The ROLE is what the lead filed the ticket under, so it is what the board
+      // reads as; `assignee` is now a delivery-time pin to a concrete seat, which
+      // is a cost-attribution fact and not the name the lead is looking for.
+      const shownFor = (t) => t.role || t.assignee || '—';
       const row = (t) =>
-        `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${t.assignee || '—'} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`;
+        `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`;
       const closedRow = (t) =>
-        `${t.id} [${t.state}] ${t.assignee || '—'} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}`;
+        `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}`;
       const lines = shown.map(row);
       const head = filter === 'open' ? `tickets on ${team.name}` : `tickets on ${team.name} [${filter}]`;
       const closed = filter === 'open' ? tickets.filter((t) => t.state !== 'open') : [];
