@@ -83,6 +83,20 @@ const SUITE_STUBS = {
   crash: 'console.error("SyntaxError: Unexpected end of input");\nprocess.exit(1);\n',
   // Ran, exited 0, but never printed a summary. The false green this guards.
   silent: 'process.exit(0);\n',
+  // A sweep that discovered NO test files: node prints a valid summary and exits
+  // 0, so this satisfies exit-0 and fail-0 both. It is a run that verified
+  // nothing, which is the one thing that must never reach a reviewer.
+  zerotests: 'console.log("TOTALS: 0 pass, 0 fail, 0 tests");\nprocess.exit(0);\n',
+  // A TOTALS-shaped line forwarded from a test file's own output, BEFORE the
+  // runner's real summary. Taking the first match reads the wrong numbers off
+  // the wrong line — here a green one over a red run.
+  shadowed: 'console.log("some test printed: TOTALS: 9 pass, 0 fail, 9 tests");\n'
+    + 'console.log("\\u2716 the real failure (2.00ms)");\n'
+    + 'console.log("TOTALS: 1 pass, 1 fail, 2 tests");\nprocess.exit(1);\n',
+  // Never exits. The kill arm: a wedged runner must be SIGKILLed and escalate,
+  // because nothing was verified and the hand cannot rework a run that hung.
+  hang: 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\n'
+    + 'setInterval(() => {}, 1000);\n',
 };
 
 // Plants the worktree the loop runs in: the branch's own scripts/run-tests.js,
@@ -129,7 +143,10 @@ function commitOnBranch(dir, branch, file, body) {
 // measuring what they were written to measure. A fixture with no runner would
 // escalate at the suite check, and every green-path assertion downstream would
 // silently become an assertion about that escalation instead.
-function mkLoop({ repo, ticketOver = {}, noLeadSession = false, noReviewerPrompt = false, suite = 'green' } = {}) {
+function mkLoop({
+  repo, ticketOver = {}, noLeadSession = false, noReviewerPrompt = false, suite = 'green',
+  suiteTimeoutMs = null,
+} = {}) {
   stubSuite(repo, suite);
   const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-loop-'));
   // The reviewer's role prompt must EXIST, because the spawn path warns when it
@@ -194,6 +211,9 @@ function mkLoop({ repo, ticketOver = {}, noLeadSession = false, noReviewerPrompt
     // was read, and a stubbed spawn proves only that the loop called spawn. The
     // thing being executed is a stub script; the execution is genuine.
     childProcess: require('node:child_process'),
+    // Left unset for every other subject, so they exercise the SHIPPED cap
+    // rather than a fixture-only one; only the hang subject overrides it.
+    ...(suiteTimeoutMs == null ? {} : { ticketSuiteTimeoutMs: suiteTimeoutMs }),
     countPending: require('../pending-store').countPending,
     isDraftOpen: require('../proxy-util').isDraftOpen,
     drainPending: require('../pending-store').drainPending,
@@ -996,6 +1016,7 @@ test('the suite runs in the TICKET WORKTREE and holds the ROOT checkout lock', a
     + '  cwd: process.cwd(),\n'
     + '  lock: process.env.CLODEX_TEST_LOCK_DIR || null,\n'
     + '  wait: process.env.CLODEX_TEST_LOCK_WAIT_MS || null,\n'
+    + '  asNode: process.env.ELECTRON_RUN_AS_NODE || null,\n'
     + '}));\n'
     + 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\n');
   const probe = pathReal.join(repo.dir, 'probe.json');
@@ -1018,6 +1039,15 @@ test('the suite runs in the TICKET WORKTREE and holds the ROOT checkout lock', a
     'but takes the ROOT checkout lock, so it serializes against the lead run');
   assert.ok(Number(got.wait) > 0,
     'and WAITS for that lock: a ticket closing during another run must queue, never skip its own verification');
+  // The loop spawns `process.execPath`, which under the desktop host is the
+  // ELECTRON binary, not node (measured: .../Electron.app/Contents/MacOS/
+  // Electron). Without this variable that spawn is an app launch: no tap is
+  // written, no TOTALS is printed, and every ticket escalates forever with an
+  // error naming the tap stream. It cannot be observed from a node-hosted test
+  // run — under node the flag is inert — so what is pinned is that the loop
+  // SETS it, which is the whole of the fix.
+  assert.strictEqual(got.asNode, '1',
+    'ELECTRON_RUN_AS_NODE must ride the spawn, or under the Electron host the runner is never node at all');
 });
 
 test('the worktree gets a node_modules link, or the whole suite is a false red', async () => {
@@ -1063,4 +1093,140 @@ test('a test file that cannot even LOAD is rejected, named by its path', async (
   assert.strictEqual(sent.length, 1, 'ENTER: it was rejected as rework');
   assert.match(sent[0].body, /test\/unloadable\.test\.js/,
     'and names the file that would not load — the one thing the hand needs');
+});
+
+test('a run that executed ZERO tests escalates — it is not a green suite', async () => {
+  // `TOTALS: 0 pass, 0 fail, 0 tests` and exit 0 satisfies both halves of the
+  // green conjunction, so without the tests>0 clause a branch whose test files
+  // were never discovered reaches a reviewer wearing a green hat. That is the
+  // precise defect this whole ticket exists to prevent, arriving through the
+  // counter door. ESCALATE, not reject: the hand cannot rework a run that found
+  // nothing to run.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'zerotests' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0, 'a run that verified nothing must not reach a reviewer');
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation reached the lead');
+  assert.match(esc[0].body, /ZERO tests/, 'and it says the run executed nothing, not that tests failed');
+  assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
+    'the hand is not sent rework for a run that discovered no tests');
+});
+
+test('the LAST TOTALS line decides, not the first a test file happened to print', async () => {
+  // The runner prints its summary last. A test file forwarding a TOTALS-shaped
+  // line of its own shadows it under a first-match read — and the shadowing line
+  // can say anything, including green over a red run.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'shadowed' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0, 'the shadowing green line must not carry a red branch to a reviewer');
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: it was rejected as rework');
+  assert.match(sent[0].body, /1\/2 passing, 1 failing/,
+    "the runner's own summary decides; 9/9 came from a line it merely forwarded");
+});
+
+test('a runner that never exits is killed and ESCALATES, never rejected', async () => {
+  // The arm that decides a ticket's fate when the machinery wedges, and the one
+  // arm with no natural trigger — without the deps seam it could only be
+  // exercised by waiting out the shipped cap, so it would ship unmeasured.
+  // A kill must not look like rework: the branch was never judged.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'hang', suiteTimeoutMs: 300 });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0, 'a wedged run reaches no reviewer');
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation reached the lead');
+  assert.match(esc[0].body, /did not finish within 300ms \(killed\)/,
+    'the escalation says it was killed, and after how long');
+  assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
+    'and the hand is not sent rework for a run that was killed — its TOTALS line proves nothing');
+});
+
+test('an accept landing DURING the suite run cannot be resurrected into review', async () => {
+  // The window this closes is minutes wide. The entry guard reads loopStep, then
+  // the loop awaits a whole suite; a lead `task accept` inside that await
+  // retires the seat, removes the worktree and deletes the branch. Re-writing
+  // the hold afterwards makes the ticket in-flight again and lets a late verdict
+  // stamp REWORK onto merged, deleted work.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'green' });
+  const wt = pathReal.join(repo.dir, 'wt');
+  // The mutation happens while the runner is IN FLIGHT — the stub blocks until
+  // the test sees its marker file and then clears the hold, so the accept lands
+  // strictly inside the await rather than before or after it.
+  const marker = pathReal.join(repo.dir, 'running.marker');
+  const go = pathReal.join(repo.dir, 'go.marker');
+  fsReal.writeFileSync(pathReal.join(wt, 'scripts', 'run-tests.js'),
+    'const fs = require("fs");\n'
+    + `fs.writeFileSync(${JSON.stringify(marker)}, "1");\n`
+    + `while (!fs.existsSync(${JSON.stringify(go)})) {\n`
+    + '  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);\n'
+    + '}\n'
+    + 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\n');
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  const loop = f.m._runTicketLoop(f.team, 't1');
+  // Wait for the child to actually be running before mutating.
+  for (let i = 0; i < 400 && !fsReal.existsSync(marker); i++) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.ok(fsReal.existsSync(marker),
+    'ENTER: the suite child is running, so the mutation below lands INSIDE the await');
+  const t = f.one();
+  delete t.loopStep;
+  t.state = 'accepted';
+  f.tstore.save(f.team.root, [t]);
+  fsReal.writeFileSync(go, '1');
+  await loop;
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0, 'no reviewer is spawned for a ticket the loop no longer holds');
+  assert.ok(!('loopStep' in f.one()),
+    'and the hold is NOT re-written onto it — that is what makes a late verdict landable');
+  assert.strictEqual(f.one().state, 'accepted', 'the accept stands, untouched by the returning loop');
+  assert.deepStrictEqual(f.esc(), [], 'and this is a normal race, not something to wake the lead over');
+});
+
+test('the kill cap is strictly GREATER than the lock wait, or the wait is dead code', () => {
+  // Read off the shipped module text, not the fixture: the two constants must
+  // stay related and the relation is invisible at every call site. The kill timer
+  // starts at SPAWN, so it covers the lock wait — shipping the cap BELOW the wait
+  // makes the wait unreachable and reports a ticket that was politely queuing as
+  // `did not finish within 900000ms (killed)`, a wedge report for a healthy run.
+  // test/test-digest-lock.test.js pins the same relation for the other entry
+  // point, where the inversion cost three misdiagnosed timeouts.
+  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'session-manager.js'), 'utf8');
+  const wait = /const TICKET_SUITE_LOCK_WAIT_MS = ([^;]+);/.exec(src);
+  const timeout = /const TICKET_SUITE_TIMEOUT_MS = ([^;]+);/.exec(src);
+  // ENTER: renamed or reshaped constants must fail HERE rather than skip the
+  // comparison and leave this subject asserting nothing.
+  assert.ok(wait, 'TICKET_SUITE_LOCK_WAIT_MS is still declared with a literal expression');
+  assert.ok(timeout, 'TICKET_SUITE_TIMEOUT_MS is still declared with a literal expression');
+  // eslint-disable-next-line no-new-func
+  const waitMs = Function(`"use strict";const TICKET_SUITE_LOCK_WAIT_MS=${wait[1]};return TICKET_SUITE_LOCK_WAIT_MS;`)();
+  // eslint-disable-next-line no-new-func
+  const timeoutMs = Function(`"use strict";const TICKET_SUITE_LOCK_WAIT_MS=${wait[1]};return ${timeout[1]};`)();
+  assert.ok(Number.isFinite(waitMs) && waitMs > 0, `ENTER: the wait did not evaluate to a duration (${waitMs})`);
+  assert.ok(Number.isFinite(timeoutMs) && timeoutMs > 0, `ENTER: the cap did not evaluate to a duration (${timeoutMs})`);
+  assert.ok(waitMs < timeoutMs,
+    `the loop waits up to ${waitMs}ms for the lock but kills the child at ${timeoutMs}ms — equal or `
+    + 'less means a queued run is reported as a wedge and the wait constant can never be reached');
 });

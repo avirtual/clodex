@@ -40,16 +40,22 @@ const NOTIFY_USER_MAX_BYTES = 16 * 1024;
 
 const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
 
-// The ticket loop's suite run. The suite itself takes ~24s; the cap is generous
-// because exceeding it means a WEDGE, not a slow run, and the loop reports a
-// kill rather than waiting forever on the port-binding deadlock.
-const TICKET_SUITE_TIMEOUT_MS = 15 * 60 * 1000;
-
 // How long a queued ticket waits for another run to release the shared lock.
-// Longer than the timeout above ON PURPOSE: the thing being waited for is a run
-// that may itself be near its own cap, and giving up early would escalate a
-// ticket whose only fault was closing while the lead's suite was running.
+// Generous because the thing being waited for is a whole suite run, and giving
+// up early would escalate a ticket whose only fault was closing while the
+// lead's suite was running.
 const TICKET_SUITE_LOCK_WAIT_MS = 20 * 60 * 1000;
+
+// The ticket loop's suite run. The kill timer starts at SPAWN, so it covers the
+// lock wait as well as the run — which is why it is DERIVED from the wait and
+// must stay strictly greater than it. Shipped once the other way round (15m
+// kill over a 20m wait), which makes the wait unreachable dead code and reports
+// a queued run as `did not finish within 900000ms (killed)`: a wedge report for
+// a run that was only waiting its turn. test/test-digest-lock.test.js pins the
+// same relation for the other entry point, where the inversion cost three
+// misdiagnosed timeouts. The margin is the run itself: the suite takes ~24s,
+// and exceeding 15m of RUNNING means a wedge, not a slow suite.
+const TICKET_SUITE_TIMEOUT_MS = TICKET_SUITE_LOCK_WAIT_MS + 15 * 60 * 1000;
 
 const REBOOT_NOTICE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
@@ -541,6 +547,13 @@ function createSessionManager(deps) {
   // exec that does nothing and reports nothing.
   const termExec = termExecDep
     || (() => ({ ok: false, error: 'terminal tabs are not available on this host' }));
+
+  // Injectable ONLY so the kill arm is reachable from a test. Without a seam no
+  // subject can pin "a runner that never exits is SIGKILLed and ESCALATES,
+  // never rejects" — an arm that decides a ticket's fate and would otherwise
+  // ship green while measuring nothing.
+  const TICKET_SUITE_TIMEOUT = Number.isFinite(deps.ticketSuiteTimeoutMs)
+    ? deps.ticketSuiteTimeoutMs : TICKET_SUITE_TIMEOUT_MS;
 
   const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
   // Settle margin before the boot-ready rising edge fires its pending drain (T54).
@@ -6366,6 +6379,17 @@ function createSessionManager(deps) {
         // nothing before this check could have caught it.
         atStep = 'verify: suite';
         const suite = await this._runTicketSuite(team, ticket);
+        // Checks 1-3 were milliseconds of git; this await is MINUTES, and the
+        // entry guard above is now a snapshot that old. A lead `task accept`
+        // landing inside that window deletes loopStep, retires the seat, removes
+        // the worktree and deletes the branch — and every arm below would then
+        // act on it: _setLoopStep would re-write the hold onto a finished
+        // ticket, making it in-flight again so a late verdict can stamp REWORK
+        // onto merged, deleted work. A mid-run `task reject` is the twin: a
+        // reviewer spawned for a ticket that is already open again. Re-load and
+        // bail, the same don't-trust-the-snapshot rule _setLoopStep states.
+        const still = this._loadTicket(team, ticketId);
+        if (!still || still.loopStep !== 'verify') return;
         if (!suite.ran) {
           // Could not RUN is not the same as failed, and must not reject: the
           // hand cannot fix a lock it does not hold or a runner that would not
@@ -6461,6 +6485,23 @@ function createSessionManager(deps) {
             cwd,
             env: {
               ...process.env,
+              // `process.execPath` under the desktop app is the ELECTRON
+              // binary, not node (measured: .../Electron.app/Contents/MacOS/
+              // Electron), and engine.js is hosted by main.js as well as
+              // headless-main.js. Without this the spawn is an app launch, the
+              // runner's own re-spawn of process.execPath is not a node --test
+              // invocation, no tap is written, and EVERY ticket escalates with
+              // "the tap stream is missing". Same idiom as cli-hooks.js's
+              // INTERP; plain node ignores the variable, so this is a no-op
+              // under the headless host and in tests.
+              //
+              // Consequence worth stating: the suite then runs under ELECTRON'S
+              // node (24.17.0 at Electron 43), not the system node the lead's
+              // `npm test` uses (25.8.1). That is a real difference — the
+              // blake2b512 lesson in scripts/electron-smoke.js is exactly a
+              // behaviour that split between the two runtimes — so a green here
+              // is a green under the runtime the app itself ships.
+              ELECTRON_RUN_AS_NODE: '1',
               CLODEX_TEST_LOCK_DIR: path.join(team.root, '.test-digest.lock'),
               // WAIT, never refuse: a second ticket closing during a run must
               // QUEUE. Refusing would report "could not run" and escalate a
@@ -6487,8 +6528,8 @@ function createSessionManager(deps) {
         const finish = (v) => { if (done) return; done = true; clearTimeout(timer); resolve(v); };
         const timer = setTimeout(() => {
           try { child.kill('SIGKILL'); } catch {}
-          finish({ error: `the suite did not finish within ${TICKET_SUITE_TIMEOUT_MS}ms (killed)`, stdout, stderr });
-        }, TICKET_SUITE_TIMEOUT_MS);
+          finish({ error: `the suite did not finish within ${TICKET_SUITE_TIMEOUT}ms (killed)`, stdout, stderr });
+        }, TICKET_SUITE_TIMEOUT);
         child.on('error', (e) => finish({ error: `the runner could not start: ${e.message}`, stdout, stderr }));
         child.on('close', (code) => finish({ code, stdout, stderr }));
       });
@@ -6502,13 +6543,27 @@ function createSessionManager(deps) {
       // missing path and an empty tap, and every one of those is "never ran".
       // Requiring the line is what stops a false green from a run that produced
       // nothing — the exact defect class this whole ticket is about.
-      const totals = /TOTALS: (\d+) pass, (\d+) fail, (\d+) tests/.exec(text);
+      // The LAST match, not the first: the runner prints its summary last, but a
+      // test file's own forwarded output could carry an earlier TOTALS-shaped
+      // line and shadow it.
+      const all = [...text.matchAll(/TOTALS: (\d+) pass, (\d+) fail, (\d+) tests/g)];
+      const totals = all.length ? all[all.length - 1] : null;
       if (!totals) {
         const last = text.trim().split('\n').filter((l) => l.trim()).pop() || '(no output)';
         out.error = `the runner produced no TOTALS summary (exit ${res.code}) — last line: ${last.slice(0, 300)}`;
         return out;
       }
       const [, pass, failed, tests] = totals;
+      // A sweep that discovered no test files prints `0 pass, 0 fail, 0 tests`
+      // and exits 0, satisfying every other green condition. That is a run which
+      // verified NOTHING reaching a reviewer — the one outcome this check
+      // exists to prevent. It escalates rather than rejects: the hand cannot fix
+      // a suite that found no tests to run.
+      if (Number(tests) === 0) {
+        out.error = `the runner executed ZERO tests (exit ${res.code}) — a run that verified nothing `
+          + 'cannot stand in for a green suite';
+        return out;
+      }
       out.ran = true;
       out.summary = `${pass}/${tests} passing, ${failed} failing (exit ${res.code})`;
       // Green is the CONJUNCTION, deliberately: `fail 0` alone misses an escape

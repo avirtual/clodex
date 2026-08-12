@@ -237,6 +237,56 @@ test('lock: a named-file run ignores a held lock — the suite spawns this runne
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+// ── the override must not be inherited ─────────────────────────────────────
+// CLODEX_TEST_LOCK_DIR / CLODEX_TEST_LOCK_WAIT_MS are a decision about THIS
+// process's lock. Every nested runner is by contract a DIFFERENT run, and this
+// file and run-tests-args.test.js both spawn sweeping runners against throwaway
+// roots — which take the lock. Inheriting the override points them at the outer
+// run's lock, held by a live pid, where they block for the whole inherited wait
+// instead of exercising their own fixture. Measured against the unfixed runner:
+// 6 tests red and ~12 minutes of spawnSync timeouts, i.e. the ticket loop
+// rejecting every ticket for a defect in its own harness.
+test('lock: the lock override does NOT leak into the test children', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-root-'));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  for (const f of ['run-tests.js', 'test-escapes.js']) {
+    fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
+  }
+  // The probe is a TEST FILE: it runs as a grandchild (runner -> node --test ->
+  // this file), which is exactly the hop the leak travelled.
+  const probe = path.join(root, 'probe.json');
+  const stub = path.join(root, 'stub.test.js');
+  fs.writeFileSync(stub,
+    'require("node:fs").writeFileSync(' + JSON.stringify(probe) + ', JSON.stringify({\n'
+    + '  dir: process.env.CLODEX_TEST_LOCK_DIR || null,\n'
+    + '  wait: process.env.CLODEX_TEST_LOCK_WAIT_MS || null,\n'
+    + '}));\n'
+    + "require('node:test').test('stub', () => {});\n");
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  // A directory that does not exist and a wait long enough to hang the run for
+  // minutes if either one reached a child that took a lock.
+  env.CLODEX_TEST_LOCK_DIR = path.join(root, 'elsewhere', '.test-digest.lock');
+  env.CLODEX_TEST_LOCK_WAIT_MS = '1200000';
+  try {
+    // A NAMED FILE, so the outer runner does not take a lock either: the claim
+    // under test is about env propagation, and a lock wait would only add
+    // minutes of noise to it.
+    const res = spawnSync(
+      process.execPath, [path.join(root, 'scripts', 'run-tests.js'), stub],
+      { encoding: 'utf-8', cwd: root, timeout: 120000, env },
+    );
+    const out = `${res.stdout || ''}${res.stderr || ''}`;
+    assert.match(out, /TOTALS:/,
+      'ENTER: the runner produced no totals, so the probe below describes a run that never happened');
+    assert.ok(fs.existsSync(probe), 'ENTER: the probe test file executed and recorded its environment');
+    const got = JSON.parse(fs.readFileSync(probe, 'utf8'));
+    assert.deepStrictEqual(got, { dir: null, wait: null },
+      'a nested runner must see the DEFAULT lock: inheriting the override makes it block on a lock '
+      + 'the outer run holds, and a sweeping child then wedges until its own spawn timeout kills it');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('lock: npm test reclaims a lock whose holder is dead, and releases on exit', () => {
   // A pid that cannot exist: a killed runner never cleans up, and without
   // reclamation the first crash wedges every later run forever.
