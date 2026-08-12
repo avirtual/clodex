@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- The ticket board now belongs to the PROJECT rather than to the team, so two
+  teams working one repo share one board instead of each keeping a private list
+  the other cannot see. Existing boards migrate themselves on first launch: your
+  tickets are copied, never moved, and the old file is left where it is. A board
+  that cannot be read is skipped and retried next launch rather than replaced.
+
 - Seat spawn/retire notices now go to the team lead alone. Every seat on the
   project used to get them, so a hand mid-task was woken to be told that an
   unrelated reviewer had restarted — news it cannot act on. Who is up is the
