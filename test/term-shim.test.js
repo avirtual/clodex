@@ -476,6 +476,31 @@ test('a too-old bash is told its version and the floor', () => {
   assert.ok(!/only zsh/.test(msg), 'bash is supported now — this message must not say otherwise');
 });
 
+// Measured against a real operator's reading of the version-only wording: "i
+// cant understand why we are so dependent on the latest and greatest bash".
+// Two numbers with no dates read as a bleeding-edge demand, and the truth is
+// the reverse — the floor is a decade old and macOS is the frozen one, so the
+// newest Mac fails identically to a five-year-old one. Without the years the
+// message accuses the operator's machine of being behind.
+test('the floor is dated, so it cannot read as a bleeding-edge demand', () => {
+  const msg = unsupportedShellReason({ shell: '/bin/bash', probeVersion: () => [3, 2] });
+  assert.ok(msg, 'ENTER: an old bash really is refused');
+  assert.match(msg, /2016/, 'the year the required bash shipped — a decade-old floor, not a new one');
+  assert.match(msg, /2007/, 'the year macOS froze — the stall is Apple\'s, not the operator\'s');
+  assert.match(msg, /nothing needs updating/i,
+    'the operator must not go looking for an update that does not exist');
+});
+
+// zsh is on every Mac since Catalina and fixes this with no install at all.
+// The pre-t231 text pointed only at Homebrew, so an operator with an unused
+// zsh 5.9 was sent to download a package they did not need.
+test('the zero-install fix is named, and named before the one that downloads', () => {
+  const msg = unsupportedShellReason({ shell: '/bin/bash', probeVersion: () => [3, 2] });
+  assert.match(msg, /zsh/, 'ENTER: zsh is offered at all — it was missing entirely before t231');
+  assert.ok(msg.indexOf('zsh') < msg.indexOf('Homebrew'),
+    'zsh needs no install, so it must come first — behind Homebrew it reads as the fallback');
+});
+
 test('a bash whose version cannot be read says so rather than guessing', () => {
   const msg = unsupportedShellReason({ shell: '/bin/bash', probeVersion: () => null });
   assert.match(msg, /could not be read/);

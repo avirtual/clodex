@@ -376,16 +376,21 @@ function buildBashShim({ dir, shell, fs: fsDep, probeVersion }) {
 // second copy is how a shell we do support starts being told it does not.
 //
 // The too-old-bash case earns its own sentence because it is the one an
-// operator reaches without doing anything unusual — macOS still ships 3.2 as
-// /bin/bash, and "your shell is unsupported" would send them to install zsh
-// when the fix is a newer bash they may already have.
+// operator reaches without doing anything unusual, and a bare pair of version
+// numbers reads as a bleeding-edge demand when it is the opposite: 4.4 is 2016
+// and macOS is frozen at 3.2 from 2007, so the newest Mac fails exactly like
+// the oldest. Both YEARS are load-bearing — drop them and the message tells an
+// operator their machine is behind, which sends them to update something that
+// cannot be updated. zsh is named FIRST because it needs no install (macOS
+// default since 2019); demoting it back behind Homebrew turns a zero-step fix
+// into a download.
 function unsupportedShellReason({ shell, probeVersion }) {
   if (isZsh(shell)) return null;
   if (isBash(shell)) {
     const { ok, version } = bashSupport({ shell, probeVersion });
     if (ok) return null;
     const have = version ? `bash ${version.join('.')}` : 'a bash whose version could not be read';
-    return `your terminal runs ${have}, and reporting needs bash ${BASH_MIN.join('.')} or newer (it uses PS0, added there) — macOS ships 3.2 as /bin/bash, so a newer one from Homebrew as your $SHELL would work`;
+    return `your terminal runs ${have}, and reporting needs bash ${BASH_MIN.join('.')} or newer (it uses PS0, added there) — not a bleeding-edge ask: 4.4 is from 2016, and macOS still ships 2007's 3.2 as /bin/bash, so the newest Mac reports the same version as the oldest. Nothing needs updating: make zsh your $SHELL — already there, the macOS default since 2019 — or a Homebrew bash if you prefer bash`;
   }
   return `your terminal runs ${shell || 'a shell Clodex does not shim'}, and only zsh and bash report command results back`;
 }
