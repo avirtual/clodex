@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- A retired role field in `team.json` now says so on load, instead of vanishing
+  once the file claims a current schema version. `roles.reviewer.tools` looks
+  like a capability restriction and enforces nothing — the real cap is in code —
+  and a version-stamped manifest dropped it in silence, so the file kept reading
+  as policy. The warning partitions by measured effect rather than by key name:
+  a key is described as still-read only when deleting it actually changes the
+  role, which matters because `worktree` is honored for an exact `true` on a
+  non-reserved role with no explicit `dispatch` and inert everywhere else.
+  Telling the owner of an inert `worktree: false` to "write `dispatch:
+  \"worktree\"` instead" would have converted a standing role into one that
+  mints branches nobody asked for.
+
 - Reporting a ticket done now runs the review, instead of asking the lead to.
   `[agent:task done]` recorded the report and stopped there: the lead had to
   notice the ticket, check the branch existed and carried commits, materialize
