@@ -39,6 +39,63 @@ function git(cwd, args) {
   return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
 }
 
+// The suite CHECK 4 runs is a stub runner planted in the fixture worktree, for
+// the reason test/test-digest-lock.test.js gives: a test that shells out to the
+// real suite would be the slowest thing in the suite and would recurse.
+//
+// So these tests pin the loop's CONTRACT WITH the runner — which arm each
+// outcome takes — and NOT that the real suite runs. That second claim cannot be
+// made here and is not made: it was established by running the real runner in a
+// real worktree, and the stub's whole job is to be the runner's output shapes.
+//
+// The shapes are COPIED FROM A REAL RUN of scripts/run-tests.js against a real
+// failing branch, not invented here. That distinction is not pedantry: these
+// stubs first used tap's `not ok N - name`, which the loop's parser matched and
+// which the runner NEVER prints — it sends tap to a temp file it consumes
+// itself, so the only failure text on stdout is the dot reporter's
+// `✖ name (1.23ms)` block. The stub agreed with the parser, both were wrong
+// together, and every real rejection would have named no tests at all.
+// A stub is only evidence when its output came off the real thing.
+const SUITE_STUBS = {
+  // Exit 0 AND fail 0 — the only shape that reaches a reviewer.
+  green: 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\nprocess.exit(0);\n',
+  // A real red run: the dot reporter's failure block, then the summary. The
+  // repeated name is real too — the reporter lists each failure inline and again
+  // in the trailing summary.
+  red: 'console.log(".XX");\nconsole.log("");\nconsole.log("Failed tests:");\nconsole.log("");\n'
+    + 'console.log("\\u2716 the thing that broke (1.15ms)");\n'
+    + 'console.log("\\u2716 the other thing (0.42ms)");\n'
+    + 'console.log("\\u2716 the thing that broke (1.15ms)");\n'
+    + 'console.log("TOTALS: 3 pass, 2 fail, 5 tests");\nprocess.exit(1);\n',
+  // Exit 0 with failures counted: the escape shape. Neither signal alone catches
+  // it, which is why `green` is a conjunction of both.
+  escaped: 'console.log("TOTALS: 4 pass, 1 fail, 5 tests");\nprocess.exit(0);\n',
+  // A test file that cannot be PARSED. Measured, not assumed: node does not
+  // crash the run — it reports the unloadable file as one failing test NAMED BY
+  // ITS PATH and still prints a summary. So this is a rejection with the file
+  // named, not an escalation, and the hand gets the one thing it needs to fix.
+  unloadable: 'console.log("..X");\nconsole.log("");\nconsole.log("Failed tests:");\nconsole.log("");\n'
+    + 'console.log("\\u2716 test/unloadable.test.js (46.04ms)");\n'
+    + 'console.log("TOTALS: 2 pass, 1 fail, 3 tests");\nprocess.exit(1);\n',
+  // Died before it could summarize at all — a refused lock, a runner that could
+  // not start, a node crash. NOTHING was verified, so this escalates: the hand
+  // cannot fix a run that never happened.
+  crash: 'console.error("SyntaxError: Unexpected end of input");\nprocess.exit(1);\n',
+  // Ran, exited 0, but never printed a summary. The false green this guards.
+  silent: 'process.exit(0);\n',
+};
+
+// Plants the worktree the loop runs in: the branch's own scripts/run-tests.js,
+// plus the node_modules the symlink step looks for at the team root.
+function stubSuite(repo, mode) {
+  const wt = pathReal.join(repo.dir, 'wt');
+  fsReal.mkdirSync(pathReal.join(wt, 'scripts'), { recursive: true });
+  fsReal.mkdirSync(pathReal.join(repo.dir, 'node_modules'), { recursive: true });
+  if (mode === 'none') return wt;
+  fsReal.writeFileSync(pathReal.join(wt, 'scripts', 'run-tests.js'), SUITE_STUBS[mode]);
+  return wt;
+}
+
 // A real repo with a base commit and a branch carrying one commit beyond it —
 // the shape the loop is designed for. Returned SHAs are read back from git, not
 // assumed, so a fixture that failed to build the state it names cannot pass.
@@ -68,7 +125,12 @@ function commitOnBranch(dir, branch, file, body) {
   return sha;
 }
 
-function mkLoop({ repo, ticketOver = {}, noLeadSession = false, noReviewerPrompt = false } = {}) {
+// `suite` defaults to 'green' so the subjects that predate CHECK 4 keep
+// measuring what they were written to measure. A fixture with no runner would
+// escalate at the suite check, and every green-path assertion downstream would
+// silently become an assertion about that escalation instead.
+function mkLoop({ repo, ticketOver = {}, noLeadSession = false, noReviewerPrompt = false, suite = 'green' } = {}) {
+  stubSuite(repo, suite);
   const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-loop-'));
   // The reviewer's role prompt must EXIST, because the spawn path warns when it
   // does not and the loop escalates on that warning. Without this the fixture
@@ -127,6 +189,11 @@ function mkLoop({ repo, ticketOver = {}, noLeadSession = false, noReviewerPrompt
     // The REAL module, deliberately: see the header. A stub here would assert
     // only that the loop calls the functions it calls.
     gitWorktree: require('../git-worktree'),
+    // REAL child_process, like gitWorktree above and for the same reason: the
+    // suite check's claim is that a runner actually executed and its exit code
+    // was read, and a stubbed spawn proves only that the loop called spawn. The
+    // thing being executed is a stub script; the execution is genuine.
+    childProcess: require('node:child_process'),
     countPending: require('../pending-store').countPending,
     isDraftOpen: require('../proxy-util').isDraftOpen,
     drainPending: require('../pending-store').drainPending,
@@ -791,4 +858,209 @@ test('a verdict on a done ticket with NO loop hold still falls through to the le
   // a long-closed ticket must not revive its review fields.
   assert.strictEqual(landed, null, 'a finished ticket takes no verdict');
   assert.ok(!('verdict' in f.one()), 'and nothing was written to it');
+});
+
+// ── CHECK 4: the suite runs, and its result decides the arm ────────────────
+//
+// The defect this whole check exists for is a runner that reports green because
+// it never ran — a wrong cwd, a swallowed dependency, an exit code read from the
+// wrong process. That is invisible from a green board, so the subjects below are
+// written to fail when the check DEGRADES, not only when it breaks: several
+// assert that the reviewer was NOT spawned, which is also true if the loop dies
+// early, and each therefore pins the reason as well as the outcome.
+
+test('a red suite rejects to the hand and spawns NO reviewer', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  // The order claim, and the whole economic point of the ticket: a cold review
+  // costs ~100k tokens, so a red branch must never reach one.
+  assert.strictEqual(f.created.length, 0, 'no reviewer is spawned for a red branch');
+  assert.deepStrictEqual(f.esc(), [], 'a red suite is rework, not an escalation to the lead');
+
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: exactly one rejection was delivered');
+  assert.strictEqual(sent[0].target, 'team-hand', 'the rework goes to the hand, not the lead');
+  // The failing NAMES, not just a count: "the suite failed" sends the hand back
+  // to re-run it to find out what, which is the round trip this saves.
+  assert.match(sent[0].body, /the thing that broke/, 'the failing test names ride the rejection');
+  assert.match(sent[0].body, /the other thing/);
+  assert.match(sent[0].body, /3\/5 passing, 2 failing/, 'and the counts do too');
+
+  const t = f.one();
+  assert.strictEqual(t.state, 'open', 'the ticket is reopened for rework');
+  assert.ok(!('loopStep' in t), 'and the loop stops holding it');
+  assert.strictEqual(t.closedAt, null, 'reopening clears the close stamp, exactly as _taskReject does');
+});
+
+test('a suite that exits 0 with failures counted is NOT green', async () => {
+  // The escape shape. An error thrown on an async continuation that outlives its
+  // test is counted PASS by the reporter while node's exit code stays honest —
+  // and the reverse (exit 0, fail > 0) is what a miscounted run looks like.
+  // Trusting either signal alone admits one of them, so green is the conjunction.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'escaped' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0, 'a run reporting a failure reaches no reviewer, whatever it exited');
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: it was rejected as rework');
+  assert.match(sent[0].body, /4\/5 passing, 1 failing/);
+});
+
+test('a suite that cannot run at all ESCALATES rather than rejecting', async () => {
+  // A file that cannot even load is not the hand's rework: nothing was verified,
+  // so "the suite fails, fix it" names no fix and no failing test. Rejecting here
+  // opens a rework round nobody can close, so this must reach the lead instead.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'crash' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0, 'no reviewer');
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation reached the lead');
+  assert.match(esc[0].body, /verify: suite/, 'the escalation names the step it stopped at');
+  assert.match(esc[0].body, /no TOTALS summary/, 'and says the run never completed, not that tests failed');
+  assert.strictEqual(esc[0].target, 'lead');
+  assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
+    'and the hand is NOT sent rework it cannot act on');
+});
+
+test('a runner that exits 0 printing NOTHING is not accepted as green', async () => {
+  // THE FALSE GREEN THIS CHECK EXISTS TO PREVENT. A wrong cwd, a filter matching
+  // nothing, a runner that died before it counted — all can exit 0 with no
+  // summary. Exit code alone would call this a pass and spawn a reviewer for a
+  // branch nothing verified, which is indistinguishable from a real green.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'silent' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0, 'exit 0 without evidence of a run must not reach a reviewer');
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: it escalated');
+  assert.match(esc[0].body, /no TOTALS summary/);
+});
+
+test('a branch with no test runner escalates, naming the missing runner', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'none' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0, 'no reviewer');
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: it escalated');
+  assert.match(esc[0].body, /no test runner at/, 'the evidence names what was missing');
+});
+
+test('the suite runs in the TICKET WORKTREE and holds the ROOT checkout lock', async () => {
+  // Both halves are load-bearing and neither is visible from a green board.
+  //
+  // CWD: a runner invoked in the root checkout tests master and reports a real,
+  // current, green number for code that was never run — a pass, not an error.
+  //
+  // LOCK: scripts/run-tests.js roots its lock at its OWN checkout, so a worktree
+  // run would take the worktree's lock — a different mutex from the one the
+  // lead's run holds. Both runs then reach the port-binding tests together and
+  // deadlock at 0% CPU, which reads as a slow suite. A second lock is not
+  // serialization, so the env override pinning it to the root is the fix.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'green' });
+  const wt = pathReal.join(repo.dir, 'wt');
+  // The stub reports its own cwd and the lock env it was handed, so this asserts
+  // what the CHILD actually received rather than what the caller meant to pass.
+  fsReal.writeFileSync(pathReal.join(wt, 'scripts', 'run-tests.js'),
+    'const fs = require("fs");\n'
+    + 'fs.writeFileSync(process.env.T317_PROBE, JSON.stringify({\n'
+    + '  cwd: process.cwd(),\n'
+    + '  lock: process.env.CLODEX_TEST_LOCK_DIR || null,\n'
+    + '  wait: process.env.CLODEX_TEST_LOCK_WAIT_MS || null,\n'
+    + '}));\n'
+    + 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\n');
+  const probe = pathReal.join(repo.dir, 'probe.json');
+  process.env.T317_PROBE = probe;
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+  delete process.env.T317_PROBE;
+
+  assert.ok(fsReal.existsSync(probe), 'ENTER: the runner actually executed and wrote the probe');
+  const got = JSON.parse(fsReal.readFileSync(probe, 'utf8'));
+  assert.strictEqual(fsReal.realpathSync(got.cwd), fsReal.realpathSync(wt),
+    'the suite runs in the ticket worktree, not the root checkout');
+  // Compared against the resolved PARENT: the stub never takes the lock, so the
+  // dir does not exist and realpath cannot resolve it — while the repo dir
+  // itself is under a symlinked /var, so the raw strings differ.
+  assert.strictEqual(pathReal.join(fsReal.realpathSync(pathReal.dirname(got.lock)), pathReal.basename(got.lock)),
+    pathReal.join(fsReal.realpathSync(repo.dir), '.test-digest.lock'),
+    'but takes the ROOT checkout lock, so it serializes against the lead run');
+  assert.ok(Number(got.wait) > 0,
+    'and WAITS for that lock: a ticket closing during another run must queue, never skip its own verification');
+});
+
+test('the worktree gets a node_modules link, or the whole suite is a false red', async () => {
+  // A git worktree has no node_modules and nothing installs one. Measured in a
+  // bare worktree: the 7 files requiring electron/node-pty/ws fail
+  // MODULE_NOT_FOUND, so without this the loop would reject every ticket for a
+  // defect in its own harness — a rework round the hand cannot possibly close.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'green' });
+  const link = pathReal.join(repo.dir, 'wt', 'node_modules');
+  assert.ok(!fsReal.existsSync(link), 'ENTER: the worktree starts with no node_modules, like a real one');
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.ok(fsReal.existsSync(link), 'the loop linked node_modules into the worktree');
+  assert.strictEqual(fsReal.realpathSync(link), fsReal.realpathSync(pathReal.join(repo.dir, 'node_modules')),
+    'and it points at the root checkout tree');
+  assert.strictEqual(f.created.length, 1, 'and the green run still reached its reviewer');
+});
+
+test('a test file that cannot even LOAD is rejected, named by its path', async () => {
+  // MEASURED against the real runner, and it corrects an intuition worth
+  // recording: an unparseable test file does NOT crash the run. Node reports it
+  // as a single failing test named by its path and still prints a summary, so
+  // this takes the reject arm — which is the right arm, because the hand can act
+  // on "test/unloadable.test.js failed" and the branch is genuinely red.
+  //
+  // The property that must hold either way is that it is never GREEN and never
+  // reaches a reviewer. That is what this pins.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'unloadable' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0, 'a branch whose tests cannot load reaches no reviewer');
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: it was rejected as rework');
+  assert.match(sent[0].body, /test\/unloadable\.test\.js/,
+    'and names the file that would not load — the one thing the hand needs');
 });
