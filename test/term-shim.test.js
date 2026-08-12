@@ -496,9 +496,24 @@ test('the floor is dated, so it cannot read as a bleeding-edge demand', () => {
 // zsh 5.9 was sent to download a package they did not need.
 test('the zero-install fix is named, and named before the one that downloads', () => {
   const msg = unsupportedShellReason({ shell: '/bin/bash', probeVersion: () => [3, 2] });
-  assert.match(msg, /zsh/, 'ENTER: zsh is offered at all — it was missing entirely before t231');
+  assert.ok(msg, 'ENTER: an old bash really is refused');
+  // LOAD-BEARING, not a duplicate of the ordering check below: indexOf returns
+  // -1 for an absent needle, so a string that named Homebrew and dropped zsh
+  // entirely would satisfy `-1 < 12` and pass vacuously.
+  assert.match(msg, /zsh/, 'zsh is offered at all — it was missing entirely before t231');
   assert.ok(msg.indexOf('zsh') < msg.indexOf('Homebrew'),
     'zsh needs no install, so it must come first — behind Homebrew it reads as the fallback');
+});
+
+// The advice above is only actionable with the restart: SHELL is read from the
+// app process, so chsh + a new tab reproduces this same refusal. A message that
+// sent the operator to reopen the tab would be a second wrong instruction.
+test('the zsh advice says restart Clodex, since a new tab would not pick up $SHELL', () => {
+  const msg = unsupportedShellReason({ shell: '/bin/bash', probeVersion: () => [3, 2] });
+  assert.ok(msg, 'ENTER: an old bash really is refused');
+  assert.match(msg, /restart Clodex/, 'the step without which changing $SHELL appears to do nothing');
+  assert.ok(!/reopen the (terminal )?tab/.test(msg),
+    'reopening the tab does NOT re-read $SHELL — advising it sends the operator down a dead end');
 });
 
 test('a bash whose version cannot be read says so rather than guessing', () => {

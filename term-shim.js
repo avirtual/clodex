@@ -384,13 +384,20 @@ function buildBashShim({ dir, shell, fs: fsDep, probeVersion }) {
 // cannot be updated. zsh is named FIRST because it needs no install (macOS
 // default since 2019); demoting it back behind Homebrew turns a zero-step fix
 // into a download.
+//
+// "then restart Clodex" is not padding and must not become "reopen the tab":
+// every read of the shell is the APP process's own `process.env.SHELL` (the
+// diagnosis's caller, the shim at spawn, and drawer-pty's fallback chain), so
+// SHELL is captured at launch. A `chsh` plus a new tab yields this identical
+// refusal, and an operator who followed the advice concludes the advice was
+// wrong. This differs from the pref-state causes, where reopening IS the fix.
 function unsupportedShellReason({ shell, probeVersion }) {
   if (isZsh(shell)) return null;
   if (isBash(shell)) {
     const { ok, version } = bashSupport({ shell, probeVersion });
     if (ok) return null;
     const have = version ? `bash ${version.join('.')}` : 'a bash whose version could not be read';
-    return `your terminal runs ${have}, and reporting needs bash ${BASH_MIN.join('.')} or newer (it uses PS0, added there) — not a bleeding-edge ask: 4.4 is from 2016, and macOS still ships 2007's 3.2 as /bin/bash, so the newest Mac reports the same version as the oldest. Nothing needs updating: make zsh your $SHELL — already there, the macOS default since 2019 — or a Homebrew bash if you prefer bash`;
+    return `your terminal runs ${have}, and reporting needs bash ${BASH_MIN.join('.')} or newer (it uses PS0, added there) — not a bleeding-edge ask: 4.4 is from 2016, and macOS still ships 2007's 3.2 as /bin/bash, so the newest Mac reports the same version as the oldest. Nothing needs updating: make zsh your $SHELL — already there, the macOS default since 2019 — then restart Clodex so it picks that up; or a Homebrew bash if you prefer bash`;
   }
   return `your terminal runs ${shell || 'a shell Clodex does not shim'}, and only zsh and bash report command results back`;
 }
