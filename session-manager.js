@@ -4364,10 +4364,7 @@ function createSessionManager(deps) {
           if (wt) {
             try { getPersistence().setWorktree(name, wt); } catch { /* best-effort */ }
           }
-          // No resolveSeatShape on this path — the template here can be a bare
-          // JSON file the spawner named, not a library entry — so the writer is
-          // handed the one field it reads.
-          this._applyTemplatePersistence(name, { tpl });
+          this._applyTemplatePersistence(name, tpl);
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd: spawnCwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
           });
@@ -4515,7 +4512,7 @@ function createSessionManager(deps) {
           // silently no-op if it isn't there yet. A reviewer that skipped this ran
           // unstripped no matter what the template said, which is invisible from
           // inside the seat.
-          this._applyTemplatePersistence(name, shape);
+          this._applyTemplatePersistence(name, shape.tpl);
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
           });
@@ -5347,9 +5344,12 @@ function createSessionManager(deps) {
     // stripLevel/autoCompact are persistence writes, not create() args, so they
     // land AFTER create() mints the entry — setStripLevel on a missing entry is a
     // silent no-op, which is how a template's strip level got lost before.
-    _applyTemplatePersistence(name, shape) {
-      if (!shape || !shape.tpl) return;
-      const { tpl } = shape;
+    // Takes the TEMPLATE, not a shape: one caller has no shape to give (its
+    // template can be a bare JSON file named by path), and a synthetic `{ tpl }`
+    // there would be a second source that agrees only until this writer reads a
+    // second shape field — at which point that path goes inert silently.
+    _applyTemplatePersistence(name, tpl) {
+      if (!tpl) return;
       if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
       if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
     }
@@ -5500,7 +5500,7 @@ function createSessionManager(deps) {
             // the wire that measures what this seat costs. Pinned by t189.
             shape.env, true,
           );
-          this._applyTemplatePersistence(seat.name, shape);
+          this._applyTemplatePersistence(seat.name, shape.tpl);
           // FIRST, before anything else that can throw. Between create() and this
           // line the seat is live in a tree no record names, and _ticketTreeHolder
           // reads occupancy off the RECORD — so it is blind to it, and session:kill

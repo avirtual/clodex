@@ -3556,6 +3556,7 @@ const SHIPPED_REVIEWER_TEMPLATE = {
 function mkReview(extra = {}) {
   const roleOverride = extra.reviewerRole;
   delete extra.reviewerRole;
+  const acCalls = [];
   // Template seed: `reviewTemplates` (the full list) wins; else `reviewTemplate`
   // (single, overriding the shipped default's fields); else the shipped default.
   const templatesList = Array.isArray(extra.reviewTemplates)
@@ -3586,7 +3587,11 @@ function mkReview(extra = {}) {
     // Same by-name, no-op-when-absent shape as setStripLevel, and for the same
     // reason: a fixture that wrote unconditionally would make a call moved
     // BEFORE create() look like it worked.
+    // acCalls records the CALL, which the resulting record cannot: `on !== false`
+    // deletes the key, so an unconditional setAutoCompact(name, true) leaves a
+    // record indistinguishable from one the guard skipped entirely.
     setAutoCompact: (n, on) => {
+      acCalls.push([n, on]);
       const e = store.find((x) => x.name === n);
       if (!e) return;
       if (on === false) e.autoCompact = false; else delete e.autoCompact;
@@ -3625,7 +3630,7 @@ function mkReview(extra = {}) {
   // persistence record — mirror that here so the sweep/record assertions see it.
   m.kill = async (name) => { killed.push(name); persistence.remove(name); order.push('discard'); };
   m._sendToSession = (name, channel, payload) => { contextActions.push({ name, channel, payload }); order.push('context-action'); };
-  return { m, injected, created, delivered, passive, parkedActive, gated, archived, killed, contextActions, order, persistence, team };
+  return { m, injected, created, delivered, passive, parkedActive, gated, archived, killed, contextActions, order, persistence, acCalls, team };
 }
 
 test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inverted tools, ephemeral+reviewFor, scope delivered as an active-class park', async () => {
@@ -4409,16 +4414,20 @@ test('team-review (t297): the template autoCompact:false lands on the seat, and 
 // The opt-OUT is the only stored value: a template that says nothing must leave
 // the key ABSENT, or it freezes "on" onto the record and autoCompactOf can no
 // longer tell a deliberate choice from a default.
-test('team-review (t297): a template with no autoCompact leaves the key ABSENT, not written true', async () => {
-  const { m, created, persistence } = mkReview();
+test('team-review (t297): a template with no autoCompact never calls the setter at all', async () => {
+  const { m, created, persistence, acCalls } = mkReview();
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
   const entry = persistence.get(created[0][0]);
   assert.ok(entry, 'ENTER: the seat has a persistence entry');
+  // The CALL, not the record: `on !== false` deletes the key, so an
+  // unconditional setAutoCompact(name, true) leaves the record identical to
+  // this one and the record assertion below cannot see the guard at all.
+  assert.deepStrictEqual(acCalls, [], 'the guard skipped the setter entirely');
   assert.ok(!('autoCompact' in entry),
-    'the shipped default carries no autoCompact, so the key stays absent and the default applies');
+    'and the key stays absent, so the default applies');
 });
 
 // A template with no stripLevel must not write one: absent is a real value
@@ -9835,6 +9844,8 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   const upserted = [];
   const removed = [];
   const worktreeSet = [];
+  const stripCalls = [];
+  const acCalls = [];
   // The record's worktree is read back to decide whether a tree is OCCUPIED, so
   // the stub has to carry it. A get() that returns a bare { name } makes every
   // live seat look like it is in no tree at all.
@@ -9872,7 +9883,13 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
         worktreeSet.push({ name, wt });
         if (wt && wt.path) wtByName.set(name, wt); else wtByName.delete(name);
       },
-      setStripLevel: () => {}, setAutoCompact: () => {},
+      // Recorders, not no-ops: the ticket path's only persistence-application
+      // assertion was create()'s argv, so deleting its _applyTemplatePersistence
+      // call left the suite green. Gated on `upserted` for the same reason the
+      // real setters resolve by name — an unconditional recorder cannot tell a
+      // call placed BEFORE create() from one placed after.
+      setStripLevel: (n, l) => { if (upserted.includes(n)) stripCalls.push([n, l]); },
+      setAutoCompact: (n, on) => { if (upserted.includes(n)) acCalls.push([n, on]); },
     }),
     getTemplates: () => ({ list: () => [] }),
     ensureDir: () => {},
@@ -9908,7 +9925,7 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
     if (i >= 0) upserted.splice(i, 1);
     wtByName.delete(name);
   };
-  return { m, team, teamDir, seat, seatWithTree, gated, upserted, removed, worktreeSet, archiveSeat, killSeat,
+  return { m, team, teamDir, seat, seatWithTree, gated, upserted, removed, worktreeSet, stripCalls, acCalls, archiveSeat, killSeat,
     load: () => tstore.load(teamDir), one: (id) => tstore.load(teamDir).find((t) => t.id === id) };
 }
 
@@ -10774,6 +10791,13 @@ test('task add: the role\'s template shapes the seat it staffs', async () => {
     'env is confined to the allowlist — a template is agent-writable and ANTHROPIC_BASE_URL redirects credentials');
   assert.strictEqual(got.promptFile, 'clodex-team-hand',
     'the ROLE prompt still wins the prompt slot: a template must not silently displace the role delta that defines the seat\'s job');
+  // stripLevel is NOT a create() arg — it is a persistence write applied after,
+  // so create()'s argv above cannot see it and dropping the call was invisible.
+  // The recorder is gated on the record existing, which is also the ordering pin.
+  assert.deepStrictEqual(f.stripCalls, [[f.upserted.at(-1), 2]],
+    'the template stripLevel is applied to the seat, after create() minted its record');
+  assert.deepStrictEqual(f.acCalls, [],
+    'and a template with no autoCompact never calls that setter');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
