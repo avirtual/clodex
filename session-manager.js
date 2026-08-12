@@ -6475,7 +6475,11 @@ function createSessionManager(deps) {
         // work before choosing a disposition. Caught here, not left floating: a
         // rejection would otherwise retire nothing and tell no one.
         this._handleTeamRetire(targetName, sender).catch((e) => {
+          // A DM, not just a log line: a throw in the sync prelude retires
+          // nothing, and a main-process warn the requester cannot see leaves the
+          // lead waiting on a confirmation that is never coming.
           log.warn('intent', `team-retire ${sender} → ${targetName} failed: ${e.message}`);
+          this._deliverMessage(sender, 'clodex-team', `retire ${targetName} failed: ${e.message}`, 'dm');
         });
         return;
       }
@@ -6528,10 +6532,14 @@ function createSessionManager(deps) {
       // is not evidence of a clean tree, and archiving something discardable is
       // recoverable while the reverse is not.
       let dirtyPath = null;
+      // Captured here because kill() drops the persistence record: by the time
+      // the confirmation is built, the record this path came from is gone.
+      let discardPath = null;
       if (discard) {
         const rec = (() => { try { return getPersistence().get(targetName); } catch { return null; } })();
         const wt = rec && rec.worktree && rec.worktree.path ? rec.worktree.path : null;
         if (wt) {
+          discardPath = wt;
           const d = await gitWorktree.isDirty(wt).catch((e) => ({ ok: false, error: e.message }));
           if (!d.ok || d.dirty) { discard = false; dirtyPath = wt; }
         }
@@ -6554,14 +6562,23 @@ function createSessionManager(deps) {
         // _taskAssign's, which the app already uses for the same loss.
         let confirm;
         if (dirtyPath) {
+          // The exit routes through RESUME on purpose: the seat was just
+          // archived, so its pty is dead and it has left this.sessions — a second
+          // team-retire returns at `if (!target)` and does nothing at all, which
+          // reads to the lead as the tool ignoring it.
           confirm = `retired ${targetName} (ARCHIVED, not discarded — ${dirtyPath} has uncommitted work). `
-            + 'A discard would have deleted that tree. Commit or clear it, then retire again to discard.';
+            + 'A discard would have deleted that tree. Resume it from the sidebar, commit or clear that tree, '
+            + 'then retire again to discard.';
         } else if (!discard) {
           confirm = `retired ${targetName} (resumable from the sidebar or on next project open)`;
         } else if (r && r.worktreeRemoved) {
           confirm = `retired ${targetName} (discarded — its worktree was removed; committed work survives on the branch)`;
         } else if (r && r.error) {
-          confirm = `retired ${targetName} (discarded, but its worktree could NOT be removed: ${r.error} — remove it by hand)`;
+          // The path comes from the record, not from r.error: removeWorktree's
+          // failure strings carry no path, so "remove it by hand" would name
+          // nothing to remove.
+          confirm = `retired ${targetName} (discarded, but its worktree could NOT be removed: ${r.error}`
+            + `${discardPath ? ` — remove ${discardPath} by hand` : ' — remove it by hand'})`;
         } else {
           confirm = `retired ${targetName} (discarded — state lives in its task artifact)`;
         }

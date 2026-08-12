@@ -2732,7 +2732,13 @@ test('team-retire: a DIRTY worktree downgrades the discard to an archive', async
   assert.strictEqual(parked.length, 1, 'ENTER: the confirmation was delivered');
   assert.match(parked[0], /ARCHIVED, not discarded/, 'the lead is told the disposition changed');
   assert.match(parked[0], /\/wt\/t900/, 'and which tree caused it');
-  assert.match(parked[0], /retire again/, 'and the exit: commit, then retire again');
+  // The exit must route through RESUME. The seat is archived, so its pty is dead
+  // and it has left this.sessions — a second team-retire returns at `if (!target)`
+  // and does nothing at all (pinned below), so an exit that says only "retire
+  // again" instructs a silent no-op and reads as the tool ignoring the lead.
+  assert.match(parked[0], /Resume it from the sidebar/,
+    'the exit names the resume step, without which "retire again" is a no-op against a dead session');
+  assert.match(parked[0], /retire again/, 'and then the retry');
 });
 
 // UNKNOWN is not clean. If git cannot answer, discarding would be a guess in the
@@ -2762,6 +2768,70 @@ test('team-retire: an UNREADABLE worktree also downgrades to an archive', async 
   assert.deepStrictEqual(archived, ['team-runner'], 'an unanswerable tree is preserved, not deleted on a guess');
   assert.deepStrictEqual(killed, [], 'and never killed');
   assert.deepStrictEqual(removed, [], 'nor its tree removed');
+});
+
+// A removal failure must name the tree the operator has to clean up by hand.
+// removeWorktree's error strings carry no path, so interpolating only the error
+// produced "remove it by hand" with no "it" — and the record that held the path
+// is already gone by then, because kill() drops it.
+test('team-retire: a failed worktree removal names the path to remove by hand', async () => {
+  const { m, PENDING_DIR } = mkRetire(
+    { '/proj/a': '/proj', '/proj/r': '/proj' },
+    { '/proj': { lead: {}, runner: {} } },
+    {
+      getPersistence: () => ({
+        list: () => [],
+        get: (n) => (n === 'team-runner'
+          ? { name: n, ephemeral: true, worktree: { path: '/wt/t900', branch: 't900' } } : null),
+      }),
+      gitWorktree: {
+        removeWorktree: async () => ({ ok: false, error: 'Refusing to remove the main working tree' }),
+        isDirty: async () => ({ ok: true, dirty: false }),
+      },
+    },
+  );
+  m.kill = async (name) => { m.sessions.delete(name); };
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  await new Promise((r) => setTimeout(r, 50));
+  const parked = drainPending(PENDING_DIR, 'lead', 't');
+  assert.strictEqual(parked.length, 1, 'ENTER: the confirmation was delivered');
+  assert.match(parked[0], /could NOT be removed/, 'ENTER: the failure branch is the one under test');
+  assert.match(parked[0], /remove \/wt\/t900 by hand/,
+    'the confirmation names the tree; the error string alone carries no path, and the record holding it is dropped by kill()');
+});
+
+// A throw in the sync prelude must reach the REQUESTER. A main-process warn the
+// lead cannot see leaves it waiting on a confirmation that never comes.
+test('team-retire: a handler throw DMs the requester, not just the log', async () => {
+  const { m, delivered } = mkRetire(
+    { '/proj/a': '/proj', '/proj/r': '/proj' },
+    { '/proj': { lead: {}, runner: {} } },
+    {
+      getPersistence: () => ({
+        list: () => [],
+        get: (n) => (n === 'team-runner'
+          ? { name: n, ephemeral: true, worktree: { path: '/wt/t900', branch: 't900' } } : null),
+      }),
+      gitWorktree: {
+        removeWorktree: async () => ({ ok: true }),
+        isDirty: async () => { throw new Error('git exploded'); },
+      },
+    },
+  );
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
+  m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
+  // The probe's own .catch handles a rejected promise, so force the throw where
+  // nothing local catches it: the sync prelude.
+  m._sendToSession = () => { throw new Error('window gone'); };
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.strictEqual(delivered.length, 1, 'ENTER: the requester was told something');
+  assert.match(delivered[0].body, /retire team-runner failed: window gone/,
+    'a throw reaches the lead as a DM — silence here is a lead waiting forever on a retire that never happened');
 });
 
 // A seat with NO worktree keeps discarding: the probe is about the tree, not a

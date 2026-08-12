@@ -146,6 +146,13 @@ async function repoInfo(cwd) {
 // UNKNOWN, not clean, when git can't answer: `{ ok: false }` must never be read
 // as "nothing to lose" — the caller's fail-safe direction is to keep the tree.
 // Committed work is deliberately NOT counted: it survives on the branch.
+//
+// The deliberate boundary: `--porcelain` honors .gitignore, so a seat whose only
+// output went to an ignored path (node_modules, a build dir, a scratch file the
+// repo excludes) reads CLEAN and its tree is force-removed. That is the intended
+// trade — a repo declares ignored paths disposable, and counting them would make
+// every seat in a repo with a build dir permanently undiscardable — but it means
+// this answers "is there work git would track", not "is this directory empty".
 async function isDirty(worktreePath) {
   const wt = worktreePath && path.resolve(String(worktreePath));
   if (!wt) return { ok: false, error: 'No worktree path given' };

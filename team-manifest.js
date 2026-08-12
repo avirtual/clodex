@@ -33,6 +33,13 @@ const ROLE_KEYS = new Set(['template', 'prompt', 'brief', 'worktree']);
 // left as-is until that lands, and this entry is what makes the gap loud.
 const UNREACHABLE_ROLE_FIELDS = new Set(['worktree']);
 
+// The five fields version 2 deleted. Named rather than derived as "anything not
+// in ROLE_KEYS", because the mutators DELETE these from disk: a derived set would
+// silently grow to include hand-authored keys nobody asked us to remove, and the
+// migration would become data loss. Every one of these is already dropped at
+// load, so removing it from the file changes no behavior — only the bytes.
+const CUT_ROLE_FIELDS = ['instantiate', 'standing', 'tools', 'type', 'ephemeral'];
+
 // Every role field a front door (setRole, the Add Role form, the popover row
 // model) may set. Exported so the legibility test compares the real list against
 // the schema instead of a copy that can drift from it.
@@ -149,22 +156,41 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   // every caller (engine.js and every test) injects the real fs anyway. The dir
   // is still created 0700 first — atomicWriteFileSync's own mkdir carries no
   // mode, and ~/.clodex/teams/<name>/ must not widen to the umask default.
-  // Stamp the current schema version onto a manifest about to be written, but
-  // ONLY when every role on it is free of keys this schema no longer models.
-  // A mutator touches one role and deliberately preserves the others' raw keys,
-  // so an unconditional stamp would claim a migration that did not happen and
-  // silence the load-time warn over keys still sitting on disk. Conditional, the
-  // version means what it says: this file has nothing left to drop.
-  function stampVersion(raw) {
-    const roles = (raw && raw.roles && typeof raw.roles === 'object') ? raw.roles : {};
-    const clean = Object.values(roles).every((d) => unknownRoleKeys(d).length === 0);
-    if (clean) raw.version = MANIFEST_VERSION;
-    return raw;
-  }
-
   function atomicWrite(file, data) {
     ensureDir(path.dirname(file));
     atomicWriteFileSync(file, data);
+  }
+
+  // Migrate every role off the cut fields, then stamp the schema version. Run on
+  // EVERY mutator write, which is what makes the version mean something: a
+  // conditional stamp alone could never fire on a real legacy file, because the
+  // v1 stock scaffold put `instantiate`/`tools` on `reviewer` and every mutator
+  // refuses the reserved roles — so the one file that motivated the warning was
+  // the one file that could never stop emitting it.
+  //
+  // Scoped to CUT_ROLE_FIELDS, not to ROLE_KEYS: this strips a NAMED set of keys
+  // this schema already drops at load, so it changes no read semantics anywhere —
+  // it only makes the disk agree with what every reader already does. Keys we
+  // simply do not model (setRole's `customField` case) are hand-authored data and
+  // stay untouched; that distinction is the whole justification for stripping
+  // here at all.
+  function migrateRoles(raw) {
+    const roles = (raw && raw.roles && typeof raw.roles === 'object' && !Array.isArray(raw.roles))
+      ? raw.roles : null;
+    if (!roles) return raw;
+    for (const [roleName, def] of Object.entries(roles)) {
+      if (!def || typeof def !== 'object' || Array.isArray(def)) continue;
+      for (const k of CUT_ROLE_FIELDS) {
+        if (k in def) delete def[k];
+      }
+      roles[roleName] = def;
+    }
+    // Only now can this be true of a file whose stale keys lived on a reserved
+    // role. Still conditional: a hand-authored key outside the cut set is not
+    // ours to delete, and a file carrying one has not finished migrating.
+    const clean = Object.values(roles).every((d) => unknownRoleKeys(d).length === 0);
+    if (clean) raw.version = MANIFEST_VERSION;
+    return raw;
   }
 
   function listTeams() {
@@ -241,7 +267,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // silent by design — that is a hand-added key on today's schema, which the
     // legibility gate covers; the warn exists for the migration, not as a linter.
     if (dropped.length && version < MANIFEST_VERSION) {
-      const seen = `${file} ${dropped.join(',')}`;
+      const seen = `${file}|${dropped.join(',')}`;
       if (!warnedDrops.has(seen)) {
         warnedDrops.add(seen);
         console.warn(`team "${name}": ignoring role keys this schema no longer models — ${dropped.join(', ')} (${file})`);
@@ -426,7 +452,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
     raw.roles[roleName] = pickRoleKeys(def);
-    atomicWrite(team.file, JSON.stringify(stampVersion(raw), null, 2));
+    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
     return loadManifest(teamName);
   }
 
@@ -457,11 +483,11 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     raw.roles = raw.roles || {};
     // NOT picked down to the schema, unlike addRole's new role: this write
     // preserves an EXISTING role's hand-authored keys (pinned below), and `clean`
-    // is already EDITABLE-only, so no cut field can enter here — it can only
-    // already be on disk. The restamp below is conditional for that reason.
+    // is already EDITABLE-only, so no cut field can enter here. The cut fields
+    // that are already on disk leave via migrateRoles, which names them.
     raw.roles[roleName] = { ...raw.roles[roleName], ...clean };
     normalizeRoleDef(roleName, raw.roles[roleName], team.file);
-    atomicWrite(team.file, JSON.stringify(stampVersion(raw), null, 2));
+    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
     return loadManifest(teamName);
   }
 
@@ -475,7 +501,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     }
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     if (raw.roles) delete raw.roles[roleName];
-    atomicWrite(team.file, JSON.stringify(raw, null, 2));
+    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
     return loadManifest(teamName);
   }
 
@@ -497,7 +523,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     raw.roles = raw.roles || {};
     raw.roles[toName] = raw.roles[fromName];
     delete raw.roles[fromName];
-    atomicWrite(team.file, JSON.stringify(raw, null, 2));
+    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
     return loadManifest(teamName);
   }
 
@@ -509,7 +535,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     if (ms == null) delete raw.watchdogMs;
     else raw.watchdogMs = ms;
-    atomicWrite(team.file, JSON.stringify(raw, null, 2));
+    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
     return loadManifest(teamName);
   }
 

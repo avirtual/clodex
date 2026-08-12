@@ -231,35 +231,53 @@ test('loadManifest: the drop warning is emitted once per key set, and a v2 file 
 });
 
 // `version`'s consumer, end to end: a legacy file warns until a mutator rewrites
-// it clean, then goes quiet permanently. Without the restamp the drop is merely
+// it clean, then goes quiet permanently. Without the migration the drop is merely
 // suppressed; with it the system heals, which is the whole argument for the field
 // existing at all under a rule that forbids declarations nothing reads.
 //
-// The healing mutator here is removeRole + addRole, NOT setRole: setRole
-// deliberately preserves an existing role's unmodeled raw keys (pinned below),
-// so it can restamp but never clean. Replacing the stale role is what clears it.
-test('the mutators restamp version once the file carries no stale keys, silencing the warn', () => {
+// THE REAL SHAPE, not a convenient one. The v1 stock scaffold put the cut keys on
+// `reviewer` — this fixture is the operator's own live team.json — and every
+// mutator refuses the reserved roles. A migration that only cleans the role being
+// edited can therefore never fire on the one file that motivated the warning:
+// `reviewer` stays stale forever, `clean` stays false forever, and the mechanism
+// is inert while claiming to be self-healing.
+test('a mutator migrates EVERY role off the cut fields, including reserved ones, and stamps', () => {
   const home = mkHome();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
   const file = path.join(home, 'teams', 'shop', 'team.json');
   mkTeam(home, 'shop', {
-    root, lead: 'lead',
-    roles: { lead: {}, runner: { brief: 'r', standing: 'prompts/s.md' } },
+    root, lead: 'clodex',
+    roles: {
+      lead: { prompt: 'clodex-team-lead' },
+      hand: { template: 'clodex-hand-seat', prompt: 'clodex-team-hand', ephemeral: true, worktree: true },
+      // Reserved AND stale: unreachable by addRole, setRole, removeRole and
+      // renameRole alike. If this role does not heal, nothing does.
+      reviewer: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', tools: ['Read', 'Grep', 'Glob'] },
+      designer: { instantiate: 'session', ephemeral: true, template: 'fable-design' },
+    },
   });
   const tm = createTeamManifest({ fs, clodexHome: home });
   const realWarn = console.warn;
   console.warn = () => {};
   try {
     assert.strictEqual(tm.loadManifest('shop').version, 1, 'ENTER: starts as a version-1 file');
-    assert.ok(!('version' in JSON.parse(fs.readFileSync(file, 'utf-8'))),
-      'ENTER: and the stale key is genuinely on disk to begin with');
-    tm.removeRole('shop', 'runner');
-    tm.addRole('shop', 'runner', { brief: 'r2', standing: 'prompts/s.md' });
+    const before = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    assert.ok('tools' in before.roles.reviewer && 'instantiate' in before.roles.reviewer,
+      'ENTER: the reserved role genuinely carries the cut keys on disk to begin with');
+    // A mutation on an UNRELATED, non-reserved role: the migration must not
+    // require touching the stale role, because the stale role cannot be touched.
+    tm.setRole('shop', 'designer', { brief: 'designs things' });
   } finally { console.warn = realWarn; }
 
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
-  assert.deepStrictEqual(onDisk.roles.runner, { brief: 'r2' },
-    'the stale key is gone from DISK, not just from the read — re-adding it through the front door cannot land it either');
+  assert.deepStrictEqual(onDisk.roles.reviewer, { prompt: 'clodex-team-reviewer' },
+    'the RESERVED role healed: the cut keys left the file even though no mutator may address it');
+  assert.deepStrictEqual(onDisk.roles.hand,
+    { template: 'clodex-hand-seat', prompt: 'clodex-team-hand', worktree: true },
+    'ephemeral is gone from hand; worktree, which the schema still models, is untouched');
+  assert.deepStrictEqual(onDisk.roles.designer,
+    { template: 'fable-design', brief: 'designs things' },
+    'the edited role took the patch and lost its cut keys');
   assert.strictEqual(onDisk.version, 2, 'and the file now declares the schema it was rewritten against');
 
   const warned = [];
@@ -268,16 +286,17 @@ test('the mutators restamp version once the file carries no stale keys, silencin
   assert.deepStrictEqual(warned, [], 'the healed file is silent forever, not merely deduped for this process');
 });
 
-// The stamp is CONDITIONAL: a mutator touching one role deliberately preserves
-// the others' raw keys, so stamping unconditionally would claim a migration that
-// did not happen and silence the warn over keys still sitting on disk.
-test('a mutator does not stamp the version while another role still carries stale keys', () => {
+// The migration is NAMED, not derived. A hand-authored key outside the cut set is
+// data we do not model but were never asked to delete — deriving the strip as
+// "anything not in ROLE_KEYS" would turn a migration into data loss, and would
+// also stamp a file that still carries something a reader drops.
+test('the migration strips only the NAMED cut fields, leaving hand-authored keys and the stamp off', () => {
   const home = mkHome();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
   const file = path.join(home, 'teams', 'shop', 'team.json');
   mkTeam(home, 'shop', {
     root, lead: 'lead',
-    roles: { lead: {}, runner: { brief: 'r' }, stale: { brief: 's', tools: ['Read'] } },
+    roles: { lead: {}, runner: { brief: 'r' }, other: { brief: 'o', tools: ['Read'], customField: 'keepme' } },
   });
   const tm = createTeamManifest({ fs, clodexHome: home });
   const realWarn = console.warn;
@@ -286,8 +305,10 @@ test('a mutator does not stamp the version while another role still carries stal
 
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
   assert.strictEqual(onDisk.roles.runner.brief, 'r2', 'ENTER: the edit landed');
-  assert.deepStrictEqual(onDisk.roles.stale, { brief: 's', tools: ['Read'] }, 'the untouched role keeps its raw keys');
-  assert.ok(!('version' in onDisk), 'so the file must NOT claim to be migrated');
+  assert.deepStrictEqual(onDisk.roles.other, { brief: 'o', customField: 'keepme' },
+    'the cut key went; the unmodeled hand-authored one stayed');
+  assert.ok(!('version' in onDisk),
+    'and the file does not claim to be migrated while it still carries a key every reader drops');
 });
 
 // The lead role specifically: `instantiate: subagent` on it was a hard throw.
