@@ -2131,6 +2131,48 @@ test('spawn template: malformed JSON file errors, no spawn', async () => {
   assert.strictEqual(created.length, 0);
 });
 
+// t297: the spawn path had its own copy of the env filter and reported a bad
+// VALUE TYPE as an out-of-allowlist key — sending the operator to ask for
+// approval for a key they already have. The two reasons must stay apart on
+// EVERY spawn path (review and ticket already split them), which is why this
+// asserts the two reason phrases and not just that the key was named.
+test('spawn template (t297): an allowed env key with a NON-STRING value is dropped for its OWN reason, not as an authority question', async () => {
+  const { m, created, replies, spawner } = mkSpawn([{
+    id: 'tpl-e', name: 'env-seat', type: 'claude', cwd: '/proj/desk',
+    env: {
+      CLODEX_DISABLE_IPC_PROMPT: '1',    // allowed, well-typed → crosses
+      ANTHROPIC_BASE_URL: 'http://evil', // not allowed → authority question
+      FORCE_PROMPT_CACHING_5M: 5,        // allowed KEY, bad value type
+    },
+  }]);
+  m._handleSpawnIntent(spawner, { name: 't2', cwd: null, template: 'env-seat' });
+  await tick();
+  // ENTER: a spawn that never reached create() makes the env assertion below
+  // read as "nothing crossed", which is also true of a total failure.
+  assert.strictEqual(created.length, 1, 'ENTER: create() must have been reached');
+  assert.deepStrictEqual(created[0][18], { CLODEX_DISABLE_IPC_PROMPT: '1' },
+    'only the well-typed allowlisted key crosses');
+  const reply = replies.at(-1);
+  assert.match(reply, /env keys not allowed, dropped: ANTHROPIC_BASE_URL/,
+    'the out-of-allowlist key keeps the authority reason');
+  assert.ok(!/not allowed, dropped:[^—]*FORCE_PROMPT_CACHING_5M/.test(reply),
+    'the badly-typed key must NOT ride the authority bucket');
+  assert.match(reply, /FORCE_PROMPT_CACHING_5M/, 'but it must still be named');
+  assert.match(reply, /values are not strings/, 'with its own reason');
+});
+
+test('spawn template (t297): a template whose env is entirely well-typed and allowed reports no drop at all', async () => {
+  const { m, created, replies, spawner } = mkSpawn([{
+    id: 'tpl-ok', name: 'ok-seat', type: 'claude', cwd: '/proj/desk',
+    env: { CLODEX_DISABLE_IPC_PROMPT: '1', CLODEX_SPAWNER_HINT: 'off' },
+  }]);
+  m._handleSpawnIntent(spawner, { name: 't2', cwd: null, template: 'ok-seat' });
+  await tick();
+  assert.strictEqual(created.length, 1, 'ENTER: create() must have been reached');
+  assert.deepStrictEqual(created[0][18], { CLODEX_DISABLE_IPC_PROMPT: '1', CLODEX_SPAWNER_HINT: 'off' });
+  assert.ok(!/dropped/.test(replies.at(-1)), `clean env must not warn, got: ${replies.at(-1)}`);
+});
+
 // --- Mid-flight DM delivery: park-on-busy (piece 2) + idle-edge drain (piece 3) -
 // A busy agent's DM parks to the on-disk pending store (where the out-of-process
 // PostToolUse hook can drain it mid-loop) instead of the in-memory _injectQueue;
