@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- Seat spawn/retire notices now go to the team lead alone. Every seat on the
+  project used to get them, so a hand mid-task was woken to be told that an
+  unrelated reviewer had restarted — news it cannot act on. Who is up is the
+  lead's business. Each seat still boots with an accurate roster; only the
+  interruption is gone.
+
 - A reviewer template whose `tools` is not a list, or is an empty one, no longer
   spawns a reviewer holding every tool the cap allows. Both cases used to be
   indistinguishable from leaving `tools` out, so a typo in the template granted

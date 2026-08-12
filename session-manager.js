@@ -2452,21 +2452,25 @@ function createSessionManager(deps) {
       if (!team) return;
       const role = matchSeatRole(team, session.name);
       const body = formatCompositionDelta(team.name, verb, { seat: session.name, role });
-      // The persistence record is the single source of a seat's ephemerality —
-      // stamped at spawn by the path that knows. The role def carried a second
-      // copy that could disagree with it.
-      let rec = null; try { rec = getPersistence().get(session.name); } catch { rec = null; }
-      const ephemeral = !!(rec && rec.ephemeral === true);
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead || s.name === session.name) continue;
         if (s._bootSettling) continue;   // still booting (codex) → drop the delta (harmless-miss contract)
-        if (ephemeral && s.name !== team.lead) continue;
         let root; try { root = findProjectRoot(s.cwd); } catch { root = null; }
         if (!root || root !== team.root) continue;
-        this._deliverPassive(s.name, 'team', body, 'dm');
-        // The delta rides conversation history and dies with the next context
-        // reset; re-baking the digest is what makes this seat's NEXT boot carry
-        // the changed composition instead of the one it was minted with.
+        // The DM goes to the LEAD ALONE. Who else is up is the lead's dispatch
+        // problem; a hand, reviewer or designer cannot act on the news that a
+        // sibling restarted, so delivering it to them is a pure interruption —
+        // it wakes a working seat and costs a turn of its context to say nothing
+        // it can use. This is unconditional: it does NOT depend on whether the
+        // seat that changed was ephemeral. Relevance is a property of the
+        // RECIPIENT, not of the subject.
+        if (s.name === team.lead) this._deliverPassive(s.name, 'team', body, 'dm');
+        // The re-bake stays for EVERY seat, and that is why it sits outside the
+        // guard above. The delta rides conversation history and dies with the
+        // next context reset; re-baking is what makes this seat's NEXT boot
+        // carry the changed composition instead of the one it was minted with.
+        // Folding it into the lead-only branch would leave every other seat
+        // booting a stale roster — silently, since nothing reads it back.
         if (s.agentType === 'claude') this._rebakeDigest(s.name);
       }
     }

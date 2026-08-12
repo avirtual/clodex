@@ -3012,7 +3012,11 @@ const teamDeps = {
     : (cwd && cwd.startsWith('/other') ? '/other' : null)),
 };
 
-test('_notifyComposition: passive delta fans to the OTHER live team seats only', () => {
+// The project/agentType filters, pinned on a delta that DOES deliver. `outsider`
+// and `shell` are the rows that must not survive the loop; the lead is here as
+// the one legitimate recipient, so a regression that dropped every delivery is
+// distinguishable from one that merely narrowed correctly.
+test('_notifyComposition: passive delta skips other projects and bash seats, and lands on the lead', () => {
   const { m } = mkPark(teamDeps);
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' });
@@ -3021,7 +3025,7 @@ test('_notifyComposition: passive delta fans to the OTHER live team seats only',
   const passive = [];
   m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
   m._notifyComposition(m.sessions.get('team-dev'), 'retired');
-  assert.strictEqual(passive.length, 1, 'only the one other live team seat is notified');
+  assert.strictEqual(passive.length, 1, 'exactly one delivery — the lead');
   assert.strictEqual(passive[0].t, 'lead');
   assert.strictEqual(passive[0].s, 'team', 'sender is the team channel');
   assert.match(passive[0].b, /\[team team\] seat team-dev retired \(role: dev\)/);
@@ -3034,17 +3038,21 @@ test('_notifyComposition: passive delta fans to the OTHER live team seats only',
 // boot-settle FLAG (armed for every codex seat at create), NOT on a stashed
 // roster: a resumed/stamped seat has no roster to stash yet still boots (MUST-FIX
 // 1). No second timer.
-test('_notifyComposition: a still-booting codex seat COALESCES — delta dropped, not typed', () => {
+// The boot-settle guard protects the RECIPIENT, and since the 2026-08-12 ruling
+// the only recipient is the lead — so a lead-as-codex-seat is the fixture that
+// still exercises it. Notifying ABOUT the lead is the case that now reaches
+// nobody (self-skip, no other eligible recipient), which is why the subject here
+// is a teammate.
+test('_notifyComposition: a still-booting codex LEAD coalesces — delta dropped, not typed', () => {
   const { m } = mkPark(teamDeps);
-  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
-  // codex teammate mid-boot: boot window open (fresh mint also stashed its roster).
-  m.sessions.set('team-cx', { name: 'team-cx', agentType: 'codex', cwd: '/proj/b',
+  // the lead is the codex seat mid-boot: boot window open (a fresh mint also stashed its roster).
+  m.sessions.set('lead', { name: 'lead', agentType: 'codex', cwd: '/proj/a',
     _bootSettling: true, _pendingRoster: teamStub });
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' }); // subject
   const passive = [];
   m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
-  m._notifyComposition(m.sessions.get('lead'), 'spawned');
-  // The booting codex seat is skipped; no other live seat to notify.
-  assert.deepStrictEqual(passive, [], 'no delta delivered to a seat still in its boot-settle window');
+  m._notifyComposition(m.sessions.get('team-dev'), 'spawned');
+  assert.deepStrictEqual(passive, [], 'no delta delivered to a lead still in its boot-settle window');
 });
 
 // MUST-FIX 1 (task 22 reopened task 20's window for RESUMED seats): a resumed
@@ -3052,63 +3060,64 @@ test('_notifyComposition: a still-booting codex seat COALESCES — delta dropped
 // would ACTIVE-type a delta into its booting TUI. The boot-settle flag guards it
 // regardless of roster. Contract: DROP (the seat's resumed context + on-demand
 // roster pull is ground truth; a missed one-line delta is harmless).
-test('_notifyComposition: a RESUMED-stamped codex seat mid-boot (no stashed roster) still coalesces', () => {
+test('_notifyComposition: a RESUMED-stamped codex LEAD mid-boot (no stashed roster) still coalesces', () => {
   const { m } = mkPark(teamDeps);
-  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
-  // resumed seat: booting, but its roster was skipped (stamped) → NO _pendingRoster.
-  m.sessions.set('cx-resumed', { name: 'cx-resumed', agentType: 'codex', cwd: '/proj/b',
-    _bootSettling: true });
+  // resumed lead: booting, but its roster was skipped (stamped) → NO _pendingRoster.
+  m.sessions.set('lead', { name: 'lead', agentType: 'codex', cwd: '/proj/a', _bootSettling: true });
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' }); // subject
   const passive = [];
   m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
-  m._notifyComposition(m.sessions.get('lead'), 'spawned');
-  assert.deepStrictEqual(passive, [], 'delta dropped while the resumed seat is still booting (nothing typed)');
+  m._notifyComposition(m.sessions.get('team-dev'), 'spawned');
+  assert.deepStrictEqual(passive, [], 'delta dropped while the resumed lead is still booting (nothing typed)');
   // Once its boot settles (_bootSettling cleared), a later delta lands normally.
-  m.sessions.get('cx-resumed')._bootSettling = false;
-  m._notifyComposition(m.sessions.get('lead'), 'archived');
-  assert.deepStrictEqual(passive.map((p) => p.t), ['cx-resumed'], 'after settle the delta delivers on the normal path');
+  m.sessions.get('lead')._bootSettling = false;
+  m._notifyComposition(m.sessions.get('team-dev'), 'archived');
+  assert.deepStrictEqual(passive.map((p) => p.t), ['lead'], 'after settle the delta delivers on the normal path');
 });
 
-test('_notifyComposition: delta + booting seat coalesce — booted seat wins, delta never double-delivered', () => {
-  // A single fan over a mixed set: cx-boot is mid-boot (window open → must be
-  // dropped/coalesced), cx-live is booted (must receive). Proves the skip is
-  // selective, not a blanket suppression, and that no seat is delivered twice.
+test('_notifyComposition: over a mixed set the lead gets exactly one delta, never twice', () => {
+  // A single fan over a mixed set. Before the lead-only ruling this pinned that
+  // the boot-skip was selective across two RECIPIENTS; with one eligible
+  // recipient the surviving property is arity — exactly one delivery per fan,
+  // and a booted bystander adds none. cx-live is here precisely because it WOULD
+  // have received under the old fan, so a revert shows up as a second row.
   const { m } = mkPark(teamDeps);
-  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });               // source
-  m.sessions.set('cx-boot', { name: 'cx-boot', agentType: 'codex', cwd: '/proj/b', _bootSettling: true, _pendingRoster: teamStub });
-  m.sessions.set('cx-live', { name: 'cx-live', agentType: 'codex', cwd: '/proj/c' });          // booted
+  m.sessions.set('lead', { name: 'lead', agentType: 'codex', cwd: '/proj/a', _bootSettling: true, _pendingRoster: teamStub });
+  m.sessions.set('cx-live', { name: 'cx-live', agentType: 'codex', cwd: '/proj/c' });          // booted bystander
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' });       // subject
   const passive = [];
   m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
-  m._notifyComposition(m.sessions.get('lead'), 'spawned');
-  assert.deepStrictEqual(passive.map((p) => p.t), ['cx-live'],
-    'the booting seat coalesces; the booted seat gets exactly one delta');
-  // Once cx-boot settles (_bootSettling cleared), a later delta lands.
-  m.sessions.get('cx-boot')._bootSettling = false;
-  m._notifyComposition(m.sessions.get('lead'), 'archived');
-  assert.deepStrictEqual(passive.slice(1).map((p) => p.t).sort(), ['cx-boot', 'cx-live'],
-    'after boot the once-coalesced seat takes deltas promptly, still no double delivery');
+  m._notifyComposition(m.sessions.get('team-dev'), 'spawned');
+  assert.deepStrictEqual(passive, [],
+    'the booting lead coalesces, and the booted bystander is not a recipient at all');
+  // Once the lead settles (_bootSettling cleared), a later delta lands — once.
+  m.sessions.get('lead')._bootSettling = false;
+  m._notifyComposition(m.sessions.get('team-dev'), 'archived');
+  assert.deepStrictEqual(passive.map((p) => p.t), ['lead'],
+    'after boot the once-coalesced lead takes the delta promptly, still exactly one delivery');
 });
 
-test('_notifyComposition: a LIVE codex seat (no stashed roster) is delivered promptly', () => {
+test('_notifyComposition: a LIVE codex LEAD (no stashed roster) is delivered promptly', () => {
   const { m } = mkPark(teamDeps);
-  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
-  m.sessions.set('team-cx', { name: 'team-cx', agentType: 'codex', cwd: '/proj/b' }); // booted: no _pendingRoster
+  m.sessions.set('lead', { name: 'lead', agentType: 'codex', cwd: '/proj/a' }); // booted: no _pendingRoster
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' }); // subject
   const passive = [];
   m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
-  m._notifyComposition(m.sessions.get('lead'), 'spawned');
-  assert.strictEqual(passive.length, 1, 'a booted codex seat gets the delta on the normal (passive) path');
-  assert.strictEqual(passive[0].t, 'team-cx');
-  assert.match(passive[0].b, /\[team team\] seat lead spawned \(role: lead\)/);
+  m._notifyComposition(m.sessions.get('team-dev'), 'spawned');
+  assert.strictEqual(passive.length, 1, 'a booted codex lead gets the delta on the normal (passive) path');
+  assert.strictEqual(passive[0].t, 'lead');
+  assert.match(passive[0].b, /\[team team\] seat team-dev spawned \(role: dev\)/);
 });
 
-test('_notifyComposition: a Claude seat still parks passively even mid-boot (boot-safe regardless)', () => {
+test('_notifyComposition: a Claude LEAD still parks passively even mid-boot (boot-safe regardless)', () => {
   const { m } = mkPark(teamDeps);
-  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
-  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' }); // claude: never stashes a roster
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' }); // claude: never stashes a roster
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' }); // subject
   const passive = [];
   m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
-  m._notifyComposition(m.sessions.get('lead'), 'spawned');
-  assert.strictEqual(passive.length, 1, 'claude target parks passively (no active PTY write to race)');
-  assert.strictEqual(passive[0].t, 'team-dev');
+  m._notifyComposition(m.sessions.get('team-dev'), 'spawned');
+  assert.strictEqual(passive.length, 1, 'claude lead parks passively (no active PTY write to race)');
+  assert.strictEqual(passive[0].t, 'lead');
 });
 
 // --- T34: an EPHEMERAL subject seat's delta fans to the LEAD only ------------
@@ -3149,9 +3158,12 @@ test('_notifyComposition (T34): an ephemeral reviewer seat delta reaches ONLY th
   assert.match(passive[0].b, /\[team team\] seat team-reviewer-1 archived \(role: reviewer\)/);
 });
 
-test('_notifyComposition (T34): a PERSISTENT seat delta still reaches bystanders (full fan preserved)', () => {
-  // team-dev is a persistent role (no ephemeral marker on def OR record) — a hand
-  // learning a second dev arrived/left IS durable topology, so the full fan stays.
+// Operator ruling (2026-08-12): a composition delta is LEAD-ONLY, whatever the
+// subject was. T34 restricted the fan for ephemeral subjects only, which keyed
+// on the wrong end of the delivery — a hand cannot act on the news that a dev
+// restarted any more than on the news that a reviewer did, so both are pure
+// interruption. Relevance is a property of the RECIPIENT, not of the subject.
+test('_notifyComposition: a PERSISTENT seat delta is lead-only too — bystanders are never woken', () => {
   const { m } = mkPark({
     ...teamReviewerDeps,
     getPersistence: () => ({ list: () => [], get: () => null }), // no ephemeral record for anyone
@@ -3162,8 +3174,30 @@ test('_notifyComposition (T34): a PERSISTENT seat delta still reaches bystanders
   const passive = [];
   m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
   m._notifyComposition(m.sessions.get('team-dev'), 'spawned');
-  assert.deepStrictEqual(passive.map((p) => p.t).sort(), ['lead', 'team-hand'],
-    'persistent subject keeps the full team fan — lead AND the hand bystander');
+  assert.deepStrictEqual(passive.map((p) => p.t), ['lead'],
+    'a persistent subject fans to the lead alone — the hand bystander is spared');
+});
+
+// The re-bake is the half that must NOT narrow with the DM, and it is invisible
+// from the delivery assertions above: it carries the changed composition into
+// every seat's NEXT boot. Folding it into the lead-only branch would leave every
+// other seat booting a stale roster, and nothing reads that back to catch it.
+test('_notifyComposition: the digest re-bake still runs for EVERY seat, not just the lead', () => {
+  const { m } = mkPark({
+    ...teamReviewerDeps,
+    getPersistence: () => ({ list: () => [], get: () => null }),
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-hand', { name: 'team-hand', agentType: 'claude', cwd: '/proj/b' });
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/c' }); // the subject
+  const passive = [];
+  const rebaked = [];
+  m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
+  m._rebakeDigest = (n) => rebaked.push(n);
+  m._notifyComposition(m.sessions.get('team-dev'), 'spawned');
+  assert.deepStrictEqual(passive.map((p) => p.t), ['lead'], 'DM narrowed to the lead');
+  assert.deepStrictEqual(rebaked.sort(), ['lead', 'team-hand'],
+    'both surviving seats re-bake — the subject self-skips, the bystander does NOT');
 });
 
 test('_notifyComposition (T34): an ephemeral subject is still self-skipped even when it IS the lead-eligible loop', () => {
@@ -3182,13 +3216,12 @@ test('_notifyComposition (T34): an ephemeral subject is still self-skipped even 
   assert.deepStrictEqual(passive.map((p) => p.t), ['lead'], 'delivered to the lead, never to the subject itself');
 });
 
-// t292 inverts T34's second marker. The role def's `ephemeral` was a SECOND
-// source for a fact the persistence record already carried, and two stores for
-// one word is how they came to disagree. The record is now the only one — so a
-// stale `ephemeral: true` left on a def in a version-1 team.json must NOT quietly
-// narrow the fan-out, because a seat that is genuinely persistent would stop
-// telling its teammates it had gone.
-test('_notifyComposition: a stale role-def `ephemeral` does NOT narrow the fan — the record is the only source', () => {
+// t292 cut `ephemeral` from role defs: it was a SECOND source for a fact the
+// persistence record already carried, and two stores for one word is how they
+// came to disagree. The fan is now lead-only unconditionally, so a stale marker
+// on a v1 def cannot change WHO is notified — this pins that the def is inert
+// here, which is what stops a future reader from reviving it as a delivery input.
+test('_notifyComposition: a stale role-def `ephemeral` changes nothing — the fan is lead-only regardless', () => {
   const teamStubEphRole = { name: 'team', root: '/proj', lead: 'lead',
     roles: {
       lead: { brief: 'the lead' },
@@ -3205,8 +3238,8 @@ test('_notifyComposition: a stale role-def `ephemeral` does NOT narrow the fan �
   const passive = [];
   m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
   m._notifyComposition(m.sessions.get('team-runner-1'), 'retired');
-  assert.deepStrictEqual(passive.map((p) => p.t).sort(), ['lead', 'team-hand'],
-    'the full fan runs: without a record marker the seat is persistent, whatever the def still says');
+  assert.deepStrictEqual(passive.map((p) => p.t), ['lead'],
+    'lead-only, whatever the def still says — the stale marker is inert for delivery');
 });
 
 // Task 22: the one-time team wiring (initial roster + the seat's own 'spawned'
