@@ -104,6 +104,27 @@ const SUITE_STUBS = {
     + 'console.log("TOTALS: 1 pass, 1 fail, 2 tests");\n'
     + 'console.error("a test printed: TOTALS: 9 pass, 0 fail, 9 tests");\n'
     + 'process.exit(1);\n',
+  // A red run carrying the DIAGNOSTICS, not just the names: the dot reporter
+  // prints the AssertionError, the `+ actual - expected` diff and the stack
+  // under each `✖` row, and that block is the whole evidence the preserved file
+  // exists to keep. `red` above stops at the names, so it cannot tell a file
+  // that saved the diagnostics from one that saved only what the rejection
+  // message already carries.
+  //
+  // Copied off a real `node scripts/run-tests.js --reporter=dot` run against a
+  // deliberately failing deepStrictEqual, under the same rule as every stub
+  // here — the indentation, the `+ actual - expected` header and the bare-brace
+  // diff shape are node's, not invented.
+  redWithDiff: 'console.log("X.");\nconsole.log("");\nconsole.log("Failed tests:");\nconsole.log("");\n'
+    + 'console.log("\\u2716 probe alpha fails with a deep diff (2.083792ms)");\n'
+    + 'console.log("  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:");\n'
+    + 'console.log("  + actual - expected");\n'
+    + 'console.log("    {");\n'
+    + 'console.log("  +   a: 1,");\n'
+    + 'console.log("  -   a: 2,");\n'
+    + 'console.log("    }");\n'
+    + 'console.log("      at TestContext.<anonymous> (/tmp/probe/frag.test.js:4:10)");\n'
+    + 'console.log("TOTALS: 1 pass, 1 fail, 2 tests");\nprocess.exit(1);\n',
   // Never exits on its own — the kill arm — and SPAWNS A GRANDCHILD, which is
   // what the real runner does (it blocks in spawnSync running `node --test`,
   // which starts a file per test). The grandchild writes a marker while alive
@@ -1995,4 +2016,182 @@ test('t362: a SECOND loop rejection counts the round up, so the lead sees the de
   const notice = rejNotice(f);
   assert.strictEqual(notice.length, 1, 'ENTER: the second rejection notified the lead too');
   assert.match(notice[0].body, /round 2/, 'and the lead is told which round it is');
+});
+
+// ── t370: the loop's red run preserves its output ──────────────────────────
+//
+// scripts/test-digest.sh's `save_failing_output` gives the lead's exec grant a
+// preserved dump of a failing run. The loop never reaches that script — it
+// spawns the BRANCH's scripts/run-tests.js — so its own red run preserved
+// nothing, and the loop's rejection is the one failure report that reaches ONLY
+// the hand. The evidence nobody else can see was the evidence being dropped.
+//
+// A shared `~/.clodex/test-failures/last.txt` is deliberately NOT what the loop
+// writes: it has one writer today and the loop would be an unattended second,
+// so two tickets failing close together would hand a hand another ticket's
+// failure. These subjects pin the per-ticket, per-round path instead.
+
+// The preserved file, found the way diffFile() finds the diff — by walking the
+// projects root rather than rebuilding the path the code under test computes.
+// Rebuilding it would make the assertion agree with the implementation by
+// construction and pass over a file written somewhere nobody looks.
+function keptFiles(f, home) {
+  const hits = [];
+  const walk = (d) => {
+    let ents = [];
+    try { ents = fsReal.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const full = pathReal.join(d, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (/^suite-failure-.*\.txt$/.test(e.name)) hits.push(full);
+    }
+  };
+  walk(pathReal.join(home, 'projects'));
+  return hits;
+}
+
+test('t370: a red loop run PRESERVES its full output, and the rejection names the file', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+  assert.deepStrictEqual(keptFiles(f, f.home), [],
+    'ENTER: nothing is preserved before the run — the assertions below must be about THIS run');
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const kept = keptFiles(f, f.home);
+  assert.strictEqual(kept.length, 1, 'exactly one preserved file is written');
+  // The round is in the name for the reason the diff's is: round 1's evidence is
+  // what a round 2 failure gets compared against, and it is unrecoverable once
+  // the branch moves on.
+  assert.strictEqual(pathReal.basename(kept[0]), 'suite-failure-t1-r1.txt');
+
+  const body = fsReal.readFileSync(kept[0], 'utf8');
+  // The DIAGNOSTICS, not merely the names. The names were already in the
+  // rejection message, so a file containing only those would satisfy a
+  // non-empty check while preserving nothing the hand did not already have —
+  // which is exactly the state this ticket found.
+  assert.match(body, /AssertionError \[ERR_ASSERTION\]/, 'the assertion text is preserved');
+  assert.match(body, /\+ actual - expected/, 'the diff is preserved');
+  assert.match(body, /at TestContext\.<anonymous>/, 'the stack is preserved');
+  // The header, so a stale or foreign dump is detectable on sight rather than
+  // silently misread as this run's.
+  assert.match(body, /# tree:/, 'the header names the tree that ran');
+  assert.match(body, /1\/2 passing, 1 failing/, 'and the counts it produced');
+
+  // The hand is TOLD the path. Without this the file exists and the one party
+  // who can act on it has to know the convention to find it.
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: exactly one rejection was delivered');
+  assert.ok(sent[0].body.includes(kept[0]),
+    `the rejection names the preserved file by absolute path (body: ${sent[0].body.slice(0, 400)})`);
+});
+
+test('t370: a SECOND red round writes its own file, so round 1 evidence survives', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.one().reworkRound, 1, 'ENTER: round 1 rejected and counted');
+
+  // The hand closes again and the loop rejects again.
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r2', reportedBy: 'team-hand' }]);
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.one().reworkRound, 2, 'ENTER: round 2 rejected too');
+
+  const kept = keptFiles(f, f.home).map((p) => pathReal.basename(p)).sort();
+  assert.deepStrictEqual(kept, ['suite-failure-t1-r1.txt', 'suite-failure-t1-r2.txt'],
+    'each round keeps its own file — round 2 must not overwrite round 1');
+});
+
+test('t370: two tickets failing together do not overwrite each other', async () => {
+  // The reason this is not the digest's single shared last.txt. The loop is
+  // unattended and fires on ticket close, so two tickets closing minutes apart
+  // would leave one hand reading the other ticket's failure — confidently wrong,
+  // which is worse than an absent file because it gets acted on.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+  const t1 = f.one();
+  f.tstore.save(f.team.root, [
+    { ...t1, state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' },
+    { ...t1, id: 't2', taskDir: 'tasks/loop-fixture-two', state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' },
+  ]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await f.m._runTicketLoop(f.team, 't2');
+  await new Promise((r) => setImmediate(r));
+
+  const kept = keptFiles(f, f.home).map((p) => pathReal.basename(p)).sort();
+  assert.deepStrictEqual(kept, ['suite-failure-t1-r1.txt', 'suite-failure-t2-r1.txt'],
+    'each ticket keeps its own evidence');
+  // And each file holds ITS OWN ticket's run, not the last one to finish.
+  for (const p of keptFiles(f, f.home)) {
+    const id = /suite-failure-(t\d+)-/.exec(pathReal.basename(p))[1];
+    assert.match(fsReal.readFileSync(p, 'utf8'), new RegExp(`for ${id}\\.`),
+      `${pathReal.basename(p)} names the ticket whose run it holds`);
+  }
+});
+
+test('t370: a GREEN run preserves nothing and carries no captured output', async () => {
+  // The output is carried on the red arm only: a green run's is noise nobody
+  // reads, and holding a 64KB string on every passing ticket to never use it is
+  // a cost with no reader.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'green' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.one().loopStep, 'review', 'ENTER: the green run really reached review');
+  assert.deepStrictEqual(keptFiles(f, f.home), [], 'a green run preserves nothing');
+});
+
+test('t370: a write failure still rejects, and SAYS why there is no file', async () => {
+  // A rejection with no evidence is still a correct rejection — but silently
+  // dropping the reason recreates this ticket's own bug one level down: the hand
+  // hunts for a file that was never written and is told nothing.
+  //
+  // The failure is INJECTED because the obvious route to it does not exist: an
+  // unresolvable taskDir escalates at CHECK 3, which is hoisted ahead of the
+  // suite, so it never reaches this arm. What does reach it is a write that
+  // fails after CHECK 3 passed — the task dir removed during a suite run that
+  // takes minutes. Stubbing the writer is the honest way to pin the MESSAGE
+  // arm without pretending the unreachable path is reachable.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+  f.m._writeTicketSuiteFailure = () => ({ ok: false, path: null, error: 'ENOENT: the task dir went away' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: the rejection still reaches the hand');
+  assert.match(sent[0].body, /could not be preserved/,
+    'it says there is nothing to read, rather than pointing at a missing file');
+  assert.match(sent[0].body, /the task dir went away/, 'and carries the underlying reason');
+  assert.match(sent[0].body, /probe alpha/, 'the failing names still ride it');
+});
+
+test('t370: an EMPTY capture is refused rather than written as a confidently empty file', () => {
+  // t363's own raw-fallback arm exists for this: a present file that says
+  // nothing reads as "the runner produced no output", which is a claim about the
+  // run rather than about the preservation. Refusing puts the reason in the
+  // rejection instead, where it is true.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const r = f.m._writeTicketSuiteFailure(f.team, f.one(), { output: '   \n  ', summary: '0/1', cwd: repo.dir });
+  assert.strictEqual(r.ok, false, 'an empty capture is not written');
+  assert.strictEqual(r.path, null, 'and no path is claimed for it');
+  assert.match(r.error, /no captured output/, 'the reason names the empty capture');
+  assert.deepStrictEqual(keptFiles(f, f.home), [], 'nothing landed on disk');
 });

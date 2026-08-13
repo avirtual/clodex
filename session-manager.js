@@ -7368,9 +7368,24 @@ function createSessionManager(deps) {
           return;
         }
         if (!suite.green) {
+          // BEFORE the reject, which increments `reworkRound` — the file is
+          // named for the round that just FAILED, not the one it opens, so the
+          // number in the path matches the run the hand is being sent back over.
+          const kept = this._writeTicketSuiteFailure(team, still, suite);
+          // Named ABSOLUTELY in the message, so the hand needs no convention to
+          // find it. A write failure rides the same line rather than being
+          // swallowed: a rejection with no evidence is still a correct
+          // rejection, but the hand must learn WHY there is nothing to read
+          // instead of hunting for a file that was never written — which is this
+          // ticket's own bug, one level down.
+          const evidence = kept.ok
+            ? `FULL OUTPUT (assertion text, diff and stack): ${kept.path}\n`
+              + 'Read it instead of re-running the suite.'
+            : `The failing output could not be preserved (${kept.error}), so the names above are all there is.`;
           const rejected = this._rejectTicketFromLoop(team, ticketId,
             `the test suite FAILS on your branch — ${suite.summary}\n\n`
             + `FAILING: ${suite.failing || '(the runner reported no test names)'}\n\n`
+            + `${evidence}\n\n`
             + 'Fix these and close the ticket again. No reviewer was spawned: a review of a '
             + 'red branch is wasted, and the suite is the gate.');
           // Reject is the designed rework channel, but it needs a seat to reach.
@@ -7396,7 +7411,13 @@ function createSessionManager(deps) {
     }
 
     // Run the suite in the ticket's WORKTREE while holding the ROOT checkout's
-    // lock. Returns { ran, green, code, summary, failing, cwd, error }.
+    // lock. Returns { ran, green, code, summary, failing, output, cwd, error }.
+    //
+    // `output` is the run's captured text, carried out ONLY when the suite is
+    // red, for _writeTicketSuiteFailure to preserve. The reduction to `failing`
+    // keeps test NAMES and drops the assertion text, diff and stack — and the
+    // loop's rejection reaches only the hand, so the hand is the one party who
+    // can diagnose a red gate and the only evidence it had was those names.
     //
     // `ran:false` means the suite never executed (no worktree, no runner, spawn
     // failure, lock never acquired, no summary) — an escalation, never a
@@ -7425,7 +7446,7 @@ function createSessionManager(deps) {
       // its pid is still in the lock dir (a killed runner never runs its exit
       // handler). Without this the revert gate blames a process that no longer
       // exists and tells the lead to wait for a suite that will never finish.
-      const out = { ran: false, green: false, code: null, summary: '', failing: '', cwd, error: null, runnerPid: null };
+      const out = { ran: false, green: false, code: null, summary: '', failing: '', output: '', cwd, error: null, runnerPid: null };
       if (!cwd) { out.error = 'the ticket has no worktree path to run in'; return out; }
 
       const runner = path.join(cwd, 'scripts', 'run-tests.js');
@@ -7673,6 +7694,9 @@ function createSessionManager(deps) {
           if (m && !names.includes(m[1].trim())) names.push(m[1].trim());
         }
         out.failing = names.slice(0, 20).join('; ').slice(0, 1000);
+        // The RED arm only. A green run's output is noise nobody reads, and
+        // carrying it would hold a 64KB string on every passing ticket.
+        out.output = text;
         if (!out.failing) {
           const esc = /ESCAPES: (?!0)(.*)/.exec(text);
           if (esc) out.failing = `escaped errors — ${esc[1].trim().slice(0, 500)}`;
@@ -7880,6 +7904,51 @@ function createSessionManager(deps) {
         return { ok: false, dir: null, error: `ticket ${ticket.id} has no resolvable task dir to write the diff into (taskDir: ${ticket.taskDir || 'none'})` };
       }
       return { ok: true, dir: taskDir, error: null };
+    }
+
+    // The failing suite run's OUTPUT, preserved beside the ticket's other
+    // artifacts. scripts/test-digest.sh does this for the lead's exec grant
+    // (`save_failing_output`); this is the same guarantee for the loop's run,
+    // which reaches the script not at all — it spawns the BRANCH's
+    // scripts/run-tests.js, deliberately, so nothing in the digest runs.
+    //
+    // PER TICKET AND ROUND, not the digest's one shared
+    // `~/.clodex/test-failures/last.txt`. That file has exactly one writer
+    // today; the loop would be a second, and an UNATTENDED one — it fires on
+    // ticket close, so two tickets closing minutes apart overwrite each other
+    // and a hand reads another ticket's failure as its own. Wrong evidence is
+    // worse than none, because it is acted on. A per-round name also keeps
+    // round 1's evidence alive through round 2, the same reason _writeTicketDiff
+    // puts the round in ITS name.
+    //
+    // Resolved through _ticketDiffDest, so the confinement that guards the diff
+    // guards this too: `taskDir` is spec TEXT an agent wrote, and a `~` or `..`
+    // in it would otherwise join into a path outside the projects root.
+    _writeTicketSuiteFailure(team, ticket, suite) {
+      const dest = this._ticketDiffDest(team, ticket);
+      if (!dest.ok) return { ok: false, path: null, error: dest.error };
+      const body = String((suite && suite.output) || '').trim();
+      // An empty capture is reported, never written: a file that exists and says
+      // nothing reads as "the runner said nothing", which is the confidently
+      // empty artifact t363's own raw-fallback arm exists to avoid.
+      if (!body) return { ok: false, path: null, error: 'the run produced no captured output to preserve' };
+      const round = (Number(ticket.reworkRound) || 0) + 1;
+      const file = path.join(dest.dir, `suite-failure-${ticket.id}-r${round}.txt`);
+      const header = [
+        `# clodex ticket loop — preserved output of the FAILING suite run for ${ticket.id}.`,
+        `# tree:  ${(suite && suite.cwd) || 'unknown'}`,
+        `# head:  ${(ticket.worktree && ticket.worktree.branch) || 'unknown'}`,
+        `# when:  ${new Date().toISOString()}`,
+        `# count: ${(suite && suite.summary) || 'unknown'}`,
+        '',
+      ].join('\n');
+      try {
+        ensureDir(dest.dir);
+        fs.writeFileSync(file, `${header}${body}\n`);
+      } catch (e) {
+        return { ok: false, path: file, error: e.message };
+      }
+      return { ok: true, path: file, error: null };
     }
 
     // The materialized diff, written beside the ticket's other artifacts.
