@@ -174,6 +174,10 @@ function commitOnBranch(dir, branch, file, body) {
 function mkLoop({
   repo, ticketOver = {}, noLeadSession = false, noReviewerPrompt = false, suite = 'green',
   suiteTimeoutMs = null,
+  // Wraps the REAL git-worktree rather than replacing it, so a caller can count
+  // which git operations the loop reached without giving up the real ones the
+  // header argues for. Identity by default: an unwrapped fixture is unchanged.
+  wrapGit = (gw) => gw,
 } = {}) {
   stubSuite(repo, suite);
   const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-loop-'));
@@ -233,7 +237,7 @@ function mkLoop({
     ensureDir: require('../fs-util').ensureDir,
     // The REAL module, deliberately: see the header. A stub here would assert
     // only that the loop calls the functions it calls.
-    gitWorktree: require('../git-worktree'),
+    gitWorktree: wrapGit(require('../git-worktree')),
     // REAL child_process, like gitWorktree above and for the same reason: the
     // suite check's claim is that a runner actually executed and its exit code
     // was read, and a stubbed spawn proves only that the loop called spawn. The
@@ -482,6 +486,62 @@ test('an empty diff escalates rather than reaching a reviewer with nothing to re
   assert.match(esc[0].body, /verify: diff/);
   assert.match(esc[0].body, /is empty despite 1 commit/, 'the evidence names the contradiction it found');
   assert.strictEqual(f.created.length, 0);
+});
+
+// Nine measured firings, each one computing a diff (78625 bytes at the worst)
+// against a destination that was already unresolvable when the step began. The
+// check moved AHEAD of the diff, so the wasted git pass is not merely reported
+// — it never runs.
+test('an unresolvable task dir escalates BEFORE the diff is computed, not after', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  let diffCalls = 0;
+  const f = mkLoop({
+    repo,
+    // The ~86% case: a spec naming no artifact dir anywhere, so no taskDir.
+    ticketOver: { spec: 'a title with no artifact path\n\nbody prose', taskDir: undefined },
+    wrapGit: (gw) => ({ ...gw, diffText: (...a) => { diffCalls += 1; return gw.diffText(...a); } }),
+  });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  assert.strictEqual(f.one().taskDir, undefined, 'ENTER: the ticket really carries no task dir');
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'exactly one escalation');
+  // THE assertion of this test. A pass-through wrapper is the only way to see
+  // it: the escalation body reads almost the same either way, and every other
+  // observable (no reviewer, no diff file, one escalation) was ALREADY true
+  // when the loop computed 78kB and threw it away.
+  assert.strictEqual(diffCalls, 0, 'no diff is computed for a ticket with nowhere to put one');
+  assert.strictEqual(f.diffFile().length, 0, 'and nothing is written');
+  assert.strictEqual(f.created.length, 0, 'no reviewer is spawned');
+  assert.match(esc[0].body, /verify: task-dir/, 'the escalation names its own check, not the diff check');
+  // The CAUSE and the FIX, not just the symptom: every one of the nine firings
+  // read as a loop bug because the message named only "no resolvable task dir".
+  assert.match(esc[0].body, /spec has no `tasks\/…` path/, 'the evidence names the cause');
+  assert.match(esc[0].body, /task edit/, 'and the action that fixes it');
+});
+
+// The other half of the same fix: with the path on line 3 the loop now runs
+// clean. Without the extractTaskDir widening this is the ticket shape that
+// escalated ~86% of the time.
+test('a spec naming its task dir on a LATER line reaches the reviewer', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const spec = 't1 — the title\n\ntasks/loop-fixture — the artifact dir\n';
+  const f = mkLoop({ repo, ticketOver: { spec, taskDir: ticketsMod.extractTaskDir(spec) } });
+  assert.strictEqual(f.one().taskDir, 'tasks/loop-fixture',
+    'ENTER: extractTaskDir must have found the line-3 path, or this measures the line-1 case');
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.deepStrictEqual(f.esc(), [], 'nothing escalates');
+  assert.strictEqual(f.created.length, 1, 'the reviewer is spawned');
+  assert.strictEqual(f.diffFile().length, 1, 'and its diff was written');
 });
 
 test('escalation tears nothing down and clears the loop hold', async () => {

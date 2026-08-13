@@ -6346,7 +6346,22 @@ function createSessionManager(deps) {
           return;
         }
 
-        // CHECK 3 — the diff materializes, non-empty. This is also the artifact
+        // CHECK 3 — there is somewhere to PUT the diff, asked BEFORE computing
+        // one. The same question `_writeTicketDiff` asks below, hoisted: nine
+        // measured firings each computed a diff (78625 bytes at the worst) and
+        // discarded it on a destination that was already unresolvable when the
+        // step began. The check is a string match; the work it guards is a git
+        // subprocess over the whole branch.
+        //
+        // The evidence names the CAUSE, not just the symptom: every one of those
+        // firings read as a loop bug, and the fix is a line in the spec.
+        if (!this._ticketDiffDest(team, ticket).ok) {
+          fail('verify: task-dir', `ticket ${ticket.id} names no task dir to write the review diff into (taskDir: ${ticket.taskDir || 'none'}) — its spec has no \`tasks/…\` path anywhere in it. Fix: add the artifact dir to the ticket's spec (\`task edit\`), then re-run \`task done\`.`,
+            'checked the task dir BEFORE computing a diff; no diff computed, no reviewer spawned');
+          return;
+        }
+
+        // CHECK 4 — the diff materializes, non-empty. This is also the artifact
         // the reviewer reads, so the check and the deliverable are the same
         // operation: a diff that cannot be written is a review that cannot happen.
         const diff = await gitWorktree.diffText(team.root, baseSha, branch)
@@ -6369,14 +6384,14 @@ function createSessionManager(deps) {
           return;
         }
 
-        // CHECK 4 — the suite actually RUNS, on the ticket's branch, and passes.
+        // CHECK 5 — the suite actually RUNS, on the ticket's branch, and passes.
         //
         // ORDER IS THE POINT, not an implementation detail: a cold review costs
         // ~100k tokens dominated by context acquisition, so paying it for a
         // branch that fails its own suite is the most expensive mistake this
         // loop can make. Suite first; reviewer only on green.
         //
-        // Checks 1-3 are tree SHAPE — they prove the work EXISTS. Only an
+        // Checks 1-4 are tree SHAPE — they prove the work EXISTS. Only an
         // execution proves it WORKS, and only a FULL run catches a blast radius
         // outside the diff: t309 added a key to git-worktree.js and broke
         // plugin-host-engine.test.js, a file its diff never touched. The hand
@@ -6715,12 +6730,17 @@ function createSessionManager(deps) {
       }
     }
 
-    // The materialized diff, written beside the ticket's other artifacts.
+    // Where a ticket's review diff would go, WITHOUT writing anything — the
+    // question the loop asks before computing a diff and the one the write asks
+    // again. One function so the cheap pre-check cannot answer differently from
+    // the write it guards: two copies of this rule would let the loop clear a
+    // destination that then refuses the diff, which is the waste it exists to
+    // prevent.
     //
     // The taskDir is RESOLVED through the same confinement _writeTicketCost uses
     // and for the same reason: it is spec TEXT, an agent wrote it, and a `~` or a
     // `..` in it would otherwise be joined into a path outside the projects root.
-    _writeTicketDiff(team, ticket, text) {
+    _ticketDiffDest(team, ticket) {
       let taskDir = null;
       try {
         taskDir = teamCost.resolveTaskDir({
@@ -6730,11 +6750,19 @@ function createSessionManager(deps) {
           homedir: os.homedir(),
         });
       } catch (e) {
-        return { ok: false, path: null, error: `task dir refused: ${e.message}` };
+        return { ok: false, dir: null, error: `task dir refused: ${e.message}` };
       }
       if (!taskDir) {
-        return { ok: false, path: null, error: `ticket ${ticket.id} has no resolvable task dir to write the diff into (taskDir: ${ticket.taskDir || 'none'})` };
+        return { ok: false, dir: null, error: `ticket ${ticket.id} has no resolvable task dir to write the diff into (taskDir: ${ticket.taskDir || 'none'})` };
       }
+      return { ok: true, dir: taskDir, error: null };
+    }
+
+    // The materialized diff, written beside the ticket's other artifacts.
+    _writeTicketDiff(team, ticket, text) {
+      const dest = this._ticketDiffDest(team, ticket);
+      if (!dest.ok) return { ok: false, path: null, error: dest.error };
+      const taskDir = dest.dir;
       // The round is in the NAME so round 2 does not overwrite round 1: round 1's
       // diff is the one artifact a round 2 reviewer might want to diff against,
       // and it is unrecoverable once the branch moves on.
