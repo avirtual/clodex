@@ -940,6 +940,30 @@ test('countMustFix: an emphasised placeholder is zero, whatever wraps it', () =>
     'an emphasised placeholder declares no must-fixes — the gate must not refuse an ACCEPT over italics');
 });
 
+// t374 nit 4: the coverage above is unit-level on countMustFix plus
+// extractMustFix on the fixture — nothing carried an emphasised verdict through
+// _handleReviewDone the way t332 does for bare `(none)`. Both countMustFix call
+// sites (the lead notification and the auto-merge gate) read the same function,
+// so the risk is low, but "low" is not "pinned": this is the test that fails if
+// the notification path ever stops routing through the normalizing counter.
+test('an ACCEPT whose must-fix section is emphasised is announced with NO must-fixes', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT\n\nMUST-FIX: *(none)*');
+
+  const t = f.one('t1');
+  // ENTER: the italics survived onto the record. If extractMustFix ever strips
+  // emphasis itself, this stops exercising the wiring it was written for and
+  // degenerates into t332's test with extra steps.
+  assert.strictEqual(t.mustFix, '*(none)*', 'ENTER: the record carries the emphasised placeholder');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the notification was sent');
+  assert.match(f.gated[0].body, /no must-fixes/,
+    'an ACCEPT must not be announced as carrying a must-fix over italics');
+  assert.ok(!/1 must-fix/.test(f.gated[0].body), 'and certainly not "1 must-fix"');
+});
+
 // The point of the fix is that emphasis is NORMALIZED rather than enumerated:
 // `*` and `_` are not added to the placeholder character classes, so an
 // open-ended family of spellings collapses onto the cases t367 already
@@ -955,6 +979,13 @@ test('countMustFix: emphasis is stripped before the placeholder test, not enumer
     // The multi-line branch still selects the WORD form, so an emphasised dash
     // rule over a real list stays a rule over a real list.
     ['*(none)*\n\n---\n\n  explanatory prose', 0],
+    // t374 nit 3: the mirror of the row above, and the shape t367 r2's must-fix
+    // was actually about. Correct today by construction — the multi-line branch
+    // selects the WORD form, which has no dash arm — but it is what breaks if
+    // someone later hoists stripEmphasis above the `nonEmpty.length > 1` branch
+    // selection, turning an emphasised RULE over a real list into zero.
+    ['*---*\n- a\n- b', 2],
+    ['**---**\n- the guard is inverted', 1],
   ];
   for (const [input, expected] of cases) {
     assert.strictEqual(countMustFix(input), expected,
@@ -991,6 +1022,107 @@ test('countMustFix: stripping emphasis must not turn real must-fixes into a plac
     ['*the sweep drops the row*', 1],
     // Prose first, emphasised placeholder later, is still not a placeholder.
     ['- the guard is inverted\n\n*(none)*', 1],
+  ];
+  for (const [input, expected] of cases) {
+    assert.strictEqual(countMustFix(input), expected,
+      `countMustFix(${JSON.stringify(input)}) must be ${expected}`);
+  }
+});
+
+// ── t374 nit 2: the line-boundary decision, made explicit ───────────────────
+
+// The TRAILING edge tolerates whitespace and periods outside the closing run:
+// `**(none)**.` is a spelling a reviewer plausibly writes, and refusing it is
+// the same whack-a-mole the normalization exists to end, one layer out.
+//
+// The LEADING edge does NOT: `> *(none)*` stays one must-fix, by design. That
+// asymmetry is the whole content of this test — both halves are pinned, so a
+// later change that "finishes the job" by tolerating leading decoration has to
+// delete an assertion that says not to rather than silently widen the gate.
+test('countMustFix: trailing punctuation outside the run is tolerated, leading decoration is not', () => {
+  const cases = [
+    // Red against t372: each counted 1, because the closing run was anchored
+    // hard to end-of-line and the period pushed it off.
+    ['**(none)**.', 0], ['*(none)*.', 0], ['*none*.', 0], ['`(none)`.', 0],
+    ['**nothing**.', 0], ['***(none)***.', 0], ['**_(none)_**.', 0],
+    ['*(none)* ', 0], ['*(none)*  .', 0], ['*(none)*..', 0],
+    // The multi-line shapes too — the placeholder still OPENS the section.
+    ['*(none)*.\n\n  - **MF1** — traced.\n  - **MF2** — traced.', 0],
+
+    // Not a widening. The strip hands `MF1` to the placeholder test, and `MF1`
+    // is not a placeholder word, so an emphasised REAL item with a trailing
+    // period is still one must-fix.
+    ['*MF1*.', 1], ['**MF1**.', 1],
+    ['**the guard is inverted**.', 1],
+    ['*none blocking*, but fix the inverted guard', 1],
+    // Only whitespace and periods are tolerated. An emphasis char outside the
+    // closing run still means the run is UNBALANCED, which is what keeps a
+    // half-wrapped line from becoming a placeholder.
+    ['**(none)*', 1], ['*(none)**', 1], ['*(none)*_', 1], ['*(none)*`', 1],
+    // Other trailing punctuation is not in the class either — the tolerance is
+    // deliberately the narrow one, not "any punctuation".
+    ['*(none)*!', 1], ['*(none)*?', 1], ['*(none)*;', 1], ['*(none)*,', 1],
+
+    // The LEADING edge, anchored by design. A blockquote or list marker before
+    // the wrapper is line decoration, not emphasis, and stripEmphasis does not
+    // own it. These are the rows to change if that call is ever revisited.
+    ['> *(none)*', 1],
+    ['> **(none)**.', 1],
+    ['  > *(none)*', 1],
+  ];
+  for (const [input, expected] of cases) {
+    assert.strictEqual(countMustFix(input), expected,
+      `countMustFix(${JSON.stringify(input)}) must be ${expected}`);
+  }
+});
+
+// ── t374 nit 1: the emphasis run is BOUNDED ─────────────────────────────────
+
+// `countMustFix` runs on the main process's verdict path, so a line that makes
+// EMPHASIS_WRAP_RE backtrack stalls the whole app — no worker, no timeout.
+//
+// The subject is a long emphasis run followed by a long body that cannot close
+// it. Against the unbounded `[*_`]+` the engine tries every group-1 length, and
+// for each one rescans every group-2 end position and does a k-char backreference
+// compare: measured at 3057ms on the machine this was written on, versus 0.8ms
+// bounded. A pure run of the same length is only quadratic (40k stars = 363ms),
+// which is why the body half of the subject is load-bearing and must not be
+// "simplified" away.
+//
+// The budget is deliberately far above the fixed cost (sub-millisecond) and far
+// below the unfixed one, so it fails on the regression rather than on a slow CI
+// box. It is a wall-clock assertion, which makes it the one test here that could
+// flake; that is the honest trade for pinning a stall that has no other symptom.
+test('countMustFix: a pathological emphasis run does not stall the verdict path', () => {
+  const evil = `${'*'.repeat(5000)}${'x'.repeat(50000)}`;
+
+  // ENTER: the subject really is the hard shape — a long run, then a long body
+  // that never closes it. If either half is trimmed, the backtracking this test
+  // exists to catch stops happening and the timing assertion passes vacuously.
+  assert.ok(/^\*{5000}x/.test(evil), 'ENTER: the subject opens with the long emphasis run');
+  assert.strictEqual(evil.length, 55000, 'ENTER: the non-closing body is still attached');
+
+  const t0 = Date.now();
+  const n = countMustFix(evil);
+  const ms = Date.now() - t0;
+
+  assert.strictEqual(n, 1, 'the line is one unmarked must-fix, not a placeholder');
+  assert.ok(ms < 500, `the bounded run must not backtrack: took ${ms}ms (unbounded: ~3000ms)`);
+});
+
+// The bound costs no spelling: stripEmphasis's LOOP unwraps a pass at a time, so
+// a run longer than the bound is eaten by successive passes. This is what makes
+// `{1,6}` safe to keep — without it, someone reading only the perf test would
+// reasonably "fix" a long-run miss by restoring `+` and re-arming the stall.
+test('countMustFix: bounding the run loses no spelling — the unwrap loop handles the rest', () => {
+  const cases = [
+    ['*******(none)*******', 0],
+    [`${'*'.repeat(12)}(none)${'*'.repeat(12)}`, 0],
+    [`${'_'.repeat(9)}none${'_'.repeat(9)}`, 0],
+    [`${'*'.repeat(20)}(none)${'*'.repeat(20)}.`, 0],
+    // And still balanced-only at any length: a long run that does not reappear
+    // identically is not a wrapper.
+    [`${'*'.repeat(12)}(none)${'*'.repeat(11)}`, 1],
   ];
   for (const [input, expected] of cases) {
     assert.strictEqual(countMustFix(input), expected,
