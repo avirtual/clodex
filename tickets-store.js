@@ -248,6 +248,36 @@ function extractMustFix(verdictText) {
   return /^(?:none|n\/a|-+|—)\.?$/i.test(out) ? null : out;
 }
 
+// How many must-fixes, for a notification that must state a NUMBER without
+// carrying the prose. Counts leading list markers (`- `, `* `, `1. `, `1) `)
+// because that is how the reviewer template asks for the section; an
+// unmarked block is one item, which is also the shape `extractMustFix`
+// documents for the inline `MUST-FIX: <text>` header.
+//
+// Derived on read rather than stored: a second field on the record could
+// disagree with `mustFix` after any edit, and the blob is the thing a human
+// acts on.
+//
+// A non-null blob can still mean NONE. `extractMustFix`'s placeholder test is
+// anchored bare (`none`, `n/a`, `-`), so any wrapping survives it: `(none)` —
+// the shape a live record actually carried — reaches here as a string with no
+// list marker, and an unguarded floor of 1 then announces `ACCEPT … 1 must-fix`.
+// A verdict that contradicts its own count is the false premise this
+// notification exists to stop, so the placeholder is re-tested here, wrapped.
+const MUSTFIX_PLACEHOLDER_RE = /^[\s(\[]*(?:none|n\/a|nothing|-+|—)[\s.)\]]*$/i;
+
+function countMustFix(mustFixText) {
+  if (mustFixText == null) return 0;
+  const text = String(mustFixText);
+  if (MUSTFIX_PLACEHOLDER_RE.test(text.trim())) return 0;
+  const lines = text.split('\n');
+  let n = 0;
+  for (const line of lines) if (/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S/.test(line)) n++;
+  // The floor: a bare unmarked item is one must-fix, not zero. Only reached
+  // once the placeholder test above has ruled out "no items at all".
+  return n > 0 ? n : (text.trim() ? 1 : 0);
+}
+
 // Has this ticket been DISPATCHED? First-class state, because everything
 // downstream of the add/start split keys off it, and inferring it from
 // `dispatch:'worktree'` plus the absence of `ticket.worktree` is a derived
@@ -303,4 +333,4 @@ function ticketInFlight(ticket) {
   return ticket.state === 'done' && !!ticket.loopStep;
 }
 
-module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, ticketStarted, ticketInFlight, branchSlug, TICKETS_FILE };
+module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, branchSlug, TICKETS_FILE };

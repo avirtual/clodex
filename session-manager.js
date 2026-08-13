@@ -168,7 +168,7 @@ const REVIEWER_FALLBACK = {
     CLODEX_SPAWNER_HINT: 'off',
   },
 };
-const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, ticketStarted, ticketInFlight, branchSlug } = require('./tickets-store');
+const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, branchSlug } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { buildReviewScope } = require('./ticket-review-scope');
 const { findRepoRoot } = require('./project-root');
@@ -4734,6 +4734,79 @@ function createSessionManager(deps) {
       return { verdict: ticket.verdict, mustFix: ticket.mustFix, reviewRound: ticket.reviewRound };
     }
 
+    // The verdict prose, written beside the diff it reviewed. Shares
+    // _ticketDiffDest's resolution so the body cannot land somewhere the diff
+    // would not, and takes the round from the ALREADY-STAMPED record — this
+    // runs after the save, where `reviewRound` is the round that just landed,
+    // unlike _writeTicketDiff which runs before it and adds one.
+    _writeVerdictBody(session, ticketId, landedOn, fullVerdict) {
+      let team;
+      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      if (!team) return { ok: false, path: null, error: 'no team' };
+      const ticket = this._loadTicket(team, ticketId);
+      if (!ticket) return { ok: false, path: null, error: `no ticket ${ticketId}` };
+      const dest = this._ticketDiffDest(team, ticket);
+      if (!dest.ok) return { ok: false, path: null, error: dest.error };
+      const round = Number(landedOn.reviewRound) || Number(ticket.reviewRound) || 1;
+      const file = path.join(dest.dir, `review-${ticketId}-r${round}.verdict.md`);
+      try {
+        ensureDir(dest.dir);
+        fs.writeFileSync(file, fullVerdict);
+      } catch (e) {
+        return { ok: false, path: null, error: e.message };
+      }
+      return { ok: true, path: file, error: null };
+    }
+
+    // The lead's copy of a TICKET verdict: a SUMMARY, never the body. The record
+    // stays the store — this only tells the lead the store changed, because a
+    // lead that does not know a review finished is a lead not merging it.
+    //
+    // Summary rather than fall-through, against the measured alternative: one
+    // real verdict was 15839 bytes, and posting that to the inbox on every
+    // review is the flooding the record/dm split was built to prevent. The
+    // fields here are the ones the lead acts on — which ticket, which way it
+    // went, which round, and whether there is work to hand back — and they are
+    // exactly what a truncated dump of the record hides, since `verdict` sits
+    // after a multi-KB `report`.
+    //
+    // Called AFTER _landVerdictOnTicket has returned, i.e. after the save: a
+    // throw here must never unwind a durable verdict, so everything is wrapped
+    // and the worst case is a landed verdict the lead has to poll for — the
+    // status quo this fixes, never a lost one. Ordering is the invariant; do
+    // not hoist this above the save.
+    _notifyLeadOfVerdict(session, lead, ticketId, landedOn, fullVerdict) {
+      try {
+        const n = countMustFix(landedOn.mustFix);
+        const mf = n === 0
+          ? 'no must-fixes'
+          : `${n} must-fix${n === 1 ? '' : 'es'}`;
+        // The full prose goes in the ticket's task dir, beside the diff it is
+        // about. Not a spill: those are swept by AGE (MSG_MAX_AGE, 30 min), so
+        // an overnight lead wakes to a dead path — and not the record either,
+        // which a truncated dump already hides `verdict` inside. The task dir
+        // is durable, outside the user's repo, and costs the record nothing.
+        const written = this._writeVerdictBody(session, ticketId, landedOn, fullVerdict);
+        const where = written.ok
+          ? `Full verdict (${fullVerdict.length} bytes): ${written.path}`
+          : `Full verdict (${fullVerdict.length} bytes) could NOT be saved (${written.error}) — only the summary above survives.`;
+        const body = [
+          `${landedOn.verdict} on ticket ${ticketId} (review round ${landedOn.reviewRound}, ${mf}).`,
+          `Landed on the ticket record; the board shows it via [agent:task list all].`,
+          where,
+        ].join('\n');
+        // Not urgent: a verdict is durable on the record before this runs, so
+        // waking a busy lead buys nothing the next turn does not. A hold or a
+        // park is therefore an acceptable outcome and is logged, not retried.
+        const r = this._gatedDeliver(lead, session.name, body, false, `[ticket ${ticketId} ${landedOn.verdict}]`);
+        if (r && r.error) {
+          log.warn('intent', `ticket ${ticketId}: verdict landed but lead ${lead} not notified — ${r.error}`);
+        }
+      } catch (e) {
+        log.error('intent', `ticket ${ticketId}: verdict landed but lead notification failed: ${e.message}`);
+      }
+    }
+
     _handleReviewDone(session, body) {
       const reply = (msg) => this._injectText(session, `[agent:review-done] ${msg}`, { parkable: true });
       const verdict = String(body == null ? '' : body).trim();
@@ -4755,6 +4828,7 @@ function createSessionManager(deps) {
       let landedOn = null;
       if (rec.reviewTicket) landedOn = this._landVerdictOnTicket(session, rec.reviewTicket, verdict);
       if (landedOn) {
+        this._notifyLeadOfVerdict(session, lead, rec.reviewTicket, landedOn, verdict);
         this._broadcast('ipc-message', {
           type: 'review-done', from: session.name, to: rec.reviewTicket, body: `verdict → ticket ${rec.reviewTicket}`,
         });
@@ -7223,9 +7297,9 @@ function createSessionManager(deps) {
         // and deletes the branch. A `loopStep` surviving that lets the late
         // verdict through `_landVerdictOnTicket`'s done+loopStep arm, stamping a
         // REWORK — with a bumped reviewRound — onto merged-and-deleted work,
-        // while review-done takes its landed branch and tells the lead nothing.
-        // Cleared, a late verdict cannot be placed and correctly falls through
-        // to the lead, who is the one who can act on it.
+        // which the lead then hears about only as a summary of a stamp nobody
+        // asked for. Cleared, a late verdict cannot be placed and correctly
+        // falls through to the lead in FULL, who is the one who can act on it.
         delete ticket.loopStep;
         // Re-read: the teardown below stamped revival onto its own copy.
         const fresh = ticketsStore.load(team.root);
