@@ -62,6 +62,15 @@ blocks a release.
   that skipped the entire remaining sweep instead of just its own ticket
   looked identical to a correct one, and would have silenced every alarm after
   the first exempt ticket with the suite still green.
+- A review verdict on a ticket now tells the lead it arrived. It was written
+  to the ticket record and nowhere else, so the only way to learn a review had
+  finished was to poll the board — while an ad-hoc review scoped by a path
+  reported back normally. The record is still the source of truth and the full
+  verdict is still kept out of the inbox, since one measured verdict ran to
+  nearly 16KB; what arrives is a summary with the verdict, the round and the
+  must-fix count. The full text is written beside the ticket's review diff in
+  its own task directory, so it outlives both the reviewer and the half-hour
+  sweep that used to be the only copy.
 
 - A retired role field in `team.json` now says so on load, instead of vanishing
   once the file claims a current schema version. `roles.reviewer.tools` looks
