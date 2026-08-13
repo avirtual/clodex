@@ -117,6 +117,22 @@ function extractTaskDir(specText) {
   return m ? m[0] : null;
 }
 
+// Core's tickets-store.ticketStarted, copied for the same §4 reason and read by
+// `stalled` below. Keep every arm: the ABSENT-key arm is the legacy shape and
+// the easy one to drop — records written before `startedAt` existed have no such
+// key and were all dispatched, so reading them as unstarted would empty the
+// stalled column of exactly the oldest tickets, which is the direction nobody
+// notices. `parked` carves out the one legacy shape that provably never
+// dispatched. `role`/`worktree` are a second reading for records
+// `_repinTicketToSeat` left without a `role`.
+function ticketStarted(ticket) {
+  if (!ticket) return false;
+  if (ticket.startedAt != null) return true;
+  if (ticket.role || (ticket.worktree && ticket.worktree.path)) return true;
+  if (!Object.prototype.hasOwnProperty.call(ticket, 'startedAt')) return !ticket.parked;
+  return false;
+}
+
 /**
  * Core's fs-util.atomicWriteFileSync, copied for the same §4 reason. Every
  * clause is load-bearing and none may be simplified into a plain writeFileSync:
@@ -459,7 +475,14 @@ function shape(t, now, stallMs) {
     // `!parked` for the same reason: core exempts a parked ticket from the
     // sweep, so flagging one here invents a stall core can neither produce nor
     // clear.
-    stalled: assignee !== '' && !t.parked && quietMs !== null && quietMs >= stallMs,
+    // `ticketStarted` is the third exemption, and the one the `assignee` test
+    // alone does not cover: `[agent:task add <role>]` writes the ROLE into
+    // `assignee`, so a filed-but-never-dispatched backlog ticket is assigned by
+    // that test and quiet forever by construction. Core exempts it
+    // (`!ticketStarted(t)` in _sweepTeamTickets); without this term the board
+    // would flag a stall for a seat that does not exist yet.
+    stalled: assignee !== '' && !t.parked && ticketStarted(t)
+      && quietMs !== null && quietMs >= stallMs,
     // The same condition said in the affirmative, and kept OUT of the stalled
     // count and the section head on purpose: how long a backlog ticket has sat
     // is worth seeing, and it is not a stall.

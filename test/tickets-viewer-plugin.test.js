@@ -710,6 +710,61 @@ test('tickets-viewer: a PARKED open ticket is parked, never stalled (t174)', asy
   } finally { cleanup(); }
 });
 
+test('tickets-viewer: an UNSTARTED open ticket is never stalled, however assigned (t329)', async () => {
+  const { host, teams, cleanup } = boot();
+  try {
+    const dir = mkTeam(teams, 'alpha');
+    const now = Date.now();
+    // The third exemption in core's gate, and the one an `assignee` test cannot
+    // stand in for: `add` writes the ROLE NAME into `assignee`, so a ticket the
+    // lead filed and never dispatched is assigned, quiet forever, and past any
+    // threshold — 28 of them on the real board the day this landed. Core skips
+    // them (`!ticketStarted(t)`); a board that flagged them would show 28 stalls
+    // core can neither produce nor clear, for seats that do not exist.
+    //
+    // Every fixture below is ASSIGNED and past the threshold, so `assignee` and
+    // the threshold can exempt none of them — only started-ness separates them.
+    writeTickets(dir, [
+      // Filed, never dispatched: the key is PRESENT and null.
+      ticket('t1', { assignee: 'hand', startedAt: null, lastActivityAt: now - 40 * HOUR }),
+      // Dispatched, then went quiet: the stall the board exists to show.
+      ticket('t2', { assignee: 'hand', startedAt: now - 6 * HOUR, lastActivityAt: now - 5 * HOUR }),
+      // The legacy shape, and the arm of ticketStarted that is easiest to drop:
+      // records predating `startedAt` have NO such key and were all dispatched,
+      // so key-absent reads as STARTED. Getting this wrong empties the stalled
+      // column of the oldest tickets — silently, since an absent stall looks
+      // like a calm board.
+      ticket('t3', { assignee: 'hand', lastActivityAt: now - 5 * HOUR }),
+      // Second reading for a record _repinTicketToSeat left with a null
+      // startedAt but a `role`: still started.
+      ticket('t4', { assignee: 'seat-1', role: 'hand', startedAt: null, lastActivityAt: now - 5 * HOUR }),
+    ]);
+    const res = await host.dispatch('tickets-viewer', 'board', [keyOfTeam(dir)], 'desktop');
+    const byId = Object.fromEntries(res.open.map((t) => [t.id, t]));
+    // ENTER: every assertion below reads through this reduction, and the
+    // interesting row is the unstarted one — a board that dropped it would let
+    // the rest of the test pass while proving nothing.
+    assert.ok(byId.t1, 'the unstarted ticket must survive into the board');
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(byId.t3, 'startedAt'), false,
+      'the legacy fixture must reach shape() with no startedAt key');
+
+    assert.equal(byId.t1.stalled, false, 'nothing was ever dispatched, so quiet is expected');
+    assert.equal(byId.t1.backlog, false, 'it HAS an assignee — unstarted and backlog are different rows');
+    assert.equal(byId.t1.parked, false, 'and it is not parked either');
+    // Still measured and still shown: how long a filed ticket has sat is worth
+    // seeing, it is just not a stall.
+    assert.ok(byId.t1.quietMs >= 39 * HOUR, 'the age of an undispatched ticket is still measured');
+
+    assert.equal(byId.t2.stalled, true, 'a dispatched ticket past the threshold still stalls');
+    assert.equal(byId.t3.stalled, true, 'an absent startedAt key reads as STARTED, as in core');
+    assert.equal(byId.t4.stalled, true, 'a `role` is the second reading of started-ness');
+
+    const list = await host.dispatch('tickets-viewer', 'projects', [], 'desktop');
+    const row = list.projects.find((p) => p.key === keyOfTeam(dir));
+    assert.equal(row.stalled, 3, 'the sidebar stall count excludes the unstarted one too');
+  } finally { cleanup(); }
+});
+
 test('tickets-viewer: an already-nudged stall is marked as such', async () => {
   const { host, teams, cleanup } = boot();
   try {
