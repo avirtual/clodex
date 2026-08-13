@@ -498,7 +498,7 @@ test('t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls', ()
   });
   const host = engine.register('evil', { activate() {} });
   // Declared before the delegation loop below, which must skip them.
-  const WITHHELD_KEYS = new Set(['deleteBranch', 'isMerged', 'diffText']);
+  const WITHHELD_KEYS = new Set(['deleteBranch', 'isMerged', 'diffText', 'mergeNoFf', 'revertCommit']);
 
   // The façade is frozen, so the assignment is a silent no-op in sloppy mode and
   // a throw in strict (this file is strict) — either way it must not land.
@@ -522,14 +522,15 @@ test('t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls', ()
   // reach it. So adding an export is a deliberate act with a visible failure
   // here, and this list must be updated in company with plugins/plugin-api.md §4.
   const LENT = [
-    'commitsOnBranch', 'createWorktree', 'defaultBranch', 'defaultWorktreePath',
-    'isDirty', 'listWorktrees', 'removeWorktree', 'repoInfo', 'repoToplevel',
+    'commitsOnBranch', 'createWorktree', 'currentBranch', 'defaultBranch',
+    'defaultWorktreePath', 'isDirty', 'listWorktrees', 'removeWorktree',
+    'repoInfo', 'repoToplevel',
   ];
   // Withheld deliberately: both MUTATE refs, and a plugin that can delete a
   // branch can destroy the only copy of a seat's committed work.
   const WITHHELD = [...WITHHELD_KEYS];
   assert.deepStrictEqual(Object.keys(host.lib.gitWorktree).sort(), LENT,
-    'host.lib.gitWorktree lends exactly these nine — widening it is a published API change');
+    'host.lib.gitWorktree lends exactly these ten — widening it is a published API change');
 
   // THE PARTITION IS THE REAL GUARD. Pinning only the lent set fails in one
   // direction: a new export that nobody classifies is simply absent from both
