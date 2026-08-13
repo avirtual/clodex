@@ -287,7 +287,25 @@ const MUSTFIX_PLACEHOLDER_WORD_RE = /^[\s(\[]*(?:none|n\/a|nothing)[\s.)\]]*$/i;
 //     must-fix, and a bare `*` / `**` / backtick never becomes a placeholder;
 //   - the interior neither opens nor closes with whitespace, which is what
 //     keeps the LIST ITEM `* (none) *` a list item rather than a wrapper.
-const EMPHASIS_WRAP_RE = /^([*_`]+)(\S(?:.*\S)?)\1$/;
+//
+// The run is BOUNDED because a backreference under an unbounded greedy run
+// backtracks cubically, and `countMustFix` runs on the main process's verdict
+// path: an unbounded `[*_`]+` against a long run followed by a long non-matching
+// body stalled the app for seconds (test-pinned). Nothing is lost by the bound —
+// `stripEmphasis`'s loop already unwraps longer and nested runs a pass at a time,
+// so raising it back to `+` buys no spelling and re-arms the stall.
+//
+// The TRAILING edge tolerates `[\s.]*` outside the closing run, because
+// `**(none)**.` is a spelling a reviewer plausibly writes and the punctuation is
+// the same whack-a-mole family one layer out. It is not a widening: the class is
+// whitespace-and-period only, so `**(none)*` stays unbalanced and `*MF1*.` strips
+// to `MF1`, which is no placeholder word. Adding `*`/`_`/backtick here WOULD
+// widen it — an unbalanced run would become a wrapper.
+//
+// The LEADING edge is anchored by design: `> *(none)*` stays one must-fix. Line
+// decoration is the caller's to strip, and tolerating it here would make a
+// quoted or prefixed line a placeholder.
+const EMPHASIS_WRAP_RE = /^([*_`]{1,6})(\S(?:.*\S)?)\1[\s.]*$/;
 
 // Nested wrappers unwrap outside-in (`**_(none)_**`). Terminates by
 // construction: each pass returns a strictly shorter middle.
