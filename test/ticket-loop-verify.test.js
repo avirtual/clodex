@@ -1645,3 +1645,235 @@ test('a DANGLING node_modules link names the dangle, not "could not link"', asyn
   assert.ok(!/could not link node_modules/.test(esc[0].body),
     'and does not blame the link step, which never ran and is not the fix');
 });
+
+// ── t362: the lead can SEE a loop rejection, and can add to one ─────────────
+//
+// Two defects, one region. (a) the well-behaved rejection — suite red, hand
+// alive, rework delivered — reached the lead through nothing at all: the only
+// lead-facing signal on this path is the call site's escalation, which fires
+// exactly when delivery FAILED. (b) a lead `task reject` racing that rejection
+// bounced off a `state === 'done'` guard the loop had already invalidated, and
+// its must-fixes went to a spill file nobody reads.
+//
+// The subjects below are written against the shape of the fix, not its text:
+// each one names the arm it measures, because "a message reached the lead" is
+// also true of an escalation, and the whole point of (a) is that a rejection
+// must NOT read as one.
+
+// The lead's rejection notice, isolated from the escalation channel: both go to
+// the lead, and a filter that caught either would let one substitute for the
+// other — exactly the confusion this ticket is about.
+const rejNotice = (f) => f.gated.filter((g) => g.target === 'lead' && /REJECTED by the loop/.test(g.body));
+
+test('t362: a DELIVERED rejection reaches the lead too, over the real verify path', async () => {
+  // Driven through _runTicketLoop rather than by calling _rejectTicketFromLoop
+  // directly: a notice the call site can no longer reach is worth nothing, and a
+  // direct call cannot tell the difference.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const notice = rejNotice(f);
+  assert.strictEqual(notice.length, 1, 'ENTER: exactly one rejection notice reached the lead');
+  // The four fields the lead decides on without opening anything.
+  assert.match(notice[0].body, /ticket t1/, 'which ticket');
+  assert.match(notice[0].body, /team-hand/, 'which seat it went back to');
+  assert.match(notice[0].body, /round 1/, 'how many rounds deep');
+  assert.match(notice[0].body, /the test suite FAILS/, 'and one line of why');
+  // The dump stays OUT. The hand has it and the record has it; posting it to the
+  // lead on every rejection is the flooding the record/dm split exists to stop.
+  assert.doesNotMatch(notice[0].body, /the thing that broke/,
+    'the failing test names do NOT ride the lead notice — the hand has them');
+  // Still rework, not an escalation. This is the claim the ticket turns on: the
+  // lead learns about it WITHOUT the loop reporting that it stopped.
+  assert.deepStrictEqual(f.esc(), [], 'a delivered rejection is still not an escalation');
+  assert.strictEqual(f.created.length, 0, 'and no reviewer was spawned');
+});
+
+test('t362: the notice is NON-URGENT, because the reopen is already durable', () => {
+  // Urgency is the difference between a lead that finishes its turn and one that
+  // is interrupted; the reopen is on disk before this runs, so the next turn
+  // loses nothing. Asserted on the argument, since a hold or a park is an
+  // acceptable outcome here and neither is visible in the body.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const urgencies = [];
+  const inner = f.m._gatedDeliver;
+  f.m._gatedDeliver = (target, sender, body, urgent, tag, onWrite) => {
+    urgencies.push({ target, urgent, body });
+    return inner.call(f.m, target, sender, body, urgent, tag, onWrite);
+  };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify' }]);
+
+  f.m._rejectTicketFromLoop(f.team, 't1', 'the test suite FAILS on your branch — 3/5 passing');
+
+  const toLead = urgencies.filter((u) => u.target === 'lead' && /REJECTED by the loop/.test(u.body));
+  assert.strictEqual(toLead.length, 1, 'ENTER: the lead notice was the row measured');
+  assert.strictEqual(toLead[0].urgent, false, 'the lead notice does not interrupt');
+  const toSeat = urgencies.filter((u) => u.target === 'team-hand');
+  assert.strictEqual(toSeat.length, 1, 'ENTER: the seat got its rework');
+  assert.strictEqual(toSeat[0].urgent, true, 'the HAND is still woken — it is the one that must act');
+});
+
+test('t362: an UNDELIVERED rejection tells the lead once, as an escalation, not twice', async () => {
+  // The pre-existing arm. With no seat the ticket stays done and the call site
+  // escalates; adding a second channel here would report one event twice, by two
+  // mechanisms, and a lead reading both has to work out they are the same thing.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  f.m.sessions.delete('team-hand');
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: the undeliverable rework escalated, as before');
+  assert.match(esc[0].body, /no live seat/, 'naming why it could not be sent back');
+  assert.deepStrictEqual(rejNotice(f), [],
+    'and the delivered-path notice does NOT also fire — one event, one channel');
+  // Wording-independent restatement of the same claim. The line above reduces on
+  // the notice's own text, so a rename of that text would empty the filter and
+  // pass this subject while measuring nothing; counting EVERY delivery to the
+  // lead cannot go vacuous that way.
+  const toLead = f.gated.filter((g) => g.target === 'lead');
+  assert.strictEqual(toLead.length, 1,
+    `the lead hears about this ONCE — got ${toLead.length}: ${toLead.map((g) => g.body.slice(0, 40)).join(' | ')}`);
+});
+
+test('t362: a notice that THROWS cannot unwind the rejection', () => {
+  // Ordering is the invariant: the notice runs after the save, wrapped, so the
+  // worst case is a landed rejection the lead has to poll for — never a lost one.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.m._gatedDeliver = (target) => {
+    if (target === 'lead') throw new Error('lead delivery exploded');
+    return { queued: true };
+  };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify' }]);
+
+  const r = f.m._rejectTicketFromLoop(f.team, 't1', 'the test suite FAILS on your branch');
+
+  assert.strictEqual(r.ok, true, 'the rejection still succeeded — the notice is not part of its contract');
+  const t = f.one();
+  assert.strictEqual(t.state, 'open', 'ENTER: the reopen is durable despite the throw');
+  assert.strictEqual(t.reworkRound, 1, 'and the marker survived with it');
+});
+
+// ── t362 (b): the marker, and the reject that lands on rework ───────────────
+
+test('t362: BOTH rejection transitions stamp the marker, identically', () => {
+  // The two transitions are deliberately identical (see _rejectTicketFromLoop's
+  // header). A marker written in only one of them would make "was this reopened
+  // by a rejection?" depend on WHO rejected, which is the asymmetry the pair
+  // exists to prevent — and the loop's rejection is the one that made the lead's
+  // reject bounce in the first place.
+  const viaLoop = mkLoop({ repo: mkRepo() });
+  viaLoop.tstore.save(viaLoop.team.root, [{ ...viaLoop.one(), state: 'done', loopStep: 'verify' }]);
+  viaLoop.m._rejectTicketFromLoop(viaLoop.team, 't1', 'suite red');
+
+  const viaLead = mkLoop({ repo: mkRepo() });
+  viaLead.tstore.save(viaLead.team.root, [{ ...viaLead.one(), state: 'done', loopStep: 'review' }]);
+  viaLead.m._handleTask(viaLead.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'fix the bound' });
+
+  assert.strictEqual(viaLoop.one().state, 'open', 'ENTER: the loop really reopened it');
+  assert.strictEqual(viaLead.one().state, 'open', 'ENTER: the lead really reopened it');
+  assert.strictEqual(viaLoop.one().reworkRound, 1, 'the loop stamps the marker');
+  assert.strictEqual(viaLead.one().reworkRound, 1, 'and the lead stamps the same one');
+});
+
+test('t362: a ticket that never closed carries NO marker, so reject still bounces', () => {
+  // The distinction the whole fix rests on. `open` is two different tickets, and
+  // widening the guard to accept the state would collapse them — reject would
+  // then mean "undo the close" or "replace the spec" depending on where it lands,
+  // which is what _taskRespec's header argues against and still holds.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });   // minted open, never done
+
+  assert.ok(!('reworkRound' in f.one()), 'ENTER: a minted ticket carries no marker');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'the must-fixes' });
+
+  assert.ok(f.injected.some((x) => /reject reopens a DONE ticket; t1 is open/.test(x)),
+    'the bounce is unchanged for a ticket that never closed');
+  // Nothing left the box as rework. Asserted on the DELIVERY LIST WHOLE rather
+  // than on a text filter: a filter that matches nothing is also true of a
+  // delivery that happened under different wording.
+  assert.deepStrictEqual(f.gated, [],
+    'no rework was delivered at all — the ticket was never reopened');
+});
+
+test('t362: a lead reject RACING the loop lands as a follow-up, not a bounce', () => {
+  // The race the ticket describes: the loop reopened it a moment ago, the lead
+  // read the red verify and fired its own must-fixes. Before the marker existed
+  // this bounced with "already handled" and spilled the reason to a file nobody
+  // reads.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify' }]);
+  f.m._rejectTicketFromLoop(f.team, 't1', 'the test suite FAILS on your branch');
+  assert.strictEqual(f.one().reworkRound, 1, 'ENTER: the loop reopened it and marked it');
+  f.gated.length = 0; f.tags.length = 0; f.injected.length = 0;
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'also fix the bound' });
+
+  const sent = f.gated.filter((g) => g.target === 'team-hand');
+  assert.strictEqual(sent.length, 1, 'ENTER: the must-fixes were delivered to the live seat');
+  assert.match(sent[0].body, /also fix the bound/, 'carrying the reason verbatim');
+  assert.match(sent[0].body, /CLOSE WITH: \[agent:task done /,
+    'and the close verb, since the seat still has to close');
+  assert.ok(f.injected.some((x) => /delivered to team-hand as a follow-up/.test(x)),
+    'the reply says follow-up, not reopen — the lead must not read this as a fresh round');
+  assert.ok(!f.injected.some((x) => /reject reopens a DONE ticket/.test(x)),
+    'and it is NOT the bounce');
+
+  const t = f.one();
+  assert.strictEqual(t.reworkRound, 1, 'a follow-up is not a new rework round — nothing implies a fresh review');
+  assert.strictEqual(t.state, 'open', 'the ticket was already open and stays there');
+  assert.ok(!('loopStep' in t), 'and the loop still does not hold it');
+});
+
+test('t362: a follow-up with no live seat FAILS LOUDLY, and keeps the reason', () => {
+  // Same reasoning as the loop's own pre-write seat check: rework nobody receives
+  // must never reply success. The reason is spilled so the lead can recover it,
+  // which is the one thing the old bounce did right.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify' }]);
+  f.m._rejectTicketFromLoop(f.team, 't1', 'the test suite FAILS on your branch');
+  assert.strictEqual(f.one().reworkRound, 1, 'ENTER: it is rejection-reopened');
+  f.m.sessions.delete('team-hand');
+  f.gated.length = 0; f.injected.length = 0;
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'also fix the bound' });
+
+  assert.ok(f.injected.some((x) => /^\[agent:task\] error:/.test(x) && /no live seat/.test(x)),
+    'an undeliverable follow-up is an error, never a success reply');
+  assert.deepStrictEqual(f.gated, [], 'and nothing was delivered');
+  assert.ok(f.injected.some((x) => /spill-stub/.test(x)),
+    'the must-fixes are spilled so the lead can recover them');
+});
+
+test('t362: a SECOND loop rejection counts the round up, so the lead sees the depth', () => {
+  // The counter is why the marker is not a boolean: "the hand is quietly on round
+  // 3" is the state the lead is watching for, and a flag cleared on each close
+  // would report round 1 forever.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify' }]);
+  f.m._rejectTicketFromLoop(f.team, 't1', 'suite red');
+  // The seat closes again, and the loop rejects again.
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify' }]);
+  assert.strictEqual(f.one().reworkRound, 1, 'ENTER: the marker SURVIVED the close — it is not reset per round');
+  f.gated.length = 0;
+  f.m._rejectTicketFromLoop(f.team, 't1', 'suite still red');
+
+  assert.strictEqual(f.one().reworkRound, 2, 'the second rejection counts up');
+  const notice = rejNotice(f);
+  assert.strictEqual(notice.length, 1, 'ENTER: the second rejection notified the lead too');
+  assert.match(notice[0].body, /round 2/, 'and the lead is told which round it is');
+});
