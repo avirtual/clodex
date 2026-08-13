@@ -38,6 +38,14 @@ blocks a release.
 - Fixed a packaging test that only ever passed in a checkout where a build had
   been run: it asserted the existence of directories that are gitignored and
   untracked, so it failed in every fresh clone and every ticket worktree.
+- The ticket board no longer flags filed-but-unstarted tickets as stalled, and
+  a ticket dispatched from the board is now recorded as started. The board kept
+  its own copy of the stall rule and did not get the fix above, so the same
+  twenty-eight tickets stayed lit on screen. Fixing only that would have been
+  worse than the bug: assigning a ticket from the board delivers its spec but
+  never stamped a start time, so a board-dispatched ticket would have read as
+  never-started forever — invisible to the board's flag and to the watchdog
+  alike. A stall nobody is told about is the more expensive direction.
 
 - A retired role field in `team.json` now says so on load, instead of vanishing
   once the file claims a current schema version. `roles.reviewer.tools` looks
