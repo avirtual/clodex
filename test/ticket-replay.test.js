@@ -998,4 +998,134 @@ test('t349: a closed ticket is never redelivered to a silent seat', async () => 
   } finally { app.stop(); }
 });
 
+// ── t349 r1: the latch may only watch a delivery whose consumption is observable ──
+//
+// The three tests below are the review's must-fixes. The first is the important
+// one: it is the case where "the confirm signal and the consumption event are the
+// same event" — the argument the whole redelivery rests on — is FALSE.
+
+test('t349: a spec PARKED to a busy seat is not watched — consuming it produces no edge', async () => {
+  const world = mkWorld();
+  const app = boot(world, { deps: { specConfirmMs: 60_000 } });
+  try {
+    const lead = await app.spawn('lead');
+    const s = await app.spawn('team-hand');
+    await replayPassed(app, 'team-hand');
+    // Mid-turn at dispatch. Every ticket dispatch is urgent, so shouldHoldDm does
+    // NOT hold a busy seat — the delivery goes to _maybeParkDelivery instead and
+    // becomes a FILE. That is the designed path, not a failure.
+    s.activityState = 'thinking';
+    const before = app.seen('team-hand');
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+    await new Promise((r) => setTimeout(r, 60));
+
+    assert.strictEqual(app.seen('team-hand'), before,
+      'ENTER: the spec must have PARKED rather than been written — if it was injected instead, this fixture '
+      + 'never reaches the state it names and the assertion below passes for the wrong reason');
+    assert.ok(!s._specUnconfirmed,
+      'a parked spec must NOT arm the latch: the out-of-process hook drains it mid-loop and a seat already '
+      + '"thinking" emits no fresh activity edge for it (ActivityTracker._set dedupes on unchanged state), so '
+      + 'the latch could never be cleared by consumption — it would redeliver a full spec into a seat that '
+      + 'HAS it and is working on it');
+
+    // And the seat consuming it stays silent at the window, because nothing armed.
+    const armed = app.seen('team-hand');
+    app.m._checkSpecConfirm(s);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(app.seen('team-hand'), armed, 'and no redelivery is produced for it');
+  } finally { app.stop(); }
+});
+
+test('t349: a spec DIVERTED to a park at write time drops the latch it already armed', async () => {
+  const world = mkWorld();
+  const app = boot(world, { deps: { specConfirmMs: 60_000 } });
+  try {
+    const lead = await app.spawn('lead');
+    const s = await app.spawn('team-hand');
+    await replayPassed(app, 'team-hand');
+    // The divert runs INSIDE the queue's critical section, after the producer has
+    // already reported 'injected'. An operator with an open draft at that instant
+    // turns the write into a park — so the latch armed a moment earlier is now
+    // watching for an edge that consumption will never produce.
+    s.lastUserInputTs = Date.now();
+    s.lastUserSubmitTs = 0;
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+    await new Promise((r) => setTimeout(r, 120));
+
+    assert.strictEqual(app.seen('team-hand'), '',
+      'ENTER: the delivery must have been DIVERTED to a park rather than written — if it reached the PTY, '
+      + 'this fixture never enters the state it names and the latch assertion below is about nothing');
+    assert.ok(!s._specUnconfirmed,
+      'a write claimed by the fire-time divert must leave no latch behind: the bytes became a file, and a '
+      + 'file is drained without producing the activity edge the latch waits for — last disposition wins');
+  } finally { app.stop(); }
+});
+
+test('t349: a ticket reassigned during the window is not redelivered to the old seat', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    const other = await app.spawn('other-hand');
+    // Spend the new seat's OWN respawn-replay one-shot while the ticket still
+    // belongs to team-hand. Left armed it fires after the reassignment below and
+    // delivers a legitimate REPLAY — a different mechanism doing its job, but
+    // byte-identical at the PTY to the stale-latch redelivery under test, so the
+    // assertion would fail (or pass) for a reason unrelated to the fix.
+    await replayPassed(app, 'other-hand');
+    // The operator's documented recovery for a silent seat. It re-pins the ticket
+    // and delivers to the new seat, which starts work and clears its OWN latch —
+    // nothing clears the old seat's, so the stale latch is what must not fire.
+    const all = world.tickets();
+    all.find((t) => t.id === 't1').assignee = 'other-hand';
+    world.tstore.save(world.team.root, all);
+    // Baseline AFTER the spawn settles: a fresh seat's own boot traffic is not the
+    // redelivery under test, and folding it into the baseline would make this
+    // assert that a busy terminal stayed byte-identical rather than that no spec
+    // arrived.
+    await new Promise((r) => setTimeout(r, 40));
+    const otherBefore = app.seen('other-hand');
+
+    fireConfirm(app, s);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(app.seen('other-hand'), otherBefore,
+      'the seat that now holds the ticket must receive nothing — a stale latch re-resolves to whoever holds '
+      + 'the ticket NOW, which injects a REPLAY into a seat mid-work on it');
+    assert.strictEqual(s._specUnconfirmed, null,
+      'and the stale latch is dropped, so the second window cannot escalate naming the wrong seat');
+    assert.ok(other, 'ENTER: the second seat must be live, or "received nothing" is trivially true');
+  } finally { app.stop(); }
+});
+
+test('t349: a stranded ticket that resolves to no live seat escalates instead of going silent', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    // The assignee died inside the window and nothing took its role, so the ticket
+    // resolves to nobody. Dropping this alongside the reassignment case would be
+    // silent in exactly the shape this ticket exists to report: an open ticket whose
+    // spec reached no one, and no one told.
+    app.m.sessions.delete('team-hand');
+    fireConfirm(app, s);
+    const leadSaw = await settled(app, 'lead', /ESCALATED/);
+    assert.match(leadSaw, /ESCALATED/,
+      'a stranded spec must reach the lead — a ticket that resolves to no seat is the loudest case this '
+      + 'ticket exists to surface, not a case to drop');
+    assert.match(leadSaw, /spec-undelivered/, 'and it names the step, so the lead knows which mechanism spoke');
+    // The evidence must name STRANDING, not a failed redelivery. Both paths end in
+    // an escalation, so a test that only matches /ESCALATED/ passes with this branch
+    // deleted — control simply falls through to the retry, which escalates for a
+    // different reason and hands the lead the wrong diagnosis.
+    assert.match(leadSaw, /no longer resolves to any live seat/,
+      'and the evidence names the actual condition: nobody holds the ticket, so no redelivery was even '
+      + 'attempted — reporting this as a failed redelivery would send the lead looking at a delivery path '
+      + 'that never ran');
+    assert.doesNotMatch(leadSaw, /redelivery could not be handed/,
+      'ENTER: it must NOT be the retry path speaking — that path is reached only when a seat still holds the '
+      + 'ticket, and confusing the two makes this test blind to the branch it names');
+    assert.strictEqual(s._specUnconfirmed, null, 'and the latch is cleared rather than left to re-fire');
+  } finally { app.stop(); }
+});
+
 after(() => { setImmediate(() => process.exit(0)); });

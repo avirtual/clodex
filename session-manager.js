@@ -568,10 +568,12 @@ function createSessionManager(deps) {
   // the wall-clock defer can. Long enough to let the readline loop come up.
   // Injectable for tests (driven at 0); ~750ms in production.
   const BOOT_DRAIN_SETTLE_MS = Number.isFinite(deps.bootDrainSettleMs) ? deps.bootDrainSettleMs : 750;
-  // How long after a spec is written a seat has to START A TURN before the write
-  // is treated as lost. Not a stall threshold — it measures the FIRST turn only,
-  // and a seat that submitted anything at all has already cleared the latch, so
-  // this can never fire on a slow turn however long it runs.
+  // How long after a spec is WRITTEN — the clock starts at the queue's write, not
+  // at the enqueue, so the gates ahead of it do not eat the window — a seat has to
+  // START A TURN before the write is treated as lost. Not a stall threshold: it
+  // measures the FIRST turn only, and a seat that submitted anything at all has
+  // already cleared the latch, so this can never fire on a slow turn however long
+  // it runs.
   // Injectable for tests, which drive it LONG and call the check directly — at 0
   // the check races the delivery it is meant to judge and reads a latch the
   // production ordering never produces. 90s in production.
@@ -5191,11 +5193,17 @@ function createSessionManager(deps) {
       // only as "Message (N bytes) attached". A seat must know this is a REPLAY
       // before it opens the file, not after.
       const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${specText}`, urgent,
-        replay ? `[ticket ${ticket.id} REPLAY]` : '');
+        replay ? `[ticket ${ticket.id} REPLAY]` : '',
+        // Arms from the WRITE, not from this return. `queued` covers two dispositions
+        // and only one of them is confirmable: an injected unit ends with an Enter, so
+        // consuming it starts a turn, while a parked file is drained by the
+        // out-of-process hook mid-loop and a seat already `thinking` emits no fresh
+        // activity edge for it. Arming over a park would therefore redeliver into a
+        // seat that HAS the spec and is working on it.
+        (disposition) => this._armSpecConfirm(seat, ticket.id, disposition));
       if (!r || r.error) return { undelivered: true };
       if (r.parked) return { parked: r.parked, reason: r.reason || null };
       if (r.held) return { held: true, reason: r.held };
-      this._armSpecConfirm(seat, ticket.id);
       return { queued: true };   // handed to the queue; the write comes later
     }
 
@@ -5214,16 +5222,44 @@ function createSessionManager(deps) {
     // spec — this is not a proxy for the failure, it is the same event seen from
     // the other side.
     //
-    // Armed only on `queued`. A `parked` delivery is a file the seat drains on its
-    // own next turn, which is a different mechanism with its own durability.
-    _armSpecConfirm(seatName, ticketId) {
+    // Armed from the WRITE (_deliverMessage's onWrite), never from the enqueue, and
+    // only for the 'injected' disposition. Two reasons, both load-bearing:
+    //
+    // A PARKED delivery is not confirmable. The file is drained by the
+    // out-of-process PostToolUse hook mid-loop, and ActivityTracker._set dedupes on
+    // unchanged state — so a seat that was already `thinking` when the spec parked
+    // consumes it without ever producing a fresh edge. Arming there would redeliver
+    // a full spec into a seat actively working on it. The park has its own
+    // durability (park cap, idle drain, hook drain) and needs no watcher.
+    //
+    // And arming at ENQUEUE would start the clock before the bytes exist: the quiet
+    // gate can hold a write for up to INJECT_QUIET_MAXWAIT (5 min), so a spec still
+    // queued at the window would get a redelivery enqueued BEHIND it — the first
+    // write then lands, starts a turn, clears the latch, and the second copy writes
+    // anyway, because nothing cancels a queued unit.
+    _armSpecConfirm(seatName, ticketId, disposition = 'injected') {
       const s = this.sessions.get(seatName);
       if (!s || !s.agentType || s._dead) return;
+      if (disposition !== 'injected') {
+        // A late divert can park text this already armed over — drop the latch
+        // rather than leave it watching for an edge that will never come.
+        if (s._specUnconfirmed && s._specUnconfirmed.ticketId === ticketId) {
+          s._specUnconfirmed = null;
+          clearTimeout(s._specConfirmTimer);
+          s._specConfirmTimer = null;
+        }
+        return;
+      }
       // An earlier unconfirmed spec is REPLACED, not stacked: the new write's
       // leading Ctrl-U clears whatever the old one left in the composer, so the
       // old latch describes a draft that no longer exists.
+      // The retry budget SURVIVES the replacement when it is the same ticket: the
+      // redelivery re-enters here through the write it triggered, and a budget reset
+      // there would make the one-shot retry unbounded.
+      const prior = s._specUnconfirmed;
+      const retried = !!(prior && prior.ticketId === ticketId && prior.retried);
       clearTimeout(s._specConfirmTimer);
-      s._specUnconfirmed = { ticketId, at: Date.now(), retried: false };
+      s._specUnconfirmed = { ticketId, at: Date.now(), retried };
       this._armSpecConfirmTimer(s);
     }
 
@@ -5254,6 +5290,9 @@ function createSessionManager(deps) {
       if (!u || session._dead) return;
       // A dialog is the one wait that is legitimately unbounded and produces no
       // activity. Re-arm rather than clear: the spec may still be unread behind it.
+      // The re-arm is DELIBERATELY uncapped — the operator may answer at any time,
+      // and a seat that never woke is still worth catching an hour later. It cannot
+      // leak: the timer is unref'd and _cleanup clears it when the session dies.
       if (session.needsAttention && session.needsAttention.kind === 'permission') {
         this._armSpecConfirmTimer(session);
         return;
@@ -5261,8 +5300,30 @@ function createSessionManager(deps) {
       let team; try { team = resolveTeam(session.cwd); } catch { return; }
       if (!team) return;
       const ticket = ticketsStore.load(team.root).find((t) => t.id === u.ticketId);
-      // Closed or reassigned while we waited — nothing left to redeliver.
+      // Closed while we waited — nothing left to redeliver.
       if (!ticket || ticket.state !== 'open') { session._specUnconfirmed = null; return; }
+      // Who holds the ticket NOW. The two ways that stops being this session are
+      // opposite in what they mean, and collapsing them loses the louder one.
+      const holder = this._ticketAssigneeSeat(team, ticket);
+      // REASSIGNED to a live seat. This is the operator's documented recovery for a
+      // silent seat, so it is the common case, not an edge: `task assign` re-pins the
+      // ticket and delivers to the new seat, which starts work and clears its OWN
+      // latch — nothing clears this one. Without this, _deliverTicketSpec re-resolves
+      // to the new holder and injects a REPLAY into a seat mid-work on it, and the
+      // second window escalates naming the wrong seat.
+      if (holder && holder !== session.name) { session._specUnconfirmed = null; return; }
+      // Resolves to NOBODY — the assignee died inside the window and nothing took
+      // its role. Dropping this quietly alongside the reassignment case would be
+      // this ticket's own premise failing inside its own fix: an open ticket whose
+      // spec reached no one, and no one told.
+      if (!holder) {
+        session._specUnconfirmed = null;
+        log.error('intent', `spec for ${u.ticketId} is stranded — ${session.name} never started a turn and the ticket now resolves to no live seat`);
+        this._escalateTicket(team, u.ticketId, 'spec-undelivered',
+          `${session.name} never started a turn after its spec was written, and the ticket no longer resolves to any live seat`,
+          'the spec was injected once at dispatch; no redelivery was attempted because there is nobody to deliver to');
+        return;
+      }
 
       if (!u.retried) {
         // Safe to redeliver precisely BECAUSE the latch is still set: the seat
@@ -5279,10 +5340,33 @@ function createSessionManager(deps) {
         });
         // Marked as a replay: the seat may be holding an unsubmitted copy, and it
         // must not read the second one as a second ticket.
-        this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true, true);
-        // _deliverTicketSpec re-arms through _armSpecConfirm, which resets
-        // `retried` — so carry it forward, or the retry budget never runs out.
-        if (session._specUnconfirmed) session._specUnconfirmed.retried = true;
+        const r = this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true, true);
+        // A redelivery that reached nobody arms nothing, so the second window would
+        // never run and the escalation below would be unreachable — the one case
+        // where this mechanism most needs to speak (spec undeliverable, seat gone)
+        // is the one it would go silent on. `parked` counts as reached: the file is
+        // durable and the seat drains it, it is simply not confirmable from here,
+        // which is the same reason the arm skips it.
+        if (!r || !(r.queued || r.parked)) {
+          const why = (r && (r.reason || (r.held && 'held') || (r.undelivered && 'no live seat resolves')))
+            || 'unknown delivery failure';
+          session._specUnconfirmed = null;
+          log.error('intent', `redelivery of ${u.ticketId} to ${session.name} reached nobody (${why}) — escalating`);
+          this._escalateTicket(team, u.ticketId, 'spec-undelivered',
+            `${session.name} never started a turn after its spec was written, and the redelivery could not be handed to a seat: ${why}`,
+            'the spec was injected once at dispatch and a redelivery was attempted after the confirmation window');
+          return;
+        }
+        // A `parked` redelivery is durable but produces no edge to confirm, so there
+        // is nothing further to watch; the park's own drains own it from here.
+        if (r.parked) { session._specUnconfirmed = null; return; }
+        // `queued` is a statement about the future, and the arm now rides the WRITE —
+        // so a redelivery that is queued and then never written (the seat dies in the
+        // gates, the queue is still holding it) arms no timer, and the latch would
+        // dead-end with its retry spent: silent, in the case this exists to report.
+        // Re-arm explicitly when the write has not already done it. Harmless if it
+        // lands later — that arm replaces this timer and carries `retried` forward.
+        if (!session._specConfirmTimer) this._armSpecConfirmTimer(session);
         return;
       }
 
@@ -8409,6 +8493,15 @@ function createSessionManager(deps) {
     // must use it: enqueue returns while the bytes are still in the ready loop, so a
     // stamp taken from the return outlives a write that the boot re-render wiped, and
     // the seat is then suppressed forever on the strength of it.
+    //
+    // It receives WHICH disposition made the text durable: 'injected' for a write
+    // released by the queue, 'parked' for a file the seat drains on its own. Both
+    // are durable, so a caller recording "told" treats them alike — but they differ
+    // in whether CONSUMPTION is observable from this process. An injected unit ends
+    // with an Enter, so consuming it starts a turn; a parked file is drained by the
+    // out-of-process hook mid-loop, and a seat already `thinking` produces no fresh
+    // activity edge for it (ActivityTracker._set dedupes on unchanged state). A
+    // caller that waits for such an edge must therefore arm on 'injected' only.
     _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null) {
       const target = this.sessions.get(targetName);
       if (!target) return;
@@ -8420,10 +8513,15 @@ function createSessionManager(deps) {
           // A park via the fire-time divert is durable too, so the stamp is taken
           // once the producer runs and the write is imminent — the same instant the
           // divert decides. Returning the text unchanged keeps this a pure hook.
-          ...(fire ? { produce: () => { try { fire(); } catch {} return finalText; } } : {}),
+          // Reports 'parked' when the divert claims it: the bytes become a file, not
+          // a write, and an observer keying on consumption must see that difference.
+          ...(fire ? {
+            produce: () => { try { fire('injected'); } catch {} return finalText; },
+            onDivert: () => { try { fire('parked'); } catch {} },
+          } : {}),
         });
       } else if (fire) {
-        try { fire(); } catch {}   // parked to disk = durable; the stamp is honest
+        try { fire('parked'); } catch {}   // parked to disk = durable; the stamp is honest
       }
       this._sendToSession(targetName, 'session-mention', targetName, mtype, senderName);
     }
@@ -8602,7 +8700,18 @@ function createSessionManager(deps) {
       // self-intent (compact/reload continuation, a slash command) would stall the
       // agent. The divert re-checks for an open draft at write time, inside the
       // queue's critical section.
-      const divert = opts.parkable ? this._parkDivertFor(session, opts.parkId || null) : null;
+      const baseDivert = opts.parkable ? this._parkDivertFor(session, opts.parkId || null) : null;
+      // The divert runs AFTER `produce`, so a caller told 'injected' by the producer
+      // can still have its text parked a moment later. Reporting the claim lets such
+      // a caller correct itself — last disposition wins.
+      const onDivert = typeof opts.onDivert === 'function' ? opts.onDivert : null;
+      const divert = (baseDivert && onDivert)
+        ? (t) => {
+          const claimed = baseDivert(t);
+          if (claimed) { try { onDivert(); } catch {} }
+          return claimed;
+        }
+        : baseDivert;
       const qopts = {};
       if (divert) qopts.divert = divert;
       if (produce) qopts.produce = produce;
