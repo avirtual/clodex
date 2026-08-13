@@ -77,7 +77,7 @@ function parseIntentLegacy(rawLine) {
   const rebootMatch = cleaned.match(/^\[agent:reboot\]\s*(.*)/s);
   if (rebootMatch) return { type: 'reboot', body: rebootMatch[1] };
 
-  const taskMatch = cleaned.match(/^\[agent:task\s+(add|assign|done|reject|cancel|accept|park|list)\b([^\]]*)\]\s*(.*)/s);
+  const taskMatch = cleaned.match(/^\[agent:task\s+(add|assign|start|done|reject|cancel|accept|park|list)\b([^\]]*)\]\s*(.*)/s);
   if (taskMatch) {
     const sub = taskMatch[1];
     const argToks = taskMatch[2].trim().split(/\s+/).filter(Boolean);
@@ -95,7 +95,14 @@ function parseIntentLegacy(rawLine) {
     // between the walk and the legacy chain, so a deliberate, reviewed shape
     // change belongs in both or the pin stops meaning anything.
     if (sub === 'list') return { type: 'task', sub, id: null, who: null, filter: argToks[0] || null, body: '' };
-    if (sub === 'park') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
+    // t308 added `start` to parseTask and did NOT update this copy. The gap
+    // stayed invisible because the corpus is harvested from QUOTED string
+    // literals and the only `task start` in a harvested file sat inside a
+    // regex literal — so no corpus line ever reached the divergence. Fuzzing
+    // the oracle against the walk (2000 generated lines) found this and only
+    // this. Keep the lockstep rule above in force: a new sub-verb lands here
+    // in the same commit, or the differential silently stops covering it.
+    if (sub === 'park' || sub === 'start') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
     return { type: 'task', sub, id: argToks[0] || null, who: null, body };
   }
 
@@ -208,6 +215,8 @@ const ADVERSARIAL = [
   '[agent:task list] trailing', '[agent:task foo]', '[agent:task]',
   '[agent:task added t1]',
   '[agent:task park t1]', '[agent:task park t1] why', '[agent:task park]',
+  '[agent:task start]', '[agent:task start t1]', '[agent:task start t1] trailing',
+  '[agent:task started t1]',
   '[agent:task add park] spec', '[agent:task add park hand] spec',
   '[agent:task add hand park] spec', '[agent:task add parked] spec',
   '[agent:team role-add lead] brief', '[agent:team role-add lead prompt:p.md] brief',
@@ -225,6 +234,54 @@ const ADVERSARIAL = [
 ];
 
 const CORPUS = [...new Set([...ADVERSARIAL, ...harvestedLines()])];
+
+// ── t313: the "every verb in every shape" claim, enforced ───────────────────
+//
+// ADVERSARIAL's comment claims it covers every verb in every shape. Nothing
+// checked that, and it was false: t308 added `start` to parseTask, the frozen
+// oracle above was never updated in lockstep, and NO corpus line reached the
+// divergence — so the differential stayed green over a sub-verb it did not
+// parse at all, from t308 until a `task start` literal happened to land in a
+// harvested file. A universal asserted in prose is the defect class; this
+// converts it into a mechanism.
+//
+// The corpus does NOT grow with the suite the way harvestedLines' comment
+// says: it reads three hardcoded files, so the six `task start` literals that
+// have been in test/task-start.test.js since t308 were never harvested.
+// Widening the harvest is the other possible fix and is deliberately NOT taken
+// here — it would pull in every future intent-mentioning test file and make
+// this differential fail for reasons unrelated to the walk. Naming the verbs
+// is the narrower guarantee.
+//
+// The verb list is DERIVED from intent-registry.js's own source rather than
+// retyped, so a new sub-verb cannot be added to the grammar without either
+// appearing in the corpus or turning this red. Reading source text is uglier
+// than importing a constant, but parseTask's alternation is a regex literal
+// inside a function — exporting it purely for this test would reshape
+// production to suit the suite. The empty-derivation trap is guarded below:
+// if the regex ever stops matching, an empty list makes `every` vacuously
+// true, which is precisely how a guard like this rots into a no-op.
+function taskSubVerbsFromSource() {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'intent-registry.js'), 'utf8');
+  const m = src.match(/agent:task\\s\+\(([a-z|-]+)\)/);
+  return m ? m[1].split('|') : [];
+}
+
+test('t313: every task sub-verb in the real grammar appears in the corpus', () => {
+  const verbs = taskSubVerbsFromSource();
+  // Without this the assertion below iterates nothing and passes no matter what
+  // the corpus contains — the exact shape of vacuity this guard exists to stop.
+  assert.ok(verbs.length >= 9, `ENTER: read the alternation from intent-registry.js (got ${JSON.stringify(verbs)})`);
+  assert.ok(verbs.includes('start'), 'ENTER: and it includes the verb whose absence started this');
+
+  for (const v of verbs) {
+    const hit = CORPUS.some((line) => {
+      const i = parseIntent(line);
+      return i && i.type === 'task' && i.sub === v;
+    });
+    assert.ok(hit, `no corpus line parses to task/${v} — the differential does not cover it`);
+  }
+});
 
 test('corpus is big enough to be evidence', () => {
   assert.ok(CORPUS.length >= 150, `corpus is only ${CORPUS.length} lines`);
