@@ -232,7 +232,7 @@ const teamCost = require('./team-cost');
 const { buildReviewScope } = require('./ticket-review-scope');
 const { findRepoRoot } = require('./project-root');
 const { projectDirFor } = require('./clodex-paths');
-const { readTail, lastToolFrom, formatStallBody } = require('./stall-evidence');
+const { readTail, lastToolFrom, formatStallBody, formatOrphanBody } = require('./stall-evidence');
 // Aliased deliberately: the manager has its OWN trackedSessionIds() method with
 // a different contract (every id across all sessions, no argument). This is the
 // per-entry union, and the two must not be mistaken for each other.
@@ -2807,6 +2807,7 @@ function createSessionManager(deps) {
       clearTimeout(s._rebootNoticeRetryTimer);
       clearTimeout(s._rebootNoticeFlushTimer);
       clearTimeout(s._specConfirmTimer);
+      clearTimeout(s._reviewStartTimer);
       // Drops the pending debounce timer with it — a hint armed after the PTY
       // died would ride the next session under the same name. The offer
       // cooldown goes too: a retired seat's name is reused by its replacement,
@@ -2939,6 +2940,16 @@ function createSessionManager(deps) {
         s._specUnconfirmed = null;
         clearTimeout(s._specConfirmTimer);
         s._specConfirmTimer = null;
+      }
+      // Same edge, same meaning, for a reviewer's first turn. The check re-reads
+      // `activityState` itself and would decline anyway, so this is the cheap arm
+      // of a belt-and-braces pair: it stops a healthy review holding a timer for
+      // its whole run, and it makes the disarm survive a seat that starts and
+      // finishes inside the window (idle -> thinking -> idle), where the state read
+      // at the deadline is idle again and only the transcript would say otherwise.
+      if (s && state !== 'idle' && s._reviewStartTimer) {
+        clearTimeout(s._reviewStartTimer);
+        s._reviewStartTimer = null;
       }
       if (state !== 'idle') this._touchTicketActivity(name);
       if (s && state !== 'idle' && s.needsAttention) this._setAttention(s, null);
@@ -4879,6 +4890,12 @@ function createSessionManager(deps) {
           // was the failure. Do not re-inline the scope here: two copies would
           // disagree the moment one is edited, and the dm copy is the losable one.
           this._deliverParkedActive(name, session.name, 'Your review scope is in your system prompt. Begin.', 'dm');
+          // Armed AFTER the nudge, so the window measures the nudge's outcome and
+          // not the spawn's. A reviewer is the one seat with no other traffic to
+          // earn a turn from, so nothing else here would ever notice it not taking
+          // one — the spec-confirm latch does not cover it (that watches a TICKET
+          // spec injected into an existing seat, and this scope is never injected).
+          this._armReviewStartCheck(name, session.name);
           this._broadcast('ipc-message', {
             type: 'team-review', from: session.name, to: name, body: `review → ${name} @ ${cwd}`,
           });
@@ -5913,6 +5930,94 @@ function createSessionManager(deps) {
       // it also stops a 90s window from holding every test file that dispatches a
       // ticket open until node kills it.
       if (session._specConfirmTimer.unref) session._specConfirmTimer.unref();
+    }
+
+    // A reviewer seat that never takes its first turn, and nothing says so.
+    //
+    // Measured twice: `clodex-reviewer-365-r2` sat alive and idle for ~30 minutes,
+    // `clodex-reviewer-375-r1` for 4 — the second caught by the operator, not by
+    // any alarm. Both had their scope: since the scope moved into the seat's
+    // system prompt it cannot be lost in delivery, so what goes missing is the
+    // contentless START nudge, and a reviewer with no nudge has no other traffic
+    // to earn a turn from. The park's own two drain edges (boot-ready rising edge,
+    // `_armParkedDrainFallback`) are the recovery for that, and when both miss the
+    // seat is silent and permanent with nothing watching.
+    //
+    // The tell is the TRANSCRIPT, not the clock: the hook creates
+    // `run/<name>/transcript.jsonl` as a symlink at spawn and its target file only
+    // appears once the CLI writes a turn. Measured in both directions on the same
+    // night — t375's target still absent 4 minutes after the link was created,
+    // while a healthy `clodex-reviewer-371-r1` had 254KB with a moving mtime
+    // inside five. So absence of the target is not a proxy for "no first turn",
+    // it is the same event.
+    //
+    // `activityState` is required as well, and it is the conservative term: a seat
+    // whose hook never installed would have no transcript however hard it works,
+    // and alarming there would report the detector's own blind spot as a wedge.
+    // A seat that took a turn cannot be idle-with-no-transcript — it reached idle
+    // THROUGH thinking, which is what writes the file.
+    //
+    // ONE-SHOT and detection-only. No re-send: the seat that DID get its nudge is
+    // indistinguishable from here after the fact, and re-nudging it costs a full
+    // duplicate cold review. The lead recovers by hand — an urgent dm re-sending
+    // the scope, never a respawn (a respawn mints a second seat and strands the
+    // first's `born`-stamped mail; see _armParkedDrainFallback).
+    _armReviewStartCheck(seatName, leadName) {
+      const s = this.sessions.get(seatName);
+      // Claude-only, because the artifact is: `transcript.jsonl` is written by the
+      // Claude hook. A codex seat would read as permanently silent. The review path
+      // forces claude today (the C2 tool-cap constant), so this guard is about a
+      // future caller, not about a case that exists.
+      if (!s || s.agentType !== 'claude' || s._dead) return;
+      s._reviewStartTimer = setTimeout(() => {
+        s._reviewStartTimer = null;
+        try { this._checkReviewStarted(s, leadName); }
+        catch (e) { log.error('intent', `review start check failed for ${seatName}: ${e.message}`); }
+      }, SPEC_CONFIRM_MS);
+      // Observer-grade in both senses, exactly like the spec-confirm timer: never
+      // the reason the process stays alive, never the reason a test file hangs for
+      // 90s after spawning a reviewer.
+      if (s._reviewStartTimer.unref) s._reviewStartTimer.unref();
+    }
+
+    _checkReviewStarted(session, leadName) {
+      if (!session || session._dead) return;
+      if (!this.sessions.has(session.name)) return;   // retired inside the window
+      // A dialog is an unbounded wait that produces no turn and no transcript, and
+      // it is not this defect — the seat has its scope and is asking about it. Same
+      // treatment as _checkSpecConfirm: re-arm rather than alarm, uncapped, because
+      // the operator may answer at any time and a seat that never woke is still
+      // worth catching later.
+      if (session.needsAttention && session.needsAttention.kind === 'permission') {
+        this._armReviewStartCheck(session.name, leadName);
+        return;
+      }
+      if (session.activityState !== 'idle') return;   // it started; nothing owed
+      if (this._seatHasTranscript(session.name)) return;
+      log.error('intent', `reviewer ${session.name} produced no transcript ${SPEC_CONFIRM_MS / 1000}s after spawn — it never took a first turn`);
+      this._broadcast('ipc-message', {
+        ts: Date.now(), from: 'clodex', to: session.name, kind: 'review-unstarted',
+        body: `${session.name} never started its review`,
+      });
+      this._gatedDeliver(leadName, 'clodex-team',
+        `[review ${session.name}] spawned ${Math.round(SPEC_CONFIRM_MS / 1000)}s ago and has taken NO turn — no transcript exists, so it never started. `
+        + 'Its scope is in its system prompt and is intact; what was lost is the nudge that starts it. '
+        + `Recover with an urgent dm to ${session.name} re-sending the scope and telling it to ignore the message if it already has it — NOT a respawn, which mints a second seat and strands this one's mail.`,
+        false, `[review ${session.name}] never started`);
+    }
+
+    // Has this seat ever written a turn? The link is created at spawn and its
+    // target only when the CLI writes — so a link that resolves to nothing is a
+    // seat that has produced nothing, and an unreadable/absent link is the same
+    // answer for a weaker reason. Every failure reads as "no transcript", which is
+    // the direction that ALARMS, so a broken probe is loud rather than silent —
+    // the opposite of `_stallEvidence`'s policy, and deliberately: there an absent
+    // field degrades an alarm that fires anyway, here it IS the alarm.
+    _seatHasTranscript(name) {
+      try {
+        const link = pathFor(REGISTRY_DIR, name, 'transcript');
+        return fs.statSync(fs.realpathSync(link)).size > 0;
+      } catch { return false; }
     }
 
     // Cleared by ANY non-idle activity (see _emitActivity): reaching a turn at all
@@ -8979,6 +9084,11 @@ function createSessionManager(deps) {
     async _sweepTeamTickets(team, now) {
       const stallMs = (typeof team.watchdogMs === 'number' && team.watchdogMs > 0) ? team.watchdogMs : TICKET_STALL_MS;
       const tickets = ticketsStore.load(team.root);
+      // Walked ONCE for the whole board, not once per ticket: the orphan test below
+      // asks `_ticketAssigneeSeat` about every eligible ticket and each resolution
+      // would otherwise re-walk the run directory. Same reason `_touchTicketActivity`
+      // hoists it.
+      const live = this._teamLiveSeatNames(team.root);
       for (const t of tickets) {
         // UNSTARTED is the exemption, not unassigned: `add` writes the ROLE NAME
         // into `assignee`, so a ticket the lead filed as backlog and never
@@ -8999,6 +9109,34 @@ function createSessionManager(deps) {
         if (!ticketInFlight(t) || t.assignee == null || !ticketStarted(t) || t.parked) continue; // unstarted/unassigned/parked/closed exempt
         const last = t.lastActivityAt || t.openedAt || now;
         if (now - last < stallMs) continue;
+        // A loop-held ticket names the STEP, not the seat (see the body below), so
+        // it is never orphan-tested: the hand is finished and gone by construction
+        // there, and asking whether a seat is live would classify every loop-held
+        // ticket as unassigned and replace the alarm that names the stuck step.
+        const loopHeld = t.state === 'done' && !!t.loopStep;
+        // ORPHAN: the assignee resolves to no live seat. Measured on t376 — a
+        // retired hand's ticket alarmed "hand quiet 31m", then "STILL stalled
+        // (repeat 1): hand quiet 1h" about a seat that had not existed for an hour.
+        // Nothing was quiet; nothing was there.
+        //
+        // Resolution goes through the SAME `_ticketAssigneeSeat` the dispatch uses,
+        // so "no seat" here means exactly what "undeliverable" means there. A
+        // separate liveness test would be free to disagree, and the disagreement
+        // would be silent in the worse direction: a ticket the sweep calls orphaned
+        // while dispatch still routes it stops alarming about a seat that IS there.
+        //
+        // Note this is reachable for a worktree ticket in a way a role ticket is
+        // not: `_ticketAssigneeSeat` deliberately refuses to degrade a worktree pin
+        // to its role, so a retired worktree seat resolves to null permanently
+        // rather than being re-answered by a sibling.
+        const orphan = !loopHeld && !this._ticketAssigneeSeat(team, t, live);
+        // ONE alarm, ever — not the geometric ladder below. The ladder re-escalates
+        // because a stall can end and the seat can come back; an orphan cannot
+        // resolve itself, so every repeat carries identical information and the
+        // whole cost of the defect was the repeating. `nudgedAt` is cleared by
+        // `task assign` and by seat activity, so a real reassignment does start a
+        // fresh episode — the silence is scoped to the unchanged situation.
+        if (orphan && t.nudgedAt) continue;
         // NOT one nudge per episode any more (t322). `nudgedAt` is cleared only by
         // seat ACTIVITY, which by definition never comes during a stall, so a
         // single alarm the lead dismissed bought permanent silence: measured on
@@ -9064,7 +9202,6 @@ function createSessionManager(deps) {
         // the wrong actor entirely — the first thing to check differs completely
         // between a silent seat and a dead verify step. It gets no seat evidence
         // for the same reason: the hand's last tool call is not what is stuck.
-        const loopHeld = t.state === 'done' && !!t.loopStep;
         let body;
         if (loopHeld) {
           const head = repeat > 0 ? `[ticket ${tid}] STILL stalled (repeat ${repeat}): ` : `[ticket ${tid}] stalled: `;
@@ -9079,10 +9216,20 @@ function createSessionManager(deps) {
           // ticket exists to stop producing.
           const after = ticketsStore.load(team.root).find((x) => x.id === tid);
           if (!after || !ticketInFlight(after) || (after.lastActivityAt || null) !== seenAt) continue;
-          body = formatStallBody({
-            ticketId: tid, who: t.role || t.assignee, age: humanizeAge(now - last),
-            repeat, tool: ev.tool, commits: ev.commits, dirty: ev.dirty,
-          });
+          // The orphan branch shares the probe above and diverges only here: the git
+          // facts are what decide between reassign, cancel and park, so they are worth
+          // the same calls. `ev.tool` is null for an orphan by construction — the
+          // probe resolves its transcript through the same resolver that just
+          // returned no seat — and formatOrphanBody takes no tool field at all.
+          body = orphan
+            ? formatOrphanBody({
+              ticketId: tid, who: t.assignee, age: humanizeAge(now - last),
+              commits: ev.commits, dirty: ev.dirty,
+            })
+            : formatStallBody({
+              ticketId: tid, who: t.role || t.assignee, age: humanizeAge(now - last),
+              repeat, tool: ev.tool, commits: ev.commits, dirty: ev.dirty,
+            });
         }
         this._gatedDeliver(team.lead, 'ticket-watchdog',
           body, false, '',

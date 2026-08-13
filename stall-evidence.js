@@ -118,4 +118,30 @@ function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits 
   return `${head} (${bits.join(', ')})${verdict}`;
 }
 
-module.exports = { readTail, lastToolFrom, formatStallBody };
+// A ticket whose assignee resolves to NO live seat. Not a stall — nothing is
+// quiet, because nothing exists to be quiet — so it must not borrow the stall
+// wording. Measured on t376: "hand quiet 31m (no commits)" and then "STILL
+// stalled (repeat 1): hand quiet 1h" about a seat retired an hour earlier. The
+// lead's first move on a stall (look at what the seat is doing) has no referent
+// here, and an alarm that sends the lead looking for a seat that does not exist
+// is the noise that teaches it to dismiss the alarm that matters.
+//
+// So the wording names the ONE fact — no seat holds this — and the three exits.
+// `who` is the role or the dead seat's name; it is what the ticket still claims,
+// which is precisely the thing to disbelieve, so it is quoted as a claim rather
+// than stated as an actor.
+//
+// The git evidence rides along because it is what decides between the exits: a
+// branch with commits on it is worth reassigning, an untouched one is worth
+// cancelling. The transcript field never appears — there is no seat to read one
+// from, and `_stallEvidence` returns `tool: null` for exactly that reason.
+function formatOrphanBody({ ticketId, who, age, commits = null, dirty = null }) {
+  const head = `[ticket ${ticketId}] assigned to "${who}", which is not a live seat — not stalled, UNASSIGNED (quiet ${age})`;
+  const bits = [];
+  if (commits != null) bits.push(commits === 0 ? 'no commits' : `${commits} commit${commits === 1 ? '' : 's'}`);
+  if (dirty != null) bits.push(dirty ? 'tree dirty' : 'tree clean');
+  const ev = bits.length ? ` (${bits.join(', ')})` : '';
+  return `${head}${ev} — reassign it, cancel it, or park it; nothing is working on it and nothing will`;
+}
+
+module.exports = { readTail, lastToolFrom, formatStallBody, formatOrphanBody };
