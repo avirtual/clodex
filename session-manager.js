@@ -40,6 +40,23 @@ const NOTIFY_USER_MAX_BYTES = 16 * 1024;
 
 const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
 
+// How long a queued ticket waits for another run to release the shared lock.
+// Generous because the thing being waited for is a whole suite run, and giving
+// up early would escalate a ticket whose only fault was closing while the
+// lead's suite was running.
+const TICKET_SUITE_LOCK_WAIT_MS = 20 * 60 * 1000;
+
+// The ticket loop's suite run. The kill timer starts at SPAWN, so it covers the
+// lock wait as well as the run — which is why it is DERIVED from the wait and
+// must stay strictly greater than it. Shipped once the other way round (15m
+// kill over a 20m wait), which makes the wait unreachable dead code and reports
+// a queued run as `did not finish within 900000ms (killed)`: a wedge report for
+// a run that was only waiting its turn. test/test-digest-lock.test.js pins the
+// same relation for the other entry point, where the inversion cost three
+// misdiagnosed timeouts. The margin is the run itself: the suite takes ~24s,
+// and exceeding 15m of RUNNING means a wedge, not a slow suite.
+const TICKET_SUITE_TIMEOUT_MS = TICKET_SUITE_LOCK_WAIT_MS + 15 * 60 * 1000;
+
 const REBOOT_NOTICE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
 // Retry-with-a-ceiling, NOT confirmed delivery — the distinction is the whole
@@ -531,6 +548,13 @@ function createSessionManager(deps) {
   // exec that does nothing and reports nothing.
   const termExec = termExecDep
     || (() => ({ ok: false, error: 'terminal tabs are not available on this host' }));
+
+  // Injectable ONLY so the kill arm is reachable from a test. Without a seam no
+  // subject can pin "a runner that never exits is SIGKILLed and ESCALATES,
+  // never rejects" — an arm that decides a ticket's fate and would otherwise
+  // ship green while measuring nothing.
+  const TICKET_SUITE_TIMEOUT = Number.isFinite(deps.ticketSuiteTimeoutMs)
+    ? deps.ticketSuiteTimeoutMs : TICKET_SUITE_TIMEOUT_MS;
 
   const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
   // Settle margin before the boot-ready rising edge fires its pending drain (T54).
@@ -6345,6 +6369,57 @@ function createSessionManager(deps) {
           return;
         }
 
+        // CHECK 4 — the suite actually RUNS, on the ticket's branch, and passes.
+        //
+        // ORDER IS THE POINT, not an implementation detail: a cold review costs
+        // ~100k tokens dominated by context acquisition, so paying it for a
+        // branch that fails its own suite is the most expensive mistake this
+        // loop can make. Suite first; reviewer only on green.
+        //
+        // Checks 1-3 are tree SHAPE — they prove the work EXISTS. Only an
+        // execution proves it WORKS, and only a FULL run catches a blast radius
+        // outside the diff: t309 added a key to git-worktree.js and broke
+        // plugin-host-engine.test.js, a file its diff never touched. The hand
+        // could not have known to run it and the reviewer had no shell, so
+        // nothing before this check could have caught it.
+        atStep = 'verify: suite';
+        const suite = await this._runTicketSuite(team, ticket);
+        // Checks 1-3 were milliseconds of git; this await is MINUTES, and the
+        // entry guard above is now a snapshot that old. A lead `task accept`
+        // landing inside that window deletes loopStep, retires the seat, removes
+        // the worktree and deletes the branch — and every arm below would then
+        // act on it: _setLoopStep would re-write the hold onto a finished
+        // ticket, making it in-flight again so a late verdict can stamp REWORK
+        // onto merged, deleted work. A mid-run `task reject` is the twin: a
+        // reviewer spawned for a ticket that is already open again. Re-load and
+        // bail, the same don't-trust-the-snapshot rule _setLoopStep states.
+        const still = this._loadTicket(team, ticketId);
+        if (!still || still.loopStep !== 'verify') return;
+        if (!suite.ran) {
+          // Could not RUN is not the same as failed, and must not reject: the
+          // hand cannot fix a lock it does not hold or a runner that would not
+          // start, and sending it back with "the suite did not run" is a rework
+          // round nobody can close.
+          fail('verify: suite', `the test suite could not be run on ${branch}: ${suite.error}`,
+            `ran the suite in ${suite.cwd || 'the ticket worktree'}; no reviewer spawned`);
+          return;
+        }
+        if (!suite.green) {
+          const rejected = this._rejectTicketFromLoop(team, ticketId,
+            `the test suite FAILS on your branch — ${suite.summary}\n\n`
+            + `FAILING: ${suite.failing || '(the runner reported no test names)'}\n\n`
+            + 'Fix these and close the ticket again. No reviewer was spawned: a review of a '
+            + 'red branch is wasted, and the suite is the gate.');
+          // Reject is the designed rework channel, but it needs a seat to reach.
+          // With none, the ticket would sit reopened and unread, so the lead
+          // gets it instead — the failure is real either way and must surface.
+          if (!rejected.ok) {
+            fail('verify: suite', `the suite fails on ${branch} (${suite.summary}) and the rework could not be sent back: ${rejected.error}`,
+              `ran the suite (exit ${suite.code}); no reviewer spawned; failing: ${suite.failing || 'unnamed'}`);
+          }
+          return;
+        }
+
         this._setLoopStep(team, ticketId, 'review');
         atStep = 'review';
         this._spawnTicketReview(team, ticketId, written.path);
@@ -6354,6 +6429,262 @@ function createSessionManager(deps) {
         // a worse way to learn about it than being told the exception.
         fail(atStep, `the loop threw: ${e && e.message ? e.message : String(e)}`,
           atStep === 'review' ? 'verify passed and the diff was written; the throw came at or after the review spawn' : 'no reviewer spawned');
+      }
+    }
+
+    // Run the suite in the ticket's WORKTREE while holding the ROOT checkout's
+    // lock. Returns { ran, green, code, summary, failing, cwd, error }.
+    //
+    // `ran:false` means the suite never executed (no worktree, no runner, spawn
+    // failure, lock never acquired, no summary) — an escalation, never a
+    // rejection. `ran:true, green:false` is a real red suite.
+    //
+    // THE LOCK IS THE SUBTLE PART. Both entry points root it at their own
+    // checkout (`scripts/run-tests.js` uses `path.join(__dirname,'..')`), so a
+    // worktree runner would take the WORKTREE's lock — a different mutex from
+    // the one the lead's run holds. That is not serialization: both runs would
+    // reach the port-binding tests together and deadlock at 0% CPU, which is
+    // indistinguishable from a slow suite. CLODEX_TEST_LOCK_DIR pins the mutex
+    // to the root checkout while the tests still run in the worktree.
+    async _runTicketSuite(team, ticket) {
+      const wt = (ticket && ticket.worktree) || {};
+      const cwd = wt.path ? String(wt.path) : null;
+      const out = { ran: false, green: false, code: null, summary: '', failing: '', cwd, error: null };
+      if (!cwd) { out.error = 'the ticket has no worktree path to run in'; return out; }
+
+      const runner = path.join(cwd, 'scripts', 'run-tests.js');
+      if (!fs.existsSync(runner)) {
+        // The worktree's OWN runner, not the root's: it must be the branch's
+        // copy so a ticket that changes the runner is verified by the version it
+        // ships, and a branch predating the runner is a fact worth escalating
+        // rather than papering over with the root's copy.
+        out.error = `no test runner at ${runner} — the branch has no scripts/run-tests.js`;
+        return out;
+      }
+
+      // A git worktree has no node_modules, and nothing installs one. Without
+      // this the 7 files requiring electron/node-pty/ws fail MODULE_NOT_FOUND
+      // and the loop would reject every ticket for a defect in its own harness.
+      // A symlink to the root's tree costs nothing, is gitignored (so it neither
+      // dirties the tree nor blocks worktree removal), and is left in place —
+      // recreating it per run would race a concurrent read of it.
+      const link = path.join(cwd, 'node_modules');
+      if (!fs.existsSync(link)) {
+        const src = path.join(team.root, 'node_modules');
+        if (!fs.existsSync(src)) {
+          out.error = `neither ${link} nor ${src} exists — the suite cannot resolve its dependencies`;
+          return out;
+        }
+        try { fs.symlinkSync(src, link); } catch (e) {
+          if (!fs.existsSync(link)) {   // a concurrent run winning the race is fine
+            out.error = `could not link node_modules into the worktree: ${e.message}`;
+            return out;
+          }
+        }
+      }
+
+      const res = await new Promise((resolve) => {
+        let child;
+        try {
+          child = childProcess.spawn(process.execPath, [runner, '--reporter=dot'], {
+            cwd,
+            env: {
+              ...process.env,
+              // `process.execPath` under the desktop app is the ELECTRON
+              // binary, not node (measured: .../Electron.app/Contents/MacOS/
+              // Electron), and engine.js is hosted by main.js as well as
+              // headless-main.js. Without this the spawn is an app launch, the
+              // runner's own re-spawn of process.execPath is not a node --test
+              // invocation, no tap is written, and EVERY ticket escalates with
+              // "the tap stream is missing". Same idiom as cli-hooks.js's
+              // INTERP; plain node ignores the variable, so this is a no-op
+              // under the headless host and in tests.
+              //
+              // Consequence worth stating: the suite then runs under ELECTRON'S
+              // node (24.17.0 at Electron 43), not the system node the lead's
+              // `npm test` uses (25.8.1). That is a real difference — the
+              // blake2b512 lesson in scripts/electron-smoke.js is exactly a
+              // behaviour that split between the two runtimes — so a green here
+              // is a green under the runtime the app itself ships.
+              ELECTRON_RUN_AS_NODE: '1',
+              CLODEX_TEST_LOCK_DIR: path.join(team.root, '.test-digest.lock'),
+              // WAIT, never refuse: a second ticket closing during a run must
+              // QUEUE. Refusing would report "could not run" and escalate a
+              // ticket whose only sin was closing at a busy moment, and skipping
+              // the check outright is the false green this exists to prevent.
+              CLODEX_TEST_LOCK_WAIT_MS: String(TICKET_SUITE_LOCK_WAIT_MS),
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+            // Its OWN process group, so the timeout can kill the whole tree.
+            // This child's entire job is to have grandchildren: it blocks in
+            // spawnSync running `node --test`, which starts a file per test.
+            // Killing the runner alone leaves that sweep alive and reparented,
+            // still binding the real ports cli/test/attach.test.js uses — and
+            // the killed runner never ran its exit handler, so it left a lock
+            // dir naming a dead pid that the NEXT gate run legitimately
+            // reclaims. That run then reaches the ports alongside the orphan
+            // and deadlocks at 0% CPU, which is the wedge the whole mutex
+            // exists to prevent, self-inflicted and invisible in the
+            // escalation text.
+            detached: true,
+          });
+        } catch (e) { resolve({ error: `spawn failed: ${e.message}` }); return; }
+
+        // Bounded and drained. The output is read to keep the pipes from filling
+        // (a full pipe blocks the child forever, which the timeout would then
+        // report as a wedge), but only the TAIL is kept: a dot-reporter run of
+        // this suite is small, and the summary this parses is at the end.
+        let stdout = '';
+        let stderr = '';
+        let done = false;
+        const cap = (s, add) => (s + add).slice(-64 * 1024);
+        child.stdout.setEncoding('utf8');
+        child.stderr.setEncoding('utf8');
+        child.stdout.on('data', (d) => { stdout = cap(stdout, d); });
+        child.stderr.on('data', (d) => { stderr = cap(stderr, d); });
+        const finish = (v) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          // Detach the drains. A group kill that misses something leaves a
+          // writer on these pipes, and every byte it sends would keep appending
+          // to strings this closure holds long after the result was resolved.
+          // resume() is not tidiness: removing the last 'data' listener PAUSES
+          // the stream, so a surviving writer fills the pipe and then blocks
+          // forever — holding the root lock this whole path exists to release.
+          try { child.stdout.removeAllListeners('data'); child.stdout.resume(); } catch {}
+          try { child.stderr.removeAllListeners('data'); child.stderr.resume(); } catch {}
+          resolve(v);
+        };
+        const timer = setTimeout(() => {
+          // The GROUP, via the negative pid — `child.kill()` signals only the
+          // group leader, which is the runner blocked in spawnSync, not the
+          // sweep underneath it. session-manager.js's exec path records that
+          // distinction and then chooses a plain child on the grounds that "v1
+          // commands have no grandchildren"; that reasoning does not reach here,
+          // where grandchildren are the point. Falls back to the plain kill so a
+          // platform or a fake child without a real pid still gets signalled.
+          // `> 0` is load-bearing, not defensive noise: kill(-0) signals OUR
+          // OWN process group — the whole app — and childProcess is an injected
+          // seam, so a stubbed child's pid shape is not guaranteed to be a real
+          // pid. cli/src/dial.js guards the identical call the same way.
+          if (child.pid > 0) {
+            try { process.kill(-child.pid, 'SIGKILL'); } catch {
+              try { child.kill('SIGKILL'); } catch {}
+            }
+          } else {
+            try { child.kill('SIGKILL'); } catch {}
+          }
+          finish({ error: `the suite did not finish within ${TICKET_SUITE_TIMEOUT}ms (killed)`, stdout, stderr });
+        }, TICKET_SUITE_TIMEOUT);
+        child.on('error', (e) => finish({ error: `the runner could not start: ${e.message}`, stdout, stderr }));
+        child.on('close', (code) => finish({ code, stdout, stderr }));
+      });
+
+      const text = `${res.stdout || ''}\n${res.stderr || ''}`;
+      if (res.error) { out.error = res.error; return out; }
+      out.code = res.code;
+
+      // The runner's own TOTALS line is the only evidence the run COMPLETED.
+      // Exit 0 alone is not: the runner exits non-zero on a refused lock, a
+      // missing path and an empty tap, and every one of those is "never ran".
+      // Requiring the line is what stops a false green from a run that produced
+      // nothing — the exact defect class this whole ticket is about.
+      // STDOUT ONLY, and the LAST match in it. The runner prints its summary to
+      // stdout, last. Searching the combined text instead puts ALL of stderr
+      // after ALL of stdout regardless of when either was written, so any
+      // TOTALS-shaped line a test file writes to stderr would always beat the
+      // real summary — including a green decoy over a red run, which is the
+      // shadowing this guards, one stream over.
+      const all = [...String(res.stdout || '').matchAll(/TOTALS: (\d+) pass, (\d+) fail, (\d+) tests/g)];
+      const totals = all.length ? all[all.length - 1] : null;
+      if (!totals) {
+        const last = text.trim().split('\n').filter((l) => l.trim()).pop() || '(no output)';
+        out.error = `the runner produced no TOTALS summary (exit ${res.code}) — last line: ${last.slice(0, 300)}`;
+        return out;
+      }
+      const [, pass, failed, tests] = totals;
+      // A sweep that discovered no test files prints `0 pass, 0 fail, 0 tests`
+      // and exits 0, satisfying every other green condition. That is a run which
+      // verified NOTHING reaching a reviewer — the one outcome this check
+      // exists to prevent. It escalates rather than rejects: the hand cannot fix
+      // a suite that found no tests to run.
+      if (Number(tests) === 0) {
+        out.error = `the runner executed ZERO tests (exit ${res.code}) — a run that verified nothing `
+          + 'cannot stand in for a green suite';
+        return out;
+      }
+      out.ran = true;
+      out.summary = `${pass}/${tests} passing, ${failed} failing (exit ${res.code})`;
+      // Green is the CONJUNCTION, deliberately: `fail 0` alone misses an escape
+      // (an error on an async continuation that outlives its test is counted a
+      // PASS and only the exit code is honest), and exit 0 alone would trust a
+      // reporter that never counted. Either one disagreeing means not green.
+      out.green = res.code === 0 && Number(failed) === 0;
+      if (!out.green) {
+        // The `✖ name (1.23ms)` shape, which is what the DOT reporter prints in
+        // its "Failed tests:" block — NOT tap's `not ok N - name`. The runner
+        // sends tap to a temp file it consumes itself, so no tap ever reaches
+        // this stdout and a `not ok` parser silently yields no names at all.
+        // Measured against the real runner on a real failing branch, which is
+        // the only reason this is right: a stub reproducing the tap shape would
+        // have pinned the wrong contract and every real rejection would have
+        // named nothing.
+        const names = [];
+        for (const line of text.split('\n')) {
+          const m = /^ *✖ (.+?) \(\d+(?:\.\d+)?ms\)\s*$/.exec(line);
+          // The trailing summary repeats each failure, so the same name arrives
+          // twice; the hand should see a list of distinct tests, not doubles.
+          if (m && !names.includes(m[1].trim())) names.push(m[1].trim());
+        }
+        out.failing = names.slice(0, 20).join('; ').slice(0, 1000);
+        if (!out.failing) {
+          const esc = /ESCAPES: (?!0)(.*)/.exec(text);
+          if (esc) out.failing = `escaped errors — ${esc[1].trim().slice(0, 500)}`;
+        }
+      }
+      return out;
+    }
+
+    // Reject a ticket back to its seat from inside the loop.
+    //
+    // NOT `_taskReject`: that one is an intent handler — it is lead-only, needs a
+    // calling session and a `reply`, and the loop has neither. The STATE
+    // TRANSITION is deliberately identical to it, because a ticket reopened by
+    // the loop and one reopened by the lead must be indistinguishable to every
+    // reader downstream; if that handler's transition changes, this must follow.
+    _rejectTicketFromLoop(team, ticketId, reason) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const ticket = tickets.find((t) => t.id === ticketId);
+        if (!ticket) return { ok: false, error: `ticket ${ticketId} is gone` };
+        const seat = this._ticketAssigneeSeat(team, ticket);
+        // Resolved BEFORE the write: with no seat to receive it the ticket must
+        // stay done for the lead to escalate on, not sit reopened and unread.
+        if (!seat || seat === team.lead) {
+          return { ok: false, error: `no live seat holds ${ticket.role || ticket.assignee || 'the ticket'} to send the rework to` };
+        }
+        ticket.state = 'open';
+        ticket.closedAt = null;
+        ticket.closedBy = null;
+        ticket.lastActivityAt = Date.now();
+        ticket.nudgedAt = null;
+        delete ticket.loopStep;
+        ticketsStore.save(team.root, tickets);
+        const r = this._gatedDeliver(seat, 'ticket-loop', `[ticket ${ticket.id} rejected] ${reason}`, true,
+          `[ticket ${ticket.id} rejected]`);
+        this._reconcileTickets(team);
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: ticket.assignee || seat, body: `ticket ${ticket.id} rejected: suite red` });
+        log.info('intent', `ticket ${ticket.id} rejected by the loop (suite red) → ${seat}`);
+        // Undelivered is still reopened: the board is correct and the watchdog
+        // sees an open ticket, which is recoverable. Reporting it lets the caller
+        // escalate so the lead learns the hand was never told.
+        if (!(r && (r.queued || r.parked))) {
+          return { ok: false, error: `the ticket was reopened but the rework message did not reach ${seat} (${(r && (r.error || r.held)) || 'unknown delivery failure'})` };
+        }
+        return { ok: true, error: null, seat };
+      } catch (e) {
+        return { ok: false, error: e.message };
       }
     }
 

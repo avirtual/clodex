@@ -262,14 +262,60 @@ test('layer 3: the EXCLUDED table has no stale entries', () => {
   // An excluded tree that was later deleted, or later added to build.files,
   // leaves a reason behind that is no longer true. A table nobody prunes is a
   // table nobody trusts.
-  for (const key of Object.keys(EXCLUDED)) {
+  //
+  // WHAT "STALE" MEANS DEPENDS ON WHETHER GIT TRACKS THE TREE, and conflating
+  // the two made this test checkout-dependent for its whole life. `dist/` and
+  // `tasks/` are gitignored build/development residue: they exist in a
+  // developer's root checkout because they ran a build or made task dirs, and
+  // they are ABSENT from every fresh clone and every git worktree. Asserting
+  // existence for those asks a question whose answer is a property of the
+  // machine, not of the repo — green here, red there, and nobody trusts a test
+  // that does that. It stayed invisible only because the suite had only ever
+  // been run from the root checkout; a verify step that runs it in a ticket
+  // worktree makes it red for every ticket regardless of the ticket's change.
+  //
+  // So each key is anchored to whichever fact is actually load-bearing for it,
+  // and NEITHER branch is a skip:
+  //   tracked tree   → the directory must exist (deletion is a real event)
+  //   gitignored     → the .gitignore entry must still match (absence is the
+  //                    normal condition, so the ignore rule is the only durable
+  //                    evidence the tree is still a thing this repo knows about)
+  // Renaming `dist/` tomorrow removes its .gitignore line, the match stops, and
+  // the stale reason is still caught — which is the property that would have
+  // been lost by skipping gitignored keys outright.
+  //
+  // Asked with the key's TRAILING SLASH, deliberately: `git check-ignore dist`
+  // matches only when the directory exists on disk, while `dist/` matches
+  // whether it exists or not. Passing the bare name would rebuild the very
+  // checkout-dependence this fixes.
+  const keys = Object.keys(EXCLUDED);
+  const ignored = gitIgnored(keys);
+  // ENTER: the gitignored keys are the whole reason this test has two branches.
+  // If the set comes back empty every key silently takes the tracked branch and
+  // this test is checkout-dependent again, passing on the machine that has the
+  // build residue — the exact failure it was rewritten to remove.
+  assert.ok(ignored.size > 0,
+    'git reported none of the EXCLUDED keys as ignored; expected at least dist/ and tasks/. '
+    + 'Either .gitignore changed or gitIgnored() is being asked the wrong question.');
+  const stale = [];
+  for (const key of keys) {
     const dir = key.replace(/\/$/, '');
-    assert.ok(fs.existsSync(path.join(ROOT, dir)),
-      `EXCLUDED lists ${key} but that directory no longer exists — drop the entry`);
-    assert.ok(!touchesTree(dir),
-      `EXCLUDED lists ${key} as deliberately not shipped, but build.files now ships it — `
-      + 'one of the two is wrong');
+    if (!ignored.has(dir) && !fs.existsSync(path.join(ROOT, dir))) {
+      stale.push(`${key} is tracked but that directory no longer exists — drop the entry`);
+    }
+    // Independent of existence and of git, so it runs for EVERY key: a tree
+    // that build.files started shipping contradicts its own exclusion reason
+    // whether or not git tracks it.
+    if (touchesTree(dir)) {
+      stale.push(`${key} is listed as deliberately not shipped, but build.files now ships it — `
+        + 'one of the two is wrong');
+    }
   }
+  // Collected, not asserted per key: assert.ok aborts at the first failure, so a
+  // table with two stale entries reports one, gets "fixed", and goes red again
+  // on the next run. Both surfaced at once is one round trip instead of two.
+  assert.deepStrictEqual(stale, [],
+    `the EXCLUDED table no longer describes this tree:\n  ${stale.join('\n  ')}`);
 });
 
 test('every build.files pattern is a shape this test understands', () => {

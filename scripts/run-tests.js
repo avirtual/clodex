@@ -92,10 +92,42 @@ if (missing.length) {
 // to finish; a human or agent at a prompt wants the reason NOW, and waiting
 // only converts a wedge into a timeout somewhere further up (the exec's own cap
 // killed the digest before it could report exactly this).
-const LOCK = path.join(ROOT, '.test-digest.lock');
+// The lock DIR is overridable because the ticket loop runs a WORKTREE's copy of
+// this script while needing the ROOT checkout's lock. Defaulting it to this
+// script's own ROOT is what makes a per-checkout lock, and a worktree runner
+// taking its own lock is not serialization — it is a second lock, and both runs
+// then reach the port-binding tests together. The override is the only way one
+// mutex can cover every checkout of the same repo.
+const LOCK = process.env.CLODEX_TEST_LOCK_DIR
+  ? path.resolve(process.env.CLODEX_TEST_LOCK_DIR)
+  : path.join(ROOT, '.test-digest.lock');
+
+// Refuse-vs-wait, defaulting to REFUSE so an unset environment behaves exactly
+// as before (a human at a prompt wants the reason now). The loop sets a wait: it
+// is not at a prompt, nothing is billed while it blocks, and a ticket that
+// closes while another suite runs must QUEUE rather than skip its own
+// verification — skipping is the false green this whole check exists to prevent.
+const LOCK_WAIT_MS = Math.max(0, Number(process.env.CLODEX_TEST_LOCK_WAIT_MS) || 0);
 
 function acquireLock() {
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  // The PARENT is created recursively (an override may name a dir that does not
+  // exist yet); the lock dir itself NEVER is. `recursive: true` does not throw
+  // EEXIST on an existing dir, which would turn the atomic test-and-set into an
+  // unconditional success and hand the lock to every concurrent run at once.
+  // Named on failure: an override pointing at an unwritable or nonexistent
+  // parent otherwise surfaces one step later as a generic
+  // `could not take the suite lock: ENOENT`, which says nothing about WHICH
+  // directory — and on the loop's escalate path that is the whole report.
+  try { fs.mkdirSync(path.dirname(LOCK), { recursive: true }); } catch (e) {
+    die(`could not create the lock directory ${path.dirname(LOCK)}: ${e.message}`);
+  }
+  // Bounded like the original: a reclaim that does not then win the lock means
+  // something is racing or the dir is unwritable, and spinning on it forever is
+  // a wedge with no message. Waiting on a LIVE holder is not a reclaim and does
+  // not consume an attempt.
+  let reclaims = 0;
+  for (;;) {
     try {
       fs.mkdirSync(LOCK);
       fs.writeFileSync(path.join(LOCK, 'pid'), String(process.pid));
@@ -110,14 +142,23 @@ function acquireLock() {
     let alive = false;
     if (holder) { try { process.kill(holder, 0); alive = true; } catch {} }
     if (alive) {
+      // Sleep SYNCHRONOUSLY: this runs before the suite spawns and the process
+      // has nothing else to do, so a busy Atomics.wait costs nothing and keeps
+      // the whole acquire path straight-line — an async wait here would have to
+      // thread a promise through every die() site above.
+      if (Date.now() < deadline) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+        continue;
+      }
       die(`another suite run is already going (pid ${holder}).\n`
         + '  Parts of this suite bind real ports, so a second run deadlocks both.\n'
+        + `${LOCK_WAIT_MS ? `  Waited ${LOCK_WAIT_MS}ms for it to finish.\n` : ''}`
         + '  Wait for it, or if it is wedged: kill '
-        + `${holder} && rm -rf ${path.relative(ROOT, LOCK)}`);
+        + `${holder} && rm -rf ${LOCK}`);
     }
     try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch {}
+    if (++reclaims >= 2) die('could not take the suite lock after reclaiming a stale one');
   }
-  die('could not take the suite lock after reclaiming a stale one');
 }
 
 let lockHeld = false;
@@ -147,12 +188,26 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-test-'));
 const tapFile = path.join(tmpDir, 'run.tap');
 
+// Both lock variables are scrubbed from the child environment. They are a
+// decision about THIS process's lock, and every nested runner is by contract a
+// DIFFERENT run: two test files (test/test-digest-lock.test.js,
+// test/run-tests-args.test.js) spawn sweeping runners of their own against
+// throwaway roots, and inheriting the override points them at the outer run's
+// lock — held by a live pid — where they block for the whole inherited wait
+// instead of exercising their own fixture. Measured against the unfixed runner:
+// 6 tests red and ~12 minutes of spawnSync timeouts, i.e. the ticket loop
+// rejecting every ticket for a defect in its own harness. Same discipline the
+// tests already apply to NODE_TEST_CONTEXT.
+const childEnv = { ...process.env };
+delete childEnv.CLODEX_TEST_LOCK_DIR;
+delete childEnv.CLODEX_TEST_LOCK_WAIT_MS;
+
 const run = spawnSync(process.execPath, [
   '--test',
   `--test-reporter=${reporter}`, '--test-reporter-destination=stdout',
   '--test-reporter=tap', `--test-reporter-destination=${tapFile}`,
   ...passthrough,
-], { cwd: ROOT, stdio: 'inherit' });
+], { cwd: ROOT, stdio: 'inherit', env: childEnv });
 
 if (run.error) die(`could not start node --test: ${run.error.message}`);
 

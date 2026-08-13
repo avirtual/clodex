@@ -100,12 +100,37 @@ test('the emitted grammar is one _landVerdictOnTicket actually parses', () => {
   assert.strictEqual(m[1], 'ACCEPT');
 });
 
-test('the suite-digest instruction is present (the C ruling moves the check here)', () => {
+test('the scope tells the reviewer the suite ALREADY RAN and was green', () => {
   const s = buildReviewScope({ ticket: ticket(), diffPath: '/tmp/d.diff' });
-  // The loop does not run the suite by ruling; if this instruction is missing
-  // the ruling has silently DROPPED the suite check rather than relocating it.
-  assert.match(s, /this loop does not run the test suite/);
-  assert.match(s, /missing, stale, or non-green suite digest in that report is itself a MUST-FIX/);
+  // PINNED BECAUSE IT ONCE DRIFTED INTO A LIE. This text used to say the loop
+  // does not run the suite, and stayed that way after verify started running it
+  // — nothing failed, because nothing checked. Reviewers act on these words, so
+  // a scope that describes a loop we no longer ship sends every reviewer to
+  // demand a digest the machine has already settled.
+  assert.match(s, /RAN the full test suite on this branch and it was GREEN/);
+  assert.match(s, /red suite is rejected to the implementer and never reaches a reviewer/);
+});
+
+test('the scope does NOT ask the reviewer to reconcile a suite digest', () => {
+  const s = buildReviewScope({ ticket: ticket(), diffPath: '/tmp/d.diff' });
+  // The absence IS the instruction, and it is asserted separately from the
+  // presence above because the two fail for different reasons: this one catches
+  // a well-meaning re-addition of the old must-fix rule, which would make the
+  // reviewer file a fault against every ticket that no longer carries a digest.
+  assert.ok(!/does not run the test suite/.test(s),
+    'the scope must not claim the loop skips the suite — verify runs it before any reviewer is spawned');
+  assert.ok(!/MUST-FIX/.test(s.split('SUITE:')[1].split('\n\n')[0] || ''),
+    'a missing digest is no longer a must-fix: the claim is verified by the machine, not the reviewer');
+});
+
+test('the scope still puts the half a green suite cannot prove ON the reviewer', () => {
+  const s = buildReviewScope({ ticket: ticket(), diffPath: '/tmp/d.diff' });
+  // Dropping the digest check must not drop the JUDGEMENT with it. A green run
+  // cannot see a test that asserts nothing or that would pass against unfixed
+  // code, and those are exactly what a reviewer is for — without this line the
+  // change would have relaxed the review instead of retargeting it.
+  assert.match(s, /whether it would still pass against the\s+unfixed code|would still pass against the unfixed code/);
+  assert.match(s, /asserting\s+nothing is green and worthless|asserting nothing is green and worthless/);
 });
 
 test('round 1 scope carries no prior-round section at all', () => {

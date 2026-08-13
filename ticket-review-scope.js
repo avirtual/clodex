@@ -110,15 +110,25 @@ function buildReviewScope({ ticket, diffPath = null, taskDir = null } = {}) {
     out.push('');
   }
 
-  // The §C ruling's other half. The loop deliberately does NOT run the suite
-  // (one runner, one lock — an automated caller contending with the lead's run
-  // on a minutes-long job is the deadlock this avoids), so the suite claim
-  // arrives as a claim inside the report above, and checking it is the
-  // reviewer's job. Without this line the ruling would drop the check entirely
-  // instead of moving it.
-  out.push('SUITE: this loop does not run the test suite — the report above is the only claim about it. '
-    + 'A missing, stale, or non-green suite digest in that report is itself a MUST-FIX. '
-    + 'So is a claimed digest you cannot reconcile with the tests actually present in the diff.');
+  // The reviewer is only reached on a GREEN suite: verify runs it on the branch
+  // and rejects a red one to the hand before any reviewer is spawned. The
+  // contention that once made an automated run unsafe is handled rather than
+  // avoided — the run takes the root checkout's lock and waits, so it serializes
+  // with the lead's run instead of deadlocking against it.
+  //
+  // So the digest check is not merely moved here, it is GONE: demanding one
+  // would send the reviewer to reconcile a claim the machine has already
+  // settled, and a reviewer who treats its absence as a must-fix now files one
+  // against every ticket. What replaces it is the half a green suite cannot
+  // reach — a passing test that asserts nothing, or that passes against unfixed
+  // code, is invisible to the runner and visible only to a reader.
+  out.push('SUITE: the loop RAN the full test suite on this branch and it was GREEN before you were '
+    + 'spawned — a red suite is rejected to the implementer and never reaches a reviewer. So do NOT '
+    + 'ask for a suite digest, and do NOT treat a missing or stale one in the report as a fault: that '
+    + 'claim is already verified and is not yours to re-check. What a green suite does NOT prove is '
+    + 'yours: whether each new test measures what it claims, whether it would still pass against the '
+    + 'unfixed code, and whether the change is the right one. A test that passes while asserting '
+    + 'nothing is green and worthless, and the run cannot tell you which it was.');
   out.push('');
 
   // Round 2+: the settled ground is stated so the reviewer does not re-open it.
