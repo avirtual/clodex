@@ -71,6 +71,22 @@ blocks a release.
   must-fix count. The full text is written beside the ticket's review diff in
   its own task directory, so it outlives both the reviewer and the half-hour
   sweep that used to be the only copy.
+- Two agent commands of the same kind in one message no longer collapse into
+  one. Their de-duplication key ignored the ticket id, so `[agent:task start
+  t1]` and `[agent:task start t2]` looked identical and the second was dropped
+  with no error to the sender — measured on two ticket approvals emitted
+  together, where only the first took effect and the second's worktree and
+  branch survived unnoticed. It affected every command carrying an id, and
+  `team role-rm` across different roles. Genuine double-pastes still collapse,
+  which is the direction that matters: the key can only tell more things
+  apart, never fewer.
+- Fixed a test that had been passing without checking anything since the
+  `task start` command was added. It compares the command parser against a
+  frozen copy of the parser it replaced, over a corpus harvested from three
+  test files — and the file exercising `task start` was not one of them, so
+  the frozen copy never learned the command and the comparison stayed green.
+  The corpus now asserts that every command in the real grammar appears in it,
+  so the next command added cannot slip through the same gap.
 
 - A retired role field in `team.json` now says so on load, instead of vanishing
   once the file claims a current schema version. `roles.reviewer.tools` looks
