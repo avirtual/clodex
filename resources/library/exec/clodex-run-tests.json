@@ -12,7 +12,7 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "tree": { "type": "string", "maxLength": 1000 }
+      "tree": { "type": "string", "minLength": 1, "maxLength": 1000 }
     }
   }
 }

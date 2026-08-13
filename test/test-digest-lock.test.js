@@ -654,3 +654,47 @@ test('def: the description states which tree the grant measures', () => {
   assert.match(def.description, /tree/,
     'and the parameter must be named, or the reader cannot act on the warning');
 });
+
+// PRESENCE vs VALUE. `{"tree":""}` is the shape a caller produces by templating
+// an unset variable (`{"tree":"$WT"}`), and it is the ticket's own bug wearing
+// the fix: the extraction regex matches an empty value, so keying the branch off
+// a non-empty VALUE falls through to the root and hands a caller who explicitly
+// asked about a worktree a green number about master.
+test('tree: an EMPTY `tree` is refused, not silently measured as the root', () => {
+  const { base, root } = mkRepo();
+  const env = stubNode(base, { tap: GREEN_TAP, exit: 0 });
+  try {
+    const r = runWithPayload(root, JSON.stringify({ tree: '' }), env);
+    assert.ok(r.lines.length > 0, 'ENTER: the script wrote nothing to stderr');
+    assert.notStrictEqual(r.code, 0,
+      'an empty tree must fail: exit 0 here is the silent fallback this ticket exists to kill');
+    assert.match(r.digest, /refused, nothing measured/,
+      'asking for a tree and getting a root measurement back is indistinguishable from a real pass');
+    assert.ok(!/green/.test(r.digest),
+      'and it must carry no suite number at all — a number here would be about the root');
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('tree: a whitespace-only `tree` is refused too', () => {
+  // Same class, and the one a shell templating `"$WT "` produces. cd " " fails,
+  // so it cannot reach the allowlist — but it must refuse, not fall back.
+  const { base, root } = mkRepo();
+  const env = stubNode(base, { tap: GREEN_TAP, exit: 0 });
+  try {
+    const r = runWithPayload(root, JSON.stringify({ tree: '   ' }), env);
+    assert.notStrictEqual(r.code, 0);
+    assert.match(r.digest, /refused, nothing measured/);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('def: the schema refuses an empty `tree` before the script ever runs', () => {
+  // Belt to the script's braces: the dispatcher bounces this loudly so the
+  // script is never spawned. It cannot be the ONLY guard, because until the app
+  // restarts the live def is the old one and only the script is in play.
+  const def = JSON.parse(fs.readFileSync(EXEC_DEF_PATH, 'utf-8'));
+  const { parseAndValidate } = require('../exec-schema');
+  const r = parseAndValidate(def, JSON.stringify({ tree: '' }));
+  assert.strictEqual(r.ok, false, 'an empty tree must not validate');
+  assert.match(r.error, /minLength/,
+    'and the bounce must name the reason, or the caller retries the same empty value');
+});

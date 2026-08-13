@@ -31,6 +31,15 @@ payload=$(cat 2>/dev/null)
 # the payload against the def's schema, and `git worktree list` below is the
 # authorization. A value carrying a quote or a backslash escape cannot name a
 # real worktree and is refused there.
+#
+# PRESENCE AND VALUE ARE SEPARATE, and conflating them rebuilds this script's
+# own bug. `[^"]*` matches the empty string, so `{"tree":""}` — the shape a
+# caller gets from templating an unset variable, `{"tree":"$WT"}` — yields an
+# empty value. Keying the branch off a non-empty value alone then falls through
+# to the root and reports a green about master to a caller who explicitly asked
+# about a worktree. The field being THERE is what commits us to the refusal
+# path; whether it is usable is a separate question answered below.
+has_tree=$(printf '%s' "$payload" | tr '\n' ' ' | awk '{ print match($0, /"tree"[ \t]*:/) ? 1 : 0 }')
 want=$(printf '%s' "$payload" | tr '\n' ' ' | awk '{
   if (!match($0, /"tree"[ \t]*:[ \t]*"[^"]*"/)) exit
   s = substr($0, RSTART, RLENGTH)
@@ -40,12 +49,13 @@ want=$(printf '%s' "$payload" | tr '\n' ' ' | awk '{
 }')
 
 measure=$root
-if [ -n "$want" ]; then
+if [ "$has_tree" = "1" ]; then
   # `cd` + `pwd -P` is the dependency-free realpath, and it is load-bearing, not
   # cosmetic: on macOS /tmp is a symlink to /private/tmp, so comparing the string
   # git prints against the string the caller passed rejects genuine worktrees.
   # Both sides go through it.
-  want_abs=$(cd "$want" 2>/dev/null && pwd -P)
+  want_abs=
+  [ -n "$want" ] && want_abs=$(cd "$want" 2>/dev/null && pwd -P)
   measure=
   if [ -n "$want_abs" ]; then
     # THE ALLOWLIST. A caller-supplied path becomes the cwd of a `node --test`
@@ -70,7 +80,10 @@ CLX_WORKTREES
     # LOUD, and never a fallback to the root. A silent fallback rebuilds the
     # original bug exactly: the caller asked about its branch and would get a
     # real, current, green number about master, which reads as its own pass.
-    printf '%.180s\n' "[${root##*/}] refused, nothing measured: not a worktree of this repo: $want" 1>&2
+    #
+    # Cause BEFORE the path: `tree` may be 1000 chars and this line is capped at
+    # 180, so a long bad path would truncate away the reason for the refusal.
+    printf '%.180s\n' "[${root##*/}] refused, nothing measured: not a worktree of this repo — ${want:-(empty)}" 1>&2
     exit 1
   fi
 fi
@@ -153,6 +166,14 @@ tree=${PWD##*/}
 # root's tree is what the ticket loop's gate already does for the same reason
 # (session-manager.js `_runTicketSuite`); it is gitignored, so it neither
 # dirties the worktree nor blocks its removal.
+#
+# THE HALF THIS DOES NOT COPY: that gate also refuses to run when the branch
+# changes package.json dependencies, because the suite then resolves out of the
+# ROOT's installed tree and goes green over a dependency set the branch does not
+# declare. This digest is deliberately OPTIMISTIC about dependencies — it is a
+# self-check an agent fires mid-work, not a merge gate. A branch that touches
+# deps gets a number that is real about the code and wrong about the deps; the
+# loop's gate is the thing that catches that, and nothing merges without it.
 if [ "$measure" != "$root" ] && [ ! -e "$measure/node_modules" ] \
    && [ -d "$root/node_modules" ]; then
   ln -s "$root/node_modules" "$measure/node_modules" 2>/dev/null
