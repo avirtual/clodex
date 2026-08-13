@@ -194,6 +194,34 @@ function collect(emitter, names) {
   return events;
 }
 
+// Wait for the observer to catch up, not for a wall clock. The events asserted
+// below (turn.completed/session/usage) fire from proxy.js's tee-close path,
+// which runs in the same tick as res.end() — and every upstream in this file is
+// unencoded, so Decompressor.end calls back synchronously and those events are
+// already emitted when the request resolves. The sleeps replaced here were dead
+// time, not a live race.
+//
+// Gating is still the right shape: it states what the test is actually waiting
+// for, it keeps holding if an encoding change makes the path async, and it is
+// what lets an absence assertion mean "finished, produced nothing".
+//
+// Pass the COUNT the test expects: several of these drive multiple requests and
+// then assert on the shape of the whole array, which is satisfiable by a
+// half-arrived set. Ordering assertions (deepEqual on roles) are exactly where
+// an early read produces a shorter array that no longer matches.
+// `|| []` so an uncollected name fails this gate loudly instead of throwing
+// from inside a timer, where an uncaught exception takes the runner down
+// rather than reporting a failed test.
+const whenEvent = (events, name, n = 1, ms = 10000) => new Promise((resolve) => {
+  const deadline = Date.now() + ms;
+  const tick = () => {
+    if ((events[name] || []).length >= n) return resolve(true);
+    if (Date.now() > deadline) return resolve(false);
+    setTimeout(tick, 2);
+  };
+  tick();
+});
+
 test('e2e: byte-exact pass-through + turn.completed/session/usage events', async () => {
   const up = await startFakeUpstream();
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
@@ -213,8 +241,8 @@ test('e2e: byte-exact pass-through + turn.completed/session/usage events', async
   assert.equal(up.seen.requests[0].url, '/v1/messages');
   assert.equal(up.seen.requests[0].body, REQUEST_BODY);
 
-  // stream-end is async after client bytes finish; wait briefly.
-  await new Promise((r) => setTimeout(r, 50));
+  // stream-end is async after client bytes finish; wait for it, not for a clock.
+  assert.ok(await whenEvent(events, 'stream-end'), 'stream-end fired');
 
   // The wire does not scan intents — it hands the full turn text to the
   // consumer, intact, including the intent line and surrounding prose.
@@ -279,7 +307,7 @@ test('e2e: an intent inside a thinking block never reaches the scanner', async (
   const events = collect(proxy, ['turn.completed']);
 
   await request(proxy.port, '/agent/tester/v1/messages', REQUEST_BODY);
-  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(await whenEvent(events, 'turn.completed'), 'turn observed');
 
   const turn = events['turn.completed'][0];
   // ENTER: the fixture's thinking really did carry a well-formed dm — if the
@@ -307,7 +335,7 @@ test('e2e: a mixed Read+Edit turn splits cleanly into reads and files (no cross-
   const events = collect(proxy, ['turn.completed']);
 
   await request(proxy.port, '/agent/tester/v1/messages', REQUEST_BODY);
-  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(await whenEvent(events, 'turn.completed'), 'turn observed');
 
   assert.equal(events['turn.completed'].length, 1);
   const turn = events['turn.completed'][0];
@@ -409,7 +437,9 @@ test('identity binding: main line owns it; subagents and side-calls cannot rebin
   });
   await request(proxy.port, '/agent/tester/v1/messages', titleBody);
 
-  await new Promise((r) => setTimeout(r, 60));
+  // Four requests, so wait for four receipts: the roles deepEqual below is an
+  // ordered whole-array match, which a partially arrived set fails on length.
+  assert.ok(await whenEvent(events, 'turn.completed', 4), 'all four turns observed');
 
   assert.equal(events.session.length, 1);
   assert.equal(proxy.sessionOf('tester'), SESSION_ID);
@@ -446,7 +476,8 @@ test('warmth head: a subagent turn stamps the ledger but never repoints the sess
     messages: [{ role: 'user', content: 'subagent task' }],
   });
   await request(proxy.port, '/agent/tester/v1/messages', subBody);
-  await new Promise((r) => setTimeout(r, 60));
+  // Both turns, or the destructure below binds subT to undefined.
+  assert.ok(await whenEvent(events, 'turn.completed', 2), 'main and subagent turns observed');
 
   const [mainT, subT] = events['turn.completed'];
   assert.equal(mainT.role, 'parent');
@@ -469,14 +500,17 @@ test('registerAgent pre-binds a resumed session id', async () => {
   const up = await startFakeUpstream();
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
   await proxy.listen();
-  const events = collect(proxy, ['session']);
+  // turn.completed is collected only as a gate for the absence assertion
+  // below: it is the LAST event of a request, so observing it proves the
+  // request was fully processed and a `session` event would have fired by now.
+  const events = collect(proxy, ['session', 'turn.completed']);
 
   proxy.registerAgent('tester', { sessionId: SESSION_ID });
   assert.equal(proxy.sessionOf('tester'), SESSION_ID);
 
   // First request declares the SAME id → already bound, no event.
   await request(proxy.port, '/agent/tester/v1/messages', REQUEST_BODY);
-  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(await whenEvent(events, 'turn.completed'), 'first request fully processed');
   assert.equal(events.session.length, 0);
 
   // /clear rotates the id → change fires with previous recorded.
@@ -484,7 +518,7 @@ test('registerAgent pre-binds a resumed session id', async () => {
     metadata: { user_id: JSON.stringify({ session_id: '11111111-2222-3333-4444-555555555555' }) },
   });
   await request(proxy.port, '/agent/tester/v1/messages', rotated);
-  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(await whenEvent(events, 'session'), 'rotation fired a session change');
   assert.equal(events.session.length, 1);
   assert.equal(events.session[0].sessionId, '11111111-2222-3333-4444-555555555555');
   assert.equal(events.session[0].previous, SESSION_ID);
@@ -535,7 +569,7 @@ test('malformed SSE degrades to an empty receipt, session unbroken', async () =>
   assert.equal(res.status, 200);
   assert.equal(res.body.toString('utf8'), GARBAGE);
 
-  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(await whenEvent(events, 'turn.completed'), 'empty receipt still finalized');
   assert.equal(events['turn.completed'].length, 1);
   const t = events['turn.completed'][0];
   assert.equal(t.text, '');

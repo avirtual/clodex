@@ -188,8 +188,30 @@ test('retire: envelope lands on the target socket with the contract shape', asyn
   });
   await new Promise((r) => server.listen(devSock, r));
   const r4 = await launch(home, { action: 'retire', agent: 'alead', target: 'adev' });
+  // Wait for the envelope, not for 200ms. The sender is a separate process and
+  // this socket's 'end' handler runs on our poll phase, so the delivery is not
+  // ordered against the child's exit by anything the test controls. Unlike the
+  // wire files, the count assertion below is positive, so a short wait can only
+  // false-FAIL — the wait is bounded generously and asserted, which turns a
+  // slow delivery into a flake that says so rather than a bare count mismatch.
+  const delivered = await new Promise((resolve) => {
+    const deadline = Date.now() + 10000;
+    const tick = () => {
+      if (envelopes.length) return resolve(true);
+      if (Date.now() > deadline) return resolve(false);
+      setTimeout(tick, 2);
+    };
+    tick();
+  });
+  // Resolving on the FIRST envelope would close the server before a second
+  // could arrive, making the "exactly one" below unfalsifiable. This drain is
+  // the window in which a duplicate would be caught, so it keeps the full 200ms
+  // the original sleep gave that check rather than a shorter one: the wait above
+  // already returns as soon as the envelope lands, so this costs the common case
+  // nothing and a weaker value would only narrow what the count can detect.
   await new Promise((r) => setTimeout(r, 200));
   server.close();
+  assert.ok(delivered, 'envelope delivered within the timeout');
 
   assert.strictEqual(r4.code, 0, `retire code: ${r4.code}`);
   assert.strictEqual(r4.err, '', `retire success is byte-silent: "${r4.err}"`);

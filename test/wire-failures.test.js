@@ -46,6 +46,45 @@ function serveOnce(handler) {
   });
 }
 
+// Wait for the observer to FINISH this response, not for a wall clock to pass.
+//
+// Whether that wait is load-bearing depends on the encoding, and most subjects
+// here are NOT the interesting case: proxy.js runs `res.end()` and
+// `tee.close()` as consecutive statements in one tick, and Decompressor.end
+// calls back synchronously when `content-encoding` is absent, so nothing can
+// interleave and the events are already emitted. For those, the sleeps this
+// replaced were dead time rather than a live race.
+//
+// Two paths in this file genuinely are async, and they are why the gating is
+// not merely cosmetic: the gzip subjects (zlib defers the callback to its own
+// ticks) and the abort/upstream-death subjects (the upstream noticing its
+// socket die is a strictly later poll-phase event).
+//
+// Gate anyway, uniformly. ABSENCE assertions below (`turn.completed.length
+// === 0`, `tee-failure === 0`) are true before the observer has run at all, so
+// a gate is what makes them mean "the observer finished and produced nothing"
+// rather than "we asked too early" — and it keeps that meaning if a future
+// encoding change makes a synchronous path async.
+// Gate on the condition a test actually asserts. A gate that implies less than
+// the assertion after it is WEAKER than the sleep it replaced: the sleep at
+// least bought slack for the hop, where a satisfied gate resolves on the next
+// tick and stops waiting.
+const until = (pred, ms = 10000) => new Promise((resolve) => {
+  const deadline = Date.now() + ms;
+  const tick = () => {
+    if (pred()) return resolve(true);
+    if (Date.now() > deadline) return resolve(false);
+    setTimeout(tick, 2);
+  };
+  tick();
+});
+
+// `|| []` so an uncollected name fails this gate loudly instead of throwing
+// from inside a timer, where an uncaught exception takes the runner down
+// rather than reporting a failed test.
+const whenEvent = (events, name, n = 1, ms = 10000) =>
+  until(() => (events[name] || []).length >= n, ms);
+
 test('upstream 5xx passes through verbatim; error receipt, not a turn', async () => {
   const { server, port } = await serveOnce((req, res) => {
     res.writeHead(529, { 'content-type': 'application/json' });
@@ -58,7 +97,7 @@ test('upstream 5xx passes through verbatim; error receipt, not a turn', async ()
   const res = await request(proxy.port, '/agent/t/v1/messages', '{}');
   assert.equal(res.status, 529);
   assert.equal(res.body.toString('utf8'), '{"error":{"type":"overloaded_error"}}');
-  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(await whenEvent(events, 'turn.completed'), 'receipt emitted');
   // proxylab finalizes every messages response: the error body still gets
   // a receipt (request counted, $0, not a user turn) — W2 step 4.
   assert.equal(events['turn.completed'].length, 1);
@@ -89,7 +128,7 @@ test('upstream dies mid-stream: bounded error, stream-end fires, no hang', async
   // The client either sees a truncated-but-clean end or a connection error —
   // both bounded; a hang is the only failure.
   await request(proxy.port, '/agent/t/v1/messages', '{}').catch(() => null);
-  await new Promise((r) => setTimeout(r, 80));
+  assert.ok(await whenEvent(events, 'stream-end'), 'stream-end fired (no hang)');
 
   assert.equal(events['stream-start'].length, 1);
   assert.equal(events['stream-end'].length, 1);
@@ -122,7 +161,13 @@ test('client aborts mid-stream: upstream released, stream-end fires', async () =
     req.on('close', resolve);
     req.end('{}');
   });
-  await new Promise((r) => setTimeout(r, 80));
+  // BOTH conditions, not just stream-end: proxy.js destroys the upstream and
+  // closes the tee in the same tick, and passthrough Decompressor.end calls
+  // back synchronously, so stream-end fires while the fake upstream has not yet
+  // seen its socket die. Gating on stream-end alone leaves ~2ms for that hop
+  // where the sleep this replaced left ~80ms — weaker than what it replaced.
+  assert.ok(await until(() => upstreamClosed && (events['stream-end'] || []).length >= 1),
+    'upstream released and stream-end fired after client abort');
 
   assert.equal(upstreamClosed, true);
   assert.equal(events['stream-start'].length, 1);
@@ -146,7 +191,9 @@ test('corrupt gzip: observer dies quietly, client gets exact bytes', async () =>
   const res = await request(proxy.port, '/agent/t/v1/messages', '{}');
   assert.equal(res.status, 200);
   assert.deepEqual(res.body, GARBAGE); // raw bytes, still "compressed"
-  await new Promise((r) => setTimeout(r, 50));
+  // stream-end is this test's terminal event; the receipt absence below is only
+  // meaningful once the observer has actually finished with the corrupt body.
+  assert.ok(await whenEvent(events, 'stream-end'), 'observer finished');
   assert.equal(events['turn.completed'].length, 0);
   assert.equal(events['stream-end'].length, 1);
 
@@ -167,7 +214,7 @@ test('valid gzip SSE: observer decodes, client gets the compressed bytes', async
 
   const res = await request(proxy.port, '/agent/t/v1/messages', '{}');
   assert.deepEqual(res.body, gz);
-  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(await whenEvent(events, 'turn.completed'), 'gzip receipt emitted');
   assert.equal(events['turn.completed'].length, 1);
   assert.equal(events['turn.completed'][0].text, 'gz ok');
 
@@ -193,7 +240,7 @@ test('tee-internal exception: forwarding untouched, tee-failure + stream-end fir
   const res = await request(proxy.port, '/agent/t/v1/messages', '{}');
   assert.equal(res.status, 200);
   assert.equal(res.body.toString('utf8'), SSE_BODY); // byte-exact despite the dead tee
-  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(await whenEvent(events, 'stream-end'), 'stream-end fired despite the dead tee');
 
   assert.equal(events['tee-failure'].length, 1);
   assert.match(events['tee-failure'][0].error, /injected/);
@@ -218,7 +265,7 @@ test('tee construction throws: same containment', async () => {
   const res = await request(proxy.port, '/agent/t/v1/messages', '{}');
   assert.equal(res.status, 200);
   assert.equal(res.body.toString('utf8'), 'data: {}\n\n');
-  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(await whenEvent(events, 'stream-end'), 'stream-end fired after a failed tee construction');
   assert.equal(events['tee-failure'].length, 1);
   assert.equal(events['stream-end'].length, 1);
 
