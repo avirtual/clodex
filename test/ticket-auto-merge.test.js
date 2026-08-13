@@ -51,6 +51,10 @@ const SUITE_STUBS = {
   // sitting on master is the state the revert exists to prevent, so this arm
   // undoes the merge too even though it is not a RED suite.
   crash: 'console.error("SyntaxError: Unexpected end of input");\nprocess.exit(1);\n',
+  // Ran, exited 0, printed NOTHING. Also a never-ran arm — but with no capture
+  // to preserve, which is what separates "there was nothing to keep" from "the
+  // preservation failed". Same shape as ticket-loop-verify's `silent`.
+  silent: 'process.exit(0);\n',
   // A red run carrying the DIAGNOSTICS — the AssertionError, the
   // `+ actual - expected` diff and the stack the dot reporter prints under each
   // `✖` row. `red` above stops at the NAMES, which already ride the escalation,
@@ -1307,23 +1311,52 @@ test('t373: the post-merge dump records the ROOT checkout, not the ticket worktr
     'and not the ticket worktree, which is not what ran');
 });
 
-test('t373: a suite that never RAN preserves nothing, and does not claim it tried', async () => {
-  // `_runTicketSuite` carries `output` on the red arm only, so a crash before the
-  // summary has nothing to preserve — and its whole diagnostic is already inline
-  // in the escalation as `suite.error`. Writing an empty file here would be the
-  // confidently-empty artifact the verify path refuses.
+test('t375: a CRASHED post-merge run preserves its capture too — it reverted master as well', async () => {
+  // The arm t373 left out. A run that died before its summary reverts master
+  // exactly as a red one does, so its output is unreproducible for the same
+  // reason, and the escalation carries only a 300-char last line. Scoping the
+  // preservation to `suite.ran` made the crash arm the one that inherited the
+  // bug the ticket was raised on.
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const f = mkMerge({ repo, suite: 'crash' });
+  assert.deepStrictEqual(keptFiles(f.home), [],
+    'ENTER: nothing is preserved before the run — the assertions below are about THIS run');
 
   await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
 
   const esc = f.esc();
   assert.strictEqual(esc.length, 1, 'ENTER: it escalated');
   assert.match(esc[0].body, /could not be RUN/, 'ENTER: on the never-ran arm, not the red one');
-  assert.deepStrictEqual(keptFiles(f.home), [], 'nothing is preserved for a run that produced nothing');
-  assert.ok(!/could not be preserved/.test(esc[0].body),
-    `a run with no output to keep must not report a preservation failure: ${esc[0].body}`);
+  assert.match(esc[0].body, /REVERTED/, 'ENTER: and master was reverted, which is what makes it unreproducible');
+
+  const kept = keptFiles(f.home);
+  assert.strictEqual(kept.length, 1, 'the crashed run preserved a file');
+  assert.match(fsReal.readFileSync(kept[0], 'utf8'), /SyntaxError: Unexpected end of input/,
+    'holding what the runner actually said, not the truncated last line');
+  assert.ok(esc[0].body.includes(kept[0]),
+    `and the escalation names it (body: ${esc[0].body.slice(0, 600)})`);
+});
+
+test('t375: a post-merge run that printed NOTHING preserves nothing, and says so once', async () => {
+  // The boundary: preserving on the unran arm must not mean writing an empty
+  // file. A present file that says nothing reads as a claim about the RUN rather
+  // than about the preservation, which is the confidently-empty artifact the
+  // writer refuses — so the lead is told the evidence is missing, and no file
+  // appears.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, suite: 'silent' });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: it escalated');
+  assert.match(esc[0].body, /could not be RUN/, 'ENTER: the never-ran arm again');
+  assert.deepStrictEqual(keptFiles(f.home), [], 'a run with nothing to keep writes no file');
+  assert.match(esc[0].body, /could not be preserved/,
+    'and the lead is told why there is nothing, rather than left to wonder');
+  assert.match(esc[0].body, /no captured output/, 'with the reason stated');
 });
 
 test('t373: a preservation that THROWS still reverts master, and is logged', async () => {

@@ -5323,24 +5323,25 @@ function createSessionManager(deps) {
           // the evidence unreproducible — re-running the suite afterwards
           // measures a tree the failure is no longer in.
           //
-          // Only on the ran-TRUE arm, exactly as the verify step does it:
-          // `_runTicketSuite` sets `output` on the red arm alone, so a run that
-          // never produced a summary carries nothing to preserve and its whole
-          // diagnostic is already `suite.error`, inlined in `why` above.
+          // Attempted on the UNRAN arm as well. A crashed or timed-out run
+          // reverts master exactly as a red one does, so its output is just as
+          // unreproducible — and `suite.error`, inlined in `why` above, is a
+          // 300-char last line standing in for a 64KB capture. Whether there is
+          // anything worth keeping is the writer's judgement, not this arm's: it
+          // refuses an empty capture, which is what a spawn failure carrying no
+          // streams produces.
           //
           // WRAPPED for the reason the verify arm is wrapped, and with more at
           // stake: `.catch()` cannot catch a synchronous throw, and one escaping
           // here would reach the method's catch-all — which escalates WITHOUT
           // reverting, leaving a red master standing because the evidence
           // mechanism threw. Preservation must never outrank the undo.
-          let kept = { ok: false, path: null, error: 'not attempted' };
-          if (suite.ran) {
-            try {
-              kept = await this._writeTicketSuiteFailure(team, ticket, suite);
-            } catch (e) {
-              kept = { ok: false, path: null, error: `the preservation threw: ${e && e.message ? e.message : String(e)}` };
-              log.error('ticket', `ticket ${ticketId}: post-merge suite output could not be preserved — ${kept.error}`);
-            }
+          let kept;
+          try {
+            kept = await this._writeTicketSuiteFailure(team, ticket, suite);
+          } catch (e) {
+            kept = { ok: false, path: null, error: `the preservation threw: ${e && e.message ? e.message : String(e)}` };
+            log.error('ticket', `ticket ${ticketId}: post-merge suite output could not be preserved — ${kept.error}`);
           }
           // BOTH directions, the rule t370 r3 settled: naming the file when it
           // exists and going silent when it does not leaves the lead — the only
@@ -5350,12 +5351,11 @@ function createSessionManager(deps) {
           // On the two arms that leave the merge standing, re-running really
           // does reproduce, and those arms are exactly where the lead is acting
           // by hand — so the clause is built per-arm rather than once.
-          const keptWhere = (reverted) => (!suite.ran ? ''
-            : (kept.ok
-              ? (reverted
-                ? ` Full output (assertion text, diff and stack) preserved at ${kept.path} — read it instead of re-running, which would measure the reverted tree.`
-                : ` Full output (assertion text, diff and stack) preserved at ${kept.path} — read it; ${MERGE_TARGET_BRANCH} still carries the merge.`)
-              : ` The failing output could not be preserved (${kept.error}).`));
+          const keptWhere = (reverted) => (kept.ok
+            ? (reverted
+              ? ` Full output (assertion text, diff and stack) preserved at ${kept.path} — read it instead of re-running, which would measure the reverted tree.`
+              : ` Full output (assertion text, diff and stack) preserved at ${kept.path} — read it; ${MERGE_TARGET_BRANCH} still carries the merge.`)
+            : ` The failing output could not be preserved (${kept.error}).`);
 
           // The revert is a write to the shared root checkout exactly as the
           // merge is, so it needs the same gate — and it needs it MORE, because
@@ -7716,7 +7716,18 @@ function createSessionManager(deps) {
       });
 
       const text = `${res.stdout || ''}\n${res.stderr || ''}`;
-      if (res.error) { out.error = res.error; return out; }
+      // The capture rides the UNRAN arms too, not the red one alone. A post-merge
+      // run that crashed or timed out REVERTS master exactly as a red one does,
+      // so its output is unreproducible for the same reason — and without this
+      // the whole account of it is a 300-char last line. Kept raw for
+      // _writeTicketSuiteFailure to judge: an empty capture is refused there, so
+      // a spawn failure (which resolves carrying no streams at all) still
+      // preserves nothing rather than writing a confidently empty artifact.
+      //
+      // Not hoisted above the green check below: a green run's output is noise
+      // nobody reads, and holding a 64KB string on every passing ticket is a
+      // cost with no reader.
+      if (res.error) { out.error = res.error; out.output = text; return out; }
       out.code = res.code;
 
       // The runner's own TOTALS line is the only evidence the run COMPLETED.
@@ -7735,6 +7746,7 @@ function createSessionManager(deps) {
       if (!totals) {
         const last = text.trim().split('\n').filter((l) => l.trim()).pop() || '(no output)';
         out.error = `the runner produced no TOTALS summary (exit ${res.code}) — last line: ${last.slice(0, 300)}`;
+        out.output = text;
         return out;
       }
       const [, pass, failed, tests] = totals;
@@ -8011,7 +8023,27 @@ function createSessionManager(deps) {
       // empty artifact t363's own raw-fallback arm exists to avoid.
       if (!body) return { ok: false, path: null, error: 'the run produced no captured output to preserve' };
       const round = (Number(ticket.reworkRound) || 0) + 1;
-      const file = path.join(dest.dir, `suite-failure-${ticket.id}-r${round}.txt`);
+      // The STAMP is what makes the name unique, not the round. `reworkRound`
+      // does not move on a REVIEW round, so a ticket re-reviewed and re-merged
+      // computes the same round twice and a second red post-merge run would
+      // overwrite the first — the overwrite hazard the per-round name exists to
+      // prevent, reachable through the one dimension the round does not count.
+      // A stamp rather than a merge-attempt counter: this writer serves the
+      // verify path too, where a merge counter means nothing, and it needs no
+      // new persisted field whose bump ordering could be got wrong. It also
+      // covers every repeat dimension at once (review round, re-merge, a retry
+      // inside one round), sorts chronologically, and agrees with the `# when:`
+      // line already in the file.
+      //
+      // The stamp's resolution is milliseconds, so it is a discriminator and not
+      // a guarantee; the existence check is what closes the name. Leaving it out
+      // would put the whole mechanism back on "two runs of one ticket cannot
+      // land in the same millisecond", which is true of real suite runs (they
+      // take minutes) and not true of anything else that calls this.
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const stem = path.join(dest.dir, `suite-failure-${ticket.id}-r${round}-${stamp}`);
+      let file = `${stem}.txt`;
+      for (let n = 2; n < 100 && fs.existsSync(file); n++) file = `${stem}-${n}.txt`;
       // The COMMIT, not just the branch name. Two rounds of one ticket differ
       // only by timestamp otherwise, yet the branch MOVED between them and that
       // movement is the entire content of a round — a hand comparing r1 to r2
@@ -8038,30 +8070,29 @@ function createSessionManager(deps) {
         `# count: ${(suite && suite.summary) || 'unknown'}`,
         '',
       ].join('\n');
+      // WRITTEN ASIDE AND RENAMED, so a truncated dump at the published path is
+      // impossible rather than cleaned up afterwards. ENOSPC or a kill mid-write
+      // leaves writeFileSync having produced a PARTIAL file, and a dump that
+      // stops mid-stack reads as complete — the hand then diagnoses off evidence
+      // missing the part it needed, which is worse than no file because it gets
+      // acted on. Writing straight to `file` and unlinking on failure closed
+      // that by cleanup, which has its own failure mode (the unlink can fail);
+      // the rename closes it by construction, so `ok:false` means "nothing is at
+      // that path" for every call site with nothing left to check.
+      //
+      // A rename onto a full disk still succeeds — it writes no data — so the
+      // ENOSPC that killed the write cannot resurface here and publish a partial
+      // file. The tmp is removed best-effort and its failure is not reported:
+      // a leftover `.tmp` is litter beside the artifacts, not something a reader
+      // can mistake for this run's output.
+      const tmp = `${file}.tmp`;
       try {
         ensureDir(dest.dir);
-        fs.writeFileSync(file, `${header}${body}\n`);
+        fs.writeFileSync(tmp, `${header}${body}\n`);
+        fs.renameSync(tmp, file);
       } catch (e) {
-        // The partial file is REMOVED, not left for the caller to disown. The
-        // likely failures here — ENOSPC, a kill mid-write — leave writeFileSync
-        // having produced a TRUNCATED file at exactly this path, while every
-        // caller reports "the failing output could not be preserved" and drops
-        // the path. A dump that stops mid-stack reads as complete, so the hand
-        // diagnoses off evidence that is missing the part it needed: worse than
-        // no file, because it gets acted on. Deleting makes `ok:false` mean
-        // "nothing is at that path" for all three call sites at once, rather
-        // than a warning each of them has to remember to carry.
-        //
-        // Unconditional because the name is per-ticket-per-round and this
-        // method is its only writer, so a file here is one THIS call created.
-        // If the unlink itself fails there IS something on disk, and then the
-        // path is named with what is wrong with it — silence would recreate the
-        // defect this arm exists to close.
-        let removed = true;
-        try { fs.unlinkSync(file); } catch (rm) { removed = rm.code === 'ENOENT'; }
-        return removed
-          ? { ok: false, path: null, error: e.message }
-          : { ok: false, path: file, error: `${e.message} — and the INCOMPLETE file left at ${file} could not be removed; do not read it as this run's output` };
+        try { fs.unlinkSync(tmp); } catch {}
+        return { ok: false, path: null, error: e.message };
       }
       return { ok: true, path: file, error: null };
     }
