@@ -6574,17 +6574,72 @@ function createSessionManager(deps) {
       // dirties the tree nor blocks worktree removal), and is left in place —
       // recreating it per run would race a concurrent read of it.
       const link = path.join(cwd, 'node_modules');
-      if (!fs.existsSync(link)) {
+      // EXISTENCE is lstat, VALIDITY is existsSync, and conflating them names
+      // the wrong cause: existsSync FOLLOWS the link, so a link whose target is
+      // momentarily gone (a root `npm install` mid-flight) reads as absent, the
+      // symlinkSync below then fails EEXIST, and the escalation says "could not
+      // link node_modules" for a tree that HAS the link and is missing the
+      // TARGET. The two states need different sentences because they need
+      // different fixes.
+      const entry = (p) => { try { return fs.lstatSync(p); } catch { return null; } };
+      if (!entry(link)) {
         const src = path.join(team.root, 'node_modules');
         if (!fs.existsSync(src)) {
           out.error = `neither ${link} nor ${src} exists — the suite cannot resolve its dependencies`;
           return out;
         }
         try { fs.symlinkSync(src, link); } catch (e) {
-          if (!fs.existsSync(link)) {   // a concurrent run winning the race is fine
+          if (!entry(link)) {   // a concurrent run winning the race is fine
             out.error = `could not link node_modules into the worktree: ${e.message}`;
             return out;
           }
+        }
+      } else if (!fs.existsSync(link)) {
+        out.error = `${link} exists but does not resolve — a dangling link, most likely to a `
+          + `${path.join(team.root, 'node_modules')} that was removed or is being reinstalled`;
+        return out;
+      }
+
+      // A branch that CHANGES package.json's dependencies cannot be verified
+      // against the root's installed tree, and the failure is silent in both
+      // directions: an ADDED dep is MODULE_NOT_FOUND (a red suite the hand
+      // cannot fix by editing code — the reject arm sends it back to rewrite
+      // correct work), while a REMOVED or RE-RANGED one still resolves out of
+      // the root's node_modules and the suite goes GREEN over a dependency set
+      // the branch does not declare. The second is the dangerous one.
+      //
+      // So ESCALATE on any difference rather than reject: the resolution is an
+      // `npm install` in the SHARED root checkout, which is the lead's call and
+      // outside what a hand can do from inside its worktree.
+      // NOT named `deps`: that is createSessionManager's own injected dependency
+      // object, and shadowing it here would silently cut this method off from
+      // every seam the factory provides the moment someone reaches for one.
+      const readDeps = (pkgPath) => {
+        try {
+          const j = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+          return { ...(j.dependencies || {}), ...(j.devDependencies || {}), ...(j.optionalDependencies || {}) };
+        } catch { return null; }
+      };
+      const wantDeps = readDeps(path.join(cwd, 'package.json'));
+      const haveDeps = readDeps(path.join(team.root, 'package.json'));
+      // Only when BOTH parsed: an unreadable package.json is a different fault,
+      // and escalating every ticket in a repo that has none would be worse than
+      // the hole this closes.
+      if (wantDeps && haveDeps) {
+        const diffs = [];
+        for (const [name, range] of Object.entries(wantDeps)) {
+          if (!(name in haveDeps)) diffs.push(`+${name}@${range} (added by the branch)`);
+          else if (haveDeps[name] !== range) diffs.push(`~${name}: root has ${haveDeps[name]}, branch wants ${range}`);
+        }
+        for (const name of Object.keys(haveDeps)) {
+          if (!(name in wantDeps)) diffs.push(`-${name} (dropped by the branch)`);
+        }
+        if (diffs.length) {
+          out.error = 'the branch changes package.json dependencies, but the suite runs against the ROOT checkout\'s '
+            + `installed node_modules (linked at ${link}), so it would verify the wrong dependency set: `
+            + `${diffs.slice(0, 10).join('; ')}${diffs.length > 10 ? ` (+${diffs.length - 10} more)` : ''}`
+            + ' — install them in the root checkout and re-run, rather than sending this back to the implementer';
+          return out;
         }
       }
 

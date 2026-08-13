@@ -119,7 +119,21 @@ test('the scope does NOT ask the reviewer to reconcile a suite digest', () => {
   // reviewer file a fault against every ticket that no longer carries a digest.
   assert.ok(!/does not run the test suite/.test(s),
     'the scope must not claim the loop skips the suite — verify runs it before any reviewer is spawned');
-  assert.ok(!/MUST-FIX/.test(s.split('SUITE:')[1].split('\n\n')[0] || ''),
+  // Bounded by the NEXT SECTION, never by a blank line. `split('\n\n')[0]`
+  // scoped this to the FIRST PARAGRAPH after `SUITE:`, which holds only while
+  // that text is a single `out.push` — reformat it into two paragraphs and the
+  // slice silently narrows to the first half, so a MUST-FIX re-added in the
+  // second half satisfies this check by leaving the slice rather than by not
+  // existing. The two ENTER guards are what make the slice falsifiable at all:
+  // an anchor that stops matching yields an EMPTY slice, and every absence
+  // assertion is true of an empty slice.
+  const after = s.split('SUITE:')[1] || '';
+  const end = after.indexOf('Report your verdict in exactly this shape:');
+  assert.ok(end > 0, 'ENTER: both anchors are present, so the slice is bounded by real section boundaries');
+  const suiteSection = after.slice(0, end);
+  assert.match(suiteSection, /green suite does NOT prove/,
+    'ENTER: the slice reaches the END of the SUITE section — a narrowed slice would drop the very text this absence check is about');
+  assert.ok(!/MUST-FIX/.test(suiteSection),
     'a missing digest is no longer a must-fix: the claim is verified by the machine, not the reviewer');
 });
 

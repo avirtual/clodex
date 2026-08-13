@@ -1485,3 +1485,143 @@ test('the kill cap is strictly GREATER than the lock wait, or the wait is dead c
     `the loop waits up to ${waitMs}ms for the lock but kills the child at ${timeoutMs}ms — equal or `
     + 'less means a queued run is reported as a wedge and the wait constant can never be reached');
 });
+
+// ── the harness cannot verify this branch: escalate, never reject ──────────
+//
+// Both subjects below are the same defect class as the TOTALS check above, one
+// step earlier: the suite runs against a dependency tree the BRANCH does not
+// describe, so its answer — red or green — is about the wrong dependency set.
+// Neither is the hand's rework, so both take the escalate arm.
+
+// Writes the two package.json files the deps comparison reads. Returns nothing;
+// the fixture's worktree is repo.dir/wt, which stubSuite has already made.
+function plantPkgs(repo, rootDeps, branchDeps) {
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'package.json'),
+    JSON.stringify({ name: 'root', dependencies: rootDeps }, null, 2));
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'wt', 'package.json'),
+    JSON.stringify({ name: 'root', dependencies: branchDeps }, null, 2));
+}
+
+test('a branch that ADDS a dependency escalates instead of taking a false RED', async () => {
+  // MEASURED FAILURE MODE: the loop links the ROOT's node_modules into the
+  // worktree, so a dep the branch added is not installed, the file requiring it
+  // dies MODULE_NOT_FOUND, and the suite goes red. The reject arm then sends the
+  // hand rework for correct code — the fix is `npm install` in the shared root,
+  // which a hand working inside its worktree cannot do.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'green' });
+  plantPkgs(repo, { ws: '^8.0.0' }, { ws: '^8.0.0', 'left-pad': '^1.3.0' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation reached the lead');
+  assert.match(esc[0].body, /left-pad/, 'the escalation NAMES the dependency, so the lead can install it');
+  assert.match(esc[0].body, /added by the branch/, 'and says which direction the difference runs');
+  assert.strictEqual(esc[0].target, 'lead');
+  assert.strictEqual(f.created.length, 0, 'no reviewer: nothing was verified');
+  assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
+    'and the hand is NOT sent rework for a dependency it cannot install');
+});
+
+test('a branch that DROPS a dependency escalates too, though its suite would go GREEN', async () => {
+  // The dangerous direction, and the reason this check is not "escalate on
+  // MODULE_NOT_FOUND". A removed dep still resolves out of the linked root tree,
+  // so the suite passes over code whose own package.json no longer declares what
+  // it imports — a green that would break on a fresh `npm ci`. Nothing downstream
+  // of a green suite looks for this.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'green' });
+  plantPkgs(repo, { ws: '^8.0.0', 'left-pad': '^1.3.0' }, { ws: '^8.0.0' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: it escalated despite a green suite');
+  assert.match(esc[0].body, /left-pad/);
+  assert.match(esc[0].body, /dropped by the branch/);
+  assert.strictEqual(f.created.length, 0, 'and the green did NOT reach a reviewer');
+});
+
+test('an unchanged dependency set reaches the reviewer exactly as before', async () => {
+  // The other half of the pair: without this the check above is satisfiable by a
+  // rule that escalates every ticket, and the whole loop would stop.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'green' });
+  plantPkgs(repo, { ws: '^8.0.0' }, { ws: '^8.0.0' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.deepStrictEqual(f.esc(), [], 'an identical dependency set is not a difference');
+  assert.strictEqual(f.created.length, 1, 'ENTER: the reviewer was spawned, so the green path still runs');
+});
+
+test('a VERSION RANGE change is a difference too, not just a missing name', async () => {
+  // A name-only comparison reads a re-ranged dep as unchanged and verifies the
+  // branch against whatever version the root happens to have installed.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'green' });
+  plantPkgs(repo, { ws: '^8.0.0' }, { ws: '^9.0.0' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: it escalated');
+  assert.match(esc[0].body, /root has \^8\.0\.0, branch wants \^9\.0\.0/,
+    'and names BOTH ranges — the lead cannot act on "ws differs"');
+});
+
+test('a repo with no package.json at all still runs its suite', async () => {
+  // Guards the guard: every subject that predates this check has no package.json
+  // in either tree, and a comparison that treated "unreadable" as "different"
+  // would escalate all of them. The 50 subjects above are that assertion; this
+  // one states it on purpose so it cannot be deleted by accident.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'green' });
+  assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'package.json')),
+    'ENTER: neither tree has a package.json, which is the case under test');
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.deepStrictEqual(f.esc(), [], 'an absent package.json is not a dependency difference');
+  assert.strictEqual(f.created.length, 1, 'the reviewer was spawned');
+});
+
+test('a DANGLING node_modules link names the dangle, not "could not link"', async () => {
+  // fs.existsSync FOLLOWS symlinks, so a link whose target is gone (a root
+  // `npm install` mid-flight) reads as ABSENT. The symlinkSync that follows then
+  // fails EEXIST, and the escalation blames the link step for a tree that HAS
+  // the link and is missing the TARGET — an error naming the wrong fix.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'green' });
+  const link = pathReal.join(repo.dir, 'wt', 'node_modules');
+  fsReal.symlinkSync(pathReal.join(repo.dir, 'gone-node_modules'), link);
+  assert.ok(!!fsReal.lstatSync(link) && !fsReal.existsSync(link),
+    'ENTER: the link EXISTS and does not RESOLVE — the exact state the two calls disagree about');
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: it escalated');
+  assert.match(esc[0].body, /does not resolve/, 'the escalation names the DANGLE');
+  assert.ok(!/could not link node_modules/.test(esc[0].body),
+    'and does not blame the link step, which never ran and is not the fix');
+});
