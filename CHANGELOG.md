@@ -13,6 +13,19 @@ blocks a release.
 
 ## Unreleased
 
+- A ticket's automatic test run no longer reports green over a dependency set
+  the branch has stopped declaring. It compares the branch's declared
+  dependencies against the checkout it borrows `node_modules` from, and holds
+  the ticket for you instead of reviewing work whose suite only passed because
+  the borrowed tree still carried a package the branch dropped.
+- `node_modules` is ignored again on a fresh clone. The entry only matched a
+  real directory, so the symlink a ticket run creates showed up as an untracked
+  change on every machine except one that happened to carry a local exclude.
+- The guard that keeps the intent parser and its test corpus in step now covers
+  `[agent:team …]` as well as `[agent:task …]`, and a new check makes sure a
+  future family of sub-verbs cannot be added without being covered too. A
+  sub-verb went untested for a full release cycle this way.
+
 - A stalled ticket's alarm now tells you what the seat was actually doing. It
   names the seat's last tool call — and distinguishes a call still in flight
   from one that died mid-write — alongside the branch's commit count and
