@@ -44,7 +44,23 @@ const BEL = String.fromCharCode(0x07);
 // acknowledgement here. Deliberately NOT automatic inside `write()`: a fixture
 // that acked itself would make the two-write split untestable, and the split is
 // the whole fix.
-const ackAbandon = (proc) => proc.emit(`${CR}${LF}$ `);
+// Answering is not enough on its own: drawer-pty types once the answer has gone
+// QUIET, because the SIGINT input flush outlasts the first byte of the reply.
+// So the acknowledgement is the bytes AND the quiet window elapsing, and this
+// helper models both — a fixture that emitted without letting the window expire
+// would report the command as never typed and pin a contract the product does
+// not have.
+const QUIET_MS = 60;
+// The LAST quiet timer, not the first: every byte re-arms the window, and only
+// the newest one still types.
+const quietElapse = (timers) => {
+  const quiet = (timers || []).filter((t) => t.ms === QUIET_MS);
+  if (quiet.length) quiet[quiet.length - 1].fn();
+};
+const ackAbandon = (proc) => {
+  proc.emit(`${CR}${LF}$ `);
+  quietElapse(proc.timers);
+};
 
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 const A = `${ESC}]133;A${BEL}`;
@@ -108,6 +124,9 @@ function mk(over = {}) {
     setTimeout: (fn, ms) => {
       const t = { fn, ms, unrefd: false, unref() { t.unrefd = true; return t; } };
       timers.push(t);
+      // Also hung off the pty so `ackAbandon` can reach the quiet window from a
+      // proc alone, without every call site having to destructure `timers`.
+      if (spawn.spawned) for (const p of spawn.spawned) p.timers = timers;
       return t;
     },
     killPid: () => {},
@@ -141,7 +160,7 @@ function mk(over = {}) {
 // firing an arm instead. Every caller below indexes into this, so a pattern that
 // admits an extra row does not fail here; it fails somewhere downstream that
 // looks unrelated.
-const execTimers = (timers) => timers.filter((t) => t.ms !== 5000 && t.ms !== 250);
+const execTimers = (timers) => timers.filter((t) => t.ms !== 5000 && t.ms !== 250 && t.ms !== QUIET_MS);
 
 // ── refusals ────────────────────────────────────────────────────────────────
 // Every one is checked INSIDE exec() rather than by a caller reading a status
@@ -765,6 +784,7 @@ test('a timed-out command that is still RUNNING is not written off', () => {
   w.spawn('ws-1', 'alice', {});
   w.exec('ws-1', 'alice', 'sleep 900');
   spawn.spawned[0].emit(C('sleep 900'));
+  quietElapse(timers);
   execTimers(timers)[0].fn();
   assert.strictEqual(w._execState('ws-1', 'alice').busy, true, 'ENTER: the terminal is genuinely held');
 
@@ -773,7 +793,7 @@ test('a timed-out command that is still RUNNING is not written off', () => {
   assert.strictEqual(results.length, 1, 'nothing was written off');
   // Two entries, not one: the abandon and the command are separate writes. The
   // C mark at the top of this test doubles as the shell's acknowledgement, so
-  // no explicit ackAbandon is needed here.
+  // only its quiet window has to elapse — no explicit ackAbandon is needed.
   assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `sleep 900${CR}`],
     'and nothing was typed into the running command');
 });

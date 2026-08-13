@@ -63,13 +63,25 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // capturing, and a D with no preceding C, as nothing to report.
   const ABANDON_LINE = String.fromCharCode(0x03);
   const ENTER = String.fromCharCode(0x0d);
-  // How long to wait for the shell to answer the ^C before typing anyway. Not a
-  // tuned latency: the shell normally answers in a millisecond or two and the
-  // command goes out then. This is the fallback for a shell that says NOTHING —
-  // ^C on an empty line under a prompt that does not redraw — where waiting
-  // forever would be a command that never runs and an agent that never hears
-  // back. Overshooting costs a slow command; undershooting reopens the race.
+  // How long to wait for a shell that answers the ^C with NOTHING AT ALL before
+  // typing anyway — ^C on an empty line under a prompt that does not redraw —
+  // where waiting forever would be a command that never runs and an agent that
+  // never hears back. It is armed only while the shell has stayed silent; once
+  // any byte arrives, ABANDON_QUIET_MS governs instead. A shell that speaks at
+  // T+240ms would otherwise be typed over by this deadline at T+250ms, which is
+  // the very race the quiet window exists to close.
   const ABANDON_ACK_MS = 250;
+  // The shell must stop TALKING, not merely start. SIGINT makes bash discard
+  // its pending input, and that discard outlasts the first byte of the answer:
+  // bytes already in flight when the signal landed (a prior command's echo, an
+  // OSC 7 cwd report) arrive during the flush and look exactly like an answer to
+  // it. Typing then loses characters from the MIDDLE of the command and the
+  // truncation still RUNS — measured against real bash at 6 failures in 280
+  // under concurrency, producing `bash: et: command not found` from `echo`, and
+  // `rm -rf ./buil` is a valid command rather than an error. Waiting for output
+  // to go quiet spans the whole flush and the prompt redraw, which arming on the
+  // first byte cannot do at any deadline.
+  const ABANDON_QUIET_MS = 60;
 
   function shellFor() {
     return shell || (env && env.SHELL) || process.env.SHELL || '/bin/zsh';
@@ -183,7 +195,11 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       // command is safe to type. Runs BEFORE the mark parser is fed: this is a
       // raw-byte acknowledgement and must not depend on marks, which a shell
       // spawned without the shim never emits at all.
-      if (rec.execArm) { const arm = rec.execArm; rec.execArm = null; arm(); }
+      // The shell has spoken, so it is answering the abandon — but the SIGINT
+      // input flush is not over until it stops. Each byte RESTARTS the quiet
+      // window rather than releasing the command, so the write lands after the
+      // flush and the prompt redraw instead of inside them.
+      if (rec.execArm) rec.execArm();
       if (rec.marks) { try { rec.marks.feed(data); } catch {} }
       rec.scrollback += data;
       rec.seq += 1;
@@ -428,6 +444,10 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       const typeCommand = () => {
         if (armed) return;
         armed = true;
+        // Released here, not on the first byte: the quiet window re-arms on
+        // every byte, so an arm left in place would schedule a timer per byte
+        // for the life of the shell.
+        if (rec.execArm === arm) rec.execArm = null;
         // The command belongs to the exec that STARTED it. By now `pending` may
         // hold a later one (a window kill settled ours and a new command came
         // in), and typing then would put our bytes on a line the current waiter
@@ -441,8 +461,27 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
           settle(rec, { status: 'write-failed', reason: String((e && e.message) || e) });
         }
       };
-      rec.execArm = typeCommand;
-      later(typeCommand, ABANDON_ACK_MS);
+      // Two clocks, and they are not interchangeable. The SILENCE deadline
+      // covers a shell that never answers; the QUIET window covers one that
+      // does. `spoke` is what hands ownership from the first to the second, and
+      // it is a FLAG rather than a cancelled handle because the deadline must
+      // stay inert even where the handle cannot be cleared — the timer seam is
+      // injected, so a caller's fake may return something clearTimeout ignores,
+      // and a silence deadline that still fired mid-answer would type into the
+      // flush this split exists to avoid.
+      let spoke = false;
+      // Counted, not just flagged: the window must restart on EVERY byte, and
+      // `typeCommand` is idempotent, so without this the first byte's timer
+      // would win and type 60ms into an answer still arriving. A timer types
+      // only if no byte landed after it was armed.
+      let gen = 0;
+      later(() => { if (!spoke) typeCommand(); }, ABANDON_ACK_MS);
+      const arm = () => {
+        spoke = true;
+        const mine = ++gen;
+        later(() => { if (gen === mine) typeCommand(); }, ABANDON_QUIET_MS);
+      };
+      rec.execArm = arm;
 
       const timer = later(() => {
         // Identity, not a cleared handle: by now this record may hold a LATER

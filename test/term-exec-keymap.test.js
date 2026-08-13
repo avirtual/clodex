@@ -61,6 +61,17 @@ function waitFor(getOut, pred, ms = SETTLE_MS) {
 // the echo of the command line as it is typed.
 const MARK = ['TERMEXEC', 'RAN'].join('_');
 
+// Split for the same reason as MARK, and it is not decoration. The readiness
+// wait below matches this against everything the pty has emitted, and a
+// terminal ECHOES the line as it is typed — so a marker spelled literally in
+// the command is satisfied by the echo of the command rather than by its
+// OUTPUT. The row then proceeds while the shell is still reading that line,
+// exec()'s ^C discards the unread remainder, and the fragment left over runs:
+// `set -o emacs && echo ...` surfaced as `bash: et: command not found`.
+// Measured against unmodified product code: 6 losses in 280 spelled literally,
+// 0 in 450 split.
+const KEYMAP_MARK = ['KEYMAP', 'SET'].join('_');
+
 async function runCase({ shellPath, keymapCmd, prefill }) {
   const out = { s: '' };
   let proc = null;
@@ -88,8 +99,10 @@ async function runCase({ shellPath, keymapCmd, prefill }) {
     // Put the shell in the keymap under test and prove it got there before
     // measuring anything — an rc file that had not run yet would silently make
     // this an emacs case wearing a vi label, and every vi row would pass.
-    proc.write(`${keymapCmd} && echo KEYMAP_SET\r`);
-    const ready = await waitFor(() => out.s, (s) => s.includes('KEYMAP_SET'));
+    // The shell concatenates the marker, so the bytes typed on the line never
+    // contain it and only the OUTPUT can satisfy the wait below.
+    proc.write(`${keymapCmd} && echo KEYMAP''_SET\r`);
+    const ready = await waitFor(() => out.s, (s) => s.includes(KEYMAP_MARK));
     assert.ok(ready, `shell reached ${keymapCmd}`);
 
     // A draft the operator walked away from. Left with the cursor moved back
