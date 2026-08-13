@@ -56,6 +56,13 @@ blocks a release.
   being guessed at. Merges never overlap each other or a test run you started
   yourself. Nothing is pushed, and the changelog and the final `task accept`
   stay yours.
+- A review that approves a ticket and says so no longer blocks its own merge.
+  Reviewers write their verdict's must-fix section as "(none)" and then explain
+  why nothing needs fixing; that explanation was read as the list of things to
+  fix, so the auto-merge refused an approval that had no objections in it and
+  sent the lead to resolve a contradiction that did not exist. A section that
+  opens by declaring no must-fixes now declares none, whatever follows it. An
+  approval that really does list must-fixes is still refused, unchanged.
 - The "Clodex restarted" notice now reaches an agent in seconds rather than
   minutes. If a pane had an unsent draft open in it, the notice waited on a
   five-minute fallback, and opening two workspaces made it worse — the second
