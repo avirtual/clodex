@@ -7371,7 +7371,7 @@ function createSessionManager(deps) {
           // BEFORE the reject, which increments `reworkRound` — the file is
           // named for the round that just FAILED, not the one it opens, so the
           // number in the path matches the run the hand is being sent back over.
-          const kept = this._writeTicketSuiteFailure(team, still, suite);
+          const kept = await this._writeTicketSuiteFailure(team, still, suite);
           // Named ABSOLUTELY in the message, so the hand needs no convention to
           // find it. A write failure rides the same line rather than being
           // swallowed: a rejection with no evidence is still a correct
@@ -7393,7 +7393,13 @@ function createSessionManager(deps) {
           // gets it instead — the failure is real either way and must surface.
           if (!rejected.ok) {
             fail('verify: suite', `the suite fails on ${branch} (${suite.summary}) and the rework could not be sent back: ${rejected.error}`,
-              `ran the suite (exit ${suite.code}); no reviewer spawned; failing: ${suite.failing || 'unnamed'}`);
+              `ran the suite (exit ${suite.code}); no reviewer spawned; failing: ${suite.failing || 'unnamed'}`
+              // The file is written BEFORE the reject is attempted, so it exists
+              // on this path too — and this is the arm where the lead is the only
+              // remaining reader, the hand having never received anything. Keeping
+              // the output and telling nobody is the original defect wearing a
+              // different hat.
+              + `${kept.ok ? ` Full output preserved at ${kept.path}.` : ''}`);
           }
           return;
         }
@@ -7924,7 +7930,7 @@ function createSessionManager(deps) {
     // Resolved through _ticketDiffDest, so the confinement that guards the diff
     // guards this too: `taskDir` is spec TEXT an agent wrote, and a `~` or `..`
     // in it would otherwise join into a path outside the projects root.
-    _writeTicketSuiteFailure(team, ticket, suite) {
+    async _writeTicketSuiteFailure(team, ticket, suite) {
       const dest = this._ticketDiffDest(team, ticket);
       if (!dest.ok) return { ok: false, path: null, error: dest.error };
       const body = String((suite && suite.output) || '').trim();
@@ -7934,10 +7940,22 @@ function createSessionManager(deps) {
       if (!body) return { ok: false, path: null, error: 'the run produced no captured output to preserve' };
       const round = (Number(ticket.reworkRound) || 0) + 1;
       const file = path.join(dest.dir, `suite-failure-${ticket.id}-r${round}.txt`);
+      // The COMMIT, not just the branch name. Two rounds of one ticket differ
+      // only by timestamp otherwise, yet the branch MOVED between them and that
+      // movement is the entire content of a round — a hand comparing r1 to r2
+      // could not tell which tree each measured. Read from the worktree that
+      // actually ran (test-digest.sh's `# head:` does the same with rev-parse),
+      // and degraded to the branch name alone rather than failing the write: a
+      // preserved dump with a vaguer header beats no dump.
+      const head = await gitWorktree.currentBranch((suite && suite.cwd) || '')
+        .catch(() => null);
+      const headLine = head && head.ok
+        ? `${head.branch} ${String(head.head || '').slice(0, 12)}`
+        : `${(ticket.worktree && ticket.worktree.branch) || 'unknown'} (commit unresolved)`;
       const header = [
         `# clodex ticket loop — preserved output of the FAILING suite run for ${ticket.id}.`,
         `# tree:  ${(suite && suite.cwd) || 'unknown'}`,
-        `# head:  ${(ticket.worktree && ticket.worktree.branch) || 'unknown'}`,
+        `# head:  ${headLine}`,
         `# when:  ${new Date().toISOString()}`,
         `# count: ${(suite && suite.summary) || 'unknown'}`,
         '',

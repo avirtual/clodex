@@ -2152,6 +2152,16 @@ test('t370: a GREEN run preserves nothing and carries no captured output', async
 
   assert.strictEqual(f.one().loopStep, 'review', 'ENTER: the green run really reached review');
   assert.deepStrictEqual(keptFiles(f, f.home), [], 'a green run preserves nothing');
+
+  // The second clause of the name, measured DIRECTLY. Asserting only that no
+  // file landed cannot see the guard at all: the green arm never calls
+  // _writeTicketSuiteFailure, so making `out.output = text` unconditional leaves
+  // this subject green while the 64KB string is carried on every passing ticket.
+  // A test that cannot reach the state its name describes is the defect class
+  // this repo is most careful about, so the claim is pinned where it lives.
+  const green = await f.m._runTicketSuite(f.team, f.one());
+  assert.strictEqual(green.green, true, 'ENTER: the direct run really is the green arm');
+  assert.strictEqual(green.output, '', 'a green run carries no captured output');
 });
 
 test('t370: a write failure still rejects, and SAYS why there is no file', async () => {
@@ -2182,16 +2192,91 @@ test('t370: a write failure still rejects, and SAYS why there is no file', async
   assert.match(sent[0].body, /probe alpha/, 'the failing names still ride it');
 });
 
-test('t370: an EMPTY capture is refused rather than written as a confidently empty file', () => {
+test('t370: an EMPTY capture is refused rather than written as a confidently empty file', async () => {
   // t363's own raw-fallback arm exists for this: a present file that says
   // nothing reads as "the runner produced no output", which is a claim about the
   // run rather than about the preservation. Refusing puts the reason in the
   // rejection instead, where it is true.
   const repo = mkRepo();
   const f = mkLoop({ repo });
-  const r = f.m._writeTicketSuiteFailure(f.team, f.one(), { output: '   \n  ', summary: '0/1', cwd: repo.dir });
+  const r = await f.m._writeTicketSuiteFailure(f.team, f.one(), { output: '   \n  ', summary: '0/1', cwd: repo.dir });
   assert.strictEqual(r.ok, false, 'an empty capture is not written');
   assert.strictEqual(r.path, null, 'and no path is claimed for it');
   assert.match(r.error, /no captured output/, 'the reason names the empty capture');
   assert.deepStrictEqual(keptFiles(f, f.home), [], 'nothing landed on disk');
+});
+
+test('t370 r2: an UNDELIVERABLE rejection still names the preserved file to the lead', async () => {
+  // The sharper version of the original bug: not "the output was thrown away"
+  // but "the output was kept and nobody was told". The write precedes the reject
+  // attempt, so on this arm the file EXISTS while the hand never received
+  // anything — the lead is the only remaining reader, which makes the path in
+  // the escalation the whole channel rather than a convenience.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+  f.m.sessions.delete('team-hand');   // no seat to receive the rework
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const kept = keptFiles(f, f.home);
+  assert.strictEqual(kept.length, 1, 'ENTER: the file really was written on the undeliverable path');
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: it escalated to the lead rather than rejecting');
+  assert.ok(esc[0].body.includes(kept[0]),
+    `the escalation names the preserved file (body: ${esc[0].body.slice(0, 500)})`);
+});
+
+test('t370 r2: the header records the COMMIT, so two rounds are distinguishable', async () => {
+  // `# head:` carrying only the branch name makes r1 and r2 differ by timestamp
+  // alone — yet the branch MOVED between them, and that movement is the entire
+  // content of a round. Without the sha the artifact is a thing you trust rather
+  // than read.
+  const repo = mkRepo();
+  const sha1 = commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'round one\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+  // A REAL git worktree with tl-1 checked out, unlike the plain directory the
+  // other subjects use. It has to be real here and nowhere else: this is the one
+  // claim about what the TREE THAT RAN says about itself, and a plain directory
+  // inside the repo resolves to the repo root, reporting `master` — which would
+  // make this subject measure the fixture rather than the header.
+  const realWt = pathReal.join(repo.dir, 'realwt');
+  git(repo.dir, ['worktree', 'add', '-q', realWt, 'tl-1']);
+  fsReal.mkdirSync(pathReal.join(realWt, 'scripts'), { recursive: true });
+  fsReal.writeFileSync(pathReal.join(realWt, 'scripts', 'run-tests.js'), SUITE_STUBS.redWithDiff);
+  assert.strictEqual(git(realWt, ['rev-parse', '--abbrev-ref', 'HEAD']), 'tl-1',
+    'ENTER: the worktree really has the ticket branch checked out');
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand',
+    worktree: { ...f.one().worktree, path: realWt },
+  }]);
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  // The branch MOVES, committed IN THE WORKTREE — which is both what a hand
+  // actually does for round 2 and the only way that works here: the branch is
+  // checked out by the worktree, so a root-side `git checkout tl-1` is refused.
+  fsReal.writeFileSync(pathReal.join(realWt, 'work.txt'), 'round two\n');
+  git(realWt, ['add', 'work.txt']);
+  git(realWt, ['commit', '-q', '-m', 'the round 2 fix']);
+  const sha2 = git(realWt, ['rev-parse', 'HEAD']);
+  assert.notStrictEqual(sha1, sha2, 'ENTER: the branch really moved between rounds');
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r2', reportedBy: 'team-hand' }]);
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const byRound = {};
+  for (const p of keptFiles(f, f.home)) byRound[pathReal.basename(p)] = fsReal.readFileSync(p, 'utf8');
+  const r1 = byRound['suite-failure-t1-r1.txt'];
+  const r2 = byRound['suite-failure-t1-r2.txt'];
+  assert.ok(r1 && r2, 'ENTER: both rounds preserved a file');
+  // Each names the commit its own run measured — the assertion is that they
+  // DIFFER, which a branch-name-only header cannot satisfy.
+  assert.match(r1, new RegExp(`# head:.*${sha1.slice(0, 12)}`), 'round 1 records the commit it measured');
+  assert.match(r2, new RegExp(`# head:.*${sha2.slice(0, 12)}`), 'round 2 records ITS commit');
+  const headLine = (t) => /# head:.*/.exec(t)[0];
+  assert.notStrictEqual(headLine(r1), headLine(r2),
+    'the two headers are distinguishable, which is the whole point');
 });
