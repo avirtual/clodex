@@ -275,6 +275,12 @@ test('a respawned seat is handed the spec of a ticket still open against it', as
     assert.match(got, /REPLAY/,
       'and it must be MARKED as a replay — a seat that cannot tell a redelivery from a fresh assignment will '
       + 'redo work it already finished, which is the same silent failure pointed the other way');
+    // t353: a replayed seat is the one MOST likely to close in prose — it is a
+    // fresh process that never read the original dispatch, and the role prompt is
+    // a seeded file that may be stale. Asserted at the PTY bytes like everything
+    // else here: the verb has to survive the same gates the spec does.
+    assert.match(got, /CLOSE WITH: \[agent:task done t1\]/,
+      'the close verb must ride the REPLAY too — the respawned seat has no memory of the first dispatch');
 
     const t = world.tickets().find((x) => x.id === 't1');
     assert.ok(t.deliveredTo, 'the delivery must be stamped on the record');

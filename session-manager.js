@@ -156,6 +156,24 @@ function filterTemplateEnv(rawEnv) {
 // named `team` in another workspace, which received the replies as nonsense.
 // Keep in sync with the senderName literals at the _deliver* call sites.
 const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 'reboot', 'clodex']);
+
+// The close verb, on the DISPATCH rather than only in the role prompt. Three
+// hands in a row finished good work, committed it, reported by dm, and never
+// emitted `[agent:task done <id>]` — so the ticket stayed `open` and the verify
+// loop, the reviewer spawn and the verdict never fired, with nothing to say so.
+// It cannot live only in the prompt: that prompt is a SEEDED file
+// (stores.js seedLibraryDefaults), which stops re-syncing the moment the live
+// copy diverges, so a shipped fix can sit in the repo and never reach a seat.
+// Both observed false beliefs are denied by name — one hand said it could not
+// close because `clodex-team` was not granted to it (it confused the intent
+// grammar with the exec registry; `task` is not in intent-catalog's gateable set
+// and needs no grant at all), and the dm-is-a-close case is invisible from the
+// lead's side because the report itself arrives either way.
+// The tickets-viewer plugin holds a copy it cannot require (plugin-api §4);
+// test/tickets-viewer-path-parity.test.js pins the two together.
+const ticketCloseLine = (id) => `CLOSE WITH: [agent:task done ${id}] <your report> — one intent, at the end: it delivers the report to the lead AND marks the ticket done. `
+  + `It is a line you emit yourself, like any [agent:…] intent — NOT an exec command, and nothing needs to be granted for it. `
+  + `A dm carrying your report does NOT close the ticket: the ticket stays open, and everything downstream of the close (tree verify, review) never runs.\n`;
 const DEFAULT_REVIEWER_TEMPLATE = 'clodex-team-reviewer';
 const REVIEWER_FALLBACK = {
   systemPromptFile: 'clodex-team-reviewer',
@@ -5168,11 +5186,14 @@ function createSessionManager(deps) {
           + `That tree is yours for this ticket: commit to ${ticket.worktree.branch} as you go, never push, and do not merge it. `
           + `Your cwd is the shared repo checkout; editing files there instead would collide with the other seats working in it.\n`
         : '';
+      // Rides EVERY dispatch, replays included: a respawned seat has no memory of
+      // the verb, exactly as it has none of its worktree. See ticketCloseLine.
+      const closeLine = ticketCloseLine(ticket.id);
       // The marker also rides the pointer line: this head is ~490 chars, so head+spec
       // spills for all but the shortest specs, and a spilled body announces itself
       // only as "Message (N bytes) attached". A seat must know this is a REPLAY
       // before it opens the file, not after.
-      const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${specText}`, urgent,
+      const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${closeLine}${specText}`, urgent,
         replay ? `[ticket ${ticket.id} REPLAY]` : '');
       if (!r || r.error) return { undelivered: true };
       if (r.parked) return { parked: r.parked, reason: r.reason || null };
@@ -8832,4 +8853,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { createSessionManager, deniedBodyDisposition, isStaleRegistration, missingToolOnExit, nameConflict, preseedClaudeOnboarding };
+module.exports = { createSessionManager, deniedBodyDisposition, isStaleRegistration, missingToolOnExit, nameConflict, preseedClaudeOnboarding, ticketCloseLine };

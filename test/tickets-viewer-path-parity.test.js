@@ -26,7 +26,31 @@ const path = require('path');
 
 const core = require('../clodex-paths');
 const coreStore = require('../tickets-store');
+const { ticketCloseLine } = require('../session-manager');
 const viewer = require('../plugins/tickets-viewer/engine')._internals;
+
+// t353: the close verb is the same copied-utility situation as projectDirFor,
+// with the same failure mode — silent, and green. A diverged copy still delivers
+// a spec, so nothing throws and nothing looks wrong; the seat dispatched through
+// the viewer simply learns a different rule (or none) from the seat dispatched
+// through core, and the observed defect is exactly a seat not knowing the verb.
+// The two literals are asserted byte-for-byte because the WORDING is what does
+// the work here: both false beliefs that cost three tickets are denied by name,
+// and a paraphrase that dropped either would pass a shape check.
+test('viewer close line agrees with core _deliverTicketSpec byte for byte', () => {
+  for (const id of ['t1', 't42', 't1000']) {
+    assert.strictEqual(viewer.closeLine(id), ticketCloseLine(id),
+      `close line must match core's for ${id}`);
+  }
+  const line = ticketCloseLine('t7');
+  assert.match(line, /^CLOSE WITH: \[agent:task done t7\]/,
+    'the verb, with the id already filled in — the seat should not have to assemble it');
+  assert.match(line, /NOT an exec command, and nothing needs to be granted/,
+    'denies the belief that closing is exec-gated — one hand reported by dm for exactly this reason');
+  assert.match(line, /A dm carrying your report does NOT close the ticket/,
+    'denies the belief that a report-shaped dm closes it — invisible from the lead side, since the report arrives either way');
+  assert.ok(line.endsWith('\n'), 'ends the line, or the spec text runs on into it');
+});
 
 test('viewer projectDirFor agrees with core clodex-paths byte for byte', () => {
   const home = path.join(os.tmpdir(), 'parity-home');
