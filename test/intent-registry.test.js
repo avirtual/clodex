@@ -150,18 +150,80 @@ function parseIntentLegacy(rawLine) {
 // a new intent test file contributes nothing until it is added here, which is
 // how a sub-verb went uncovered for an entire release cycle. The sub-verb
 // guards below, not this harvest, are what make coverage a mechanism.
+// Scan for string literals in CODE positions only. A quote-pairing regex over
+// raw bytes cannot do this: an apostrophe in prose (`caller's job`) opens a
+// literal that closes at the next quote anywhere downstream, so every literal
+// after it pairs on shifted boundaries. That mis-pairing is silent in BOTH
+// directions — it dropped 106 real literals and swept in 1100 fragments of
+// comment prose and code (`});`) as if they were corpus lines.
+//
+// Comments cannot be stripped in a separate pass first: a `//` inside a string
+// literal is not a comment, so recognizing the two requires one shared pass.
+// Regex literals are skipped for the same reason a comment is — an unbalanced
+// quote inside one (`/^\[agent:\?\] ... `\[agent:frobnicate now\]`/`) otherwise
+// desyncs everything after it.
+function stringLiteralsInCode(src) {
+  const out = [];
+  // A `/` starts a regex only where an expression may begin. After an
+  // identifier, number, `)` or `]` it is division, so those are excluded.
+  const REGEX_MAY_FOLLOW = /[=(,:[!&|?{};+\-*%~^]/;
+  let prevSig = '';
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === '/' && src[i + 1] === '/') {
+      while (i < src.length && src[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && src[i + 1] === '*') {
+      i = src.indexOf('*/', i + 2);
+      if (i < 0) break;
+      i += 2;
+      continue;
+    }
+    if (c === '/' && (prevSig === '' || REGEX_MAY_FOLLOW.test(prevSig))) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < src.length) {
+        const d = src[j];
+        if (d === '\\') { j += 2; continue; }
+        if (d === '\n') { j = -1; break; }
+        if (d === '[') inClass = true;
+        else if (d === ']') inClass = false;
+        else if (d === '/' && !inClass) break;
+        j++;
+      }
+      if (j > 0) { i = j + 1; prevSig = '/'; continue; }
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      let j = i + 1;
+      let body = '';
+      while (j < src.length) {
+        const d = src[j];
+        if (d === '\\') { body += src.slice(j, j + 2); j += 2; continue; }
+        if (d === c) break;
+        // An unterminated single/double quote is an apostrophe we mis-read;
+        // abandon it rather than swallowing the rest of the file.
+        if (d === '\n' && c !== '`') { j = -1; break; }
+        body += d;
+        j++;
+      }
+      if (j > 0) { out.push(body); i = j + 1; prevSig = c; continue; }
+    }
+    if (!/\s/.test(c)) prevSig = c;
+    i++;
+  }
+  return out;
+}
+
 function harvestedLines() {
   const out = new Set();
   for (const f of ['intent-scanner.test.js', 'session-manager.test.js', 'ipc-prompt.test.js']) {
     let src;
     try { src = fs.readFileSync(path.join(__dirname, f), 'utf8'); } catch { continue; }
-    // Single- and double-quoted literals, plus backticked ones without
-    // interpolation. Escapes are decoded through JSON where possible so a
-    // literal `\[agent:` in the source becomes a real backslash in the corpus.
-    const re = /(['"`])((?:\\.|(?!\1)[^\\])*)\1/g;
-    let m;
-    while ((m = re.exec(src))) {
-      const raw = m[2];
+    // Escapes are decoded through JSON where possible so a literal `\[agent:`
+    // in the source becomes a real backslash in the corpus.
+    for (const raw of stringLiteralsInCode(src)) {
       if (!raw.includes('[agent:')) continue;
       if (raw.includes('${')) continue;
       let decoded = raw;
