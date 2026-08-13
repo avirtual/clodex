@@ -3861,9 +3861,11 @@ function createSessionManager(deps) {
     // force the park out rather than inheriting the generic 5-minute cap.
     //
     // Scope note, deliberate: drainPending claims the seat's WHOLE park dir, so
-    // anything else parked for this seat leaves early with the notice. That is
-    // bounded — those deliveries are at most REBOOT_NOTICE_FLUSH_MS old and were
-    // headed for the same queue — and the turn check below means a seat that has
+    // anything else parked for this seat leaves early with the notice. Bounded by
+    // one deferral round, NOT by REBOOT_NOTICE_FLUSH_MS: the re-arm below is
+    // unbounded, so a chain that started at T+0 can still be alive minutes later
+    // and sweep a DM parked just before it fires. The 300s park cap would have
+    // flushed that DM anyway, and the turn check below means a seat that has
     // already woken forces nothing at all.
     _armRebootNoticeFlush(target, parkedAt = Date.now()) {
       if (target._rebootNoticeFlushTimer) return;   // one deadline per launch, earliest governs
@@ -3906,7 +3908,14 @@ function createSessionManager(deps) {
           return;
         }
         log.info('inject', `reboot notice flush cap (${REBOOT_NOTICE_FLUSH_MS / 1000}s) for ${target.name} — forcing the parked notice out`);
-        this._flushParkedNow(target, `reboot.${process.pid}`, 'park-flush');
+        // Timer callback: _flushParkedNow calls countPending outside a try by
+        // design, so a throw here escapes as an uncaughtException and takes the
+        // app down rather than costing one undelivered notice. The ladder re-parks.
+        try {
+          this._flushParkedNow(target, `reboot.${process.pid}`, 'park-flush');
+        } catch (e) {
+          log.error('inject', `reboot notice flush for ${target.name} failed: ${e.message}`);
+        }
       };
       target._rebootNoticeFlushFire = fire;
       target._rebootNoticeFlushDelay = REBOOT_NOTICE_FLUSH_MS;
