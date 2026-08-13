@@ -638,12 +638,19 @@ test('arm: a draft that grows without changing the winner does not re-POST', asy
   assert.strictEqual(posts.length, 1, 'ENTER: the debounced pass must have fired');
   // Enter, before the first POST has resolved. The cooldown cannot help here.
   inflight.onDraft('s', DRAFT, CTX, { final: true });
+  // Read synchronously this proves nothing: `rank` has not resumed from its
+  // setImmediate yet, so a re-POST could not have happened either way. The
+  // claim only becomes observable once the pass has actually run, which is
+  // what the drained settle below waits for.
+  await settle();
   assert.strictEqual(posts.length, 1,
     'a second pass while the first POST is still in flight must not re-POST the same winner — the '
     + 'offer ledger is written in the .then(), so at this instant it is empty and the memo is the '
     + 'only thing standing between one hint and two');
   release();
   await settle();
+  assert.strictEqual(posts.length, 1,
+    'and it still must not re-POST once the first POST resolves and the ledger is written');
 });
 
 test('arm: a draft below the term floor never arms', async () => {

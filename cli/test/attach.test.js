@@ -252,33 +252,45 @@ async function attachCli(name, extraArgs, port, tty, spawnFn) {
 // keystroke delivered in that window is silently NOT forwarded and the test
 // sees no /api/input at all. Reproduced 8/12 with 12 copies of this file in
 // parallel; a larger constant only moves the window.
-const whenSeen = (seen, pred, ms = 10000) => new Promise((resolve) => {
+// Resolves false on timeout rather than rejecting: a broken gate then degrades
+// into the caller's own named assertion failure instead of the hang this file
+// is built around (see the fakeTty header). The tick is cleared and unref'd so
+// a run that throws downstream is not held open by a pending poll.
+const until = (pred, ms = 10000) => new Promise((resolve) => {
   const end = Date.now() + ms;
+  let timer = null;
+  const stop = (v) => { if (timer) clearTimeout(timer); resolve(v); };
   const tick = () => {
-    if (seen.some(pred)) return resolve(true);
-    if (Date.now() > end) return resolve(false);
-    setTimeout(tick, 5);
+    let v; try { v = pred(); } catch { v = false; }
+    if (v) return stop(true);
+    if (Date.now() > end) return stop(false);
+    timer = setTimeout(tick, 5);
+    if (timer.unref) timer.unref();
   };
   tick();
 });
+const whenSeen = (seen, pred, ms) => until(() => seen.some(pred), ms);
 const sawAcquire = (seen) => whenSeen(seen, (s) =>
   s.url.startsWith('/api/control/') && s.body && s.body.action === 'acquire');
+// The resize carries the control token, so seeing it proves the acquire
+// RESPONSE was processed — not merely that the request was sent. Arming happens
+// on the replay frame, which the server writes before the acquire POST exists,
+// so `token` is null at arm time in EVERY run; anything token-dependent must
+// wait for this, not for a wall clock.
+const sawTokenedResize = (seen) => whenSeen(seen, (s) =>
+  s.url.startsWith('/api/resize/') && s.body && s.body.token);
 
 // Wait for text the attach has actually written to the local terminal.
-const whenOut = (tty, re, ms = 10000) => new Promise((resolve) => {
-  const end = Date.now() + ms;
-  const tick = () => {
-    if (re.test(tty.out())) return resolve(true);
-    if (Date.now() > end) return resolve(false);
-    setTimeout(tick, 5);
-  };
-  tick();
-});
+const whenOut = (tty, re, ms) => until(() => re.test(tty.out()), ms);
 
 test('attach: replay resets + writes scrollback, output streams, acquire+resize on entry, release on detach', T, async (t) => {
   const { seen, port } = await startStub(t, {
     scrollback: 'PRIOR OUTPUT\n',
-    onAttach: (state) => { pushOutput(state.attach, 'live line\r\n'); },
+    // Delayed so the output frame arrives as a SEPARATE read after the replay
+    // rather than riding the same TCP chunk — the decoder handles both, and
+    // only this one is covered here. The gate below makes it deterministic, so
+    // the delay costs nothing.
+    onAttach: (state) => { setTimeout(() => pushOutput(state.attach, 'live line\r\n'), 30); },
   });
   const tty = fakeTty();
   // Detach only once BOTH things this test asserts have actually happened: the
@@ -402,9 +414,24 @@ test('attach: a keystroke during the reconnect gap is not fatal — attach recon
     },
   });
   const tty = fakeTty();
-  setTimeout(() => tty.push(Buffer.from('a')), 400);   // in the reconnect gap → 403, swallowed
-  setTimeout(() => tty.push(Buffer.from('b')), 1500);  // after re-acquire → 200
-  setTimeout(() => tty.push(Buffer.from([0x1c])), 2500);
+  const tokenedResizes = () => seen.filter((s) =>
+    s.url.startsWith('/api/resize/') && s.body && s.body.token).length;
+  // THE GAP IS: control token already held (first acquire done, so the POST is
+  // actually sent) AND no attach stream live (the stub auto-releases while
+  // dead, which is what makes it 403). Both halves are load-bearing — waiting
+  // only for the drop fires before the first acquire, where `token` is null and
+  // onStdin drops the keystroke silently instead of 403ing it.
+  sawTokenedResize(seen)
+    .then(() => until(() => state.live === false))
+    .then(() => tty.push(Buffer.from('a')));           // in the gap → 403, swallowed
+  // The second must land after the re-acquire RESPONSE, or it 403s too and
+  // `inputStatuses` never sees a 200. Every reconnect re-acquires and then
+  // re-resizes with the new token (attach.js acquireAndResize), so a SECOND
+  // tokened resize is the marker; the acquire request alone is not.
+  until(() => tokenedResizes() >= 2)
+    .then(() => tty.push(Buffer.from('b')))            // after re-acquire → 200
+    .then(() => until(() => state.inputStatuses.includes(200)))
+    .then(() => tty.push(Buffer.from([0x1c])));
   const { code } = await attachCli('bash', [], port, tty.tty);
   assert.strictEqual(code, 0, 'survived the gap keystroke (no exit 4)');
   const attachCount = seen.filter((s) => s.url.startsWith('/api/attach/')).length;
@@ -416,12 +443,22 @@ test('attach: a keystroke during the reconnect gap is not fatal — attach recon
 test('attach: a stale-token 403 on input is swallowed (not fatal)', T, async (t) => {
   // MF1: every /api/input 403s (holder changed underneath us). A viewer typing
   // into a stolen session sees silent no-ops, matching the GUI — never exit 4.
-  const { state, port } = await startStub(t, { input403: true });
+  const { seen, state, port } = await startStub(t, { input403: true });
   const tty = fakeTty();
-  setTimeout(() => tty.push(Buffer.from('ls\r')), 40);   // 403, swallowed
-  setTimeout(() => tty.push(Buffer.from([0x1c])), 120);  // then detach cleanly
+  // Token-dependent exactly like the two tests above: on a bare timer the
+  // keystroke can land before the acquire response, where onStdin's `token`
+  // guard drops it, no /api/input is sent and inputStatuses stays empty.
+  sawTokenedResize(seen).then(() => {
+    tty.push(Buffer.from('ls\r'));                       // 403, swallowed
+    // Queue the detach behind the input REQUEST so teardown cannot outrun it.
+    whenSeen(seen, (s) => s.url.startsWith('/api/input/'))
+      .then(() => tty.push(Buffer.from([0x1c])));        // then detach cleanly
+  });
   const { code } = await attachCli('bash', [], port, tty.tty);
   assert.strictEqual(code, 0, 'a 403 input did not tear down the attach');
+  // The input POST is fired unawaited and teardown does not wait for it, so the
+  // status can be recorded after the run resolves.
+  await until(() => state.inputStatuses.length > 0);
   assert.ok(state.inputStatuses.includes(403), 'input actually 403d');
 });
 
