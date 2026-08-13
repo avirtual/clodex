@@ -47,6 +47,12 @@ blocks a release.
   They now wait for the work itself: the hint test for the ranking pass to run,
   and the terminal-attach tests for the session token to arrive before typing
   into it. Waiting longer would not have fixed either one.
+- The wire proxy's tests no longer wait out fixed stretches of wall clock
+  before checking their results. Where the check was genuinely racing the work
+  — the compressed responses, and the case where the client hangs up
+  mid-stream — a slow machine could read the answer before it existed and fail
+  a healthy build. They now wait for the event they are actually about.
+  Elsewhere the wait was simply dead time, and the suite is quicker without it.
 - A ticket whose review comes back ACCEPT is now merged for you. The team lead
   used to be the one running `git merge` after every verdict; the loop now does
   it, runs the full suite on the result, and reverts the merge if that suite

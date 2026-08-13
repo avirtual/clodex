@@ -57,8 +57,11 @@ function serveOnce(handler) {
 //
 // Two paths in this file genuinely are async, and they are why the gating is
 // not merely cosmetic: the gzip subjects (zlib defers the callback to its own
-// ticks) and the abort/upstream-death subjects (the upstream noticing its
-// socket die is a strictly later poll-phase event).
+// ticks) and the client-abort subject (the fake upstream noticing its socket
+// die is a strictly later poll-phase event). Upstream-death is NOT one of
+// them: proxy.js's `error` and `close` handlers each call `res.destroy()` and
+// `tee.close()` in the same handler, so `stream-end` is emitted before the
+// client's rejection can be delivered.
 //
 // Gate anyway, uniformly. ABSENCE assertions below (`turn.completed.length
 // === 0`, `tee-failure === 0`) are true before the observer has run at all, so
