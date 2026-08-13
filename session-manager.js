@@ -7704,6 +7704,11 @@ function createSessionManager(deps) {
         ticket.closedBy = null;
         ticket.lastActivityAt = Date.now();
         ticket.nudgedAt = null;
+        // Written here for the reason the header gives: _taskReject's guard reads
+        // it to tell a rejection-reopened ticket from one that never closed, and a
+        // marker set in only one of the two transitions would make that answer
+        // depend on WHO rejected — the asymmetry this pair exists to prevent.
+        ticket.reworkRound = (Number(ticket.reworkRound) || 0) + 1;
         delete ticket.loopStep;
         ticketsStore.save(team.root, tickets);
         // Rework needs the verb as much as a first dispatch: the seat closes a
@@ -7722,10 +7727,92 @@ function createSessionManager(deps) {
         if (!(r && (r.queued || r.parked))) {
           return { ok: false, error: `the ticket was reopened but the rework message did not reach ${seat} (${(r && (r.error || r.held)) || 'unknown delivery failure'})` };
         }
+        // The DELIVERED arm only. The undelivered one above returns an error the
+        // call site already escalates on, and firing both would report one
+        // rejection to the lead twice, by two channels, as two events.
+        this._notifyLeadOfLoopRejection(team, ticket, seat, reason);
         return { ok: true, error: null, seat };
       } catch (e) {
         return { ok: false, error: e.message };
       }
+    }
+
+    // The lead's copy of a LOOP REJECTION. Without it the well-behaved case —
+    // suite red, hand alive, rework delivered — is silent to the lead by
+    // construction: the only other lead-facing signal on this path is the call
+    // site's escalation, which fires exactly when delivery FAILED. A lead cannot
+    // adjudicate a rejection it never sees, and "the hand is quietly on round 3"
+    // is the state it is supposed to be watching for.
+    //
+    // Shaped after _notifyLeadOfVerdict and for the same reasons: SUMMARY, never
+    // the suite dump — which ticket, which seat, how many rounds deep, and one
+    // line of why is what the lead acts on, and the failing test names are
+    // already on the record and in the hand's own copy. Non-urgent, because the
+    // reopen is durable before this runs, so a hold or a park is an acceptable
+    // outcome. Wrapped, and called AFTER the save: a throw here must never
+    // unwind the rejection. Ordering is the invariant; do not hoist it.
+    _notifyLeadOfLoopRejection(team, ticket, seat, reason) {
+      try {
+        if (!team.lead) return;
+        const round = Number(ticket.reworkRound) || 1;
+        // The reason opens with the one-line summary the loop composed; the rest
+        // is the failing-test dump, which is deliberately not forwarded.
+        const firstLine = String(reason || '').split('\n')[0].trim().slice(0, 300);
+        const body = [
+          `[ticket ${ticket.id} REJECTED by the loop] sent back to ${seat} for rework (round ${round}).`,
+          '',
+          `WHY: ${firstLine || 'the test suite failed on the branch'}`,
+          '',
+          'The rework reached the seat and the ticket is open again; the failing test names are on'
+          + ' the record and in the seat\'s copy. Nothing was torn down — the worktree, the branch'
+          + ' and the seat are exactly as they were.',
+        ].join('\n');
+        const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticket.id} REJECTED] round ${round} → ${seat}`);
+        if (r && r.error) {
+          log.warn('intent', `ticket ${ticket.id} rejected to ${seat} but lead ${team.lead} not notified — ${r.error}`);
+        }
+      } catch (e) {
+        log.error('intent', `ticket ${ticket.id}: rejection landed but lead notification failed: ${e.message}`);
+      }
+    }
+
+    // A lead `task reject` on a ticket a rejection ALREADY reopened. Not a
+    // reopen: the close was undone once already and every write reject makes
+    // would be a no-op here, so this only delivers the new must-fixes to the seat
+    // that is holding the rework right now.
+    //
+    // It deliberately bumps NOTHING that implies a fresh review round —
+    // `reworkRound` counts transitions into open, and no transition happens here.
+    // `lastActivityAt`/`nudgedAt` ARE stamped: the ticket genuinely just moved,
+    // and leaving a stale stamp would let the watchdog nudge about a seat that
+    // was handed work this second.
+    //
+    // With no live seat this must FAIL LOUDLY rather than reply success — same
+    // reasoning as the loop's own pre-write seat check: rework nobody receives
+    // must never read as delivered.
+    _taskRejectFollowUp(session, team, tickets, ticket, reason, reply) {
+      const seat = this._ticketAssigneeSeat(team, ticket);
+      if (!seat || seat === team.lead) {
+        reply(`error: ${ticket.id} is already open for rework, but no live seat holds `
+          + `${ticket.role || ticket.assignee || 'the ticket'} to send the follow-up to`
+          + `${this._spillRejectedPayload(session, 'task reject', reason)}`);
+        return;
+      }
+      ticket.lastActivityAt = Date.now();
+      ticket.nudgedAt = null;
+      ticketsStore.save(team.root, tickets);
+      const r = this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} more must-fixes] ${ticketCloseLine(ticket.id)}${reason}`, true,
+        `[ticket ${ticket.id} more must-fixes] close with ${ticketCloseVerb(ticket.id)}`);
+      if (!(r && (r.queued || r.parked))) {
+        reply(`error: ${ticket.id} is already open for rework and the follow-up did NOT reach ${seat} `
+          + `(${(r && (r.error || r.held)) || 'unknown delivery failure'})`
+          + `${this._spillRejectedPayload(session, 'task reject', reason)}`);
+        return;
+      }
+      this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || seat, body: `ticket ${ticket.id} follow-up must-fixes` });
+      log.info('intent', `task reject ${ticket.id} by ${session.name} → follow-up to ${seat} (already open for rework)`);
+      reply(`ticket ${ticket.id} was already open for rework (round ${Number(ticket.reworkRound) || 1}) — `
+        + `your must-fixes were delivered to ${seat} as a follow-up, not as a new reopen`);
     }
 
     _loadTicket(team, ticketId) {
@@ -8106,12 +8193,36 @@ function createSessionManager(deps) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
-      if (ticket.state !== 'done') { reply(`error: reject reopens a DONE ticket; ${intent.id} is ${ticket.state}${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
+      if (ticket.state !== 'done') {
+        // `open` is TWO different tickets and the bounce below is right for only
+        // one of them. `reworkRound` is what tells them apart: a ticket open
+        // because a rejection reopened it has a seat holding rework right now, so
+        // further must-fixes are a coherent follow-up rather than a second undo of
+        // a close that already happened. A ticket that never closed has nothing
+        // for reject to undo and still belongs to `respec` — see this file's
+        // _taskRespec header, which that split is still load-bearing for.
+        if (ticket.state === 'open' && Number(ticket.reworkRound) > 0) {
+          this._taskRejectFollowUp(session, team, tickets, ticket, reason, reply);
+          return;
+        }
+        reply(`error: reject reopens a DONE ticket; ${intent.id} is ${ticket.state}${this._spillRejectedPayload(session, 'task reject', reason)}`);
+        return;
+      }
       ticket.state = 'open';
       ticket.closedAt = null;
       ticket.closedBy = null;          // cleared alongside closedAt — it is open again
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;
+      // The marker that makes the guard above decidable. Nothing else on the
+      // record distinguishes a rejection-reopened ticket from one that never
+      // closed, and `state = 'open'` is written in exactly three places: a mint
+      // (which never sets this) and the two rejection transitions. It counts
+      // rather than flags because the lead's rejection notice reports how many
+      // rounds deep the seat is, and it is NOT cleared on a later close — a
+      // counter reset every round would report round 1 forever.
+      // Distinct from `reviewRound` and deliberately so: a loop rejection spawns
+      // no reviewer, so no review round happens on this path.
+      ticket.reworkRound = (Number(ticket.reworkRound) || 0) + 1;
       // Reopening ends the loop's hold for the same reason accept does: the
       // ticket is `open` again, so the sweep tracks it on the ordinary path and a
       // stale step would otherwise let a late verdict land on a ticket the lead
