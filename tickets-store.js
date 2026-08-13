@@ -248,6 +248,25 @@ function extractMustFix(verdictText) {
   return /^(?:none|n\/a|-+|—)\.?$/i.test(out) ? null : out;
 }
 
+// How many must-fixes, for a notification that must state a NUMBER without
+// carrying the prose. Counts leading list markers (`- `, `* `, `1. `, `1) `)
+// because that is how the reviewer template asks for the section; an
+// unmarked block is one item, which is also the shape `extractMustFix`
+// documents for the inline `MUST-FIX: <text>` header.
+//
+// Derived on read rather than stored: a second field on the record could
+// disagree with `mustFix` after any edit, and the blob is the thing a human
+// acts on. Zero is impossible by construction here — `extractMustFix` already
+// mapped "(none)" to null — so a 0 from a non-null blob would be a lie, and
+// the floor of 1 is what keeps "REWORK, 0 must-fixes" off the wire.
+function countMustFix(mustFixText) {
+  if (mustFixText == null) return 0;
+  const lines = String(mustFixText).split('\n');
+  let n = 0;
+  for (const line of lines) if (/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S/.test(line)) n++;
+  return n > 0 ? n : (String(mustFixText).trim() ? 1 : 0);
+}
+
 // Has this ticket been DISPATCHED? First-class state, because everything
 // downstream of the add/start split keys off it, and inferring it from
 // `dispatch:'worktree'` plus the absence of `ticket.worktree` is a derived
@@ -303,4 +322,4 @@ function ticketInFlight(ticket) {
   return ticket.state === 'done' && !!ticket.loopStep;
 }
 
-module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, ticketStarted, ticketInFlight, branchSlug, TICKETS_FILE };
+module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, branchSlug, TICKETS_FILE };

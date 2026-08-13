@@ -240,7 +240,7 @@ test('reviewTicket survives an in-place restart (engine preserveFields)', () => 
 
 // ── the verdict lands on the ticket ────────────────────────────────────────
 
-test('review-done on a ticket review writes the verdict to the RECORD and tells the lead nothing', async () => {
+test('review-done on a ticket review writes the verdict to the RECORD and tells the lead a SUMMARY', async () => {
   const f = mkVerdict();
   openTicket(f);
   const rec = spawnReviewer(f, 'review the diff', { ticketId: 't1' });
@@ -254,9 +254,11 @@ test('review-done on a ticket review writes the verdict to the RECORD and tells 
   assert.strictEqual(t.reviewRound, 1);
   assert.ok(typeof t.reviewedAt === 'number' && t.reviewedAt > 0, 'reviewedAt is stamped');
 
-  // The point of the field, stated as an absence: the lead is NOT the route.
-  assert.deepStrictEqual(f.gated, [],
-    'a ticket verdict must not also be dm-ed to the lead — two copies of a verdict is two things to reconcile');
+  // t326: the record is still the store, but the lead is now TOLD. The previous
+  // behaviour asserted this array was empty; a lead whose only channel is
+  // polling the ticket JSON is the defect that replaced.
+  assert.strictEqual(f.gated.length, 1, 'the lead is notified exactly once');
+  assert.strictEqual(f.gated[0].target, 'lead');
 });
 
 test('the verdict is written BEFORE the seat is discarded', async () => {
@@ -591,4 +593,97 @@ test('a verdict for a ticket that is no longer open falls through to the lead', 
     'the verdict still reaches the lead — the review was real work, and the lead is who can act on a closed ticket');
   assert.strictEqual(f.gated[0].target, 'lead');
   assert.match(f.gated[0].body, /VERDICT: ACCEPT/);
+});
+
+// ── t326: the lead is told the verdict landed ──────────────────────────────
+//
+// The ticket route's original shape returned before ever delivering, so the
+// lead's only channel was polling the ticket JSON. These pin the notification
+// AND its boundaries: it must carry the fields the lead acts on, and it must
+// NOT carry the body (one measured verdict was 15839 bytes — inbox flooding is
+// what the record/dm split exists to prevent).
+
+test('the lead notification carries ticket id, verdict, round and must-fix COUNT', async () => {
+  const f = mkVerdict();
+  openTicket(f);
+  const rec = spawnReviewer(f, 'review the diff', { ticketId: 't1' });
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name),
+    'VERDICT: REWORK\n\nMUST-FIX\n- the guard is inverted\n- the sweep drops the row\n\nNITS\n- naming');
+
+  // ENTER: the row under test survived — without this, every assertion below
+  // reads off `undefined` and a route that delivered nothing would pass them.
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery, and it is the notification');
+  const note = f.gated[0];
+  assert.strictEqual(note.target, 'lead', 'it goes to the lead named by reviewFor');
+
+  assert.match(note.body, /\bt1\b/, 'names the ticket — the lead runs several rounds at once');
+  assert.match(note.body, /REWORK/, 'states which way it went');
+  assert.match(note.body, /round 1/, 'states the round');
+  assert.match(note.body, /2 must-fixes/, 'states HOW MANY must-fixes, so REWORK is actionable without opening the record');
+  assert.match(note.body, /task show t1/, 'points at where the full body is read');
+});
+
+test('the notification is a SUMMARY — the multi-KB verdict body is not in it', async () => {
+  const f = mkVerdict();
+  openTicket(f);
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+
+  // A body in the measured size class (the round-2 t317 verdict was 15839
+  // bytes). Fall-through would put all of it in the lead's inbox.
+  const bulk = 'x'.repeat(15839);
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name),
+    `VERDICT: ACCEPT\n\nREPORT\n${bulk}\n\nMUST-FIX: none`);
+
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the notification was sent');
+  const note = f.gated[0];
+  assert.ok(!note.body.includes(bulk),
+    'the body must NOT be forwarded — that is the flooding the record/dm split prevents');
+  assert.ok(note.body.length < 600,
+    `a summary stays small; got ${note.body.length} bytes`);
+  assert.match(note.body, /no must-fixes/, 'an ACCEPT still says there is nothing to fix');
+});
+
+test('the verdict is on the RECORD even when notifying the lead throws', async () => {
+  const f = mkVerdict();
+  openTicket(f);
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+  // The record write is the source of truth: a notification failure must never
+  // cost the verdict. Never the reverse.
+  f.m._gatedDeliver = () => { throw new Error('lead is gone'); };
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT\n\nMUST-FIX: none');
+
+  const t = f.one('t1');
+  assert.strictEqual(t.verdict, 'ACCEPT', 'the verdict survived the failed notification');
+  assert.strictEqual(t.reviewRound, 1, 'and so did the round');
+  assert.deepStrictEqual(f.killed, [rec.name], 'and the reviewer seat still retired — no stranded seat');
+});
+
+test('the record is written BEFORE the lead is notified', async () => {
+  const f = mkVerdict();
+  openTicket(f);
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+  // Ordering is the invariant the constraint names: observe what the store held
+  // at the instant the notification fired, not merely the end state.
+  let verdictAtNotify;
+  const realGated = f.m._gatedDeliver;
+  f.m._gatedDeliver = (...a) => { verdictAtNotify = (f.one('t1') || {}).verdict; return realGated(...a); };
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT\n\nMUST-FIX: none');
+
+  assert.strictEqual(verdictAtNotify, 'ACCEPT',
+    'the verdict was already durable on the record when the lead was told — a notify-first order can announce a verdict a failed save then loses');
+});
+
+test('an ad-hoc review is unchanged — it still gets the FULL verdict, not a summary', async () => {
+  const f = mkVerdict();
+  const rec = spawnReviewer(f, 'review the boot-race fix');
+  assert.ok(!('reviewTicket' in rec), 'ENTER: this is the ad-hoc route');
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT\nthe race is closed by the latch');
+
+  assert.strictEqual(f.gated.length, 1, 'ENTER: one delivery on the ad-hoc path');
+  assert.match(f.gated[0].body, /the race is closed by the latch/,
+    'an ad-hoc asker still reads the whole verdict — there is no record for it to land on');
 });
