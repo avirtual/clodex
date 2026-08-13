@@ -88,7 +88,11 @@ const REBOOT_NOTICE_MAX_ATTEMPTS = 3;
 //   > INJECT_BOOT_MAXWAIT (20s) — past the queue's readiness cap a polite drain
 //     either already happened or is not going to, so this cannot pre-empt one.
 //   < REBOOT_NOTICE_RETRY_DELAYS[0] (30s) — firing after the first re-park would
-//     flush TWO copies of the notice joined into one body.
+//     flush TWO copies of the notice joined into one body. This bound holds for
+//     the FIRST, undeferred round only: a draft deferral re-arms past 30s, so a
+//     later round can join the ladder's re-park. Accepted, not overlooked — it
+//     costs one duplicated line, and t229 already rules a duplicate the safe
+//     direction. Do not "fix" it by bounding the re-arm; see _armRebootNoticeFlush.
 const REBOOT_NOTICE_FLUSH_MS = 25 * 1000;
 
 // How long the pane must have been untouched before the forced flush is allowed
@@ -8905,6 +8909,12 @@ function createSessionManager(deps) {
 
     _flushParkedNow(target, tag, kind = 'park-flush') {
       if (target._dead) return { ok: true, count: 0 };
+      // Any forced flush ends the notice's deferral chain, not just the operator's
+      // (flushPending). The chain otherwise dies only on a real turn or its own
+      // flush, so a pane kept warm past the 300s park cap left it alive after the
+      // cap had already delivered the notice — and the next unrelated park would
+      // then be forced out early by a timer that no longer had anything to deliver.
+      if (target._rebootNoticeFlushTimer) { clearTimeout(target._rebootNoticeFlushTimer); target._rebootNoticeFlushTimer = null; }
       // Claim LATE, like the boot-ready drain: drainPending DELETES the parked
       // files, and enqueue returns before the queue has written anything, so
       // claiming here meant a wiped or never-reached write destroyed the only
@@ -8957,9 +8967,8 @@ function createSessionManager(deps) {
       }
       const r = this._flushParkedNow(target, `flush.${process.pid}`, 'park-flush');
       if (target._parkCapTimer) { clearTimeout(target._parkCapTimer); target._parkCapTimer = null; }
-      // The operator's flush just drained the dir, so the notice's own deadline has
-      // nothing left to force and would only splice the NEXT park's contents early.
-      if (target._rebootNoticeFlushTimer) { clearTimeout(target._rebootNoticeFlushTimer); target._rebootNoticeFlushTimer = null; }
+      // The notice's own deadline is cleared inside _flushParkedNow, for every
+      // forced flush rather than only this one.
       this._lastPendingCounts.delete(name);
       this._broadcast('pending-count', { name, count: 0 });
       return r;
