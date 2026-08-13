@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+- The must-fix placeholder check no longer stalls on a long run of emphasis
+  characters, and tolerates a trailing period after the placeholder
+  (`**(none)**.`). A blockquote or other line prefix is still not emphasis, so
+  `> *(none)*` continues to count as a must-fix.
 - A test run that crashes or times out now keeps its output too, and saved
   output can no longer overwrite itself. The previous change kept the output
   of runs that FAILED; a run that died or hung was still reduced to its last
