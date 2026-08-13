@@ -91,6 +91,12 @@ const REBOOT_NOTICE_MAX_ATTEMPTS = 3;
 //     flush TWO copies of the notice joined into one body.
 const REBOOT_NOTICE_FLUSH_MS = 25 * 1000;
 
+// How long the pane must have been untouched before the forced flush is allowed
+// to fire. Comfortably longer than INJECT_QUIET_MS (2s), which is tuned to not
+// cut mid-WORD: this one has to clear a pause mid-COMPOSITION, and stopping to
+// think for a couple of seconds is ordinary.
+const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
+
 // Defaults folded into the BASE of the env-scope merge, so every scope
 // (global/workspace/session/override) still beats them. They must NOT move to
 // the app-owned block applied after the merge (env-scopes.js) — those win by
@@ -3848,9 +3854,12 @@ function createSessionManager(deps) {
     // bounded — those deliveries are at most REBOOT_NOTICE_FLUSH_MS old and were
     // headed for the same queue — and the turn check below means a seat that has
     // already woken forces nothing at all.
-    _armRebootNoticeFlush(target) {
+    _armRebootNoticeFlush(target, parkedAt = Date.now()) {
       if (target._rebootNoticeFlushTimer) return;   // one deadline per launch, earliest governs
-      const parkedAt = Date.now();
+      // Carried across a re-arm, NOT restamped: the turn check below asks "did the
+      // seat wake since the PARK", and refreshing this on every round would keep
+      // moving the line the turn has to beat, so a seat that woke during round 1
+      // would look unwoken forever.
       // Named like the retry's fire, and for the same reason: a test drives it
       // directly instead of waiting out 25s of wall clock.
       const fire = () => {
@@ -3862,6 +3871,27 @@ function createSessionManager(deps) {
         const stop = target.lastMainStop;
         if (stop && !stop.seeded && Number.isFinite(stop.ts) && stop.ts > parkedAt) {
           log.debug('inject', `reboot notice flush for ${target.name} skipped — seat took a turn since the park`);
+          return;
+        }
+        // A FRESH draft is the one thing this deadline must never interrupt. The
+        // forced flush enqueues non-parkable, so at write time the queue emits a
+        // bare Ctrl-U clear-line into whatever is typed (inject-queue.js) — the
+        // splice INJECT_QUIET_MAXWAIT was raised to 5 min to avoid after it cut
+        // live composition mid-word twice. Shortening the deadline to 25s without
+        // this check would make that 12x more likely, trading the annoyance this
+        // ticket fixes for a worse one.
+        //
+        // Re-arm rather than flush, and deliberately WITHOUT a round bound: the
+        // 300s _armParkCap is armed independently at T+0 and remains the ultimate
+        // backstop, so unbounded re-arming degrades at worst to exactly master's
+        // behaviour while giving 25s whenever the operator is away. A bound would
+        // only re-introduce the splice this check exists to prevent — do not add one.
+        //
+        // The field case is untouched: a restored seat has no lastUserInputTs, so
+        // Date.now() - 0 is stale and the notice flushes at the first deadline.
+        if (Date.now() - (target.lastUserInputTs || 0) <= REBOOT_NOTICE_DRAFT_STALE_MS) {
+          log.debug('inject', `reboot notice flush for ${target.name} deferred — draft touched within ${REBOOT_NOTICE_DRAFT_STALE_MS / 1000}s; re-arming`);
+          this._armRebootNoticeFlush(target, parkedAt);
           return;
         }
         log.info('inject', `reboot notice flush cap (${REBOOT_NOTICE_FLUSH_MS / 1000}s) for ${target.name} — forcing the parked notice out`);
