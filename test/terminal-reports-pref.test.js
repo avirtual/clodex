@@ -192,9 +192,9 @@ function bootEngine() {
   const { createEngine } = require('../engine');
   const userData = mkDir();
   // registryDir or the engine seeds the operator's live ~/.clodex (t359).
-  // Overriding HOME above is NOT enough: engine.js resolves the root once at
-  // construction via os.homedir(), which on darwin reads the passwd entry and
-  // ignores $HOME.
+  // Overriding HOME above is NOT enough on its own: engine.js resolves the root
+  // ONCE at construction, so anything that lands after that call is never
+  // consulted, and any path not routed through this seam keeps the old root.
   const eng = createEngine({
     userDataPath: userData,
     seams: { registryDir: path.join(home, '.clodex') },
