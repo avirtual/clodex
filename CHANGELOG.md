@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- A reviewer's "no must-fixes" is now understood however it is emphasised.
+  Clodex merges a reviewed branch automatically when the verdict accepts it
+  and lists no must-fixes — but it read the list literally, so a reviewer
+  who wrote the empty list in bold or italics had the merge refused and
+  escalated as though the branch still had work outstanding. Markdown
+  emphasis is now stripped before the list is read. The check that matters
+  is unchanged in the other direction: a verdict that lists real must-fixes
+  still blocks the merge, and a single-item list is still a list, not a
+  placeholder.
 - When the ticket loop sends a branch back because its tests fail, the
   failing output is now kept. The loop ran the suite, read the one-line
   summary, and threw the rest away, so the agent was told THAT its branch
