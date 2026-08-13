@@ -23,8 +23,9 @@ blocks a release.
   change on every machine except one that happened to carry a local exclude.
 - The guard that keeps the intent parser and its test corpus in step now covers
   `[agent:team …]` as well as `[agent:task …]`, and a new check makes sure a
-  future family of sub-verbs cannot be added without being covered too. A
-  sub-verb went untested for a full release cycle this way.
+  future family of sub-verbs cannot be added without being covered too — whatever
+  its verbs are spelled with. A sub-verb went untested for a full release cycle
+  this way.
 
 - A stalled ticket's alarm now tells you what the seat was actually doing. It
   names the seat's last tool call — and distinguishes a call still in flight
