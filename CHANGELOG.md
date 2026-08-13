@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- Running the tests no longer writes to your own `~/.clodex`. Building the app's
+  internals inside a test seeded the real library, materialized real scripts and
+  swept the real agent registry — so a full suite run quietly edited the same
+  directory the running app was using. Tests now build against a temporary root,
+  and one that forgets to now fails loudly instead of reaching for your home
+  directory.
 - A hand working in a ticket's own worktree can now verify that worktree. The
   granted test command measured the team's main checkout for every seat, so a
   hand running it against its branch was handed the main checkout's result —
