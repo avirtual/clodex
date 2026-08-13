@@ -202,9 +202,22 @@ function boot(world, opts = {}) {
     // including the roster broadcast, whose arrival is timing-dependent — a bare
     // count asserts the absence of unrelated traffic, which is not the property and
     // fails only on a loaded machine.
-    parked: (name, re) => require('../pending-store')
-      .peekPending(path.join(root, 'pending'), name, { max: 20, snipLen: 200 })
-      .filter((p) => re.test(p.snippet)).length,
+    // Matches the WHOLE parked text, not peekPending's snippet: that returns only
+    // the first body line, so any change to what leads a dispatch (the close-verb
+    // pointer line did exactly this) moves the spec out of the matched region and
+    // turns a passing park assertion red for a reason that has nothing to do with
+    // parking. Reads the store directly for the same reason app.seen does.
+    parked: (name, re) => {
+      const dir = path.join(root, 'pending', name);
+      let files;
+      try { files = fs.readdirSync(dir); } catch { return 0; }
+      return files.filter((f) => f.endsWith('.json') && !f.startsWith('.')).filter((f) => {
+        try {
+          const obj = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+          return obj && typeof obj.text === 'string' && re.test(obj.text);
+        } catch { return false; }
+      }).length;
+    },
   };
 }
 
