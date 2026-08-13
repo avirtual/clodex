@@ -34,6 +34,11 @@ const viewerEngine = require('../plugins/tickets-viewer/engine');
 const {
   DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, VIEWER_ACTOR,
   setClodexHomeForTest, projectDirFor,
+  // Read from the engine on purpose, so the delivery assertions below pin the
+  // SHAPE (the close line rides every dispatch) and not the wording. The wording
+  // is pinned once, against core's copy, in tickets-viewer-path-parity.test.js —
+  // three hand-copied literals would just mean three places to forget.
+  closeLine: viewerCloseLine,
 } = viewerEngine._internals;
 const HOUR = 60 * 60 * 1000;
 
@@ -1081,7 +1086,7 @@ test('tickets-viewer: add DELIVERS the spec to a live assignee, and says when it
     // The seat must be TOLD, in the shape core uses, or an assignment nobody
     // saw looks exactly like one that was picked up.
     assert.deepEqual(injected.map((i) => ({ name: i.name, text: i.text })),
-      [{ name: 'hand-1', text: '[ticket t1] do the thing' }]);
+      [{ name: 'hand-1', text: `[ticket t1] ${viewerCloseLine('t1')}do the thing` }]);
     assert.equal(onDisk(home, key)[0].assignee, 'hand-1', 'and the record says who holds it');
 
     // The seat is not running. The ticket is still written — that is the point
@@ -1208,7 +1213,7 @@ test('tickets-viewer: assign re-points a ticket, clears the nudge and the park, 
     assert.equal(t.nudgedAt, null, 'the new holder has not been chased');
     assert.equal('parked' in t, false, 'assigning is what releases a parked ticket');
     assert.ok(t.lastActivityAt >= now, 'the clock moved');
-    assert.deepEqual(injected.map((i) => i.text), ['[ticket t1] the work']);
+    assert.deepEqual(injected.map((i) => i.text), [`[ticket t1] ${viewerCloseLine('t1')}the work`]);
   } finally { cleanup(); }
 });
 

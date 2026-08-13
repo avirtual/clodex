@@ -1043,6 +1043,25 @@ test('seed: shipped team prompts agree on who commits, who merges, who pushes', 
     'lead prompt carries the merge-after-review step the hand defers to');
 });
 
+// t353: three hands in a row reported by dm and left the ticket open, one of
+// them saying it believed closing required an exec grant it lacked. Both wrong
+// beliefs are denied in the prompt now, and both denials are pinned by MEANING
+// rather than by a `task done` substring — the substring was already there
+// through all three incidents. This pins the wording only; whether a cold seat
+// READS it is not something a unit test can answer, and the mechanical half of
+// the fix (the verb on every dispatch) is pinned in session-manager.test.js.
+test('seed: the hand prompt denies both false beliefs about closing a ticket', () => {
+  const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
+  assert.match(hand, /is an INTENT you emit/,
+    'the hand is told plainly that task done is an intent, not a command it must be granted');
+  assert.match(hand, /not an exec command, it needs no grant/,
+    'and the exec-registry confusion is named, since that is the belief a seat actually held');
+  assert.match(hand, /A dm carrying your report does NOT close the ticket/,
+    'and that reporting by dm leaves the ticket open');
+  assert.match(hand, /indistinguishable from the lead's side/,
+    'and why nobody catches it: the report arrives complete either way');
+});
+
 // The base-commit check is a PAIR: the lead cites the commit, the hand acts on
 // the mismatch. Either half alone is inert — a citation nobody checks, or a
 // check with nothing to check against.

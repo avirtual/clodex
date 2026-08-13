@@ -221,6 +221,7 @@ function mkLoop({
   };
   const injected = [];
   const gated = [];
+  const tags = [];
   const broadcasts = [];
   const deps = {
     getRemoteServer: () => null,
@@ -277,8 +278,11 @@ function mkLoop({
   // models a system where no stall episode is ever stamped — under which the
   // one-nudge-per-episode assertions below would fail for a reason that exists
   // only in the fixture.
+  // `tag` is recorded ALONGSIDE the body, not merged into the pushed row: the
+  // deepStrictEqual pins below assert `gated` entries whole, and widening that
+  // shape would rewrite pins that are not about the tag.
   m._gatedDeliver = (target, sender, body, urgent, tag, onWrite) => {
-    gated.push({ target, sender, body });
+    gated.push({ target, sender, body }); tags.push(tag);
     if (typeof onWrite === 'function') onWrite();
     return { queued: true };
   };
@@ -307,7 +311,7 @@ function mkLoop({
   tstore.save(team.root, [ticket]);
 
   return {
-    m, team, home, tstore, persistence, injected, gated, broadcasts, created, seat,
+    m, team, home, tstore, persistence, injected, gated, tags, broadcasts, created, seat,
     one: (id = 't1') => tstore.load(team.root).find((t) => t.id === id),
     esc: () => gated.filter((g) => /ESCALATED/.test(g.body)),
     diffFile: () => {
@@ -1066,6 +1070,22 @@ test('a red suite rejects to the hand and spawns NO reviewer', async () => {
   assert.match(sent[0].body, /the thing that broke/, 'the failing test names ride the rejection');
   assert.match(sent[0].body, /the other thing/);
   assert.match(sent[0].body, /3\/5 passing, 2 failing/, 'and the counts do too');
+  // t353 r2: rework is a SECOND close, and the verb has to ride it for the same
+  // reason it rides a first dispatch — otherwise that close falls back on the
+  // seeded role prompt, which is a file that demonstrably drifts.
+  assert.match(sent[0].body, /CLOSE WITH: \[agent:task done /,
+    'the rework carries the close verb — a second close must not depend on the seeded prompt');
+  // t353 r3: and on the POINTER, which is a separate argument the body cannot
+  // vouch for. Appending the close line pushed this body past the spill threshold,
+  // so the tag became the only text the seat reads before opening the file.
+  // Indexed off the rejection's own row rather than asserting the array whole:
+  // the loop delivers on other paths too, and a length pin here would go red on
+  // unrelated traffic.
+  assert.ok(sent[0].body.length > 500,
+    `ENTER: the rejection must actually spill (body was ${sent[0].body.length} bytes), or the tag is cosmetic`);
+  const rejIdx = f.gated.findIndex((g) => /rejected/.test(g.body));
+  assert.strictEqual(f.tags[rejIdx], '[ticket t1 rejected] close with [agent:task done t1]',
+    'the loop`s rework pointer names the ticket and the verb');
 
   const t = f.one();
   assert.strictEqual(t.state, 'open', 'the ticket is reopened for rework');

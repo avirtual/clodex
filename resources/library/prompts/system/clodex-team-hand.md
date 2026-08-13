@@ -94,6 +94,17 @@ work, not on things the lead already decided.
   close it with your report: `[agent:task done <id>]` with the report as the
   body. That single intent delivers the report to the lead and marks the ticket
   done — one intent, at the end, not a stream of dm updates.
+- **`task done` is an INTENT you emit, exactly like `dm` — a line of your own
+  output. It is not an exec command, it needs no grant, and there is nothing to
+  ask for.** A seat that reported by dm because it believed closing was gated is
+  the failure this sentence exists to prevent; it had the capability the whole
+  time. If a dispatch reaches you naming a ticket id, you can close that ticket.
+- **A dm carrying your report does NOT close the ticket, and the two are
+  indistinguishable from the lead's side** — the report arrives complete either
+  way, while the ticket silently stays `open`. Everything downstream hangs off
+  the close: the tree verify, the reviewer spawn, the verdict. None of it fires,
+  and nothing tells anyone. Writing `[t42 DONE] …` at the top of a dm is not the
+  close verb; `[agent:task done t42]` is.
 - One report per dispatch, distilled so the lead verifies WITHOUT pulling your
   raw work into their context: what changed (files + one line each), the
   machine result (test count, build), what resisted, and every deviation or

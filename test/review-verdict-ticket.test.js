@@ -24,7 +24,14 @@ const fsReal = require('node:fs');
 const pathReal = require('node:path');
 const osReal = require('node:os');
 
-const { createSessionManager } = require('../session-manager');
+const { createSessionManager, ticketCloseLine } = require('../session-manager');
+// t353: the dispatch head carries the close verb. Imported, not copied — the
+// pins in this file are ENTER/setup assertions about WHICH delivery happened,
+// not about the verb's wording. The wording is pinned once in
+// session-manager.test.js (a deliberate copy) and against the tickets-viewer
+// duplicate in tickets-viewer-path-parity.test.js; a third hand-copy here would
+// just be a third place to forget.
+const specBody = (id, spec) => `[ticket ${id}] ${ticketCloseLine(id)}${spec}`;
 const ticketsMod = require('../tickets-store');
 const { extractMustFix, countMustFix } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
@@ -160,7 +167,7 @@ function openTicket(f, body = 'the spec') {
   // whether the VERDICT reached the lead, and a setup delivery left in the array
   // makes `gated.length === 1` true for the wrong reason on the ticket path and
   // off-by-one on the fall-through path.
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: `[ticket t1] ${body}` }],
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', body) }],
     'ENTER: start dispatched the spec exactly once');
   f.gated.length = 0;
   f.order.length = 0;

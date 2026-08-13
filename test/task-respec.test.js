@@ -360,8 +360,10 @@ test('the RESPEC marker rides the TAG too, which is what survives a spill', () =
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'x'.repeat(2000) });
 
   assert.strictEqual(tags.length, 1, 'ENTER: one delivery — otherwise the tag below is nobody`s');
-  assert.strictEqual(tags[0], '[ticket t1 RESPEC]',
-    'a spilled respec announces itself as a respec; an empty tag reads as a fresh dispatch');
+  assert.strictEqual(tags[0], '[ticket t1 RESPEC] close with [agent:task done t1]',
+    'a spilled respec announces itself as a respec AND carries the close verb; either half '
+    + 'missing is a silent loss — an empty marker reads as a fresh dispatch, and a bare close '
+    + 'verb loses the only signal that this supersedes a spec the seat already has');
 });
 
 // A fresh dispatch must NOT acquire the marker — otherwise the discriminator is

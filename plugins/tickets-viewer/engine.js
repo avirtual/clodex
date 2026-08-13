@@ -189,6 +189,17 @@ const PROJECT_FILE = '.project';
 // can hold keeps the two distinguishable in the record forever.
 const VIEWER_ACTOR = 'viewer';
 
+// The close verb, copied from core's _deliverTicketSpec under §4 (the plugin
+// cannot require core). Every dispatch carries it because the prompt that would
+// otherwise teach it is a seeded file that drifts silently, and three seats in a
+// row finished good work, reported by dm, and left the ticket open — one of them
+// because it believed closing needed an exec grant. Both wrong beliefs are
+// denied by name. Parity with core's copy is pinned in
+// test/tickets-viewer-path-parity.test.js.
+const closeLine = (id) => `CLOSE WITH: [agent:task done ${id}] <your report> — one intent, at the end: it delivers the report to the lead AND marks the ticket done. `
+  + `It is a line you emit yourself, like any [agent:…] intent — NOT an exec command, and nothing needs to be granted for it. `
+  + `A dm carrying your report does NOT close the ticket: the ticket stays open, and everything downstream of the close (tree verify, review) never runs.\n`;
+
 /**
  * Core's path-confine.js, copied rather than required: §12 of
  * plugins/plugin-api.md refuses a relative require that leaves this directory,
@@ -788,6 +799,11 @@ function findOpen(tickets, id) {
  * assignment that looks delivered and is not.
  *
  * Format matches core's _deliverTicketSpec so a seat cannot tell the two apart.
+ * That includes the CLOSE WITH line: a seat told how to close by one dispatch
+ * path and not the other learns the verb is optional, and the whole point of the
+ * line is that it rides EVERY dispatch. §4's copied-utility pattern applies —
+ * the plugin cannot require core — so the literal is duplicated here and pinned
+ * against core's in test/tickets-viewer-path-parity.test.js.
  */
 function deliverSpec(name, ticket) {
   if (!name || !host || !host.sessions) return false;
@@ -799,7 +815,7 @@ function deliverSpec(name, ticket) {
   }
   if (!handle || !handle.isAlive()) return false;
   try {
-    handle.inject(`[ticket ${ticket.id}] ${str(ticket.spec)}`, { parkable: true });
+    handle.inject(`[ticket ${ticket.id}] ${closeLine(ticket.id)}${str(ticket.spec)}`, { parkable: true });
     return true;
   } catch (e) {
     host.log.error(`could not deliver ${ticket.id} to ${name}`, e);
@@ -1018,7 +1034,7 @@ module.exports._internals = {
   clodexHome, projectDirFor, nextTicketId, ticketTitle, extractTaskDir, ticketStarted,
   atomicWriteFileSync, resolveProject,
   add, editSpec, assign, closeTicket, sessions,
-  VIEWER_ACTOR,
+  VIEWER_ACTOR, closeLine,
   DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, RECENT_DONE_MS, RECENT_DONE_CAP,
   // The tree is no longer env-derived, so a test needs a seam that is not an
   // environment variable. It overrides the HOME rather than teams/ or projects/,

@@ -5111,6 +5111,11 @@ function mkTasks(extra = {}) {
   // with deepStrictEqual, and widening the recorded shape would force those
   // pins to be rewritten to accommodate a field they are not about.
   const urgents = [];
+  // `tags` rides its own array for exactly the reason `urgents` does: the pins
+  // below assert `gated` with deepStrictEqual. The tag is the ONLY thing a seat
+  // sees when a body spills, and every ticket dispatch spills now, so it needs to
+  // be observable — but not at the cost of rewriting those pins.
+  const tags = [];
   // Fires `onWrite` (6th arg), because this stub models a delivery that REACHES
   // THE WRITE. A stub that took it and never called it would model a permanently
   // wiped write, so every caller that stamps from onWrite (the watchdog nudge)
@@ -5118,7 +5123,7 @@ function mkTasks(extra = {}) {
   // certify the old stamp-on-return behaviour. Tests wanting the never-written
   // case override with a stub that omits the call.
   m._gatedDeliver = (target, sender, body, urgent, tag, onWrite) => {
-    gated.push({ target, sender, body }); urgents.push(urgent);
+    gated.push({ target, sender, body }); urgents.push(urgent); tags.push(tag);
     if (typeof onWrite === 'function') onWrite();
     return { queued: true };
   };
@@ -5130,8 +5135,83 @@ function mkTasks(extra = {}) {
   };
   const load = () => tstore.load(team.root);
   const one = (id) => load().find((t) => t.id === id);
-  return { m, injected, gated, urgents, broadcasts, team, home, tstore, seat, load, one };
+  return { m, injected, gated, urgents, tags, broadcasts, team, home, tstore, seat, load, one };
 }
+
+// t353: every dispatched spec carries the close verb. The literal lives here ONCE
+// and is COPIED from _deliverTicketSpec rather than imported — that is the point:
+// the many deepStrictEqual pins below assert the whole delivered body, so an edit
+// to the production line fails them all until it is re-read here deliberately. Two
+// beliefs cost three hands a closed ticket each ("closing needs an exec grant",
+// "a dm with my report closes it"), so both denials are pinned by name below.
+const CLOSE_LINE = (id) => `CLOSE WITH: [agent:task done ${id}] <your report> — one intent, at the end: it delivers the report to the lead AND marks the ticket done. `
+  + `It is a line you emit yourself, like any [agent:…] intent — NOT an exec command, and nothing needs to be granted for it. `
+  + `A dm carrying your report does NOT close the ticket: the ticket stays open, and everything downstream of the close (tree verify, review) never runs.\n`;
+// The whole delivered body for an ordinary (non-worktree, non-replay) dispatch.
+const specBody = (id, spec) => `[ticket ${id}] ${CLOSE_LINE(id)}${spec}`;
+
+// t353 r2. The close line put the head at 417 bytes (plain) / ~733 (worktree)
+// against MSG_SPILL_THRESHOLD's 500, so a plain dispatch spills once its spec
+// exceeds 83 chars and a worktree dispatch spills unconditionally. A spilled body
+// is announced ONLY as "Message (N bytes) attached", so the pointer tag is the
+// entire basis on which a seat decides to spend a Read turn — a tag naming neither
+// the ticket nor the verb would put the close verb behind the very turn this
+// ticket exists to save. The tag was unpinned before this.
+//
+// The 83-char boundary is asserted rather than assumed: an earlier draft of this
+// test claimed EVERY dispatch spills and used an 8-char spec, which did not — its
+// ENTER caught the overclaim. A spec that short does not occur in practice, but a
+// test that states it does would be describing a system nobody runs.
+test('t353: a realistic dispatch spills, so the POINTER carries the id and the close verb', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  const spec = 'rework the widget so it stops double-counting on the retry path, and pin the new count';
+  // Derived, not hardcoded: the 83-char boundary is 500 minus the head, so an edit
+  // to the close line moves it. A literal would silently stop meaning "long enough
+  // to spill" and start meaning "83".
+  assert.ok(spec.length > 500 - specBody('t1', '').length,
+    'ENTER: the spec must be long enough to spill, or the tag is not what the seat sees');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: spec });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.ok(f.gated[0].body.length > 500,
+    `ENTER: the dispatch must actually spill (body was ${f.gated[0].body.length} bytes), or the tag is cosmetic`);
+  assert.deepStrictEqual(f.tags, ['[ticket t1] close with [agent:task done t1]'],
+    'the pointer names the ticket AND the verb — it is all a seat sees before deciding to open the file');
+});
+
+// The tag rides EVERY dispatch, spilled or not: whether a body spills is a
+// function of spec length, which is not something the dispatch path should have
+// to reason about. A tag applied only when it spills would be correct today and
+// wrong the moment the threshold moves.
+test('t353: the pointer tag rides even a dispatch too short to spill', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'tiny' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.ok(f.gated[0].body.length < 500,
+    'ENTER: this one must NOT spill, or it is the same case as the test above');
+  assert.deepStrictEqual(f.tags, ['[ticket t1] close with [agent:task done t1]'],
+    'the tag does not depend on the spill decision');
+});
+
+test('t353: the close verb is never at column 1, in the body or the tag', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  // The delivered text contains a COMPLETE, ready-to-fire intent. It is inert only
+  // because parseIntent is ^-anchored and this never starts a line. A reflow that
+  // moved it to column 1 would make a seat close its own ticket on receipt — the
+  // spec text arrives, the scanner fires, the ticket is done before any work is.
+  for (const line of f.gated[0].body.split('\n')) {
+    assert.ok(!line.startsWith('[agent:'),
+      `no delivered line may START with an intent — found: ${line.slice(0, 60)}`);
+  }
+  // The tag is prefixed with "[agent:from <sender>] " by _buildDeliveryText, so it
+  // is not at column 1 either; asserted at the tag itself since that prefix is
+  // applied downstream of this fixture.
+  assert.ok(!f.tags[0].startsWith('[agent:'), 'the pointer tag does not open with a firing intent');
+});
 
 // t308 split this test's subject in two. It used to pin add's WHOLE job —
 // mint, re-pin to the receiving seat, deliver, confirm — because add did all
@@ -5169,7 +5249,7 @@ test('task start (assigned): re-pins to the receiving seat and delivers the spec
   // instead of inferring one.
   assert.strictEqual(t.assignee, 'team-hand', 'pinned to the seat that received it');
   assert.strictEqual(t.role, 'hand', 'the filed role survives the pin');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] build the widget\ndetail' }],
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', 'build the widget\ndetail') }],
     'spec delivered to the live seat holding the role, id-prefixed');
   assert.ok(f.injected.some((x) => /ticket t1 → hand/.test(x)), 'lead confirmed');
 });
@@ -5192,7 +5272,7 @@ test('task add/start (name-addressed): a live seat name resolves as an assignee 
   // resolvers (_teamLiveSeats vs _teamLiveSeatNames) can silently disagree —
   // which is what this test has always been for.
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] name-addressed work' }],
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', 'name-addressed work') }],
     'the spec reaches the named seat — _ticketAssigneeSeat resolved it by name');
 });
 
@@ -5240,7 +5320,7 @@ test('task assign: a backlog ticket gets an assignee and the spec is delivered',
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'hand', body: '' });
   assert.strictEqual(f.one('t1').assignee, 'team-hand', 'pinned to the seat the spec reached');
   assert.strictEqual(f.one('t1').role, 'hand', 'filed under the role');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] the spec' }]);
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', 'the spec') }]);
   assert.ok(f.injected.some((x) => /ticket t1 → hand/.test(x)));
 });
 
@@ -5256,7 +5336,7 @@ test('task reassign: TWO deliveries — old-assignee notice ORDERED BEFORE new-a
   assert.strictEqual(f.gated[0].target, 'team-hand', 'OLD assignee notice first');
   assert.match(f.gated[0].body, /reassigned/);
   assert.strictEqual(f.gated[1].target, 'team-reviewer-1', 'NEW assignee spec second');
-  assert.match(f.gated[1].body, /^\[ticket t1\] the spec/);
+  assert.strictEqual(f.gated[1].body, specBody('t1', 'the spec'));
 });
 
 test('task reassign: a parked/dead OLD seat does not block the NEW delivery (independence)', () => {
@@ -6035,13 +6115,47 @@ test('task reject: lead reopens a DONE ticket, reason to the assignee, assignee 
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'done' });
-  f.gated.length = 0;
+  // Both arrays are cleared together and stay index-aligned: the same stub pushes
+  // to each on every delivery, so clearing one alone would leave the tag pin
+  // reading a row from the setup deliveries above.
+  f.gated.length = 0; f.tags.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'fix the edge case' });
   const t = f.one('t1');
   assert.strictEqual(t.state, 'open', 'reopened');
   assert.strictEqual(t.assignee, 'team-hand', 'assignee kept — reject does not re-route the ticket');
   assert.strictEqual(t.role, 'hand', 'and its role is untouched');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1 rejected] fix the edge case' }]);
+  // Rework carries the close verb too — the seat is about to close a SECOND time,
+  // and sourcing the verb from the seeded role prompt is the stale-file dependency
+  // the dispatch line exists to remove.
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: `[ticket t1 rejected] ${CLOSE_LINE('t1')}fix the edge case` }]);
+  // This site passed NO tag before t353. The tag rides regardless of whether the
+  // body spills — a SHORT reason like this one does not (426-byte head + 17), and
+  // the tag must not be a function of the reason's length.
+  assert.ok(f.gated[0].body.length < 500,
+    'ENTER: this reason is too short to spill — the point here is that the tag rides anyway');
+  assert.deepStrictEqual(f.tags, ['[ticket t1 rejected] close with [agent:task done t1]'],
+    'the rework pointer names the ticket and the verb');
+});
+
+// The case that actually ships. A real rejection reason is paragraphs, not a
+// phrase — the head is 426 bytes, so anything past ~74 chars of reason spills and
+// the pointer becomes the only text the seat reads. This site passed NO tag before
+// t353, so dropping it degrades the pointer to a bare "Message (N bytes) attached"
+// naming neither ticket nor verb: strictly worse than before this ticket existed.
+test('t353: a realistic lead rejection spills, so its POINTER carries the id and the verb', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  const reason = 'the retry path still double-counts when the second attempt lands inside the window, '
+    + 'and the new pin asserts the count without asserting the row it came from';
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'done' });
+  f.gated.length = 0; f.tags.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: reason });
+  assert.ok(f.gated[0].body.length > 500,
+    `ENTER: the rejection must actually spill (body was ${f.gated[0].body.length} bytes), or the tag is cosmetic`);
+  assert.deepStrictEqual(f.tags, ['[ticket t1 rejected] close with [agent:task done t1]'],
+    'a spilled rejection shows the seat nothing but this line');
 });
 
 test('task reject: rejecting a non-DONE ticket is bounced', () => {
@@ -6249,7 +6363,7 @@ test('t89 done ADVANCES the seat: the next held ticket is delivered, urgently', 
   // ENTER: two deliveries — [0] the report to the lead, [1] the advance.
   assert.strictEqual(f.gated.length, 2, 'ENTER: the report AND an advance fired');
   assert.strictEqual(f.gated[0].target, 'lead', 'ENTER: [0] is the done-report');
-  assert.deepStrictEqual(f.gated[1], { target: 'team-hand', sender: 'clodex-team', body: '[ticket t2] spec two' },
+  assert.deepStrictEqual(f.gated[1], { target: 'team-hand', sender: 'clodex-team', body: specBody('t2', 'spec two') },
     'the seat is handed the next ticket it holds, id-prefixed like any dispatch');
   assert.strictEqual(f.urgents[1], true,
     'the advance must WAKE — a seat that just closed a ticket is at a turn boundary and about to go idle, the exact state a passive dm is held for');
@@ -6286,7 +6400,7 @@ test('t89 _advanceSeat never hands back the ticket just closed, even before the 
   const next = f.m._advanceSeat(f.team, 'team-hand', 't1');
 
   assert.strictEqual(next.id, 't2', 'the closed ticket must not be handed back as the seat`s next work');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'clodex-team', body: '[ticket t2] the genuine next' }]);
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'clodex-team', body: specBody('t2', 'the genuine next') }]);
 });
 
 test('t89 the advance is FIFO, not id order — oldest first when the two disagree', () => {
@@ -6312,7 +6426,7 @@ test('t89 the advance is FIFO, not id order — oldest first when the two disagr
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'report' });
 
   assert.strictEqual(f.gated.length, 2, 'ENTER: the report AND an advance fired');
-  assert.strictEqual(f.gated[1].body, '[ticket t3] minted third, but NEWER',
+  assert.strictEqual(f.gated[1].body, specBody('t3', 'minted third, but NEWER'),
     'FIFO means OLDEST first: t3 was opened before t2, so id order must not decide the advance');
 });
 
@@ -6338,7 +6452,7 @@ test('t89 the advance skips closed tickets and other seats` work', () => {
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'report' });
 
   assert.strictEqual(f.gated.length, 2, 'the report and exactly one advance');
-  assert.strictEqual(f.gated[1].body, '[ticket t5] the real next one',
+  assert.strictEqual(f.gated[1].body, specBody('t5', 'the real next one'),
     'a cancelled ticket, another seat`s ticket and a backlog ticket are all skipped');
 });
 
@@ -6356,7 +6470,7 @@ test('t89 the advance follows the TICKET`s seat, so a lead closing over a silent
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'done', id: 't1', body: 'closing for it' });
 
   assert.strictEqual(f.gated.length, 1, 'ENTER: a lead close sends no report to itself, so [0] is the advance');
-  assert.deepStrictEqual(f.gated[0], { target: 'team-hand', sender: 'clodex-team', body: '[ticket t2] spec two' },
+  assert.deepStrictEqual(f.gated[0], { target: 'team-hand', sender: 'clodex-team', body: specBody('t2', 'spec two') },
     'the advance is keyed on the ticket`s assignee seat — keying it on the closer would leave the silent seat idle, which is the whole defect');
   assert.strictEqual(f.urgents[0], true);
 });
@@ -6374,7 +6488,7 @@ test('t89 cancel advances too — it frees the seat exactly as done does', () =>
 
   assert.strictEqual(f.gated.length, 2, 'ENTER: the cancellation notice AND an advance');
   assert.strictEqual(f.urgents[0], false, 'the cancellation notice itself still rides passively — stopping is not work');
-  assert.deepStrictEqual(f.gated[1], { target: 'team-hand', sender: 'clodex-team', body: '[ticket t2] spec two' });
+  assert.deepStrictEqual(f.gated[1], { target: 'team-hand', sender: 'clodex-team', body: specBody('t2', 'spec two') });
   assert.strictEqual(f.urgents[1], true, 'but what follows it is');
   assert.ok(f.injected.some((x) => /cancelled — next: t2 delivered to team-hand/.test(x)));
 });
@@ -6441,7 +6555,7 @@ test('t295: a dead seat does not take its pinned role tickets with it', () => {
   assert.strictEqual(f.one('t1').state, 'done', 'the sibling can close what it inherited');
   assert.deepStrictEqual(f.gated.map((g) => [g.target, g.body]),
     [['lead', '[ticket t1 done] inherited and finished'],
-      ['team-hand-2', '[ticket t2] second']],
+      ['team-hand-2', specBody('t2', 'second')]],
     'the report goes to the lead and the NEXT ticket is actually delivered to the sibling');
   // And the advance re-pins, so the record stops naming a seat that never worked it.
   assert.strictEqual(f.one('t2').assignee, 'team-hand-2', 'the advanced ticket re-pins to its new seat');
@@ -6923,7 +7037,7 @@ test('task assign UNPARKS: assign is the dispatch, so the flag cannot survive it
   const t = f.one('t1');
   // The key is REMOVED, not set false — same reason add omits it.
   assert.ok(!('parked' in t), 'the flag is gone from the record');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] the spec' }],
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', 'the spec') }],
     'and the spec finally goes out');
   assert.ok(f.injected.some((x) => /unparked/.test(x)), 'the lead is told it was released');
   assert.deepStrictEqual(f.m._openTicketsFor(f.team, 'team-hand').map((x) => x.id), ['t1'],
@@ -11101,6 +11215,11 @@ test('task add: an opted-in role mints a branch, a worktree and a seat, and the 
   assert.match(f.gated[0].body, new RegExp(`WORK IN: ${wtPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `),
     'the spec must name the worktree path — the seat boots in the repo and would otherwise edit the shared tree');
   assert.match(f.gated[0].body, /branch t1-build-the-widget/, 'and its branch');
+  // t353: the worktree branch of the head is the one a hand actually gets, so the
+  // close verb has to survive it too — a line that rides only the plain dispatch
+  // would miss every branch-per-ticket seat, which is all of them.
+  assert.match(f.gated[0].body, /CLOSE WITH: \[agent:task done t1\]/,
+    'the close verb rides the worktree dispatch as well as the plain one');
   assert.ok(f.gated[0].body.endsWith('build the widget\ndetail'),
     'the spec text itself still arrives, after the location line');
 
@@ -11161,7 +11280,7 @@ test('task add: a role WITHOUT the opt-in keeps the old role-assigned path', asy
   // the close-time cost path reads a seat instead of inferring one.
   assert.strictEqual(t.assignee, 'team-hand', 'ticket pins to the seat that received it');
   assert.strictEqual(t.role, 'hand', 'and keeps the role the lead filed it under');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] ordinary work' }],
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', 'ordinary work') }],
     'the existing live seat receives the spec as before');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
