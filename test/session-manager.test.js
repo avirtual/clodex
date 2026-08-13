@@ -10551,6 +10551,114 @@ test('t188: a replayed turn fires a repeated exec ONCE, and the DEDUPER is what 
   }
 });
 
+// ── t313: two bodyless siblings in ONE turn are two emissions, not a repeat ──
+//
+// The dedupe key short-circuited on `sub`, so `[agent:task start t210]` and
+// `[agent:task start t309]` hashed the same and the per-turn `fired` Set ate
+// the second — a log.warn the emitting seat never sees. Measured live on a pair
+// of `task accept`s: one ticket's branch and worktree never appeared.
+//
+// Driven through the REAL wire handler and the REAL parser, because both halves
+// of the requirement live in that loop and pull opposite ways: distinct ids must
+// BOTH fire, and a genuine double-paste must still collapse to one. A key change
+// that bought the first by losing the second would be worse than the bug — a
+// double-pasted `task cancel` executing twice is destructive where the bug only
+// drops one. The `swallowed` warn is asserted alongside the fire count because
+// counts alone cannot say WHICH layer answered.
+
+async function wireRig(text) {
+  const { m, warns } = mkRecovery();
+  const fired = [];
+  const errors = [];
+  m._handleIntent = (_agent, intent) => { fired.push(`${intent.type}:${intent.sub}:${intent.id || intent.name || ''}`); };
+  m._broadcast = () => {};
+  m._publishAgentText = () => {};
+  m._maybeDeliverDigest = () => {};
+  m._maybeRearmHold = () => {};
+  m._maybeFireCompactLatch = () => {};
+  const shadowLog = m._shadowLog.bind(m);
+  m._shadowLog = (rec) => { if (rec.type === 'wire-observer-error') errors.push(rec.error); shadowLog(rec); };
+
+  const wire = await m._ensureWire();
+  try {
+    m.sessions.set('a', { name: 'a', intentSource: 'wire', sessionId: 'sid-1' });
+    wire.emit('turn.completed', { agent: 'a', text, reqId: 'r1', sessionId: 'sid-1', stop: { is_turn: true } });
+    await new Promise((r) => setImmediate(r));
+    // The handler body is wrapped in a try that only shadow-logs: a throw would
+    // leave `fired` empty and every assertion below would read as "deduped".
+    assert.deepStrictEqual(errors, [], 'ENTER: the wire handler ran to completion, so the fire counts below are real');
+    return { fired, warns };
+  } finally {
+    await wire.close();
+    if (m._holdKeeper) m._holdKeeper.stop();
+  }
+}
+
+test('t313: two bodyless `task start` with distinct ids both fire on the wire path', async () => {
+  const { fired, warns } = await wireRig('[agent:task start t210]\n[agent:task start t309]');
+  assert.deepStrictEqual(fired, ['task:start:t210', 'task:start:t309'],
+    'both tickets started — the second is a distinct command, not a repeat of the first');
+  assert.deepStrictEqual(warns, [], 'and nothing was swallowed as an intra-turn duplicate');
+});
+
+test('t313: two IDENTICAL bodyless intents in one turn still collapse to one', async () => {
+  const { fired, warns } = await wireRig('[agent:task cancel t7]\n[agent:task cancel t7]');
+  assert.deepStrictEqual(fired, ['task:cancel:t7'],
+    'a double-pasted cancel must run ONCE — running it twice is the regression this guards');
+  assert.deepStrictEqual(warns, ['intra-turn dup task a — swallowed'],
+    'and the per-turn Set is the layer that stopped it');
+});
+
+test('t313: `team role-rm` with distinct roles both fire', async () => {
+  const { fired, warns } = await wireRig('[agent:team role-rm hand]\n[agent:team role-rm designer]');
+  assert.deepStrictEqual(fired, ['team:role-rm:hand', 'team:role-rm:designer']);
+  assert.deepStrictEqual(warns, []);
+});
+
+// The recovery loop takes the same bkey from the same function, so the fix has
+// to land there too — a wire-path-only change would leave the replayed tail
+// collapsing siblings. Its dedupe is stricter (no exec exemption, and claim
+// rejects recovery-after-recovery), so this asserts only the half the key
+// controls: distinct ids inside ONE replayed callback both fire.
+test('t313: the RECOVERY path also fires both distinct-id siblings', async () => {
+  const { m, warns } = mkRecovery();
+  const fired = [];
+  m._handleIntent = (_agent, intent) => { fired.push(`${intent.type}:${intent.sub}:${intent.id}`); };
+  m._broadcast = () => {};
+  m._publishAgentText = () => {};
+
+  const wire = await m._ensureWire();
+  try {
+    const captured = [];
+    m.sessions.set('a', {
+      name: 'a', intentSource: 'wire',
+      sentinel: { recovering: false, armRecovery: (cb) => captured.push(cb) },
+    });
+    wire.emit('tee-failure', { agent: 'a', reqId: 'r1', error: 'tee closed mid-stream' });
+    assert.strictEqual(captured.length, 1, 'ENTER: recovery armed and we hold the real replay callback');
+
+    captured[0]('[agent:task start t210]\n[agent:task start t309]');
+    await new Promise((r) => setImmediate(r));
+    assert.deepStrictEqual(fired, ['task:start:t210', 'task:start:t309'],
+      'the replayed turn dispatched both tickets');
+    assert.deepStrictEqual(warns, [], 'neither was swallowed as an intra-turn duplicate');
+  } finally {
+    await wire.close();
+    if (m._holdKeeper) m._holdKeeper.stop();
+  }
+});
+
+test('t313: a double-pasted dm still dedupes, and urgent still splits the identity', async () => {
+  const dup = await wireRig('[agent:dm bob] ping\n[agent:dm bob] ping');
+  assert.deepStrictEqual(dup.fired, ['dm:undefined:'], 'the repeated dm was sent once');
+  assert.deepStrictEqual(dup.warns, ['intra-turn dup dm a — swallowed']);
+
+  const esc = await wireRig('[agent:dm bob] ping\n[agent:dm bob urgent] ping');
+  assert.deepStrictEqual(esc.fired, ['dm:undefined:', 'dm:undefined:'],
+    'the urgent resend of a held dm must dispatch, not be swallowed as a duplicate');
+  assert.deepStrictEqual(esc.warns, []);
+});
+
 // --- spawn into a git worktree ------------------------------------------------
 // `worktree:<branch>` is what makes several seats able to edit one repo at once.
 // Real git, because the payload is git's own on-disk layout: the seat must boot

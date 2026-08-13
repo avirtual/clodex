@@ -117,10 +117,27 @@ function looksLikeIntent(rawLine) {
 // differ (both paths see the same assistant text, so the same intent hashes
 // to the same key on both sides). Body capped so a huge dm doesn't bloat
 // the shadow log's keys.
+// Every field that DISCRIMINATES one emission from another, in a fixed order.
+// Read as a list, never `||`-chained: a chain short-circuits on the first
+// truthy one, so for any verb carrying a `sub` the id/name/target behind it
+// never reached the key and `[agent:task start t1]` / `[agent:task start t2]`
+// hashed identically — the second was swallowed by the intra-turn Set with
+// only a log.warn. An ALLOWLIST rather than the intent's own keys: a plugin
+// `parse` returns an arbitrary object, and one non-deterministic field in it
+// (a timestamp) would make a genuine double-paste look distinct, which is the
+// worse failure — a double `task cancel` executing twice.
+const KEY_FIELDS = ['sub', 'target', 'name', 'id', 'cmd', 'spec', 'who', 'to', 'filter', 'template', 'cwd', 'worktree', 'park', 'ms'];
+
 function shadowIntentKey(agent, intent) {
   // urgent is part of the identity: a held dm RESENT with the flag inside the
   // dedupe TTL must dispatch, not be swallowed as a duplicate of the bounce.
-  const head = (intent.sub || intent.target || intent.name || intent.id || intent.cmd || intent.spec || '') + (intent.urgent ? '+urgent' : '');
+  const parts = [];
+  for (const f of KEY_FIELDS) {
+    const v = intent[f];
+    if (v === null || v === undefined || v === '' || v === false) continue;
+    parts.push(String(v));
+  }
+  const head = parts.join('/') + (intent.urgent ? '+urgent' : '');
   // `text` = the synthesized `unknown` intent's raw line: without it every
   // near-miss in a turn would collapse to one dedupe key and only the first
   // distinct typo would bounce.
