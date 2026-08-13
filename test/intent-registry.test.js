@@ -487,6 +487,52 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:exec c] {}')), 'json');
 });
 
+// ── t341: the differential above iterates the CORPUS, so a bodyMode widening on
+// a sub-verb no corpus line parses to is never REACHED — the loop passes over it
+// in silence. Measured, not assumed: adding a `snapshot` arm to the context row
+// leaves every test in this file green.
+//
+// The t313/t338 sub-verb guard cannot close this. It derives from the closed
+// alternation in a family's PARSE regex, and the families whose bodyMode branches
+// on `.sub` are a different set: `context` and `memory` capture `(\S+)`, so they
+// have no alternation to read and their bodyMode sub-verbs are invisible to it.
+// Hence a separate derivation — but the corpus, the coverage predicate and the
+// anti-vacuity shape are the existing ones, not a parallel mechanism.
+//
+// Derived from each row's bodyMode SOURCE rather than retyped, so an arm cannot
+// be added to a predicate without either appearing in the corpus or turning this
+// red. Reading a function's text is shape-dependent — a predicate rewritten as a
+// Set lookup names no literal — so a row that branches on `.sub` and yields
+// nothing FAILS here instead of contributing an empty list. That is t343's lesson
+// one level down: a failed read must not be indistinguishable from nothing to read.
+function bodyModeSubsFromSource(row) {
+  const src = String(row.bodyMode);
+  if (!/\.sub\b/.test(src)) return null;
+  return [...src.matchAll(/\.sub\s*===\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
+}
+
+// The pair count the predicates named when this was pinned. An arm deleted from a
+// predicate shrinks the loop below rather than failing it, so the count is floored.
+const MIN_BODYMODE_SUBS = 11;
+
+test('t341: every sub-verb a bodyMode predicate names is reachable in the corpus', () => {
+  let pairs = 0;
+  for (const row of registry.CORE_ROWS) {
+    const subs = bodyModeSubsFromSource(row);
+    if (subs === null) continue;
+    assert.ok(subs.length > 0,
+      `${row.type}: its bodyMode branches on .sub but no sub-verb could be read out of it — `
+      + 'the derivation went blind, which is a vacuous pass, not a row with nothing to enumerate');
+    for (const sub of subs) {
+      pairs++;
+      assert.ok(corpusCovers(row.type, sub),
+        `no corpus line parses to ${row.type}/${sub} — the allow-set differential never reaches its bodyMode`);
+    }
+  }
+  assert.ok(pairs >= MIN_BODYMODE_SUBS,
+    `ENTER: read the bodyMode sub-verbs off CORE_ROWS (got ${pairs}, expected >= ${MIN_BODYMODE_SUBS})`);
+});
+
 test('bodyMode of an unknown or malformed intent is none', () => {
   assert.strictEqual(registry.bodyModeFor(null), 'none');
   assert.strictEqual(registry.bodyModeFor({}), 'none');
