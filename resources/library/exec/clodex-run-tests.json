@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "/bin/sh",
+    "${TEAM_ROOT}/scripts/test-digest.sh"
+  ],
+  "cwd": "${TEAM_ROOT}",
+  "description": "Suite digest, one line. Measures the TEAM ROOT unless `tree` names one of this repo's worktrees (absolute path) — from a worktree, pass it or the number is about master, not your branch.",
+  "timeoutMs": 120000,
+  "maxBytes": 1024,
+  "replyStderr": true,
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "tree": { "type": "string", "maxLength": 1000 }
+    }
+  }
+}
