@@ -823,6 +823,17 @@ function add(payload) {
       closedAt: null,
       lastActivityAt: now,
       nudgedAt: null,
+      // An explicit key, never omitted: `ticketStarted` reads an ABSENT
+      // `startedAt` as a pre-upgrade record the old `add` dispatched, so a
+      // record minted without one files as already STARTED — a shape core
+      // cannot produce, from the writer that also reads it as legacy.
+      //
+      // Stamped rather than null when an assignee is given, which is where this
+      // parts from core's `add`: core split dispatch out into `_taskStart` and
+      // always writes null, but delivery happens HERE (deliverSpec below), and a
+      // delivered spec whose record says unstarted is exempt from the stall
+      // watchdog for as long as the seat holds it.
+      startedAt: who ? now : null,
     };
     const taskDir = extractTaskDir(text);
     if (taskDir) ticket.taskDir = taskDir;
@@ -895,6 +906,14 @@ function assign(payload) {
     t.nudgedAt = null;
     delete t.role;
     delete t.parked;
+    // Assign IS a dispatch here — deliverSpec runs below — so it records the
+    // dispatch, exactly as core's `_taskAssign` does. Without this an
+    // undispatched ticket assigned FROM THE BOARD stays unstarted forever, and
+    // both the stall flag above and core's watchdog exempt it: a seat holds it,
+    // goes quiet for a week, and nothing says so. Not re-stamped when already
+    // set: this is the moment work FIRST started, and a re-send must not
+    // restate it.
+    if (!ticketStarted(t)) t.startedAt = t.lastActivityAt;
     return { result: { ticket: t } };
   });
   if (!res.ok) return res;
@@ -983,7 +1002,7 @@ module.exports.deactivate = () => {
 module.exports._internals = {
   confine, readTickets, readTicketsAt, readManifest, stallMsFor, shape,
   board, teams, projects, teamsRoot, projectsRoot, teamIndex, projectRootFor,
-  clodexHome, projectDirFor, nextTicketId, ticketTitle, extractTaskDir,
+  clodexHome, projectDirFor, nextTicketId, ticketTitle, extractTaskDir, ticketStarted,
   atomicWriteFileSync, resolveProject,
   add, editSpec, assign, closeTicket, sessions,
   VIEWER_ACTOR,

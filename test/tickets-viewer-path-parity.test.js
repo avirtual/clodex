@@ -175,3 +175,43 @@ test('viewer extractTaskDir agrees with core tickets-store', () => {
   assert.strictEqual(viewer.extractTaskDir('second line has it\ntasks/nope'), null,
     'only the first line is read');
 });
+
+test('viewer ticketStarted agrees with core tickets-store', () => {
+  // The fourth copy (t329), and it fails silently in BOTH directions, which is
+  // why the table covers both. Reading a started ticket as unstarted exempts it
+  // from the stall flag and from core's watchdog — a seat holds it, goes quiet
+  // for a week, and the board stays calm. Reading an unstarted one as started
+  // flags 28 backlog tickets as stalls core can neither produce nor clear.
+  const tickets = [
+    { startedAt: 123 },                              // stamped → started
+    { startedAt: null },                             // filed, never dispatched
+    {},                                              // legacy: absent → STARTED
+    { parked: true },                                // absent + parked → never dispatched
+    { startedAt: null, role: 'hand' },               // second reading: a role means dispatch
+    { startedAt: null, worktree: { path: '/x' } },   // and so does a minted tree
+    { startedAt: null, worktree: {} },               // but an EMPTY worktree is not a path
+    null,
+  ];
+
+  // ENTER: the loop is the reduction, and the interesting rows are the two
+  // absent-key ones — every other row agrees under an implementation that
+  // dropped the legacy arm entirely.
+  assert.ok(tickets.some((t) => t && !Object.prototype.hasOwnProperty.call(t, 'startedAt') && !t.parked),
+    'the table must reach the bare absent-key case');
+  assert.ok(tickets.some((t) => t && !Object.prototype.hasOwnProperty.call(t, 'startedAt') && t.parked),
+    'and the absent-key-but-parked case');
+
+  for (const t of tickets) {
+    assert.strictEqual(viewer.ticketStarted(t), coreStore.ticketStarted(t),
+      `diverged on ${JSON.stringify(t)}`);
+  }
+
+  // The anchors, so two copies that drifted TOGETHER still fail: the equality
+  // above is satisfied by any pair of identically-wrong functions.
+  assert.strictEqual(viewer.ticketStarted({}), true,
+    'a record predating the field was dispatched by the old add — absent means STARTED');
+  assert.strictEqual(viewer.ticketStarted({ parked: true }), false,
+    'except a parked one, the shape the old add returned before delivering');
+  assert.strictEqual(viewer.ticketStarted({ startedAt: null }), false,
+    'an explicit null is a ticket filed and never dispatched');
+});
