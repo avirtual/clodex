@@ -13,6 +13,20 @@ blocks a release.
 
 ## Unreleased
 
+- The team lead is now told when the ticket loop sends work back. A branch
+  whose test suite fails is returned to the agent that wrote it, which was
+  always the right recipient — but the lead only heard about it when that
+  delivery FAILED, so the ordinary case was invisible to the person
+  responsible for the ticket. The lead now gets its own summary: which ticket,
+  which agent, how many rounds deep. The failing-test detail still goes only
+  to the agent that has to act on it.
+- A lead rejecting a ticket that the loop has just rejected no longer bounces.
+  The two used to race: the loop reopened the ticket, and the lead's own
+  rejection was then refused with an error reading as though it had already
+  been handled, while the must-fixes it carried were left in a file nobody
+  reads. Those must-fixes are now delivered to the agent as follow-up rework.
+  Rejecting a ticket that never closed still points you at `task respec`,
+  which remains the verb for that.
 - A ticket whose review comes back ACCEPT is now merged for you. The team lead
   used to be the one running `git merge` after every verdict; the loop now does
   it, runs the full suite on the result, and reverts the merge if that suite
