@@ -185,6 +185,7 @@ function boot(world, opts = {}) {
       clearTimeout(s._bootSettleTimer);
       clearTimeout(s._parkCapTimer);
       clearTimeout(s._replayFallbackTimer);
+      clearTimeout(s._specConfirmTimer);
     }
   };
   return {
@@ -825,6 +826,176 @@ test('a ticket with no spec is skipped rather than delivered empty', async () =>
       + 'ticket that was skipped records a delivery that never happened');
     assert.strictEqual(JSON.stringify(after || null), before, 'the record is untouched');
   } finally { app2.stop(); }
+});
+
+// ── t349: a write that reached the queue is not a spec that reached the seat ──
+//
+// `queued` means the bytes went to the inject queue. A write landing inside the
+// CLI's boot re-render is either wiped or keeps its Enter as content, and both
+// stamp the record delivered — so the failure is silent and the log line for a
+// lost dispatch is byte-identical to a healthy one. Measured over 24 consecutive
+// real dispatches the write goes out 1.02s after spawn in EVERY case, healthy and
+// lost alike, which is why no timing constant can separate them and these tests
+// drive the confirmation latch instead.
+//
+// The latch clears on any non-idle activity, because starting a turn is exactly
+// what a lost write prevents. Four of the five tests below therefore assert
+// SILENCE, and each names the shape it is silent about — a detector that fires on
+// a seat that is merely slow is worse than none, since the redelivery it triggers
+// lands in a live composer.
+
+// Fire the confirmation check at a moment the test chooses. The production timer
+// is cancelled first so it cannot also fire and turn a one-shot retry into two.
+function fireConfirm(app, s) {
+  clearTimeout(s._specConfirmTimer);
+  s._specConfirmTimer = null;
+  app.m._checkSpecConfirm(s);
+}
+
+// The window is injected LONG and the check is then called directly. Driving it
+// at 0 instead makes the check race the delivery it is meant to judge: it fires
+// while the first write is still settling through the queue, so the latch is
+// already spent by the time a test can look at it, and every assertion about the
+// latch's state reads a value the production ordering never produces.
+async function dispatched(world, opts = {}) {
+  const app = boot(world, { deps: { specConfirmMs: 60_000, ...(opts.deps || {}) } });
+  const lead = await app.spawn('lead');
+  const s = await app.spawn('team-hand');
+  // Spend the respawn-replay one-shot on an EMPTY board before the ticket exists.
+  // Left armed it fires against t1 a few ticks later and writes a REPLAY of its
+  // own, which is indistinguishable at the PTY from the redelivery under test —
+  // the silence assertions below would then be reading another mechanism's bytes
+  // and failing (or worse, passing) for a reason that has nothing to do with this.
+  await replayPassed(app, 'team-hand');
+  app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+  app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const got = await settled(app, 'team-hand');
+  assert.match(got, /BUILD THE WIDGET/,
+    'ENTER: the spec must have been written at all — with no first delivery there is nothing for the latch to '
+    + 'confirm, and a redelivery assertion below would pass for the wrong reason');
+  assert.ok(s._specUnconfirmed,
+    'ENTER: the write must ARM the latch — unarmed, every silence assertion below holds trivially and the '
+    + 'file stays green against a fix that never runs');
+  // An injected unit is three writes (Ctrl-U, text, Enter) and `settled` returns
+  // on the middle one. The silence tests below baseline the PTY and assert it is
+  // UNCHANGED, so a baseline taken here would still be missing the trailing Enter
+  // and every one of them would fail on the first delivery finishing itself.
+  for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.ok(app.seen('team-hand').endsWith('\r'),
+    'ENTER: the first delivery must be COMPLETE before a test baselines the terminal');
+  return { app, s, lead };
+}
+
+test('t349: a seat written to that never starts a turn is redelivered to, exactly once', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    const first = app.seen('team-hand');
+    // No activity at all — the seat never submitted. This is the wedged shape:
+    // from outside it is indistinguishable from a seat that is simply thinking,
+    // which is the whole reason the failure went unnoticed four times in a night.
+    fireConfirm(app, s);
+    const after = await settled(app, 'team-hand', /REPLAY/);
+    assert.match(after, /REPLAY/,
+      'a spec whose seat never took a turn must be redelivered — the write is fire-and-forget into a PTY, so '
+      + 'nothing else in the system can tell a lost dispatch from a delivered one');
+    assert.ok(after.length > first.length, 'ENTER: the redelivery must be a SECOND write, not a re-read of the first');
+    assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.retried, true,
+      'and the retry must be spent — an unspent budget redelivers forever, spraying a live composer');
+
+    // Second window, still no turn: the budget is exhausted, so this escalates to
+    // the lead rather than writing a third copy.
+    const beforeLead = app.seen('lead');
+    fireConfirm(app, s);
+    const leadSaw = await settled(app, 'lead', /ESCALATED/);
+    assert.match(leadSaw, /ESCALATED/,
+      'two writes with no turn is not a lost write, and a third copy would not fix it — it goes to the lead');
+    assert.ok(leadSaw.length > beforeLead.length, 'ENTER: the escalation must be a new write to the lead');
+    assert.strictEqual(s._specUnconfirmed, null, 'and the latch is released, so nothing re-fires behind the escalation');
+  } finally { app.stop(); }
+});
+
+test('t349: a seat thinking for minutes on its first turn is never redelivered to', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    const first = app.seen('team-hand');
+    // To think at all it SUBMITTED, which is the event the latch is asking about.
+    // The turn's length is irrelevant and stays irrelevant however long it runs —
+    // this detector can only ever see the absence of a FIRST turn.
+    app.m._emitActivity('team-hand', 'thinking');
+    assert.strictEqual(s._specUnconfirmed, null, 'a started turn clears the latch');
+    fireConfirm(app, s);
+    await new Promise((r) => setTimeout(r, 30));
+    assert.strictEqual(app.seen('team-hand'), first,
+      'a seat mid-turn must receive NOTHING — a redelivery here splices a second copy of the spec into a live '
+      + 'composer, which is a worse failure than the one being fixed');
+  } finally { app.stop(); }
+});
+
+test('t349: a seat that finished its turn and went idle is never redelivered to', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    // Terminal idle is reached THROUGH thinking, and that transit is what clears
+    // the latch. An idle seat with the latch still set is unreachable — which is
+    // why this case needs no threshold to stay silent.
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+    const first = app.seen('team-hand');
+    assert.strictEqual(s._specUnconfirmed, null, 'ENTER: the turn must have cleared the latch on its way to idle');
+    fireConfirm(app, s);
+    await new Promise((r) => setTimeout(r, 30));
+    assert.strictEqual(app.seen('team-hand'), first,
+      'a finished seat must receive nothing — it did its work and is waiting, not wedged');
+  } finally { app.stop(); }
+});
+
+test('t349: a seat blocked on a permission dialog is not redelivered to, and is still watched', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    const first = app.seen('team-hand');
+    // A dialog produces no activity and waits an unbounded time on a human, so it
+    // looks exactly like the wedged shape. It must not alarm — but it must not be
+    // written off either, since the spec may still be unread behind it.
+    s.needsAttention = { kind: 'permission', ts: Date.now(), message: 'allow?' };
+    fireConfirm(app, s);
+    await new Promise((r) => setTimeout(r, 30));
+    assert.strictEqual(app.seen('team-hand'), first,
+      'a blocked seat must receive nothing — its silence is the human\'s, not a lost write');
+    assert.ok(s._specUnconfirmed,
+      'and the latch must SURVIVE rather than clear: a dialog answered ten minutes later leaves a seat that '
+      + 'still never took a turn, and clearing here would retire the only check that would catch it');
+    assert.strictEqual(s._specUnconfirmed.retried, false, 'the retry budget is untouched — nothing was tried');
+
+    // Dialog answered, still no turn: the check that was re-armed now fires.
+    s.needsAttention = null;
+    fireConfirm(app, s);
+    const after = await settled(app, 'team-hand', /REPLAY/);
+    assert.match(after, /REPLAY/, 'once the dialog clears, a seat that still never woke is redelivered to');
+  } finally { app.stop(); }
+});
+
+test('t349: a closed ticket is never redelivered to a silent seat', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    const first = app.seen('team-hand');
+    // The seat closed the ticket through some other path and went quiet. There is
+    // no work left to hand back, and redelivering would re-open finished work.
+    const all = world.tickets();
+    all.find((t) => t.id === 't1').state = 'done';
+    world.tstore.save(world.team.root, all);
+    fireConfirm(app, s);
+    await new Promise((r) => setTimeout(r, 30));
+    assert.strictEqual(app.seen('team-hand'), first,
+      'a ticket that is no longer open must not be redelivered — the record, not the seat, is the authority '
+      + 'on whether there is still work');
+    assert.strictEqual(s._specUnconfirmed, null, 'and the latch is dropped rather than left to fire again');
+  } finally { app.stop(); }
 });
 
 after(() => { setImmediate(() => process.exit(0)); });

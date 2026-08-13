@@ -568,6 +568,14 @@ function createSessionManager(deps) {
   // the wall-clock defer can. Long enough to let the readline loop come up.
   // Injectable for tests (driven at 0); ~750ms in production.
   const BOOT_DRAIN_SETTLE_MS = Number.isFinite(deps.bootDrainSettleMs) ? deps.bootDrainSettleMs : 750;
+  // How long after a spec is written a seat has to START A TURN before the write
+  // is treated as lost. Not a stall threshold — it measures the FIRST turn only,
+  // and a seat that submitted anything at all has already cleared the latch, so
+  // this can never fire on a slow turn however long it runs.
+  // Injectable for tests, which drive it LONG and call the check directly — at 0
+  // the check races the delivery it is meant to judge and reads a latch the
+  // production ordering never produces. 90s in production.
+  const SPEC_CONFIRM_MS = Number.isFinite(deps.specConfirmMs) ? deps.specConfirmMs : 90 * 1000;
   const ROSTER_MAX_WAIT_MS = deps.rosterMaxWaitMs || 10000;
 
   // clodexHome is INJECTED, never left to the store's default: the board now
@@ -2728,6 +2736,7 @@ function createSessionManager(deps) {
       clearTimeout(s._replayFallbackTimer);
       clearTimeout(s._parkedDrainFallbackTimer);
       clearTimeout(s._rebootNoticeRetryTimer);
+      clearTimeout(s._specConfirmTimer);
       // Drops the pending debounce timer with it — a hint armed after the PTY
       // died would ride the next session under the same name. The offer
       // cooldown goes too: a retired seat's name is reused by its replacement,
@@ -2855,6 +2864,15 @@ function createSessionManager(deps) {
         if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       }
       if (s && state !== 'idle') s.lastMainStop = null;
+      // A turn started, so the last spec write reached a composer that submitted
+      // it. Unconditional on the state LABEL and outside the change-guard above:
+      // the latch asks only whether the seat has ever come alive since the write,
+      // and a repeat 'thinking' edge answers that as well as a first one.
+      if (s && state !== 'idle' && s._specUnconfirmed) {
+        s._specUnconfirmed = null;
+        clearTimeout(s._specConfirmTimer);
+        s._specConfirmTimer = null;
+      }
       if (state !== 'idle') this._touchTicketActivity(name);
       if (s && state !== 'idle' && s.needsAttention) this._setAttention(s, null);
       if (s && state === 'idle') { this._maybeFlushInjectQueue(s); this._drainPendingAtIdle(s); }
@@ -5177,7 +5195,99 @@ function createSessionManager(deps) {
       if (!r || r.error) return { undelivered: true };
       if (r.parked) return { parked: r.parked, reason: r.reason || null };
       if (r.held) return { held: true, reason: r.held };
+      this._armSpecConfirm(seat, ticket.id);
       return { queued: true };   // handed to the queue; the write comes later
+    }
+
+    // `queued` says the bytes were handed to the inject queue, not that the seat
+    // received them — see _gatedDeliver's own note on the word. The gap is real
+    // and silent: a write landing inside the CLI's boot re-render is either wiped
+    // (the seat's context is empty) or survives with its Enter eaten as content
+    // (a draft that never submits), and BOTH stamp the record delivered. Measured
+    // across 24 consecutive dispatches, the write goes out 1.02s after spawn in
+    // every case — healthy and lost alike — so no timing constant separates them
+    // and widening the boot margin cannot be the fix.
+    //
+    // What separates them is what happens NEXT. The injected unit ends with a
+    // '\r'; if it lands, the CLI submits and the turn drives activityState off
+    // 'idle'. So a seat that never leaves idle after a write did not consume the
+    // spec — this is not a proxy for the failure, it is the same event seen from
+    // the other side.
+    //
+    // Armed only on `queued`. A `parked` delivery is a file the seat drains on its
+    // own next turn, which is a different mechanism with its own durability.
+    _armSpecConfirm(seatName, ticketId) {
+      const s = this.sessions.get(seatName);
+      if (!s || !s.agentType || s._dead) return;
+      // An earlier unconfirmed spec is REPLACED, not stacked: the new write's
+      // leading Ctrl-U clears whatever the old one left in the composer, so the
+      // old latch describes a draft that no longer exists.
+      clearTimeout(s._specConfirmTimer);
+      s._specUnconfirmed = { ticketId, at: Date.now(), retried: false };
+      this._armSpecConfirmTimer(s);
+    }
+
+    _armSpecConfirmTimer(session) {
+      session._specConfirmTimer = setTimeout(() => {
+        session._specConfirmTimer = null;
+        this._checkSpecConfirm(session);
+      }, SPEC_CONFIRM_MS);
+    }
+
+    // Cleared by ANY non-idle activity (see _emitActivity): reaching a turn at all
+    // means the seat submitted, and submitting is exactly what a lost write
+    // prevents. The three shapes that must NOT alarm are silent for structural
+    // reasons rather than tuned ones:
+    //   - a seat thinking for minutes on its first turn went non-idle to think,
+    //     so the latch was gone seconds after the write;
+    //   - a seat that finished and is idle reached idle THROUGH thinking, which
+    //     cleared it — a terminal idle with the latch still set is unreachable;
+    //   - a seat blocked on a permission dialog re-arms below instead of firing,
+    //     so a dialog answered ten minutes later is still checked afterwards.
+    _checkSpecConfirm(session) {
+      const u = session._specUnconfirmed;
+      if (!u || session._dead) return;
+      // A dialog is the one wait that is legitimately unbounded and produces no
+      // activity. Re-arm rather than clear: the spec may still be unread behind it.
+      if (session.needsAttention && session.needsAttention.kind === 'permission') {
+        this._armSpecConfirmTimer(session);
+        return;
+      }
+      let team; try { team = resolveTeam(session.cwd); } catch { return; }
+      if (!team) return;
+      const ticket = ticketsStore.load(team.root).find((t) => t.id === u.ticketId);
+      // Closed or reassigned while we waited — nothing left to redeliver.
+      if (!ticket || ticket.state !== 'open') { session._specUnconfirmed = null; return; }
+
+      if (!u.retried) {
+        // Safe to redeliver precisely BECAUSE the latch is still set: the seat
+        // cannot have consumed the spec without submitting, and cannot submit
+        // without clearing this. So the retry cannot duplicate work that was
+        // taken — and where the first copy is sitting unsubmitted in the
+        // composer (the Enter-eaten case), the redelivery's leading Ctrl-U
+        // replaces that draft rather than concatenating with it.
+        u.retried = true;
+        log.warn('intent', `spec for ${u.ticketId} unconfirmed on ${session.name} after ${SPEC_CONFIRM_MS / 1000}s (no turn started) — redelivering once`);
+        this._broadcast('ipc-message', {
+          ts: Date.now(), from: 'clodex', to: session.name, kind: 'spec-unconfirmed',
+          body: `ticket ${u.ticketId} spec written but no turn started — redelivering`,
+        });
+        // Marked as a replay: the seat may be holding an unsubmitted copy, and it
+        // must not read the second one as a second ticket.
+        this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true, true);
+        // _deliverTicketSpec re-arms through _armSpecConfirm, which resets
+        // `retried` — so carry it forward, or the retry budget never runs out.
+        if (session._specUnconfirmed) session._specUnconfirmed.retried = true;
+        return;
+      }
+
+      // Two writes, no turn. Whatever is wrong is not a lost write, and a third
+      // copy would not fix it — hand it to the lead, who can look at the seat.
+      session._specUnconfirmed = null;
+      log.error('intent', `spec for ${u.ticketId} still unconfirmed on ${session.name} after a redelivery — escalating`);
+      this._escalateTicket(team, u.ticketId, 'spec-undelivered',
+        `${session.name} was written to twice and never started a turn (no activity for ${Math.round((Date.now() - u.at) / 1000)}s after dispatch)`,
+        'the spec was injected once at dispatch and redelivered once after the confirmation window');
     }
 
     _ticketDeliverySuffix(d, assignee) {
