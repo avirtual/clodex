@@ -28,13 +28,20 @@ const SCRIPT = path.join(__dirname, '..', 'scripts', 'test-digest.sh');
 // testing nothing.
 function lockHarness(dir, sleepSeconds) {
   const src = fs.readFileSync(SCRIPT, 'utf-8');
-  const start = src.indexOf('LOCK=".test-digest.lock"');
+  const start = src.indexOf('LOCK="$root/.test-digest.lock"');
   const end = src.indexOf('out=$(node --test');
   assert.ok(start > 0 && end > start,
     'the lock block was not found in test-digest.sh — this test is extracting it by anchor and '
     + 'those anchors have moved');
   const block = src.slice(start, end);
-  return `#!/bin/sh\ncd "${dir}" || exit 1\n${block}\nsleep ${sleepSeconds}\necho held >&2\nexit 0\n`;
+  // `root` and `measure` are set by the script ABOVE this block and the block
+  // reads both (the lock is rooted, the measurement cd's). Supplying them here
+  // is what keeps the extraction faithful to the SHIPPED text: without them the
+  // lock would resolve to `/.test-digest.lock` and the cd would fail, so the
+  // harness would exercise nothing. Both point at the fixture dir, i.e. the
+  // default no-parameter case.
+  return `#!/bin/sh\ncd "${dir}" || exit 1\nroot="${dir}"\nmeasure="${dir}"\n${block}\n`
+    + `sleep ${sleepSeconds}\necho held >&2\nexit 0\n`;
 }
 
 function mkHarness(sleepSeconds = 0) {
@@ -182,7 +189,12 @@ function withFakeLock(holderPid, check) {
 test('lock: npm test and the digest share ONE lock dir, or the mutex is not a mutex', () => {
   const shell = fs.readFileSync(SCRIPT, 'utf-8');
   const js = fs.readFileSync(RUNNER, 'utf-8');
-  assert.match(shell, /LOCK="\.test-digest\.lock"/, 'the shell path names the lock dir');
+  // `$root` is the script's OWN checkout, i.e. the team root, and the lock is
+  // pinned there absolutely even when a `tree` payload sends the measurement to
+  // a worktree. A lock relative to the measured tree would be a per-worktree
+  // mutex, which excludes nothing.
+  assert.match(shell, /LOCK="\$root\/\.test-digest\.lock"/,
+    'the shell path names the lock dir, rooted at its own checkout');
   assert.match(js, /'\.test-digest\.lock'/,
     'run-tests.js must use the SAME dir — a second lock name excludes nothing');
   assert.match(js, /process\.kill\(holder, 0\)/,
@@ -426,9 +438,9 @@ test("digest: the tree named is the script's own checkout, not the caller's cwd"
 test('digest: a digest path cannot be added without the tree marker', () => {
   // The three cases above pin today's three lines. This pins the PROPERTY, so a
   // fourth digest path added later cannot ship unmarked with the suite green.
-  // Scoped to below the runner invocation on purpose: the lock-refusal printf
-  // above it reports no measurement, and lockHarness() extracts that block
-  // standalone (`tree` is assigned above the anchor, so it would expand empty).
+  // Scoped to below the runner invocation on purpose: the two printfs above it
+  // (the lock refusal, the not-a-worktree refusal) both report that NOTHING was
+  // measured, so a tree marker on them would name a tree no suite ran in.
   const src = fs.readFileSync(SCRIPT, 'utf-8');
   const from = src.indexOf('out=$(node --test');
   assert.ok(from > 0,
@@ -441,4 +453,248 @@ test('digest: a digest path cannot be added without the tree marker', () => {
     assert.ok(/\[\$tree\]|\[%s\]/.test(line),
       `a digest line that does not name its tree: ${line.trim()}`);
   }
+});
+
+// ── the tree the digest was ASKED to measure ────────────────────────────────
+// The tree became a parameter because the `cd` above made it unaskable: every
+// seat's exec resolves ${TEAM_ROOT} to the shared checkout, so a worktree hand
+// self-verifying its branch measured master and got a real, current, green
+// number for code that was never run.
+//
+// The fixture has to be a REAL git repo with a REAL worktree, because the
+// authorization is `git worktree list` — a fake directory tree would let a test
+// pass against an allowlist that never ran.
+function mkRepo() {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t358-')));
+  const root = path.join(base, 'root');
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
+  const git = (...a) => execFileSync('git', ['-C', root, ...a], { stdio: 'ignore' });
+  execFileSync('git', ['init', '-q', '-b', 'main', root], { stdio: 'ignore' });
+  git('config', 'user.email', 't@t');
+  git('config', 'user.name', 't');
+  git('add', '-A');
+  git('commit', '-qm', 'x');
+  const wt = path.join(base, 'wt-branch');
+  git('worktree', 'add', '-q', '-b', 'feature', wt);
+  return { base, root, wt };
+}
+
+// A stub `node` standing in for the suite, as above. `holdSeconds` makes the
+// measurement itself take time, which is what the serialization test needs.
+function stubNode(dir, { tap, exit, holdSeconds = 0 }) {
+  fs.mkdirSync(path.join(dir, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'bin', 'node'),
+    `#!/bin/sh\nsleep ${holdSeconds}\ncat <<'CLX_TAP'\n${tap}\nCLX_TAP\nexit ${exit}\n`,
+    { mode: 0o755 });
+  return { ...process.env, PATH: `${path.join(dir, 'bin')}${path.delimiter}${process.env.PATH}` };
+}
+
+const GREEN_TAP = ['TAP version 13', 'ok 1 - a case', '1..1',
+  '# tests 3', '# pass 3', '# fail 0'].join('\n');
+
+function runWithPayload(root, payload, env, opts = {}) {
+  const res = spawnSync('/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')], {
+    encoding: 'utf-8', cwd: opts.cwd || root, timeout: 60000, env, input: payload,
+  });
+  const lines = (res.stderr || '').split('\n').filter((l) => l.trim() !== '');
+  return { lines, digest: lines[lines.length - 1], code: res.status };
+}
+
+test('tree: a `tree` payload measures THAT worktree, and the digest names it', () => {
+  const { base, root, wt } = mkRepo();
+  const env = stubNode(base, { tap: GREEN_TAP, exit: 0 });
+  try {
+    const r = runWithPayload(root, JSON.stringify({ tree: wt }), env);
+    assert.ok(r.lines.length > 0,
+      'ENTER: the script wrote nothing to stderr, so there is no digest to check');
+    // The WHOLE line: a substring check for the worktree basename would also
+    // match a spawn error naming the fixture path, i.e. pass in the case where
+    // nothing was measured at all.
+    assert.strictEqual(r.digest, `[${path.basename(wt)}] 3/3 green`,
+      'the digest must name the requested worktree — naming the root here is the original bug, '
+      + 'and it is indistinguishable from a real pass');
+    assert.strictEqual(r.code, 0);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('tree: no `tree` field still measures the team root, unchanged', () => {
+  // The lead's usage. A parameter that silently changed the default would break
+  // every existing caller while looking like it worked.
+  const { base, root } = mkRepo();
+  const env = stubNode(base, { tap: GREEN_TAP, exit: 0 });
+  try {
+    const r = runWithPayload(root, '{}', env);
+    assert.ok(r.lines.length > 0, 'ENTER: the script wrote nothing to stderr');
+    assert.strictEqual(r.digest, `[${path.basename(root)}] 3/3 green`);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('tree: a path that is not a worktree of this repo is REFUSED, never fallen back', () => {
+  // The whole point of the allowlist. A silent fallback to the root rebuilds
+  // this ticket's bug exactly: the caller asked about its branch and would read
+  // master's green as its own. So the refusal must be loud AND must not measure.
+  const { base, root } = mkRepo();
+  const outsider = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t358-OUTSIDER-'));
+  const env = stubNode(base, { tap: GREEN_TAP, exit: 0 });
+  try {
+    const r = runWithPayload(root, JSON.stringify({ tree: outsider }), env);
+    assert.ok(r.lines.length > 0, 'ENTER: the script wrote nothing to stderr');
+    assert.notStrictEqual(r.code, 0, 'a refused tree must fail, not return a green');
+    assert.match(r.digest, /refused, nothing measured: not a worktree of this repo/);
+    assert.ok(!/green/.test(r.digest),
+      'the refusal must not carry a suite result: a number here would be about the root, which is '
+      + 'the silent fallback this exists to prevent');
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+    fs.rmSync(outsider, { recursive: true, force: true });
+  }
+});
+
+test('tree: a nonexistent path is refused the same way, not resolved to the root', () => {
+  const { base, root } = mkRepo();
+  const env = stubNode(base, { tap: GREEN_TAP, exit: 0 });
+  try {
+    const r = runWithPayload(root, JSON.stringify({ tree: '/no/such/tree/anywhere' }), env);
+    assert.notStrictEqual(r.code, 0);
+    assert.match(r.digest, /refused, nothing measured/);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+// THE INVARIANT THE PARAMETER MUST NOT BREAK. The measured tree moved; the lock
+// must not have followed it. If it did, each worktree gets its own mutex, which
+// excludes nothing — two suites reach the port-binding tests together and
+// deadlock at 0% CPU, indistinguishable from a slow suite.
+test('tree: two runs naming DIFFERENT trees still serialize on the root lock', async () => {
+  const { base, root, wt } = mkRepo();
+  // The first run holds for 3s inside the suite, i.e. while holding the lock.
+  const env = stubNode(base, { tap: GREEN_TAP, exit: 0, holdSeconds: 3 });
+  const lock = path.join(root, '.test-digest.lock');
+  try {
+    const first = spawn('/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
+      { cwd: root, env, stdio: ['pipe', 'ignore', 'ignore'] });
+    first.stdin.end(JSON.stringify({ tree: wt }));   // measures the WORKTREE
+    await new Promise((r) => setTimeout(r, 800));
+    assert.ok(fs.existsSync(lock),
+      'ENTER: the worktree run must hold the ROOT checkout\'s lock — if this dir does not exist the '
+      + 'lock followed the measured tree, which is the failure under test');
+
+    const t0 = Date.now();
+    // The second measures the ROOT: a different tree, and it must still wait.
+    const second = runWithPayload(root, '{}', env);
+    const waited = Date.now() - t0;
+    assert.strictEqual(second.code, 0, 'the second run eventually succeeds');
+    assert.ok(waited > 1500,
+      `the second run returned after ${waited}ms — naming a different tree must NOT buy it a `
+      + 'separate mutex, or both suites reach the port-binding tests together and deadlock');
+    first.kill('SIGKILL');
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('tree: the lock is the ROOT\'s even when a worktree is measured', () => {
+  // Stated as a property of the shipped text as well as the behaviour above: the
+  // lock path must be anchored to $root, and absolutely — a relative path would
+  // resolve against the measured tree once the script cds, so the EXIT trap
+  // would delete nothing and leave the real lock held forever.
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  assert.match(src, /LOCK="\$root\/\.test-digest\.lock"/,
+    'the lock is pinned to the script\'s own checkout, not to the measured tree');
+  const lockAt = src.indexOf('LOCK="$root/.test-digest.lock"');
+  const cdAt = src.indexOf('cd "$measure"');
+  assert.ok(lockAt > 0 && cdAt > 0,
+    'ENTER: both the lock assignment and the measurement cd must be present, or the ordering '
+    + 'assertion below is comparing against something that is not there');
+  assert.ok(lockAt < cdAt,
+    'the lock must be ACQUIRED before the cd to the measured tree: acquiring afterwards would '
+    + 'resolve a relative reclaim against the worktree');
+});
+
+// ── the def that carries the parameter ──────────────────────────────────────
+// The SHIPPED def, not a copy (same discipline as clodex-monitor.test.js): a
+// copy is correct the day it is made and stale after, while the artifact that
+// actually gates live payloads drifts away.
+const EXEC_DEF_PATH = path.join(__dirname, '..', 'resources', 'library', 'exec', 'clodex-run-tests.json');
+
+test('def: these tests read the SHIPPED run-tests def, not a copy of it', () => {
+  const rel = path.relative(path.join(__dirname, '..'), EXEC_DEF_PATH);
+  assert.strictEqual(rel, path.join('resources', 'library', 'exec', 'clodex-run-tests.json'),
+    'the def under test IS the seeded artifact — no copy, under any name, can satisfy this');
+  // Path identity alone is satisfied by a path that does not exist, which is
+  // how this def lived for its whole life: live-only in the operator's library,
+  // with nothing in the repo to review or seed from. Existence is the half that
+  // catches that.
+  assert.ok(fs.existsSync(EXEC_DEF_PATH),
+    'the def must EXIST in the repo: a live-only def is unreviewable and unseedable, and a fresh '
+    + 'install would grant a command with no definition behind it');
+});
+
+test('def: the schema admits `tree` and still admits the empty payload', () => {
+  const { parseAndValidate, validateExecDef } = require('../exec-schema');
+  const def = JSON.parse(fs.readFileSync(EXEC_DEF_PATH, 'utf-8'));
+  assert.deepStrictEqual(validateExecDef(def, 'clodex-run-tests'), { ok: true },
+    'ENTER: a def the dispatcher would refuse makes every payload assertion below meaningless');
+  assert.strictEqual(parseAndValidate(def, '{}').ok, true,
+    'the lead calls this with {} and that must keep working');
+  assert.strictEqual(parseAndValidate(def, JSON.stringify({ tree: '/some/worktree' })).ok, true);
+  // additionalProperties:false is what turns a typo into a loud bounce instead
+  // of a silent measurement of the wrong tree — the bug this ticket is about.
+  assert.strictEqual(parseAndValidate(def, JSON.stringify({ treee: '/some/worktree' })).ok, false,
+    'a misspelled field must be REFUSED, not ignored into a root measurement');
+  assert.strictEqual(parseAndValidate(def, JSON.stringify({ tree: 7 })).ok, false);
+});
+
+test('def: the description states which tree the grant measures', () => {
+  // A hand reads this line in its prompt before deciding whether to trust the
+  // number. A grant that does not say what it measured is how a green about
+  // master got read as a green about a branch.
+  const def = JSON.parse(fs.readFileSync(EXEC_DEF_PATH, 'utf-8'));
+  assert.strictEqual(typeof def.description, 'string');
+  assert.match(def.description, /TEAM ROOT/,
+    'the default must be stated: with no `tree` this measures the root, not the caller\'s worktree');
+  assert.match(def.description, /tree/,
+    'and the parameter must be named, or the reader cannot act on the warning');
+});
+
+// PRESENCE vs VALUE. `{"tree":""}` is the shape a caller produces by templating
+// an unset variable (`{"tree":"$WT"}`), and it is the ticket's own bug wearing
+// the fix: the extraction regex matches an empty value, so keying the branch off
+// a non-empty VALUE falls through to the root and hands a caller who explicitly
+// asked about a worktree a green number about master.
+test('tree: an EMPTY `tree` is refused, not silently measured as the root', () => {
+  const { base, root } = mkRepo();
+  const env = stubNode(base, { tap: GREEN_TAP, exit: 0 });
+  try {
+    const r = runWithPayload(root, JSON.stringify({ tree: '' }), env);
+    assert.ok(r.lines.length > 0, 'ENTER: the script wrote nothing to stderr');
+    assert.notStrictEqual(r.code, 0,
+      'an empty tree must fail: exit 0 here is the silent fallback this ticket exists to kill');
+    assert.match(r.digest, /refused, nothing measured/,
+      'asking for a tree and getting a root measurement back is indistinguishable from a real pass');
+    assert.ok(!/green/.test(r.digest),
+      'and it must carry no suite number at all — a number here would be about the root');
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('tree: a whitespace-only `tree` is refused too', () => {
+  // Same class, and the one a shell templating `"$WT "` produces. cd " " fails,
+  // so it cannot reach the allowlist — but it must refuse, not fall back.
+  const { base, root } = mkRepo();
+  const env = stubNode(base, { tap: GREEN_TAP, exit: 0 });
+  try {
+    const r = runWithPayload(root, JSON.stringify({ tree: '   ' }), env);
+    assert.notStrictEqual(r.code, 0);
+    assert.match(r.digest, /refused, nothing measured/);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('def: the schema refuses an empty `tree` before the script ever runs', () => {
+  // Belt to the script's braces: the dispatcher bounces this loudly so the
+  // script is never spawned. It cannot be the ONLY guard, because until the app
+  // restarts the live def is the old one and only the script is in play.
+  const def = JSON.parse(fs.readFileSync(EXEC_DEF_PATH, 'utf-8'));
+  const { parseAndValidate } = require('../exec-schema');
+  const r = parseAndValidate(def, JSON.stringify({ tree: '' }));
+  assert.strictEqual(r.ok, false, 'an empty tree must not validate');
+  assert.match(r.error, /minLength/,
+    'and the bounce must name the reason, or the caller retries the same empty value');
 });

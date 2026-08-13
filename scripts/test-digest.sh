@@ -6,21 +6,87 @@
 # the whole digest lives on a single bounded line.
 #   pass: "[wb-wrap-ui] 811/811 green"
 #   fail: "[wb-wrap-ui] 798/811 green, 13 failing: name1; name2; …" (capped)
-# Dependency-free: sh + awk only. The TAP reporter is forced so the summary
-# grammar ("# pass N") doesn't shift with TTY detection across node versions.
+# Dependency-free: sh + awk + git only. The TAP reporter is forced so the
+# summary grammar ("# pass N") doesn't shift with TTY detection across node
+# versions.
+#
+# WHICH TREE. The optional `tree` payload field names the checkout to measure;
+# with no field this measures its own, which is the team root. The two are
+# separate from the LOCK, which is box-wide and always the root's — see the
+# lock block. Every digest line names the tree that actually ran.
 
 cd "$(dirname "$0")/.." || exit 1
+# The team root, fixed for the rest of this script. The lock lives here even
+# when the measurement runs elsewhere, and this is the checkout whose
+# `git worktree list` is the allowlist below.
+root=$PWD
 
-# The cd above means the tree measured is THIS script's checkout no matter who
-# calls it, so a caller in another worktree gets a real, current, green number
-# for code that was never run — that reads as a pass, not an error. Hence every
-# digest line names its tree, AHEAD of the failing names: the 180-char cap below
-# eats the tail first. Parameter expansion, not basename(1), to keep the
-# dependency-free promise in the header literal.
-tree=${PWD##*/}
+# The exec payload (stdin), drained in FULL so the dispatcher's write can't
+# EPIPE.
+payload=$(cat 2>/dev/null)
 
-# Drain the exec payload (stdin) so the dispatcher's write can't EPIPE.
-cat >/dev/null 2>/dev/null
+# One optional string field out of a flat JSON object, in awk, because giving
+# this script a JSON dependency would make the digest depend on the tree it is
+# measuring. This is not the security gate — the dispatcher has already checked
+# the payload against the def's schema, and `git worktree list` below is the
+# authorization. A value carrying a quote or a backslash escape cannot name a
+# real worktree and is refused there.
+#
+# PRESENCE AND VALUE ARE SEPARATE, and conflating them rebuilds this script's
+# own bug. `[^"]*` matches the empty string, so `{"tree":""}` — the shape a
+# caller gets from templating an unset variable, `{"tree":"$WT"}` — yields an
+# empty value. Keying the branch off a non-empty value alone then falls through
+# to the root and reports a green about master to a caller who explicitly asked
+# about a worktree. The field being THERE is what commits us to the refusal
+# path; whether it is usable is a separate question answered below.
+has_tree=$(printf '%s' "$payload" | tr '\n' ' ' | awk '{ print match($0, /"tree"[ \t]*:/) ? 1 : 0 }')
+want=$(printf '%s' "$payload" | tr '\n' ' ' | awk '{
+  if (!match($0, /"tree"[ \t]*:[ \t]*"[^"]*"/)) exit
+  s = substr($0, RSTART, RLENGTH)
+  sub(/^"tree"[ \t]*:[ \t]*"/, "", s)
+  sub(/"$/, "", s)
+  print s
+}')
+
+measure=$root
+if [ "$has_tree" = "1" ]; then
+  # `cd` + `pwd -P` is the dependency-free realpath, and it is load-bearing, not
+  # cosmetic: on macOS /tmp is a symlink to /private/tmp, so comparing the string
+  # git prints against the string the caller passed rejects genuine worktrees.
+  # Both sides go through it.
+  want_abs=
+  [ -n "$want" ] && want_abs=$(cd "$want" 2>/dev/null && pwd -P)
+  measure=
+  if [ -n "$want_abs" ]; then
+    # THE ALLOWLIST. A caller-supplied path becomes the cwd of a `node --test`
+    # sweep, which runs whatever *.test.js it finds there — so the path must be
+    # constrained to this repo's own checkouts, and `git worktree list` from the
+    # root enumerates exactly those. Membership in it IS the authorization.
+    #
+    # Fed by heredoc rather than a pipe on purpose: a piped `while` runs in a
+    # subshell, so the `measure=` assignment inside it would be discarded and
+    # every tree would be refused.
+    candidates=$(git -C "$root" worktree list --porcelain 2>/dev/null \
+      | awk '$1=="worktree" { sub(/^worktree /, ""); print }')
+    while IFS= read -r cand; do
+      [ -n "$cand" ] || continue
+      cand_abs=$(cd "$cand" 2>/dev/null && pwd -P)
+      if [ "$cand_abs" = "$want_abs" ]; then measure=$want_abs; break; fi
+    done <<CLX_WORKTREES
+$candidates
+CLX_WORKTREES
+  fi
+  if [ -z "$measure" ]; then
+    # LOUD, and never a fallback to the root. A silent fallback rebuilds the
+    # original bug exactly: the caller asked about its branch and would get a
+    # real, current, green number about master, which reads as its own pass.
+    #
+    # Cause BEFORE the path: `tree` may be 1000 chars and this line is capped at
+    # 180, so a long bad path would truncate away the reason for the refusal.
+    printf '%.180s\n' "[${root##*/}] refused, nothing measured: not a worktree of this repo — ${want:-(empty)}" 1>&2
+    exit 1
+  fi
+fi
 
 # ONE SUITE AT A TIME, ENFORCED RATHER THAN ASKED FOR. Parts of this suite bind
 # real ports and spawn real children (cli/test/attach.test.js), so two
@@ -39,7 +105,16 @@ cat >/dev/null 2>/dev/null
 # mkdir is the atomic test-and-set on every POSIX filesystem. A lock holding a
 # DEAD pid is stale (a killed runner never cleans up) and is reclaimed, or the
 # first crash would wedge every later run forever.
-LOCK=".test-digest.lock"
+#
+# PINNED TO THE ROOT, ABSOLUTELY, and that is the whole reason the tree is a
+# parameter rather than a `cd`. A lock relative to the MEASURED tree gives every
+# worktree its own mutex, which excludes nothing: two suites then reach the
+# port-binding tests together and deadlock at 0% CPU. Absolute, not relative,
+# because the measurement cd's away below and the EXIT trap would otherwise
+# delete a path resolved against the worktree — i.e. release nothing and leave
+# the real lock held forever. Same split as the ticket loop's
+# CLODEX_TEST_LOCK_DIR (session-manager.js), expressed in sh.
+LOCK="$root/.test-digest.lock"
 waited=0
 while ! mkdir "$LOCK" 2>/dev/null; do
   holder=$(cat "$LOCK/pid" 2>/dev/null)
@@ -74,6 +149,35 @@ echo $$ > "$LOCK/pid"
 # Covers the normal exit and the common signals; without this a Ctrl-C leaves a
 # lock whose pid IS alive for a moment and the next run waits on a ghost.
 trap 'rm -rf "$LOCK"' EXIT HUP INT TERM
+
+# ONLY NOW move to the measured tree: the lock above was taken at the root and
+# is held across this cd.
+cd "$measure" || exit 1
+
+# Recomputed AFTER the cd, so the digest names the tree that actually ran rather
+# than the tree that holds the lock — a marker naming the root while measuring a
+# worktree would be worse than none. Parameter expansion, not basename(1), to
+# keep the dependency-free promise in the header literal.
+tree=${PWD##*/}
+
+# A worktree has no node_modules and nothing creates one, so the ~7 files
+# requiring electron/node-pty/ws would fail MODULE_NOT_FOUND and the digest
+# would report a red suite for a defect in its own harness. A symlink to the
+# root's tree is what the ticket loop's gate already does for the same reason
+# (session-manager.js `_runTicketSuite`); it is gitignored, so it neither
+# dirties the worktree nor blocks its removal.
+#
+# THE HALF THIS DOES NOT COPY: that gate also refuses to run when the branch
+# changes package.json dependencies, because the suite then resolves out of the
+# ROOT's installed tree and goes green over a dependency set the branch does not
+# declare. This digest is deliberately OPTIMISTIC about dependencies — it is a
+# self-check an agent fires mid-work, not a merge gate. A branch that touches
+# deps gets a number that is real about the code and wrong about the deps; the
+# loop's gate is the thing that catches that, and nothing merges without it.
+if [ "$measure" != "$root" ] && [ ! -e "$measure/node_modules" ] \
+   && [ -d "$root/node_modules" ]; then
+  ln -s "$root/node_modules" "$measure/node_modules" 2>/dev/null
+fi
 
 out=$(node --test --test-reporter=tap 2>&1)
 code=$?
