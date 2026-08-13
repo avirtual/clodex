@@ -5050,12 +5050,24 @@ function createSessionManager(deps) {
     // deadlock exactly as two suites would. `.catch` inside the link, so one
     // rejected merge cannot break the chain for every merge after it.
     _queueAutoMerge(team, ticketId, landedOn, verdictText) {
+      // COUNTED, not probed: a promise cannot be asked whether it has settled,
+      // and the count is the only place the wait becomes visible. Because the
+      // chain is process-wide, a merge wedged on team A stalls team B for as
+      // long as a suite can take (the lock wait alone is 20 minutes) with
+      // nothing in the log where a lead debugging the silence would look.
+      this._mergePending = (this._mergePending || 0) + 1;
+      if (this._mergePending > 1) {
+        log.info('ticket', `auto-merge for ${ticketId} QUEUED behind ${this._mergePending - 1} merge(s) already in flight — one merge runs at a time process-wide, and each holds the chain through its whole post-merge suite`);
+      }
       this._mergeChain = Promise.resolve(this._mergeChain)
         .catch(() => {})
         .then(() => this._autoMergeTicket(team, ticketId, landedOn, verdictText))
         .catch((e) => {
           log.error('ticket', `auto-merge for ${ticketId} rejected: ${e && e.message ? e.message : String(e)}`);
-        });
+        })
+        // After the catch, so it runs on both arms: a counter that leaked on a
+        // rejected merge would report a phantom queue forever after.
+        .then(() => { this._mergePending -= 1; });
       return this._mergeChain;
     }
 
@@ -5218,8 +5230,14 @@ function createSessionManager(deps) {
         // this ticket creates; this covers the lead's.
         const holder = this._suiteLockHolder(team);
         if (holder) {
+          // The recovery is spelled out because there is NO retry: _queueAutoMerge
+          // is reachable only from an ACCEPT landing, so a refused merge is
+          // refused for good — nothing re-drives it, and "try again later" would
+          // describe a mechanism that does not exist. Same defect class as
+          // claiming a wedged checkout: a false promise in the one message whose
+          // whole job is to be trusted.
           fail('suite-in-flight', `a test suite is already running in the root checkout ${team.root} (pid ${holder}) — merging now would rewrite the files under it`,
-            'nothing was merged; re-run the accept once that suite finishes, or `git merge` the branch by hand');
+            `nothing was merged, and the loop will NOT retry — no path re-drives a merge once its verdict has landed. To land it by hand: \`git -C ${team.root} merge --no-ff ${branch}\`, then run the suite in ${team.root}. Otherwise re-review the ticket.`);
           return;
         }
 
@@ -5289,6 +5307,27 @@ function createSessionManager(deps) {
           const why = suite.ran
             ? `the suite FAILS on ${MERGE_TARGET_BRANCH} after the merge — ${suite.summary}\nFAILING: ${suite.failing || '(the runner reported no test names)'}`
             : `the suite could not be RUN on ${MERGE_TARGET_BRANCH} after the merge: ${suite.error}`;
+
+          // The revert is a write to the shared root checkout exactly as the
+          // merge is, so it needs the same gate — and it needs it MORE, because
+          // the path that reaches it is the one a live suite creates: our own run
+          // waits TICKET_SUITE_LOCK_WAIT_MS for a lock the lead's exec grant is
+          // holding, the runner dies, `ran` is false, and reverting here would
+          // rewrite the tree under that still-running child.
+          //
+          // The asymmetry is the point. Today a red suite and a suite we were
+          // never allowed to run arrive here as the same value, and reverting
+          // treats them the same — the most destructive action available, taken
+          // on no evidence. An unverified merge on master is undone by one
+          // command the lead can run whenever they like; a torn write into a
+          // running suite costs a debugging session and reports a failure that
+          // was never in the code.
+          const blocker = this._suiteLockHolder(team);
+          if (blocker) {
+            fail('revert-blocked', `${why}\n\nThe merge ${merged.sha} IS on ${MERGE_TARGET_BRANCH} and was NOT verified, and it was left there deliberately: a test suite is running in ${team.root} (pid ${blocker}), so reverting now would rewrite the files under it.`,
+              `merged ${branch} as ${merged.sha} and did NOT revert. Undo it yourself once that suite finishes: \`git -C ${team.root} revert -m 1 ${merged.sha}\``);
+            return;
+          }
           const rev = await gitWorktree.revertCommit(team.root, merged.sha)
             .catch((e) => ({ ok: false, error: e.message }));
           fail('suite', why, rev.ok

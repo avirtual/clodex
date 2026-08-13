@@ -137,6 +137,7 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
   const gated = [];
   const tags = [];
   const broadcasts = [];
+  const logs = [];
   const deps = {
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
@@ -170,7 +171,12 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
     MSG_MAX_AGE: 1800,
     termAvailableFor: require('../drawer-avail').termAvailableFor,
     REGISTRY_DIR: home,
-    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+    log: {
+      info: (tag, msg) => logs.push({ level: 'info', tag, msg }),
+      warn: (tag, msg) => logs.push({ level: 'warn', tag, msg }),
+      error: (tag, msg) => logs.push({ level: 'error', tag, msg }),
+      debug: () => {},
+    },
     resolveTeam: (cwd) => (cwd && cwd.startsWith(repo.dir) ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(repo.dir) ? repo.dir : null),
   };
@@ -215,7 +221,7 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
   tstore.save(team.root, [ticket]);
 
   return {
-    m, team, home, tstore, persistence, injected, gated, tags, broadcasts, created, seat,
+    m, team, home, tstore, persistence, injected, gated, tags, broadcasts, created, seat, logs,
     one: (id = 't1') => tstore.load(team.root).find((t) => t.id === id),
     esc: () => gated.filter((g) => /ESCALATED/.test(g.body)),
     landed: () => gated.filter((g) => /MERGED/.test(g.body)),
@@ -558,6 +564,11 @@ test('a suite that goes RED after the merge reverts the merge and escalates', as
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const f = mkMerge({ repo, suite: 'red' });
   const before = f.masterHead();
+  // The twin of the revert-blocked subject above: with NO suite holding the root
+  // lock the revert must still happen, or the gate added there would have turned
+  // every red merge into an unverified one left on master.
+  assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, '.test-digest.lock')),
+    'ENTER: nothing holds the root suite lock, so the revert is not gated off');
 
   await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
 
@@ -596,6 +607,52 @@ test('a suite that could not RUN reverts the merge too, rather than leaving mast
   assert.match(esc[0].body, /could not be RUN/, 'the escalation distinguishes "did not run" from "failed"');
   assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'work.txt')),
     'the unverified merge was undone');
+});
+
+test('a live suite in the root checkout stops the REVERT too, and master keeps the merge', async () => {
+  // The merge arm's gate on the revert arm, and the path that reaches it is the
+  // one a live suite creates: our post-merge run waits out
+  // TICKET_SUITE_LOCK_WAIT_MS for a lock the lead's exec grant holds, the runner
+  // dies, `ran` is false — and reverting there rewrites the tree under that
+  // still-running child. Today "the suite failed" and "I was never allowed to
+  // run it" arrive as the same value.
+  //
+  // The lock is planted BY THE STUB RUNNER, mid-run: planting it up front would
+  // trip the step 3b gate and never merge at all, so the subject would measure
+  // suite-in-flight and this arm would go untested.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, suite: 'crash' });
+  const lock = pathReal.join(repo.dir, '.test-digest.lock');
+  const real = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (team, ticket, runIn) => {
+    const r = await real(team, ticket, runIn);
+    // OUR OWN pid: alive by construction, and the probe harms no process.
+    fsReal.mkdirSync(lock, { recursive: true });
+    fsReal.writeFileSync(pathReal.join(lock, 'pid'), String(process.pid));
+    return r;
+  };
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation');
+  assert.match(esc[0].body, /merge: revert-blocked/, 'named as its own step, not reported as a revert that happened');
+  // THE assertion: the merge is STILL THERE. An unverified merge the lead can
+  // undo with one command is strictly the lesser harm against a torn write into
+  // a running suite.
+  assert.match(f.masterLog(), /Merge t1:/, 'the merge is still on master');
+  assert.ok(!/Revert/.test(f.masterLog()), 'and nothing reverted it');
+  assert.strictEqual(fsReal.readFileSync(pathReal.join(repo.dir, 'work.txt'), 'utf8'), 'the work\n',
+    'the branch content is still in the working tree — nothing was rewritten under the running suite');
+
+  // What the lead needs to act: the sha, the pid, and the literal command.
+  const sha = git(repo.dir, ['rev-parse', 'master']);
+  assert.ok(esc[0].body.includes(sha), 'the escalation names the merge sha');
+  assert.match(esc[0].body, new RegExp(String(process.pid)), 'and the pid holding the lock');
+  assert.ok(esc[0].body.includes(`git -C ${repo.dir} revert -m 1 ${sha}`),
+    'and the exact undo command, mainline included');
+  assert.deepStrictEqual(f.landed(), [], 'an unverified merge is never announced as landed');
 });
 
 test('the post-merge suite runs in the ROOT checkout, on the merged master', async () => {
@@ -751,6 +808,42 @@ test('two ACCEPTs arriving as review-done are serialized too, not merely when qu
   assert.deepStrictEqual(f.esc(), [], 'neither escalated');
 });
 
+test('a merge that has to wait for the chain says so in the log', async () => {
+  // The chain is process-wide, so a merge wedged on one team stalls every other
+  // team's merge for as long as a suite can take — the lock wait alone is 20
+  // minutes. Without this line the lead debugging that silence finds nothing at
+  // the only place they would look.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'a.txt', 'work a\n');
+  git(repo.dir, ['branch', 'tl-2']);
+  commitOnBranch(repo.dir, 'tl-2', 'b.txt', 'work b\n');
+  const f = mkMerge({ repo });
+  const t1 = f.one('t1');
+  f.tstore.save(f.team.root, [t1, {
+    ...t1, id: 't2', taskDir: 'tasks/merge-fixture-2',
+    spec: 'the second ticket — tasks/merge-fixture-2',
+    worktree: { path: pathReal.join(repo.dir, 'wt2'), branch: 'tl-2', baseSha: repo.baseSha },
+  }]);
+
+  const p1 = f.m._queueAutoMerge(f.team, 't1', LANDED, ACCEPT);
+  // Read BEFORE awaiting: the line is written at queue time, which is the only
+  // moment the wait is knowable — a promise cannot be asked whether it settled.
+  const queued = f.logs.filter((l) => /QUEUED/.test(l.msg));
+  const p2 = f.m._queueAutoMerge(f.team, 't2', LANDED, ACCEPT);
+  const queuedAfter = f.logs.filter((l) => /QUEUED/.test(l.msg));
+
+  assert.deepStrictEqual(queued, [], 'ENTER: the FIRST merge waits for nothing and must not claim to');
+  assert.strictEqual(queuedAfter.length, 1, 'the second one logs that it is waiting');
+  assert.match(queuedAfter[0].msg, /t2/, 'and names the ticket that is stuck');
+  assert.match(queuedAfter[0].msg, /1 merge/, 'and how many are ahead of it');
+
+  await Promise.all([p1, p2]);
+  assert.deepStrictEqual(f.esc(), [], 'both merges still landed');
+  // The counter must come back to zero on the way out, or every later merge
+  // reports a phantom queue for the life of the process.
+  assert.strictEqual(f.m._mergePending, 0, 'the in-flight count is not leaked');
+});
+
 test('a merge refuses to start while a LIVE pid holds the root suite lock', async () => {
   // The lead's exec grant runs `clodex-run-tests` in the root checkout and holds
   // this lock for minutes. A merge landing mid-run rewrites the files under the
@@ -772,6 +865,18 @@ test('a merge refuses to start while a LIVE pid holds the root suite lock', asyn
   assert.match(esc[0].body, new RegExp(String(process.pid)), 'and it names the pid holding the lock');
   assert.strictEqual(f.masterHead(), before, 'nothing was merged');
   assert.deepStrictEqual(f.landed(), [], 'and no merge was announced');
+
+  // The RECOVERY, and it is the assertion that matters most here: nothing
+  // re-drives a merge once its verdict has landed, so an escalation saying "try
+  // again later" would describe a mechanism that does not exist and leave the
+  // ticket stranded while the lead waits for a retry that never comes.
+  assert.match(esc[0].body, /will NOT retry/, 'the lead is told plainly that no retry is coming');
+  assert.ok(!/re-run the accept/.test(esc[0].body),
+    'and is NOT pointed at a recovery the loop cannot perform');
+  // includes, not match: the root is a real tmpdir path and regex-escaping it
+  // just to assert a literal is a way to get the assertion itself wrong.
+  assert.ok(esc[0].body.includes(`git -C ${repo.dir} merge --no-ff tl-1`),
+    'the exact hand-merge command is spelled out, root and branch included');
 });
 
 test('a liveness probe that throws stops the merge instead of being read as "nobody"', async () => {
