@@ -953,6 +953,18 @@ test('matchSeatRole: a numeric suffix strips with or without a separator, and an
   assert.strictEqual(matchSeatRole(team, 'shop-hand-wire'), null);
   assert.strictEqual(matchSeatRole(team, 'shop-2'), null);          // digits only: no key left
 
+  // `-rN` is the one LETTERED tail that strips, and only ahead of the numeric
+  // one: a ticket's reviewer is `<team>-reviewer-<ticket>-r<round>`, so both
+  // tails must go or the key keeps the ticket number and resolves to nothing.
+  // A role-less reviewer drops off the roster, loses its role prompt and slips
+  // past the fail-CLOSED _roleInUse guard.
+  assert.strictEqual(matchSeatRole(team, 'shop-reviewer-337-r1'), 'reviewer');
+  assert.strictEqual(matchSeatRole(team, 'shop-reviewer-337-r12'), 'reviewer');
+  assert.strictEqual(matchSeatRole(team, 'shop-hand-337-r2'), 'hand');
+  // Still only DIGITS after the `r`, and still not a general escape.
+  assert.strictEqual(matchSeatRole(team, 'shop-reviewer-337-rx'), null);
+  assert.strictEqual(matchSeatRole(team, 'shop-r1'), null);         // the round alone is no key
+
   // A role may legitimately end in a digit. Stripping first would resolve its
   // own seat to a DIFFERENT role, which is worse than not resolving at all.
   const digitRole = teamFixture();

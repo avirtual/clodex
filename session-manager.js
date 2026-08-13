@@ -4572,9 +4572,56 @@ function createSessionManager(deps) {
         return;
       }
 
+      // A ticket's reviewer is named for the TICKET AND THE ROUND
+      // (`<team>-reviewer-<n>-r<round>`), not for a seat counter. Two properties
+      // depend on it: a watchdog can address the seat by a name that means one
+      // review, and a reminder aimed at a finished review cannot reach whoever
+      // claimed `-reviewer-1` next.
+      //
+      // The round is read off the TICKET — the same durable counter
+      // _writeTicketDiff adds one to and _landVerdictOnTicket stamps — and NOT
+      // off the mint index below. kill() removes the seat's record when a
+      // reviewer retires, so the index restarts at 1 for round 2; anything
+      // derived from it renumbers round 2 as round 1. Measured on t332: REWORK
+      // then ACCEPT, both billed to review-r1.
+      //
+      // A taken scoped name falls back to the counter rather than refusing: the
+      // loop has no way to act on a refusal here, and a second reviewer for a
+      // round whose verdict has not landed is an anomaly worth spawning through
+      // rather than a reason to strand the ticket.
+      //
+      // The name is unique per (ticket, ROUND), not per review. A verdict that
+      // fails to parse leaves _landVerdictOnTicket's counter unbumped while
+      // kill() still reaps the record, so a re-review of that ticket mints the
+      // same name and the same cost label a second time. Narrower than the
+      // collapse above — two reviews of ONE round, not two rounds merged — and
+      // bumping at spawn would trade it for a round number that counts spawns
+      // rather than verdicts, which is the number the loop's rework ladder reads.
+      const roundTicket = reviewTicket ? this._loadTicket(team, reviewTicket) : null;
+      // _loadTicket returns null for a missing ticket AND for an unreadable
+      // board. Silent, that degrades a ticket review to the counter name and to
+      // `reviewRound = n - 1` — the exact t332 round collapse this mint exists to
+      // prevent, reintroduced with no signal. Logged so it is auditable.
+      if (reviewTicket && !roundTicket) {
+        log.warn('intent', `team-review for ticket ${reviewTicket}: ticket not readable from the board — falling back to the counter name and a seat-index round (rounds may collapse in the cost rollup)`);
+      }
+      const ticketRound = roundTicket ? (Number(roundTicket.reviewRound) || 0) + 1 : 0;
+      // The ticket number is required to be digits rather than name-checked: it
+      // is the only part of this name not already in the counter name below, so
+      // a team name that would spell an illegal seat spells one either way. The
+      // sibling mint _mintTicketSeat DOES check AGENT_NAME_RE and returns a
+      // structured refusal — it has a caller that can act on one; this path
+      // falls back to the counter name instead, so the asymmetry is deliberate.
+      const ticketNum = /^t?(\d+)$/.exec(String(reviewTicket || ''));
+      let name = null;
+      if (ticketRound > 0 && ticketNum) {
+        const scoped = `${team.name}-reviewer-${ticketNum[1]}-r${ticketRound}`;
+        if (!this.sessions.has(scoped) && !getPersistence().get(scoped)) name = scoped;
+      }
       let n = 1;
-      let name;
-      do { name = `${team.name}-reviewer-${n++}`; } while (this.sessions.has(name) || getPersistence().get(name));
+      if (!name) {
+        do { name = `${team.name}-reviewer-${n++}`; } while (this.sessions.has(name) || getPersistence().get(name));
+      }
 
       // MUST-FIX 1 (name-mint TOCTOU): a second [agent:team-review] in the SAME lead
       // turn runs its taken-name loop synchronously, BEFORE either deferred create()
@@ -4587,13 +4634,17 @@ function createSessionManager(deps) {
       // `wireLabel` rides the SAME synchronous stub as the name reservation, and
       // that is the ordering that makes it work: create() reads it back off the
       // record to mint the proxy agent id, so a label written after the deferred
-      // create() would label nothing. The round is the reviewer seat's own index
-      // (n was post-incremented by the loop above), which is what keeps round 2's
-      // spend off round 1's label — the §4 cache-ordering claim is only testable
-      // if the rounds are separable.
-      const reviewRound = n - 1;
+      // create() would label nothing. The round comes from the ticket when there
+      // is one, so round 2's spend stays off round 1's label; the seat index is
+      // only a fallback for an ad-hoc review, which has no ticket to count on.
+      const reviewRound = ticketRound > 0 ? ticketRound : n - 1;
+      // The id comes from `reviewTicket` when there is one — the caller's explicit
+      // claim — and only falls back to the scope prose for an ad-hoc review, which
+      // has no claim to read. Scraping prose we already hold the answer to makes
+      // the label depend on the scope builder's wording: a scope that stopped
+      // spelling the id would silently bill every ticket's review to `<team>.review-rN`.
       const reviewLabel = teamCost.reviewWireLabelFor({
-        team: team.name, ticketId: teamCost.ticketIdFromScope(scope), round: reviewRound,
+        team: team.name, ticketId: reviewTicket || teamCost.ticketIdFromScope(scope), round: reviewRound,
       });
       getPersistence().upsert({
         name, ephemeral: true, reviewFor: session.name,
