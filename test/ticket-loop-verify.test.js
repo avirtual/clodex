@@ -1192,7 +1192,9 @@ test('a TOTALS decoy on STDERR does not beat the real summary on stdout', async 
 // body reports PASS while asserting nothing, and one refactor later that is
 // permanent invisible coverage loss.
 let electronPath = null;
-try { electronPath = require(pathReal.join(__dirname, '..', 'node_modules', 'electron')); } catch {}
+// Only a missing install may be swallowed: a corrupted or half-installed
+// electron would otherwise skip under a reason that is not true.
+try { electronPath = require(pathReal.join(__dirname, '..', 'node_modules', 'electron')); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
 
 test("this host's Electron really runs as node when the variable is set", {
   skip: electronPath ? false : 'node_modules/electron is not installed in this checkout',

@@ -6549,9 +6549,9 @@ function createSessionManager(deps) {
           // Detach the drains. A group kill that misses something leaves a
           // writer on these pipes, and every byte it sends would keep appending
           // to strings this closure holds long after the result was resolved.
-          // resume() is not tidiness: removing the last 'data' listener PAUSES
-          // the stream, so a surviving writer fills the pipe and then blocks
-          // forever — holding the root lock this whole path exists to release.
+          // resume() keeps the stream in flowing-discard mode once the last
+          // consumer is gone, so a writer that survived the group kill cannot
+          // back up on the pipe and block holding the root lock.
           try { child.stdout.removeAllListeners('data'); child.stdout.resume(); } catch {}
           try { child.stderr.removeAllListeners('data'); child.stderr.resume(); } catch {}
           resolve(v);
