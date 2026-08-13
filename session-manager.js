@@ -2866,10 +2866,7 @@ function createSessionManager(deps) {
         if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       }
       if (s && state !== 'idle') s.lastMainStop = null;
-      // A turn started, so the last spec write reached a composer that submitted
-      // it. Unconditional on the state LABEL and outside the change-guard above:
-      // the latch asks only whether the seat has ever come alive since the write,
-      // and a repeat 'thinking' edge answers that as well as a first one.
+      // A turn started, so the last spec write reached a composer that submitted it.
       if (s && state !== 'idle' && s._specUnconfirmed) {
         s._specUnconfirmed = null;
         clearTimeout(s._specConfirmTimer);
@@ -5237,7 +5234,10 @@ function createSessionManager(deps) {
     // queued at the window would get a redelivery enqueued BEHIND it — the first
     // write then lands, starts a turn, clears the latch, and the second copy writes
     // anyway, because nothing cancels a queued unit.
-    _armSpecConfirm(seatName, ticketId, disposition = 'injected') {
+    // `disposition` is REQUIRED and has no default: the unsafe value is `injected`,
+    // so a caller that forgets to pass one would arm a 90s latch over text it never
+    // wrote. Defaulting is what made the hold-park's argument-less onWrite silent.
+    _armSpecConfirm(seatName, ticketId, disposition) {
       const s = this.sessions.get(seatName);
       if (!s || !s.agentType || s._dead) return;
       if (disposition !== 'injected') {
@@ -5250,6 +5250,15 @@ function createSessionManager(deps) {
         }
         return;
       }
+      // The park decision was taken back at _deliverMessage time, but the boot-ready
+      // (20s) and quiet (INJECT_QUIET_MAXWAIT, 5min) gates sit AHEAD of the write, so
+      // a seat that went busy while the unit waited gets it into a live turn. This
+      // runs inside `produce` — that is the whole reason the arm moved here — so the
+      // state read is the one at write time. The divert only rescues a seat with an
+      // open draft; one that already submitted has none, is `thinking`, and emits no
+      // fresh edge, so the latch would run its full window over a delivered spec.
+      // A seat already working is by definition not the wedged shape this catches.
+      if (s.activityState !== 'idle') return;
       // An earlier unconfirmed spec is REPLACED, not stacked: the new write's
       // leading Ctrl-U clears whatever the old one left in the composer, so the
       // old latch describes a draft that no longer exists.
@@ -5311,7 +5320,15 @@ function createSessionManager(deps) {
       // latch — nothing clears this one. Without this, _deliverTicketSpec re-resolves
       // to the new holder and injects a REPLAY into a seat mid-work on it, and the
       // second window escalates naming the wrong seat.
-      if (holder && holder !== session.name) { session._specUnconfirmed = null; return; }
+      if (holder && holder !== session.name) {
+        // Logged because this branch collapses two different things: an operator
+        // reassignment, and the role resolver simply picking a different sibling for
+        // the same role. Both drop the latch correctly, but only the second means a
+        // silent seat went unwatched, and nothing else would leave a trace of it.
+        log.info('intent', `spec latch for ${u.ticketId} dropped at ${session.name}: the ticket now resolves to ${holder}`);
+        session._specUnconfirmed = null;
+        return;
+      }
       // Resolves to NOBODY — the assignee died inside the window and nothing took
       // its role. Dropping this quietly alongside the reassignment case would be
       // this ticket's own premise failing inside its own fix: an open ticket whose
@@ -8276,7 +8293,10 @@ function createSessionManager(deps) {
           : null;
         // A park IS durable, so it fires onWrite; a bare `held` reached nobody and
         // must not — that asymmetry is the same one the nudge/replay stamps encode.
-        if (parkId && typeof onWrite === 'function') { try { onWrite(); } catch {} }
+        // It reports `parked` explicitly: this text is a FILE, drained by the
+        // out-of-process hook mid-loop, so a caller confirming a write must not
+        // treat it as one. An argument-less call here reads as `injected`.
+        if (parkId && typeof onWrite === 'function') { try { onWrite('parked'); } catch {} }
         return parkId
           ? { parked: parkId, reason: verdict.reason, noUrgent: verdict.noUrgent }
           : { held: verdict.reason, noUrgent: verdict.noUrgent };

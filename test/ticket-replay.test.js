@@ -136,6 +136,9 @@ function boot(world, opts = {}) {
     unionEnabled: require('../scope-util').unionEnabled,
     intentEnabled: require('../intent-catalog').intentEnabled,
     parkDelivery: require('../pending-store').parkDelivery,
+    // REAL, like parkDelivery beside it: the hold-park mints its id through this,
+    // so a stub returning a constant would collide every park after the first.
+    parkIdInUse: require('../pending-store').parkIdInUse,
     drainPending: () => [], countPending: () => 0, peekPending: () => [],
     hasActivePending: () => false,
     isDraftOpen: require('../proxy-util').isDraftOpen,
@@ -1129,3 +1132,75 @@ test('t349: a stranded ticket that resolves to no live seat escalates instead of
 });
 
 after(() => { setImmediate(() => process.exit(0)); });
+
+// The OTHER park, and the one the round-1 fix missed. A dialog-blocked seat is the
+// single hold `urgent` cannot override (shouldHoldDm returns noUrgent for
+// attention==='permission'), so a dispatch to one lands in _parkHeldDelivery rather
+// than in the inject queue. The seat is IDLE here — this is not the busy-park shape
+// one test up, it is a live composer that simply cannot be written to yet.
+test('t349: a spec HELD-PARKED behind a permission dialog does not arm the latch', async () => {
+  const world = mkWorld();
+  const app = boot(world, { deps: { specConfirmMs: 60_000 } });
+  try {
+    const lead = await app.spawn('lead');
+    const s = await app.spawn('team-hand');
+    await replayPassed(app, 'team-hand');
+    // BEFORE the dispatch, which is the whole gap: arming via a normal injected
+    // delivery and only then raising the dialog exercises the injected path with a
+    // dialog attached, never the hold-park.
+    s.needsAttention = { kind: 'permission', ts: Date.now(), message: 'allow?' };
+    const before = app.seen('team-hand');
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+    await new Promise((r) => setTimeout(r, 60));
+
+    assert.strictEqual(app.seen('team-hand'), before,
+      'ENTER: the spec must have been HELD-PARKED rather than written — if it reached the PTY this fixture '
+      + 'never entered _parkHeldDelivery and every assertion below is about a path it did not take');
+    assert.ok(!s._specUnconfirmed,
+      'a held-parked spec must NOT arm the latch: it is a file the hook drains mid-loop, and the operator '
+      + 'answering the dialog clears needsAttention synchronously while the seat never leaves "thinking" — so '
+      + 'no activity edge is ever emitted for it and the latch could never be cleared by consumption');
+
+    // The exact interleaving that redelivered before the fix: dialog answered inside
+    // the window, seat consumed the parked spec, no edge, and the check then finds no
+    // dialog to defer behind, an open ticket, and this seat still holding it.
+    s.needsAttention = null;
+    const armed = app.seen('team-hand');
+    app.m._checkSpecConfirm(s);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(app.seen('team-hand'), armed,
+      'and nothing is redelivered once the dialog clears — a full REPLAY here would land in a seat that '
+      + 'already has the spec and is working on it, which is worse than the loss this ticket closes');
+  } finally { app.stop(); }
+});
+
+// The gates sit AHEAD of the write, so the disposition alone is not enough: a seat
+// that was idle when the park decision was taken can be mid-turn by the time the
+// bytes land. The divert catches only a seat with an OPEN draft; one that submitted
+// has none.
+test('t349: a seat that went busy while the unit waited in the gates does not arm the latch', async () => {
+  const world = mkWorld();
+  const app = boot(world, { deps: { specConfirmMs: 60_000 } });
+  try {
+    const lead = await app.spawn('lead');
+    const s = await app.spawn('team-hand');
+    await replayPassed(app, 'team-hand');
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+    // Busy at WRITE time, idle at park-decision time. _armSpecConfirm runs inside
+    // `produce`, so it reads the state here, not the one the disposition was chosen
+    // under. Set between dispatch and the queue's release.
+    const t = setTimeout(() => { s.activityState = 'thinking'; }, 0);
+    app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+    s.activityState = 'thinking';
+    clearTimeout(t);
+    const got = await settled(app, 'team-hand');
+    assert.match(got, /BUILD THE WIDGET/,
+      'ENTER: the spec must have been WRITTEN — this test is about a write into a busy seat, so a park here '
+      + 'would make the latch assertion below true for the unrelated reason the test above already covers');
+    assert.ok(!s._specUnconfirmed,
+      'a write into a seat that is already thinking must not arm: it emits no fresh activity edge (_set '
+      + 'dedupes on unchanged state), so the latch would run its full window over a spec that landed fine '
+      + 'and then redeliver into a working seat');
+  } finally { app.stop(); }
+});
