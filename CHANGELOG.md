@@ -33,6 +33,13 @@ blocks a release.
   it — bought itself another full window of silence before the watchdog spoke
   up. It is also no longer told that "no live seat holds" a ticket the lead is
   in fact holding itself.
+- Two tests that failed at random under load now pass reliably, and for the
+  right reason. Both were waiting out a fixed stretch of wall clock and then
+  asserting on work that a busy machine had not started yet — so the suite went
+  red on a healthy build often enough to make a green run stop meaning much.
+  They now wait for the work itself: the hint test for the ranking pass to run,
+  and the terminal-attach tests for the session token to arrive before typing
+  into it. Waiting longer would not have fixed either one.
 - A ticket whose review comes back ACCEPT is now merged for you. The team lead
   used to be the one running `git merge` after every verdict; the loop now does
   it, runs the full suite on the result, and reverts the merge if that suite
