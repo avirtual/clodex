@@ -1747,8 +1747,10 @@ test('t362: an UNDELIVERED rejection tells the lead once, as an escalation, not 
 });
 
 test('t362: a notice that THROWS cannot unwind the rejection', () => {
-  // Ordering is the invariant: the notice runs after the save, wrapped, so the
-  // worst case is a landed rejection the lead has to poll for — never a lost one.
+  // The WRAP only — a throwing notice leaves a landed rejection the lead has to
+  // poll for, never a lost one. The ordering that wrap depends on is a separate
+  // claim and is measured by the subject below, which this one cannot see: a
+  // notice hoisted above the save is still wrapped and still passes here.
   const repo = mkRepo();
   const f = mkLoop({ repo });
   f.m._gatedDeliver = (target) => {
@@ -1763,6 +1765,43 @@ test('t362: a notice that THROWS cannot unwind the rejection', () => {
   const t = f.one();
   assert.strictEqual(t.state, 'open', 'ENTER: the reopen is durable despite the throw');
   assert.strictEqual(t.reworkRound, 1, 'and the marker survived with it');
+});
+
+test('t362: a FAILED save notifies no one — the notice is downstream of the write', () => {
+  // The ordering _notifyLeadOfLoopRejection's header calls the invariant, stated
+  // as the thing hoisting it would break: a lead told "sent back for rework" about
+  // a rejection that never reached disk is worse than silence, because the ticket
+  // is still `done` and the lead now believes otherwise.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify' }]);
+
+  // Broken between the load and the save, which is exactly where the seat lookup
+  // runs. The store writes through fs-util's REAL fs, so the fixture's injected
+  // fs cannot reach it; replacing the board directory with a regular FILE fails
+  // the mkdir deterministically, where a chmod would not (root defeats it).
+  const board = pathReal.dirname(f.tstore.ticketsPath(f.team.root));
+  const inner = f.m._ticketAssigneeSeat.bind(f.m);
+  let broke = false;
+  f.m._ticketAssigneeSeat = (...args) => {
+    const seat = inner(...args);
+    if (!broke) {
+      broke = true;
+      fsReal.rmSync(board, { recursive: true, force: true });
+      fsReal.writeFileSync(board, 'not a directory\n');
+    }
+    return seat;
+  };
+
+  const r = f.m._rejectTicketFromLoop(f.team, 't1', 'the test suite FAILS on your branch');
+
+  assert.strictEqual(r.ok, false, 'ENTER: the save really threw — the rejection never landed');
+  assert.deepStrictEqual(rejNotice(f), [],
+    'the lead is NOT told about a rejection that is not on disk');
+  // The whole delivery list, not just the notice filter: everything downstream of
+  // the throw is unreachable, and a reduction on the notice text alone would go
+  // vacuous under a rename of that text.
+  assert.deepStrictEqual(f.gated, [], 'and nothing else was sent either — the seat included');
 });
 
 // ── t362 (b): the marker, and the reject that lands on rework ───────────────
@@ -1785,6 +1824,18 @@ test('t362: BOTH rejection transitions stamp the marker, identically', () => {
   assert.strictEqual(viaLead.one().state, 'open', 'ENTER: the lead really reopened it');
   assert.strictEqual(viaLoop.one().reworkRound, 1, 'the loop stamps the marker');
   assert.strictEqual(viaLead.one().reworkRound, 1, 'and the lead stamps the same one');
+
+  // "Identically" is a claim about the EXPRESSION, and comparing each side to
+  // literal 1 cannot see it: a lead transition rewritten to `reworkRound = 1` — a
+  // flag — agrees with the counting loop on the first round and disagrees on
+  // every one after. The lead's second round is where the two shapes separate,
+  // so the subject only measures its own name from here down.
+  viaLead.tstore.save(viaLead.team.root, [{ ...viaLead.one(), state: 'done', loopStep: 'review' }]);
+  viaLead.m._handleTask(viaLead.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'and the other bound' });
+
+  assert.strictEqual(viaLead.one().state, 'open', 'ENTER: the second lead rejection reopened it too');
+  assert.strictEqual(viaLead.one().reworkRound, 2,
+    'the lead COUNTS, exactly as the loop does — a flag written here would still read 1');
 });
 
 test('t362: a ticket that never closed carries NO marker, so reject still bounces', () => {
@@ -1856,6 +1907,74 @@ test('t362: a follow-up with no live seat FAILS LOUDLY, and keeps the reason', (
   assert.deepStrictEqual(f.gated, [], 'and nothing was delivered');
   assert.ok(f.injected.some((x) => /spill-stub/.test(x)),
     'the must-fixes are spilled so the lead can recover them');
+});
+
+test('t362: a follow-up on a SELF-HELD ticket says the lead holds it, not that nobody does', () => {
+  // Where this arises is a SOLO board: `_soloContext` sets `lead = session.name`,
+  // so the one seat there is its own lead and every self-held ticket resolves to
+  // `seat === team.lead`. The old single arm answered "no live seat holds the
+  // ticket" — false exactly where it is most confusing, since the seat reading it
+  // IS the holder. Reproduced here by holding the ticket at the lead role, which
+  // is the same resolution the solo board reaches.
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { assignee: 'lead', role: 'lead' } });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'open', reworkRound: 1 }]);
+  assert.strictEqual(f.m._ticketAssigneeSeat(f.team, f.one()), f.team.lead,
+    'ENTER: the ticket really resolves to the lead itself');
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'also fix the bound' });
+
+  const errs = f.injected.filter((x) => /^\[agent:task\] error:/.test(x));
+  assert.strictEqual(errs.length, 1, 'ENTER: it is still an error — a follow-up to yourself is not delivered');
+  assert.match(errs[0], /is holding it/, 'and it names the holder rather than denying there is one');
+  assert.doesNotMatch(errs[0], /no live seat/,
+    'the false claim is gone: a seat that resolved is not "no live seat"');
+  assert.ok(f.injected.some((x) => /spill-stub/.test(x)), 'the payload is still spilled, as before');
+  assert.deepStrictEqual(f.gated, [], 'and nothing was delivered');
+});
+
+test('t362: a follow-up that does NOT reach the seat leaves the stall stamps alone', () => {
+  // The stamps say "this seat was handed work just now", and the watchdog reads
+  // them to decide whether an episode is still stalling. Writing them before the
+  // delivery attempt buys a failed follow-up a full silent window: the ticket
+  // looks freshly touched and the nudge that should fire is deferred over a
+  // message nobody received.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const stamped = Date.now() - 90 * 60 * 1000;
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'open', reworkRound: 1, lastActivityAt: stamped, nudgedAt: stamped,
+  }]);
+  f.m._gatedDeliver = () => ({ error: 'no such agent "team-hand"' });
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'also fix the bound' });
+
+  assert.ok(f.injected.some((x) => /^\[agent:task\] error:/.test(x) && /did NOT reach team-hand/.test(x)),
+    'ENTER: the delivery really failed and was reported as a failure');
+  const t = f.one();
+  assert.strictEqual(t.nudgedAt, stamped,
+    'the stall episode is NOT reset — the seat was never told, so nothing about it changed');
+  assert.strictEqual(t.lastActivityAt, stamped, 'and the activity stamp is untouched for the same reason');
+});
+
+test('t362: a DELIVERED follow-up does stamp, so the watchdog does not nudge a seat just handed work', () => {
+  // The other half of the pair above: moving the stamps below the delivery must
+  // not drop them. A seat that genuinely received must-fixes this second is not
+  // stalling, and a stale stamp here would nudge it immediately.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const stamped = Date.now() - 90 * 60 * 1000;
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'open', reworkRound: 1, lastActivityAt: stamped, nudgedAt: stamped,
+  }]);
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'also fix the bound' });
+
+  const sent = f.gated.filter((g) => g.target === 'team-hand');
+  assert.strictEqual(sent.length, 1, 'ENTER: the follow-up really was delivered');
+  const t = f.one();
+  assert.strictEqual(t.nudgedAt, null, 'the stall episode is cleared on the delivered arm');
+  assert.ok(t.lastActivityAt > stamped, 'and the activity stamp moved forward with it');
 });
 
 test('t362: a SECOND loop rejection counts the round up, so the lead sees the depth', () => {
