@@ -7647,7 +7647,21 @@ function createSessionManager(deps) {
         // The lie self-heals after one alarm, which is exactly why it needs a pin
         // rather than a comment: telling the lead it already answered something it
         // never saw is the confidently-wrong field this module exists to prevent.
-        const repeat = prevAge > 0 ? 1 : 0;
+        //
+        // The ORDINAL, not a boolean in integer clothing: `prevAge > 0 ? 1 : 0`
+        // printed "repeat 1" on the 60m, 120m and 240m rungs alike, making the
+        // three indistinguishable in the one field that separates a half-hour
+        // stall from an all-night one. log2 recovers it without state because
+        // `prevAge` IS the age at which the previous alarm fired and the gate
+        // above only passes on a DOUBLING, so the ladder is 1·2·4·8·stallMs.
+        // `round` absorbs the 60s sweep granularity (a 30m window alarming at
+        // 61m must still read rung 2, not 1); `max(1,·)` covers a stamp taken
+        // while `watchdogMs` was TIGHTER than it is now, where the ratio is < 1
+        // and the log negative. Off-ladder — a first alarm that landed late
+        // because no sweep ran at the window — this is the rung reached, which
+        // can exceed the number of messages actually sent; the rung is the
+        // useful quantity (how old is this stall) and is what the pins assert.
+        const repeat = prevAge > 0 ? Math.max(1, Math.round(Math.log2(prevAge / stallMs)) + 1) : 0;
         // A ticket already being probed by an overlapping sweep is skipped rather
         // than double-nudged: the git probes below are async, so two sweeps can
         // both pass this gate before either stamps.
