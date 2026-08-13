@@ -29,6 +29,15 @@ blocks a release.
   spawned and nothing could be stalling. Twenty-eight open tickets were in that
   state, and with the new escalation schedule above they would have produced
   roughly 140 alarms a night about work nobody had started.
+- A ticket's verify step now runs the test suite in the ticket's own worktree
+  before a reviewer is spawned, so nobody is asked to review a branch that does
+  not build. The suite runner gets its own process group and is killed as a
+  group on timeout: it blocks in a synchronous spawn, so the previous kill left
+  the inner test process running and still holding ports, which deadlocked the
+  next run against a lock it had inherited.
+- Fixed a packaging test that only ever passed in a checkout where a build had
+  been run: it asserted the existence of directories that are gitignored and
+  untracked, so it failed in every fresh clone and every ticket worktree.
 
 - A retired role field in `team.json` now says so on load, instead of vanishing
   once the file claims a current schema version. `roles.reviewer.tools` looks
