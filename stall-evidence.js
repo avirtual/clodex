@@ -53,6 +53,17 @@ function readTail(fs, file, bytes = 64 * 1024) {
 //
 // A truncated first line is normal (the tail starts mid-file) and is skipped by
 // the JSON.parse guard, not specially handled.
+//
+// KNOWN BLIND SPOT, not a bug to patch by reinstating sidechain entries: a seat
+// blocked on a long `Task` subagent writes sidechain lines continuously, so the
+// 64KB tail can hold nothing BUT sidechain volume and the seat's own
+// `tool_use Task` falls outside the window. This returns null there, and the
+// alarm loses its strongest field on the seat most likely to be wedged. It is
+// the fail-safe direction — omitting beats misattributing a subagent's call to
+// the seat — and consistent with the module's stated policy above. The fix, if
+// this is ever measured to matter, is to keep scanning BACKWARD past the
+// sidechain volume (re-read with a larger window when a tail yields no
+// non-sidechain `tool_use`), never to widen what counts as the seat's own call.
 function lastToolFrom(text) {
   if (!text) return null;
   let use = null;          // { name, id } — the most recent tool_use seen

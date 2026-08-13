@@ -7254,6 +7254,100 @@ test('t322 a stall that keeps stalling speaks again once the quiet has DOUBLED',
   assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 3, 'which lands at 2h — 30m, 1h, 2h');
 });
 
+test('t327 the repeat number is the ladder RUNG, distinct on every one of them', async () => {
+  // `prevAge > 0 ? 1 : 0` printed "repeat 1" at 60m, 120m AND 240m, so the field
+  // that exists to tell a half-hour stall from an all-night one said the same
+  // thing on all three. A single-rung pin cannot see that: it is the SECOND and
+  // later rungs that were wrong, and 1 is right by accident on the first.
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const quiet = Date.now() - stallMs;
+  const arr = f.load();
+  arr[0].lastActivityAt = quiet;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+
+  const at = (mins) => quiet + mins * 60 * 1000;
+  for (const mins of [30, 60, 120, 240]) await f.m._sweepTickets(at(mins));
+
+  const nudges = f.gated.filter((g) => /stalled/.test(g.body));
+  assert.strictEqual(nudges.length, 4, 'ENTER: all four rungs of the ladder alarmed — 30m, 1h, 2h, 4h');
+  // The heads, in order. Asserted as the whole set rather than rung by rung: the
+  // defect was that three of them were IDENTICAL, which only a comparison across
+  // rungs can catch.
+  assert.deepStrictEqual(
+    nudges.map((n) => n.body.match(/^\[ticket t1\] (?:STILL stalled \(repeat \d+\)|stalled)/)[0]),
+    [
+      '[ticket t1] stalled',
+      '[ticket t1] STILL stalled (repeat 1)',
+      '[ticket t1] STILL stalled (repeat 2)',
+      '[ticket t1] STILL stalled (repeat 3)',
+    ],
+    'the first is not a repeat, and each later rung carries its own ordinal');
+  // The ordinal tracks the AGE it is meant to summarise, not just some counter.
+  assert.match(nudges[3].body, /quiet 4h/, 'rung 3 is the 4h alarm');
+});
+
+test('t327 an off-ladder previous alarm still yields a sane rung, never 0 or a fraction', async () => {
+  // The ordinal is derived (log2 of prevAge/stallMs), so it has to be judged off
+  // the happy path too: sweeps run every 60s and the app can be shut when a rung
+  // falls due, so a repeat's `prevAge` need not be an exact power-of-two multiple
+  // of the window. What must hold is that the label is a positive integer that
+  // grows with the stall — not 0 (which would print no repeat marker at all on a
+  // ticket that has already alarmed) and not a fraction.
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const quiet = Date.now() - stallMs;
+  const arr = f.load();
+  arr[0].lastActivityAt = quiet;
+  // A previous alarm at 47m — no rung sits there; the app was closed at 30m and a
+  // sweep reached the ticket only once it reopened.
+  arr[0].nudgedAt = quiet + 47 * 60 * 1000;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+
+  // 94m = double of 47m, so the doubling gate passes on the first sweep here.
+  await f.m._sweepTickets(quiet + 94 * 60 * 1000);
+  const nudges = f.gated.filter((g) => /stalled/.test(g.body));
+  assert.strictEqual(nudges.length, 1, 'ENTER: the off-ladder repeat fired, so its label is under test');
+  const n = nudges[0].body.match(/STILL stalled \(repeat (\d+)\)/);
+  assert.ok(n, 'it is marked as a repeat — an already-alarmed ticket must never read as a first alarm');
+  assert.strictEqual(n[1], '2', 'log2(47/30) rounds to 1, so this is rung 2 — the integer above, not 1.65');
+});
+
+test('t327 a stamp from a tighter watchdogMs clamps to 1 rather than going negative', async () => {
+  // `watchdogMs` is per-team and editable, so a repeat can be judged against a
+  // window WIDER than the one the previous alarm fired under. prevAge/stallMs is
+  // then < 1 and its log negative: unclamped the label reads "repeat 0" or worse
+  // "repeat -1" on a ticket that has demonstrably already spoken.
+  const f = mkTasks();
+  f.team.watchdogMs = 30 * 60 * 1000;
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const quiet = Date.now() - 60 * 60 * 1000;
+  const arr = f.load();
+  arr[0].lastActivityAt = quiet;
+  // Alarmed 2m in, under a 1-minute window that has since been widened to 30m.
+  arr[0].nudgedAt = quiet + 2 * 60 * 1000;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+
+  await f.m._sweepTickets(quiet + 60 * 60 * 1000);
+  const nudges = f.gated.filter((g) => /stalled/.test(g.body));
+  assert.strictEqual(nudges.length, 1, 'ENTER: it alarmed, so the clamp is what this asserts');
+  assert.match(nudges[0].body, /STILL stalled \(repeat 1\)/,
+    'clamped to the lowest repeat, not 0 and not negative');
+});
+
 test('t322 a FIRST alarm is never labelled a repeat, even with a stale nudgedAt', async () => {
   // `_stampTicketRevival` writes `lastActivityAt` without clearing `nudgedAt` —
   // the one `lastActivityAt` writer that does not. So a ticket can enter a fresh
