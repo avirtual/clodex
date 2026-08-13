@@ -33,6 +33,13 @@ blocks a release.
   it — bought itself another full window of silence before the watchdog spoke
   up. It is also no longer told that "no live seat holds" a ticket the lead is
   in fact holding itself.
+- When a test run fails, its output is now kept instead of thrown away. The
+  one-line summary that agents run tests through reported which tests failed but
+  discarded everything explaining why, so the next step was always to run the
+  whole suite again just to read the error — and a failure that only shows up
+  under load might not come back. The full output of a failing run is now saved
+  to a file the summary names. Large assertion diffs survive it too; they were
+  being truncated at exactly the point the interesting part began.
 - Two tests that failed at random under load now pass reliably, and for the
   right reason. Both were waiting out a fixed stretch of wall clock and then
   asserting on work that a busy machine had not started yet — so the suite went
