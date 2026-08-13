@@ -50,12 +50,25 @@ const BEL = String.fromCharCode(0x07);
 // helper models both — a fixture that emitted without letting the window expire
 // would report the command as never typed and pin a contract the product does
 // not have.
-const QUIET_MS = 60;
+// Read from the source, not hand-copied. A duplicated literal that drifts from
+// the product's makes `quietElapse` match nothing and become a silent no-op —
+// every test here would then pass against a product that never waits at all —
+// and it would leak the stale value into `execTimers`, surfacing as an
+// unrelated wrong-timer failure somewhere downstream.
+const constFromSource = (name) => {
+  const src = fs.readFileSync(require.resolve('../drawer-pty.js'), 'utf8');
+  const m = src.match(new RegExp(`const ${name} = (\\d+);`));
+  assert.ok(m, `ENTER: ${name} was found in drawer-pty.js`);
+  return Number(m[1]);
+};
+const QUIET_MS = constFromSource('ABANDON_QUIET_MS');
+const MAX_MS = constFromSource('ABANDON_MAX_MS');
 // The LAST quiet timer, not the first: every byte re-arms the window, and only
 // the newest one still types.
 const quietElapse = (timers) => {
   const quiet = (timers || []).filter((t) => t.ms === QUIET_MS);
-  if (quiet.length) quiet[quiet.length - 1].fn();
+  assert.ok(quiet.length, 'ENTER: a quiet window was armed — without one this helper is a no-op');
+  quiet[quiet.length - 1].fn();
 };
 const ackAbandon = (proc) => {
   proc.emit(`${CR}${LF}$ `);
@@ -160,7 +173,7 @@ function mk(over = {}) {
 // firing an arm instead. Every caller below indexes into this, so a pattern that
 // admits an extra row does not fail here; it fails somewhere downstream that
 // looks unrelated.
-const execTimers = (timers) => timers.filter((t) => t.ms !== 5000 && t.ms !== 250 && t.ms !== QUIET_MS);
+const execTimers = (timers) => timers.filter((t) => t.ms !== 5000 && t.ms !== 250 && t.ms !== QUIET_MS && t.ms !== MAX_MS);
 
 // ── refusals ────────────────────────────────────────────────────────────────
 // Every one is checked INSIDE exec() rather than by a caller reading a status
@@ -284,6 +297,87 @@ test('the command is not typed until the shell has answered the abandon', () => 
   assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`],
     'the shell spoke, so the command follows as its own write');
   assert.deepStrictEqual(results, [], 'and typing it settles nothing on its own');
+});
+
+// The three tests below pin the QUIET WINDOW specifically. The tests around
+// them pass against an arm that types on the first byte, so without these a
+// revert to that would be caught by nothing but a ~1-in-280 real-shell flake.
+
+test('a first byte is not the end of the flush — the command waits for quiet', () => {
+  // The bytes that arrive first are the ones ALREADY IN FLIGHT when the ^C
+  // landed: a prior command's echo, an OSC 7 cwd report. They are not an answer
+  // to the signal, and typing on them puts the command inside the input discard,
+  // which drops characters out of its MIDDLE and still runs the remainder.
+  const { w, spawn } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+
+  spawn.spawned[0].emit(`${CR}${LF}$ `);
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C],
+    'the shell has spoken but has not gone quiet — nothing typed yet');
+});
+
+test('a byte arriving inside the quiet window restarts it', () => {
+  // Otherwise the first byte's timer types 60ms in, while the answer is still
+  // arriving — the same defect as typing on the first byte, one window later.
+  const { w, spawn, timers } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+
+  spawn.spawned[0].emit(`${CR}${LF}`);
+  const stale = timers.filter((t) => t.ms === QUIET_MS);
+  assert.strictEqual(stale.length, 1, 'ENTER: the first byte armed a window');
+  spawn.spawned[0].emit('$ ');
+  stale[0].fn();
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C],
+    'the superseded window does not type — a later byte outranks it');
+
+  quietElapse(timers);
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`],
+    'and the newest window, once it elapses, is the one that types');
+});
+
+test('a shell that never goes quiet still gets its command, on the cap', () => {
+  // Reachable without any misbehaviour: isBusy() is false while a BACKGROUND
+  // job writes to the tty, so exec() is accepted and the ^C is delivered. With
+  // only a restarting window the command would never be typed at all and the
+  // waiter would hang to EXEC_TIMEOUT, reporting a timeout for a command that
+  // never ran.
+  const { w, spawn, timers } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+
+  for (let i = 0; i < 50; i++) spawn.spawned[0].emit('chatter ');
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C],
+    'ENTER: a shell talking without pause has not been typed to yet');
+
+  const cap = timers.filter((t) => t.ms === MAX_MS);
+  assert.strictEqual(cap.length, 1, 'ENTER: exactly one cap, armed once per exec');
+  cap[0].fn();
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`],
+    'the cap types it regardless of how chatty the shell is');
+
+  // A chatty shell must not schedule a window per data chunk for the rest of
+  // its life once the command is already out.
+  const before = timers.length;
+  spawn.spawned[0].emit('more chatter');
+  assert.strictEqual(timers.length, before, 'no further timers are armed after the command is typed');
+});
+
+test('the silence deadline is inert once the shell has spoken', () => {
+  // Both clocks are armed up front, so the 250ms deadline is still in the list
+  // after an answer arrives. Firing mid-answer would type into the flush — the
+  // exact race the quiet window exists to close.
+  const { w, spawn, timers } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+
+  spawn.spawned[0].emit(`${CR}${LF}$ `);
+  const silence = timers.filter((t) => t.ms === 250);
+  assert.strictEqual(silence.length, 1, 'ENTER: the silence deadline was armed');
+  silence[0].fn();
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C],
+    'the deadline handed ownership to the quiet window and types nothing itself');
 });
 
 test('a shell that answers nothing still gets its command, on the fallback', () => {

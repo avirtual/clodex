@@ -82,6 +82,12 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // to go quiet spans the whole flush and the prompt redraw, which arming on the
   // first byte cannot do at any deadline.
   const ABANDON_QUIET_MS = 60;
+  // The ceiling on the whole abandon handshake. It cannot reopen the flush race
+  // the quiet window closes: the SIGINT discard is milliseconds, and the loss
+  // was measured inside the first ~60ms. What it bounds is the opposite failure
+  // — a shell that never goes quiet, where waiting for silence is waiting
+  // forever.
+  const ABANDON_MAX_MS = 1000;
 
   function shellFor() {
     return shell || (env && env.SHELL) || process.env.SHELL || '/bin/zsh';
@@ -475,12 +481,30 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       // would win and type 60ms into an answer still arriving. A timer types
       // only if no byte landed after it was armed.
       let gen = 0;
-      later(() => { if (!spoke) typeCommand(); }, ABANDON_ACK_MS);
+      // Declared before any timer is scheduled: `typeCommand` closes over this
+      // to release the arm, and the seam is injected — a fake that runs its
+      // callback synchronously on registration would hit the temporal dead zone.
       const arm = () => {
         spoke = true;
+        // Once the command is out, further bytes must not keep scheduling: the
+        // arm is released in typeCommand, but the cap can win while a chatty
+        // shell is still mid-answer, and a timer per data chunk for the life of
+        // that shell is an unbounded leak.
+        if (armed) return;
         const mine = ++gen;
         later(() => { if (gen === mine) typeCommand(); }, ABANDON_QUIET_MS);
       };
+      later(() => { if (!spoke) typeCommand(); }, ABANDON_ACK_MS);
+      // The command is typed EVENTUALLY, whatever the shell does. The quiet
+      // window restarts on every byte, so a shell emitting at gaps under it
+      // would otherwise never be interrupted — and that is reachable, not
+      // theoretical: isBusy() is false while a BACKGROUND job writes to the tty,
+      // so exec() is accepted, the ^C is delivered, and without this cap nothing
+      // would ever be typed and the waiter would hang to EXEC_TIMEOUT reporting
+      // a timeout for a command that never ran. Unconditional because every
+      // other path here is conditional on the shell behaving; typeCommand is
+      // idempotent, so this is a no-op whenever one of them already won.
+      later(typeCommand, ABANDON_MAX_MS);
       rec.execArm = arm;
 
       const timer = later(() => {
