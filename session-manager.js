@@ -5034,12 +5034,86 @@ function createSessionManager(deps) {
     // It also does not touch CHANGELOG.md — that file conflicts across every
     // live branch, so it stays the lead's, and the notification says an entry is
     // owed instead.
+    // ONE merge at a time, process-wide, chained rather than fired.
+    //
+    // Every step of a merge writes the shared root checkout, and the suite in
+    // the middle of it runs for MINUTES. Two ACCEPTs landing in that window is
+    // not a scheduler-tick race: ticket A merges and blocks inside its suite,
+    // B's gates all pass (root is clean and on master — A's merge is clean), and
+    // B's `git merge` mutates the tree under A's running suite child. A's result
+    // then describes A+B, and if it is red the revert of A either conflicts or
+    // succeeds and leaves B merged and never verified, with B's "merge landed"
+    // notification firing on a suite that measured A.
+    //
+    // The chain is on the manager, not per team: the writes collide on a
+    // checkout, but the suite binds real PORTS, so two teams' merges overlapping
+    // deadlock exactly as two suites would. `.catch` inside the link, so one
+    // rejected merge cannot break the chain for every merge after it.
+    _queueAutoMerge(team, ticketId, landedOn, verdictText) {
+      this._mergeChain = Promise.resolve(this._mergeChain)
+        .catch(() => {})
+        .then(() => this._autoMergeTicket(team, ticketId, landedOn, verdictText))
+        .catch((e) => {
+          log.error('ticket', `auto-merge for ${ticketId} rejected: ${e && e.message ? e.message : String(e)}`);
+        });
+      return this._mergeChain;
+    }
+
+    // The pid holding the root checkout's suite lock, or null. Reads the same
+    // `<lock>/pid` file scripts/run-tests.js writes, and treats a lock naming a
+    // DEAD pid as absent for the same reason the runner reclaims it: a killed
+    // run never cleans up, and refusing every merge forever afterwards would be
+    // a wedge with no way out.
+    _suiteLockHolder(team) {
+      try {
+        const pid = Number(fs.readFileSync(path.join(team.root, '.test-digest.lock', 'pid'), 'utf8').trim());
+        if (!pid) return null;
+        return isAlive(pid) ? pid : null;
+      } catch { return null; }
+    }
+
+    // What the DM could not deliver, left on the board. Re-load/mutate/save, the
+    // same don't-trust-a-snapshot rule _setLoopStep states.
+    //
+    // A null step CLEARS it, and the green path calls it that way: a ticket that
+    // failed at `clean-tree`, was retried and then merged would otherwise carry
+    // the old failure forever, and a stale field on a board is read as current.
+    _stampMergeError(team, ticketId, step) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec) return;
+        if (!step) { if (!('mergeError' in rec)) return; delete rec.mergeError; }
+        else rec.mergeError = step;
+        rec.lastActivityAt = Date.now();
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `merge error stamp for ${ticketId} failed: ${e.message}`);
+      }
+    }
+
     async _autoMergeTicket(team, ticketId, landedOn, verdictText) {
-      const fail = (step, evidence, tried) => this._escalateTicket(team, ticketId, `merge: ${step}`, evidence, tried);
+      const fail = (step, evidence, tried) => {
+        // Stamped BEFORE the DM, because the DM is the arm that can fail. An
+        // undelivered escalation is otherwise lost outright: _landVerdictOnTicket
+        // already deleted `loopStep`, so _escalateTicket's "loopStep kept so the
+        // watchdog re-surfaces it" is false here — ticketInFlight is false and
+        // the stall sweep never looks at this ticket again. The board carries
+        // what the DM may not.
+        this._stampMergeError(team, ticketId, step);
+        this._escalateTicket(team, ticketId, `merge: ${step}`, evidence, tried);
+      };
       let merged = null;
       try {
         const ticket = this._loadTicket(team, ticketId);
         if (!ticket) return;
+        // The verdict→merge gap is async (a git ancestor check, then a whole
+        // suite), and the loop re-loads across every other such gap for the same
+        // reason: a `task reject` or `task cancel` landing inside it reopens the
+        // ticket, and merging a reopened ticket lands work its own team has just
+        // decided is not finished. Silent, like the no-branch case — the lead who
+        // reopened it does not need to be told the loop noticed.
+        if (ticket.state !== 'done') return;
         const wt = ticket.worktree || {};
         const branch = wt.branch;
         const baseSha = wt.baseSha;
@@ -5050,12 +5124,15 @@ function createSessionManager(deps) {
 
         // STEP 1 — the must-fixes in the verdict BODY are empty.
         //
-        // Parsed from the verdict TEXT with extractMustFix, never read off a
-        // count someone else computed: seven confirmed instances of a DM header
-        // claiming "10 must-fixes" over a body reading "(none)". Deriving it
-        // here rather than trusting `landedOn.mustFix` costs one function call
-        // and removes the caller from the trust chain of the one gate that
-        // decides whether unreviewed-as-clean work reaches master.
+        // Parsed from the verdict TEXT with extractMustFix, never off a count
+        // someone else computed: seven confirmed instances of a DM header
+        // claiming "10 must-fixes" over a body reading "(none)".
+        //
+        // This is a cheap belt, not a second source of truth — `landedOn.mustFix`
+        // is `extractMustFix` on this same string, so today the two cannot
+        // disagree. What it buys is that the gate deciding whether work reaches
+        // master reads the verdict itself, so a future caller that computes or
+        // forwards that field differently cannot widen it by accident.
         //
         // An ACCEPT that still lists must-fixes is a contradiction only a human
         // can resolve, so it escalates — a wrong merge is the expensive
@@ -5114,6 +5191,30 @@ function createSessionManager(deps) {
           return;
         }
 
+        // STEP 3b — nobody is running a suite in the checkout we are about to
+        // rewrite.
+        //
+        // The suite lock serializes the RUNS; it does not serialize the git
+        // writes BETWEEN them, and the merge is exactly such a write. The lead's
+        // exec grant runs `clodex-run-tests` in team.root and holds this lock for
+        // minutes; a merge landing mid-run rewrites the files under the running
+        // child, and the lead gets a spurious red with nothing naming the cause.
+        // That is not hypothetical — suite-lock contention produced a false
+        // rejection on this team already.
+        //
+        // A hairline race survives (a run starting between this check and the
+        // merge). Closing it properly means holding the mkdir lock across
+        // merge→suite→revert and handing the held lock to a child that expects to
+        // acquire it — a bigger change than this step should carry. The
+        // in-process chain covers the loop's own concurrency, which is the case
+        // this ticket creates; this covers the lead's.
+        const holder = this._suiteLockHolder(team);
+        if (holder) {
+          fail('suite-in-flight', `a test suite is already running in the root checkout ${team.root} (pid ${holder}) — merging now would rewrite the files under it`,
+            'nothing was merged; re-run the accept once that suite finishes, or `git merge` the branch by hand');
+          return;
+        }
+
         // STEP 4 — the merge itself, always with a merge commit.
         //
         // The message goes through a FILE, never `-m`: it is generated text
@@ -5144,10 +5245,14 @@ function createSessionManager(deps) {
         merged = await gitWorktree.mergeNoFf(team.root, branch, msgFile)
           .catch((e) => ({ ok: false, error: e.message }));
         if (!merged.ok) {
+          // Reported off `wedged`, never off `aborted`: a merge that failed
+          // BEFORE it started (bad ref, unreadable message file) also fails to
+          // abort, and claiming a wedged shared checkout about an untouched tree
+          // is a false alarm in the one message whose job is to be trusted.
           fail('merge', `git merge --no-ff ${branch} failed:\n${merged.error}`,
-            merged.aborted === false
-              ? `ran the merge in ${team.root}; \`git merge --abort\` ALSO failed, so the checkout is left mid-merge and needs a human`
-              : `ran the merge in ${team.root} and aborted it, so the checkout is back where it was`);
+            merged.wedged
+              ? `ran the merge in ${team.root}; \`git merge --abort\` ALSO failed and MERGE_HEAD is still there, so the checkout is left mid-merge and needs a human`
+              : `ran the merge in ${team.root}; the checkout is back where it was (no MERGE_HEAD)`);
           return;
         }
         if (!merged.moved) {
@@ -5188,6 +5293,7 @@ function createSessionManager(deps) {
         // uses — a merge that landed and a merge that could not are the same
         // question for the lead, and a second channel is what the loop's design
         // forbids.
+        this._stampMergeError(team, ticketId, null);
         this._notifyMergeLanded(team, ticketId, {
           branch, sha: merged.sha, rounds, summary: suite.summary,
         });
@@ -5207,6 +5313,14 @@ function createSessionManager(deps) {
     // CHANGELOG.md is deliberately not touched by the merge: it conflicts across
     // every live branch, so it stays the lead's, and an unstated debt is one the
     // release then ships without.
+    // COLUMN 1 IS THE SAFETY, the same knife-edge ticketCloseLine documents and
+    // for a worse consequence: the last line carries a complete, ready-to-fire
+    // `[agent:task accept <id>]`, inert only because `Nothing was torn down: `
+    // precedes it. IntentScanner's parse is ^-anchored, so a reflow putting the
+    // verb at the start of a line makes the LEAD auto-accept on receipt —
+    // retiring the seat and destroying the worktree, the one thing this whole
+    // step promises not to do, and the one action here that no revert undoes.
+    // Keep the prefix.
     _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary }) {
       try {
         const body = [
@@ -5276,11 +5390,9 @@ function createSessionManager(deps) {
           // no team to escalate to.
           let team = null;
           try { team = resolveTeam(session.cwd); } catch { team = null; }
-          if (team) {
-            Promise.resolve(this._autoMergeTicket(team, rec.reviewTicket, landedOn, verdict)).catch((e) => {
-              log.error('ticket', `auto-merge for ${rec.reviewTicket} rejected: ${e && e.message ? e.message : String(e)}`);
-            });
-          }
+          // QUEUED, not fired: see _queueAutoMerge for why two of these must
+          // never overlap.
+          if (team) this._queueAutoMerge(team, rec.reviewTicket, landedOn, verdict);
         }
         return;
       }

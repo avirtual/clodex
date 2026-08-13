@@ -419,6 +419,14 @@ async function currentBranch(cwd) {
 // text is already captured in `error`, so nothing diagnostic is lost by
 // restoring the tree.
 //
+// `aborted` and `wedged` are NOT complements, and the caller must report off
+// `wedged`. `git merge --abort` also fails when there was never a merge to
+// abort — an unresolvable ref, an unreadable message file — so `aborted:false`
+// alone would announce "the checkout is left mid-merge and needs a human"
+// about a tree git never touched, a false alarm in the one message whose whole
+// job is to be trusted. `wedged` is evidence: MERGE_HEAD exists only while a
+// merge is actually in progress.
+//
 // `sha` is the NEW HEAD and `moved` says whether HEAD actually changed. Both
 // are needed because `--no-ff` on an already-merged branch prints "Already up
 // to date", exits 0, and creates NO commit — reading `ok` alone would report a
@@ -434,11 +442,16 @@ async function mergeNoFf(cwd, branch, messageFile) {
   if (!r.ok) {
     const output = `${r.stdout || ''}${r.stderr || ''}`.trim() || `git merge exited ${r.code}`;
     const ab = await git(repo, ['merge', '--abort']);
+    // Asked of git, after the abort: a merge that never STARTED leaves no
+    // MERGE_HEAD, and neither does one the abort successfully undid. Only a
+    // genuinely half-applied merge does.
+    const mh = await git(repo, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']);
+    const wedged = mh.ok && !!mh.stdout.trim();
     return {
-      ok: false, sha: null, moved: false, aborted: ab.ok, headBefore,
-      error: ab.ok
-        ? output
-        : `${output}\n(and \`git merge --abort\` also failed: ${(ab.stderr || ab.stdout || '').trim() || `exit ${ab.code}`} — the checkout is left mid-merge)`,
+      ok: false, sha: null, moved: false, aborted: ab.ok, wedged, headBefore,
+      error: wedged
+        ? `${output}\n(and \`git merge --abort\` also failed: ${(ab.stderr || ab.stdout || '').trim() || `exit ${ab.code}`} — the checkout is left mid-merge)`
+        : output,
     };
   }
   const after = await git(repo, ['rev-parse', 'HEAD']);
