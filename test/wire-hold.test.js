@@ -567,6 +567,21 @@ function post(port, path, body) {
   });
 }
 
+// Poll for the observer's own progress instead of a wall clock: proxy.js ends
+// the client response before it closes the tee, so post() resolving says
+// nothing about the cache write or the billing stamp asserted below. Measured
+// by delaying the tee-close completion — this subject failed at 60ms against
+// its 30ms sleeps.
+const until = (pred, ms = 10000) => new Promise((resolve) => {
+  const deadline = Date.now() + ms;
+  const tick = () => {
+    if (pred()) return resolve(true);
+    if (Date.now() > deadline) return resolve(false);
+    setTimeout(tick, 2);
+  };
+  tick();
+});
+
 test('proxy caches the main line for replay; count_tokens path does not', async () => {
   const server = http.createServer((req, res) => {
     if (req.url.includes('count_tokens')) {
@@ -592,7 +607,7 @@ test('proxy caches the main line for replay; count_tokens path does not', async 
   proxy.on('turn.completed', (t) => turns.push(t));
   const body = JSON.stringify(makeObj());
   await post(proxy.port, '/agent/t/v1/messages', body);
-  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(await until(() => turns.length >= 1), 'main-line turn observed');
   const entry = keeper.entry(SID);
   assert.ok(entry, 'main-line messages call cached');
   assert.match(entry.url, /\/v1\/messages$/);
@@ -602,8 +617,12 @@ test('proxy caches the main line for replay; count_tokens path does not', async 
 
   // count_tokens on the same session must NOT replace the replayable body;
   // it IS billed (0-token request-rate-limit spend) but emits no turn.
+  // count_tokens emits NO turn by design, so there is no receipt to wait on —
+  // gate on the billing stamp, the one positive trace it does leave. Waiting
+  // for turns.length here would gate on an absence that is already true.
   await post(proxy.port, '/agent/t/v1/messages/count_tokens', body);
-  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(await until(() => proxy.billing.totals.count_tokens_requests === 1),
+    'count_tokens billed');
   assert.match(keeper.entry(SID).url, /\/v1\/messages$/);
   assert.equal(turns.length, 1); // the messages turn only
   assert.equal(proxy.billing.totals.count_tokens_requests, 1);
