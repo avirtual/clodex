@@ -43,7 +43,12 @@ const T2 = T1 + 6 * 60 * 1000;
 
 function mkEngine(seams) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t283-'));
-  return createEngine({ userDataPath: tmp, seams, log: { info() {}, warn() {}, error() {} } });
+  // registryDir or the engine seeds the operator's live ~/.clodex (t359).
+  return createEngine({
+    userDataPath: tmp,
+    seams: { registryDir: path.join(tmp, 'clodex-home'), ...seams },
+    log: { info() {}, warn() {}, error() {} },
+  });
 }
 
 // A live session as the reboot paths see it: they read `name`, `createdAt`,

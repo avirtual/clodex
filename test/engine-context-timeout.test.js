@@ -24,7 +24,12 @@ const { ProxyClient, PROXY_REPORT_TIMEOUT } = require('../wirescope-proxy');
 
 function mkEngine() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-ctx-timeout-'));
-  return createEngine({ userDataPath: tmp, log: { info() {}, warn() {}, error() {} } });
+  // registryDir or the engine seeds the operator's live ~/.clodex (t359).
+  return createEngine({
+    userDataPath: tmp,
+    seams: { registryDir: path.join(tmp, 'clodex-home') },
+    log: { info() {}, warn() {}, error() {} },
+  });
 }
 
 // Drive the real fetchProxyContext end to end: plant a routed session, make the

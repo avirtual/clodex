@@ -22,7 +22,12 @@ const { createEngine } = require('../engine');
 
 function mkEngine() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-eng-env-'));
-  return createEngine({ userDataPath: tmp, seams: {}, log: { info() {}, warn() {}, error() {} } });
+  // registryDir or the engine seeds the operator's live ~/.clodex (t359).
+  return createEngine({
+    userDataPath: tmp,
+    seams: { registryDir: path.join(tmp, 'clodex-home') },
+    log: { info() {}, warn() {}, error() {} },
+  });
 }
 
 // Replace manager.create with a recorder so no real PTY spawns — captures the full

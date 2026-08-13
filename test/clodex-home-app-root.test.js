@@ -57,7 +57,15 @@ test('the in-app team layer follows REGISTRY_DIR, not CLODEX_HOME', async () => 
   await withDecoyHome(() => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-eng-home-'));
     try {
-      const eng = createEngine({ userDataPath: tmp, seams: {}, log: { info() {}, warn() {}, error() {} } });
+      // An explicit registryDir, not the real home (t359): the discriminator here
+      // is that a team planted in CLODEX_HOME stays invisible, and a root that is
+      // neither the decoy nor the operator's live tree tests that just as sharply
+      // without seeding ~/.clodex from whatever branch the suite runs in.
+      const eng = createEngine({
+        userDataPath: tmp,
+        seams: { registryDir: path.join(tmp, 'clodex-home') },
+        log: { info() {}, warn() {}, error() {} },
+      });
       // listTeams is the front door's own reader, so this drives the real wiring
       // rather than re-deriving a path the product might not use.
       const names = eng.listTeams().map((t) => t.name || t);

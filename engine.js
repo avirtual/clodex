@@ -108,6 +108,31 @@ function sweepSpilledMessages(msgDir, pendingDir, maxAgeSec, now = Date.now()) {
   }
 }
 
+// The registry root, resolved as a pure function so a test can pin the
+// production default WITHOUT constructing an engine — constructing one is
+// itself the write we are trying to prevent.
+//
+// Deliberately NOT read from CLODEX_HOME: t118 settled that the env var is a
+// seam for the standalone scripts only and never app configuration. The pin is
+// the CLODEX_HOME decoy case in test/engine-registry-dir-seam.test.js, which
+// resolves with the var set and requires the home-derived path — adding a
+// `|| process.env.CLODEX_HOME` clause here goes red there.
+//
+// Throwing under `node --test` rather than returning the home is the backstop
+// for the seed guard's blind spot: seeding is the LEAST destructive thing this
+// root feeds. registry.cleanup() unlinks run/*/agent.json and runLegacySweep
+// rmSync's at the root, and neither consults that guard, so a test that forgets
+// the seam must fail loudly here instead of quietly deleting the operator's.
+function resolveRegistryDir(seams) {
+  if (seams && seams.registryDir) return seams.registryDir;
+  if (process.env.NODE_TEST_CONTEXT) {
+    throw new Error(
+      'createEngine: refusing to resolve the real ~/.clodex under node --test — '
+      + 'pass seams.registryDir (see t359)');
+  }
+  return path.join(os.homedir(), '.clodex');
+}
+
 function createEngine({ userDataPath, seams = {}, log }) {
   // Individual consts (not a destructure-with-defaults) so each seam name is
   // visible to the leak-scanner's ownDefinitions; the `|| default` keeps every
@@ -159,7 +184,10 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // web host, and a consumer must learn that rather than guess wire-port+1.
   const getWebInfo = seams.webInfo || (() => null);
 
-  const REGISTRY_DIR = path.join(os.homedir(), '.clodex');
+  // Every path below derives from this, and the suite's twelve createEngine
+  // callers pass a temp one: unseamed, they seeded the operator's live library
+  // from whatever branch happened to be checked out.
+  const REGISTRY_DIR = resolveRegistryDir(seams);
 
 
 
@@ -1898,4 +1926,4 @@ const toolCache = createToolCache({ whichBin });
   };
 }
 
-module.exports = { createEngine, diagWarning, sweepSpilledMessages };
+module.exports = { createEngine, resolveRegistryDir, diagWarning, sweepSpilledMessages };
