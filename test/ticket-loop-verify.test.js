@@ -2060,6 +2060,39 @@ function keptFiles(f, home) {
   return hits;
 }
 
+// Everything the writer could have left behind, published or not — the `.tmp`
+// the write-then-rename goes through included. keptFiles() above answers "what
+// would a reader find", which is the wrong question for a subject about litter:
+// a scratch file that survives is invisible to it by construction.
+function keptDebris(home) {
+  const hits = [];
+  const walk = (d) => {
+    let ents = [];
+    try { ents = fsReal.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const full = pathReal.join(d, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (/^suite-failure-/.test(e.name)) hits.push(full);
+    }
+  };
+  walk(pathReal.join(home, 'projects'));
+  return hits;
+}
+
+// The name with its timestamp discriminator cut off, so a subject about ROUNDS
+// asserts about rounds and not about the clock. The stamp itself is pinned by
+// the subject that is about it. A name that does NOT carry one throws here
+// rather than reducing to something that quietly compares equal.
+function keptStems(f, home) {
+  return keptFiles(f, home)
+    .map((p) => {
+      const m = /^(suite-failure-t\d+-r\d+)-\d{4}-/.exec(pathReal.basename(p));
+      assert.ok(m, `every preserved file carries a stamp after its round: ${pathReal.basename(p)}`);
+      return m[1];
+    })
+    .sort();
+}
+
 test('t370: a red loop run PRESERVES its full output, and the rejection names the file', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
@@ -2076,7 +2109,8 @@ test('t370: a red loop run PRESERVES its full output, and the rejection names th
   // The round is in the name for the reason the diff's is: round 1's evidence is
   // what a round 2 failure gets compared against, and it is unrecoverable once
   // the branch moves on.
-  assert.strictEqual(pathReal.basename(kept[0]), 'suite-failure-t1-r1.txt');
+  assert.match(pathReal.basename(kept[0]), /^suite-failure-t1-r1-\d{4}-\d\d-\d\d.*\.txt$/,
+    'the ticket, the round and the stamp are all in the name');
 
   const body = fsReal.readFileSync(kept[0], 'utf8');
   // The DIAGNOSTICS, not merely the names. The names were already in the
@@ -2114,8 +2148,7 @@ test('t370: a SECOND red round writes its own file, so round 1 evidence survives
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(f.one().reworkRound, 2, 'ENTER: round 2 rejected too');
 
-  const kept = keptFiles(f, f.home).map((p) => pathReal.basename(p)).sort();
-  assert.deepStrictEqual(kept, ['suite-failure-t1-r1.txt', 'suite-failure-t1-r2.txt'],
+  assert.deepStrictEqual(keptStems(f, f.home), ['suite-failure-t1-r1', 'suite-failure-t1-r2'],
     'each round keeps its own file — round 2 must not overwrite round 1');
 });
 
@@ -2137,8 +2170,7 @@ test('t370: two tickets failing together do not overwrite each other', async () 
   await f.m._runTicketLoop(f.team, 't2');
   await new Promise((r) => setImmediate(r));
 
-  const kept = keptFiles(f, f.home).map((p) => pathReal.basename(p)).sort();
-  assert.deepStrictEqual(kept, ['suite-failure-t1-r1.txt', 'suite-failure-t2-r1.txt'],
+  assert.deepStrictEqual(keptStems(f, f.home), ['suite-failure-t1-r1', 'suite-failure-t2-r1'],
     'each ticket keeps its own evidence');
   // And each file holds ITS OWN ticket's run, not the last one to finish.
   for (const p of keptFiles(f, f.home)) {
@@ -2277,10 +2309,17 @@ test('t370 r2: the header records the COMMIT, so two rounds are distinguishable'
   await f.m._runTicketLoop(f.team, 't1');
   await new Promise((r) => setImmediate(r));
 
+  // Keyed by ROUND, which is what this subject is about — the stamp after it
+  // varies by construction and indexing on the whole basename would miss both
+  // files and leave every assertion below reading undefined.
   const byRound = {};
-  for (const p of keptFiles(f, f.home)) byRound[pathReal.basename(p)] = fsReal.readFileSync(p, 'utf8');
-  const r1 = byRound['suite-failure-t1-r1.txt'];
-  const r2 = byRound['suite-failure-t1-r2.txt'];
+  for (const p of keptFiles(f, f.home)) {
+    const m = /-(r\d+)-\d{4}-/.exec(pathReal.basename(p));
+    assert.ok(m, `ENTER: the name carries a round and a stamp: ${pathReal.basename(p)}`);
+    byRound[m[1]] = fsReal.readFileSync(p, 'utf8');
+  }
+  const r1 = byRound.r1;
+  const r2 = byRound.r2;
   assert.ok(r1 && r2, 'ENTER: both rounds preserved a file');
   // Each names the commit its own run measured — the assertion is that they
   // DIFFER, which a branch-name-only header cannot satisfy.
@@ -2438,28 +2477,34 @@ test('t373: the lead DM really does drop the evidence line, which is why the log
     `the lead's DM carries only the summary line, so the failure is not in it: ${toLead[0].body}`);
 });
 
-test('t373: a write that FAILS mid-file leaves no truncated dump at the disowned path', async () => {
+// ── t375: the published path is written by RENAME, never in place ──────────
+//
+// t373 closed the truncated-dump hole by CLEANING UP after a failed write: the
+// partial file was unlinked, and when the unlink itself failed the path was
+// named with a warning. The rename closes the same hole by construction — the
+// bytes go to a scratch name and only a completed file is ever moved onto the
+// published one — which removes the unremovable-partial state, and with it the
+// subject that pinned the warning. That subject is gone from this file
+// deliberately: it described a branch that no longer exists.
+
+test('t375: a write that dies mid-file leaves NOTHING at the published path', async () => {
   // ENOSPC and a kill mid-write both leave writeFileSync having produced a
-  // PARTIAL file at exactly the path the caller then drops. The hand is told
-  // "could not be preserved" while a dump that stops mid-stack sits in its task
-  // dir looking complete — worse than no file, because it is acted on.
-  //
-  // The bytes are written FOR REAL and then the throw is raised, which is the
-  // only honest way to reach this: a stub that merely throws would leave nothing
-  // on disk and the subject would pass against the unfixed code for the wrong
-  // reason. Verified: against the unfixed writer this subject FAILS on the
-  // leftover file, and the ok/path assertions below fail too.
+  // PARTIAL file at whatever path it was given. A dump that stops mid-stack
+  // reads as complete, so a hand told "could not be preserved" can still find
+  // one in its task dir and diagnose off it — worse than no file, because it is
+  // acted on. The bytes are written FOR REAL and then the throw raised: a stub
+  // that merely threw would leave nothing on disk and pass for the wrong reason.
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
-  let truncatedAt = null;
+  let wroteTo = null;
   const f = mkLoop({
     repo,
     suite: 'redWithDiff',
     wrapFs: (fs) => ({
       ...fs,
       writeFileSync: (p, data, ...rest) => {
-        if (!/suite-failure-.*\.txt$/.test(String(p))) return fs.writeFileSync(p, data, ...rest);
-        truncatedAt = String(p);
+        if (!/suite-failure-/.test(String(p))) return fs.writeFileSync(p, data, ...rest);
+        wroteTo = String(p);
         fs.writeFileSync(p, String(data).slice(0, 40), ...rest);   // the partial file
         const e = new Error('ENOSPC: no space left on device, write');
         e.code = 'ENOSPC';
@@ -2472,10 +2517,13 @@ test('t373: a write that FAILS mid-file leaves no truncated dump at the disowned
   await f.m._runTicketLoop(f.team, 't1');
   await new Promise((r) => setImmediate(r));
 
-  assert.ok(truncatedAt, 'ENTER: the write really was attempted and really did leave bytes behind');
-  assert.ok(!fsReal.existsSync(truncatedAt),
-    `the partial file is removed, not left to be read as this run's output (still at ${truncatedAt})`);
-  assert.deepStrictEqual(keptFiles(f, f.home), [], 'and nothing suite-failure-shaped survives anywhere');
+  assert.ok(wroteTo, 'ENTER: the write really was attempted and really did leave bytes behind');
+  assert.match(wroteTo, /\.tmp$/,
+    `the partial bytes went to a scratch name, never to the published path (wrote to ${wroteTo})`);
+  assert.deepStrictEqual(keptFiles(f, f.home), [],
+    'so a reader walking for preserved dumps finds none');
+  assert.deepStrictEqual(keptDebris(f.home), [],
+    'and the scratch file was cleaned up too, rather than left as litter');
 
   // The rejection still goes out and still says why there is nothing — the
   // guarantee this must not disturb.
@@ -2485,18 +2533,18 @@ test('t373: a write that FAILS mid-file leaves no truncated dump at the disowned
   assert.match(sent[0].body, /ENOSPC/, 'with the reason');
 });
 
-test('t373: a failed write claims NO path, so no caller can name a file that is gone', async () => {
+test('t375: a failed write claims NO path, so no caller can name a file that is not there', async () => {
   // The direct half of the subject above: the caller's `kept.path` is what a
-  // message would print, and returning the path of a file that was just removed
-  // would point the reader at nothing. Measured on the return value, because the
-  // undeliverable arm reads exactly this field.
+  // message would print, and naming a path nothing was published to points the
+  // reader at a ghost. Measured on the return value, because the undeliverable
+  // arm reads exactly this field.
   const repo = mkRepo();
   const f = mkLoop({
     repo,
     wrapFs: (fs) => ({
       ...fs,
       writeFileSync: (p, data, ...rest) => {
-        if (!/suite-failure-.*\.txt$/.test(String(p))) return fs.writeFileSync(p, data, ...rest);
+        if (!/suite-failure-/.test(String(p))) return fs.writeFileSync(p, data, ...rest);
         fs.writeFileSync(p, String(data).slice(0, 40), ...rest);
         throw new Error('ENOSPC: no space left on device, write');
       },
@@ -2506,15 +2554,16 @@ test('t373: a failed write claims NO path, so no caller can name a file that is 
     output: 'X.\n✖ probe alpha (1ms)\nTOTALS: 1 pass, 1 fail, 2 tests\n', summary: '1/2', cwd: repo.dir,
   });
   assert.strictEqual(r.ok, false, 'ENTER: the write really failed');
-  assert.strictEqual(r.path, null, 'no path is claimed for a file that no longer exists');
+  assert.strictEqual(r.path, null, 'no path is claimed when nothing was published');
   assert.match(r.error, /ENOSPC/, 'the underlying reason still rides the result');
-  assert.deepStrictEqual(keptFiles(f, f.home), [], 'and the partial file is gone from disk');
+  assert.deepStrictEqual(keptDebris(f.home), [], 'and nothing of the attempt is left on disk');
 });
 
-test('t373: an unremovable partial file IS named, with what is wrong with it', async () => {
-  // The other direction of the same rule. Silence is only safe because the file
-  // is gone; when the unlink itself fails there IS something on disk, and going
-  // quiet then recreates the defect — a truncated dump nobody was warned about.
+test('t375: a scratch file that CANNOT be removed is still never named to a reader', async () => {
+  // The state t373 had to warn about, now harmless — which is the whole value of
+  // the rename and has to be pinned rather than asserted in prose. The leftover
+  // is at a `.tmp` name no caller was given and no reader walks to, so `ok:false`
+  // still means "nothing to read" with no warning for a call site to carry.
   const repo = mkRepo();
   let leftAt = null;
   const f = mkLoop({
@@ -2522,13 +2571,13 @@ test('t373: an unremovable partial file IS named, with what is wrong with it', a
     wrapFs: (fs) => ({
       ...fs,
       writeFileSync: (p, data, ...rest) => {
-        if (!/suite-failure-.*\.txt$/.test(String(p))) return fs.writeFileSync(p, data, ...rest);
+        if (!/suite-failure-/.test(String(p))) return fs.writeFileSync(p, data, ...rest);
         leftAt = String(p);
         fs.writeFileSync(p, String(data).slice(0, 40), ...rest);
         throw new Error('ENOSPC: no space left on device, write');
       },
       unlinkSync: (p) => {
-        if (!/suite-failure-.*\.txt$/.test(String(p))) return fs.unlinkSync(p);
+        if (!/suite-failure-/.test(String(p))) return fs.unlinkSync(p);
         const e = new Error('EPERM: operation not permitted, unlink');
         e.code = 'EPERM';
         throw e;
@@ -2538,23 +2587,52 @@ test('t373: an unremovable partial file IS named, with what is wrong with it', a
   const r = await f.m._writeTicketSuiteFailure(f.team, f.one(), {
     output: 'X.\n✖ probe alpha (1ms)\nTOTALS: 1 pass, 1 fail, 2 tests\n', summary: '1/2', cwd: repo.dir,
   });
+  assert.ok(leftAt && fsReal.existsSync(leftAt), 'ENTER: the partial bytes really are still on disk');
+  assert.match(leftAt, /\.tmp$/, 'ENTER: and they are at the scratch name, which is why this is safe');
   assert.strictEqual(r.ok, false, 'still a failure');
-  assert.ok(leftAt && fsReal.existsSync(leftAt), 'ENTER: the partial file really is still on disk');
-  assert.strictEqual(r.path, leftAt, 'the path IS named when a file is actually there');
-  assert.match(r.error, /INCOMPLETE/, 'and the message says the file is not this run’s output');
+  assert.strictEqual(r.path, null, 'no path is named, because nothing readable exists');
+  assert.deepStrictEqual(keptFiles(f, f.home), [],
+    'and the leftover is invisible to a reader walking for preserved dumps');
 });
 
-test('t373: an ENOENT unlink is not read as a file left behind', async () => {
-  // The write can throw BEFORE producing anything (a refused open), and then the
-  // unlink finds nothing. Treating that as "could not remove" would name a path
-  // with no file at it — the mirror of the bug, pointing a reader at a ghost.
+test('t375: a RENAME that fails publishes nothing and reports the reason', async () => {
+  // The failure mode the rename ADDS, so it cannot be the one thing left
+  // unpinned: the write succeeded and the publish did not. Nothing may appear at
+  // the published path, and the caller must hear why rather than a stale
+  // "no captured output".
+  const repo = mkRepo();
+  const f = mkLoop({
+    repo,
+    wrapFs: (fs) => ({
+      ...fs,
+      renameSync: (a, b) => {
+        if (!/suite-failure-/.test(String(a))) return fs.renameSync(a, b);
+        const e = new Error('EXDEV: cross-device link not permitted, rename');
+        e.code = 'EXDEV';
+        throw e;
+      },
+    }),
+  });
+  const r = await f.m._writeTicketSuiteFailure(f.team, f.one(), {
+    output: 'X.\n✖ probe alpha (1ms)\nTOTALS: 1 pass, 1 fail, 2 tests\n', summary: '1/2', cwd: repo.dir,
+  });
+  assert.strictEqual(r.ok, false, 'a run whose dump never got published is not a success');
+  assert.strictEqual(r.path, null, 'nothing is named');
+  assert.match(r.error, /EXDEV/, 'the rename failure is the reason reported, not a guess');
+  assert.deepStrictEqual(keptDebris(f.home), [], 'and the scratch file is cleaned up');
+});
+
+test('t373: a write that produced NOTHING reports its own reason, not the cleanup\'s', async () => {
+  // The write can throw BEFORE producing anything (a refused open), and the
+  // cleanup then finds no scratch file. That ENOENT must not displace the reason
+  // the caller actually needs — the open failure is what a reader can act on.
   const repo = mkRepo();
   const f = mkLoop({
     repo,
     wrapFs: (fs) => ({
       ...fs,
       writeFileSync: (p, data, ...rest) => {
-        if (!/suite-failure-.*\.txt$/.test(String(p))) return fs.writeFileSync(p, data, ...rest);
+        if (!/suite-failure-/.test(String(p))) return fs.writeFileSync(p, data, ...rest);
         const e = new Error('EACCES: permission denied, open');   // nothing written
         e.code = 'EACCES';
         throw e;
@@ -2566,6 +2644,95 @@ test('t373: an ENOENT unlink is not read as a file left behind', async () => {
   });
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.path, null, 'nothing was created, so nothing is named');
-  assert.ok(!/INCOMPLETE/.test(r.error), `a file that never existed must not be described as left behind: ${r.error}`);
   assert.match(r.error, /EACCES/, 'the real reason is what the caller reports');
+});
+
+// ── t375: an UNRAN run carries its capture out too ─────────────────────────
+//
+// t370 scoped `output` to the red arm because that was the only consumer then.
+// The post-merge run gave the unran arms a consumer: a crash or a timeout there
+// REVERTS master exactly as a red suite does, so its output is unreproducible
+// for the same reason, and `suite.error` — the only thing carried today — is a
+// 300-char last line standing in for a 64KB capture. These pin the carry at the
+// source; ticket-auto-merge.test.js pins what the post-merge arm does with it.
+
+test('t375: a run that produced no TOTALS carries its capture, not just a last line', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, suite: 'crash' });
+
+  const r = await f.m._runTicketSuite(f.team, f.one());
+
+  assert.strictEqual(r.ran, false, 'ENTER: this really is the never-ran arm, not a red suite');
+  assert.match(r.error, /no TOTALS summary/, 'ENTER: and it is the missing-summary path specifically');
+  assert.match(r.output, /SyntaxError: Unexpected end of input/,
+    'the captured text comes out whole, for a caller that can preserve it');
+});
+
+test('t375: a TIMED-OUT run carries its capture too', async () => {
+  // The other arm the post-merge revert makes unreproducible, and the one where
+  // the loss is worst: a killed run's stdout is everything that had been printed
+  // before the wedge, which is the only evidence of WHERE it wedged.
+  const repo = mkRepo();
+  const f = mkLoop({ repo, suite: 'hang', suiteTimeoutMs: 3000 });
+  const kid = pathReal.join(repo.dir, 'kid.marker');
+  process.env.T317_KID = kid;
+  try {
+    const r = await f.m._runTicketSuite(f.team, f.one());
+    assert.strictEqual(r.ran, false, 'ENTER: a killed run never ran');
+    assert.match(r.error, /did not finish within 3000ms/, 'ENTER: killed by the timeout, not some other fault');
+    assert.match(r.output, /TOTALS: 5 pass, 0 fail, 5 tests/,
+      'what the wedged run had already printed is carried out');
+  } finally {
+    delete process.env.T317_KID;
+  }
+});
+
+test('t375: a GREEN run still carries nothing — the carry did not widen to every run', async () => {
+  // The anti-widening guard for the two above. `output` on a green run is a 64KB
+  // string held on every passing ticket for a reader that does not exist, and
+  // the obvious way to implement the carry (hoisting it above the green check)
+  // does exactly that while every subject above stays green.
+  const repo = mkRepo();
+  const f = mkLoop({ repo, suite: 'green' });
+
+  const r = await f.m._runTicketSuite(f.team, f.one());
+
+  assert.strictEqual(r.green, true, 'ENTER: the green arm really was reached');
+  assert.strictEqual(r.output, '', 'a green run carries no captured output');
+});
+
+test('t375: a run that printed NOTHING carries nothing, and the writer refuses it', async () => {
+  // The boundary the carry must not cross: preserving MORE must not mean writing
+  // a file for a run with nothing in it. A present file that says nothing reads
+  // as "the runner produced no output" — a claim about the run rather than about
+  // the preservation, and the confidently-empty artifact this writer refuses.
+  const repo = mkRepo();
+  const f = mkLoop({ repo, suite: 'silent' });
+
+  const r = await f.m._runTicketSuite(f.team, f.one());
+  assert.strictEqual(r.ran, false, 'ENTER: no summary, so it never ran');
+  assert.strictEqual(r.output.trim(), '', 'ENTER: the run really printed nothing to carry');
+
+  const kept = await f.m._writeTicketSuiteFailure(f.team, f.one(), r);
+  assert.strictEqual(kept.ok, false, 'the writer refuses it');
+  assert.strictEqual(kept.path, null, 'and names no file');
+  assert.match(kept.error, /no captured output/, 'saying that is why, rather than inventing a reason');
+  assert.deepStrictEqual(keptDebris(f.home), [], 'nothing of it reaches disk, not even a scratch file');
+});
+
+test('t375: a SUCCESSFUL write leaves the dump and no scratch file beside it', async () => {
+  // The success path's half of the rename. Every failure subject above walks for
+  // debris; none of them would notice a `.tmp` surviving a write that WORKED,
+  // because they never reach it — and a scratch file accumulating once per red
+  // run is litter in the same dir a hand reads its evidence from.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const r = await f.m._writeTicketSuiteFailure(f.team, f.one(), {
+    output: 'X.\n✖ probe alpha (1ms)\nTOTALS: 1 pass, 1 fail, 2 tests\n', summary: '1/2', cwd: repo.dir,
+  });
+  assert.strictEqual(r.ok, true, 'ENTER: the write really succeeded');
+  assert.deepStrictEqual(keptDebris(f.home), [r.path],
+    'the published dump is the ONLY suite-failure file on disk');
+  assert.match(fsReal.readFileSync(r.path, 'utf8'), /probe alpha/,
+    'and it is whole, not the scratch copy under another name');
 });
