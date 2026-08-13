@@ -87,6 +87,11 @@ blocks a release.
   the frozen copy never learned the command and the comparison stayed green.
   The corpus now asserts that every command in the real grammar appears in it,
   so the next command added cannot slip through the same gap.
+- A repeated stall alarm now says which rung of the escalation ladder it is on.
+  Every alarm from the second onward said "repeat 1", so the 1h, 2h and 4h
+  warnings were indistinguishable from each other and the number was simply
+  false — in a message whose whole purpose is to be trusted when it says
+  something is wrong.
 
 - A retired role field in `team.json` now says so on load, instead of vanishing
   once the file claims a current schema version. `roles.reviewer.tools` looks
