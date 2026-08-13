@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- A ticket whose review comes back ACCEPT is now merged for you. The team lead
+  used to be the one running `git merge` after every verdict; the loop now does
+  it, runs the full suite on the result, and reverts the merge if that suite
+  goes red. Anything it will not do by itself — a checkout that is dirty, a
+  branch that moved, a suite it was not allowed to run — comes back to the lead
+  as a message naming the commit and the exact command to undo it, rather than
+  being guessed at. Merges never overlap each other or a test run you started
+  yourself. Nothing is pushed, and the changelog and the final `task accept`
+  stay yours.
 - The "Clodex restarted" notice now reaches an agent in seconds rather than
   minutes. If a pane had an unsent draft open in it, the notice waited on a
   five-minute fallback, and opening two workspaces made it worse — the second
