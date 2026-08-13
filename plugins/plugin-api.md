@@ -852,8 +852,8 @@ or fires an IPC is not slow — it is wrong, because a relayout is not an event.
 ### `host.lib`
 
 Sanctioned shared core utilities, frozen and named. In `"1"` there is exactly
-one entry, `gitWorktree`, offering the nine functions below (the module
-exports three more, withheld — see the membership rule). All are `async` except
+one entry, `gitWorktree`, offering the ten functions below (the module
+exports five more, withheld — see the membership rule). All are `async` except
 `defaultWorktreePath`, and all are best-effort: they return a shaped result or
 `null` rather than throwing.
 
@@ -868,6 +868,7 @@ exports three more, withheld — see the membership rule). All are `async` excep
 | `removeWorktree(worktreePath)` | `{ ok }` or `{ ok: false, error }`. Refuses to remove the main working tree — the path must be a registered *linked* worktree. |
 | `commitsOnBranch(cwd, branch, base)` | `{ ok, count, base }` — how many commits `branch` carries beyond `base`. With no `base`, or one that no longer resolves (rebased, gc'd), it falls back to a merge base rather than counting against the checkout's live HEAD, which answers wrongly in both directions. |
 | `isDirty(worktreePath)` | `{ ok, dirty }` or `{ ok: false, error }`. Whether the tree holds work git would track — uncommitted or untracked. Honors `.gitignore`, so output in an ignored path reads clean. Committed work is deliberately excluded: it lives on the branch and survives the checkout. |
+| `currentBranch(cwd)` | `{ ok, branch, head }` — which branch that checkout is actually **on**, and its HEAD sha. Not the same question as `defaultBranch`, which answers what the repo's mainline is *called*; a detached HEAD is `ok: false`, never a branch named `HEAD`. |
 
 You receive **bound wrappers**, not the module itself: the members cannot be
 reassigned, and core's own calls to these functions are unreachable from a
@@ -881,6 +882,12 @@ Core using a function is necessary but not sufficient. Anything that **mutates
 refs** is withheld even though core calls it: `git-worktree.js` also exports
 `isMerged` and `deleteBranch`, and neither reaches `host.lib`. A plugin able to
 delete a branch could destroy the only copy of an agent seat's committed work.
+
+`mergeNoFf` and `revertCommit` are withheld on the same ground, at its strongest:
+they do not merely move a ref, they **commit to whatever the shared checkout has
+checked out** — the tree every agent seat's branch is cut from. Core added them
+for the ticket loop's auto-merge, which runs them only behind a clean-tree and
+on-master gate.
 
 `diffText` is withheld on a second ground, and it is the one to predict from:
 everything lent here returns **metadata** — paths, branches, counts, a dirty

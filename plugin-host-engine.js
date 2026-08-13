@@ -54,7 +54,12 @@ function createPluginHostEngine(deps) {
 // repo path the caller names, whether or not Clodex ever opened it. Core added
 // it for the ticket loop; no plugin has asked. Lending is a published API that
 // narrowing later would break, so it stays withheld until something needs it.
-  const LIB_GIT_WITHHELD = new Set(['deleteBranch', 'isMerged', 'diffText']);
+// `mergeNoFf` and `revertCommit` are the strongest case the withhold rule has:
+// they do not merely mutate a ref, they COMMIT to whatever the shared checkout
+// has checked out — the tree every seat's branch is cut from. `currentBranch` is
+// lent, being read-only metadata of exactly the kind the rest of the lent set
+// returns.
+  const LIB_GIT_WITHHELD = new Set(['deleteBranch', 'isMerged', 'diffText', 'mergeNoFf', 'revertCommit']);
   const libGitWorktree = Object.freeze(Object.fromEntries(
     Object.keys(gitWorktree || {})
       .filter((k) => typeof gitWorktree[k] === 'function' && !LIB_GIT_WITHHELD.has(k))
