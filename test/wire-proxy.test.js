@@ -205,10 +205,13 @@ function collect(emitter, names) {
 // then assert on the shape of the whole array, which is satisfiable by a
 // half-arrived set. Ordering assertions (deepEqual on roles) are exactly where
 // an early read produces a shorter array that no longer matches.
+// `|| []` so an uncollected name fails this gate loudly instead of throwing
+// from inside a timer, where an uncaught exception takes the runner down
+// rather than reporting a failed test.
 const whenEvent = (events, name, n = 1, ms = 10000) => new Promise((resolve) => {
   const deadline = Date.now() + ms;
   const tick = () => {
-    if (events[name].length >= n) return resolve(true);
+    if ((events[name] || []).length >= n) return resolve(true);
     if (Date.now() > deadline) return resolve(false);
     setTimeout(tick, 2);
   };

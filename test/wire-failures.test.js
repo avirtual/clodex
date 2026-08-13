@@ -60,15 +60,25 @@ function serveOnce(handler) {
 // are the reason this matters: they are true before the observer has run at
 // all, so gating them on a positive terminal event is what makes them mean
 // "the observer finished and produced nothing" instead of "we asked too early".
-const whenEvent = (events, name, n = 1, ms = 10000) => new Promise((resolve) => {
+// Gate on the condition a test actually asserts. A gate that implies less than
+// the assertion after it is WEAKER than the sleep it replaced: the sleep at
+// least bought slack for the hop, where a satisfied gate resolves on the next
+// tick and stops waiting.
+const until = (pred, ms = 10000) => new Promise((resolve) => {
   const deadline = Date.now() + ms;
   const tick = () => {
-    if (events[name].length >= n) return resolve(true);
+    if (pred()) return resolve(true);
     if (Date.now() > deadline) return resolve(false);
     setTimeout(tick, 2);
   };
   tick();
 });
+
+// `|| []` so an uncollected name fails this gate loudly instead of throwing
+// from inside a timer, where an uncaught exception takes the runner down
+// rather than reporting a failed test.
+const whenEvent = (events, name, n = 1, ms = 10000) =>
+  until(() => (events[name] || []).length >= n, ms);
 
 test('upstream 5xx passes through verbatim; error receipt, not a turn', async () => {
   const { server, port } = await serveOnce((req, res) => {
@@ -146,7 +156,13 @@ test('client aborts mid-stream: upstream released, stream-end fires', async () =
     req.on('close', resolve);
     req.end('{}');
   });
-  assert.ok(await whenEvent(events, 'stream-end'), 'stream-end fired after client abort');
+  // BOTH conditions, not just stream-end: proxy.js destroys the upstream and
+  // closes the tee in the same tick, and passthrough Decompressor.end calls
+  // back synchronously, so stream-end fires while the fake upstream has not yet
+  // seen its socket die. Gating on stream-end alone leaves ~2ms for that hop
+  // where the sleep this replaced left ~80ms — weaker than what it replaced.
+  assert.ok(await until(() => upstreamClosed && events['stream-end'].length >= 1),
+    'upstream released and stream-end fired after client abort');
 
   assert.equal(upstreamClosed, true);
   assert.equal(events['stream-start'].length, 1);
