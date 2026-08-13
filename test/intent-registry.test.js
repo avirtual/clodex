@@ -505,10 +505,19 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
 // Set lookup names no literal — so a row that branches on `.sub` and yields
 // nothing FAILS here instead of contributing an empty list. That is t343's lesson
 // one level down: a failed read must not be indistinguishable from nothing to read.
+//
+// `mentions` counts every `.sub` in the source, and the test below requires it to
+// equal the literals read out. A PARTIAL read is the same hole one level down: a
+// widening spelled as a negation (`i.sub !== 'list'`) on a row that also carries
+// `===` arms yields a non-empty list, so a length check alone stays green while
+// the widened set goes unenumerated. Equality admits only the `===` shape.
 function bodyModeSubsFromSource(row) {
   const src = String(row.bodyMode);
   if (!/\.sub\b/.test(src)) return null;
-  return [...src.matchAll(/\.sub\s*===\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
+  return {
+    subs: [...src.matchAll(/\.sub\s*===\s*['"]([^'"]+)['"]/g)].map((m) => m[1]),
+    mentions: [...src.matchAll(/\.sub\b/g)].length,
+  };
 }
 
 // The pair count the predicates named when this was pinned. An arm deleted from a
@@ -518,11 +527,15 @@ const MIN_BODYMODE_SUBS = 11;
 test('t341: every sub-verb a bodyMode predicate names is reachable in the corpus', () => {
   let pairs = 0;
   for (const row of registry.CORE_ROWS) {
-    const subs = bodyModeSubsFromSource(row);
-    if (subs === null) continue;
-    assert.ok(subs.length > 0,
-      `${row.type}: its bodyMode branches on .sub but no sub-verb could be read out of it — `
-      + 'the derivation went blind, which is a vacuous pass, not a row with nothing to enumerate');
+    const read = bodyModeSubsFromSource(row);
+    if (read === null) continue;
+    const { subs, mentions } = read;
+    assert.strictEqual(subs.length, mentions,
+      `${row.type}: its bodyMode mentions .sub ${mentions}x but only ${subs.length} `
+      + 'sub-verb literal(s) could be read out of it — the derivation is partially or wholly '
+      + 'blind, which is a vacuous pass, not a row with nothing to enumerate. If the predicate '
+      + 'was legitimately refactored (a negated arm, an includes(), a switch), update '
+      + '`bodyModeSubsFromSource` to read the new predicate shape');
     for (const sub of subs) {
       pairs++;
       assert.ok(corpusCovers(row.type, sub),
