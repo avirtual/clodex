@@ -46,6 +46,22 @@ blocks a release.
   never stamped a start time, so a board-dispatched ticket would have read as
   never-started forever — invisible to the board's flag and to the watchdog
   alike. A stall nobody is told about is the more expensive direction.
+- A ticket's artifact directory is now found anywhere in its spec, not only on
+  the first line. A spec that named its task dir lower down left the review
+  step with nowhere to write the diff, so it computed one and threw it away —
+  measured nine times in a night, the largest discarding 78KB, twice on the
+  tickets that fix the review loop itself. The scan is a strict superset, so
+  any spec that resolved before resolves to the same directory now. The loop
+  also checks that a destination exists before spending a full-branch diff on
+  it, and when there is none it names a recovery that works: the suggested
+  command is parsed by the real intent grammar and exercised end to end, so
+  renaming an intent breaks the test rather than quietly leaving the advice
+  pointing at a command nobody can run.
+- Fixed a stall-sweep test that could not have caught the bug it was written
+  for. Every exemption fixture had a single-element board, so an exemption
+  that skipped the entire remaining sweep instead of just its own ticket
+  looked identical to a correct one, and would have silenced every alarm after
+  the first exempt ticket with the suite still green.
 
 - A retired role field in `team.json` now says so on load, instead of vanishing
   once the file claims a current schema version. `roles.reviewer.tools` looks
