@@ -1383,9 +1383,16 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     // future caller that forgets the seam would silently do it again. A test
     // that means to exercise seeding passes a temp registryDir, so this only
     // ever fires on the path that is already a mistake.
+    //
+    // Keys on whatever homedir() says NOW, so a test that fakes HOME and then
+    // passes a registryDir matching it (terminal-reports-pref does) has its
+    // seeding silently suppressed — expect an unseeded library there rather
+    // than debugging it as a seed bug.
     if (process.env.NODE_TEST_CONTEXT
         && registryDir === path.join(os.homedir(), '.clodex')) {
-      if (log) log.warn('stores', 'refusing to seed the real ~/.clodex under node --test; pass seams.registryDir');
+      // Optional-call: several initStores callers pass {info, error} only, so a
+      // bare log.warn would make the safety net itself the crash.
+      if (log) log.warn?.('stores', 'refusing to seed the real ~/.clodex under node --test; pass seams.registryDir');
       return;
     }
     let src;

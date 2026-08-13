@@ -38,7 +38,7 @@ function engineSeamTargets(seams) {
       userDataPath: tmp,
       log: { info() {}, warn() {}, error() {} },
       // registryDir or the engine seeds the operator's live ~/.clodex (t359).
-      seams: { ...seams, registryDir: path.join(tmp, 'clodex-home') },
+      seams: { registryDir: path.join(tmp, 'clodex-home'), ...seams },
     });
   } finally {
     smMod.createSessionManager = origSm;

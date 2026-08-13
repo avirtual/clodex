@@ -113,11 +113,24 @@ function sweepSpilledMessages(msgDir, pendingDir, maxAgeSec, now = Date.now()) {
 // itself the write we are trying to prevent.
 //
 // Deliberately NOT read from CLODEX_HOME: t118 settled that the env var is a
-// seam for the standalone scripts only and never app configuration, and
-// test/clodex-home-app-root.test.js pins the app ignoring it. Honouring it here
-// would silently reverse that decision.
+// seam for the standalone scripts only and never app configuration. The pin is
+// the CLODEX_HOME decoy case in test/engine-registry-dir-seam.test.js, which
+// resolves with the var set and requires the home-derived path — adding a
+// `|| process.env.CLODEX_HOME` clause here goes red there.
+//
+// Throwing under `node --test` rather than returning the home is the backstop
+// for the seed guard's blind spot: seeding is the LEAST destructive thing this
+// root feeds. registry.cleanup() unlinks run/*/agent.json and runLegacySweep
+// rmSync's at the root, and neither consults that guard, so a test that forgets
+// the seam must fail loudly here instead of quietly deleting the operator's.
 function resolveRegistryDir(seams) {
-  return (seams && seams.registryDir) || path.join(os.homedir(), '.clodex');
+  if (seams && seams.registryDir) return seams.registryDir;
+  if (process.env.NODE_TEST_CONTEXT) {
+    throw new Error(
+      'createEngine: refusing to resolve the real ~/.clodex under node --test — '
+      + 'pass seams.registryDir (see t359)');
+  }
+  return path.join(os.homedir(), '.clodex');
 }
 
 function createEngine({ userDataPath, seams = {}, log }) {

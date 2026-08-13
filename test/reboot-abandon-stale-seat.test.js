@@ -46,7 +46,7 @@ function mkEngine(seams) {
   // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,
-    seams: { ...seams, registryDir: path.join(tmp, 'clodex-home') },
+    seams: { registryDir: path.join(tmp, 'clodex-home'), ...seams },
     log: { info() {}, warn() {}, error() {} },
   });
 }

@@ -30,7 +30,6 @@ const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
 
 const { createEngine, resolveRegistryDir } = require('../engine');
 
@@ -99,7 +98,11 @@ test('a test-constructed engine seeds its OWN registry root and writes no home a
       // The assertion that must fail against unfixed code: with the seam given,
       // the home-derived root is never touched. Counting files rather than
       // hashing a live tree — under a fake HOME the correct count is exactly 0,
-      // so there is nothing racy to observe.
+      // so there is nothing racy to observe. existsSync first, because a writer
+      // that creates only DIRECTORIES under the root passes a file count of 0
+      // vacuously.
+      assert.strictEqual(fs.existsSync(path.join(fakeHome, '.clodex')), false,
+        'an engine given a registryDir must not create the home-derived root at all');
       assert.strictEqual(fileCount(path.join(fakeHome, '.clodex')), 0,
         'an engine given a registryDir must not write the home-derived root');
     } finally {
@@ -111,16 +114,65 @@ test('a test-constructed engine seeds its OWN registry root and writes no home a
 
 // The other side of the discriminator. Pure resolution, no construction, no IO —
 // proving the production default still points at the home must not write one.
-test('the default registry root is still the home-derived path when no seam is given', () => {
+test('the default registry root is the home-derived path, and ignores CLODEX_HOME', () => {
   withFakeHome((fakeHome) => {
     const expected = path.join(fakeHome, '.clodex');
-    assert.strictEqual(resolveRegistryDir({}), expected,
-      'omitting the seam must resolve the operator home exactly as before');
-    assert.strictEqual(resolveRegistryDir(undefined), expected,
-      'a missing seams object must resolve the operator home');
+
     assert.strictEqual(resolveRegistryDir({ registryDir: '/tmp/elsewhere' }), '/tmp/elsewhere',
       'an explicit seam wins');
+
+    // The production default. resolveRegistryDir throws under node --test when
+    // no seam is given (the backstop), so unset that marker for exactly this
+    // resolution — the property under test is what PRODUCTION resolves, and
+    // production never runs with it set. Restored in the finally below.
+    //
+    // This case carries t118's pin, which the t359 diff otherwise deleted:
+    // test/clodex-home-app-root.test.js used to construct an engine with no
+    // seam while CLODEX_HOME held a decoy, so a root honouring the env var went
+    // red. Every engine construction now passes an explicit registryDir, which
+    // made that mutant green suite-wide while main.js and headless-main.js pass
+    // no seam — production would have followed CLODEX_HOME with nothing red.
+    // Hence a decoy here: `|| process.env.CLODEX_HOME` in resolveRegistryDir
+    // must fail THIS assertion.
+    const prevCtx = process.env.NODE_TEST_CONTEXT;
+    const prevHomeVar = process.env.CLODEX_HOME;
+    const decoy = path.join(fakeHome, 'decoy-clodex-home-from-env');
+    try {
+      delete process.env.NODE_TEST_CONTEXT;
+      process.env.CLODEX_HOME = decoy;
+
+      // ENTER: the decoy must differ from the answer, or the assertion holds
+      // whatever the code does.
+      assert.notStrictEqual(decoy, expected,
+        'the fixture must make the decoy and the expected root DIFFER');
+
+      assert.strictEqual(resolveRegistryDir({}), expected,
+        'the app root must ignore CLODEX_HOME — t118: the env var is a seam for the standalone scripts only');
+      assert.strictEqual(resolveRegistryDir(undefined), expected,
+        'a missing seams object must resolve the operator home, still ignoring CLODEX_HOME');
+    } finally {
+      if (prevCtx === undefined) delete process.env.NODE_TEST_CONTEXT;
+      else process.env.NODE_TEST_CONTEXT = prevCtx;
+      if (prevHomeVar === undefined) delete process.env.CLODEX_HOME;
+      else process.env.CLODEX_HOME = prevHomeVar;
+    }
   });
+});
+
+// The backstop the lead promoted from the reviewer's structural nit: forgetting
+// the seam under `node --test` must be loud. Seeding is the least destructive
+// writer of this root — registry.cleanup() unlinks run/*/agent.json and
+// runLegacySweep rmSync's at the root, neither of which consults the seed guard.
+test('resolveRegistryDir throws when the seam is forgotten under node --test', () => {
+  assert.ok(process.env.NODE_TEST_CONTEXT,
+    'this test is meaningless unless node --test marks the process');
+  assert.throws(() => resolveRegistryDir({}), /refusing to resolve the real/,
+    'a forgotten seam must fail loudly rather than resolve the operator home');
+  assert.throws(() => resolveRegistryDir(undefined), /refusing to resolve the real/,
+    'a missing seams object must fail loudly too');
+  // The seam still works under the same marker — the throw must not be a blanket ban.
+  assert.strictEqual(resolveRegistryDir({ registryDir: '/tmp/ok' }), '/tmp/ok',
+    'an explicit seam is still honoured under node --test');
 });
 
 // The safety net behind the seam: a caller that FORGETS the seam under
