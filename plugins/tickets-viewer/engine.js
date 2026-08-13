@@ -496,6 +496,11 @@ function shape(t, now, stallMs) {
     // already names its seat, so the lead's action is to release it rather than
     // to decide who gets it.
     parked: t.parked === true,
+    // A COUNT, not the entries: the row needs "this spec was replaced, N times"
+    // and nothing more, and shipping the array would put every superseded title
+    // on a surface that renders none of them. Absent on the overwhelming
+    // majority of tickets, so it reads 0 rather than undefined.
+    respecCount: Array.isArray(t.respecs) ? t.respecs.length : 0,
   };
 }
 

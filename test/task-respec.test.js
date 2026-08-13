@@ -26,6 +26,7 @@ const osReal = require('node:os');
 
 const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
+const { ticketStarted } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { parseIntent } = require('../intent-scanner');
 
@@ -96,19 +97,52 @@ function mkRespec(extra = {}) {
   };
 }
 
-// A ticket open and pinned to a live seat — the state the whole verb is for.
-// Asserts the seat really resolves, so a delivery assertion below cannot pass
-// vacuously against a ticket nobody holds.
+// A ticket open, DISPATCHED, and pinned to a live seat — the state the whole
+// verb is for. Asserts the seat really resolves, so a delivery assertion below
+// cannot pass vacuously against a ticket nobody holds.
+//
+// This fixture NORMALISES two things — it pins `assignee` to a concrete seat and
+// stamps `startedAt` — and that normalisation is exactly what hid the r1
+// must-fix: every delivery assertion ran on the one shape where role resolution
+// is harmless. The role-key and unstarted shapes are built explicitly below, by
+// `openRolePinned`, and must stay that way.
 function openPinned(f, spec = 'the original spec\nwith detail') {
   const lead = f.seat('lead');
   f.seat('team-hand');
   f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: spec });
   const t = f.one('t1');
   t.assignee = 'team-hand';
+  t.startedAt = Date.now();   // dispatched — `add` alone files it unstarted
   delete t.role;
   f.tstore.save(f.team.root, f.load().map((x) => (x.id === 't1' ? t : x)));
   assert.strictEqual(f.m._ticketAssigneeSeat(f.team, f.one('t1')), 'team-hand',
     'ENTER: the ticket resolves to a live seat — otherwise every delivery assertion below is vacuous');
+  assert.ok(ticketStarted(f.one('t1')), 'ENTER: the ticket is dispatched — otherwise the delivery gate, not the seat, decides');
+  f.gated.length = 0;
+  f.injected.length = 0;
+  return f.one('t1');
+}
+
+// The shape `[agent:task add <role>]` actually produces: `assignee` is the ROLE
+// KEY and `startedAt` is null. `_ticketAssigneeSeat` resolves a bare role key to
+// the first live seat holding that role, so a sibling hand — mid-work in another
+// ticket's tree — is what this ticket resolves to. `started` stamps the dispatch
+// without touching the role pin, which is the only difference that may gate
+// delivery.
+function openRolePinned(f, { started }, spec = 'the original spec\nwith detail') {
+  const lead = f.seat('lead');
+  const sibling = f.seat('team-hand-999');   // a live seat filling role `hand`
+  f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: spec });
+  const t = f.one('t1');
+  assert.strictEqual(t.assignee, 'hand', 'ENTER: add pinned the ROLE KEY, not a seat');
+  assert.strictEqual(t.startedAt, null, 'ENTER: add files unstarted');
+  if (started) t.startedAt = Date.now();
+  f.tstore.save(f.team.root, f.load().map((x) => (x.id === 't1' ? t : x)));
+  // The hazard, asserted as a PRECONDITION: this ticket resolves to a seat that
+  // was never given it. If this stops holding the test below proves nothing.
+  assert.strictEqual(f.m._ticketAssigneeSeat(f.team, f.one('t1')), sibling.name,
+    'ENTER: the role key resolves to the sibling seat — the misdelivery target');
+  assert.strictEqual(ticketStarted(f.one('t1')), !!started, `ENTER: started=${!!started}`);
   f.gated.length = 0;
   f.injected.length = 0;
   return f.one('t1');
@@ -157,6 +191,46 @@ test('respec DELETES taskDir when the new spec names none', () => {
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'no dir now\njust prose' });
 
   assert.ok(!('taskDir' in f.one('t1')), 'stale taskDir dropped, not carried');
+});
+
+// Dropping it is correct; dropping it SILENTLY is not. The loop hard-fails on a
+// missing task dir several steps downstream and routes the lead to `reject`.
+test('dropping the artifact link is REPORTED, not silent', () => {
+  const f = mkRespec();
+  openPinned(f, 'has a dir\ntasks/some-dir — notes');
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'no dir now' });
+  assert.match(f.reply(), /artifact link was dropped/, 'the lead learns it here, not three steps later');
+
+  // And no false alarm when the new spec keeps one, or when there was none.
+  const f2 = mkRespec();
+  openPinned(f2, 'has a dir\ntasks/some-dir — notes');
+  f2.m._handleTask(f2.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'still\ntasks/other-dir — x' });
+  assert.doesNotMatch(f2.reply(), /artifact link was dropped/, 'kept a dir — no note');
+
+  const f3 = mkRespec();
+  openPinned(f3, 'no dir at all\nprose');
+  f3.m._handleTask(f3.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'still none' });
+  assert.doesNotMatch(f3.reply(), /artifact link was dropped/, 'never had one — no note');
+});
+
+// The supersession record has to be VISIBLE, or it satisfies the requirement
+// literally and not actually.
+test('the board row shows a corrected ticket as respec`d, with a count', () => {
+  const f = mkRespec();
+  openPinned(f);
+  const lead = f.seat('lead');
+
+  f.m._handleTask(lead, { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  assert.doesNotMatch(f.reply(), /respec/, 'ENTER: an uncorrected ticket carries no suffix');
+
+  f.m._handleTask(lead, { type: 'task', sub: 'respec', who: null, id: 't1', body: 'first correction' });
+  f.m._handleTask(lead, { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  assert.match(f.reply(), /respec'd ×1/, 'one correction shown on the row');
+
+  f.m._handleTask(lead, { type: 'task', sub: 'respec', who: null, id: 't1', body: 'second correction' });
+  f.m._handleTask(lead, { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  assert.match(f.reply(), /respec'd ×2/, 'the count tracks');
 });
 
 // The guard t339 must not lose: an open ticket silently rewritten into
@@ -208,6 +282,99 @@ test('respec DELIVERS the new spec to the assignee seat, urgently', () => {
   assert.doesNotMatch(f.gated[0].body, /the original spec/, 'not the superseded one');
   assert.strictEqual(f.urgents[0], true, 'urgent — the hand is building the wrong thing right now');
   assert.match(f.reply(), /respec/, 'the lead is told it went out');
+});
+
+// The r1 must-fix, and the reason the delivery gate is `ticketStarted` and not
+// `parked`. `add` files a role ticket with `assignee` = the role key and
+// `startedAt` = null; the resolver maps that key to the FIRST live seat holding
+// the role. Deliver on that and this ticket's spec lands in a sibling hand
+// already mid-work in a different ticket's worktree — the failure `add` was
+// stripped of its own delivery to prevent.
+test('respec does NOT deliver an UNSTARTED role ticket into a sibling seat', () => {
+  const f = mkRespec();
+  openRolePinned(f, { started: false });
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'corrected, undispatched' });
+
+  assert.strictEqual(f.gated.length, 0, 'NOTHING delivered — the sibling is not this ticket`s hand');
+  assert.match(f.one('t1').spec, /corrected, undispatched/, 'the record was still corrected');
+  assert.match(f.reply(), /not started/, 'the lead is told it was not dispatched');
+  assert.match(f.reply(), /task start t1/, 'and which verb dispatches it');
+});
+
+// The other half of the same gate: once dispatched, a role-pinned ticket DOES
+// deliver. Without this the fix could be "never deliver a role ticket" and the
+// test above would still pass.
+test('respec DOES deliver a STARTED role-pinned ticket', () => {
+  const f = mkRespec();
+  openRolePinned(f, { started: true });
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'corrected, dispatched' });
+
+  assert.strictEqual(f.gated.length, 1, 'exactly one delivery');
+  assert.strictEqual(f.gated[0].target, 'team-hand-999', 'to the seat the role resolves to');
+  assert.match(f.gated[0].body, /corrected, dispatched/);
+});
+
+// Neither arm may stamp `startedAt` or re-pin: that would make respec a third
+// dispatch path, which is the seam the add/start split exists to create.
+test('respec never stamps startedAt nor re-pins the role — it is not a dispatch path', () => {
+  const f = mkRespec();
+  openRolePinned(f, { started: false });
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'still not dispatched' });
+
+  const t = f.one('t1');
+  assert.strictEqual(t.startedAt, null, 'startedAt untouched — start alone dispatches');
+  assert.strictEqual(t.assignee, 'hand', 'still on the role key, not re-pinned to a seat');
+  assert.strictEqual(ticketStarted(t), false, 'still undispatched');
+});
+
+// ── MUST-FIX 2: the delivered spec must announce itself as a REPLACEMENT ────
+// Over ~500 bytes the body spills and the seat sees only "Message (N bytes)
+// attached" — identical in shape to a fresh dispatch. A hand reading it as one
+// follows its brief (compact, start clean) and discards the in-flight work of
+// the ticket being corrected. So the marker must be in BOTH the body text and
+// the tag, because the tag is the half that survives a spill.
+
+test('a respec delivery is MARKED in the body, and tells the hand not to start over', () => {
+  const f = mkRespec();
+  openPinned(f);
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'the corrected spec' });
+
+  const body = f.gated[0].body;
+  assert.match(body, /\[ticket t1 RESPEC\]/, 'marked as a respec, not as a fresh dispatch');
+  assert.match(body, /SUPERSEDES/, 'says the new text replaces the old');
+  assert.match(body, /do NOT start over and do NOT compact/, 'countermands the hand brief`s start-clean rule');
+  assert.doesNotMatch(body, /REPLAY/, 'not confused with the replay path');
+});
+
+// The assertion that matters when the body spills: the tag is all the seat sees.
+test('the RESPEC marker rides the TAG too, which is what survives a spill', () => {
+  const f = mkRespec();
+  openPinned(f);
+  const tags = [];
+  f.m._gatedDeliver = (target, sender, body, urgent, tag) => { tags.push(tag); return { queued: true }; };
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'x'.repeat(2000) });
+
+  assert.strictEqual(tags.length, 1, 'ENTER: one delivery — otherwise the tag below is nobody`s');
+  assert.strictEqual(tags[0], '[ticket t1 RESPEC]',
+    'a spilled respec announces itself as a respec; an empty tag reads as a fresh dispatch');
+});
+
+// A fresh dispatch must NOT acquire the marker — otherwise the discriminator is
+// a constant and proves nothing.
+test('an ordinary dispatch carries no RESPEC marker', () => {
+  const f = mkRespec();
+  const lead = f.seat('lead');
+  f.seat('team-hand');
+  f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'a fresh spec' });
+  f.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+
+  assert.ok(f.gated.length >= 1, 'ENTER: start dispatched it');
+  assert.doesNotMatch(f.gated[0].body, /RESPEC/, 'a first dispatch is not a respec');
 });
 
 // ── the state gate ─────────────────────────────────────────────────────────

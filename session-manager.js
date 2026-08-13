@@ -5140,7 +5140,7 @@ function createSessionManager(deps) {
     // seat cannot tell a replay from a fresh assignment (that indistinguishability
     // is the whole finding in this ticket's notes), so the marker has to be in the
     // text, not in the caller's head.
-    _deliverTicketSpec(team, ticket, specText, fromName, urgent = false, replay = false) {
+    _deliverTicketSpec(team, ticket, specText, fromName, urgent = false, replay = false, respec = false) {
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (!seat) return { undelivered: true };
       if (seat === team.lead) return { self: true }; // self-assign — the lead just wrote it
@@ -5152,6 +5152,12 @@ function createSessionManager(deps) {
       // notes are no evidence of absent work. And it must offer three branches — a
       // done/not-done pair sends the realistic partial case down "start over", which
       // is the destructive one.
+      // A RESPEC is the third case, and it is marked for the same reason replay is:
+      // over ~500 bytes the body spills and the seat sees only "Message (N bytes)
+      // attached", which is byte-identical in shape to a fresh dispatch. A hand that
+      // reads it as one follows its brief — compact, start clean — and discards the
+      // in-flight work of the very ticket being corrected. It must say "keep going,
+      // the spec changed", never "begin".
       const head = replay
         ? `[ticket ${ticket.id} REPLAY] this ticket was already open and assigned to you when this process `
           + `started, so an earlier incarnation of you may have already done some or all of it. `
@@ -5159,7 +5165,13 @@ function createSessionManager(deps) {
           + `artifact. Then — if the work is DONE, close the ticket instead of redoing it; if NOTHING was `
           + `started, do the task as specified below; if it is PARTIALLY done, do NOT restart it — report what `
           + `you found and ask how to proceed.\n`
-        : `[ticket ${ticket.id}] `;
+        : respec
+          ? `[ticket ${ticket.id} RESPEC] the lead has REPLACED this ticket's spec — you are already working `
+            + `it, so do NOT start over and do NOT compact: keep the tree and the context you have. The text `
+            + `below SUPERSEDES the spec you were given; re-read it, keep whatever work still applies, and `
+            + `discard only what the new spec contradicts. If work you have already done is now out of scope, `
+            + `say so in your report rather than silently reverting it.\n`
+          : `[ticket ${ticket.id}] `;
       // A ticket with its own worktree: the seat's cwd is the REPO, so the tree is
       // somewhere it would not otherwise look (git puts a worktree BESIDE the repo).
       // Rides the spec on every delivery INCLUDING a replay — a respawned seat needs
@@ -5174,7 +5186,7 @@ function createSessionManager(deps) {
       // only as "Message (N bytes) attached". A seat must know this is a REPLAY
       // before it opens the file, not after.
       const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${specText}`, urgent,
-        replay ? `[ticket ${ticket.id} REPLAY]` : '');
+        replay ? `[ticket ${ticket.id} REPLAY]` : (respec ? `[ticket ${ticket.id} RESPEC]` : ''));
       if (!r || r.error) return { undelivered: true };
       if (r.parked) return { parked: r.parked, reason: r.reason || null };
       if (r.held) return { held: true, reason: r.held };
@@ -7339,23 +7351,49 @@ function createSessionManager(deps) {
       // summary line describing a spec that no longer exists; a stale taskDir points
       // the seat's journal at another ticket's artifacts.
       ticket.title = ticketTitle(spec);
+      const hadTaskDir = !!ticket.taskDir;   // read before the line below overwrites it
       const taskDir = extractTaskDir(spec);
       if (taskDir) ticket.taskDir = taskDir; else delete ticket.taskDir;
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null; // a corrected spec starts a new stall episode, as assign does
       ticketsStore.save(team.root, tickets);
-      // Parked is NOT cleared, unlike assign. Assign IS the dispatch, so it unparks;
-      // a parked ticket has never been dispatched, so there is nothing to re-deliver
-      // and respec must not become a second dispatch path. _deliverTicketSpec is
-      // still called: it resolves no seat for a parked ticket and reports undelivered.
-      const d = ticket.parked ? { undelivered: true }
-        : this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
+      // Deliver only to a ticket that was actually DISPATCHED, which is
+      // `ticketStarted` — not `parked` alone. An added-but-unstarted ticket keeps
+      // `assignee` at the ROLE KEY it was filed under, and `_ticketAssigneeSeat`
+      // resolves a bare role key to the FIRST live seat holding that role, with no
+      // started term of its own. So a parked-only gate hands this ticket's spec to
+      // whichever sibling answers for the role first — a hand mid-work in another
+      // ticket's worktree. `add` was stripped of its delivery for exactly this and
+      // says so ("do not restore a delivery here"); gating anywhere but here would
+      // restore it by a new door.
+      //
+      // Neither arm re-pins or stamps `startedAt`: that would make respec a third
+      // dispatch path, which is the seam the add/start split exists to create.
+      // Correcting the spec of an undispatched ticket is a WRITE, and `task start`
+      // remains the one verb that sends it.
+      const dispatched = ticketStarted(ticket) && !ticket.parked;
+      const d = dispatched
+        ? this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true, false, true)
+        : { undelivered: true };
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} respec'd` });
       log.info('intent', `task respec ${ticket.id} by ${session.name} → spec replaced, re-dispatched`);
       const target = ticket.role || ticket.assignee || 'unassigned';
-      const parkedNote = ticket.parked ? ' (parked — spec replaced, not dispatched; assign it to send)' : this._ticketDeliverySuffix(d, target);
-      reply(`ticket ${ticket.id} respec'd → ${target}${parkedNote}`);
+      // The undispatched arms say WHICH verb sends the corrected spec. Silence here
+      // reads as "delivered" and is how a lead ends up believing a hand has the new
+      // text, which is the failure this whole ticket is about.
+      const note = ticket.parked
+        ? ` (parked — spec replaced, NOT dispatched; [agent:task start ${ticket.id}] sends it)`
+        : !dispatched
+          ? ` (not started — spec replaced, NOT dispatched; [agent:task start ${ticket.id}] sends it)`
+          : this._ticketDeliverySuffix(d, target);
+      // Surfaced, not silent: the loop hard-fails later on a ticket with no task dir
+      // and routes the lead to `reject`, three steps downstream of the respec that
+      // dropped it. Cheaper to learn here, while the spec is still in hand.
+      const dirNote = (hadTaskDir && !ticket.taskDir)
+        ? ` — NOTE: the previous spec named a tasks/… dir and this one does not, so the artifact link was dropped`
+        : '';
+      reply(`ticket ${ticket.id} respec'd → ${target}${note}${dirNote}`);
     }
 
     _taskCancel(session, team, intent, reply) {
@@ -7600,8 +7638,12 @@ function createSessionManager(deps) {
       // reads as; `assignee` is now a delivery-time pin to a concrete seat, which
       // is a cost-attribution fact and not the name the lead is looking for.
       const shownFor = (t) => t.role || t.assignee || '—';
+      // The respec suffix rides the TITLE, which is re-derived from each new spec:
+      // without it the row silently changes text between two listings and the lead
+      // has no way to tell a corrected ticket from one it misremembers.
+      const respecMark = (t) => (Array.isArray(t.respecs) && t.respecs.length ? ` (respec'd ×${t.respecs.length})` : '');
       const row = (t) =>
-        `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`;
+        `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${respecMark(t)}`;
       const closedRow = (t) =>
         `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}`;
       const lines = shown.map(row);

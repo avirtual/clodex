@@ -64,13 +64,18 @@ visible rather than silently lost.
   only on a DONE ticket — for one still open, see `respec` below.
 - `[agent:task respec <id>]` — **the correction channel for a ticket that is
   still open**, with the corrected spec as the body. It replaces the spec on the
-  record, re-derives the title and task-dir from it, and delivers the new spec
-  to the assignee — so the board and the hand never disagree about what the work
-  is. Reach for it when a hand reports your account was wrong, or when the spec
-  you dispatched was incomplete: `reject` bounces on an open ticket (there is no
-  close to undo), and cancel-and-refile burns the id, its history and its
-  artifact link. The supersession is recorded on the ticket, so a rewritten
-  dispatch is never silent. A parked ticket is corrected but not dispatched.
+  record and re-derives the title and task-dir from it. If the ticket has been
+  DISPATCHED it also delivers the new spec to the assignee, marked as a respec
+  so the hand keeps its tree and context instead of starting over — so the board
+  and the hand never disagree about what the work is. A ticket that is parked,
+  backlog, or filed-but-not-yet-started is corrected on the record and NOT
+  delivered (there is no hand to correct yet); the reply says so and names
+  `task start` as the verb that dispatches it. Reach for respec when a hand
+  reports your account was wrong, or when the spec you dispatched was
+  incomplete: `reject` bounces on an open ticket (there is no close to undo),
+  and cancel-and-refile burns the id, its history and its artifact link. The
+  supersession is recorded and shown on the board as `(respec'd ×N)`, so a
+  rewritten dispatch is never silent.
 - `[agent:task cancel <id>]` — you drop it; the reason rides in the body.
   Terminal, unlike reject.
 - `[agent:task accept <id>]` — you have read the report and it stands. This is

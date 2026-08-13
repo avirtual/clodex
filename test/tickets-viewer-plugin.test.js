@@ -1115,6 +1115,33 @@ test('tickets-viewer: add refuses an empty spec, and writes nothing', async () =
   } finally { cleanup(); }
 });
 
+// t339: core's `task respec` records each supersession on the ticket. The board
+// is the surface the lead actually reads, so it carries the COUNT — a history
+// no reader ever surfaces satisfies "show the spec was superseded" literally and
+// not actually. A count, not the entries: the row renders no titles.
+test('tickets-viewer: shape surfaces respecCount, defaulting to 0', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/solo/respec');
+    writeTicketsAt(home, key, [
+      ticket('t1'),
+      ticket('t2', { respecs: [{ at: Date.now(), by: 'lead', title: 'superseded' }] }),
+      ticket('t3', { respecs: [{ at: 1, by: 'lead', title: 'a' }, { at: 2, by: 'lead', title: 'b' }] }),
+    ]);
+
+    const res = await host.dispatch('tickets-viewer', 'board', [key], 'desktop');
+    const byId = Object.fromEntries(res.open.map((t) => [t.id, t]));
+    // ENTER: all three rows survive the reduction — the assertions below are a
+    // 0 and two positives, and a dropped row would satisfy the 0 vacuously.
+    assert.ok(byId.t1 && byId.t2 && byId.t3, 'every fixture reached the board');
+
+    assert.strictEqual(byId.t1.respecCount, 0, 'an uncorrected ticket reads 0, not undefined');
+    assert.strictEqual(byId.t2.respecCount, 1);
+    assert.strictEqual(byId.t3.respecCount, 2, 'the count tracks repeated corrections');
+    assert.ok(!('respecs' in byId.t3), 'the entries themselves stay off the wire — the row shows a count');
+  } finally { cleanup(); }
+});
+
 test('tickets-viewer: editSpec rewrites the spec AND everything derived from it', async () => {
   const { host, home, cleanup } = boot();
   try {
