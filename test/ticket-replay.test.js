@@ -195,6 +195,16 @@ function boot(world, opts = {}) {
     m, spawn, stop, emit,
     seen: (name) => writes.get(name) || '',
     wipeUntil: (name, ms) => keepFrom.set(name, Date.now() + ms),
+    // How many parked entries MATCH — not how many exist. "Nothing reached the PTY"
+    // is equally true of a park that THREW (_parkHeldDelivery catches, returns null,
+    // and the log is a stub here), so a park must be proven positively. Matched
+    // rather than counted because a dialog-blocked seat parks EVERYTHING sent to it,
+    // including the roster broadcast, whose arrival is timing-dependent — a bare
+    // count asserts the absence of unrelated traffic, which is not the property and
+    // fails only on a loaded machine.
+    parked: (name, re) => require('../pending-store')
+      .peekPending(path.join(root, 'pending'), name, { max: 20, snipLen: 200 })
+      .filter((p) => re.test(p.snippet)).length,
   };
 }
 
@@ -1157,6 +1167,13 @@ test('t349: a spec HELD-PARKED behind a permission dialog does not arm the latch
     assert.strictEqual(app.seen('team-hand'), before,
       'ENTER: the spec must have been HELD-PARKED rather than written — if it reached the PTY this fixture '
       + 'never entered _parkHeldDelivery and every assertion below is about a path it did not take');
+    // POSITIVELY, not by the absence above: a park that threw is caught inside
+    // _parkHeldDelivery, returns null, and leaves the PTY equally untouched — so
+    // `seen === before` alone is just as true of a bare `held` that parked nothing,
+    // and this test would go green over the one path it exists to cover.
+    assert.strictEqual(app.parked('team-hand', /BUILD THE WIDGET/), 1,
+      'ENTER: the SPEC itself must be in the park store — the assertion above cannot tell a successful park '
+      + 'from a park that failed silently, and only one of those is the state this test names');
     assert.ok(!s._specUnconfirmed,
       'a held-parked spec must NOT arm the latch: it is a file the hook drains mid-loop, and the operator '
       + 'answering the dialog clears needsAttention synchronously while the seat never leaves "thinking" — so '
@@ -1189,11 +1206,11 @@ test('t349: a seat that went busy while the unit waited in the gates does not ar
     app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
     // Busy at WRITE time, idle at park-decision time. _armSpecConfirm runs inside
     // `produce`, so it reads the state here, not the one the disposition was chosen
-    // under. Set between dispatch and the queue's release.
-    const t = setTimeout(() => { s.activityState = 'thinking'; }, 0);
+    // under. The ordering is deterministic rather than raced: _handleTask is
+    // synchronous, and the queue's _drain does not start until a microtask, so this
+    // assignment always lands between the park decision and the write.
     app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
     s.activityState = 'thinking';
-    clearTimeout(t);
     const got = await settled(app, 'team-hand');
     assert.match(got, /BUILD THE WIDGET/,
       'ENTER: the spec must have been WRITTEN — this test is about a write into a busy seat, so a park here '
