@@ -457,6 +457,48 @@ test("digest: the tree named is the script's own checkout, not the caller's cwd"
 // the process. Two agents were each blocked on evidence the run had already
 // produced. These tests are about what SURVIVES a failing run.
 
+// REAL runner output, captured by running node against a scratch test file,
+// for the reason test/test-escapes.test.js gives about its own fixtures: a
+// hand-written approximation cannot tell you what node actually emits, and this
+// reducer is a parser of node's TAP. Two shapes below were mis-guessed by hand
+// and only the real capture settled them — the bare `...` elision node's assert
+// puts INSIDE a big diff, and the fact that a nested test's stdout arrives
+// UNINDENTED at top level (so `/^# /` does see it).
+//
+// Captured rather than pasted: pasting 200+ lines of volatile absolute paths and
+// durations dates instantly, and regenerating means a wording change in node
+// fails these tests rather than silently passing against a frozen copy.
+function captureRealTap({ fillers = 0, bigDiff = false, escape = false } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t363-cap-'));
+  try {
+    const src = [
+      "const { test } = require('node:test');",
+      "const assert = require('node:assert');",
+      // Each filler is one more `# Subtest:` diagnostic line, which is how the
+      // real suite drowns the diagnostics buffer.
+      `for (let i = 1; i <= ${fillers}; i++) test('filler ' + i, () => {});`,
+      "console.log('TOP LEVEL STDOUT MARKER');",
+      escape ? "test('an escaping test', () => { setTimeout(() => { throw new Error('BOOM ESCAPED'); }, 5); });" : '',
+      "test('outer suite', async (t) => {",
+      "  await t.test('the failing subtest', () => {",
+      "    console.log('NESTED STDOUT MARKER');",
+      bigDiff
+        ? "    const a = {}, b = {}; for (let i = 0; i < 60; i++) { a['k'+i] = i; b['k'+i] = i; } a.zz = 1; b.zz = 2;"
+          + '    assert.deepStrictEqual(a, b);'
+        : "    assert.deepStrictEqual({ a: 1, b: 2 }, { a: 1, b: 3 });",
+      '  });',
+      "  await t.test('a passing sibling', () => {});",
+      '});',
+    ].join('\n');
+    fs.writeFileSync(path.join(dir, 'cap.test.js'), src);
+    const env = { ...process.env };
+    delete env.NODE_TEST_CONTEXT;
+    const res = spawnSync(process.execPath, ['--test', '--test-reporter=tap'],
+      { cwd: dir, encoding: 'utf-8', timeout: 60000, env });
+    return `${res.stdout || ''}${res.stderr || ''}`;
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+
 // A failing TAP fixture with the shape node actually emits: a `not ok` row at
 // depth, then the YAML block carrying the evidence, and a passing sibling that
 // must NOT be what we keep.
@@ -661,6 +703,121 @@ test('keep: TAP the trimmer does not recognise falls back to raw, never to empty
   assert.ok(r.kept.includes('something the reducer does not match'),
     'the reduction matched nothing and kept nothing — an empty dump is indistinguishable from a '
     + 'run that produced no output, and hides that the TAP grammar moved');
+});
+
+// Runs the SHIPPED script over arbitrary TAP and returns the preserved file.
+// Separate from runDigest so a fixture can be built from a real capture.
+function keepFor(tap, exit = 1) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t363-'));
+  try {
+    fs.mkdirSync(path.join(root, 'scripts'));
+    fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
+    fs.mkdirSync(path.join(root, 'bin'));
+    // The TAP goes through a FILE, not a heredoc: a capture containing the
+    // heredoc terminator or a `$` would otherwise be mangled by the stub.
+    fs.writeFileSync(path.join(root, 'tap.txt'), tap);
+    fs.writeFileSync(path.join(root, 'bin', 'node'),
+      `#!/bin/sh\ncat ${path.join(root, 'tap.txt')}\nexit ${exit}\n`, { mode: 0o755 });
+    const home = path.join(root, 'home');
+    const env = {
+      ...process.env,
+      PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`,
+      CLODEX_HOME: home,
+    };
+    delete env.NODE_TEST_CONTEXT;
+    spawnSync('/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
+      { encoding: 'utf-8', cwd: root, timeout: 60000, env });
+    const keep = path.join(home, 'test-failures', 'last.txt');
+    return fs.existsSync(keep) ? fs.readFileSync(keep, 'utf-8') : null;
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+
+test('keep: at real suite scale the diagnostics are stdout, not a wall of test names', () => {
+  // THE FIXTURE MUST BE BIG, and that is the whole subject. The reducer caps the
+  // diagnostics buffer; node emits one `# Subtest:` per test, so on the real
+  // ~5300-test suite those names alone are an order of magnitude over the cap
+  // and evict the stdout this section advertises. A small fixture certifies the
+  // claim while measuring nothing — the failure mode is the cap never binding.
+  const FILLERS = 600;
+  const tap = captureRealTap({ fillers: FILLERS, escape: true });
+  const subtestLines = tap.split('\n').filter((l) => /^# Subtest: /.test(l)).length;
+  assert.ok(subtestLines > 400,
+    `ENTER: the capture has only ${subtestLines} '# Subtest:' lines, which is under the script's `
+    + 'diagnostics cap — this fixture is too small to exercise the eviction it is about');
+
+  const kept = keepFor(tap);
+  assert.ok(kept !== null, 'ENTER: nothing was preserved');
+  const diag = kept.slice(kept.indexOf('## top-level diagnostics'));
+  assert.ok(diag.length > 0, 'ENTER: there is no diagnostics section to judge');
+
+  // The evidence, which sits in the MIDDLE of the stream and is the first thing
+  // a middle-drop throws away.
+  assert.ok(diag.includes('TOP LEVEL STDOUT MARKER'),
+    'test stdout was evicted from the diagnostics section at scale — the section header promises '
+    + 'stdout and this is the case where it stops delivering it');
+  assert.match(diag, /# Error: .*asynchronous activity after the test ended/,
+    'the escape diagnostic did not survive: that line is the one test/test-escapes.test.js exists '
+    + 'to catch, and losing it hides a suite that went green while broken');
+  assert.ok(!/^# Subtest: /m.test(diag),
+    'per-test `# Subtest:` names are still in the diagnostics buffer — they are already in the '
+    + 'failure rows above and at scale they are what starves this section');
+  // And the summary tail, at the far end of the same buffer.
+  assert.match(diag, /^# fail \d+$/m, 'the summary tail must survive alongside the stdout');
+});
+
+test('keep: a bare `...` inside a big diff does not truncate the block early', () => {
+  // Node's assert elides the middle of a large deep-equal diff with a bare
+  // `...`, indented DEEPER than the YAML block it sits inside. An unanchored
+  // terminator ends the block there and drops the rest of the diff, `code:` and
+  // the whole `stack:` — on exactly the big-diff failures worth preserving.
+  const tap = captureRealTap({ bigDiff: true });
+  const elision = tap.split('\n').filter((l) => /^[ \t]+\.\.\.[ \t]*$/.test(l));
+  assert.ok(elision.length > 0,
+    'ENTER: this capture contains no indented `...` elision, so it cannot exercise the early '
+    + 'termination it is about — node may have changed how it elides large diffs');
+
+  const kept = keepFor(tap);
+  assert.ok(kept !== null, 'ENTER: nothing was preserved');
+  assert.match(kept, /^ *not ok 1 - the failing subtest$/m,
+    'ENTER: the failing row itself is missing, so everything below is about nothing');
+  for (const tail of ['zz: 1', "code: 'ERR_ASSERTION'", 'stack: |-']) {
+    assert.ok(kept.includes(tail),
+      `the block was cut short before ${JSON.stringify(tail)} — an elision inside the diff ended `
+      + 'it early, which silently discards the evidence on the biggest failures');
+  }
+});
+
+test('keep: the digest shows the home-relative path a reader can actually type', () => {
+  // The only form a user ever sees, and no other subject reaches it: every other
+  // fixture puts CLODEX_HOME outside $HOME, so the tilde branch never runs.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t363-'));
+  try {
+    fs.mkdirSync(path.join(root, 'scripts'));
+    fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
+    fs.mkdirSync(path.join(root, 'bin'));
+    fs.writeFileSync(path.join(root, 'bin', 'node'),
+      `#!/bin/sh\ncat <<'CLX_TAP'\n${RICH_FAIL_TAP}\nCLX_TAP\nexit 1\n`, { mode: 0o755 });
+    const home = path.join(root, 'fakehome');
+    fs.mkdirSync(home);
+    const env = {
+      ...process.env,
+      PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`,
+      HOME: home,
+      CLODEX_HOME: path.join(home, '.clodex'),
+    };
+    delete env.NODE_TEST_CONTEXT;
+    const res = spawnSync('/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
+      { encoding: 'utf-8', cwd: root, timeout: 60000, env });
+    const lines = (res.stderr || '').split('\n').filter((l) => l.trim() !== '');
+    assert.ok(lines.length > 0, 'ENTER: the script wrote nothing to stderr');
+    assert.strictEqual(lines[lines.length - 1],
+      `[${path.basename(root)}] 2/4 green, 2 failing (~/.clodex/test-failures/last.txt): `
+      + 'the failing subtest; outer suite',
+      'under $HOME the digest must abbreviate to ~ — it is the only form users see, and the raw '
+      + 'form spends ~20 more chars of a 180-char line that the failing names are competing for');
+    assert.ok(fs.existsSync(path.join(home, '.clodex', 'test-failures', 'last.txt')),
+      'and the abbreviated path must be where the file actually is, not a cosmetic string');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('keep: the preserved path lives outside the run dir that teardown deletes', () => {

@@ -5,7 +5,7 @@
 # LAST stderr line (200-char slice) on both the success and failure paths, so
 # the whole digest lives on a single bounded line.
 #   pass: "[wb-wrap-ui] 811/811 green"
-#   fail: "[wb-wrap-ui] 798/811 green, 13 failing: name1; name2; …" (capped)
+#   fail: "[wb-wrap-ui] 798/811 green, 13 failing (~/.clodex/test-failures/last.txt): name1; …"
 # Dependency-free: sh + awk + git only. The TAP reporter is forced so the
 # summary grammar ("# pass N") doesn't shift with TTY detection across node
 # versions.
@@ -245,16 +245,38 @@ save_failing_output() {
       raw != "tap" { next }
       state == 2 {
         nf++; f[nf] = $0
-        if ($0 ~ /^[ \t]*\.\.\.[ \t]*$/) state = 0
+        # ANCHORED TO THE OPENER INDENT, and that is the whole point: node
+        # assert emits a bare `...` elision INSIDE a large deep-equal diff,
+        # deeper-indented than the block it sits in. An unanchored terminator
+        # ends the block there and silently drops the rest of the diff, `code:`
+        # and the entire `stack:` — on precisely the big-diff failures this
+        # file exists to preserve.
+        if ($0 ~ /^[ \t]*\.\.\.[ \t]*$/) {
+          match($0, /^[ \t]*/)
+          if (RLENGTH == ind) state = 0
+        }
         next
       }
       state == 1 {
-        if ($0 ~ /^[ \t]*---[ \t]*$/) { nf++; f[nf] = $0; state = 2; next }
+        if ($0 ~ /^[ \t]*---[ \t]*$/) {
+          nf++; f[nf] = $0; state = 2
+          match($0, /^[ \t]*/); ind = RLENGTH
+          next
+        }
         state = 0
       }
       # A failing row at any nesting depth, then the YAML block node writes under
       # it — that block is where the assertion text, the diff and the stack are.
       /^[ \t]*not ok [0-9]+ - / { nf++; f[nf] = $0; state = 1; next }
+      # One `# Subtest:` per test in the suite, i.e. THOUSANDS at real scale,
+      # against a cap of a few hundred. Keeping them starves the diagnostics
+      # buffer with names that are already in the failure rows above, and the
+      # middle-drop then evicts what this section is actually for: mid-run test
+      # stdout and the `# Error: ... asynchronous activity after the test
+      # ended` escapes that test/test-escapes.test.js is the guard on.
+      # No apostrophes anywhere in this awk program: it is single-quoted, and
+      # one would end it mid-script.
+      /^# Subtest: / { next }
       # Top-level diagnostics: test stdout and the summary tail.
       /^# / { nd++; d[nd] = $0 }
       END {
