@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- A test run that crashes or times out now keeps its output too, and saved
+  output can no longer overwrite itself. The previous change kept the output
+  of runs that FAILED; a run that died or hung was still reduced to its last
+  few lines, even though it reverts the merge just the same. Saved files are
+  now stamped, so a ticket reviewed more than once cannot overwrite its own
+  earlier evidence, and they are published by rename — a save that dies
+  partway can no longer leave a half-written file that reads as complete.
 - The same failing output is now kept when a merge is undone. Clodex merges
   a reviewed branch, runs the suite again, and reverts the merge if that
   run fails — but the output of the run that justified the revert was
