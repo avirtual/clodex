@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- A ticket whose spec turned out to be wrong can now be corrected in place with
+  `task respec`, rather than cancelled and refiled — which burned its id, its
+  history and the link to its notes. If the ticket is already with a hand, the
+  corrected spec is delivered marked as a correction, so the hand keeps its
+  working tree and its context instead of starting over. A ticket nobody is
+  working on yet is corrected on the record, and the reply names the verb that
+  will send it.
 - The guard that checks every intent in the code is exercised by a test now
   reads the code as code. It had been pairing quote characters over raw bytes,
   so a backtick inside a comment opened a "string" that ran on for lines —
