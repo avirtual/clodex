@@ -7783,24 +7783,33 @@ function createSessionManager(deps) {
     //
     // It deliberately bumps NOTHING that implies a fresh review round —
     // `reworkRound` counts transitions into open, and no transition happens here.
-    // `lastActivityAt`/`nudgedAt` ARE stamped: the ticket genuinely just moved,
-    // and leaving a stale stamp would let the watchdog nudge about a seat that
-    // was handed work this second.
+    // `lastActivityAt`/`nudgedAt` ARE stamped, but only once the follow-up is
+    // actually away: the stamps say "this seat was handed work just now", and
+    // writing them ahead of a delivery that then fails resets the stall episode
+    // over a message nobody received — the watchdog would then wait a full window
+    // before nudging about a seat that was never told anything.
     //
     // With no live seat this must FAIL LOUDLY rather than reply success — same
     // reasoning as the loop's own pre-write seat check: rework nobody receives
     // must never read as delivered.
     _taskRejectFollowUp(session, team, tickets, ticket, reason, reply) {
       const seat = this._ticketAssigneeSeat(team, ticket);
-      if (!seat || seat === team.lead) {
+      // Its own arm, because on a SOLO board `_soloContext` makes the lead its own
+      // team lead, so a self-held ticket lands here with a seat that resolved fine.
+      // Folding it into the no-seat arm below tells the operator no live seat holds
+      // the role when one demonstrably does — their own.
+      if (seat && seat === team.lead) {
+        reply(`error: ${ticket.id} is already open for rework and ${seat} is holding it — `
+          + 'a follow-up to yourself is not delivered; the must-fixes are yours to act on'
+          + `${this._spillRejectedPayload(session, 'task reject', reason)}`);
+        return;
+      }
+      if (!seat) {
         reply(`error: ${ticket.id} is already open for rework, but no live seat holds `
           + `${ticket.role || ticket.assignee || 'the ticket'} to send the follow-up to`
           + `${this._spillRejectedPayload(session, 'task reject', reason)}`);
         return;
       }
-      ticket.lastActivityAt = Date.now();
-      ticket.nudgedAt = null;
-      ticketsStore.save(team.root, tickets);
       const r = this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} more must-fixes] ${ticketCloseLine(ticket.id)}${reason}`, true,
         `[ticket ${ticket.id} more must-fixes] close with ${ticketCloseVerb(ticket.id)}`);
       if (!(r && (r.queued || r.parked))) {
@@ -7809,6 +7818,9 @@ function createSessionManager(deps) {
           + `${this._spillRejectedPayload(session, 'task reject', reason)}`);
         return;
       }
+      ticket.lastActivityAt = Date.now();
+      ticket.nudgedAt = null;
+      ticketsStore.save(team.root, tickets);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || seat, body: `ticket ${ticket.id} follow-up must-fixes` });
       log.info('intent', `task reject ${ticket.id} by ${session.name} → follow-up to ${seat} (already open for rework)`);
       reply(`ticket ${ticket.id} was already open for rework (round ${Number(ticket.reworkRound) || 1}) — `
