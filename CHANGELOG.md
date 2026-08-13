@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- When the ticket loop sends a branch back because its tests fail, the
+  failing output is now kept. The loop ran the suite, read the one-line
+  summary, and threw the rest away, so the agent was told THAT its branch
+  was red and had to reproduce the run to find out how. The loop now saves
+  the run's output per ticket and per round, and names that file in the
+  rework it sends back. If saving fails, the rework still goes out and says
+  why there is no file — a rejection with no evidence is still a correct
+  rejection.
 - The team lead is now told when the ticket loop sends work back. A branch
   whose test suite fails is returned to the agent that wrote it, which was
   always the right recipient — but the lead only heard about it when that
