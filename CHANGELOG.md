@@ -13,6 +13,25 @@ blocks a release.
 
 ## Unreleased
 
+- A hand working in a ticket's own worktree can now verify that worktree. The
+  granted test command measured the team's main checkout for every seat, so a
+  hand running it against its branch was handed the main checkout's result —
+  green, and about code the hand had never touched. It now takes the tree to
+  measure, refuses a path that is not a worktree of this repo rather than
+  quietly falling back, and names the tree in its answer.
+- A ticket dispatched to a seat that never picks it up is now reported. Four
+  times in one night a seat was handed a spec and simply never started, and
+  nothing distinguished that from a seat working normally — the log recorded
+  only that the send was attempted. A dispatch that produces no sign of life is
+  now redelivered once and then escalated to the lead, and a spec parked for a
+  busy seat is correctly left alone rather than resent to a seat that already
+  has it.
+- A dispatched ticket now tells the seat how to close it. Every dispatch is
+  long enough to arrive as an attachment, so the one line a seat sees before
+  deciding whether to open it had to carry the ticket's id and the closing
+  command — otherwise the instruction for finishing the work sat behind the
+  very step it was meant to save.
+
 - A ticket whose spec turned out to be wrong can now be corrected in place with
   `task respec`, rather than cancelled and refiled — which burned its id, its
   history and the link to its notes. If the ticket is already with a hand, the
