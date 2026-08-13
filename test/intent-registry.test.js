@@ -145,14 +145,20 @@ function parseIntentLegacy(rawLine) {
 // --- the corpus --------------------------------------------------------------
 
 // Scan for string literals in CODE positions only. A quote-pairing regex over
-// raw bytes cannot do this: an apostrophe in prose (`caller's job`) opens a
-// literal that closes at the next quote anywhere downstream, so every literal
-// after it pairs on shifted boundaries. That mis-pairing is silent in BOTH
-// directions — it dropped 106 real literals and swept in 1100 fragments of
-// comment prose and code (`});`) as if they were corpus lines.
+// raw bytes cannot do this: a quote in prose opens a literal that closes at the
+// next quote anywhere downstream, so every literal after it pairs on shifted
+// boundaries. A BACKTICK in a comment is the vector with reach — single quotes
+// abort at the newline, so `caller's job` cannot desync past its own line.
+//
+// The mis-pairing was silent in BOTH directions, and over-collection was the
+// larger half. (t348 measured 106 real literals dropped and 1100 comment/code
+// fragments swept in, against a one-off oracle — a historical finding, not
+// something this file can check. What the tree checks is the consequence: the
+// `[agent:context clear]` anchor and the `});` sentinel below.)
 //
 // Comments cannot be stripped in a separate pass first: a `//` inside a string
 // literal is not a comment, so recognizing the two requires one shared pass.
+// The `http://` line in the scanner's unit test is what pins that.
 // Regex literals are skipped for the same reason a comment is — an unbalanced
 // quote inside one (`/^\[agent:\?\] ... `\[agent:frobnicate now\]`/`) otherwise
 // desyncs everything after it.
@@ -443,12 +449,18 @@ test('t348: the literal scanner reads code positions only, exactly', () => {
     '   still inside the block comment */',
     "const d = /^\\[agent:\\?\\] `\\[agent:frobnicate now\\]`/;",
     "const e = '[agent:task done t1] report';",
+    // Pins the comment block's claim that comments cannot be stripped in a
+    // separate pre-pass: this `//` is inside a literal, so a pre-pass would
+    // truncate the line and lose the intent. No harvested file has such a
+    // literal today, which is exactly why the claim needs its own witness.
+    "const u = 'see http://x [agent:who]';",
   ].join('\n');
   assert.deepStrictEqual(stringLiteralsInCode(fixture), [
     '[agent:who]',
     '[agent:context clear]',
     '[agent:dm bob] hi',
     '[agent:task done t1] report',
+    'see http://x [agent:who]',
   ]);
 });
 
