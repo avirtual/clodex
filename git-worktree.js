@@ -387,8 +387,90 @@ async function diffText(cwd, base, head, { maxBuffer = 32 * 1024 * 1024 } = {}) 
   return { ok: true, text: r.stdout };
 }
 
+// Which branch the checkout at `cwd` is actually ON, and its HEAD sha.
+//
+// NOT `defaultBranch()`, which answers what the repo's mainline is CALLED — a
+// caller about to write to this checkout needs to know where the write would
+// land, and those two disagree exactly when it matters (a checkout parked on a
+// feature branch, or detached mid-rebase). A detached HEAD is `ok:false`, never
+// a branch named "HEAD".
+async function currentBranch(cwd) {
+  const repo = await repoToplevel(cwd);
+  if (!repo) return { ok: false, branch: null, head: null, error: 'not a git repository' };
+  const r = await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  const name = r.ok ? r.stdout.trim() : '';
+  if (!name || name === 'HEAD') {
+    return { ok: false, branch: null, head: null, error: (r.stderr || 'the checkout is detached').trim() };
+  }
+  const h = await git(repo, ['rev-parse', 'HEAD']);
+  return { ok: true, branch: name, head: h.ok ? h.stdout.trim() : null, repo };
+}
+
+// Merge `branch` into whatever the checkout at `cwd` has checked out, always
+// with a merge commit, message read from `messageFile`.
+//
+// `--no-edit` as well as `-F`: without it a git configured with an editor
+// blocks forever inside a spawned process nobody can type into.
+//
+// A FAILED merge leaves the index and the worktree mid-conflict, and this
+// checkout is the one every other seat's branch is cut from — a wedged shared
+// tree costs more than the merge was worth. So a failure aborts back to the
+// pre-merge state and reports whether that abort itself succeeded; the conflict
+// text is already captured in `error`, so nothing diagnostic is lost by
+// restoring the tree.
+//
+// `sha` is the NEW HEAD and `moved` says whether HEAD actually changed. Both
+// are needed because `--no-ff` on an already-merged branch prints "Already up
+// to date", exits 0, and creates NO commit — reading `ok` alone would report a
+// merge that never happened.
+async function mergeNoFf(cwd, branch, messageFile) {
+  const repo = await repoToplevel(cwd);
+  if (!repo) return { ok: false, sha: null, moved: false, error: 'not a git repository' };
+  if (!branch) return { ok: false, sha: null, moved: false, error: 'no branch given' };
+  if (!messageFile) return { ok: false, sha: null, moved: false, error: 'no message file given' };
+  const before = await git(repo, ['rev-parse', 'HEAD']);
+  const headBefore = before.ok ? before.stdout.trim() : null;
+  const r = await git(repo, ['merge', '--no-ff', '--no-edit', '-F', String(messageFile), branch]);
+  if (!r.ok) {
+    const output = `${r.stdout || ''}${r.stderr || ''}`.trim() || `git merge exited ${r.code}`;
+    const ab = await git(repo, ['merge', '--abort']);
+    return {
+      ok: false, sha: null, moved: false, aborted: ab.ok, headBefore,
+      error: ab.ok
+        ? output
+        : `${output}\n(and \`git merge --abort\` also failed: ${(ab.stderr || ab.stdout || '').trim() || `exit ${ab.code}`} — the checkout is left mid-merge)`,
+    };
+  }
+  const after = await git(repo, ['rev-parse', 'HEAD']);
+  const sha = after.ok ? after.stdout.trim() : null;
+  return {
+    ok: true, sha, headBefore, moved: !!(sha && headBefore && sha !== headBefore),
+    output: `${r.stdout || ''}${r.stderr || ''}`.trim(),
+  };
+}
+
+// Undo a MERGE commit. `-m 1` is not optional and not a default: git refuses to
+// revert a merge without a mainline, so omitting it turns the undo into an
+// error at exactly the moment the tree is broken and the undo is the only way
+// back. 1 is the first parent — the branch that was merged INTO.
+async function revertCommit(cwd, sha) {
+  const repo = await repoToplevel(cwd);
+  if (!repo) return { ok: false, error: 'not a git repository' };
+  if (!sha) return { ok: false, error: 'no commit given' };
+  const r = await git(repo, ['revert', '--no-edit', '-m', '1', sha]);
+  if (!r.ok) {
+    const output = `${r.stdout || ''}${r.stderr || ''}`.trim() || `git revert exited ${r.code}`;
+    // Same argument as mergeNoFf's abort: a half-applied revert leaves the
+    // shared checkout conflicted, which is worse than the state it was undoing.
+    const ab = await git(repo, ['revert', '--abort']);
+    return { ok: false, aborted: ab.ok, error: output };
+  }
+  const after = await git(repo, ['rev-parse', 'HEAD']);
+  return { ok: true, sha: after.ok ? after.stdout.trim() : null };
+}
+
 module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
   defaultBranch, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
-  diffText,
+  diffText, currentBranch, mergeNoFf, revertCommit,
 };

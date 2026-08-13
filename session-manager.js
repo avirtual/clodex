@@ -243,6 +243,14 @@ const { foldDraft } = require('./hint-arm');
 
 const TICKET_STALL_MS = 30 * 60 * 1000;
 
+// The branch an accepted ticket lands on. A literal, matching what
+// scripts/release.sh's preflight demands, and deliberately NOT
+// gitWorktree.defaultBranch(): that prefers origin/HEAD, which answers about a
+// ref this checkout may never merge to, and the auto-merge writes to the tree in
+// front of it. A checkout parked anywhere else is a blocked merge, not a merge
+// somewhere else.
+const MERGE_TARGET_BRANCH = 'master';
+
 // Process-life identity for a spawned session (ticket replay). Module-level and
 // NOT a deps seam: every value this is compared against was minted by the same
 // build, so an injectable generator could only ever be stubbed into agreeing with
@@ -5012,6 +5020,213 @@ function createSessionManager(deps) {
       }
     }
 
+    // An ACCEPT lands the branch on master. The edge the loop used to stop dead
+    // at: dispatch, verify, review and reject all ran themselves, and every
+    // accept then cost the lead six manual steps.
+    //
+    // EVERY failure arm escalates through _escalateTicket — the loop's existing
+    // single channel to the lead, deliberately not a second one — and every one
+    // of them leaves the tree, the branch and the seat exactly as they were.
+    //
+    // What this does NOT do, and must not: `task accept`. That retires the seat
+    // and destroys the worktree, which is the lead's call after reading the
+    // verdict; a merge is recoverable by a revert, a destroyed worktree is not.
+    // It also does not touch CHANGELOG.md — that file conflicts across every
+    // live branch, so it stays the lead's, and the notification says an entry is
+    // owed instead.
+    async _autoMergeTicket(team, ticketId, landedOn, verdictText) {
+      const fail = (step, evidence, tried) => this._escalateTicket(team, ticketId, `merge: ${step}`, evidence, tried);
+      let merged = null;
+      try {
+        const ticket = this._loadTicket(team, ticketId);
+        if (!ticket) return;
+        const wt = ticket.worktree || {};
+        const branch = wt.branch;
+        const baseSha = wt.baseSha;
+        // A ticket worked in the SHARED checkout has no branch to merge, exactly
+        // as it had no loop to run. Silent, not an escalation: nothing went
+        // wrong, there is simply nothing to land.
+        if (!branch || !baseSha) return;
+
+        // STEP 1 — the must-fixes in the verdict BODY are empty.
+        //
+        // Parsed from the verdict TEXT with extractMustFix, never read off a
+        // count someone else computed: seven confirmed instances of a DM header
+        // claiming "10 must-fixes" over a body reading "(none)". Deriving it
+        // here rather than trusting `landedOn.mustFix` costs one function call
+        // and removes the caller from the trust chain of the one gate that
+        // decides whether unreviewed-as-clean work reaches master.
+        //
+        // An ACCEPT that still lists must-fixes is a contradiction only a human
+        // can resolve, so it escalates — a wrong merge is the expensive
+        // direction.
+        const mustFix = extractMustFix(verdictText == null ? '' : String(verdictText));
+        const n = countMustFix(mustFix);
+        if (n > 0) {
+          fail('must-fix', `the verdict is ACCEPT but its MUST-FIX body is not empty (${n} item${n === 1 ? '' : 's'}): ${String(mustFix).slice(0, 800)}`,
+            'nothing was merged — an ACCEPT that still lists must-fixes is a contradiction the lead resolves, not the loop');
+          return;
+        }
+
+        // STEP 2 — the recorded base is still an ancestor of the branch head.
+        // Same question, same argument order and same reason as the verify
+        // step's CHECK 2: isMerged(root, X, Y) asks "is X an ancestor of Y", so
+        // the base goes first. A NO means the branch is not the tree the spec
+        // was written against, and merging it lands work reviewed against
+        // something else.
+        const anc = await gitWorktree.isMerged(team.root, baseSha, branch)
+          .catch((e) => ({ ok: false, error: e.message }));
+        if (!anc.ok) {
+          fail('base-is-ancestor', `git could not confirm ${baseSha} is an ancestor of ${branch}: ${anc.error}`,
+            `ran isMerged(${baseSha}, ${branch}); nothing was merged`);
+          return;
+        }
+        if (!anc.merged) {
+          fail('base-is-ancestor', `${baseSha} is NOT an ancestor of ${branch} — the branch was rebased or reset, so it is not the tree the review was written against`,
+            `ran isMerged(${baseSha}, ${branch}); nothing was merged`);
+          return;
+        }
+
+        // STEP 3 — the checkout we are about to write to is clean and on
+        // master. BOTH, and before the merge: a dirty tree makes git refuse
+        // mid-way, and a checkout parked on another branch would take the merge
+        // silently onto whatever it is sitting on.
+        const dirty = await gitWorktree.isDirty(team.root).catch((e) => ({ ok: false, error: e.message }));
+        if (!dirty.ok) {
+          fail('clean-tree', `git could not report the state of the root checkout ${team.root}: ${dirty.error}`,
+            'nothing was merged — an unknown tree state is never read as clean');
+          return;
+        }
+        if (dirty.dirty) {
+          fail('clean-tree', `the root checkout ${team.root} has uncommitted changes, so a merge would mix them into the merge commit`,
+            'nothing was merged; run `git -C ' + team.root + ' status` to see what is uncommitted');
+          return;
+        }
+        const cur = await gitWorktree.currentBranch(team.root).catch((e) => ({ ok: false, error: e.message }));
+        if (!cur.ok) {
+          fail('on-master', `git could not say which branch ${team.root} is on: ${cur.error}`,
+            'nothing was merged');
+          return;
+        }
+        if (cur.branch !== MERGE_TARGET_BRANCH) {
+          fail('on-master', `the root checkout is on "${cur.branch}", not ${MERGE_TARGET_BRANCH} — merging here would land ${branch} on the wrong branch`,
+            `nothing was merged; check out ${MERGE_TARGET_BRANCH} in ${team.root} and merge ${branch} by hand`);
+          return;
+        }
+
+        // STEP 4 — the merge itself, always with a merge commit.
+        //
+        // The message goes through a FILE, never `-m`: it is generated text
+        // carrying a ticket title an agent wrote, and it is multi-line by
+        // construction. The file also survives for the lead to read if the merge
+        // is refused.
+        const rounds = Number(landedOn && landedOn.reviewRound) || Number(ticket.reviewRound) || 1;
+        const msg = [
+          `Merge ${ticketId}: ${ticketTitle(ticket.spec)}`,
+          '',
+          `Branch: ${branch}`,
+          `Review rounds: ${rounds}`,
+          `Verdict: ACCEPT (auto-merged by the ticket loop)`,
+          '',
+        ].join('\n');
+        let msgFile = null;
+        try {
+          const dest = this._ticketDiffDest(team, ticket);
+          const dir = dest.ok ? dest.dir : os.tmpdir();
+          if (dest.ok) ensureDir(dir);
+          msgFile = path.join(dir, `merge-${ticketId}.msg`);
+          fs.writeFileSync(msgFile, msg);
+        } catch (e) {
+          fail('merge', `the merge message could not be written: ${e.message}`,
+            'nothing was merged — the message file is written before the merge so a failure here costs nothing');
+          return;
+        }
+        merged = await gitWorktree.mergeNoFf(team.root, branch, msgFile)
+          .catch((e) => ({ ok: false, error: e.message }));
+        if (!merged.ok) {
+          fail('merge', `git merge --no-ff ${branch} failed:\n${merged.error}`,
+            merged.aborted === false
+              ? `ran the merge in ${team.root}; \`git merge --abort\` ALSO failed, so the checkout is left mid-merge and needs a human`
+              : `ran the merge in ${team.root} and aborted it, so the checkout is back where it was`);
+          return;
+        }
+        if (!merged.moved) {
+          // `--no-ff` on an already-merged branch prints "Already up to date",
+          // exits 0 and creates nothing. Reading ok alone would announce a merge
+          // that did not happen and then run a suite proving nothing about it.
+          fail('merge', `git merge --no-ff ${branch} exited 0 but HEAD did not move — the branch was already contained in ${MERGE_TARGET_BRANCH}, so no merge commit exists`,
+            `ran the merge in ${team.root}; nothing to revert`);
+          return;
+        }
+
+        // STEP 5 — the FULL suite, on the merged master, through the same lock
+        // the lead's exec grant takes. The merge is the first moment the two
+        // trees have ever been combined, so nothing before it can have tested
+        // this state.
+        //
+        // A red master blocks every other ticket in the team, so the undo is not
+        // optional and must not be a question put to the lead: revert first,
+        // escalate with the evidence second.
+        const suite = await this._runTicketSuite(team, ticket, team.root);
+        if (!suite.ran || !suite.green) {
+          // `ran:false` is undone as well as red, though the spec names only
+          // red: an unverified merge sitting on master is the state this whole
+          // step exists to prevent, and a revert is cheap and recoverable while
+          // a silently unverified master is neither.
+          const why = suite.ran
+            ? `the suite FAILS on ${MERGE_TARGET_BRANCH} after the merge — ${suite.summary}\nFAILING: ${suite.failing || '(the runner reported no test names)'}`
+            : `the suite could not be RUN on ${MERGE_TARGET_BRANCH} after the merge: ${suite.error}`;
+          const rev = await gitWorktree.revertCommit(team.root, merged.sha)
+            .catch((e) => ({ ok: false, error: e.message }));
+          fail('suite', why, rev.ok
+            ? `merged ${branch} as ${merged.sha}, ran the suite in ${team.root}, then REVERTED the merge (${rev.sha}) — ${MERGE_TARGET_BRANCH} is green again and the branch is untouched`
+            : `merged ${branch} as ${merged.sha} and the revert ALSO failed (${rev.error}) — ${MERGE_TARGET_BRANCH} is left carrying the merge and needs a human`);
+          return;
+        }
+
+        // Green. The lead is told through the SAME channel every escalation
+        // uses — a merge that landed and a merge that could not are the same
+        // question for the lead, and a second channel is what the loop's design
+        // forbids.
+        this._notifyMergeLanded(team, ticketId, {
+          branch, sha: merged.sha, rounds, summary: suite.summary,
+        });
+      } catch (e) {
+        // A throw AFTER the merge landed is the dangerous shape: master carries
+        // an unverified merge and nothing else will notice. Name the sha, so the
+        // lead has the one thing needed to undo it.
+        fail('unexpected', `the auto-merge threw: ${e && e.message ? e.message : String(e)}`,
+          merged && merged.ok && merged.sha
+            ? `the merge commit ${merged.sha} IS on ${MERGE_TARGET_BRANCH} and was NOT verified — \`git -C ${team.root} revert -m 1 ${merged.sha}\` undoes it`
+            : 'nothing was merged');
+      }
+    }
+
+    // The merge landed. Rides _escalateTicket's channel — one lead DM from the
+    // loop, whichever way it went — and states the CHANGELOG debt, because
+    // CHANGELOG.md is deliberately not touched by the merge: it conflicts across
+    // every live branch, so it stays the lead's, and an unstated debt is one the
+    // release then ships without.
+    _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary }) {
+      try {
+        const body = [
+          `[ticket ${ticketId} MERGED] ${branch} → ${MERGE_TARGET_BRANCH} as ${sha}`,
+          '',
+          `Review rounds: ${rounds}. Suite on ${MERGE_TARGET_BRANCH} after the merge: ${summary}.`,
+          `A CHANGELOG.md entry is OWED — the merge does not write one (it conflicts across every live branch).`,
+          `Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`,
+        ].join('\n');
+        const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticketId} MERGED]`);
+        if (!(r && (r.queued || r.parked))) {
+          log.error('ticket', `ticket ${ticketId} merged as ${sha} but ${team.lead} was NOT told (${(r && (r.error || r.held)) || 'unknown delivery failure'})`);
+        }
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} merged: ${branch} → ${MERGE_TARGET_BRANCH}` });
+        log.info('intent', `ticket ${ticketId} auto-merged: ${branch} → ${MERGE_TARGET_BRANCH} as ${sha}`);
+      } catch (e) {
+        log.error('ticket', `merge notification for ${ticketId} failed: ${e.message}`);
+      }
+    }
+
     _handleReviewDone(session, body) {
       const reply = (msg) => this._injectText(session, `[agent:review-done] ${msg}`, { parkable: true });
       const verdict = String(body == null ? '' : body).trim();
@@ -5042,6 +5257,31 @@ function createSessionManager(deps) {
           action: 'retired', name: session.name, disposition: 'discard',
         });
         this.kill(session.name);
+        // ACCEPT alone, and fired UNAWAITED — this handler is synchronous and
+        // the merge shells out to git and then runs a whole suite, so awaiting
+        // it would hold the intent handler open for minutes. Same shape and same
+        // reason as _taskDone firing _runTicketLoop.
+        //
+        // AFTER the verdict is durable and the reviewer retired: the merge reads
+        // the record, and a merge that throws must never cost the verdict or
+        // strand the seat. A REWORK is untouched by this and takes the path it
+        // always did.
+        if (landedOn.verdict === 'ACCEPT') {
+          // Re-resolved off the reviewer's cwd rather than threaded out of
+          // _landVerdictOnTicket: that function returns the verdict fields by
+          // contract, and widening its return to carry the team so one caller
+          // can avoid a resolve is how a narrow contract turns into a bag. A
+          // null is unreachable here (the verdict landed, so the team resolved
+          // moments ago) and is skipped rather than escalated — there would be
+          // no team to escalate to.
+          let team = null;
+          try { team = resolveTeam(session.cwd); } catch { team = null; }
+          if (team) {
+            Promise.resolve(this._autoMergeTicket(team, rec.reviewTicket, landedOn, verdict)).catch((e) => {
+              log.error('ticket', `auto-merge for ${rec.reviewTicket} rejected: ${e && e.message ? e.message : String(e)}`);
+            });
+          }
+        }
         return;
       }
       const r = this._gatedDeliver(lead, session.name, verdict, false);
@@ -6984,9 +7224,15 @@ function createSessionManager(deps) {
     // reach the port-binding tests together and deadlock at 0% CPU, which is
     // indistinguishable from a slow suite. CLODEX_TEST_LOCK_DIR pins the mutex
     // to the root checkout while the tests still run in the worktree.
-    async _runTicketSuite(team, ticket) {
+    //
+    // `runIn` overrides which tree the tests execute in WITHOUT touching the
+    // lock, which stays pinned to team.root either way. The post-merge run needs
+    // exactly that: it verifies MASTER, in the root checkout, and must still
+    // serialize against the loop's worktree runs and the lead's exec grant —
+    // three producers on one mutex.
+    async _runTicketSuite(team, ticket, runIn = null) {
       const wt = (ticket && ticket.worktree) || {};
-      const cwd = wt.path ? String(wt.path) : null;
+      const cwd = runIn ? String(runIn) : (wt.path ? String(wt.path) : null);
       const out = { ran: false, green: false, code: null, summary: '', failing: '', cwd, error: null };
       if (!cwd) { out.error = 'the ticket has no worktree path to run in'; return out; }
 
