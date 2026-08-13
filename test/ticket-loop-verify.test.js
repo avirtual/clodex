@@ -2280,3 +2280,101 @@ test('t370 r2: the header records the COMMIT, so two rounds are distinguishable'
   assert.notStrictEqual(headLine(r1), headLine(r2),
     'the two headers are distinguishable, which is the whole point');
 });
+
+test('t370 r3: an UNDELIVERABLE rejection says WHY there is no file, not just when there is one', async () => {
+  // The mirror of the round-1 fix. Naming the file when it exists and going
+  // silent when it does not leaves the lead — the only reader on this arm —
+  // unable to tell "preservation failed" from "nobody thought to look".
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+  f.m.sessions.delete('team-hand');   // nothing to deliver the rework to
+  f.m._writeTicketSuiteFailure = async () => ({ ok: false, path: null, error: 'ENOSPC: no space left on device' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: it escalated to the lead rather than rejecting');
+  assert.match(esc[0].body, /could not be preserved/, 'the lead is told the evidence is missing');
+  assert.match(esc[0].body, /ENOSPC/, 'and why, so absence is distinguishable from nobody looking');
+});
+
+test('t370 r3: a preservation that THROWS cannot eat the rejection', async () => {
+  // Structural, not incidental. A sync throw is not catchable by `.catch()`, so
+  // an unwrapped call turns a RED suite into an ESCALATION and the hand never
+  // receives the rework the whole loop exists to send. The guarantee has to hold
+  // regardless of which git module is injected.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+  f.m._writeTicketSuiteFailure = () => { throw new TypeError('gitWorktree.currentBranch is not a function'); };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'the hand STILL gets its rework — the throw did not become an escalation');
+  assert.strictEqual(sent[0].target, 'team-hand');
+  assert.deepStrictEqual(f.esc(), [], 'and the lead is not escalated to instead');
+  assert.match(sent[0].body, /could not be preserved/, 'the rejection says the evidence is missing');
+  assert.match(sent[0].body, /is not a function/, 'and carries the throw as the reason');
+  assert.match(sent[0].body, /probe alpha/, 'the failing names still ride it');
+  assert.strictEqual(f.one().state, 'open', 'the ticket is reopened for rework, as a red suite must');
+});
+
+test('t370 r3: an accept landing during the PRESERVATION write cannot reopen the ticket', async () => {
+  // The await added for the header's git read sits between the freshness
+  // re-check and the reject's mutation. Milliseconds, but it is the window the
+  // surrounding comment warns about: reopening an ACCEPTED ticket would bump its
+  // rework round and put a finished ticket back on the board.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+  // The accept lands INSIDE the write, which is exactly where the gap is.
+  const realWrite = f.m._writeTicketSuiteFailure.bind(f.m);
+  f.m._writeTicketSuiteFailure = async (team, ticket, suite) => {
+    const r = await realWrite(team, ticket, suite);
+    const t = f.one();
+    delete t.loopStep;                       // what `task accept` does
+    f.tstore.save(f.team.root, [{ ...t, state: 'done' }]);
+    return r;
+  };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const t = f.one();
+  assert.strictEqual(t.state, 'done', 'the accepted ticket stays done — it is NOT reopened');
+  assert.ok(!('reworkRound' in t), 'and no rework round is stamped onto finished work');
+  assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
+    'no rejection is delivered for a ticket that is no longer at verify');
+});
+
+test('t370 r3: a resolvable branch with an UNRESOLVABLE commit says so, rather than claiming one', async () => {
+  // currentBranch returns ok:true with head:null when `rev-parse HEAD` fails, so
+  // the naive interpolation writes `# head:  tl-1 ` — a header that claims a
+  // commit and carries none, which is worse than admitting the gap because the
+  // sha is the half a reader cannot reconstruct.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({
+    repo,
+    suite: 'redWithDiff',
+    wrapGit: (gw) => ({ ...gw, currentBranch: async () => ({ ok: true, branch: 'tl-1', head: null }) }),
+  });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const kept = keptFiles(f, f.home);
+  assert.strictEqual(kept.length, 1, 'ENTER: the file was still written — a vaguer header beats no dump');
+  const head = /# head: .*/.exec(fsReal.readFileSync(kept[0], 'utf8'))[0];
+  assert.match(head, /tl-1/, 'the branch it could resolve is still recorded');
+  assert.match(head, /commit unresolved/, 'and the missing sha is stated, not left as a trailing space');
+  assert.ok(!/# head: {2}tl-1 *$/.test(head), `the header must not claim a commit it does not have (got: ${JSON.stringify(head)})`);
+});

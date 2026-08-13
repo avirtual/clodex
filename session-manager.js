@@ -7371,7 +7371,27 @@ function createSessionManager(deps) {
           // BEFORE the reject, which increments `reworkRound` — the file is
           // named for the round that just FAILED, not the one it opens, so the
           // number in the path matches the run the hand is being sent back over.
-          const kept = await this._writeTicketSuiteFailure(team, still, suite);
+          // WRAPPED, not merely awaited: `.catch()` cannot catch a synchronous
+          // throw, and a preservation failure turning a RED suite into an
+          // ESCALATION would mean the hand never gets its rework — the evidence
+          // mechanism eating the rejection it exists to serve. The property this
+          // ticket ships is that a rejection with no evidence is still a correct
+          // rejection, and that has to hold by construction rather than by which
+          // git module happens to be injected.
+          let kept;
+          try {
+            kept = await this._writeTicketSuiteFailure(team, still, suite);
+          } catch (e) {
+            kept = { ok: false, path: null, error: `the preservation threw: ${e && e.message ? e.message : String(e)}` };
+          }
+          // The freshness snapshot at the top of this arm is now as old as the
+          // git subprocesses the write just awaited. Milliseconds, not the
+          // minutes the suite took — but this is the mutation the comment above
+          // warns about, and a `task accept` landing in the gap would reopen an
+          // accepted ticket and bump its rework round. The WRITE is harmless
+          // either way (a file beside the ticket's artifacts); the REJECT is not.
+          const fresh = this._loadTicket(team, ticketId);
+          if (!fresh || fresh.loopStep !== 'verify') return;
           // Named ABSOLUTELY in the message, so the hand needs no convention to
           // find it. A write failure rides the same line rather than being
           // swallowed: a rejection with no evidence is still a correct
@@ -7399,7 +7419,11 @@ function createSessionManager(deps) {
               // remaining reader, the hand having never received anything. Keeping
               // the output and telling nobody is the original defect wearing a
               // different hat.
-              + `${kept.ok ? ` Full output preserved at ${kept.path}.` : ''}`);
+              // BOTH directions. Naming the file when it exists was round 1;
+              // saying so when it does not is the same requirement mirrored,
+              // because silence here is indistinguishable from nobody having
+              // thought to look — and this is the arm with no other reader.
+              + `${kept.ok ? ` Full output preserved at ${kept.path}.` : ` The failing output could not be preserved (${kept.error}).`}`);
           }
           return;
         }
@@ -7949,9 +7973,15 @@ function createSessionManager(deps) {
       // preserved dump with a vaguer header beats no dump.
       const head = await gitWorktree.currentBranch((suite && suite.cwd) || '')
         .catch(() => null);
-      const headLine = head && head.ok
-        ? `${head.branch} ${String(head.head || '').slice(0, 12)}`
-        : `${(ticket.worktree && ticket.worktree.branch) || 'unknown'} (commit unresolved)`;
+      // `ok:true` with a NULL head is reachable — currentBranch tolerates a
+      // failed `rev-parse HEAD` (git-worktree.js) — and interpolating it yields
+      // `# head:  tl-1 `, a line that claims a commit and carries none. The sha
+      // is the half a reader cannot reconstruct, so its absence has to be said,
+      // not left as a trailing space.
+      const headSha = head && head.ok ? String(head.head || '').slice(0, 12) : '';
+      const headLine = head && head.ok && headSha
+        ? `${head.branch} ${headSha}`
+        : `${(head && head.branch) || (ticket.worktree && ticket.worktree.branch) || 'unknown'} (commit unresolved)`;
       const header = [
         `# clodex ticket loop — preserved output of the FAILING suite run for ${ticket.id}.`,
         `# tree:  ${(suite && suite.cwd) || 'unknown'}`,
