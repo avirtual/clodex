@@ -61,15 +61,25 @@ function servingBox() {
 // The CONSUMER's main process. A long hello interval so nothing in these
 // windows is re-opened by a background tick — every open below is one the test
 // asked for, which is what lets a count mean anything.
+//
+// The emitted events are RECORDED, not dropped. They are the only thing the
+// renderer ever sees of this wire, so a harness that swallows them can measure
+// the serving box perfectly and still miss what the operator gets — which is
+// exactly what the first pass of this file did.
 function consumer(port) {
-  return new PeerConnection({
+  const events = [];
+  const conn = new PeerConnection({
     id: 'p1',
     label: 'box',
     url: `http://127.0.0.1:${port}`,
-    emit: () => {},
+    emit: (channel, id, seat, payload) => { events.push({ channel, seat, payload }); },
     helloIntervalMs: 60000,
   });
+  conn.events = events;
+  return conn;
 }
+
+const chan = (conn, channel) => conn.events.filter((e) => e.channel === channel);
 
 async function waitFor(what, pred, ms = 4000) {
   const t0 = Date.now();
@@ -88,8 +98,13 @@ const watched = (server) => [...server._wterm.entries()]
   .filter(([, set]) => set.size > 0).map(([seat]) => seat).sort();
 
 // A renderer reload, from the main process's point of view: nothing. Stated as
-// a function so the tests below read as the sequence an operator performs, and
-// so that a future reload-handling fix has one obvious place to be called from.
+// a function so the tests below read as the sequence an operator performs.
+//
+// Deliberately NOT a seam a future fix would call. A per-window drop is not
+// implementable against these objects: `_wterms` is keyed by seat per
+// connection with no window attribution, and the `peer:wterm*` handlers discard
+// the sender — so a fix has to add window-keyed want bookkeeping first, and
+// this no-op would not be where it hooks in.
 function reloadRenderer() { /* the renderer dies and is rebuilt; main is untouched */ }
 
 // --- 1. the claim as filed --------------------------------------------------
@@ -126,6 +141,27 @@ test('a reload does NOT open a second stream or a second shell for the same seat
     assert.deepStrictEqual(spawns, ['alice'],
       'and the serving side was never asked for a second shell');
     assert.ok(reports.length >= 1, 'ENTER: the stream report fired, so an added stream would have been reported');
+
+    // THE PRICE OF THAT ABSORPTION, and the reason "no leak" is not the whole
+    // answer. The mechanism that swallows the duplicate open is the same one
+    // that starves the fresh renderer: `wtermOpen` answers ok WITHOUT opening an
+    // SSE, and the serving box writes `replay` only at stream-open — so the
+    // second open produces no snapshot.
+    //
+    // What that costs the operator is in term-tab.js, which this test cannot
+    // execute (DOM-bound) but whose input it fully determines: `onShow` sets
+    // `pending = []` on every show, and on the PEER path `flushPending` is
+    // reachable from exactly one place — the replay listener. No replay means
+    // `pending` is never nulled, so every live byte below is buffered instead
+    // of painted. The pane stays blank and the buffer grows for as long as the
+    // remote shell prints.
+    assert.strictEqual(chan(conn, 'peer-wterm-replay').length, 1,
+      'only the FIRST open was handed a snapshot — the fresh renderer gets none, so its pending buffer never flushes');
+
+    server.pushWtermOutput('alice', Buffer.from('post-reload output\n'));
+    await waitFor('the live byte to reach the consumer', () => chan(conn, 'peer-wterm-data').length >= 1);
+    assert.strictEqual(chan(conn, 'peer-wterm-replay').length, 1,
+      'and output keeps flowing with still no replay behind it — these are the bytes that pile up unpainted');
   } finally {
     conn.stop();
     server.stop();
@@ -184,7 +220,13 @@ test('a reload puts no second request on the wire for a seat already streaming',
 // stream for a seat that was genuinely opened, not a duplicate. It is the
 // orphaning of that one stream.
 
-test('a seat the fresh renderer does not re-show keeps its stream, with nothing left to close it', async () => {
+// CHARACTERIZATION — current behaviour, NOT a requirement. This test and the
+// one after it describe what a reload leaves behind today so that a fix can be
+// measured against it; neither states that it ought to stay that way. A later
+// ticket that teaches this box to shed a reloaded window's streams SHOULD turn
+// the assertion below red, and the correct response is to update it, not to
+// preserve `['alice', 'bob']` as a contract.
+test('characterization: a seat the fresh renderer does not re-show keeps its stream, with nothing left to close it', async () => {
   const { server, spawns } = servingBox();
   await server.start();
   const conn = consumer(server.port);
@@ -217,7 +259,7 @@ test('a seat the fresh renderer does not re-show keeps its stream, with nothing 
 // The bound on that leak, and the reason it is a stranded stream rather than a
 // growing one: the orphan is per SEAT, not per reload. Ten reloads with the
 // same seat showing leave exactly one.
-test('the orphan does not accumulate across repeated reloads of the same seat', async () => {
+test('characterization: the orphan does not accumulate across repeated reloads of the same seat', async () => {
   const { server, spawns } = servingBox();
   await server.start();
   const conn = consumer(server.port);
