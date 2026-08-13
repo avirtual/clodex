@@ -23,6 +23,12 @@ blocks a release.
   (30m, 1h, 2h, 4h) instead of speaking once and going quiet. The doubling is
   what keeps an unattended stall visible without flooding the prompt stream:
   an 8-hour stall speaks about five times, not sixteen.
+- The stall watchdog no longer alarms about tickets that were filed but never
+  started. Opening a ticket for a role records that role as the assignee, so a
+  backlog ticket looked dispatched to the watchdog even though no seat was ever
+  spawned and nothing could be stalling. Twenty-eight open tickets were in that
+  state, and with the new escalation schedule above they would have produced
+  roughly 140 alarms a night about work nobody had started.
 
 - A retired role field in `team.json` now says so on load, instead of vanishing
   once the file claims a current schema version. `roles.reviewer.tools` looks
