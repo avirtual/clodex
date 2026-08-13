@@ -655,6 +655,41 @@ test('a live suite in the root checkout stops the REVERT too, and master keeps t
   assert.deepStrictEqual(f.landed(), [], 'an unverified merge is never announced as landed');
 });
 
+test('our OWN killed runner is not a blocker, and the revert still happens', async () => {
+  // The timeout arm SIGKILLs the runner and resolves in the same tick, before
+  // the child is reaped. A zombie answers kill(pid, 0), and the killed runner
+  // never ran its exit handler, so its pid is still in the lock dir: the probe
+  // reads our own corpse as a live foreign suite. Left unexempted, the gate
+  // refuses the revert and tells the lead to wait for a suite that no longer
+  // exists — so the pid the run reports is what distinguishes ours from theirs.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, suite: 'crash' });
+  const lock = pathReal.join(repo.dir, '.test-digest.lock');
+  const real = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (team, ticket, runIn) => {
+    const r = await real(team, ticket, runIn);
+    fsReal.mkdirSync(lock, { recursive: true });
+    fsReal.writeFileSync(pathReal.join(lock, 'pid'), String(process.pid));
+    // The lock names OUR runner. Alive by construction, exactly as an unreaped
+    // corpse is, so the liveness probe cannot be what tells the two apart.
+    return { ...r, runnerPid: process.pid };
+  };
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation');
+  // ENTER for the twin above: a live lock DOES exist and DOES name a live pid,
+  // so this subject cannot pass merely by failing to reach the gate.
+  assert.strictEqual(fsReal.readFileSync(pathReal.join(lock, 'pid'), 'utf8'), String(process.pid),
+    'ENTER: the lock is planted and names a live pid');
+  assert.match(esc[0].body, /merge: suite/, 'the revert ran, so the step is the suite failure, not revert-blocked');
+  assert.ok(!/revert-blocked/.test(esc[0].body), 'our own runner must not read as a foreign suite');
+  assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'work.txt')),
+    'and the unverified merge was undone');
+});
+
 test('the post-merge suite runs in the ROOT checkout, on the merged master', async () => {
   // Not in the ticket's worktree: the merge is the first moment the two trees
   // were ever combined, so a run in the branch's own tree verifies the state
@@ -835,7 +870,7 @@ test('a merge that has to wait for the chain says so in the log', async () => {
   assert.deepStrictEqual(queued, [], 'ENTER: the FIRST merge waits for nothing and must not claim to');
   assert.strictEqual(queuedAfter.length, 1, 'the second one logs that it is waiting');
   assert.match(queuedAfter[0].msg, /t2/, 'and names the ticket that is stuck');
-  assert.match(queuedAfter[0].msg, /1 merge/, 'and how many are ahead of it');
+  assert.match(queuedAfter[0].msg, /behind 1 other merge/, 'and how many are ahead of it');
 
   await Promise.all([p1, p2]);
   assert.deepStrictEqual(f.esc(), [], 'both merges still landed');

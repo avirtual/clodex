@@ -5066,7 +5066,7 @@ function createSessionManager(deps) {
       // nothing in the log where a lead debugging the silence would look.
       this._mergePending = (this._mergePending || 0) + 1;
       if (this._mergePending > 1) {
-        log.info('ticket', `auto-merge for ${ticketId} QUEUED behind ${this._mergePending - 1} merge(s) already in flight — one merge runs at a time process-wide, and each holds the chain through its whole post-merge suite`);
+        log.info('ticket', `auto-merge for ${ticketId} QUEUED behind ${this._mergePending - 1} other merge(s) — one is in flight and the rest are waiting, since one merge runs at a time process-wide and each holds the chain through its whole post-merge suite`);
       }
       this._mergeChain = Promise.resolve(this._mergeChain)
         .catch(() => {})
@@ -5331,9 +5331,26 @@ function createSessionManager(deps) {
           // command the lead can run whenever they like; a torn write into a
           // running suite costs a debugging session and reports a failure that
           // was never in the code.
-          const blocker = this._suiteLockHolder(team);
+          // The ran-TRUE case reaches here too, and it was priced rather than
+          // overlooked: our own runner releases the root lock at exit, so a
+          // ticket-B verify run spinning in run-tests.js's wait loop can take it
+          // in the sliver before this probe. That leaves a genuinely RED master
+          // standing, against the rule that red is always undone. The
+          // alternative trades it for a torn write into B's live run plus a
+          // spurious red on B, so the ruling stands — but the message below must
+          // then say RED, not merely unverified.
+          // Our OWN runner is not a blocker. On the timeout path it is SIGKILLed
+          // and this probe runs before it is reaped, so isAlive answers true for
+          // a corpse whose pid the killed runner never cleared from the lock dir
+          // — the gate would then refuse the revert and tell the lead to wait
+          // for a suite that no longer exists.
+          const holder = this._suiteLockHolder(team);
+          const blocker = (holder && holder === suite.runnerPid) ? null : holder;
           if (blocker) {
-            fail('revert-blocked', `${why}\n\nThe merge ${merged.sha} IS on ${MERGE_TARGET_BRANCH} and was NOT verified, and it was left there deliberately: a test suite is running in ${team.root} (pid ${blocker}), so reverting now would rewrite the files under it.`,
+            const state = suite.ran
+              ? `is RED: the merge ${merged.sha} IS on it and the suite FAILED`
+              : `carries an UNVERIFIED merge ${merged.sha}: its suite never ran`;
+            fail('revert-blocked', `${why}\n\n${MERGE_TARGET_BRANCH} ${state}, and it was left that way deliberately: a test suite is running in ${team.root} (pid ${blocker}), so reverting now would rewrite the files under it.`,
               `merged ${branch} as ${merged.sha} and did NOT revert. Undo it yourself once that suite finishes: \`git -C ${team.root} revert -m 1 ${merged.sha}\``);
             return;
           }
@@ -7401,7 +7418,14 @@ function createSessionManager(deps) {
     async _runTicketSuite(team, ticket, runIn = null) {
       const wt = (ticket && ticket.worktree) || {};
       const cwd = runIn ? String(runIn) : (wt.path ? String(wt.path) : null);
-      const out = { ran: false, green: false, code: null, summary: '', failing: '', cwd, error: null };
+      // `runnerPid` is surfaced so a caller probing the root lock can tell OUR
+      // runner from a foreign one. On the timeout path the child is SIGKILLed
+      // and finish() resolves in the same tick, before it is reaped — and a
+      // zombie answers kill(pid, 0), so isAlive reads the corpse as live while
+      // its pid is still in the lock dir (a killed runner never runs its exit
+      // handler). Without this the revert gate blames a process that no longer
+      // exists and tells the lead to wait for a suite that will never finish.
+      const out = { ran: false, green: false, code: null, summary: '', failing: '', cwd, error: null, runnerPid: null };
       if (!cwd) { out.error = 'the ticket has no worktree path to run in'; return out; }
 
       const runner = path.join(cwd, 'scripts', 'run-tests.js');
@@ -7536,6 +7560,10 @@ function createSessionManager(deps) {
             detached: true,
           });
         } catch (e) { resolve({ error: `spawn failed: ${e.message}` }); return; }
+        // Recorded on the OUTER object, not the resolved value: the timeout arm
+        // resolves a shape that carries only an error, and the pid is needed on
+        // exactly that path.
+        out.runnerPid = child.pid > 0 ? child.pid : null;
 
         // Bounded and drained. The output is read to keep the pipes from filling
         // (a full pipe blocks the child forever, which the timeout would then
