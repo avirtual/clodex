@@ -6983,19 +6983,30 @@ test('parking clears nudgedAt, so the unpark starts a fresh stall episode', asyn
   assert.strictEqual(f.one('t1').nudgedAt, null, 'the stale stamp is cleared');
 });
 
-test('watchdog: a PARKED stalled ticket is EXEMPT even though it has an assignee', async () => {
+test('watchdog: a PARKED stalled ticket is EXEMPT even though it is started and assigned', async () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
-  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, park: true, body: 'parked' });
+  // STARTED, then parked — not parked at add. t328 made this distinction
+  // load-bearing: a park-at-add ticket is also UNSTARTED, so the started-ness
+  // term short-circuits before `t.parked` is ever evaluated and the whole test
+  // passes without measuring the term it names. Same reasoning, and the same
+  // fixture shape, as the _openTicketsFor pin above.
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', who: null, body: '' });
   const arr = f.load();
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
   f.tstore.save(f.team.root, arr);
   f.gated.length = 0;
+  const t = f.one('t1');
+  assert.strictEqual(t.parked, true, 'ENTER: really parked');
+  assert.ok(t.startedAt != null,
+    'ENTER: and STARTED — so neither the unassigned nor the unstarted term can exempt it, '
+    + 'which leaves `parked` as the only one that can. This is its only pin in the suite.');
+  assert.ok(t.assignee != null, 'ENTER: and assigned');
   await f.m._sweepTickets(Date.now());
-  // The assignee is set, so ONLY the parked term can be exempting this — which
-  // is what makes this different from the backlog case below.
-  assert.strictEqual(f.one('t1').assignee, 'hand', 'ENTER: assigned, so the backlog exemption does not apply');
-  assert.deepStrictEqual(f.gated.filter((g) => /stalled/.test(g.body)), [], 'nothing was dispatched, so quiet is expected');
+  assert.deepStrictEqual(f.gated.filter((g) => /stalled/.test(g.body)), [],
+    'the lead parked it deliberately, so quiet is the expected state and an alarm reports its own decision back');
   assert.strictEqual(f.one('t1').nudgedAt, null);
 });
 
@@ -7109,6 +7120,37 @@ test('t328 watchdog: a legacy record with no startedAt key still alarms', async 
   await f.m._sweepTickets(Date.now());
   assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1,
     'the legacy arm is preserved — an old in-flight ticket is still watched');
+});
+
+test('t328 watchdog: a legacy UNASSIGNED record is exempt though it reads as started', async () => {
+  // This is the case that justifies keeping BOTH `t.assignee == null` and
+  // `!ticketStarted(t)` in the gate, and it is the only thing defending that
+  // decision. The shape: `startedAt` key absent, so ticketStarted returns TRUE
+  // via the legacy arm — but no assignee, so no seat can be resolved and an
+  // alarm would name nobody.
+  //
+  // Collapse the two terms into the obvious `!ticketStarted(t)` simplification
+  // and THIS is the test that goes red. Nothing else covers it: the other
+  // legacy pin above is assigned, and the backlog pin below is unstarted.
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'legacy backlog' });
+  const arr = f.load();
+  delete arr[0].startedAt;            // pre-upgrade record: no such key
+  arr[0].lastActivityAt = Date.now() - stallMs * 2;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+  const t = f.one('t1');
+  assert.ok(!('startedAt' in t), 'ENTER: the key is absent on disk, not merely null');
+  assert.strictEqual(ticketsMod.ticketStarted(t), true,
+    'ENTER: so the started-ness term reads it as STARTED and cannot be what exempts it');
+  assert.strictEqual(t.assignee, null, 'ENTER: leaving the unassigned term as the only one that can');
+  await f.m._sweepTickets(Date.now());
+  assert.deepStrictEqual(f.gated.filter((g) => /stalled/.test(g.body)), [],
+    'no assignee means no seat to resolve, so the alarm would name nobody');
+  assert.strictEqual(f.one('t1').nudgedAt, null);
 });
 
 test('watchdog: a per-team watchdogMs override tightens the stall window', async () => {
