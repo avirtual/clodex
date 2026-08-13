@@ -907,3 +907,93 @@ test('countMustFix: a leading markdown RULE does not swallow the list under it',
       `countMustFix(${JSON.stringify(input)}) must be ${expected}`);
   }
 });
+
+// ── t372: markdown emphasis around the placeholder ──────────────────────────
+
+// Bytes lifted from the live verdict that refused a real ACCEPT tonight
+// (review-t370-r1.verdict.md): the reviewer wrote the placeholder in italics.
+// `extractMustFix` yields exactly `*(none)*` from this, and the unfixed
+// countMustFix reads that as one must-fix — the third spelling to break the
+// gate, after t332's `(none)` and t367's `(none)` + trailing prose.
+const T372_LIVE_VERDICT = [
+  '- **VERDICT**: ACCEPT — the change does what it claims, the new tests measure the real thing.',
+  '',
+  '- **MUST-FIX**: *(none)*',
+  '',
+  '- **NITS**:',
+  '  1. `session-manager.js:7395` — the escalation to the lead does not name `kept.path`.',
+  '  2. `session-manager.js:7940` — the header records only the branch name.',
+].join('\n');
+
+test('countMustFix: an emphasised placeholder is zero, whatever wraps it', () => {
+  const body = extractMustFix(T372_LIVE_VERDICT);
+
+  // ENTER: the italics really did survive onto the body. If extractMustFix ever
+  // strips emphasis itself, this test stops measuring the bug it was written for
+  // and the assertion below passes over a string that was never the hard case.
+  assert.strictEqual(String(body), '*(none)*',
+    'ENTER: the body is the emphasised placeholder, exactly as the live record carried it');
+
+  // Against the unfixed counter this is 1, and the auto-merge refused an ACCEPT
+  // that listed nothing.
+  assert.strictEqual(countMustFix(body), 0,
+    'an emphasised placeholder declares no must-fixes — the gate must not refuse an ACCEPT over italics');
+});
+
+// The point of the fix is that emphasis is NORMALIZED rather than enumerated:
+// `*` and `_` are not added to the placeholder character classes, so an
+// open-ended family of spellings collapses onto the cases t367 already
+// reasoned about instead of a fourth arm a fifth spelling slips past.
+test('countMustFix: emphasis is stripped before the placeholder test, not enumerated', () => {
+  const cases = [
+    // Red against master: each of these counted 1.
+    ['*(none)*', 0], ['_(none)_', 0], ['**(none)**', 0], ['*none*', 0],
+    ['`none`', 0], ['__none__', 0], ['***(none)***', 0], ['**_(none)_**', 0],
+    ['*n/a*', 0], ['**nothing**', 0], ['`(none)`', 0], ['*None.*', 0],
+    // Red against master: counted 2, the bullets under an emphasised placeholder.
+    ['*(none)*\n\n  - **MF1** — traced.\n  - **MF2** — traced.', 0],
+    // The multi-line branch still selects the WORD form, so an emphasised dash
+    // rule over a real list stays a rule over a real list.
+    ['*(none)*\n\n---\n\n  explanatory prose', 0],
+  ];
+  for (const [input, expected] of cases) {
+    assert.strictEqual(countMustFix(input), expected,
+      `countMustFix(${JSON.stringify(input)}) must be ${expected}`);
+  }
+});
+
+// The anti-widening arm. These pass against master too — that is their job, not
+// a weakness: they are what proves the normalization did not quieten the gate
+// over genuine must-fixes, and they only earn their keep on the fixed code.
+test('countMustFix: stripping emphasis must not turn real must-fixes into a placeholder', () => {
+  const cases = [
+    // A LEADING run with no closing partner is not a wrapper. `**MF1**: …`
+    // opens with `**` and must stay one must-fix.
+    ['**MF1**: the guard is inverted', 1],
+    ['*MF1*: the guard is inverted', 1],
+    ['`countMustFix` is inverted', 1],
+    ['**none** of the guards survive the sweep', 1],
+    ['*none blocking*, but fix the inverted guard', 1],
+    // Unbalanced runs: the leading run must reappear identically at the end.
+    ['**(none)*', 1], ['*(none)**', 1], ['*(none)_', 1], ['`(none)*', 1],
+    // Bare emphasis runs are not placeholders — there is no `none` under them.
+    ['*', 1], ['**', 1], ['***', 1], ['`', 1], ['_', 1], ['``', 1],
+    // A real bulleted list is untouched, including the `*` marker form, which
+    // is the shape most at risk from a careless strip.
+    ['* the guard is inverted\n* the sweep drops the row', 2],
+    ['*(none)* is what he should have written\n- but the guard is inverted', 1],
+    // A `*` BULLET whose item happens to read `(none)` is a list item, not a
+    // wrapper: the space after the marker is what tells them apart.
+    ['* (none) *', 1],
+    ['* none', 1],
+    // Emphasis around a REAL item stays a real item.
+    ['**the guard is inverted**', 1],
+    ['*the sweep drops the row*', 1],
+    // Prose first, emphasised placeholder later, is still not a placeholder.
+    ['- the guard is inverted\n\n*(none)*', 1],
+  ];
+  for (const [input, expected] of cases) {
+    assert.strictEqual(countMustFix(input), expected,
+      `countMustFix(${JSON.stringify(input)}) must be ${expected}`);
+  }
+});

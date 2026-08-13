@@ -273,6 +273,30 @@ const MUSTFIX_PLACEHOLDER_RE = /^[\s(\[]*(?:none|n\/a|nothing|-+|—)[\s.)\]]*$/
 // this counter exists to prevent, arriving through its own fix.
 const MUSTFIX_PLACEHOLDER_WORD_RE = /^[\s(\[]*(?:none|n\/a|nothing)[\s.)\]]*$/i;
 
+// Emphasis is normalized off the line before the patterns above see it, rather
+// than added to their character classes. `*(none)*` was the THIRD spelling to
+// refuse a live ACCEPT; the space of ways a model writes "nothing here" is
+// open-ended, so enumerating wrappers one incident at a time loses by
+// construction. Stripping collapses that family onto the two cases already
+// reasoned about.
+//
+// Both halves of the shape carry anti-widening weight, and dropping either one
+// silences the gate over genuine must-fixes:
+//   - the run is BALANCED (`\1`), so an unclosed run is not a wrapper —
+//     `**MF1**: the guard is inverted` keeps its leading `**` and stays one
+//     must-fix, and a bare `*` / `**` / backtick never becomes a placeholder;
+//   - the interior neither opens nor closes with whitespace, which is what
+//     keeps the LIST ITEM `* (none) *` a list item rather than a wrapper.
+const EMPHASIS_WRAP_RE = /^([*_`]+)(\S(?:.*\S)?)\1$/;
+
+// Nested wrappers unwrap outside-in (`**_(none)_**`). Terminates by
+// construction: each pass returns a strictly shorter middle.
+function stripEmphasis(line) {
+  let s = line;
+  for (let m = EMPHASIS_WRAP_RE.exec(s); m; m = EMPHASIS_WRAP_RE.exec(s)) s = m[2];
+  return s;
+}
+
 function countMustFix(mustFixText) {
   if (mustFixText == null) return 0;
   const text = String(mustFixText);
@@ -289,7 +313,9 @@ function countMustFix(mustFixText) {
   // real list still counts, so an ACCEPT that genuinely lists must-fixes is
   // still the contradiction the merge gate refuses.
   const nonEmpty = lines.filter((l) => l.trim());
-  const firstLine = nonEmpty.length ? nonEmpty[0].trim() : '';
+  // Only the line under TEST is normalized. The item count below still runs on
+  // the original lines, so a `*` list marker stays a list marker.
+  const firstLine = nonEmpty.length ? stripEmphasis(nonEmpty[0].trim()) : '';
   const re = nonEmpty.length > 1 ? MUSTFIX_PLACEHOLDER_WORD_RE : MUSTFIX_PLACEHOLDER_RE;
   if (re.test(firstLine)) return 0;
   let n = 0;
