@@ -1066,6 +1066,11 @@ test('a red suite rejects to the hand and spawns NO reviewer', async () => {
   assert.match(sent[0].body, /the thing that broke/, 'the failing test names ride the rejection');
   assert.match(sent[0].body, /the other thing/);
   assert.match(sent[0].body, /3\/5 passing, 2 failing/, 'and the counts do too');
+  // t353 r2: rework is a SECOND close, and the verb has to ride it for the same
+  // reason it rides a first dispatch — otherwise that close falls back on the
+  // seeded role prompt, which is a file that demonstrably drifts.
+  assert.match(sent[0].body, /CLOSE WITH: \[agent:task done /,
+    'the rework carries the close verb — a second close must not depend on the seeded prompt');
 
   const t = f.one();
   assert.strictEqual(t.state, 'open', 'the ticket is reopened for rework');

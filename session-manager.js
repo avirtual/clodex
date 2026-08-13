@@ -171,7 +171,15 @@ const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 're
 // lead's side because the report itself arrives either way.
 // The tickets-viewer plugin holds a copy it cannot require (plugin-api §4);
 // test/tickets-viewer-path-parity.test.js pins the two together.
-const ticketCloseLine = (id) => `CLOSE WITH: [agent:task done ${id}] <your report> — one intent, at the end: it delivers the report to the lead AND marks the ticket done. `
+//
+// COLUMN 1 IS THE SAFETY. This text contains a complete, ready-to-fire
+// `[agent:task done <id>]`, and it is inert only because it never starts a line:
+// `CLOSE WITH: ` precedes it here and `[agent:from <sender>] ` precedes it on the
+// pointer line. IntentScanner's parse is ^-anchored, so reflowing either one to
+// put the verb at the start of a line turns delivered text into a firing intent —
+// a seat would close its own ticket on receipt of the spec. Keep the prefix.
+const ticketCloseVerb = (id) => `[agent:task done ${id}]`;
+const ticketCloseLine = (id) => `CLOSE WITH: ${ticketCloseVerb(id)} <your report> — one intent, at the end: it delivers the report to the lead AND marks the ticket done. `
   + `It is a line you emit yourself, like any [agent:…] intent — NOT an exec command, and nothing needs to be granted for it. `
   + `A dm carrying your report does NOT close the ticket: the ticket stays open, and everything downstream of the close (tree verify, review) never runs.\n`;
 const DEFAULT_REVIEWER_TEMPLATE = 'clodex-team-reviewer';
@@ -5189,12 +5197,17 @@ function createSessionManager(deps) {
       // Rides EVERY dispatch, replays included: a respawned seat has no memory of
       // the verb, exactly as it has none of its worktree. See ticketCloseLine.
       const closeLine = ticketCloseLine(ticket.id);
-      // The marker also rides the pointer line: this head is ~490 chars, so head+spec
-      // spills for all but the shortest specs, and a spilled body announces itself
-      // only as "Message (N bytes) attached". A seat must know this is a REPLAY
-      // before it opens the file, not after.
+      // EVERY dispatch spills now: the head alone is ~420 chars and a worktree one
+      // ~730, against a 500-byte threshold. So the pointer line is all a seat sees
+      // before deciding whether to spend a Read turn, and it must carry the id AND
+      // the verb — a spilled body announces itself only as "Message (N bytes)
+      // attached", which would put the close verb behind the very turn this line
+      // exists to save. The verb is safe here for the same reason as in the body:
+      // `[agent:from <sender>] ` precedes the tag, so it is never at column 1.
       const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${closeLine}${specText}`, urgent,
-        replay ? `[ticket ${ticket.id} REPLAY]` : '');
+        replay
+          ? `[ticket ${ticket.id} REPLAY] close with ${ticketCloseVerb(ticket.id)}`
+          : `[ticket ${ticket.id}] close with ${ticketCloseVerb(ticket.id)}`);
       if (!r || r.error) return { undelivered: true };
       if (r.parked) return { parked: r.parked, reason: r.reason || null };
       if (r.held) return { held: true, reason: r.held };
@@ -6903,8 +6916,13 @@ function createSessionManager(deps) {
         ticket.nudgedAt = null;
         delete ticket.loopStep;
         ticketsStore.save(team.root, tickets);
-        const r = this._gatedDeliver(seat, 'ticket-loop', `[ticket ${ticket.id} rejected] ${reason}`, true,
-          `[ticket ${ticket.id} rejected]`);
+        // Rework needs the verb as much as a first dispatch: the seat closes a
+        // SECOND time, and without it here that close depends on the seeded role
+        // prompt — the stale-file dependency this whole line exists to remove from
+        // the dispatch path. The reason text pushes this well past the spill
+        // threshold, so the tag carries the verb too.
+        const r = this._gatedDeliver(seat, 'ticket-loop', `[ticket ${ticket.id} rejected] ${ticketCloseLine(ticket.id)}${reason}`, true,
+          `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`);
         this._reconcileTickets(team);
         this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: ticket.assignee || seat, body: `ticket ${ticket.id} rejected: suite red` });
         log.info('intent', `ticket ${ticket.id} rejected by the loop (suite red) → ${seat}`);
@@ -7311,7 +7329,14 @@ function createSessionManager(deps) {
       delete ticket.loopStep;
       ticketsStore.save(team.root, tickets);
       const seat = this._ticketAssigneeSeat(team, ticket);
-      if (seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} rejected] ${reason}`, true);
+      // Same rework reasoning as the loop's reject. This call passed NO tag before,
+      // which was harmless while the body was short enough to arrive inline; adding
+      // the close line spills it, and an untagged pointer names neither the ticket
+      // nor the verb. So the tag is added here rather than left to default.
+      if (seat && seat !== team.lead) {
+        this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} rejected] ${ticketCloseLine(ticket.id)}${reason}`, true,
+          `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`);
+      }
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} rejected` });
       log.info('intent', `task reject ${ticket.id} by ${session.name} → reopened`);

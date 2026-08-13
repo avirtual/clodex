@@ -5111,6 +5111,11 @@ function mkTasks(extra = {}) {
   // with deepStrictEqual, and widening the recorded shape would force those
   // pins to be rewritten to accommodate a field they are not about.
   const urgents = [];
+  // `tags` rides its own array for exactly the reason `urgents` does: the pins
+  // below assert `gated` with deepStrictEqual. The tag is the ONLY thing a seat
+  // sees when a body spills, and every ticket dispatch spills now, so it needs to
+  // be observable — but not at the cost of rewriting those pins.
+  const tags = [];
   // Fires `onWrite` (6th arg), because this stub models a delivery that REACHES
   // THE WRITE. A stub that took it and never called it would model a permanently
   // wiped write, so every caller that stamps from onWrite (the watchdog nudge)
@@ -5118,7 +5123,7 @@ function mkTasks(extra = {}) {
   // certify the old stamp-on-return behaviour. Tests wanting the never-written
   // case override with a stub that omits the call.
   m._gatedDeliver = (target, sender, body, urgent, tag, onWrite) => {
-    gated.push({ target, sender, body }); urgents.push(urgent);
+    gated.push({ target, sender, body }); urgents.push(urgent); tags.push(tag);
     if (typeof onWrite === 'function') onWrite();
     return { queued: true };
   };
@@ -5130,7 +5135,7 @@ function mkTasks(extra = {}) {
   };
   const load = () => tstore.load(team.root);
   const one = (id) => load().find((t) => t.id === id);
-  return { m, injected, gated, urgents, broadcasts, team, home, tstore, seat, load, one };
+  return { m, injected, gated, urgents, tags, broadcasts, team, home, tstore, seat, load, one };
 }
 
 // t353: every dispatched spec carries the close verb. The literal lives here ONCE
@@ -5144,6 +5149,65 @@ const CLOSE_LINE = (id) => `CLOSE WITH: [agent:task done ${id}] <your report> �
   + `A dm carrying your report does NOT close the ticket: the ticket stays open, and everything downstream of the close (tree verify, review) never runs.\n`;
 // The whole delivered body for an ordinary (non-worktree, non-replay) dispatch.
 const specBody = (id, spec) => `[ticket ${id}] ${CLOSE_LINE(id)}${spec}`;
+
+// t353 r2. The close line put the head at 417 bytes (plain) / ~733 (worktree)
+// against MSG_SPILL_THRESHOLD's 500, so a plain dispatch spills once its spec
+// exceeds 83 chars and a worktree dispatch spills unconditionally. A spilled body
+// is announced ONLY as "Message (N bytes) attached", so the pointer tag is the
+// entire basis on which a seat decides to spend a Read turn — a tag naming neither
+// the ticket nor the verb would put the close verb behind the very turn this
+// ticket exists to save. The tag was unpinned before this.
+//
+// The 83-char boundary is asserted rather than assumed: an earlier draft of this
+// test claimed EVERY dispatch spills and used an 8-char spec, which did not — its
+// ENTER caught the overclaim. A spec that short does not occur in practice, but a
+// test that states it does would be describing a system nobody runs.
+test('t353: a realistic dispatch spills, so the POINTER carries the id and the close verb', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  const spec = 'rework the widget so it stops double-counting on the retry path, and pin the new count';
+  assert.ok(spec.length > 83, 'ENTER: the spec must be long enough to spill, or the tag is not what the seat sees');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: spec });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.ok(f.gated[0].body.length > 500,
+    `ENTER: the dispatch must actually spill (body was ${f.gated[0].body.length} bytes), or the tag is cosmetic`);
+  assert.deepStrictEqual(f.tags, ['[ticket t1] close with [agent:task done t1]'],
+    'the pointer names the ticket AND the verb — it is all a seat sees before deciding to open the file');
+});
+
+// The tag rides EVERY dispatch, spilled or not: whether a body spills is a
+// function of spec length, which is not something the dispatch path should have
+// to reason about. A tag applied only when it spills would be correct today and
+// wrong the moment the threshold moves.
+test('t353: the pointer tag rides even a dispatch too short to spill', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'tiny' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.ok(f.gated[0].body.length < 500,
+    'ENTER: this one must NOT spill, or it is the same case as the test above');
+  assert.deepStrictEqual(f.tags, ['[ticket t1] close with [agent:task done t1]'],
+    'the tag does not depend on the spill decision');
+});
+
+test('t353: the close verb is never at column 1, in the body or the tag', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  // The delivered text contains a COMPLETE, ready-to-fire intent. It is inert only
+  // because parseIntent is ^-anchored and this never starts a line. A reflow that
+  // moved it to column 1 would make a seat close its own ticket on receipt — the
+  // spec text arrives, the scanner fires, the ticket is done before any work is.
+  for (const line of f.gated[0].body.split('\n')) {
+    assert.ok(!line.startsWith('[agent:'),
+      `no delivered line may START with an intent — found: ${line.slice(0, 60)}`);
+  }
+  // The tag is prefixed with "[agent:from <sender>] " by _buildDeliveryText, so it
+  // is not at column 1 either; asserted at the tag itself since that prefix is
+  // applied downstream of this fixture.
+  assert.ok(!f.tags[0].startsWith('[agent:'), 'the pointer tag does not open with a firing intent');
+});
 
 // t308 split this test's subject in two. It used to pin add's WHOLE job —
 // mint, re-pin to the receiving seat, deliver, confirm — because add did all
@@ -6053,7 +6117,10 @@ test('task reject: lead reopens a DONE ticket, reason to the assignee, assignee 
   assert.strictEqual(t.state, 'open', 'reopened');
   assert.strictEqual(t.assignee, 'team-hand', 'assignee kept — reject does not re-route the ticket');
   assert.strictEqual(t.role, 'hand', 'and its role is untouched');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1 rejected] fix the edge case' }]);
+  // Rework carries the close verb too — the seat is about to close a SECOND time,
+  // and sourcing the verb from the seeded role prompt is the stale-file dependency
+  // the dispatch line exists to remove.
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: `[ticket t1 rejected] ${CLOSE_LINE('t1')}fix the edge case` }]);
 });
 
 test('task reject: rejecting a non-DONE ticket is bounced', () => {
