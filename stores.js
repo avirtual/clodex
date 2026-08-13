@@ -1,6 +1,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const crypto = require('crypto');
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
 const { envKeyError } = require('./env-scopes');
@@ -1376,6 +1377,17 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
   function seedLibraryDefaults() {
     const destRoot = path.join(registryDir, 'library');
+    // Safety net, NOT a substitute for the registryDir seam (t359): under
+    // `node --test`, refuse to seed the operator's real home. The suite seeded
+    // the live library from whatever branch happened to be checked out, and a
+    // future caller that forgets the seam would silently do it again. A test
+    // that means to exercise seeding passes a temp registryDir, so this only
+    // ever fires on the path that is already a mistake.
+    if (process.env.NODE_TEST_CONTEXT
+        && registryDir === path.join(os.homedir(), '.clodex')) {
+      if (log) log.warn('stores', 'refusing to seed the real ~/.clodex under node --test; pass seams.registryDir');
+      return;
+    }
     let src;
     try { src = fs.statSync(SEED_SRC); } catch { return; } // no seed tree shipped
     if (!src.isDirectory()) return;

@@ -108,6 +108,18 @@ function sweepSpilledMessages(msgDir, pendingDir, maxAgeSec, now = Date.now()) {
   }
 }
 
+// The registry root, resolved as a pure function so a test can pin the
+// production default WITHOUT constructing an engine — constructing one is
+// itself the write we are trying to prevent.
+//
+// Deliberately NOT read from CLODEX_HOME: t118 settled that the env var is a
+// seam for the standalone scripts only and never app configuration, and
+// test/clodex-home-app-root.test.js pins the app ignoring it. Honouring it here
+// would silently reverse that decision.
+function resolveRegistryDir(seams) {
+  return (seams && seams.registryDir) || path.join(os.homedir(), '.clodex');
+}
+
 function createEngine({ userDataPath, seams = {}, log }) {
   // Individual consts (not a destructure-with-defaults) so each seam name is
   // visible to the leak-scanner's ownDefinitions; the `|| default` keeps every
@@ -159,7 +171,10 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // web host, and a consumer must learn that rather than guess wire-port+1.
   const getWebInfo = seams.webInfo || (() => null);
 
-  const REGISTRY_DIR = path.join(os.homedir(), '.clodex');
+  // Every path below derives from this, and the suite's twelve createEngine
+  // callers pass a temp one: unseamed, they seeded the operator's live library
+  // from whatever branch happened to be checked out.
+  const REGISTRY_DIR = resolveRegistryDir(seams);
 
 
 
@@ -1898,4 +1913,4 @@ const toolCache = createToolCache({ whichBin });
   };
 }
 
-module.exports = { createEngine, diagWarning, sweepSpilledMessages };
+module.exports = { createEngine, resolveRegistryDir, diagWarning, sweepSpilledMessages };

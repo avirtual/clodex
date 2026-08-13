@@ -21,7 +21,12 @@ const { createEngine } = require('../engine');
 
 function mkEngine(seams) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-eng-sbx-'));
-  return createEngine({ userDataPath: tmp, seams, log: { info() {}, warn() {}, error() {} } });
+  // registryDir or the engine seeds the operator's live ~/.clodex (t359).
+  return createEngine({
+    userDataPath: tmp,
+    seams: { ...seams, registryDir: path.join(tmp, 'clodex-home') },
+    log: { info() {}, warn() {}, error() {} },
+  });
 }
 
 test('enableSandbox:false → getSandboxManager() is null and the IPC list-path yields []', () => {

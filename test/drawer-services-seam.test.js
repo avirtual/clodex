@@ -55,7 +55,12 @@ const silentLog = { info() {}, warn() {}, error() {} };
 
 function mkEngine(seams) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-drawer-seam-'));
-  return createEngine({ userDataPath: tmp, seams, log: silentLog });
+  // registryDir or the engine seeds the operator's live ~/.clodex (t359).
+  return createEngine({
+    userDataPath: tmp,
+    seams: { ...seams, registryDir: path.join(tmp, 'clodex-home') },
+    log: silentLog,
+  });
 }
 
 test('engine: seam omitted (Electron path) → drawer services enabled', () => {

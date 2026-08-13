@@ -18,7 +18,12 @@ const { createRemoteWiring } = require('../remote-wiring');
 
 function mkEngine(seams) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-eng-web-'));
-  return createEngine({ userDataPath: tmp, seams, log: { info() {}, warn() {}, error() {} } });
+  // registryDir or the engine seeds the operator's live ~/.clodex (t359).
+  return createEngine({
+    userDataPath: tmp,
+    seams: { ...seams, registryDir: path.join(tmp, 'clodex-home') },
+    log: { info() {}, warn() {}, error() {} },
+  });
 }
 
 // The engine does NOT export getWebInfo — it threads the seam into the peer

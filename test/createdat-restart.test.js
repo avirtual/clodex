@@ -58,7 +58,12 @@ const BORN = 1700000000000; // 2023-11-14T22:13:20Z
 
 function mkEngine() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-createdat-'));
-  return createEngine({ userDataPath: tmp, seams: {}, log: { info() {}, warn() {}, error() {} } });
+  // registryDir or the engine seeds the operator's live ~/.clodex (t359).
+  return createEngine({
+    userDataPath: tmp,
+    seams: { registryDir: path.join(tmp, 'clodex-home') },
+    log: { info() {}, warn() {}, error() {} },
+  });
 }
 
 // Put a fake live session in the manager's map so the restart paths take their

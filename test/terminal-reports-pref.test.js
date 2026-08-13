@@ -191,9 +191,13 @@ function bootEngine() {
   process.env.HOME = home;
   const { createEngine } = require('../engine');
   const userData = mkDir();
+  // registryDir or the engine seeds the operator's live ~/.clodex (t359).
+  // Overriding HOME above is NOT enough: engine.js resolves the root once at
+  // construction via os.homedir(), which on darwin reads the passwd entry and
+  // ignores $HOME.
   const eng = createEngine({
     userDataPath: userData,
-    seams: {},
+    seams: { registryDir: path.join(home, '.clodex') },
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });
   // `shutdown()` is not optional here. createEngine arms the wirescope watchdog,
