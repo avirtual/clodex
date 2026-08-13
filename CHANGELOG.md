@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- The "Clodex restarted" notice now reaches an agent in seconds rather than
+  minutes. If a pane had an unsent draft open in it, the notice waited on a
+  five-minute fallback, and opening two workspaces made it worse — the second
+  one's restore cancelled the retry the first had scheduled. The notice now has
+  its own short deadline and is delivered once, not once per workspace. It still
+  never interrupts something you are in the middle of typing: it waits for the
+  pane to go quiet first, for as long as that takes.
 - Running the tests no longer writes to your own `~/.clodex`. Building the app's
   internals inside a test seeded the real library, materialized real scripts and
   swept the real agent registry — so a full suite run quietly edited the same
