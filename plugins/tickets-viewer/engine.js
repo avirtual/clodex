@@ -496,10 +496,13 @@ function shape(t, now, stallMs) {
     // already names its seat, so the lead's action is to release it rather than
     // to decide who gets it.
     parked: t.parked === true,
-    // A COUNT, not the entries: the row needs "this spec was replaced, N times"
-    // and nothing more, and shipping the array would put every superseded title
-    // on a surface that renders none of them. Absent on the overwhelming
+    // A COUNT, not the entries: shipping the array would put every superseded
+    // title on a surface that renders none of them. Absent on the overwhelming
     // majority of tickets, so it reads 0 rather than undefined.
+    //
+    // Projected but NOT DRAWN: no renderer reads this yet, so the visible mark
+    // for a superseded spec is core's `[agent:task list]` row alone. Stated
+    // because the obvious assumption is that a shaped field reaches the board UI.
     respecCount: Array.isArray(t.respecs) ? t.respecs.length : 0,
   };
 }

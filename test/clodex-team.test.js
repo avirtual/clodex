@@ -351,9 +351,20 @@ function parityBoard() {
     // pin (cap overflow, done/cancelled totals) are unchanged. On a board where
     // every row leaves `role` undefined both renderers collapse to `assignee`,
     // and the parity pin cannot see them disagree about which of the two shows.
-    { id: 't1', title: 'still going', assignee: 'team-hand-9', role: 'hand', state: 'open', openedAt: now - 40 * HOUR, closedAt: null },
+    // t339: RESPEC'D — carried on t1 for the same reason t295's re-pin is, and
+    // marked on the OPEN row because that is where a divergence hides: without a
+    // `respecs` array on some row, t1 renders identically whether or not both
+    // implementations carry the suffix, and the parity pin goes green over the
+    // drift. Two entries, so the count itself has to match and not merely its
+    // presence.
+    { id: 't1', title: 'still going', assignee: 'team-hand-9', role: 'hand', state: 'open', openedAt: now - 40 * HOUR, closedAt: null,
+      respecs: [{ at: now - 3 * HOUR, by: 'lead', title: 'first cut' }, { at: now - 2 * HOUR, by: 'lead', title: 'second cut' }] },
     { id: 't2', title: 'old close', assignee: 'team-hand-9', role: 'hand', state: 'done', openedAt: now - 40 * HOUR, closedAt: now - 30 * HOUR },
-    { id: 't3', title: 'dropped', assignee: 'hand', state: 'cancelled', openedAt: now - 40 * HOUR, closedAt: now - 2 * HOUR },
+    // Respec'd AND closed: the mark rides `closedRow` too, so a suffix added to
+    // the open row alone would render this one identically on both sides and the
+    // "recently closed" divergence would reduce away.
+    { id: 't3', title: 'dropped', assignee: 'hand', state: 'cancelled', openedAt: now - 40 * HOUR, closedAt: now - 2 * HOUR,
+      respecs: [{ at: now - 5 * HOUR, by: 'lead', title: 'before it was dropped' }] },
     // t174: open AND assigned AND parked — the row that renders identically to
     // t1 unless both implementations carry the marker.
     { id: 't16', title: 'held back', assignee: 'hand', state: 'open', parked: true, openedAt: now - 40 * HOUR, closedAt: null },
@@ -362,6 +373,11 @@ function parityBoard() {
     rows.push({
       id: `t${i + 4}`, title: `recent ${i}`, assignee: 'hand', state: 'done',
       openedAt: now - 40 * HOUR, closedAt: now - (i + 1) * HOUR,
+      // The `closedRow` carrier, and it must be a DONE row inside the window: a
+      // cancelled ticket never reaches the "recently closed" section (only
+      // `doneAll` is sliced into it), so marking t3 alone would leave closedRow
+      // uncompared in the default view.
+      ...(i === 0 ? { respecs: [{ at: now - 5 * HOUR, by: 'lead', title: 'before it shipped' }] } : {}),
     });
   }
   return rows;
@@ -388,6 +404,14 @@ test('listing parity: the two implementations RENDER the same board (t100 — no
   assert.strictEqual(mine.filter((f) => /\|closed\|/.test(f)).length, 10, 'ENTER: the cap is in play');
   assert.ok(mine.some((f) => /^t16\|open parked\|/.test(f)),
     `ENTER: a parked row reaches the reduced facts: ${mine.join(' / ')}`);
+  // t339: the suffix rides the TITLE, which `listingFacts` captures as row[7] —
+  // so it can only be compared if a respec'd row survives the reduction. Both
+  // the open and the closed carrier are checked: the open row proves `row`
+  // carries the mark, the cancelled one proves `closedRow` does.
+  assert.ok(mine.some((f) => /^t1\|.*respec'd ×2/.test(f)),
+    `ENTER: a respec'd OPEN row reaches the reduced facts: ${mine.join(' / ')}`);
+  assert.ok(mine.some((f) => /^t4\|.*closed\|.*respec'd ×1/.test(f)),
+    `ENTER: a respec'd CLOSED row reaches the reduced facts: ${mine.join(' / ')}`);
 
   assert.deepStrictEqual(theirs, mine,
     'the two listing implementations drifted — the exec pull and [agent:task list] now disagree about the board');

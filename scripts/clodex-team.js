@@ -291,10 +291,15 @@ function doTickets(payload) {
   // what the board reads as. Rendering the pin here would make this leaf and the
   // intent board name different things for the same ticket.
   const shownFor = (t) => t.role || t.assignee || '—';
+  // Mirrors _taskList's `respecMark`: the suffix rides the title, which is
+  // re-derived from every new spec, so a corrected ticket's row silently changes
+  // text between two listings unless it says it was corrected. On BOTH row
+  // shapes — "recently closed" is where a lead reconstructs what shipped.
+  const respecMark = (t) => (Array.isArray(t.respecs) && t.respecs.length ? ` (respec'd ×${t.respecs.length})` : '');
   const row = (t) =>
-    `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}`;
+    `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${respecMark(t)}`;
   const closedRow = (t) =>
-    `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}`;
+    `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}`;
   const lines = shown.map(row);
   const closed = filter === 'open' ? tickets.filter((t) => t.state !== 'open') : [];
   const doneAll = closed.filter((t) => t.state === 'done');

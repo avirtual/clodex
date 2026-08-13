@@ -474,6 +474,55 @@ test('respec corrects a PARKED ticket without dispatching or unparking it', () =
   assert.strictEqual(f.one('t1').parked, true, 'still parked — respec is not a dispatch');
   assert.strictEqual(f.gated.length, 0, 'nothing delivered to the seat');
   assert.match(f.reply(), /parked/, 'the lead is told it was not dispatched');
+  // `openPinned` stamps startedAt, so this ticket is started AND parked — the
+  // state where `start` refuses. The route must therefore be `assign`.
+  assert.match(f.reply(), /task assign t1/, 'a STARTED parked ticket routes to assign, which start would refuse');
+});
+
+// The other side of the route predicate: genuinely unstarted and pinned, where
+// `start` IS the working verb. Without this the fix could be "always say assign"
+// and the bouncing-verb tests above would still pass.
+test('an UNSTARTED pinned ticket is routed to `start`, which is the verb that dispatches it', () => {
+  const f = mkRespec();
+  const t = openRolePinned(f, { started: false });
+  assert.ok(!ticketStarted(f.one('t1')) && f.one('t1').assignee,
+    'ENTER: unstarted AND assigned — the one shape `start` accepts');
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'corrected' });
+
+  assert.match(f.reply(), /task start t1/, 'start is correct here and must not be replaced by assign');
+  void t;
+});
+
+// The reply must name a verb that RUNS. `_taskStart` refuses a started ticket
+// and refuses a backlog one, both redirecting to `assign` — so a note fixed at
+// `start` hands back a bouncing command in exactly the states this arm covers.
+test('the undispatched note names `assign`, not `start`, where start would bounce', () => {
+  // (a) started-then-parked: park accepts a started ticket, so this arm is
+  // reachable with startedAt set, and _taskStart refuses it.
+  const f = mkRespec();
+  const t = openPinned(f);            // openPinned stamps startedAt
+  t.parked = true;
+  t.role = 'hand';
+  f.tstore.save(f.team.root, f.load().map((x) => (x.id === 't1' ? t : x)));
+  assert.ok(ticketStarted(f.one('t1')) && f.one('t1').parked,
+    'ENTER: started AND parked — the state where `start` refuses but this arm is reached');
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'corrected' });
+
+  assert.match(f.reply(), /task assign t1 hand/, 'routes to assign, which re-sends a started ticket');
+  assert.doesNotMatch(f.reply(), /task start t1/, '`start` would bounce: "already started"');
+
+  // (b) backlog: no assignee at all, and _taskStart refuses with the same redirect.
+  const f2 = mkRespec();
+  const lead = f2.seat('lead');
+  f2.m._handleTask(lead, { type: 'task', sub: 'add', who: null, id: null, body: 'backlog spec' });
+  assert.strictEqual(f2.one('t1').assignee, null, 'ENTER: genuinely backlog');
+
+  f2.m._handleTask(lead, { type: 'task', sub: 'respec', who: null, id: 't1', body: 'corrected backlog' });
+
+  assert.match(f2.reply(), /task assign t1 <role\|name>/, 'backlog routes to assign, which files AND dispatches');
+  assert.doesNotMatch(f2.reply(), /task start t1/, '`start` bounces on a backlog ticket');
 });
 
 // A backlog ticket has no assignee to deliver to; the correction must still
@@ -490,4 +539,7 @@ test('respec corrects an UNASSIGNED backlog ticket, reporting no delivery', () =
   assert.match(f.one('t1').spec, /corrected backlog spec/);
   assert.strictEqual(f.gated.length, 0, 'nobody to deliver to');
   assert.match(f.reply(), /unassigned/);
+  // Pins the ROUTE, not just the absence of delivery: `start` refuses a backlog
+  // ticket, so naming it here would be an unusable recovery.
+  assert.match(f.reply(), /task assign t1/, 'names assign, the verb that files AND dispatches a backlog ticket');
 });

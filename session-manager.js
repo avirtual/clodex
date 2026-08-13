@@ -7382,10 +7382,20 @@ function createSessionManager(deps) {
       // The undispatched arms say WHICH verb sends the corrected spec. Silence here
       // reads as "delivered" and is how a lead ends up believing a hand has the new
       // text, which is the failure this whole ticket is about.
+      // The route is picked from the STATE, not fixed at `start`. `_taskStart`
+      // refuses a backlog ticket (no assignee) and refuses an already-started one
+      // — a started-then-parked ticket reaches this arm, since park accepts a
+      // started ticket — and both redirect to `assign`. Naming `start` in either
+      // case hands back a command that bounces, which is the failure `_taskPark`'s
+      // own reply guards against: an unusable recovery in the one reply whose
+      // whole job is to name the way out.
+      const sendVerb = (!ticket.assignee || ticketStarted(ticket))
+        ? `[agent:task assign ${ticket.id} ${ticket.role || ticket.assignee || '<role|name>'}]`
+        : `[agent:task start ${ticket.id}]`;
       const note = ticket.parked
-        ? ` (parked — spec replaced, NOT dispatched; [agent:task start ${ticket.id}] sends it)`
+        ? ` (parked — spec replaced, NOT dispatched; ${sendVerb} sends it)`
         : !dispatched
-          ? ` (not started — spec replaced, NOT dispatched; [agent:task start ${ticket.id}] sends it)`
+          ? ` (not started — spec replaced, NOT dispatched; ${sendVerb} sends it)`
           : this._ticketDeliverySuffix(d, target);
       // Surfaced, not silent: the loop hard-fails later on a ticket with no task dir
       // and routes the lead to `reject`, three steps downstream of the respec that
@@ -7645,7 +7655,7 @@ function createSessionManager(deps) {
       const row = (t) =>
         `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${respecMark(t)}`;
       const closedRow = (t) =>
-        `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}`;
+        `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}`;
       const lines = shown.map(row);
       const head = filter === 'open' ? `tickets on ${team.name}` : `tickets on ${team.name} [${filter}]`;
       const closed = filter === 'open' ? tickets.filter((t) => t.state !== 'open') : [];

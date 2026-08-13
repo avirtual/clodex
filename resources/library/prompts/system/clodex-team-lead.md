@@ -74,8 +74,10 @@ visible rather than silently lost.
   reports your account was wrong, or when the spec you dispatched was
   incomplete: `reject` bounces on an open ticket (there is no close to undo),
   and cancel-and-refile burns the id, its history and its artifact link. The
-  supersession is recorded and shown on the board as `(respec'd ×N)`, so a
-  rewritten dispatch is never silent.
+  supersession is recorded and shown in `[agent:task list]` as `(respec'd ×N)`
+  on both the open and the recently-closed rows, so a rewritten dispatch is
+  never silent. That list is where the mark is VISIBLE — the tickets board UI
+  carries the count on the wire but draws no badge for it yet.
 - `[agent:task cancel <id>]` — you drop it; the reason rides in the body.
   Terminal, unlike reject.
 - `[agent:task accept <id>]` — you have read the report and it stands. This is
