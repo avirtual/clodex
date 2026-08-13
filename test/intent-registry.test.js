@@ -77,7 +77,7 @@ function parseIntentLegacy(rawLine) {
   const rebootMatch = cleaned.match(/^\[agent:reboot\]\s*(.*)/s);
   if (rebootMatch) return { type: 'reboot', body: rebootMatch[1] };
 
-  const taskMatch = cleaned.match(/^\[agent:task\s+(add|assign|start|done|reject|cancel|accept|park|list)\b([^\]]*)\]\s*(.*)/s);
+  const taskMatch = cleaned.match(/^\[agent:task\s+(add|assign|start|done|reject|respec|cancel|accept|park|list)\b([^\]]*)\]\s*(.*)/s);
   if (taskMatch) {
     const sub = taskMatch[1];
     const argToks = taskMatch[2].trim().split(/\s+/).filter(Boolean);
@@ -617,7 +617,11 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   //
   // t305 `task accept`: post-legacy, and greedy because its body is the
   // acceptance note.
-  const newSinceLegacy = (i) => i.type === 'task' && i.sub === 'accept';
+  //
+  // t339 `task respec`: post-legacy, and greedy because its body IS the
+  // replacement spec — the one body on the board whose truncation would be
+  // silently dispatched as the work itself.
+  const newSinceLegacy = (i) => i.type === 'task' && (i.sub === 'accept' || i.sub === 'respec');
   let sawTerm = 0;
   for (const line of CORPUS) {
     const i = parseIntent(line);

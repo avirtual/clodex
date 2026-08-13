@@ -295,6 +295,13 @@ test('parseIntent: task assign / done / reject / cancel / list', () => {
     { type: 'task', sub: 'done', id: 't7', who: null, body: 'shipped it' });
   assert.deepStrictEqual(parseIntent('[agent:task reject t7] needs rework'),
     { type: 'task', sub: 'reject', id: 't7', who: null, body: 'needs rework' });
+  // t339: respec's body is the REPLACEMENT SPEC, so it parses like reject's —
+  // greedy and multi-line. A spec is the one body whose silent truncation would
+  // be dispatched to a hand as the work itself.
+  assert.deepStrictEqual(parseIntent('[agent:task respec t7] the corrected spec'),
+    { type: 'task', sub: 'respec', id: 't7', who: null, body: 'the corrected spec' });
+  assert.deepStrictEqual(parseIntent('[agent:task respec t7] line one\nline two'),
+    { type: 'task', sub: 'respec', id: 't7', who: null, body: 'line one\nline two' });
   assert.deepStrictEqual(parseIntent('[agent:task cancel t7] nvm'),
     { type: 'task', sub: 'cancel', id: 't7', who: null, body: 'nvm' });
   assert.deepStrictEqual(parseIntent('[agent:task cancel t7]'),
