@@ -93,9 +93,33 @@ const SUITE_STUBS = {
   shadowed: 'console.log("some test printed: TOTALS: 9 pass, 0 fail, 9 tests");\n'
     + 'console.log("\\u2716 the real failure (2.00ms)");\n'
     + 'console.log("TOTALS: 1 pass, 1 fail, 2 tests");\nprocess.exit(1);\n',
-  // Never exits. The kill arm: a wedged runner must be SIGKILLed and escalate,
-  // because nothing was verified and the hand cannot rework a run that hung.
-  hang: 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\n'
+  // A TOTALS-shaped decoy on STDERR. Combining the streams puts all of stderr
+  // after all of stdout whenever it was written, so a stderr decoy beats the
+  // real summary under any last-match read of the combined text.
+  shadowedStderr: 'console.log("\\u2716 the real failure (2.00ms)");\n'
+    + 'console.log("TOTALS: 1 pass, 1 fail, 2 tests");\n'
+    + 'console.error("a test printed: TOTALS: 9 pass, 0 fail, 9 tests");\n'
+    + 'process.exit(1);\n',
+  // Never exits on its own — the kill arm — and SPAWNS A GRANDCHILD, which is
+  // what the real runner does (it blocks in spawnSync running `node --test`,
+  // which starts a file per test). The grandchild writes a marker while alive
+  // and is the thing a runner-only kill would orphan.
+  //
+  // Self-terminating at 60s despite "never exits": node:test's default per-test
+  // timeout is infinite, so a fixture that truly loops forever turns a failed
+  // mutation into a WEDGED SUITE instead of a red subject. A fixture must never
+  // outlive the run that spawned it.
+  // The grandchild self-terminates too, and for a stronger reason than its
+  // parent: this one is DESIGNED to be orphaned, so when the kill regresses it
+  // is the process that survives with nothing left to reap it. Measured — two
+  // mutation runs left two of them running until killed by hand.
+  hang: 'const { spawn } = require("child_process");\n'
+    + 'const kid = spawn(process.execPath, ["-e",\n'
+    + '  "const fs=require(\'fs\');setInterval(()=>{try{fs.writeFileSync(process.env.T317_KID,String(Date.now()));}catch{}},50);"\n'
+    + '  + "setTimeout(()=>process.exit(0),60000);"\n'
+    + '], { stdio: "ignore" });\n'
+    + 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\n'
+    + 'setTimeout(() => process.exit(0), 60000);\n'
     + 'setInterval(() => {}, 1000);\n',
 };
 
@@ -1137,18 +1161,86 @@ test('the LAST TOTALS line decides, not the first a test file happened to print'
     "the runner's own summary decides; 9/9 came from a line it merely forwarded");
 });
 
-test('a runner that never exits is killed and ESCALATES, never rejected', async () => {
-  // The arm that decides a ticket's fate when the machinery wedges, and the one
-  // arm with no natural trigger — without the deps seam it could only be
-  // exercised by waiting out the shipped cap, so it would ship unmeasured.
-  // A kill must not look like rework: the branch was never judged.
+test('a TOTALS decoy on STDERR does not beat the real summary on stdout', async () => {
+  // The residual half of the shadowing fix. Reading the combined text puts ALL
+  // of stderr after ALL of stdout no matter when either was written, so a
+  // stderr line wins every last-match read — a green decoy carrying a red
+  // branch to a reviewer. The runner prints its summary to stdout, so that is
+  // the only stream the verdict may come from.
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
-  const f = mkLoop({ repo, suite: 'hang', suiteTimeoutMs: 300 });
+  const f = mkLoop({ repo, suite: 'shadowedStderr' });
   f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
 
   await f.m._runTicketLoop(f.team, 't1');
   await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0, 'the stderr decoy must not carry a red branch to a reviewer');
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: it was rejected as rework');
+  assert.match(sent[0].body, /1\/2 passing, 1 failing/,
+    "stdout's summary decides; the 9/9 on stderr is not the runner's verdict");
+});
+
+test("this host's Electron really runs as node when the variable is set", () => {
+  // The mechanism half of the ELECTRON_RUN_AS_NODE fix. The subject above can
+  // only assert that the loop SETS the variable — under a node-hosted test run
+  // the flag is inert, so no amount of pinning there shows it does anything.
+  // This runs the actual binary the loop's process.execPath resolves to under
+  // the desktop host and proves it comes up as a node interpreter rather than
+  // an app. The idiom is scripts/electron-smoke.js's re-exec.
+  //
+  // What this still does NOT prove is that the SUITE is green under Electron's
+  // node, which is a different (lower) version than the system node every green
+  // in this repo was measured under. That needs a real Electron-hosted run.
+  let electron;
+  try {
+    electron = require(pathReal.join(__dirname, '..', 'node_modules', 'electron'));
+  } catch {
+    // A source checkout without devDependencies installed cannot answer this,
+    // and failing there would be a fixture complaint, not a defect report.
+    return;
+  }
+  assert.ok(typeof electron === 'string' && fsReal.existsSync(electron),
+    `ENTER: the electron module did not resolve to an existing binary (${electron})`);
+  const r = require('node:child_process').spawnSync(
+    electron, ['-p', 'process.versions.node'],
+    { encoding: 'utf-8', timeout: 60000, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } },
+  );
+  assert.strictEqual(r.status, 0,
+    `the Electron binary did not run as node (exit ${r.status}): ${(r.stderr || '').slice(0, 300)}`);
+  assert.match(String(r.stdout || '').trim(), /^\d+\.\d+\.\d+/,
+    'ELECTRON_RUN_AS_NODE must yield a node interpreter that can print its own version — without '
+    + 'that the loop spawns an APP, no tap is written, and every ticket escalates on a missing '
+    + 'tap stream');
+});
+
+// A hard cap, because the failure shape here is a HANG, not a red assertion:
+// node:test's default per-test timeout is infinite (the lesson run-tests.js
+// records), so without this a mutation that breaks the kill wedges the whole
+// suite instead of failing this subject.
+test('a runner that never exits is killed WITH ITS SWEEP, and ESCALATES', { timeout: 30000 }, async () => {
+  // The arm that decides a ticket's fate when the machinery wedges, and the one
+  // arm with no natural trigger — without the deps seam it could only be
+  // exercised by waiting out the shipped cap, so it would ship unmeasured.
+  // A kill must not look like rework: the branch was never judged.
+  //
+  // The GRANDCHILD is the point. The real runner blocks in spawnSync running
+  // `node --test`, so killing the runner alone leaves that sweep alive and
+  // reparented, still holding the real ports cli/test/attach.test.js binds —
+  // and the next gate run reclaims the lock the killed runner never released
+  // and deadlocks against it at 0% CPU. The stub reproduces the shape: a child
+  // that outlives its parent and keeps writing a marker while it lives.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'hang', suiteTimeoutMs: 300 });
+  const kid = pathReal.join(repo.dir, 'kid.marker');
+  process.env.T317_KID = kid;
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+  delete process.env.T317_KID;
 
   assert.strictEqual(f.created.length, 0, 'a wedged run reaches no reviewer');
   const esc = f.esc();
@@ -1157,6 +1249,18 @@ test('a runner that never exits is killed and ESCALATES, never rejected', async 
     'the escalation says it was killed, and after how long');
   assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
     'and the hand is not sent rework for a run that was killed — its TOTALS line proves nothing');
+
+  // ENTER: the grandchild must have existed, or "it is gone now" is vacuously
+  // true and this subject measures nothing at all.
+  assert.ok(fsReal.existsSync(kid),
+    'ENTER: the stub spawned a grandchild that wrote its marker before the kill');
+  // It writes every 50ms while alive. A survivor moves this mtime; a reaped one
+  // cannot. Measured after a settle longer than its own interval.
+  const at = fsReal.statSync(kid).mtimeMs;
+  await new Promise((r) => setTimeout(r, 600));
+  assert.strictEqual(fsReal.statSync(kid).mtimeMs, at,
+    'the grandchild is still writing — the kill signalled only the runner and orphaned the sweep, '
+    + 'which then holds the port-binding tests against every later gate run');
 });
 
 test('an accept landing DURING the suite run cannot be resurrected into review', async () => {

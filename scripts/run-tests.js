@@ -115,7 +115,13 @@ function acquireLock() {
   // exist yet); the lock dir itself NEVER is. `recursive: true` does not throw
   // EEXIST on an existing dir, which would turn the atomic test-and-set into an
   // unconditional success and hand the lock to every concurrent run at once.
-  try { fs.mkdirSync(path.dirname(LOCK), { recursive: true }); } catch {}
+  // Named on failure: an override pointing at an unwritable or nonexistent
+  // parent otherwise surfaces one step later as a generic
+  // `could not take the suite lock: ENOENT`, which says nothing about WHICH
+  // directory — and on the loop's escalate path that is the whole report.
+  try { fs.mkdirSync(path.dirname(LOCK), { recursive: true }); } catch (e) {
+    die(`could not create the lock directory ${path.dirname(LOCK)}: ${e.message}`);
+  }
   // Bounded like the original: a reclaim that does not then win the lock means
   // something is racing or the dir is unwritable, and spinning on it forever is
   // a wedge with no message. Waiting on a LIVE holder is not a reclaim and does

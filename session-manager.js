@@ -6510,6 +6510,18 @@ function createSessionManager(deps) {
               CLODEX_TEST_LOCK_WAIT_MS: String(TICKET_SUITE_LOCK_WAIT_MS),
             },
             stdio: ['ignore', 'pipe', 'pipe'],
+            // Its OWN process group, so the timeout can kill the whole tree.
+            // This child's entire job is to have grandchildren: it blocks in
+            // spawnSync running `node --test`, which starts a file per test.
+            // Killing the runner alone leaves that sweep alive and reparented,
+            // still binding the real ports cli/test/attach.test.js uses — and
+            // the killed runner never ran its exit handler, so it left a lock
+            // dir naming a dead pid that the NEXT gate run legitimately
+            // reclaims. That run then reaches the ports alongside the orphan
+            // and deadlocks at 0% CPU, which is the wedge the whole mutex
+            // exists to prevent, self-inflicted and invisible in the
+            // escalation text.
+            detached: true,
           });
         } catch (e) { resolve({ error: `spawn failed: ${e.message}` }); return; }
 
@@ -6525,9 +6537,36 @@ function createSessionManager(deps) {
         child.stderr.setEncoding('utf8');
         child.stdout.on('data', (d) => { stdout = cap(stdout, d); });
         child.stderr.on('data', (d) => { stderr = cap(stderr, d); });
-        const finish = (v) => { if (done) return; done = true; clearTimeout(timer); resolve(v); };
+        const finish = (v) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          // Detach the drains. A group kill that misses something leaves a
+          // writer on these pipes, and every byte it sends would keep appending
+          // to strings this closure holds long after the result was resolved.
+          try { child.stdout.removeAllListeners('data'); } catch {}
+          try { child.stderr.removeAllListeners('data'); } catch {}
+          resolve(v);
+        };
         const timer = setTimeout(() => {
-          try { child.kill('SIGKILL'); } catch {}
+          // The GROUP, via the negative pid — `child.kill()` signals only the
+          // group leader, which is the runner blocked in spawnSync, not the
+          // sweep underneath it. session-manager.js's exec path records that
+          // distinction and then chooses a plain child on the grounds that "v1
+          // commands have no grandchildren"; that reasoning does not reach here,
+          // where grandchildren are the point. Falls back to the plain kill so a
+          // platform or a fake child without a real pid still gets signalled.
+          // `> 0` is load-bearing, not defensive noise: kill(-0) signals OUR
+          // OWN process group — the whole app — and childProcess is an injected
+          // seam, so a stubbed child's pid shape is not guaranteed to be a real
+          // pid. cli/src/dial.js guards the identical call the same way.
+          if (child.pid > 0) {
+            try { process.kill(-child.pid, 'SIGKILL'); } catch {
+              try { child.kill('SIGKILL'); } catch {}
+            }
+          } else {
+            try { child.kill('SIGKILL'); } catch {}
+          }
           finish({ error: `the suite did not finish within ${TICKET_SUITE_TIMEOUT}ms (killed)`, stdout, stderr });
         }, TICKET_SUITE_TIMEOUT);
         child.on('error', (e) => finish({ error: `the runner could not start: ${e.message}`, stdout, stderr }));
@@ -6543,10 +6582,13 @@ function createSessionManager(deps) {
       // missing path and an empty tap, and every one of those is "never ran".
       // Requiring the line is what stops a false green from a run that produced
       // nothing — the exact defect class this whole ticket is about.
-      // The LAST match, not the first: the runner prints its summary last, but a
-      // test file's own forwarded output could carry an earlier TOTALS-shaped
-      // line and shadow it.
-      const all = [...text.matchAll(/TOTALS: (\d+) pass, (\d+) fail, (\d+) tests/g)];
+      // STDOUT ONLY, and the LAST match in it. The runner prints its summary to
+      // stdout, last. Searching the combined text instead puts ALL of stderr
+      // after ALL of stdout regardless of when either was written, so any
+      // TOTALS-shaped line a test file writes to stderr would always beat the
+      // real summary — including a green decoy over a red run, which is the
+      // shadowing this guards, one stream over.
+      const all = [...String(res.stdout || '').matchAll(/TOTALS: (\d+) pass, (\d+) fail, (\d+) tests/g)];
       const totals = all.length ? all[all.length - 1] : null;
       if (!totals) {
         const last = text.trim().split('\n').filter((l) => l.trim()).pop() || '(no output)';
