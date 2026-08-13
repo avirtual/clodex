@@ -365,13 +365,29 @@ function runDigest({ tap, exit, cwd }) {
   fs.mkdirSync(path.join(root, 'bin'));
   fs.writeFileSync(path.join(root, 'bin', 'node'),
     `#!/bin/sh\ncat <<'CLX_TAP'\n${tap}\nCLX_TAP\nexit ${exit}\n`, { mode: 0o755 });
-  const env = { ...process.env, PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}` };
+  // CLODEX_HOME into the fixture, or a failing case here writes the preserved
+  // output into the developer's REAL ~/.clodex and destroys the dump they are
+  // most likely reading — the suite must not clobber the artifact it ships.
+  const home = path.join(root, 'home');
+  const env = {
+    ...process.env,
+    PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`,
+    CLODEX_HOME: home,
+  };
   delete env.NODE_TEST_CONTEXT;
+  const keep = path.join(home, 'test-failures', 'last.txt');
   try {
     const res = spawnSync('/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
       { encoding: 'utf-8', cwd: cwd || root, timeout: 60000, env });
     const lines = (res.stderr || '').split('\n').filter((l) => l.trim() !== '');
-    return { tree: path.basename(root), lines, digest: lines[lines.length - 1], code: res.status };
+    return {
+      tree: path.basename(root),
+      lines,
+      digest: lines[lines.length - 1],
+      code: res.status,
+      keep,
+      kept: fs.existsSync(keep) ? fs.readFileSync(keep, 'utf-8') : null,
+    };
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
 
@@ -391,7 +407,7 @@ const DIGEST_CASES = [
       '# tests 3', '# pass 2', '# fail 1'].join('\n'),
     exit: 1,
     code: 1,
-    digest: (t) => `[${t}] 2/3 green, 1 failing: a failing case`,
+    digest: (t, k) => `[${t}] 2/3 green, 1 failing (${k}): a failing case`,
   },
   {
     // No summary at all — the runner died before producing one. The path that
@@ -401,7 +417,7 @@ const DIGEST_CASES = [
     tap: ['node: bad option: --test-reporter=tap'].join('\n'),
     exit: 9,
     code: 9,
-    digest: (t) => `[${t}] suite did not run: node: bad option: --test-reporter=tap`,
+    digest: (t, k) => `[${t}] suite did not run (${k}): node: bad option: --test-reporter=tap`,
   },
 ];
 
@@ -413,7 +429,7 @@ test('digest: every line the digest can emit names the tree it measured', () => 
     // that never ran, which every assertion below would then be about nothing.
     assert.ok(r.lines.length > 0,
       `ENTER: ${c.what}: the script wrote nothing to stderr, so there is no digest to check`);
-    assert.strictEqual(r.digest, c.digest(r.tree),
+    assert.strictEqual(r.digest, c.digest(r.tree, r.keep),
       `${c.what}: the whole digest line, tree marker included — a number with no statement of `
       + 'what it measured is the false-green this marker exists to prevent');
     assert.strictEqual(r.code, c.code,
@@ -433,6 +449,234 @@ test("digest: the tree named is the script's own checkout, not the caller's cwd"
       'the digest must name the tree that ran, never the one that asked — the caller reading its '
       + 'own basename back would confirm exactly the run it cannot distinguish');
   } finally { fs.rmSync(caller, { recursive: true, force: true }); }
+});
+
+// ── the failing run's OUTPUT, not just its verdict ──────────────────────────
+// The digest reduced `$out` to counts and names and dropped the rest on exit,
+// so the assertion text, diff, stack and anything the test printed died with
+// the process. Two agents were each blocked on evidence the run had already
+// produced. These tests are about what SURVIVES a failing run.
+
+// A failing TAP fixture with the shape node actually emits: a `not ok` row at
+// depth, then the YAML block carrying the evidence, and a passing sibling that
+// must NOT be what we keep.
+const RICH_FAIL_TAP = [
+  'TAP version 13',
+  '# STDOUT THE TEST PRINTED',
+  '# Subtest: outer suite',
+  '    # Subtest: the failing subtest',
+  '    not ok 1 - the failing subtest',
+  '      ---',
+  '      duration_ms: 2.14',
+  '      failureType: \'testCodeFailure\'',
+  '      error: |-',
+  '        Expected values to be strictly deep-equal:',
+  '        +   b: 2',
+  '        -   b: 3',
+  '      code: \'ERR_ASSERTION\'',
+  '      stack: |-',
+  '        TestContext.<anonymous> (/tmp/a.test.js:6:12)',
+  '      ...',
+  '    # Subtest: a passing sibling',
+  '    ok 2 - a passing sibling',
+  '      ---',
+  '      duration_ms: 0.07',
+  '      ...',
+  '    1..2',
+  // The parent wrapper node emits for a suite whose subtest failed. It rides
+  // along in both the names and the dump; keeping it in the fixture is what
+  // makes this TAP the shape node actually produces rather than a tidied one.
+  'not ok 1 - outer suite',
+  '  ---',
+  '  error: \'1 subtest failed\'',
+  '  ...',
+  '1..2',
+  '# tests 4',
+  '# pass 2',
+  '# fail 2',
+].join('\n');
+
+const RICH_FAIL_CASE = { what: 'rich fail', tap: RICH_FAIL_TAP, exit: 1 };
+
+test('keep: a failing run preserves the assertion text, diff and stack it produced', () => {
+  const r = runDigest(RICH_FAIL_CASE);
+  // ENTER: everything below is about the contents of a file, and a missing file
+  // reads as an empty string that no `includes` would match — the whole point of
+  // this ticket is that the evidence silently was not there.
+  assert.ok(r.kept !== null,
+    `ENTER: no file at ${r.keep} after a failing run — the output was discarded, which is the `
+    + 'defect this ticket exists to fix');
+
+  // ENTER for the reduction: the file is TRIMMED, and a trimmer that drops the
+  // row under test yields a confidently empty dump that every assertion below
+  // would be vacuously true of if they were absences. Assert the interesting row
+  // survived before asserting anything about what rides with it.
+  assert.match(r.kept, /^ *not ok 1 - the failing subtest$/m,
+    'the failing subtest\'s own row did not survive the reduction — a reducer that drops the row '
+    + 'under test vacuums out every assertion downstream');
+
+  for (const evidence of [
+    'Expected values to be strictly deep-equal:',   // the assertion text
+    '+   b: 2',                                     // the diff
+    'TestContext.<anonymous> (/tmp/a.test.js:6:12)', // the stack
+    'STDOUT THE TEST PRINTED',                      // what the test printed
+  ]) {
+    assert.ok(r.kept.includes(evidence),
+      `the preserved file is missing ${JSON.stringify(evidence)} — this is exactly the evidence `
+      + 'two agents were blocked on, and keeping the row without it preserves nothing');
+  }
+});
+
+test('keep: the digest NAMES the preserved file, or nobody can find it', () => {
+  const r = runDigest(RICH_FAIL_CASE);
+  assert.ok(r.lines.length > 0, 'ENTER: the script wrote nothing to stderr');
+  // The WHOLE line. A substring check for the path would also pass on a line
+  // that lost the failing NAMES to it — and the names are the half worth more.
+  assert.strictEqual(r.digest,
+    `[${r.tree}] 2/4 green, 2 failing (${r.keep}): the failing subtest; outer suite`,
+    'the digest must name the file AND keep the failing names — a file nothing points at is '
+    + 'as good as discarded, and a path that evicts the names makes the line worse');
+  assert.strictEqual(r.code, 1, 'preserving the output must not change the verdict');
+});
+
+test('keep: a GREEN run writes nothing at all', () => {
+  const r = runDigest(PASS_CASE);
+  assert.strictEqual(r.digest, `[${r.tree}] 3/3 green`,
+    'the green line must stay exactly as it was — no path, nothing to point at');
+  assert.strictEqual(r.kept, null,
+    'a green run wrote a failure dump: the file would then be a LIE the next reader trusts, '
+    + 'showing a failure that is not current');
+});
+
+test('keep: a stale dump from an earlier failure is replaced, not appended to', () => {
+  // Bounding by SHAPE rather than by a sweep: one fixed file, overwritten. This
+  // is what makes it impossible to grow a second t187 (a log measured at
+  // 1.16 MB/day). If it ever appends, it grows forever with nothing to prune it.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t363-'));
+  try {
+    fs.mkdirSync(path.join(root, 'scripts'));
+    fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
+    fs.mkdirSync(path.join(root, 'bin'));
+    fs.writeFileSync(path.join(root, 'bin', 'node'),
+      `#!/bin/sh\ncat <<'CLX_TAP'\n${RICH_FAIL_TAP}\nCLX_TAP\nexit 1\n`, { mode: 0o755 });
+    const home = path.join(root, 'home');
+    const keep = path.join(home, 'test-failures', 'last.txt');
+    fs.mkdirSync(path.dirname(keep), { recursive: true });
+    const stale = 'not ok 1 - A FAILURE FROM LAST WEEK\n'.repeat(50);
+    fs.writeFileSync(keep, stale);
+    const env = {
+      ...process.env,
+      PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`,
+      CLODEX_HOME: home,
+    };
+    delete env.NODE_TEST_CONTEXT;
+    spawnSync('/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
+      { encoding: 'utf-8', cwd: root, timeout: 60000, env });
+    const after = fs.readFileSync(keep, 'utf-8');
+    assert.match(after, /^ *not ok 1 - the failing subtest$/m,
+      'ENTER: the current failure is not in the file, so what follows would be about nothing');
+    assert.ok(!after.includes('A FAILURE FROM LAST WEEK'),
+      'the previous dump survived: this file accumulates, so it grows without bound and a reader '
+      + 'cannot tell which failure is the current one');
+    assert.ok(!fs.existsSync(`${keep}.tmp`),
+      'the staging file was left behind — it is written next to the real one and would accumulate');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('keep: the dump lands outside the measured tree, even when that is a worktree', () => {
+  // Not in the user's repo: the measured tree may be a worktree that gets
+  // REMOVED (with the evidence in it), and their checkout is not ours to dirty.
+  const { base, root, wt } = mkRepo();
+  const home = path.join(base, 'home');
+  const env = { ...stubNode(base, { tap: RICH_FAIL_TAP, exit: 1 }), CLODEX_HOME: home };
+  try {
+    const r = runWithPayload(root, JSON.stringify({ tree: wt }), env);
+    const keep = path.join(home, 'test-failures', 'last.txt');
+    assert.ok(fs.existsSync(keep),
+      'ENTER: nothing was preserved when measuring a worktree, so the assertions below are vacuous');
+    assert.strictEqual(r.digest,
+      `[${path.basename(wt)}] 2/4 green, 2 failing (${keep}): the failing subtest; outer suite`);
+    const kept = fs.readFileSync(keep, 'utf-8');
+    assert.match(kept, /^ *not ok 1 - the failing subtest$/m,
+      'ENTER: the failing row did not survive, so the header check below proves nothing');
+    // The dump must say WHICH tree produced it: one fixed path shared by every
+    // tree on the box means a reader can otherwise attribute a worktree's
+    // failure to the root, which is the same class of error as an unmarked
+    // digest line.
+    assert.ok(kept.includes(wt),
+      'the preserved file does not name the tree it came from — with one file per box, a dump '
+      + 'that cannot be attributed is a dump that can be misread as another tree\'s');
+    for (const stray of [root, wt]) {
+      assert.ok(!fs.existsSync(path.join(stray, 'test-failures')),
+        `the dump was written into ${stray} — artifacts must not land in a checkout, which may be `
+        + 'removed with the evidence still in it');
+    }
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('keep: an unwritable destination costs the dump, never the digest', () => {
+  // The digest line is the thing the caller actually receives. If preserving the
+  // output can break it, this change made the harness worse than the defect.
+  // A regular FILE where the directory must go is the cheapest real mkdir -p
+  // failure, and needs no permission games that a root-run suite would skip.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t363-'));
+  try {
+    fs.mkdirSync(path.join(root, 'scripts'));
+    fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
+    fs.mkdirSync(path.join(root, 'bin'));
+    fs.writeFileSync(path.join(root, 'bin', 'node'),
+      `#!/bin/sh\ncat <<'CLX_TAP'\n${RICH_FAIL_TAP}\nCLX_TAP\nexit 1\n`, { mode: 0o755 });
+    const home = path.join(root, 'home');
+    fs.writeFileSync(home, 'not a directory');
+    const env = {
+      ...process.env,
+      PATH: `${path.join(root, 'bin')}${path.delimiter}${process.env.PATH}`,
+      CLODEX_HOME: home,
+    };
+    delete env.NODE_TEST_CONTEXT;
+    const res = spawnSync('/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
+      { encoding: 'utf-8', cwd: root, timeout: 60000, env });
+    const lines = (res.stderr || '').split('\n').filter((l) => l.trim() !== '');
+    assert.ok(lines.length > 0, 'ENTER: the script wrote no stderr at all');
+    assert.strictEqual(lines[lines.length - 1],
+      `[${path.basename(root)}] 2/4 green, 2 failing: the failing subtest; outer suite`,
+      'when the dump cannot be written the digest must be exactly the old line — and must NOT '
+      + 'name a file that is not there, which sends the reader looking for evidence that does '
+      + 'not exist');
+    assert.strictEqual(res.status, 1, 'and the verdict still stands');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('keep: TAP the trimmer does not recognise falls back to raw, never to empty', () => {
+  // A parser that matches nothing must not produce a confidently EMPTY file:
+  // that reads as "the runner said nothing", which is the false-negative this
+  // whole ticket is about, dressed up as a fix.
+  const r = runDigest({
+    what: 'unparseable',
+    tap: ['TAP version 13', 'something the reducer does not match',
+      '# tests 3', '# pass 2', '# fail 1'].join('\n'),
+    exit: 1,
+  });
+  assert.ok(r.kept !== null, 'ENTER: nothing was preserved at all');
+  assert.ok(r.kept.includes('something the reducer does not match'),
+    'the reduction matched nothing and kept nothing — an empty dump is indistinguishable from a '
+    + 'run that produced no output, and hides that the TAP grammar moved');
+});
+
+test('keep: the preserved path lives outside the run dir that teardown deletes', () => {
+  // clodex-paths.js's header is the authority: ~/.clodex/run/<name>/ is rm -rf'd
+  // on EVERY exit path, and putting data that must outlive a restart there is
+  // the recurring bug it documents. This dump is read by an agent after the run
+  // that produced it — quite possibly after that agent's session ended.
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const m = /keep_dir=(\S+)/.exec(src);
+  assert.ok(m, 'ENTER: the script no longer sets keep_dir, so this test measures nothing');
+  assert.ok(!/\/run\//.test(m[1]),
+    `the dump is written under ${m[1]}, inside the per-agent run dir that is rm -rf'd on every `
+    + 'exit path — the evidence would be gone before it is read');
+  assert.match(m[1], /CLODEX_HOME/,
+    'the destination must honour CLODEX_HOME like clodex-paths.js does, or the suite cannot '
+    + 'redirect it and every failing test run clobbers the developer\'s own dump');
 });
 
 test('digest: a digest path cannot be added without the tree marker', () => {

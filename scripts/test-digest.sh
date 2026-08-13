@@ -186,10 +186,115 @@ pass=$(printf '%s\n' "$out" | awk '$1=="#" && $2=="pass" {n=$3} END{print n+0}')
 tests=$(printf '%s\n' "$out" | awk '$1=="#" && $2=="tests" {n=$3} END{print n+0}')
 fail=$(printf '%s\n' "$out" | awk '$1=="#" && $2=="fail" {n=$3} END{print n+0}')
 
+# THE EVIDENCE, NOT JUST THE VERDICT. Everything above reduces `$out` to counts
+# and names and then drops it on exit — assertion text, diff, stack and anything
+# the test printed. Two agents were each blocked on evidence this script had
+# already captured and threw away.
+#
+# WHERE. Outside the measured tree, always: that tree is the user's checkout, or
+# a worktree that gets removed under us. `~/.clodex/test-failures/` is a SHARED
+# root dir, deliberately not under `run/<name>/` — that one is rm -rf'd on every
+# exit path (clodex-paths.js's header is the authority on the split, and names
+# putting must-survive data under the run dir as the recurring bug).
+#
+# BOUNDED BY SHAPE, NOT BY A SWEEP. One fixed file that every failing run
+# overwrites, with the body line-capped in awk below. It cannot grow, so there
+# is nothing to prune later — t187 exists because a log grew at 1.16 MB/day and
+# a second one is not worth a reader who read the digest line seconds ago.
+#
+# The cost of one fixed path is that a second tree's failure clobbers the first
+# before anyone reads it. The box-wide lock above already serializes runs, and
+# the header written below names the tree, the commit and the time, so a stale
+# or foreign dump is detectable on sight rather than silently misread.
+keep_dir=${CLODEX_HOME:-$HOME/.clodex}/test-failures
+keep=$keep_dir/last.txt
+# Display form for the digest line, which is capped at 180 chars and where the
+# failing NAMES are the more valuable half. Empty $HOME would make the pattern
+# `/*` and match everything, so the guard is not decorative.
+keep_show=$keep
+if [ -n "$HOME" ]; then
+  case $keep in "$HOME"/*) keep_show="~${keep#"$HOME"}" ;; esac
+fi
+
+# Writes $out to $keep and succeeds, or fails and writes nothing — the caller
+# names the file on the digest line ONLY on success, so an unwritable home
+# cannot produce a digest pointing at a file that is not there.
+#   $1: "tap" to trim, anything else to keep a raw tail.
+save_failing_output() {
+  mkdir -p "$keep_dir" 2>/dev/null || return 1
+  {
+    printf '# clodex test-digest — preserved output of a FAILING run.\n'
+    printf '# ONE fixed file, overwritten by the next failing run on this box.\n'
+    printf '# tree:  %s\n' "$measure"
+    printf '# head:  %s %s\n' \
+      "$(git -C "$measure" rev-parse --abbrev-ref HEAD 2>/dev/null)" \
+      "$(git -C "$measure" log -1 --format='%h %s' 2>/dev/null)"
+    printf '# when:  %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+    printf '# count: %s/%s green, %s failing (exit %s)\n\n' "$pass" "$tests" "$fail" "$code"
+    # Two sections, buffered and emitted separately so the caps cannot evict the
+    # failing rows: a single running cap over a suite whose passing tests print
+    # heavily would drop exactly the blocks this file exists to preserve.
+    #
+    # The raw fallback is the same guard one level up. A reduction that matches
+    # nothing yields a confidently EMPTY file, which is worse than no file at
+    # all — it reads as "the runner said nothing". If no `not ok` row matched,
+    # the TAP grammar is not what this expects and the raw tail ships instead.
+    printf '%s\n' "$out" | awk -v raw="$1" '
+      BEGIN { fcap = 2000; dcap = 400; rcap = 400; state = 0 }
+      { r[NR] = $0 }
+      raw != "tap" { next }
+      state == 2 {
+        nf++; f[nf] = $0
+        if ($0 ~ /^[ \t]*\.\.\.[ \t]*$/) state = 0
+        next
+      }
+      state == 1 {
+        if ($0 ~ /^[ \t]*---[ \t]*$/) { nf++; f[nf] = $0; state = 2; next }
+        state = 0
+      }
+      # A failing row at any nesting depth, then the YAML block node writes under
+      # it — that block is where the assertion text, the diff and the stack are.
+      /^[ \t]*not ok [0-9]+ - / { nf++; f[nf] = $0; state = 1; next }
+      # Top-level diagnostics: test stdout and the summary tail.
+      /^# / { nd++; d[nd] = $0 }
+      END {
+        if (raw != "tap" || nf == 0) {
+          if (raw == "tap") print "## no `not ok` row matched — raw tail follows"
+          lo = (NR > rcap) ? NR - rcap + 1 : 1
+          if (lo > 1) printf "## (%d earlier lines dropped)\n", lo - 1
+          for (i = lo; i <= NR; i++) print r[i]
+          exit
+        }
+        print "## failing rows, with the assertion text, diff and stack"
+        hi = (nf > fcap) ? fcap : nf
+        for (i = 1; i <= hi; i++) print f[i]
+        if (nf > hi) printf "## (%d further failure lines dropped)\n", nf - hi
+        print ""
+        print "## top-level diagnostics (test stdout and the summary)"
+        if (nd > dcap) {
+          h = int(dcap / 2)
+          for (i = 1; i <= h; i++) print d[i]
+          printf "## (%d diagnostic lines dropped)\n", nd - dcap
+          for (i = nd - (dcap - h) + 1; i <= nd; i++) print d[i]
+        } else {
+          for (i = 1; i <= nd; i++) print d[i]
+        }
+      }
+    '
+  } > "$keep.tmp" 2>/dev/null || { rm -f "$keep.tmp" 2>/dev/null; return 1; }
+  # Rename, because the reader is an agent running `cat` outside this script's
+  # lock: writing in place lets it read a half-written dump as the whole truth.
+  mv "$keep.tmp" "$keep" 2>/dev/null || { rm -f "$keep.tmp" 2>/dev/null; return 1; }
+}
+
 if [ "$tests" -eq 0 ]; then
   # The runner never produced a summary — surface its last line, not silence.
+  # This arm carries the LEAST information of the three, so it is the one that
+  # most needs the dump; there is no TAP to trim, hence the raw tail.
   last=$(printf '%s\n' "$out" | awk 'NF{l=$0} END{print l}')
-  printf '%.180s\n' "[$tree] suite did not run: $last" 1>&2
+  at=
+  save_failing_output raw && at=" ($keep_show)"
+  printf '%.180s\n' "[$tree] suite did not run$at: $last" 1>&2
   [ "$code" -eq 0 ] && exit 1
   exit "$code"
 fi
@@ -203,6 +308,13 @@ fi
 # appear at every nesting depth; parent wrappers of a failed subtest are noise
 # but harmless — the cap keeps the reply bounded either way.
 names=$(printf '%s\n' "$out" | awk 'sub(/^[ \t]*not ok [0-9]+ - /, "") {printf "%s%s", sep, $0; sep="; "}')
-printf '%.180s\n' "[$tree] $pass/$tests green, $fail failing: $names" 1>&2
+# BEFORE the names, not after, even though the names are the more valuable half
+# of this line. The file holds every `not ok` row itself, so a name the 180-char
+# cap truncates is still recoverable from it; a truncated PATH is recoverable
+# from nothing, and it is precisely the run with the most failing names — the
+# one that overruns the cap — that has the most evidence worth pointing at.
+at=
+save_failing_output tap && at=" ($keep_show)"
+printf '%.180s\n' "[$tree] $pass/$tests green, $fail failing$at: $names" 1>&2
 [ "$code" -eq 0 ] && exit 1
 exit "$code"
