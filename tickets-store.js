@@ -256,15 +256,26 @@ function extractMustFix(verdictText) {
 //
 // Derived on read rather than stored: a second field on the record could
 // disagree with `mustFix` after any edit, and the blob is the thing a human
-// acts on. Zero is impossible by construction here — `extractMustFix` already
-// mapped "(none)" to null — so a 0 from a non-null blob would be a lie, and
-// the floor of 1 is what keeps "REWORK, 0 must-fixes" off the wire.
+// acts on.
+//
+// A non-null blob can still mean NONE. `extractMustFix`'s placeholder test is
+// anchored bare (`none`, `n/a`, `-`), so any wrapping survives it: `(none)` —
+// the shape a live record actually carried — reaches here as a string with no
+// list marker, and an unguarded floor of 1 then announces `ACCEPT … 1 must-fix`.
+// A verdict that contradicts its own count is the false premise this
+// notification exists to stop, so the placeholder is re-tested here, wrapped.
+const MUSTFIX_PLACEHOLDER_RE = /^[\s(\[]*(?:none|n\/a|nothing|-+|—)[\s.)\]]*$/i;
+
 function countMustFix(mustFixText) {
   if (mustFixText == null) return 0;
-  const lines = String(mustFixText).split('\n');
+  const text = String(mustFixText);
+  if (MUSTFIX_PLACEHOLDER_RE.test(text.trim())) return 0;
+  const lines = text.split('\n');
   let n = 0;
   for (const line of lines) if (/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S/.test(line)) n++;
-  return n > 0 ? n : (String(mustFixText).trim() ? 1 : 0);
+  // The floor: a bare unmarked item is one must-fix, not zero. Only reached
+  // once the placeholder test above has ruled out "no items at all".
+  return n > 0 ? n : (text.trim() ? 1 : 0);
 }
 
 // Has this ticket been DISPATCHED? First-class state, because everything

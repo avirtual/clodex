@@ -26,8 +26,9 @@ const osReal = require('node:os');
 
 const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
-const { extractMustFix } = require('../tickets-store');
+const { extractMustFix, countMustFix } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
+const { parseWithRegistry } = require('../intent-registry');
 
 // The shipped reviewer template — the DATA _handleTeamReview consumes. Copied
 // from session-manager.test.js's fixture rather than imported for the same
@@ -95,6 +96,12 @@ function mkVerdict(extra = {}) {
     validIntentNames: require('../intent-registry').validIntentNames,
     fs: fsReal,
     path: pathReal,
+    // Real `os` + `ensureDir`, because the verdict-body write resolves a task
+    // dir through the same path _writeTicketDiff does: stubbing either turns a
+    // genuine write into "the code called a function", which is the shape this
+    // file's header warns about.
+    os: osReal,
+    ensureDir: require('../fs-util').ensureDir,
     countPending: require('../pending-store').countPending,
     isDraftOpen: require('../proxy-util').isDraftOpen,
     drainPending: require('../pending-store').drainPending,
@@ -621,7 +628,16 @@ test('the lead notification carries ticket id, verdict, round and must-fix COUNT
   assert.match(note.body, /REWORK/, 'states which way it went');
   assert.match(note.body, /round 1/, 'states the round');
   assert.match(note.body, /2 must-fixes/, 'states HOW MANY must-fixes, so REWORK is actionable without opening the record');
-  assert.match(note.body, /task show t1/, 'points at where the full body is read');
+  // The pointer must name a route that RUNS. Matching the string proves only
+  // that text is present — t330 shipped advice for `task edit`, a verb that
+  // does not exist, with a test asserting exactly that string. So every
+  // `[agent:...]` the notification suggests is fed to the REAL parser here.
+  const suggested = note.body.match(/\[agent:[^\]]+\]/g) || [];
+  assert.ok(suggested.length > 0, 'ENTER: the notification suggests at least one route');
+  for (const intent of suggested) {
+    assert.ok(parseWithRegistry(intent) !== null,
+      `the notification tells the lead to run ${intent}, so it must parse — an unrecognized verb is a dead end at 3am`);
+  }
 });
 
 test('the notification is a SUMMARY — the multi-KB verdict body is not in it', async () => {
@@ -686,4 +702,103 @@ test('an ad-hoc review is unchanged — it still gets the FULL verdict, not a su
   assert.strictEqual(f.gated.length, 1, 'ENTER: one delivery on the ad-hoc path');
   assert.match(f.gated[0].body, /the race is closed by the latch/,
     'an ad-hoc asker still reads the whole verdict — there is no record for it to land on');
+});
+
+// ── t332 r1 MF1: the full verdict body has a DURABLE home ───────────────────
+//
+// A spill is swept by age (MSG_MAX_AGE = 30 min), so a pointer at one is dead
+// by morning — which is precisely the unattended overnight case this ticket
+// exists to serve. The body goes in the ticket's task dir, beside the diff.
+
+test('the full verdict body is written into the ticket task dir, and the pointer is that real path', async () => {
+  const f = mkVerdict();
+  // A spec carrying a task dir, the way the loop's dispatch does — so the
+  // artifact lands where t330 made resolution reliable.
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+  const bulk = 'x'.repeat(15839);
+  const full = `VERDICT: REWORK\n\n${bulk}\n\nMUST-FIX\n- the guard is inverted`;
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), full);
+
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the notification was sent');
+  const note = f.gated[0];
+  // The cited path is READ BACK, not merely matched: a pointer that names a
+  // file nobody wrote is the same dead end as an invented verb.
+  const m = note.body.match(/(\S*review-t1-r1\.verdict\.md)/);
+  assert.ok(m, `the notification must cite the verdict file; got: ${note.body}`);
+  assert.ok(fsReal.existsSync(m[1]), `the cited path must EXIST — got ${m[1]}`);
+  assert.strictEqual(fsReal.readFileSync(m[1], 'utf8'), full,
+    'and it must hold the whole verdict, which is the thing the summary deliberately omits');
+  assert.ok(!note.body.includes(bulk), 'the notification itself still carries no body');
+});
+
+test('the verdict file is round-stamped, so round 2 does not overwrite round 1', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+  const r1 = spawnReviewer(f, 'scope', { ticketId: 't1' });
+  await f.m._handleReviewDone(f.m.sessions.get(r1.name), 'VERDICT: REWORK\n\nMUST-FIX\n- first round');
+  assert.strictEqual(f.one('t1').reviewRound, 1, 'ENTER: round 1 landed');
+
+  const r2 = spawnReviewer(f, 'scope', { ticketId: 't1' });
+  await f.m._handleReviewDone(f.m.sessions.get(r2.name), 'VERDICT: ACCEPT\n\nMUST-FIX: none\n\nsecond round');
+
+  assert.strictEqual(f.one('t1').reviewRound, 2, 'ENTER: round 2 landed');
+  const paths = f.gated.map((g) => (g.body.match(/\S*review-t1-r\d\.verdict\.md/) || [null])[0]).filter(Boolean);
+  assert.strictEqual(paths.length, 2, 'ENTER: both rounds cited a verdict file');
+  assert.notStrictEqual(paths[0], paths[1], 'the rounds must not share a filename');
+  assert.match(fsReal.readFileSync(paths[0], 'utf8'), /first round/, "round 1's body survived round 2");
+  assert.match(fsReal.readFileSync(paths[1], 'utf8'), /second round/);
+});
+
+test('a verdict body that cannot be written still notifies, and still leaves the verdict on the record', async () => {
+  const f = mkVerdict();
+  // No task dir in the spec → nothing to resolve. The notification must degrade
+  // to an honest "could NOT be saved" rather than citing a path that is not there.
+  openTicket(f, 'a spec with no task dir at all');
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT\n\nMUST-FIX: none');
+
+  assert.strictEqual(f.one('t1').verdict, 'ACCEPT', 'the record is still the source of truth');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the lead is still told');
+  assert.match(f.gated[0].body, /could NOT be saved/,
+    'and is told the body is missing — a cited path that does not exist is worse than none');
+});
+
+// ── t332 r1 MF2: a placeholder must-fix is ZERO must-fixes ──────────────────
+
+test('countMustFix: a wrapped or worded placeholder is zero, not one', () => {
+  // extractMustFix's own placeholder test is anchored bare, so `(none)` — the
+  // shape a live record carried — survives it as a string. Announcing
+  // "ACCEPT … 1 must-fix" is the false premise this ticket exists to end.
+  const cases = [
+    [null, 0], ['', 0], ['none', 0], ['(none)', 0], ['[none]', 0], ['None.', 0],
+    ['  (None)  ', 0], ['n/a', 0], ['nothing', 0], ['—', 0], ['---', 0],
+    ['the guard is inverted', 1],
+    ['- a\n- b', 2],
+    ['1. a\n2. b', 2],
+    ['* only one', 1],
+  ];
+  for (const [input, expected] of cases) {
+    assert.strictEqual(countMustFix(input), expected,
+      `countMustFix(${JSON.stringify(input)}) must be ${expected}`);
+  }
+});
+
+test('an ACCEPT whose must-fix section is "(none)" is announced with NO must-fixes', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT\n\nMUST-FIX: (none)');
+
+  const t = f.one('t1');
+  // ENTER: the parenthesised placeholder really did survive onto the record —
+  // if extractMustFix ever strips it, this test stops measuring the bug.
+  assert.strictEqual(t.mustFix, '(none)', 'ENTER: the record carries the wrapped placeholder');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the notification was sent');
+  assert.match(f.gated[0].body, /no must-fixes/,
+    'an ACCEPT must not be announced as carrying a must-fix — that is the false premise that cost a cancelled ticket');
+  assert.ok(!/1 must-fix/.test(f.gated[0].body), 'and certainly not "1 must-fix"');
 });

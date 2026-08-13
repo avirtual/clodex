@@ -4734,6 +4734,30 @@ function createSessionManager(deps) {
       return { verdict: ticket.verdict, mustFix: ticket.mustFix, reviewRound: ticket.reviewRound };
     }
 
+    // The verdict prose, written beside the diff it reviewed. Shares
+    // _ticketDiffDest's resolution so the body cannot land somewhere the diff
+    // would not, and takes the round from the ALREADY-STAMPED record — this
+    // runs after the save, where `reviewRound` is the round that just landed,
+    // unlike _writeTicketDiff which runs before it and adds one.
+    _writeVerdictBody(session, ticketId, landedOn, fullVerdict) {
+      let team;
+      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      if (!team) return { ok: false, path: null, error: 'no team' };
+      const ticket = this._loadTicket(team, ticketId);
+      if (!ticket) return { ok: false, path: null, error: `no ticket ${ticketId}` };
+      const dest = this._ticketDiffDest(team, ticket);
+      if (!dest.ok) return { ok: false, path: null, error: dest.error };
+      const round = Number(landedOn.reviewRound) || Number(ticket.reviewRound) || 1;
+      const file = path.join(dest.dir, `review-${ticketId}-r${round}.verdict.md`);
+      try {
+        ensureDir(dest.dir);
+        fs.writeFileSync(file, fullVerdict);
+      } catch (e) {
+        return { ok: false, path: null, error: e.message };
+      }
+      return { ok: true, path: file, error: null };
+    }
+
     // The lead's copy of a TICKET verdict: a SUMMARY, never the body. The record
     // stays the store — this only tells the lead the store changed, because a
     // lead that does not know a review finished is a lead not merging it.
@@ -4757,23 +4781,18 @@ function createSessionManager(deps) {
         const mf = n === 0
           ? 'no must-fixes'
           : `${n} must-fix${n === 1 ? '' : 'es'}`;
-        // The full prose has no durable home: the record keeps only the
-        // must-fix blob, and this seat is killed with discard on the next line.
-        // Spill is the one place it survives the seat at all — but it is swept
-        // by AGE (MSG_MAX_AGE), so the expiry is stated rather than implied. An
-        // unqualified path would read as permanent and send an overnight lead
-        // to a file that was deleted before it woke.
-        let where;
-        try {
-          const path_ = spillToFile(`review-done ${ticketId}`, fullVerdict, lead);
-          where = `full verdict (${fullVerdict.length} bytes) saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes, then swept: ${path_}`;
-        } catch (e) {
-          log.warn('intent', `spill of verdict body for ${lead} failed: ${e.message}`);
-          where = `full verdict (${fullVerdict.length} bytes) could NOT be saved (${e.message}) — only the summary above survives`;
-        }
+        // The full prose goes in the ticket's task dir, beside the diff it is
+        // about. Not a spill: those are swept by AGE (MSG_MAX_AGE, 30 min), so
+        // an overnight lead wakes to a dead path — and not the record either,
+        // which a truncated dump already hides `verdict` inside. The task dir
+        // is durable, outside the user's repo, and costs the record nothing.
+        const written = this._writeVerdictBody(session, ticketId, landedOn, fullVerdict);
+        const where = written.ok
+          ? `Full verdict (${fullVerdict.length} bytes): ${written.path}`
+          : `Full verdict (${fullVerdict.length} bytes) could NOT be saved (${written.error}) — only the summary above survives.`;
         const body = [
           `${landedOn.verdict} on ticket ${ticketId} (review round ${landedOn.reviewRound}, ${mf}).`,
-          `Landed on the ticket record — read it with [agent:task show ${ticketId}].`,
+          `Landed on the ticket record; the board shows it via [agent:task list all].`,
           where,
         ].join('\n');
         // Not urgent: a verdict is durable on the record before this runs, so
