@@ -244,14 +244,54 @@ async function attachCli(name, extraArgs, port, tty, spawnFn) {
   return { code, stdout, stderr };
 }
 
+// Wait for a REQUEST to reach the stub rather than for a wall clock to elapse.
+// The drivers below must fire against attach()'s progress, not against a
+// deadline: fakeTty queues an early keystroke until the listener arms, but
+// arming happens on the SSE replay while the control token is still one
+// unresolved POST away — and onStdin drops input when `token` is unset, so a
+// keystroke delivered in that window is silently NOT forwarded and the test
+// sees no /api/input at all. Reproduced 8/12 with 12 copies of this file in
+// parallel; a larger constant only moves the window.
+const whenSeen = (seen, pred, ms = 10000) => new Promise((resolve) => {
+  const end = Date.now() + ms;
+  const tick = () => {
+    if (seen.some(pred)) return resolve(true);
+    if (Date.now() > end) return resolve(false);
+    setTimeout(tick, 5);
+  };
+  tick();
+});
+const sawAcquire = (seen) => whenSeen(seen, (s) =>
+  s.url.startsWith('/api/control/') && s.body && s.body.action === 'acquire');
+
+// Wait for text the attach has actually written to the local terminal.
+const whenOut = (tty, re, ms = 10000) => new Promise((resolve) => {
+  const end = Date.now() + ms;
+  const tick = () => {
+    if (re.test(tty.out())) return resolve(true);
+    if (Date.now() > end) return resolve(false);
+    setTimeout(tick, 5);
+  };
+  tick();
+});
+
 test('attach: replay resets + writes scrollback, output streams, acquire+resize on entry, release on detach', T, async (t) => {
   const { seen, port } = await startStub(t, {
     scrollback: 'PRIOR OUTPUT\n',
-    onAttach: (state) => { setTimeout(() => pushOutput(state.attach, 'live line\r\n'), 30); },
+    onAttach: (state) => { pushOutput(state.attach, 'live line\r\n'); },
   });
   const tty = fakeTty();
-  // Detach shortly after the live output lands.
-  setTimeout(() => tty.push(Buffer.from([0x1c])), 90);
+  // Detach only once BOTH things this test asserts have actually happened: the
+  // live output reached the terminal, and the entry acquire+resize reached the
+  // server. On a 90ms deadline the detach outran the SSE frame under load and
+  // the run asserted on a terminal holding only the scrollback (measured with
+  // 12 copies of this file in parallel); detaching purely on the output races
+  // the other way, ending the run before acquire lands.
+  Promise.all([
+    whenOut(tty, /live line/),
+    sawAcquire(seen),
+    whenSeen(seen, (s) => s.url.startsWith('/api/resize/')),
+  ]).then(() => tty.push(Buffer.from([0x1c])));
   const { code } = await attachCli('bash', [], port, tty.tty);
   assert.strictEqual(code, 0);
   // Reset sequence written before the scrollback.
@@ -275,9 +315,18 @@ test('attach: replay resets + writes scrollback, output streams, acquire+resize 
 test('attach: keystrokes before the escape are forwarded with the token; escape is not', T, async (t) => {
   const { seen, port } = await startStub(t);
   const tty = fakeTty();
-  setTimeout(() => tty.push(Buffer.from([0x6c, 0x73, 0x0d, 0x1c])), 40); // "ls\r" then Ctrl-\
+  // Gate on the RESIZE, not the acquire: the client sets `token` only when the
+  // acquire RESPONSE resolves, and resize is sent after that with the token on
+  // it. Seeing the acquire request still leaves a window where onStdin's token
+  // guard silently drops the keystroke and no /api/input is ever sent.
+  whenSeen(seen, (s) => s.url.startsWith('/api/resize/') && s.body && s.body.token)
+    .then(() => tty.push(Buffer.from([0x6c, 0x73, 0x0d, 0x1c]))); // "ls\r" then Ctrl-\
   const { code } = await attachCli('bash', [], port, tty.tty);
   assert.strictEqual(code, 0);
+  // The input POST is deliberately fire-and-forget (attach.js swallows its
+  // failures), so teardown resolves the run without waiting for it to land.
+  // Asserting straight off `seen` therefore races the wire.
+  await whenSeen(seen, (s) => s.url.startsWith('/api/input/'));
   const input = seen.find((s) => s.url.startsWith('/api/input/'));
   assert.ok(input, 'input forwarded');
   assert.strictEqual(input.body.data, 'ls\r');       // escape byte dropped
@@ -309,7 +358,12 @@ test('attach: banner notes taking control from the current holder', T, async (t)
 test('attach: SIGINT/SIGTERM is treated as a detach (exit 0, terminal restored)', T, async (t) => {
   const { seen, port } = await startStub(t);
   const tty = fakeTty();
-  setTimeout(() => tty.signal(), 40);
+  // Gate on the RESIZE, which carries the control token, so it proves the
+  // acquire RESPONSE was processed. releaseControl() returns early when `token`
+  // is unset, so a signal landing between the acquire request and its response
+  // tears down with no release to find and this test fails on timing alone.
+  whenSeen(seen, (s) => s.url.startsWith('/api/resize/') && s.body && s.body.token)
+    .then(() => tty.signal());
   const { code } = await attachCli('bash', [], port, tty.tty);
   assert.strictEqual(code, 0);
   assert.deepStrictEqual(tty.rawLog, [true, false]);
