@@ -510,7 +510,20 @@ function mkArm({ loadState = () => 'absent', armStatus = 200, armThrows = false,
 
 const DRAFT = 'how does the wirescope tail hint registry expire a slot';
 const CTX = { agent: 'a', base: 'http://127.0.0.1:1', route: 'clodex-a-deadbeef' };
-const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+// The sleep alone is NOT enough, and widening it does not help. `rank` yields on
+// a setImmediate, which is the check phase — after the whole timers phase. Once
+// the process is descheduled far enough that the arm's debounce timer and this
+// sleep's timer expire together, both callbacks run in that one timers phase:
+// the arm suspends at its setImmediate while this resolve runs as a microtask,
+// so the assert observes the pass before it has done anything. Draining the
+// check phase is what makes the wait mean "the pass finished" rather than "some
+// wall clock elapsed" — a larger `ms` only moves the deschedule that breaks it.
+// Absence assertions (posts.length === 0) depend on this too: they must not pass
+// merely because the pass had not started yet.
+const settle = async (ms = 30) => {
+  await new Promise((r) => setTimeout(r, ms));
+  for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+};
 
 // The defect that reverted pre-arming (e9b1781) was POST VOLUME on a fixed
 // hint id, not pre-arming itself. Each keystroke must cancel the pending pass,
@@ -625,12 +638,19 @@ test('arm: a draft that grows without changing the winner does not re-POST', asy
   assert.strictEqual(posts.length, 1, 'ENTER: the debounced pass must have fired');
   // Enter, before the first POST has resolved. The cooldown cannot help here.
   inflight.onDraft('s', DRAFT, CTX, { final: true });
+  // Read synchronously this proves nothing: `rank` has not resumed from its
+  // setImmediate yet, so a re-POST could not have happened either way. The
+  // claim only becomes observable once the pass has actually run, which is
+  // what the drained settle below waits for.
+  await settle();
   assert.strictEqual(posts.length, 1,
     'a second pass while the first POST is still in flight must not re-POST the same winner — the '
     + 'offer ledger is written in the .then(), so at this instant it is empty and the memo is the '
     + 'only thing standing between one hint and two');
   release();
   await settle();
+  assert.strictEqual(posts.length, 1,
+    'and it still must not re-POST once the first POST resolves and the ledger is written');
 });
 
 test('arm: a draft below the term floor never arms', async () => {
