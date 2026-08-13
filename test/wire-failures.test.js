@@ -47,19 +47,24 @@ function serveOnce(handler) {
 }
 
 // Wait for the observer to FINISH this response, not for a wall clock to pass.
-// The client's bytes and the observer's receipt are two different moments:
-// proxy.js writes `res.end()` first and only then calls `tee.close()`, whose
-// completion runs through Decompressor.end — synchronous only in passthrough,
-// and on zlib's own ticks otherwise. So `await request(...)` resolves with the
-// events below still unemitted, and every fixed sleep here was betting that the
-// gap stays under a constant. Measured with the tee-close completion delayed:
-// each test failed exactly when the delay passed its own sleep value (30ms
-// sleeps at 40, 50ms at 70, 80ms at 100) — the signature of a wall-clock race.
 //
-// ABSENCE assertions below (`turn.completed.length === 0`, `tee-failure === 0`)
-// are the reason this matters: they are true before the observer has run at
-// all, so gating them on a positive terminal event is what makes them mean
-// "the observer finished and produced nothing" instead of "we asked too early".
+// Whether that wait is load-bearing depends on the encoding, and most subjects
+// here are NOT the interesting case: proxy.js runs `res.end()` and
+// `tee.close()` as consecutive statements in one tick, and Decompressor.end
+// calls back synchronously when `content-encoding` is absent, so nothing can
+// interleave and the events are already emitted. For those, the sleeps this
+// replaced were dead time rather than a live race.
+//
+// Two paths in this file genuinely are async, and they are why the gating is
+// not merely cosmetic: the gzip subjects (zlib defers the callback to its own
+// ticks) and the abort/upstream-death subjects (the upstream noticing its
+// socket die is a strictly later poll-phase event).
+//
+// Gate anyway, uniformly. ABSENCE assertions below (`turn.completed.length
+// === 0`, `tee-failure === 0`) are true before the observer has run at all, so
+// a gate is what makes them mean "the observer finished and produced nothing"
+// rather than "we asked too early" — and it keeps that meaning if a future
+// encoding change makes a synchronous path async.
 // Gate on the condition a test actually asserts. A gate that implies less than
 // the assertion after it is WEAKER than the sleep it replaced: the sleep at
 // least bought slack for the hop, where a satisfied gate resolves on the next
@@ -161,7 +166,7 @@ test('client aborts mid-stream: upstream released, stream-end fires', async () =
   // back synchronously, so stream-end fires while the fake upstream has not yet
   // seen its socket die. Gating on stream-end alone leaves ~2ms for that hop
   // where the sleep this replaced left ~80ms — weaker than what it replaced.
-  assert.ok(await until(() => upstreamClosed && events['stream-end'].length >= 1),
+  assert.ok(await until(() => upstreamClosed && (events['stream-end'] || []).length >= 1),
     'upstream released and stream-end fired after client abort');
 
   assert.equal(upstreamClosed, true);

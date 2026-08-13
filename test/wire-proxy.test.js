@@ -194,12 +194,16 @@ function collect(emitter, names) {
   return events;
 }
 
-// Wait for the observer to catch up, not for a wall clock. `await request(...)`
-// resolves when the CLIENT has its bytes, and proxy.js calls res.end() before
-// tee.close() — the turn.completed/session/usage events all fire from that
-// close path. The sleeps replaced here were betting the gap stays under a
-// constant; with tee-close completion delayed, six subjects in this file failed
-// at 70ms, so the bet is only as good as the machine's load.
+// Wait for the observer to catch up, not for a wall clock. The events asserted
+// below (turn.completed/session/usage) fire from proxy.js's tee-close path,
+// which runs in the same tick as res.end() — and every upstream in this file is
+// unencoded, so Decompressor.end calls back synchronously and those events are
+// already emitted when the request resolves. The sleeps replaced here were dead
+// time, not a live race.
+//
+// Gating is still the right shape: it states what the test is actually waiting
+// for, it keeps holding if an encoding change makes the path async, and it is
+// what lets an absence assertion mean "finished, produced nothing".
 //
 // Pass the COUNT the test expects: several of these drive multiple requests and
 // then assert on the shape of the whole array, which is satisfiable by a

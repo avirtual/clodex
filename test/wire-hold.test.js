@@ -567,11 +567,12 @@ function post(port, path, body) {
   });
 }
 
-// Poll for the observer's own progress instead of a wall clock: proxy.js ends
-// the client response before it closes the tee, so post() resolving says
-// nothing about the cache write or the billing stamp asserted below. Measured
-// by delaying the tee-close completion — this subject failed at 60ms against
-// its 30ms sleeps.
+// Poll for the observer's own progress instead of a wall clock. The upstream
+// here is unencoded, so the tee closes synchronously in the same tick as the
+// client's res.end() and the cache write and billing stamp asserted below have
+// already happened when post() resolves — the sleeps this replaced were dead
+// time, not a live race. Gating still states what the test waits for, and
+// survives a future encoding change that would make the path async.
 const until = (pred, ms = 10000) => new Promise((resolve) => {
   const deadline = Date.now() + ms;
   const tick = () => {

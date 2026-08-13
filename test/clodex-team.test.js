@@ -204,10 +204,12 @@ test('retire: envelope lands on the target socket with the contract shape', asyn
     tick();
   });
   // Resolving on the FIRST envelope would close the server before a second
-  // could arrive, making the "exactly one" below unfalsifiable — the 200ms wait
-  // this replaced would have caught a duplicate. Drain one short beat so the
-  // count keeps its strength.
-  await new Promise((r) => setTimeout(r, 50));
+  // could arrive, making the "exactly one" below unfalsifiable. This drain is
+  // the window in which a duplicate would be caught, so it keeps the full 200ms
+  // the original sleep gave that check rather than a shorter one: the wait above
+  // already returns as soon as the envelope lands, so this costs the common case
+  // nothing and a weaker value would only narrow what the count can detect.
+  await new Promise((r) => setTimeout(r, 200));
   server.close();
   assert.ok(delivered, 'envelope delivered within the timeout');
 
