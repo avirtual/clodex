@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- Terminal exec no longer loses characters out of the command it types. It
+  abandons the current line, then waits for the shell's answer to go quiet
+  before typing, because the signal that clears the line also discards input
+  written alongside it — an operator running a command into a busy terminal
+  could previously see a mangled command run, or `command not found` for a
+  fragment of one. A one second ceiling on that wait means a shell that never
+  stops talking still gets its command.
 - The must-fix placeholder check no longer stalls on a long run of emphasis
   characters, and tolerates a trailing period after the placeholder
   (`**(none)**.`). A blockquote or other line prefix is still not emphasis, so
