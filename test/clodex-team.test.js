@@ -360,9 +360,10 @@ function parityBoard() {
     { id: 't1', title: 'still going', assignee: 'team-hand-9', role: 'hand', state: 'open', openedAt: now - 40 * HOUR, closedAt: null,
       respecs: [{ at: now - 3 * HOUR, by: 'lead', title: 'first cut' }, { at: now - 2 * HOUR, by: 'lead', title: 'second cut' }] },
     { id: 't2', title: 'old close', assignee: 'team-hand-9', role: 'hand', state: 'done', openedAt: now - 40 * HOUR, closedAt: now - 30 * HOUR },
-    // Respec'd AND closed: the mark rides `closedRow` too, so a suffix added to
-    // the open row alone would render this one identically on both sides and the
-    // "recently closed" divergence would reduce away.
+    // Respec'd and cancelled: carried so the explicit-`cancelled` filter run
+    // compares a marked row too (that path renders every shown ticket through
+    // `row`). The `closedRow` carrier is t4 — a cancelled ticket never reaches
+    // the recently-closed section, so this row cannot stand in for it.
     { id: 't3', title: 'dropped', assignee: 'hand', state: 'cancelled', openedAt: now - 40 * HOUR, closedAt: now - 2 * HOUR,
       respecs: [{ at: now - 5 * HOUR, by: 'lead', title: 'before it was dropped' }] },
     // t174: open AND assigned AND parked — the row that renders identically to
@@ -407,7 +408,8 @@ test('listing parity: the two implementations RENDER the same board (t100 — no
   // t339: the suffix rides the TITLE, which `listingFacts` captures as row[7] —
   // so it can only be compared if a respec'd row survives the reduction. Both
   // the open and the closed carrier are checked: the open row proves `row`
-  // carries the mark, the cancelled one proves `closedRow` does.
+  // carries the mark, the done row inside the recent window (t4) proves
+  // `closedRow` does.
   assert.ok(mine.some((f) => /^t1\|.*respec'd ×2/.test(f)),
     `ENTER: a respec'd OPEN row reaches the reduced facts: ${mine.join(' / ')}`);
   assert.ok(mine.some((f) => /^t4\|.*closed\|.*respec'd ×1/.test(f)),
@@ -422,7 +424,9 @@ test('listing parity: the two implementations RENDER the same board (t100 — no
 // ANY leaf window in roughly [13h, 29h] renders byte-identically. The cap is
 // different — F1 caught a cap divergence, because the fixture straddles it.
 // This is the scrape-and-compare idiom already used for the digest grammar and
-// for TICKET_FILTERS.
+// for TICKET_FILTERS. The duplicated `respecMark` helpers are guarded only
+// behaviourally, by the parity pin above; if the copied fragments grow again,
+// this idiom is the cheaper guard to extend rather than a new mechanism.
 test('listing parity: the duplicated window and cap constants agree at source', () => {
   const scrape = (file, name) => {
     const src = fs.readFileSync(file, 'utf-8');
