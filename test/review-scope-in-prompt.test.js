@@ -30,7 +30,7 @@ const pendingStore = require('../pending-store');
 
 const SCOPE = 'diff at /tmp/t5.diff against 2b7179c — attn: the migration ordering';
 
-function boot() {
+function boot(extraDeps = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t5-'));
   const writes = new Map();
   const store = new Map();
@@ -137,15 +137,26 @@ function boot() {
     INJECT_HOLD_TIMEOUT: 60_000,
     DEFAULT_WORKSPACE_ID: 'default',
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
+    ...extraDeps,
   });
 
   const m = new SessionManager();
   m._sendToSession = () => {};
   m._broadcast = () => {};
   m._applyTemplatePersistence = () => {};
+  // Recorded, not swallowed. `_gatedDeliver` is the ONLY channel the lead ever
+  // sees an alarm on, so a stub that discarded its argument would leave the t377
+  // tests below structurally unable to observe the thing they measure — green
+  // whether the detector fires, stays silent, or was never wired at all.
+  const alarms = [];
+  m._gatedDeliver = (target, sender, body, urgent, tag, onWrite) => {
+    alarms.push({ target, body });
+    if (typeof onWrite === 'function') onWrite();
+    return { queued: true };
+  };
 
   return {
-    m, root,
+    m, root, alarms,
     setPending: (n) => { pending = n; },
     inlineFor: (n) => inline.get(n),
     bakedFor: (n) => realIpcFor.get(n),
@@ -162,6 +173,7 @@ function boot() {
         clearTimeout(s._parkCapTimer);
         clearTimeout(s._replayFallbackTimer);
         clearTimeout(s._parkedDrainFallbackTimer);
+        clearTimeout(s._reviewStartTimer);
       }
     },
   };
@@ -232,5 +244,163 @@ test('team-review: the nudge dm carries no scope of its own', async () => {
     assert.ok(!body.includes(SCOPE),
       'the nudge must NOT restate the scope: a second copy on the losable channel is what this change removes');
     assert.ok(/Begin/.test(body), 'and it must still be a start signal');
+  } finally { app.stop(); }
+});
+
+// --- t377: a reviewer that never takes its first turn ------------------------
+//
+// Measured twice. `clodex-reviewer-365-r2` sat alive and idle for ~30 minutes
+// and `clodex-reviewer-375-r1` for 4 — the second caught by the operator, not by
+// any alarm. Both had their scope (it is in the prompt, per the tests above), so
+// what went missing is the START NUDGE, and a reviewer has no other traffic to
+// earn a turn from. Nothing detected either one.
+//
+// The tell is the TRANSCRIPT: the hook creates run/<name>/transcript.jsonl as a
+// symlink at spawn, and its target appears only once the CLI writes a turn.
+// Measured in both directions on the same night — t375's target still absent 4
+// minutes in, while a healthy clodex-reviewer-371-r1 had 254KB with a moving
+// mtime inside five. So these tests write (or do not write) that file and drive
+// `_checkReviewStarted` directly, rather than waiting out a 90s window.
+//
+// The two tests are ONE UNIT: the firing test alone is green under a detector
+// that alarms on EVERY reviewer, which would be worse than none.
+
+// Everything the production arm does, minus the 90s wait. `_armReviewStartCheck`
+// is exercised for real by the spawn (its timer is armed and unref'd); this is
+// the timer's own callback, called at the moment it would have fired.
+function reviewerSeat(app, { transcript }) {
+  const s = app.m.sessions.get('crew-reviewer-1');
+  s.activityState = 'idle';
+  if (transcript != null) {
+    const link = pathFor(app.root, 'crew-reviewer-1', 'transcript');
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    const target = path.join(app.root, 'real-transcript.jsonl');
+    fs.writeFileSync(target, transcript);
+    try { fs.unlinkSync(link); } catch {}
+    fs.symlinkSync(target, link);
+  }
+  return s;
+}
+
+test('t377: a reviewer with no transcript is reported to the lead as never started', async () => {
+  const app = boot();
+  try {
+    app.setPending('lead');
+    await app.m.create('lead', 'claude', app.root, [], null, 'ws');
+    const lead = app.m.sessions.get('lead');
+
+    app.setPending('crew-reviewer-1');
+    app.m._handleTeamReview(lead, SCOPE);
+    await settled(app, 'crew-reviewer-1');
+    const s = reviewerSeat(app, { transcript: null });
+    // ENTER: the seat is in the measured shape — alive, idle, no transcript. A
+    // check run against a seat that never spawned would alarm for the wrong
+    // reason, and one against a busy seat would decline for the right one.
+    assert.ok(s && !s._dead, 'ENTER: the reviewer seat is alive');
+    assert.strictEqual(s.activityState, 'idle', 'ENTER: and idle — it has taken no turn');
+    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+      'ENTER: and has produced no transcript, which is the signal itself');
+    // ENTER: the arm really happened at spawn. Without this the test would pass
+    // against a detector that is never wired to anything.
+    assert.ok(s._reviewStartTimer, 'ENTER: the spawn armed the check');
+
+    app.alarms.length = 0;
+    app.m._checkReviewStarted(s, 'lead');
+
+    assert.strictEqual(app.alarms.length, 1, 'the lead is told exactly once');
+    assert.strictEqual(app.alarms[0].target, 'lead', 'and it goes to the lead, like a stall alarm');
+    const body = app.alarms[0].body;
+    assert.match(body, /crew-reviewer-1/, 'it names the seat');
+    assert.match(body, /NO turn|never started/, 'and says what is wrong');
+    // The recovery matters as much as the detection: a respawn is the intuitive
+    // move and it is wrong — it mints a second seat while the first keeps its
+    // born-stamped mail, which drainPending then discards.
+    assert.match(body, /urgent dm/, 'it names the recovery that works');
+    assert.match(body, /NOT a respawn/, 'and the one that does not');
+  } finally { app.stop(); }
+});
+
+test('t377: a reviewer that HAS written a transcript is never reported', async () => {
+  // The other direction, in the same unit. A detector that alarms on every
+  // reviewer trains the lead to dismiss it, which is the failure defect 2 is
+  // about — arriving here by a different road.
+  const app = boot();
+  try {
+    app.setPending('lead');
+    await app.m.create('lead', 'claude', app.root, [], null, 'ws');
+    const lead = app.m.sessions.get('lead');
+
+    app.setPending('crew-reviewer-1');
+    app.m._handleTeamReview(lead, SCOPE);
+    await settled(app, 'crew-reviewer-1');
+    // A seat that took a turn and came back to idle — the shape a pure
+    // activityState test would misread as silent.
+    const s = reviewerSeat(app, { transcript: '{"type":"assistant"}\n' });
+    assert.strictEqual(s.activityState, 'idle',
+      'ENTER: idle, so only the transcript can distinguish it from the silent seat above');
+    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), true,
+      'ENTER: and its transcript really is readable');
+
+    app.alarms.length = 0;
+    app.m._checkReviewStarted(s, 'lead');
+    assert.deepStrictEqual(app.alarms, [],
+      'a reviewer that started is silent, however long it then takes — this is not a stall detector');
+  } finally { app.stop(); }
+});
+
+test('t377: a reviewer blocked on a permission dialog re-arms instead of alarming', async () => {
+  // A dialog is an unbounded wait that produces no turn and no transcript, and it
+  // is not this defect — the seat has its scope and is asking about it. Alarming
+  // there reports the operator's own unanswered dialog back as a wedge.
+  const app = boot();
+  try {
+    app.setPending('lead');
+    await app.m.create('lead', 'claude', app.root, [], null, 'ws');
+    const lead = app.m.sessions.get('lead');
+
+    app.setPending('crew-reviewer-1');
+    app.m._handleTeamReview(lead, SCOPE);
+    await settled(app, 'crew-reviewer-1');
+    const s = reviewerSeat(app, { transcript: null });
+    s.needsAttention = { kind: 'permission' };
+    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+      'ENTER: no transcript — so the dialog check is the only thing that can hold the alarm');
+
+    app.alarms.length = 0;
+    clearTimeout(s._reviewStartTimer);
+    s._reviewStartTimer = null;
+    app.m._checkReviewStarted(s, 'lead');
+
+    assert.deepStrictEqual(app.alarms, [], 'no alarm while the dialog is up');
+    assert.ok(s._reviewStartTimer,
+      're-armed rather than dropped: a dialog answered ten minutes later must still be checked afterwards');
+  } finally { app.stop(); }
+});
+
+test('t377: a retired reviewer is not reported — the check outlives the seat', async () => {
+  // The window is 90s and a fast review can finish inside it. An alarm about a
+  // seat that already delivered its verdict is the same class of noise as t376's
+  // alarm about a retired hand.
+  const app = boot();
+  try {
+    app.setPending('lead');
+    await app.m.create('lead', 'claude', app.root, [], null, 'ws');
+    const lead = app.m.sessions.get('lead');
+
+    app.setPending('crew-reviewer-1');
+    app.m._handleTeamReview(lead, SCOPE);
+    await settled(app, 'crew-reviewer-1');
+    const s = reviewerSeat(app, { transcript: null });
+    assert.ok(app.m.sessions.has('crew-reviewer-1'), 'ENTER: it was there');
+    app.m.sessions.delete('crew-reviewer-1');   // retired by review-done
+
+    app.alarms.length = 0;
+    app.m._checkReviewStarted(s, 'lead');
+    assert.deepStrictEqual(app.alarms, [], 'nothing is owed about a seat that is gone');
+    // Put it back before the teardown. `stop()` walks the sessions MAP, so a seat
+    // deleted from it keeps every handle the spawn opened — watcher, sentinel and
+    // timers alike — and the test file then hangs until node kills it rather than
+    // failing. Production has no such gap: the real retire goes through _cleanup.
+    app.m.sessions.set('crew-reviewer-1', s);
   } finally { app.stop(); }
 });
