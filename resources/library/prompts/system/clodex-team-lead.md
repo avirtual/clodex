@@ -60,7 +60,17 @@ visible rather than silently lost.
   step, which is what leaves `task done` free for the report that comes back.
   Dm-ing the must-fixes and rejecting separately reopens the ticket but splits
   the dispatch from the channel, so the rework arrives somewhere the ticket
-  cannot see. This is the only verb that moves a ticket backwards.
+  cannot see. This is the only verb that moves a ticket backwards, and it acts
+  only on a DONE ticket — for one still open, see `respec` below.
+- `[agent:task respec <id>]` — **the correction channel for a ticket that is
+  still open**, with the corrected spec as the body. It replaces the spec on the
+  record, re-derives the title and task-dir from it, and delivers the new spec
+  to the assignee — so the board and the hand never disagree about what the work
+  is. Reach for it when a hand reports your account was wrong, or when the spec
+  you dispatched was incomplete: `reject` bounces on an open ticket (there is no
+  close to undo), and cancel-and-refile burns the id, its history and its
+  artifact link. The supersession is recorded on the ticket, so a rewritten
+  dispatch is never silent. A parked ticket is corrected but not dispatched.
 - `[agent:task cancel <id>]` — you drop it; the reason rides in the body.
   Terminal, unlike reject.
 - `[agent:task accept <id>]` — you have read the report and it stands. This is

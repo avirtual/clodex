@@ -5034,6 +5034,7 @@ function createSessionManager(deps) {
         case 'start': this._taskStart(session, team, intent, reply); break;
         case 'done': this._taskDone(session, team, intent, reply); break;
         case 'reject': this._taskReject(session, team, intent, reply); break;
+        case 'respec': this._taskRespec(session, team, intent, reply); break;
         case 'cancel': this._taskCancel(session, team, intent, reply); break;
         // Async alone among the verbs: the merge gate is a git call and every
         // destructive step is downstream of its answer. Caught here for the same
@@ -7295,6 +7296,66 @@ function createSessionManager(deps) {
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} rejected` });
       log.info('intent', `task reject ${ticket.id} by ${session.name} → reopened`);
       reply(`ticket ${ticket.id} reopened (rework) → ${ticket.role || ticket.assignee || 'unassigned'}`);
+    }
+
+    // Replace an OPEN ticket's spec and re-dispatch it. The correction path for a
+    // ticket that is still in flight, where `reject` is meaningless: reject's whole
+    // body undoes a close (state, closedAt, closedBy, loopStep), and every one of
+    // those writes is a no-op on a ticket that never closed. Two verbs, two states,
+    // no overlap — widening reject to cover this would make one verb mean "undo the
+    // close" or "replace the spec" depending on where it lands.
+    //
+    // Gated to `open` even though the board's own editSpec is state-agnostic: that
+    // one only corrects a record, this one DELIVERS. Re-dispatching a done or
+    // accepted ticket would restart work on it without reopening it — a lifecycle
+    // change through the back door, and the board would still read closed.
+    _taskRespec(session, team, intent, reply) {
+      // Read before every refusal below: the body IS the new spec, and losing a
+      // re-spec to a bounce is the same loss that made cancel-and-refile lossy.
+      const spec = String(intent.body == null ? '' : intent.body).trim();
+      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can respec a ticket${this._spillRejectedPayload(session, 'task respec', spec)}`); return; }
+      if (!intent.id) { reply(`error: respec needs a ticket id — [agent:task respec <id>] <new spec>${this._spillRejectedPayload(session, 'task respec', spec)}`); return; }
+      if (!spec) { reply('error: respec needs a new spec — [agent:task respec <id>] <the corrected spec>'); return; }
+      const tickets = ticketsStore.load(team.root);
+      const ticket = tickets.find((t) => t.id === intent.id);
+      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task respec', spec)}`); return; }
+      if (ticket.state !== 'open') {
+        const route = ticket.state === 'done' ? ` — reject it first ([agent:task reject ${intent.id}]), then respec` : '';
+        reply(`error: respec replaces the spec of an OPEN ticket; ${intent.id} is ${ticket.state}${route}${this._spillRejectedPayload(session, 'task respec', spec)}`);
+        return;
+      }
+      // The supersession record, so the board can show the spec CHANGED and by whom
+      // — an open ticket silently rewritten into different work is the loss this
+      // verb exists to prevent. The superseded TITLE is kept, not its full text:
+      // tickets.json holds every ticket on the board and specs run to kilobytes, so
+      // retaining each one would grow the file without bound on a ticket corrected
+      // repeatedly.
+      const prevTitle = ticket.title;
+      if (!Array.isArray(ticket.respecs)) ticket.respecs = [];
+      ticket.respecs.push({ at: Date.now(), by: session.name, title: prevTitle });
+      ticket.spec = spec;
+      // Derived from the spec, so both are recomputed — the same pair, from the same
+      // helpers, that the board's editSpec re-derives. A stale title is the board's
+      // summary line describing a spec that no longer exists; a stale taskDir points
+      // the seat's journal at another ticket's artifacts.
+      ticket.title = ticketTitle(spec);
+      const taskDir = extractTaskDir(spec);
+      if (taskDir) ticket.taskDir = taskDir; else delete ticket.taskDir;
+      ticket.lastActivityAt = Date.now();
+      ticket.nudgedAt = null; // a corrected spec starts a new stall episode, as assign does
+      ticketsStore.save(team.root, tickets);
+      // Parked is NOT cleared, unlike assign. Assign IS the dispatch, so it unparks;
+      // a parked ticket has never been dispatched, so there is nothing to re-deliver
+      // and respec must not become a second dispatch path. _deliverTicketSpec is
+      // still called: it resolves no seat for a parked ticket and reports undelivered.
+      const d = ticket.parked ? { undelivered: true }
+        : this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
+      this._reconcileTickets(team);
+      this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} respec'd` });
+      log.info('intent', `task respec ${ticket.id} by ${session.name} → spec replaced, re-dispatched`);
+      const target = ticket.role || ticket.assignee || 'unassigned';
+      const parkedNote = ticket.parked ? ' (parked — spec replaced, not dispatched; assign it to send)' : this._ticketDeliverySuffix(d, target);
+      reply(`ticket ${ticket.id} respec'd → ${target}${parkedNote}`);
     }
 
     _taskCancel(session, team, intent, reply) {
