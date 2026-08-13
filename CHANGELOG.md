@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- That same guard now also refuses to read a predicate it does not understand,
+  rather than quietly reporting on the part it could parse.
 - The guard that keeps the intent parser and its test corpus in step now also
   covers the sub-verbs that decide how an intent's body is read. That set is
   derived separately from the one the earlier guard checks, so a sub-verb could
