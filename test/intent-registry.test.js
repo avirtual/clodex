@@ -161,9 +161,11 @@ function parseIntentLegacy(rawLine) {
 // Comments cannot be stripped in a separate pass first: a `//` inside a string
 // literal is not a comment, so recognizing the two requires one shared pass.
 // The `http://` line in the scanner's unit test is what pins that.
-// Regex literals are skipped for the same reason a comment is — an unbalanced
-// quote inside one (`/^\[agent:\?\] ... `\[agent:frobnicate now\]`/`) otherwise
-// desyncs everything after it.
+// Regex literals are skipped because a quote inside one is not a quote — the
+// balanced backticks in `/^\[agent:\?\] ... `\[agent:frobnicate now\]`/` would
+// otherwise be read as a template literal and donate its body to the corpus;
+// an ODD backtick in a regex would desync to the next backtick anywhere
+// downstream.
 //
 // KNOWN LIMIT: `${}` depth is counted so a nested template literal cannot end
 // the outer one, but the count is brace-naive — a `}` inside a string inside an
