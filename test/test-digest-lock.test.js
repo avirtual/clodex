@@ -287,6 +287,44 @@ test('lock: the lock override does NOT leak into the test children', () => {
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+// The override can name a directory that cannot be created, and on the ticket
+// loop's escalate arm this line IS the whole report — a lead sees it and nothing
+// else. Without the named-parent die the same case surfaces one step later as
+// `could not take the suite lock: <errno message>`, which blames the acquire
+// rather than the configured path; measured, that fallback still embeds a path
+// only because node's own ENOTDIR text does, and it points at the lock dir, not
+// at the parent that could not be made. Triggered portably with a FILE as a path
+// component — ENOTDIR comes from any non-directory parent, so this needs no
+// root-owned or /dev path.
+test('lock: a lock dir that cannot be created is refused BY NAME', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-root-'));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  for (const f of ['run-tests.js', 'test-escapes.js']) {
+    fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
+  }
+  const stub = path.join(root, 'stub.test.js');
+  fs.writeFileSync(stub, "require('node:test').test('stub', () => {});\n");
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  // stub.test.js is a FILE, so creating anything under it is ENOTDIR.
+  const bad = path.join(stub, 'x', '.test-digest.lock');
+  env.CLODEX_TEST_LOCK_DIR = bad;
+  try {
+    // NO file argument: only a SWEEP takes the lock, so only a sweep reaches
+    // the failure this pins.
+    const res = spawnSync(
+      process.execPath, [path.join(root, 'scripts', 'run-tests.js')],
+      { encoding: 'utf-8', cwd: root, timeout: 120000, env },
+    );
+    const out = `${res.stdout || ''}${res.stderr || ''}`;
+    assert.ok(!/TOTALS:/.test(out),
+      'ENTER: the run must have died on the lock, not gone on to execute the suite');
+    assert.match(out, new RegExp(`could not create the lock directory ${path.dirname(bad).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+      'the refusal must name the directory it could not create, or the loop escalates with a message '
+      + 'that points at the lock code instead of at the misconfigured path');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('lock: npm test reclaims a lock whose holder is dead, and releases on exit', () => {
   // A pid that cannot exist: a killed runner never cleans up, and without
   // reclamation the first crash wedges every later run forever.

@@ -113,9 +113,13 @@ const SUITE_STUBS = {
   // parent: this one is DESIGNED to be orphaned, so when the kill regresses it
   // is the process that survives with nothing left to reap it. Measured — two
   // mutation runs left two of them running until killed by hand.
+  // It writes the marker ONCE immediately and only then installs the interval:
+  // the ENTER downstream needs the marker to EXIST before the kill, and making
+  // that wait a 50ms tick puts a whole scheduling quantum between the fixture
+  // and the assertion for no gain.
   hang: 'const { spawn } = require("child_process");\n'
     + 'const kid = spawn(process.execPath, ["-e",\n'
-    + '  "const fs=require(\'fs\');setInterval(()=>{try{fs.writeFileSync(process.env.T317_KID,String(Date.now()));}catch{}},50);"\n'
+    + '  "const fs=require(\'fs\');const w=()=>{try{fs.writeFileSync(process.env.T317_KID,String(Date.now()));}catch{}};w();setInterval(w,50);"\n'
     + '  + "setTimeout(()=>process.exit(0),60000);"\n'
     + '], { stdio: "ignore" });\n'
     + 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\n'
@@ -1182,7 +1186,17 @@ test('a TOTALS decoy on STDERR does not beat the real summary on stdout', async 
     "stdout's summary decides; the 9/9 on stderr is not the runner's verdict");
 });
 
-test("this host's Electron really runs as node when the variable is set", () => {
+// Resolved OUTSIDE the subject so the absence can be a SKIP rather than a pass.
+// A source checkout without devDependencies installed cannot answer this, and
+// failing there would be a fixture complaint — but an early `return` inside the
+// body reports PASS while asserting nothing, and one refactor later that is
+// permanent invisible coverage loss.
+let electronPath = null;
+try { electronPath = require(pathReal.join(__dirname, '..', 'node_modules', 'electron')); } catch {}
+
+test("this host's Electron really runs as node when the variable is set", {
+  skip: electronPath ? false : 'node_modules/electron is not installed in this checkout',
+}, () => {
   // The mechanism half of the ELECTRON_RUN_AS_NODE fix. The subject above can
   // only assert that the loop SETS the variable — under a node-hosted test run
   // the flag is inert, so no amount of pinning there shows it does anything.
@@ -1193,18 +1207,10 @@ test("this host's Electron really runs as node when the variable is set", () => 
   // What this still does NOT prove is that the SUITE is green under Electron's
   // node, which is a different (lower) version than the system node every green
   // in this repo was measured under. That needs a real Electron-hosted run.
-  let electron;
-  try {
-    electron = require(pathReal.join(__dirname, '..', 'node_modules', 'electron'));
-  } catch {
-    // A source checkout without devDependencies installed cannot answer this,
-    // and failing there would be a fixture complaint, not a defect report.
-    return;
-  }
-  assert.ok(typeof electron === 'string' && fsReal.existsSync(electron),
-    `ENTER: the electron module did not resolve to an existing binary (${electron})`);
+  assert.ok(typeof electronPath === 'string' && fsReal.existsSync(electronPath),
+    `ENTER: the electron module did not resolve to an existing binary (${electronPath})`);
   const r = require('node:child_process').spawnSync(
-    electron, ['-p', 'process.versions.node'],
+    electronPath, ['-p', 'process.versions.node'],
     { encoding: 'utf-8', timeout: 60000, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } },
   );
   assert.strictEqual(r.status, 0,
@@ -1233,34 +1239,50 @@ test('a runner that never exits is killed WITH ITS SWEEP, and ESCALATES', { time
   // that outlives its parent and keeps writing a marker while it lives.
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
-  const f = mkLoop({ repo, suite: 'hang', suiteTimeoutMs: 300 });
+  // 3000ms, not the 300 this shipped with for one round. The marker cannot
+  // exist before stub-node boot + spawn + grandchild-node boot, ~115ms idle —
+  // but this subject's only real habitat is a full sweep, where node --test
+  // runs files at CPU-count concurrency and two cold node boots at 150-250ms
+  // each blow straight past 300. The kill would then reap the grandchild
+  // before its first write and the ENTER below would fail for a ticket that
+  // changed nothing: a gate that rejects everything, which is the mirror image
+  // of the defect this whole check exists to remove. Widening does not weaken
+  // the falsifier — a survivor still moves its mtime across the settle, and
+  // the 30s subject cap still bounds a regressed kill.
+  const f = mkLoop({ repo, suite: 'hang', suiteTimeoutMs: 3000 });
   const kid = pathReal.join(repo.dir, 'kid.marker');
   process.env.T317_KID = kid;
-  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  try {
+    f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
 
-  await f.m._runTicketLoop(f.team, 't1');
-  await new Promise((r) => setImmediate(r));
-  delete process.env.T317_KID;
+    await f.m._runTicketLoop(f.team, 't1');
+    await new Promise((r) => setImmediate(r));
 
-  assert.strictEqual(f.created.length, 0, 'a wedged run reaches no reviewer');
-  const esc = f.esc();
-  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation reached the lead');
-  assert.match(esc[0].body, /did not finish within 300ms \(killed\)/,
-    'the escalation says it was killed, and after how long');
-  assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
-    'and the hand is not sent rework for a run that was killed — its TOTALS line proves nothing');
+    assert.strictEqual(f.created.length, 0, 'a wedged run reaches no reviewer');
+    const esc = f.esc();
+    assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation reached the lead');
+    assert.match(esc[0].body, /did not finish within 3000ms \(killed\)/,
+      'the escalation says it was killed, and after how long');
+    assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
+      'and the hand is not sent rework for a run that was killed — its TOTALS line proves nothing');
 
-  // ENTER: the grandchild must have existed, or "it is gone now" is vacuously
-  // true and this subject measures nothing at all.
-  assert.ok(fsReal.existsSync(kid),
-    'ENTER: the stub spawned a grandchild that wrote its marker before the kill');
-  // It writes every 50ms while alive. A survivor moves this mtime; a reaped one
-  // cannot. Measured after a settle longer than its own interval.
-  const at = fsReal.statSync(kid).mtimeMs;
-  await new Promise((r) => setTimeout(r, 600));
-  assert.strictEqual(fsReal.statSync(kid).mtimeMs, at,
-    'the grandchild is still writing — the kill signalled only the runner and orphaned the sweep, '
-    + 'which then holds the port-binding tests against every later gate run');
+    // ENTER: the grandchild must have existed, or "it is gone now" is vacuously
+    // true and this subject measures nothing at all.
+    assert.ok(fsReal.existsSync(kid),
+      'ENTER: the stub spawned a grandchild that wrote its marker before the kill');
+    // It writes every 50ms while alive. A survivor moves this mtime; a reaped one
+    // cannot. Measured after a settle longer than its own interval.
+    const at = fsReal.statSync(kid).mtimeMs;
+    await new Promise((r) => setTimeout(r, 600));
+    assert.strictEqual(fsReal.statSync(kid).mtimeMs, at,
+      'the grandchild is still writing — the kill signalled only the runner and orphaned the sweep, '
+      + 'which then holds the port-binding tests against every later gate run');
+  } finally {
+    // In a finally, or a failed ENTER leaks the variable into every later
+    // subject in this file — where a stale path would let a stub write a
+    // marker some other assertion then reads as its own.
+    delete process.env.T317_KID;
+  }
 });
 
 test('an accept landing DURING the suite run cannot be resurrected into review', async () => {
