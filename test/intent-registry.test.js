@@ -145,7 +145,7 @@ function parseIntentLegacy(rawLine) {
 // --- the corpus --------------------------------------------------------------
 
 // Harvested LIVE from the three files named below rather than copied: every
-// string literal in them that mentions `[agent:` is, by construction, a line
+// non-interpolated string literal in them that mentions `[agent:` is a line
 // someone once thought worth asserting on. It does NOT grow with the suite —
 // a new intent test file contributes nothing until it is added here, which is
 // how a sub-verb went uncovered for an entire release cycle. The sub-verb
@@ -266,10 +266,18 @@ const CORPUS = [...new Set([...ADVERSARIAL, ...harvestedLines()])];
 //
 // t338: parameterised over the FAMILY, because `task` was not the only verb
 // with a closed sub-verb alternation — `team` has the identical shape and was
-// unguarded. The `[a-z|-]` class already covered its hyphenated verbs.
+// unguarded.
+//
+// t343: matched on the PRESENCE of a `|` inside the group rather than on an
+// alphabet of members. A `[a-z|-]` class silently fails to read a family whose
+// verbs contain a digit or an underscore, or whose group nests — and a failed
+// read here returns [], which the caller's floor is the only thing standing
+// between and a vacuous pass. This must stay in lockstep with the closure
+// scan below: a family that scan can DETECT but this cannot ENUMERATE is a
+// guard that names the hole and then measures nothing inside it.
 function subVerbsFromSource(family) {
   const src = fs.readFileSync(path.join(__dirname, '..', 'intent-registry.js'), 'utf8');
-  const m = src.match(new RegExp(`agent:${family}\\\\s\\+\\(([a-z|-]+)\\)`));
+  const m = src.match(new RegExp(`agent:${family}\\\\s\\+\\(([^)]*\\|[^)]*)\\)`));
   return m ? m[1].split('|') : [];
 }
 
@@ -278,6 +286,12 @@ function subVerbsFromSource(family) {
 // they have no list to drift out of sync with, so there is nothing for a
 // coverage guard to enumerate.
 const CLOSED_SUB_VERB_FAMILIES = ['task', 'team'];
+
+// Per-family anti-vacuity floor. Each is the count the family HAD when it was
+// pinned, so shrinking the grammar trips this rather than quietly shrinking
+// what the loop below iterates. A single shared floor would have to be the
+// smaller of the two and would stop measuring the larger family.
+const MIN_SUBS = { task: 9, team: 5 };
 
 function corpusCovers(family, sub) {
   return CORPUS.some((line) => {
@@ -291,28 +305,35 @@ test('t313/t338: every sub-verb of a closed-alternation family appears in the co
     const verbs = subVerbsFromSource(family);
     // Without this the assertion below iterates nothing and passes no matter
     // what the corpus contains — the exact shape of vacuity this guard stops.
-    assert.ok(verbs.length >= 5, `ENTER: read the ${family} alternation from intent-registry.js (got ${JSON.stringify(verbs)})`);
+    assert.ok(verbs.length >= MIN_SUBS[family], `ENTER: read the ${family} alternation from intent-registry.js (got ${JSON.stringify(verbs)})`);
     for (const v of verbs) {
       assert.ok(corpusCovers(family, v),
         `no corpus line parses to ${family}/${v} — the differential does not cover it`);
     }
   }
-  // The two verbs whose absence each family's history turned on: `start` was
-  // added to parseTask in t308 and went uncovered until t333; `role-rename` is
-  // the team verb with the same drift exposure. Naming them pins that the
-  // derivation above is reading a real alternation, not an empty match that
-  // the loop would iterate silently past.
+  // `start` was added to parseTask in t308 and went uncovered until t333 — its
+  // absence from the derived list IS that defect record, which is why this one
+  // verb is named while the rest are left to the floor above. If the verb is
+  // ever legitimately renamed, update this pin.
   assert.ok(subVerbsFromSource('task').includes('start'), 'ENTER: task/start is in the derived list');
-  assert.ok(subVerbsFromSource('team').includes('role-rename'), 'ENTER: team/role-rename is in the derived list');
 });
 
 // The guard above only covers families someone remembered to list. This one
-// makes forgetting loud: a THIRD closed alternation landing in the parser
-// turns it red rather than shipping unguarded, which is the exact way `team`
-// stayed uncovered while `task` was fixed.
-test('t338: no closed sub-verb family exists that the coverage guard does not list', () => {
+// makes forgetting loud: a THIRD closed alternation landing in
+// intent-registry.js turns it red rather than shipping unguarded, which is the
+// exact way `team` stayed uncovered while `task` was fixed. It reads that ONE
+// file — grammar supplied from anywhere else is outside its reach.
+//
+// t343: the scan keys on a `|` being present inside the group, not on the
+// alphabet its members are drawn from. The earlier `[a-z|-]` class made the
+// guard itself shape-dependent: a family spelled `(v1|v2)` or `(a_b|c)` did
+// not match, `found` stayed equal to the guarded list, and the deepStrictEqual
+// passed while the family shipped unguarded. `[^)]*` cannot cross the closing
+// paren, and every other bracket regex in the file closes its first `)` with
+// no `|` inside it, so requiring the alternation adds no false positives.
+test('t338/t343: no closed sub-verb family exists that the coverage guard does not list', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'intent-registry.js'), 'utf8');
-  const found = [...src.matchAll(/agent:([a-z-]+)\\s\+\(([a-z|-]+)\)/g)].map((m) => m[1]);
+  const found = [...src.matchAll(/agent:([a-z-]+)\\s\+\(([^)]*\|[^)]*)\)/g)].map((m) => m[1]);
   assert.ok(found.length >= 2, `ENTER: the scan found the alternations (got ${JSON.stringify(found)})`);
   assert.deepStrictEqual([...new Set(found)].sort(), [...CLOSED_SUB_VERB_FAMILIES].sort());
 });
