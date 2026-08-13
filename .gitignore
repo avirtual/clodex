@@ -1,4 +1,11 @@
 node_modules/
+# Both forms, and the second is not redundant: the trailing slash matches
+# DIRECTORIES ONLY, while the ticket loop plants node_modules as a SYMLINK into
+# each worktree (session-manager.js `_runTicketSuite`). Measured on git 2.52.0 —
+# with only the slashed form, `git status --porcelain` in such a worktree prints
+# `?? node_modules`, which git-worktree.js `isDirty` reads as work to preserve
+# and team-retire --discard then silently downgrades to an archive.
+node_modules
 dist/
 # web-dist/ is TRACKED (T42): the prebuilt browser bundle ships in the repo so
 # `npm ci --omit=dev` + `git clone` delivers the web GUI to a node with no build

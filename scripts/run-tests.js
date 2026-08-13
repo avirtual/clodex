@@ -98,6 +98,20 @@ if (missing.length) {
 // taking its own lock is not serialization — it is a second lock, and both runs
 // then reach the port-binding tests together. The override is the only way one
 // mutex can cover every checkout of the same repo.
+//
+// RESIDUAL HOLE, known and deliberately not closed here: a bare `npm test` run
+// INSIDE a worktree takes THAT worktree's lock and can still collide with the
+// loop's root-locked run — the two mutexes are different dirs, so both runs
+// reach the port-binding tests together. Only the loop sets the override; a
+// human or agent typing `npm test` in a worktree does not.
+//
+// `git rev-parse --git-common-dir` would resolve the root unconditionally and
+// close it, and was rejected: it answers with the OUTER repo whenever this
+// checkout is nested inside one (vendored, or npm-installed under another
+// repo), which moves the lock outside the checkout entirely and changes the
+// DEFAULT path — the one every human run takes — to close a hole on a path
+// that already has an explicit fix. Set CLODEX_TEST_LOCK_DIR to the root
+// checkout's `.test-digest.lock` when running a worktree's suite by hand.
 const LOCK = process.env.CLODEX_TEST_LOCK_DIR
   ? path.resolve(process.env.CLODEX_TEST_LOCK_DIR)
   : path.join(ROOT, '.test-digest.lock');
