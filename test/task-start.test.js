@@ -19,7 +19,14 @@ const fsReal = require('node:fs');
 const pathReal = require('node:path');
 const osReal = require('node:os');
 
-const { createSessionManager } = require('../session-manager');
+const { createSessionManager, ticketCloseLine } = require('../session-manager');
+// t353: the dispatch head carries the close verb. Imported, not copied — the
+// pins in this file are ENTER/setup assertions about WHICH delivery happened,
+// not about the verb's wording. The wording is pinned once in
+// session-manager.test.js (a deliberate copy) and against the tickets-viewer
+// duplicate in tickets-viewer-path-parity.test.js; a third hand-copy here would
+// just be a third place to forget.
+const specBody = (id, spec) => `[ticket ${id}] ${ticketCloseLine(id)}${spec}`;
 const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { parseIntent } = require('../intent-scanner');
@@ -153,7 +160,7 @@ test('start delivers the spec, re-pins to the receiving seat, and wakes it', () 
   const f = mkStart();
   opened(f, 'hand', 'build the widget\ndetail');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] build the widget\ndetail' }]);
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', 'build the widget\ndetail') }]);
   // Urgency is the t82 property, and it belongs to whichever verb dispatches:
   // a work assignment that sits parked leaves the board reading "assigned"
   // while nothing runs.
@@ -263,7 +270,7 @@ test('a name-addressed ticket carries no role, and is still startable', () => {
   // add's and this passes without `start` existing at all.
   assert.deepStrictEqual(f.gated, [], 'ENTER: add dispatched nothing, so the delivery below belongs to start');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] name-addressed work' }],
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', 'name-addressed work') }],
     'a seat-named ticket must start — reading "assignee is a live seat name" as "already started" would make every one of them unstartable');
 });
 
@@ -399,7 +406,7 @@ test('startedAt: a pre-upgrade PARKED record is read as never started, so it can
   assert.deepStrictEqual(f.m._openTicketsFor(f.team, 'team-hand'), [], 'parked, so out of the queue either way');
 
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] filed for later\ndetail' }],
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', 'filed for later\ndetail') }],
     'it starts — the old add never delivered a parked ticket, so this one demonstrably never ran');
   assert.ok(f.one('t1').startedAt != null, 'and it is stamped on the way through');
 });
@@ -454,7 +461,7 @@ test('an added-but-unstarted ticket is invisible to the advance, and startable a
   // ticket the advance corrupted.
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   assert.deepStrictEqual(f.gated.filter((g) => g.target === 'team-hand'),
-    [{ target: 'team-hand', sender: 'lead', body: '[ticket t2] merely filed' }],
+    [{ target: 'team-hand', sender: 'lead', body: specBody('t2', 'merely filed') }],
     'and start still dispatches it normally');
 });
 

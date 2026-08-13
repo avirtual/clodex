@@ -13,7 +13,14 @@ const fsReal = require('node:fs');
 const pathReal = require('node:path');
 const osReal = require('node:os');
 
-const { createSessionManager } = require('../session-manager');
+const { createSessionManager, ticketCloseLine } = require('../session-manager');
+// t353: the dispatch head carries the close verb. Imported, not copied — the
+// pins in this file are ENTER/setup assertions about WHICH delivery happened,
+// not about the verb's wording. The wording is pinned once in
+// session-manager.test.js (a deliberate copy) and against the tickets-viewer
+// duplicate in tickets-viewer-path-parity.test.js; a third hand-copy here would
+// just be a third place to forget.
+const specBody = (id, spec) => `[ticket ${id}] ${ticketCloseLine(id)}${spec}`;
 const { findRepoRoot } = require('../project-root');
 const { projectDirFor } = require('../clodex-paths');
 const ticketsMod = require('../tickets-store');
@@ -339,7 +346,7 @@ test('team path unchanged: with a team resolved, the board keys team.root and ro
   assert.strictEqual(board.length, 1, 'written to the team.root board');
   assert.strictEqual(board[0].assignee, 'team-hand', 'role resolved and re-pinned to the seat');
   assert.strictEqual(board[0].role, 'hand', 'the filed role survives — team semantics intact');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1] team work' }],
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', 'team work') }],
     'spec delivered through the unchanged team path');
 });
 
