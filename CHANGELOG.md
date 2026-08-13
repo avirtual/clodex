@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- The guard that keeps the intent parser and its test corpus in step now also
+  covers the sub-verbs that decide how an intent's body is read. That set is
+  derived separately from the one the earlier guard checks, so a sub-verb could
+  be added to it and go untested — the same way one went untested for a full
+  release cycle before.
 - A ticket reviewed more than once now reports each round's cost separately.
   The review seat was named from a counter that is freed when a seat retires,
   so a second round could reuse the first round's label — or come out ordered
