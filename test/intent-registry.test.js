@@ -144,10 +144,12 @@ function parseIntentLegacy(rawLine) {
 
 // --- the corpus --------------------------------------------------------------
 
-// Harvested LIVE from the intent test files rather than copied: every string
-// literal in them that mentions `[agent:` is, by construction, a line someone
-// once thought worth asserting on. Harvesting keeps the corpus growing with the
-// suite instead of freezing at whatever the extraction day happened to cover.
+// Harvested LIVE from the three files named below rather than copied: every
+// string literal in them that mentions `[agent:` is, by construction, a line
+// someone once thought worth asserting on. It does NOT grow with the suite —
+// a new intent test file contributes nothing until it is added here, which is
+// how a sub-verb went uncovered for an entire release cycle. The sub-verb
+// guards below, not this harvest, are what make coverage a mechanism.
 function harvestedLines() {
   const out = new Set();
   for (const f of ['intent-scanner.test.js', 'session-manager.test.js', 'ipc-prompt.test.js']) {
@@ -245,42 +247,74 @@ const CORPUS = [...new Set([...ADVERSARIAL, ...harvestedLines()])];
 // harvested file. A universal asserted in prose is the defect class; this
 // converts it into a mechanism.
 //
-// The corpus does NOT grow with the suite the way harvestedLines' comment
-// says: it reads three hardcoded files, so the six `task start` literals that
-// have been in test/task-start.test.js since t308 were never harvested.
-// Widening the harvest is the other possible fix and is deliberately NOT taken
-// here — it would pull in every future intent-mentioning test file and make
-// this differential fail for reasons unrelated to the walk. Naming the verbs
-// is the narrower guarantee.
+// The corpus does NOT grow with the suite: harvestedLines reads three
+// hardcoded files, so the `task start` literals that have been in
+// test/task-start.test.js since t308 were never harvested. Widening the
+// harvest is the other possible fix and is deliberately NOT taken here — it
+// would pull in every future intent-mentioning test file and make this
+// differential fail for reasons unrelated to the walk. Naming the verbs is the
+// narrower guarantee.
 //
-// The verb list is DERIVED from intent-registry.js's own source rather than
+// The verb lists are DERIVED from intent-registry.js's own source rather than
 // retyped, so a new sub-verb cannot be added to the grammar without either
 // appearing in the corpus or turning this red. Reading source text is uglier
-// than importing a constant, but parseTask's alternation is a regex literal
-// inside a function — exporting it purely for this test would reshape
-// production to suit the suite. The empty-derivation trap is guarded below:
-// if the regex ever stops matching, an empty list makes `every` vacuously
-// true, which is precisely how a guard like this rots into a no-op.
-function taskSubVerbsFromSource() {
+// than importing a constant, but the alternations are regex literals inside
+// functions — exporting them purely for this test would reshape production to
+// suit the suite. The empty-derivation trap is guarded below: if a regex ever
+// stops matching, an empty list makes `every` vacuously true, which is
+// precisely how a guard like this rots into a no-op.
+//
+// t338: parameterised over the FAMILY, because `task` was not the only verb
+// with a closed sub-verb alternation — `team` has the identical shape and was
+// unguarded. The `[a-z|-]` class already covered its hyphenated verbs.
+function subVerbsFromSource(family) {
   const src = fs.readFileSync(path.join(__dirname, '..', 'intent-registry.js'), 'utf8');
-  const m = src.match(/agent:task\\s\+\(([a-z|-]+)\)/);
+  const m = src.match(new RegExp(`agent:${family}\\\\s\\+\\(([a-z|-]+)\\)`));
   return m ? m[1].split('|') : [];
 }
 
-test('t313: every task sub-verb in the real grammar appears in the corpus', () => {
-  const verbs = taskSubVerbsFromSource();
-  // Without this the assertion below iterates nothing and passes no matter what
-  // the corpus contains — the exact shape of vacuity this guard exists to stop.
-  assert.ok(verbs.length >= 9, `ENTER: read the alternation from intent-registry.js (got ${JSON.stringify(verbs)})`);
-  assert.ok(verbs.includes('start'), 'ENTER: and it includes the verb whose absence started this');
+// The families whose parse function pins a CLOSED list of sub-verbs in its
+// bracket regex. Verbs like context/memory/file/term capture `(\S+)` instead:
+// they have no list to drift out of sync with, so there is nothing for a
+// coverage guard to enumerate.
+const CLOSED_SUB_VERB_FAMILIES = ['task', 'team'];
 
-  for (const v of verbs) {
-    const hit = CORPUS.some((line) => {
-      const i = parseIntent(line);
-      return i && i.type === 'task' && i.sub === v;
-    });
-    assert.ok(hit, `no corpus line parses to task/${v} — the differential does not cover it`);
+function corpusCovers(family, sub) {
+  return CORPUS.some((line) => {
+    const i = parseIntent(line);
+    return i && i.type === family && i.sub === sub;
+  });
+}
+
+test('t313/t338: every sub-verb of a closed-alternation family appears in the corpus', () => {
+  for (const family of CLOSED_SUB_VERB_FAMILIES) {
+    const verbs = subVerbsFromSource(family);
+    // Without this the assertion below iterates nothing and passes no matter
+    // what the corpus contains — the exact shape of vacuity this guard stops.
+    assert.ok(verbs.length >= 5, `ENTER: read the ${family} alternation from intent-registry.js (got ${JSON.stringify(verbs)})`);
+    for (const v of verbs) {
+      assert.ok(corpusCovers(family, v),
+        `no corpus line parses to ${family}/${v} — the differential does not cover it`);
+    }
   }
+  // The two verbs whose absence each family's history turned on: `start` was
+  // added to parseTask in t308 and went uncovered until t333; `role-rename` is
+  // the team verb with the same drift exposure. Naming them pins that the
+  // derivation above is reading a real alternation, not an empty match that
+  // the loop would iterate silently past.
+  assert.ok(subVerbsFromSource('task').includes('start'), 'ENTER: task/start is in the derived list');
+  assert.ok(subVerbsFromSource('team').includes('role-rename'), 'ENTER: team/role-rename is in the derived list');
+});
+
+// The guard above only covers families someone remembered to list. This one
+// makes forgetting loud: a THIRD closed alternation landing in the parser
+// turns it red rather than shipping unguarded, which is the exact way `team`
+// stayed uncovered while `task` was fixed.
+test('t338: no closed sub-verb family exists that the coverage guard does not list', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'intent-registry.js'), 'utf8');
+  const found = [...src.matchAll(/agent:([a-z-]+)\\s\+\(([a-z|-]+)\)/g)].map((m) => m[1]);
+  assert.ok(found.length >= 2, `ENTER: the scan found the alternations (got ${JSON.stringify(found)})`);
+  assert.deepStrictEqual([...new Set(found)].sort(), [...CLOSED_SUB_VERB_FAMILIES].sort());
 });
 
 test('corpus is big enough to be evidence', () => {
