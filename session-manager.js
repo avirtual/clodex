@@ -5317,6 +5317,40 @@ function createSessionManager(deps) {
             ? `the suite FAILS on ${MERGE_TARGET_BRANCH} after the merge — ${suite.summary}\nFAILING: ${suite.failing || '(the runner reported no test names)'}`
             : `the suite could not be RUN on ${MERGE_TARGET_BRANCH} after the merge: ${suite.error}`;
 
+          // The failing output, kept — the SAME writer the loop's verify run
+          // uses, not a second mechanism. This dump matters more than that one:
+          // a red post-merge suite REVERTS master, and the revert is what makes
+          // the evidence unreproducible — re-running the suite afterwards
+          // measures a tree the failure is no longer in.
+          //
+          // Only on the ran-TRUE arm, exactly as the verify step does it:
+          // `_runTicketSuite` sets `output` on the red arm alone, so a run that
+          // never produced a summary carries nothing to preserve and its whole
+          // diagnostic is already `suite.error`, inlined in `why` above.
+          //
+          // WRAPPED for the reason the verify arm is wrapped, and with more at
+          // stake: `.catch()` cannot catch a synchronous throw, and one escaping
+          // here would reach the method's catch-all — which escalates WITHOUT
+          // reverting, leaving a red master standing because the evidence
+          // mechanism threw. Preservation must never outrank the undo.
+          let kept = { ok: false, path: null, error: 'not attempted' };
+          if (suite.ran) {
+            try {
+              kept = await this._writeTicketSuiteFailure(team, ticket, suite);
+            } catch (e) {
+              kept = { ok: false, path: null, error: `the preservation threw: ${e && e.message ? e.message : String(e)}` };
+              log.error('ticket', `ticket ${ticketId}: post-merge suite output could not be preserved — ${kept.error}`);
+            }
+          }
+          // BOTH directions, the rule t370 r3 settled: naming the file when it
+          // exists and going silent when it does not leaves the lead — the only
+          // reader on either arm here — unable to tell "preservation failed"
+          // from "nobody thought to look".
+          const evidence = !suite.ran ? ''
+            : (kept.ok
+              ? ` Full output (assertion text, diff and stack) preserved at ${kept.path} — read it instead of re-running, which would measure the reverted tree.`
+              : ` The failing output could not be preserved (${kept.error}).`);
+
           // The revert is a write to the shared root checkout exactly as the
           // merge is, so it needs the same gate — and it needs it MORE, because
           // the path that reaches it is the one a live suite creates: our own run
@@ -5351,14 +5385,14 @@ function createSessionManager(deps) {
               ? `is RED: the merge ${merged.sha} IS on it and the suite FAILED`
               : `carries an UNVERIFIED merge ${merged.sha}: its suite never ran`;
             fail('revert-blocked', `${why}\n\n${MERGE_TARGET_BRANCH} ${state}, and it was left that way deliberately: a test suite is running in ${team.root} (pid ${blocker}), so reverting now would rewrite the files under it.`,
-              `merged ${branch} as ${merged.sha} and did NOT revert. Undo it yourself once that suite finishes: \`git -C ${team.root} revert -m 1 ${merged.sha}\``);
+              `merged ${branch} as ${merged.sha} and did NOT revert. Undo it yourself once that suite finishes: \`git -C ${team.root} revert -m 1 ${merged.sha}\`.${evidence}`);
             return;
           }
           const rev = await gitWorktree.revertCommit(team.root, merged.sha)
             .catch((e) => ({ ok: false, error: e.message }));
-          fail('suite', why, rev.ok
+          fail('suite', why, (rev.ok
             ? `merged ${branch} as ${merged.sha}, ran the suite in ${team.root}, then REVERTED the merge (${rev.sha}) — ${MERGE_TARGET_BRANCH} is green again and the branch is untouched`
-            : `merged ${branch} as ${merged.sha} and the revert ALSO failed (${rev.error}) — ${MERGE_TARGET_BRANCH} is left carrying the merge and needs a human`);
+            : `merged ${branch} as ${merged.sha} and the revert ALSO failed (${rev.error}) — ${MERGE_TARGET_BRANCH} is left carrying the merge and needs a human`) + evidence);
           return;
         }
 
@@ -7383,6 +7417,14 @@ function createSessionManager(deps) {
             kept = await this._writeTicketSuiteFailure(team, still, suite);
           } catch (e) {
             kept = { ok: false, path: null, error: `the preservation threw: ${e && e.message ? e.message : String(e)}` };
+            // LOGGED as well as swallowed, and the swallow is the guarantee —
+            // do not convert this into a rethrow. The throw's text reaches only
+            // the HAND, inside the rejection body: _notifyLeadOfLoopRejection
+            // forwards `reason.split('\n')[0]`, which is the suite summary line,
+            // never this one. So a SYSTEMIC break (a bad injected gitWorktree, a
+            // rename) is invisible to the lead and absent from the record
+            // entirely, discoverable only by a hand that happens to read it.
+            log.error('ticket', `ticket ${ticketId}: the failing suite output could not be preserved — ${kept.error}`);
           }
           // The freshness snapshot at the top of this arm is now as old as the
           // git subprocesses the write just awaited. Milliseconds, not the
@@ -7994,7 +8036,26 @@ function createSessionManager(deps) {
         ensureDir(dest.dir);
         fs.writeFileSync(file, `${header}${body}\n`);
       } catch (e) {
-        return { ok: false, path: file, error: e.message };
+        // The partial file is REMOVED, not left for the caller to disown. The
+        // likely failures here — ENOSPC, a kill mid-write — leave writeFileSync
+        // having produced a TRUNCATED file at exactly this path, while every
+        // caller reports "the failing output could not be preserved" and drops
+        // the path. A dump that stops mid-stack reads as complete, so the hand
+        // diagnoses off evidence that is missing the part it needed: worse than
+        // no file, because it gets acted on. Deleting makes `ok:false` mean
+        // "nothing is at that path" for all three call sites at once, rather
+        // than a warning each of them has to remember to carry.
+        //
+        // Unconditional because the name is per-ticket-per-round and this
+        // method is its only writer, so a file here is one THIS call created.
+        // If the unlink itself fails there IS something on disk, and then the
+        // path is named with what is wrong with it — silence would recreate the
+        // defect this arm exists to close.
+        let removed = true;
+        try { fs.unlinkSync(file); } catch (rm) { removed = rm.code === 'ENOENT'; }
+        return removed
+          ? { ok: false, path: null, error: e.message }
+          : { ok: false, path: file, error: `${e.message} — and the INCOMPLETE file left at ${file} could not be removed; do not read it as this run's output` };
       }
       return { ok: true, path: file, error: null };
     }

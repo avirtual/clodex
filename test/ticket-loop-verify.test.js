@@ -203,6 +203,10 @@ function mkLoop({
   // which git operations the loop reached without giving up the real ones the
   // header argues for. Identity by default: an unwrapped fixture is unchanged.
   wrapGit = (gw) => gw,
+  // Same shape, same reason, for `fs`. One subject needs a writeFileSync that
+  // leaves BYTES ON DISK and then throws — the ENOSPC/killed-mid-write shape —
+  // which no real filesystem can be talked into from here on demand.
+  wrapFs = (f) => f,
 } = {}) {
   stubSuite(repo, suite);
   const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-loop-'));
@@ -244,6 +248,7 @@ function mkLoop({
   const gated = [];
   const tags = [];
   const broadcasts = [];
+  const logs = [];
   const deps = {
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
@@ -257,7 +262,7 @@ function mkLoop({
     intentEnabledFor: require('../intent-registry').intentEnabledFor,
     pluginRowFor: require('../intent-registry').pluginRowFor,
     validIntentNames: require('../intent-registry').validIntentNames,
-    fs: fsReal,
+    fs: wrapFs(fsReal),
     path: pathReal,
     os: osReal,
     ensureDir: require('../fs-util').ensureDir,
@@ -280,7 +285,12 @@ function mkLoop({
     MSG_MAX_AGE: 1800,
     termAvailableFor: require('../drawer-avail').termAvailableFor,
     REGISTRY_DIR: home,
-    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+    log: {
+      info: (tag, msg) => logs.push({ level: 'info', tag, msg }),
+      warn: (tag, msg) => logs.push({ level: 'warn', tag, msg }),
+      error: (tag, msg) => logs.push({ level: 'error', tag, msg }),
+      debug: () => {},
+    },
     resolveTeam: (cwd) => (cwd && cwd.startsWith(repo.dir) ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(repo.dir) ? repo.dir : null),
   };
@@ -332,7 +342,7 @@ function mkLoop({
   tstore.save(team.root, [ticket]);
 
   return {
-    m, team, home, tstore, persistence, injected, gated, tags, broadcasts, created, seat,
+    m, team, home, tstore, persistence, injected, gated, tags, broadcasts, created, seat, logs,
     one: (id = 't1') => tstore.load(team.root).find((t) => t.id === id),
     esc: () => gated.filter((g) => /ESCALATED/.test(g.body)),
     diffFile: () => {
@@ -2377,4 +2387,185 @@ test('t370 r3: a resolvable branch with an UNRESOLVABLE commit says so, rather t
   assert.match(head, /tl-1/, 'the branch it could resolve is still recorded');
   assert.match(head, /commit unresolved/, 'and the missing sha is stated, not left as a trailing space');
   assert.ok(!/# head: {2}tl-1 *$/.test(head), `the header must not claim a commit it does not have (got: ${JSON.stringify(head)})`);
+});
+
+// ── t373: the preservation's own failures reach a reader ────────────────────
+
+test('t373: a preservation that THROWS is LOGGED, not only swallowed into the rejection', async () => {
+  // The swallow is the guarantee (pinned above) — but a swallow with no log
+  // makes a SYSTEMIC break invisible. The throw's text goes only into the
+  // rejection body, which reaches the hand; the lead's copy runs through
+  // _notifyLeadOfLoopRejection, which forwards `reason.split('\n')[0]` — the
+  // suite summary line, never the evidence line. So without this a bad injected
+  // gitWorktree or a rename is absent from the record entirely and discoverable
+  // only by a hand that happens to read one rejection.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+  f.m._writeTicketSuiteFailure = () => { throw new TypeError('gitWorktree.currentBranch is not a function'); };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  // ENTER: the rejection still went out, so this measures the LOG the swallow
+  // was missing rather than a throw that ate the rework.
+  assert.strictEqual(f.gated.filter((g) => /rejected/.test(g.body)).length, 1,
+    'ENTER: the hand still got its rework — the swallow is unchanged');
+  const errs = f.logs.filter((l) => l.level === 'error');
+  assert.strictEqual(errs.length, 1, `exactly one error is logged (got: ${JSON.stringify(f.logs)})`);
+  assert.match(errs[0].msg, /t1/, 'it names the ticket');
+  assert.match(errs[0].msg, /is not a function/, 'and carries the throw, which is the half the lead never sees');
+});
+
+test('t373: the lead DM really does drop the evidence line, which is why the log is the channel', async () => {
+  // The premise of the subject above, measured rather than asserted in prose. If
+  // _notifyLeadOfLoopRejection ever started forwarding the whole reason, the log
+  // would be a duplicate — so the claim that it is the ONLY lead-facing record
+  // has to be pinned where it can break.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+  f.m._writeTicketSuiteFailure = () => { throw new TypeError('gitWorktree.currentBranch is not a function'); };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const toLead = f.gated.filter((g) => g.target === 'lead' && /REJECTED/.test(g.body));
+  assert.strictEqual(toLead.length, 1, 'ENTER: the lead really was notified of the rejection');
+  assert.ok(!/is not a function/.test(toLead[0].body),
+    `the lead's DM carries only the summary line, so the failure is not in it: ${toLead[0].body}`);
+});
+
+test('t373: a write that FAILS mid-file leaves no truncated dump at the disowned path', async () => {
+  // ENOSPC and a kill mid-write both leave writeFileSync having produced a
+  // PARTIAL file at exactly the path the caller then drops. The hand is told
+  // "could not be preserved" while a dump that stops mid-stack sits in its task
+  // dir looking complete — worse than no file, because it is acted on.
+  //
+  // The bytes are written FOR REAL and then the throw is raised, which is the
+  // only honest way to reach this: a stub that merely throws would leave nothing
+  // on disk and the subject would pass against the unfixed code for the wrong
+  // reason. Verified: against the unfixed writer this subject FAILS on the
+  // leftover file, and the ok/path assertions below fail too.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  let truncatedAt = null;
+  const f = mkLoop({
+    repo,
+    suite: 'redWithDiff',
+    wrapFs: (fs) => ({
+      ...fs,
+      writeFileSync: (p, data, ...rest) => {
+        if (!/suite-failure-.*\.txt$/.test(String(p))) return fs.writeFileSync(p, data, ...rest);
+        truncatedAt = String(p);
+        fs.writeFileSync(p, String(data).slice(0, 40), ...rest);   // the partial file
+        const e = new Error('ENOSPC: no space left on device, write');
+        e.code = 'ENOSPC';
+        throw e;
+      },
+    }),
+  });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.ok(truncatedAt, 'ENTER: the write really was attempted and really did leave bytes behind');
+  assert.ok(!fsReal.existsSync(truncatedAt),
+    `the partial file is removed, not left to be read as this run's output (still at ${truncatedAt})`);
+  assert.deepStrictEqual(keptFiles(f, f.home), [], 'and nothing suite-failure-shaped survives anywhere');
+
+  // The rejection still goes out and still says why there is nothing — the
+  // guarantee this must not disturb.
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'the hand still gets its rework');
+  assert.match(sent[0].body, /could not be preserved/, 'and is told the evidence is missing');
+  assert.match(sent[0].body, /ENOSPC/, 'with the reason');
+});
+
+test('t373: a failed write claims NO path, so no caller can name a file that is gone', async () => {
+  // The direct half of the subject above: the caller's `kept.path` is what a
+  // message would print, and returning the path of a file that was just removed
+  // would point the reader at nothing. Measured on the return value, because the
+  // undeliverable arm reads exactly this field.
+  const repo = mkRepo();
+  const f = mkLoop({
+    repo,
+    wrapFs: (fs) => ({
+      ...fs,
+      writeFileSync: (p, data, ...rest) => {
+        if (!/suite-failure-.*\.txt$/.test(String(p))) return fs.writeFileSync(p, data, ...rest);
+        fs.writeFileSync(p, String(data).slice(0, 40), ...rest);
+        throw new Error('ENOSPC: no space left on device, write');
+      },
+    }),
+  });
+  const r = await f.m._writeTicketSuiteFailure(f.team, f.one(), {
+    output: 'X.\n✖ probe alpha (1ms)\nTOTALS: 1 pass, 1 fail, 2 tests\n', summary: '1/2', cwd: repo.dir,
+  });
+  assert.strictEqual(r.ok, false, 'ENTER: the write really failed');
+  assert.strictEqual(r.path, null, 'no path is claimed for a file that no longer exists');
+  assert.match(r.error, /ENOSPC/, 'the underlying reason still rides the result');
+  assert.deepStrictEqual(keptFiles(f, f.home), [], 'and the partial file is gone from disk');
+});
+
+test('t373: an unremovable partial file IS named, with what is wrong with it', async () => {
+  // The other direction of the same rule. Silence is only safe because the file
+  // is gone; when the unlink itself fails there IS something on disk, and going
+  // quiet then recreates the defect — a truncated dump nobody was warned about.
+  const repo = mkRepo();
+  let leftAt = null;
+  const f = mkLoop({
+    repo,
+    wrapFs: (fs) => ({
+      ...fs,
+      writeFileSync: (p, data, ...rest) => {
+        if (!/suite-failure-.*\.txt$/.test(String(p))) return fs.writeFileSync(p, data, ...rest);
+        leftAt = String(p);
+        fs.writeFileSync(p, String(data).slice(0, 40), ...rest);
+        throw new Error('ENOSPC: no space left on device, write');
+      },
+      unlinkSync: (p) => {
+        if (!/suite-failure-.*\.txt$/.test(String(p))) return fs.unlinkSync(p);
+        const e = new Error('EPERM: operation not permitted, unlink');
+        e.code = 'EPERM';
+        throw e;
+      },
+    }),
+  });
+  const r = await f.m._writeTicketSuiteFailure(f.team, f.one(), {
+    output: 'X.\n✖ probe alpha (1ms)\nTOTALS: 1 pass, 1 fail, 2 tests\n', summary: '1/2', cwd: repo.dir,
+  });
+  assert.strictEqual(r.ok, false, 'still a failure');
+  assert.ok(leftAt && fsReal.existsSync(leftAt), 'ENTER: the partial file really is still on disk');
+  assert.strictEqual(r.path, leftAt, 'the path IS named when a file is actually there');
+  assert.match(r.error, /INCOMPLETE/, 'and the message says the file is not this run’s output');
+});
+
+test('t373: an ENOENT unlink is not read as a file left behind', async () => {
+  // The write can throw BEFORE producing anything (a refused open), and then the
+  // unlink finds nothing. Treating that as "could not remove" would name a path
+  // with no file at it — the mirror of the bug, pointing a reader at a ghost.
+  const repo = mkRepo();
+  const f = mkLoop({
+    repo,
+    wrapFs: (fs) => ({
+      ...fs,
+      writeFileSync: (p, data, ...rest) => {
+        if (!/suite-failure-.*\.txt$/.test(String(p))) return fs.writeFileSync(p, data, ...rest);
+        const e = new Error('EACCES: permission denied, open');   // nothing written
+        e.code = 'EACCES';
+        throw e;
+      },
+    }),
+  });
+  const r = await f.m._writeTicketSuiteFailure(f.team, f.one(), {
+    output: 'X.\nTOTALS: 1 pass, 1 fail, 2 tests\n', summary: '1/2', cwd: repo.dir,
+  });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.path, null, 'nothing was created, so nothing is named');
+  assert.ok(!/INCOMPLETE/.test(r.error), `a file that never existed must not be described as left behind: ${r.error}`);
+  assert.match(r.error, /EACCES/, 'the real reason is what the caller reports');
 });

@@ -51,6 +51,22 @@ const SUITE_STUBS = {
   // sitting on master is the state the revert exists to prevent, so this arm
   // undoes the merge too even though it is not a RED suite.
   crash: 'console.error("SyntaxError: Unexpected end of input");\nprocess.exit(1);\n',
+  // A red run carrying the DIAGNOSTICS — the AssertionError, the
+  // `+ actual - expected` diff and the stack the dot reporter prints under each
+  // `✖` row. `red` above stops at the NAMES, which already ride the escalation,
+  // so it cannot tell a preserved file that saved the diagnostics from one that
+  // saved only what the lead was told anyway. Same block as
+  // ticket-loop-verify.test.js's, copied off a real run for the same reason.
+  redWithDiff: 'console.log("X.");\nconsole.log("");\nconsole.log("Failed tests:");\nconsole.log("");\n'
+    + 'console.log("\\u2716 probe alpha fails with a deep diff (2.083792ms)");\n'
+    + 'console.log("  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:");\n'
+    + 'console.log("  + actual - expected");\n'
+    + 'console.log("    {");\n'
+    + 'console.log("  +   a: 1,");\n'
+    + 'console.log("  -   a: 2,");\n'
+    + 'console.log("    }");\n'
+    + 'console.log("      at TestContext.<anonymous> (/tmp/probe/frag.test.js:4:10)");\n'
+    + 'console.log("TOTALS: 1 pass, 1 fail, 2 tests");\nprocess.exit(1);\n',
 };
 
 // A real repo whose MASTER is clean and whose branch carries one real commit.
@@ -1214,4 +1230,161 @@ test('the revert of a merge passes a mainline, or the undo is not possible at al
     assert.strictEqual(out.ok, true, 'the shipped revert passes a mainline and succeeds');
     assert.ok(!fsReal.existsSync(pathReal.join(dir, 'b.txt')), 'and the merged content is gone');
   });
+});
+
+// ── t373: the POST-MERGE red run preserves its output too ──────────────────
+//
+// t370 kept the failing output of the loop's VERIFY run. This run dropped it on
+// the floor exactly as that one used to, and it is the higher-value dump of the
+// two: a red post-merge suite REVERTS master, so re-running the suite afterwards
+// measures a tree the failure is no longer in. The evidence is unreproducible by
+// construction, and the lead is its only reader.
+
+// Walked, not rebuilt from the path the code computes — rebuilding would make
+// the assertion agree with the implementation by construction and pass over a
+// file written somewhere nobody looks. Same helper as ticket-loop-verify's.
+function keptFiles(home) {
+  const hits = [];
+  const walk = (d) => {
+    let ents = [];
+    try { ents = fsReal.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const full = pathReal.join(d, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (/^suite-failure-.*\.txt$/.test(e.name)) hits.push(full);
+    }
+  };
+  walk(pathReal.join(home, 'projects'));
+  return hits;
+}
+
+test('t373: a RED post-merge suite preserves its full output and names the file to the lead', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, suite: 'redWithDiff' });
+  assert.deepStrictEqual(keptFiles(f.home), [],
+    'ENTER: nothing is preserved before the run — the assertions below are about THIS run');
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const kept = keptFiles(f.home);
+  assert.strictEqual(kept.length, 1, 'exactly one preserved file');
+  const body = fsReal.readFileSync(kept[0], 'utf8');
+  // The DIAGNOSTICS, not the names: the names already ride the escalation, so a
+  // file holding only those would satisfy a non-empty check while preserving
+  // nothing the lead did not already have.
+  assert.match(body, /AssertionError \[ERR_ASSERTION\]/, 'the assertion text is preserved');
+  assert.match(body, /\+ actual - expected/, 'the diff is preserved');
+  assert.match(body, /at TestContext\.<anonymous>/, 'the stack is preserved');
+  assert.match(body, /1\/2 passing, 1 failing/, 'and the counts the run produced');
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation, and it is the suite step');
+  assert.match(esc[0].body, /merge: suite/);
+  assert.ok(esc[0].body.includes(kept[0]),
+    `the escalation names the preserved file by absolute path (body: ${esc[0].body.slice(0, 600)})`);
+  // The revert still happened — preservation must not have displaced the undo.
+  assert.match(esc[0].body, /REVERTED/, 'the merge was still undone');
+  assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'work.txt')), 'and master is back');
+});
+
+test('t373: the post-merge dump records the ROOT checkout, not the ticket worktree', async () => {
+  // The run that failed is MASTER's, in team.root — the header has to say so or
+  // the artifact points a reader at the branch's tree, which is not what was
+  // measured and is not what was reverted.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, suite: 'redWithDiff' });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const kept = keptFiles(f.home);
+  assert.strictEqual(kept.length, 1, 'ENTER: a file was preserved at all');
+  const body = fsReal.readFileSync(kept[0], 'utf8');
+  const tree = /# tree: .*/.exec(body)[0];
+  assert.ok(tree.includes(repo.dir), `the header names the root checkout (got: ${tree})`);
+  assert.ok(!tree.includes(pathReal.join(repo.dir, 'wt')),
+    'and not the ticket worktree, which is not what ran');
+});
+
+test('t373: a suite that never RAN preserves nothing, and does not claim it tried', async () => {
+  // `_runTicketSuite` carries `output` on the red arm only, so a crash before the
+  // summary has nothing to preserve — and its whole diagnostic is already inline
+  // in the escalation as `suite.error`. Writing an empty file here would be the
+  // confidently-empty artifact the verify path refuses.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, suite: 'crash' });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: it escalated');
+  assert.match(esc[0].body, /could not be RUN/, 'ENTER: on the never-ran arm, not the red one');
+  assert.deepStrictEqual(keptFiles(f.home), [], 'nothing is preserved for a run that produced nothing');
+  assert.ok(!/could not be preserved/.test(esc[0].body),
+    `a run with no output to keep must not report a preservation failure: ${esc[0].body}`);
+});
+
+test('t373: a preservation that THROWS still reverts master, and is logged', async () => {
+  // The ordering that matters most here. A sync throw escaping into the method's
+  // catch-all would escalate WITHOUT reverting — the evidence mechanism leaving a
+  // red master standing, which is strictly worse than the bug it fixes.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, suite: 'redWithDiff' });
+  f.m._writeTicketSuiteFailure = () => { throw new TypeError('gitWorktree.currentBranch is not a function'); };
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'exactly one escalation');
+  assert.match(esc[0].body, /merge: suite/, 'the step is the suite failure, not the catch-all');
+  assert.ok(!/the auto-merge threw/.test(esc[0].body), 'the throw did not become the unexpected arm');
+  assert.match(esc[0].body, /REVERTED/, 'and the revert still happened');
+  assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'work.txt')), 'master really is back');
+  assert.match(esc[0].body, /could not be preserved/, 'the lead is told the evidence is missing');
+  assert.match(esc[0].body, /is not a function/, 'and why');
+  const errs = f.logs.filter((l) => l.level === 'error' && /preserv/.test(l.msg));
+  assert.strictEqual(errs.length, 1, `the break is on the record too (logs: ${JSON.stringify(f.logs)})`);
+});
+
+test('t373: a REVERT-BLOCKED red merge names the preserved file too', async () => {
+  // The arm where the evidence matters most and is easiest to forget: master is
+  // left RED on purpose, the lead has to act by hand, and the dump is the only
+  // account of what is wrong with it. The lock is planted mid-run for the reason
+  // the twin above gives — planting it up front trips step 3b and never merges.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, suite: 'redWithDiff' });
+  const lock = pathReal.join(repo.dir, '.test-digest.lock');
+  const real = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (team, ticket, runIn) => {
+    const r = await real(team, ticket, runIn);
+    fsReal.mkdirSync(lock, { recursive: true });
+    fsReal.writeFileSync(pathReal.join(lock, 'pid'), String(process.pid));
+    return r;
+  };
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation');
+  assert.match(esc[0].body, /merge: revert-blocked/, 'ENTER: this really is the blocked arm');
+  assert.match(f.masterLog(), /Merge t1:/, 'ENTER: master is left carrying the red merge');
+  const kept = keptFiles(f.home);
+  assert.strictEqual(kept.length, 1, 'the output was preserved on this arm as well');
+  assert.ok(esc[0].body.includes(kept[0]),
+    `and the escalation names it (body: ${esc[0].body.slice(0, 700)})`);
+});
+
+test('t373: a GREEN post-merge suite preserves nothing', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, suite: 'green' });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.strictEqual(f.landed().length, 1, 'ENTER: the merge really landed green');
+  assert.deepStrictEqual(keptFiles(f.home), [], 'a green run leaves no failure artifact');
 });
