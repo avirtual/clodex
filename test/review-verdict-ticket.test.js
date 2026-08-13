@@ -809,3 +809,76 @@ test('an ACCEPT whose must-fix section is "(none)" is announced with NO must-fix
     'an ACCEPT must not be announced as carrying a must-fix — that is the false premise that cost a cancelled ticket');
   assert.ok(!/1 must-fix/.test(f.gated[0].body), 'and certainly not "1 must-fix"');
 });
+
+// ── t367: a placeholder that OPENS the section survives trailing prose ──────
+
+// Bytes lifted from the live verdict that blocked a real merge
+// (review-t354-r2.verdict.md): `- **MUST-FIX**: (none)` followed by indented
+// paragraphs explaining why each round-1 item was genuinely closed, plus a
+// bulleted "new-defect hunt". None of that prose is a section header, so
+// extractMustFix appends all of it to the same body — the shape the whole-blob
+// placeholder test could not see.
+const T367_LIVE_VERDICT = [
+  '- **VERDICT**: ACCEPT — both round-1 MUST-FIXes are genuinely closed.',
+  '',
+  '- **MUST-FIX**: (none)',
+  '',
+  '  Why the two items are genuinely fixed, traced rather than taken on the report\'s word:',
+  '',
+  '  - **MF1 (`cli/test/attach.test.js:451`)** — the keystroke now rides `sawTokenedResize(seen)`.',
+  '  - **MF2 (`cli/test/attach.test.js:461`)** — `await until(() => state.inputStatuses.length > 0)`.',
+  '',
+  '  New-defect hunt (the things that would have made this a REWORK):',
+  '',
+  '  - **No new hang.** Every gate is `until(...)`, which resolves `false` at its deadline.',
+  '  - **The gates still fail against broken product code.**',
+  '  - **The gap test\'s two-half gate is correct.**',
+  '',
+  '- **NITS**:',
+  '  - the reconnect test still detaches on a bare `setTimeout`.',
+].join('\n');
+
+test('countMustFix: a placeholder that OPENS the section is zero however much prose follows', () => {
+  const body = extractMustFix(T367_LIVE_VERDICT);
+
+  // ENTER: the prose really did land in the body — that is the whole mechanism.
+  // If extractMustFix ever stops appending it, this test silently stops
+  // measuring the bug and every assertion below passes vacuously.
+  assert.match(String(body), /^\(none\)/, 'ENTER: the body opens with the placeholder');
+  assert.ok(/^\s*- \*\*MF1/m.test(String(body)), 'ENTER: the explanatory bullets are in the body');
+  assert.ok(String(body).split('\n').length > 5, 'ENTER: the body is the multi-line blob, not a bare placeholder');
+
+  // Against the unfixed countMustFix this is 3 (the prose bullets), and the
+  // live file it was lifted from produced 6 — a clean ACCEPT refused as a
+  // contradiction.
+  assert.strictEqual(countMustFix(body), 0,
+    'a section opening with (none) declares no must-fixes, whatever explains it');
+});
+
+test('countMustFix: the placeholder is the whole first line, never a prefix of it', () => {
+  const cases = [
+    // The bug: placeholder first, prose after. Zero.
+    ['(none)\n\n  Why the items are closed:\n\n  - **MF1** — traced.\n  - **MF2** — traced.', 0],
+    ['none\nthe previous round is genuinely closed', 0],
+    // Bare placeholder still zero — guarded so the fix cannot regress it.
+    ['(none)', 0],
+    ['none', 0],
+    // A real list still counts. This is what proves the placeholder was not
+    // widened into something that swallows every body.
+    ['- the guard is inverted\n- the sweep drops the row', 2],
+    ['1. the guard is inverted\n2. the sweep drops the row', 2],
+    // A placeholder WORD leading a real sentence is not a placeholder LINE.
+    ['none blocking, but fix the inverted guard', 1],
+    ['nothing here is safe to merge', 1],
+    // The inline single-item shape extractMustFix's own comment documents.
+    ['the guard is inverted', 1],
+    // A blank line before the placeholder must not hide it.
+    ['\n\n(none)\n\n  - explanatory bullet', 0],
+    // Prose FIRST, placeholder later, is not a placeholder section.
+    ['- the guard is inverted\n\n(none)', 1],
+  ];
+  for (const [input, expected] of cases) {
+    assert.strictEqual(countMustFix(input), expected,
+      `countMustFix(${JSON.stringify(input)}) must be ${expected}`);
+  }
+});

@@ -269,7 +269,19 @@ const MUSTFIX_PLACEHOLDER_RE = /^[\s(\[]*(?:none|n\/a|nothing|-+|—)[\s.)\]]*$/
 function countMustFix(mustFixText) {
   if (mustFixText == null) return 0;
   const text = String(mustFixText);
-  if (MUSTFIX_PLACEHOLDER_RE.test(text.trim())) return 0;
+  // The placeholder is matched against the section's FIRST line, not the whole
+  // blob: a reviewer who writes `MUST-FIX: (none)` and then explains himself
+  // underneath leaves prose that no section header closes, so `extractMustFix`
+  // appends it to the same body and a whole-blob test stops firing. The bullets
+  // inside that prose then count as items — a live ACCEPT was refused for
+  // "6 items" over a body reading `(none)`. A section that OPENS with the
+  // placeholder declares no must-fixes, whatever follows it.
+  //
+  // Matching only the first line is what keeps this from being a widening: a
+  // real list still counts, so an ACCEPT that genuinely lists must-fixes is
+  // still the contradiction the merge gate refuses.
+  const firstLine = text.split('\n').find((l) => l.trim()) || '';
+  if (MUSTFIX_PLACEHOLDER_RE.test(firstLine.trim())) return 0;
   const lines = text.split('\n');
   let n = 0;
   for (const line of lines) if (/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S/.test(line)) n++;

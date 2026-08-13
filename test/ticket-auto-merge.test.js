@@ -397,6 +397,68 @@ test('a header that MISCOUNTS must-fixes does not block a merge whose body says 
   assert.notStrictEqual(f.masterHead(), before, 'the branch landed');
 });
 
+test('an ACCEPT that says "(none)" and then EXPLAINS ITSELF still merges', async () => {
+  // The live failure (review-t354-r2): a clean ACCEPT whose must-fix section
+  // read `(none)` and then justified each closed item in indented prose with
+  // bullets. The gate counted those bullets, refused with "6 items", and quoted
+  // `(none)` as its own evidence. The merge was completed by hand.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const before = f.masterHead();
+
+  await f.m._autoMergeTicket(f.team, 't1',
+    { verdict: 'ACCEPT', mustFix: null, reviewRound: 2 },
+    [
+      '- **VERDICT**: ACCEPT — both round-1 MUST-FIXes are genuinely closed.',
+      '',
+      '- **MUST-FIX**: (none)',
+      '',
+      '  Why the two items are genuinely fixed, traced rather than taken on trust:',
+      '',
+      '  - **MF1** — the keystroke now rides `sawTokenedResize(seen)`.',
+      '  - **MF2** — `await until(() => state.inputStatuses.length > 0)`.',
+      '',
+      '  New-defect hunt (what would have made this a REWORK):',
+      '',
+      '  - **No new hang.** Every gate is `until(...)`.',
+      '  - **The gates still fail against broken product code.**',
+      '',
+    ].join('\n'));
+
+  assert.deepStrictEqual(f.esc(), [],
+    'a section opening with (none) declares no must-fixes — the prose under it is not a list of them');
+  assert.notStrictEqual(f.masterHead(), before, 'the branch landed');
+});
+
+test('an ACCEPT whose must-fixes are REAL still refuses, prose or not', async () => {
+  // The other half of the same fix: the gate must stay exactly as loud for a
+  // verdict that genuinely lists must-fixes. If the placeholder had been
+  // widened rather than anchored to the section's first line, this would merge.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const before = f.masterHead();
+
+  await f.m._autoMergeTicket(f.team, 't1',
+    { verdict: 'ACCEPT', mustFix: null, reviewRound: 2 },
+    [
+      '- **VERDICT**: ACCEPT',
+      '',
+      '- **MUST-FIX**: none blocking, but these need doing',
+      '',
+      '  - the guard is inverted',
+      '  - the sweep drops the row',
+      '',
+    ].join('\n'));
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: the gate still refused');
+  assert.match(esc[0].body, /merge: must-fix/, 'it names the step that refused');
+  assert.match(esc[0].body, /the guard is inverted/, 'and carries the must-fixes as evidence');
+  assert.strictEqual(f.masterHead(), before, 'master did not move');
+});
+
 // ── step 2: the base must still be an ancestor ─────────────────────────────
 
 test('a base that is no longer an ancestor escalates, and nothing is merged', async () => {
