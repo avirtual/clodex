@@ -476,7 +476,20 @@ function captureRealTap({ fillers = 0, bigDiff = false, escape = false } = {}) {
       "const assert = require('node:assert');",
       // Each filler is one more `# Subtest:` diagnostic line, which is how the
       // real suite drowns the diagnostics buffer.
-      `for (let i = 1; i <= ${fillers}; i++) test('filler ' + i, () => {});`,
+      // The mid-stream marker is printed from a filler in the MIDDLE of the run,
+      // so it lands in the window a middle-drop discards. A marker printed at
+      // module load sits at the HEAD of the stream and survives that drop, which
+      // would demonstrate nothing about eviction.
+      //
+      // The filler must be ASYNC and must actually yield: node hoists the stdout
+      // of SYNCHRONOUS tests to the head of the stream regardless of when it was
+      // printed (measured — a marker from filler 300 of 600 landed at line 2),
+      // and `await Promise.resolve()` does not yield far enough to change that.
+      // `setImmediate` does, and costs nothing measurable.
+      `for (let i = 1; i <= ${fillers}; i++) test('filler ' + i, async () => {`,
+      '  await new Promise((r) => setImmediate(r));',
+      `  if (i === Math.floor(${fillers} / 2)) console.log('MID STREAM STDOUT MARKER');`,
+      '});',
       "console.log('TOP LEVEL STDOUT MARKER');",
       escape ? "test('an escaping test', () => { setTimeout(() => { throw new Error('BOOM ESCAPED'); }, 5); });" : '',
       "test('outer suite', async (t) => {",
@@ -750,11 +763,34 @@ test('keep: at real suite scale the diagnostics are stdout, not a wall of test n
   const diag = kept.slice(kept.indexOf('## top-level diagnostics'));
   assert.ok(diag.length > 0, 'ENTER: there is no diagnostics section to judge');
 
-  // The evidence, which sits in the MIDDLE of the stream and is the first thing
-  // a middle-drop throws away.
+  // The marker printed from the MIDDLE filler, i.e. the window a middle-drop
+  // discards. A head-of-stream marker survives that drop and would certify the
+  // stdout claim without measuring it.
+  // ENTER, and the position is the point: the marker must sit AFTER a large
+  // number of `# Subtest:` lines, i.e. inside the window the middle-drop
+  // discards. Node hoists synchronous test stdout to the head of the stream,
+  // where it survives that drop — a marker at the head would satisfy a mere
+  // presence check while measuring nothing about eviction.
+  const tapLines = tap.split('\n');
+  const mid = tapLines.indexOf('# MID STREAM STDOUT MARKER');
+  assert.ok(mid > 0, 'ENTER: the mid-stream marker is not in the capture at all');
+  const before = tapLines.slice(0, mid).filter((l) => /^# Subtest: /.test(l)).length;
+  assert.ok(before > 200 && before < FILLERS - 200,
+    `ENTER: the marker sits after only ${before} of ${FILLERS} '# Subtest:' lines, so it is near `
+    + 'an end of the stream that the middle-drop KEEPS — it would survive whether or not the '
+    + 'eviction is fixed');
+  assert.ok(diag.includes('MID STREAM STDOUT MARKER'),
+    'test stdout from the middle of the run was evicted from the diagnostics section at scale — '
+    + 'the section header promises stdout and this is the case where it stops delivering it');
   assert.ok(diag.includes('TOP LEVEL STDOUT MARKER'),
-    'test stdout was evicted from the diagnostics section at scale — the section header promises '
-    + 'stdout and this is the case where it stops delivering it');
+    'stdout printed at module load was evicted too');
+  // The finding that makes dropping `# Subtest:` SAFE: a nested test's stdout
+  // arrives unindented at top level, so the `/^# /` rule still collects it. If
+  // node ever indents it, it becomes invisible to that rule and skipping
+  // `# Subtest:` would start costing real output.
+  assert.ok(diag.includes('NESTED STDOUT MARKER'),
+    'a nested test\'s stdout no longer reaches the diagnostics section — it arrives unindented '
+    + 'today, which is what makes skipping `# Subtest:` safe; indented, `/^# /` cannot see it');
   assert.match(diag, /# Error: .*asynchronous activity after the test ended/,
     'the escape diagnostic did not survive: that line is the one test/test-escapes.test.js exists '
     + 'to catch, and losing it hides a suite that went green while broken');
@@ -771,10 +807,20 @@ test('keep: a bare `...` inside a big diff does not truncate the block early', (
   // terminator ends the block there and drops the rest of the diff, `code:` and
   // the whole `stack:` — on exactly the big-diff failures worth preserving.
   const tap = captureRealTap({ bigDiff: true });
-  const elision = tap.split('\n').filter((l) => /^[ \t]+\.\.\.[ \t]*$/.test(l));
-  assert.ok(elision.length > 0,
-    'ENTER: this capture contains no indented `...` elision, so it cannot exercise the early '
-    + 'termination it is about — node may have changed how it elides large diffs');
+  // AN ELISION IS A `...` WITH NO MATCHING `---`, and the distinction is the
+  // whole guard. Every YAML block ends with an indented `...`, so counting
+  // indented dots alone is satisfied by any failing TAP, elision or not — it
+  // would keep this subject green while node quietly stopped eliding, at which
+  // point the assertions below pass against the unanchored terminator too and
+  // certify a fix nothing exercises.
+  const lines = tap.split('\n');
+  const dots = lines.filter((l) => /^[ \t]*\.\.\.[ \t]*$/.test(l));
+  const opens = lines.filter((l) => /^[ \t]*---[ \t]*$/.test(l));
+  assert.ok(dots.length > opens.length,
+    `ENTER: ${dots.length} \`...\` lines against ${opens.length} \`---\` openers, so every one of `
+    + 'them is an ordinary block terminator and this capture contains no elision at all — it '
+    + 'cannot exercise the early termination it is about, and node may have changed how it '
+    + 'elides large deep-equal diffs');
 
   const kept = keepFor(tap);
   assert.ok(kept !== null, 'ENTER: nothing was preserved');
