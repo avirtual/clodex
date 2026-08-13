@@ -1491,6 +1491,12 @@ function mkNotice({ notice, live = false, persisted = null, deliverThrows = fals
     getPersistence: () => ({ list: () => [], get: (n) => (n === (notice && notice.name) ? persisted : null) }),
     parkDelivery: (_dir, name, text) => { if (parkThrows) throw new Error('park boom'); parks.push({ name, text }); },
     PENDING_DIR: '/tmp/pending-x',
+    // Same reason as mkPark's: unwired, _armParkCap does setTimeout(fn, undefined),
+    // which fires on the NEXT TICK rather than in 5 minutes. Every test here was
+    // synchronous, so that cap never got to run and the omission stayed invisible —
+    // until one awaited, and the cap fired a _flushParkedNow that the test read as
+    // the notice's own deadline firing. A test that awaits anything needs this.
+    INJECT_QUIET_MAXWAIT: 3_600_000,
     log: { info: () => {}, error: () => {}, warn: () => {}, debug: () => {} },
   });
   m._deliverMessage = (name, sender, body) => { if (deliverThrows) throw new Error('inject boom'); delivered.push({ name, sender, body }); };
@@ -1505,13 +1511,14 @@ function mkNotice({ notice, live = false, persisted = null, deliverThrows = fals
     if (!s) return;
     clearTimeout(s._parkCapTimer);
     clearTimeout(s._rebootNoticeRetryTimer);
+    clearTimeout(s._rebootNoticeFlushTimer);   // t360: a third real timer, same hazard
   };
   return { m, state, delivered, parks, disarm };
 }
 
 test('reboot notice: a LIVE CLAUDE requester gets the notice PARKED (boot-safe), then the flag clears', () => {
   const at = Date.now();
-  const { m, state, delivered, parks } = mkNotice({
+  const { m, state, delivered, parks, disarm } = mkNotice({
     notice: { name: 'a', at, reason: 'nightly' }, live: true, // mkNotice's live seat is claude
   });
   m.maybeDeliverRebootNotice();
@@ -1539,11 +1546,12 @@ test('reboot notice: a LIVE CLAUDE requester gets the notice PARKED (boot-safe),
   // drain trigger needs the seat to earn a turn. The starvation cap must be
   // armed so a forced drain lands within INJECT_QUIET_MAXWAIT.
   assert.ok(m.sessions.get('a')._parkCapTimer, 'starvation cap armed for the parked notice');
-  clearTimeout(m.sessions.get('a')._parkCapTimer);
   // t229: the in-launch retry is armed alongside the cap — it is the primary
-  // delivery path, the cap only forces the queue. Cleared for the same reason.
+  // delivery path, the cap only forces the queue.
   assert.ok(m.sessions.get('a')._rebootNoticeRetryTimer, 'in-launch retry armed for the parked notice');
-  clearTimeout(m.sessions.get('a')._rebootNoticeRetryTimer);
+  // Existence asserted above, teardown delegated: hand-clearing each timer is what
+  // let this test silently leak t360's third one. disarm() tracks the fixture.
+  disarm();
 });
 
 test('reboot notice: a LIVE CODEX requester keeps the active inject (no passive store to park into)', () => {
@@ -1705,7 +1713,7 @@ test('t229 reboot notice: a park does NOT clear the notice — the durable copy 
 });
 
 test('t229 reboot notice: a seat that takes a TURN after the park is presumed delivered → cleared', () => {
-  const { m, state, parks } = mkNotice({
+  const { m, state, parks, disarm } = mkNotice({
     notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
   });
   m.maybeDeliverRebootNotice();
@@ -1718,6 +1726,7 @@ test('t229 reboot notice: a seat that takes a TURN after the park is presumed de
   fireRebootRetry(m, 'a');
   assert.strictEqual(state.pendingRebootNotice, null, 'cleared once the seat demonstrably processed input');
   assert.strictEqual(parks.length, 1, 'and NOT re-parked — one delivery, not two');
+  disarm();   // the park armed the cap and t360's flush deadline; neither is cleared by the retry
 });
 
 test('t229 reboot notice: the SEEDED spawn stop is not a turn (it would clear every notice for free)', () => {
@@ -1827,6 +1836,205 @@ test('t229 reboot notice: the attempts stamp survives a REAL settings round-trip
   fsReal.rmSync(registryDir, { recursive: true, force: true });
 });
 
+// ── t360: the notice's own drain deadline, and the duplicate-restore burn ────
+// Two defects behind one symptom (the notice sat 5 minutes). The park inherited
+// the generic INJECT_QUIET_MAXWAIT cap because both fast drains bail on an open
+// draft; and restoreSessionsForWorkspace runs once PER WORKSPACE, so a
+// multi-workspace launch stamped two attempts a fraction of a second apart.
+
+test('t360 reboot notice: the park arms a SHORT dedicated flush deadline, not the 5-minute generic cap', () => {
+  const { m, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: the notice really was parked (otherwise there is no deadline to arm)');
+  const s = m.sessions.get('a');
+  assert.ok(s._rebootNoticeFlushTimer, 'a dedicated flush deadline is armed alongside the park');
+  // The bound that matters to the operator: seconds, not minutes. 60s is well
+  // under the generic cap this used to inherit and well over the boot window.
+  assert.ok(s._rebootNoticeFlushDelay < 60_000,
+    `the notice's flush deadline (${s._rebootNoticeFlushDelay}ms) must be seconds, not the 5-minute generic cap`);
+  // Both derivation bounds, asserted rather than described: past the queue's 20s
+  // readiness cap (so it cannot pre-empt a polite drain), and before the first
+  // retry rung (so it never flushes two copies of the notice as one body).
+  assert.ok(s._rebootNoticeFlushDelay > 20_000,
+    `must clear INJECT_BOOT_MAXWAIT (20s), got ${s._rebootNoticeFlushDelay}ms`);
+  assert.ok(s._rebootNoticeFlushDelay < 30_000,
+    `must fire before the first retry re-parks, got ${s._rebootNoticeFlushDelay}ms`);
+  // The staleness threshold's own bound, pinned directly rather than via the 1s /
+  // 60s cases either side of it: those stay green if it drifts down to
+  // INJECT_QUIET_MS, and that is precisely the value that reinstates the splice —
+  // that gate is tuned not to cut mid-WORD, while this one has to clear a pause
+  // mid-COMPOSITION. A drift guard on an already-correct constant, so unlike the
+  // rest of this file it passes against the unfixed code too.
+  assert.ok(s._rebootNoticeDraftStaleMs > 2_000,
+    `the draft-staleness threshold (${s._rebootNoticeDraftStaleMs}ms) must exceed INJECT_QUIET_MS (2s), or a mid-composition pause is spliceable again`);
+  disarm();
+});
+
+test('t360 reboot notice: the flush deadline FORCES the park out through the draft gate', () => {
+  const { m, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  let flushed = null;
+  m._flushParkedNow = (target, tag, kind) => { flushed = { name: target.name, tag, kind }; return { ok: true, count: 1 }; };
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: parked, so the fire below is the deadline acting on a real park');
+  const s = m.sessions.get('a');
+  assert.strictEqual(flushed, null, 'ENTER: nothing forced before the deadline fires');
+  s._rebootNoticeFlushFire();
+  // _flushParkedNow is the path that ignores isDraftOpen — the one that rescued
+  // this notice by hand every time. Reaching it is the whole fix; the polite
+  // drains cannot, because they bail on the open draft.
+  assert.ok(flushed, 'the deadline forces the parked notice out');
+  assert.strictEqual(flushed.name, 'a');
+  assert.strictEqual(flushed.kind, 'park-flush', 'forced through the draft-ignoring flush path');
+  disarm();
+});
+
+test('t360 reboot notice: a seat that already took a TURN is not spliced by the deadline', () => {
+  const { m, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  let flushCalls = 0;
+  m._flushParkedNow = () => { flushCalls += 1; return { ok: true, count: 0 }; };
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: parked');
+  const s = m.sessions.get('a');
+  // A real turn after the park: a drain already ran and the seat processed input,
+  // so forcing would splice for nothing. Same signal (and same seeded exclusion)
+  // the retry ladder uses.
+  s.lastMainStop = { isTurn: true, ts: Date.now() + 1000, seeded: false };
+  s._rebootNoticeFlushFire();
+  assert.strictEqual(flushCalls, 0, 'no forced flush — the seat demonstrably already drained');
+  disarm();
+});
+
+test('t360 reboot notice: a FRESH draft defers the forced flush — it re-arms instead of eating live typing', () => {
+  const { m, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  let flushCalls = 0;
+  m._flushParkedNow = () => { flushCalls += 1; return { ok: true, count: 1 }; };
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: parked, so the deadline below is acting on a real park');
+  const s = m.sessions.get('a');
+  // The operator paused mid-composition. The forced flush is non-parkable, so
+  // firing here would emit a bare Ctrl-U into that draft — the exact splice
+  // INJECT_QUIET_MAXWAIT was raised to 5 minutes to avoid.
+  s.lastUserInputTs = Date.now() - 1000;
+  s._rebootNoticeFlushFire();
+  assert.strictEqual(flushCalls, 0, 'no forced flush into a draft touched a second ago');
+  // Deferred, NOT abandoned: a re-armed deadline is what keeps the notice bounded
+  // rather than silently dropping it when the operator is at the keyboard.
+  assert.ok(s._rebootNoticeFlushTimer, 're-armed for another round instead of flushing');
+  disarm();
+});
+
+test('t360 reboot notice: a STALE draft still flushes — the deferral is not a permanent block', () => {
+  const { m, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  let flushCalls = 0;
+  m._flushParkedNow = () => { flushCalls += 1; return { ok: true, count: 1 }; };
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: parked');
+  const s = m.sessions.get('a');
+  s.lastUserInputTs = Date.now() - 60_000;   // typed a minute ago, then walked away
+  s._rebootNoticeFlushFire();
+  assert.strictEqual(flushCalls, 1, 'an abandoned draft is flushed through — this is the walked-away case');
+  disarm();
+});
+
+test('t360 reboot notice: a fresh RESTORED seat flushes at the FIRST deadline (the field case must stay fast)', () => {
+  // The whole point of the ticket. A restored seat has never been typed into, so
+  // lastUserInputTs is unset and Date.now() - 0 reads as stale. If the draft guard
+  // ever makes THIS case re-arm, the notice is slow again and the fix is undone.
+  const { m, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  let flushCalls = 0;
+  m._flushParkedNow = () => { flushCalls += 1; return { ok: true, count: 1 }; };
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: parked');
+  const s = m.sessions.get('a');
+  assert.ok(!s.lastUserInputTs, 'ENTER: a restored seat really has no recorded input, or this proves nothing');
+  s._rebootNoticeFlushFire();
+  assert.strictEqual(flushCalls, 1, 'flushed at the first deadline — no extra round for an untouched seat');
+  assert.strictEqual(s._rebootNoticeFlushTimer, null, 'and nothing re-armed');
+  disarm();
+});
+
+test('t360 reboot notice: a re-arm keeps the ORIGINAL park time, so a turn since the park still wins', async () => {
+  // The re-arm passes parkedAt through rather than restamping it. Restamping would
+  // move the line the turn check compares against on every round, so a seat that
+  // woke during round 1 would read as never having woken.
+  const { m, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  let flushCalls = 0;
+  m._flushParkedNow = () => { flushCalls += 1; return { ok: true, count: 1 }; };
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: parked');
+  const s = m.sessions.get('a');
+  const parkTime = Date.now();
+  s.lastUserInputTs = Date.now();          // fresh draft → round 1 defers
+  // A MEASURABLE gap before the deferral, and it is the whole isolating power of
+  // this test. Without it the re-arm lands in the same millisecond as the park, so
+  // a restamped parkedAt still sits below stop.ts and the turn check trips anyway —
+  // green with the restamping mutant alive. With the gap a restamp is ≥ parkTime+5,
+  // stop.ts (parkTime+1) no longer clears it, and the notice is wrongly forced.
+  await new Promise((r) => setTimeout(r, 5));
+  s._rebootNoticeFlushFire();
+  assert.strictEqual(flushCalls, 0, 'ENTER: round 1 really did defer, so round 2 is the re-armed one');
+  // The seat wakes and drains on its own, just after the ORIGINAL park — before
+  // the re-arm, which is precisely what a restamp would hide.
+  s.lastMainStop = { isTurn: true, ts: parkTime + 1, seeded: false };
+  s.lastUserInputTs = Date.now() - 60_000; // draft now stale, so only the turn check can stop it
+  s._rebootNoticeFlushFire();
+  assert.strictEqual(flushCalls, 0, 'the turn is still measured against the original park — nothing forced');
+  disarm();
+});
+
+test('t360 reboot notice: a SECOND workspace restore does not burn an attempt', () => {
+  const { m, state, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  m.maybeDeliverRebootNotice();          // workspace 1 restores
+  assert.strictEqual(parks.length, 1, 'ENTER: the first restore really did park and arm the ladder');
+  assert.strictEqual(state.pendingRebootNotice.attempts, 1, 'ENTER: stamped as attempt 1');
+  const firstDelay = m.sessions.get('a')._rebootNoticeRetryDelay;
+  m.maybeDeliverRebootNotice();          // workspace 2 restores, ~0.4s later in the field
+  assert.strictEqual(state.pendingRebootNotice.attempts, 1,
+    'the duplicate restore does NOT stamp attempt 2 — the budget is per notice, not per workspace');
+  assert.strictEqual(parks.length, 1, 'and it does not re-park a second copy');
+  // The specific damage: the duplicate used to clearTimeout the 30s rung and
+  // re-arm at 120s, so the first rung never ran as a retry.
+  assert.strictEqual(m.sessions.get('a')._rebootNoticeRetryDelay, firstDelay,
+    'the first rung survives — the duplicate did not replace it with the second');
+  assert.strictEqual(firstDelay, 30_000, 'and that surviving rung is the 30s one');
+  disarm();
+});
+
+// Note on what this does NOT prove: it does not isolate the `retry: true` flag.
+// _armRebootNoticeRetry's fire nulls _rebootNoticeRetryTimer before re-offering,
+// so the duplicate guard is already falsy by then and the flag is belt-and-braces
+// — dropping it leaves this test green. It is kept because it states the intent
+// and survives a reorder of fire(), but its protection here is structural, not
+// asserted. Saying so beats a comment implying coverage that does not exist.
+test('t360 reboot notice: the ladder\'s OWN re-offer still advances (the guard is not a freeze)', () => {
+  const { m, state, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: first park, retry armed');
+  // fireRebootRetry clears the timer then fires, exactly as the real timeout does;
+  // the re-offer carries retry:true so the duplicate guard must let it through.
+  fireRebootRetry(m, 'a');
+  assert.strictEqual(parks.length, 2, 'the retry re-parks — suppressing duplicates must not suppress the ladder');
+  assert.strictEqual(state.pendingRebootNotice.attempts, 2, 'and its attempt advances');
+  disarm();
+});
 
 test('gate: exec enabled → passes the coarse gate, reaching the per-command grant', async () => {
   const { m, injected } = mkGate(['exec']);
@@ -2510,7 +2718,10 @@ test('_cleanup disarms every timer the session owns (a fired timer on a dead sea
   const TIMER_FIELDS = [
     '_injectHoldTimer', '_injectFlushRetry', '_compactValveTimer', '_postClearValveTimer',
     '_parkCapTimer', '_bootSettleTimer', '_bootDrainTimer', '_replayFallbackTimer',
-    '_parkedDrainFallbackTimer', '_rebootNoticeRetryTimer',
+    // _specConfirmTimer predates t360 and was missing: the list is asserted whole,
+    // so every field it omits is a leak this test promises to catch and does not.
+    '_parkedDrainFallbackTimer', '_rebootNoticeRetryTimer', '_rebootNoticeFlushTimer',
+    '_specConfirmTimer',
   ];
   const fired = [];
   const s = { name: 'a', agentType: 'claude' };
@@ -9210,6 +9421,28 @@ function mkFlush(overrides = {}) {
   };
   return m;
 }
+
+test('t360 _flushParkedNow: ANY forced flush ends the notice deferral chain, not just the operator flush', () => {
+  // The chain otherwise dies only on a real turn or its own flush. So an operator
+  // keeping the pane warm past the 300s park cap left it alive AFTER the cap had
+  // already delivered the notice — and the next unrelated park would be forced out
+  // early by a deadline with nothing left to deliver. Pinned at _flushParkedNow
+  // rather than flushPending so the park-cap fire is covered by the same clear.
+  const m = mkFlush({ _texts: ['parked one'] });
+  const s = { name: 'a', agentType: 'claude' };
+  m.sessions.set('a', s);
+  let fired = 0;
+  s._rebootNoticeFlushTimer = setTimeout(() => { fired += 1; }, 50);
+  // ENTER: the chain is really live, or the clear below proves nothing.
+  assert.ok(s._rebootNoticeFlushTimer, 'ENTER: a deferral round is armed');
+  m._flushParkedNow(s, `cap.${process.pid}`, 'park-cap');   // the 300s cap firing
+  assert.strictEqual(s._rebootNoticeFlushTimer, null, 'the park-cap flush ended the deferral chain too');
+  assert.strictEqual(m._drained.length, 1, 'ENTER: and it really was a flush (the drain happened)');
+  return new Promise((r) => setTimeout(() => {
+    assert.strictEqual(fired, 0, 'the cleared round never fires against a later, unrelated park');
+    r();
+  }, 70));
+});
 
 test('flushPending: unknown / non-claude / dead target → refused, nothing drained', () => {
   const m = mkFlush();

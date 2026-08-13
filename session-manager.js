@@ -75,6 +75,39 @@ const REBOOT_NOTICE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const REBOOT_NOTICE_RETRY_DELAYS = [30 * 1000, 120 * 1000];
 const REBOOT_NOTICE_MAX_ATTEMPTS = 3;
 
+// The notice's OWN deadline for a forced flush, separate from the generic park
+// cap (INJECT_QUIET_MAXWAIT, 5 min) it would otherwise inherit. A wake-up notice
+// that arrives five minutes after the wake is not a wake-up notice.
+//
+// Both fast drains bail on an open draft, so with one open the generic cap was
+// the only thing left and the notice sat for the full five minutes. This does
+// NOT relax that gate — it schedules _flushParkedNow, the same forced path the
+// operator's flush button uses, which is what rescued the notice every time.
+//
+// Derived, and both bounds are load-bearing:
+//   > INJECT_BOOT_MAXWAIT (20s) — past the queue's readiness cap a polite drain
+//     either already happened or is not going to, so this cannot pre-empt one.
+//   < REBOOT_NOTICE_RETRY_DELAYS[0] (30s) — firing after the first re-park would
+//     flush TWO copies of the notice joined into one body. This bound holds for
+//     the FIRST, undeferred round only: a draft deferral re-arms past 30s, so a
+//     later round can join the ladder's re-park. Accepted, not overlooked — it
+//     costs one duplicated line, and t229 already rules a duplicate the safe
+//     direction. Do not "fix" it by bounding the re-arm; see _armRebootNoticeFlush.
+//
+// This deadline does NOT make the retry ladder redundant, and the ladder must not
+// be simplified away now that it exists. The queue's readiness gate writes anyway
+// once INJECT_BOOT_MAXWAIT elapses, so on a slow seat — t229 measured a 105s
+// transcript re-render — a flush at 25s can still evaporate into a booting CLI.
+// That is recoverable only because the ladder is there: the notice survives in
+// settings, the re-park follows, and the T+150s rung lands after the render.
+const REBOOT_NOTICE_FLUSH_MS = 25 * 1000;
+
+// How long the pane must have been untouched before the forced flush is allowed
+// to fire. Comfortably longer than INJECT_QUIET_MS (2s), which is tuned to not
+// cut mid-WORD: this one has to clear a pause mid-COMPOSITION, and stopping to
+// think for a couple of seconds is ordinary.
+const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
+
 // Defaults folded into the BASE of the env-scope merge, so every scope
 // (global/workspace/session/override) still beats them. They must NOT move to
 // the app-owned block applied after the merge (env-scopes.js) — those win by
@@ -2764,6 +2797,7 @@ function createSessionManager(deps) {
       clearTimeout(s._replayFallbackTimer);
       clearTimeout(s._parkedDrainFallbackTimer);
       clearTimeout(s._rebootNoticeRetryTimer);
+      clearTimeout(s._rebootNoticeFlushTimer);
       clearTimeout(s._specConfirmTimer);
       // Drops the pending debounce timer with it — a hint armed after the PTY
       // died would ride the next session under the same name. The offer
@@ -3715,7 +3749,7 @@ function createSessionManager(deps) {
         { parkable: true });
     }
 
-    maybeDeliverRebootNotice() {
+    maybeDeliverRebootNotice(opts = {}) {
       const store = getUiSettings && getUiSettings();
       if (!store) return;
       let settings;
@@ -3764,12 +3798,28 @@ function createSessionManager(deps) {
       const body = `notice: Clodex restarted and is running again (reboot requested at ${when}${reason ? `: ${reason}` : ''}).`;
 
       const target = this.sessions.get(notice.name);
+      // An armed retry means an offer for THIS notice is already in flight, so a
+      // second restore is not a second delivery opportunity — it only re-stamps an
+      // attempt. restoreSessionsForWorkspace runs once per workspace, so a
+      // two-workspace launch made two offers ~0.4s apart: the ladder burned to its
+      // ceiling before its first rung elapsed, the 30s rung was never used, and
+      // delivery fell through to the generic 5-minute cap. The budget is per notice,
+      // not per restore — suppress the duplicate rather than widen the budget.
+      //
+      // Keyed on the in-flight timer, not a launch-scoped flag: at the ceiling no
+      // timer is armed, and a later call must still reach the give-up-and-clear
+      // above. `retry` marks the ladder's own re-offer, which is not a duplicate.
+      if (!opts.retry && target && target._rebootNoticeRetryTimer) {
+        log.debug('intent', `reboot notice for ${notice.name} already in flight (retry armed) — not re-stamping an attempt`);
+        return;
+      }
       if (target && target.agentType) {
         try {
           if (target.agentType === 'claude') {
             const finalText = this._buildDeliveryText(target, 'reboot', body, 'dm');
             parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq(), null, false, this._bornFor(notice.name));
             this._armParkCap(target);
+            this._armRebootNoticeFlush(target);
             // Park is a promise to deliver, not a receipt — so this branch does NOT
             // clear(). The settings copy is the only durable one, and clearing it
             // here destroyed it while the parked file was still undelivered: a
@@ -3805,6 +3855,67 @@ function createSessionManager(deps) {
       } catch (e) {
         retainOrExpire(`park failed: ${e.message}`);
       }
+    }
+
+    // The notice's dedicated deadline: give the polite drains their window, then
+    // force the park out rather than inheriting the generic 5-minute cap.
+    //
+    // Scope note, deliberate: drainPending claims the seat's WHOLE park dir, so
+    // anything else parked for this seat leaves early with the notice. That is
+    // bounded — those deliveries are at most REBOOT_NOTICE_FLUSH_MS old and were
+    // headed for the same queue — and the turn check below means a seat that has
+    // already woken forces nothing at all.
+    _armRebootNoticeFlush(target, parkedAt = Date.now()) {
+      if (target._rebootNoticeFlushTimer) return;   // one deadline per launch, earliest governs
+      // Carried across a re-arm, NOT restamped: the turn check below asks "did the
+      // seat wake since the PARK", and refreshing this on every round would keep
+      // moving the line the turn has to beat, so a seat that woke during round 1
+      // would look unwoken forever.
+      // Named like the retry's fire, and for the same reason: a test drives it
+      // directly instead of waiting out 25s of wall clock.
+      const fire = () => {
+        target._rebootNoticeFlushTimer = null;
+        if (target._dead) return;
+        // A turn since the park means a drain already ran and the seat processed
+        // input — forcing here would splice for nothing. Same signal the retry
+        // ladder uses, and the seeded spawn stop is excluded for the same reason.
+        const stop = target.lastMainStop;
+        if (stop && !stop.seeded && Number.isFinite(stop.ts) && stop.ts > parkedAt) {
+          log.debug('inject', `reboot notice flush for ${target.name} skipped — seat took a turn since the park`);
+          return;
+        }
+        // A FRESH draft is the one thing this deadline must never interrupt. The
+        // forced flush enqueues non-parkable, so at write time the queue emits a
+        // bare Ctrl-U clear-line into whatever is typed (inject-queue.js) — the
+        // splice INJECT_QUIET_MAXWAIT was raised to 5 min to avoid after it cut
+        // live composition mid-word twice. Shortening the deadline to 25s without
+        // this check would make that 12x more likely, trading the annoyance this
+        // ticket fixes for a worse one.
+        //
+        // Re-arm rather than flush, and deliberately WITHOUT a round bound: the
+        // 300s _armParkCap is armed independently at T+0 and remains the ultimate
+        // backstop, so unbounded re-arming degrades at worst to exactly master's
+        // behaviour while giving 25s whenever the operator is away. A bound would
+        // only re-introduce the splice this check exists to prevent — do not add one.
+        //
+        // The field case is untouched: a restored seat has no lastUserInputTs, so
+        // Date.now() - 0 is stale and the notice flushes at the first deadline.
+        if (Date.now() - (target.lastUserInputTs || 0) <= REBOOT_NOTICE_DRAFT_STALE_MS) {
+          log.debug('inject', `reboot notice flush for ${target.name} deferred — draft touched within ${REBOOT_NOTICE_DRAFT_STALE_MS / 1000}s; re-arming`);
+          this._armRebootNoticeFlush(target, parkedAt);
+          return;
+        }
+        log.info('inject', `reboot notice flush cap (${REBOOT_NOTICE_FLUSH_MS / 1000}s) for ${target.name} — forcing the parked notice out`);
+        this._flushParkedNow(target, `reboot.${process.pid}`, 'park-flush');
+      };
+      target._rebootNoticeFlushFire = fire;
+      target._rebootNoticeFlushDelay = REBOOT_NOTICE_FLUSH_MS;
+      // Stamped for the same reason as the delay above: the staleness threshold is
+      // the operator's whole protection against a spliced draft, and a test that
+      // only exercises it at 1s and 60s stays green if it drifts down to
+      // INJECT_QUIET_MS, which is exactly the value that reinstates the splice.
+      target._rebootNoticeDraftStaleMs = REBOOT_NOTICE_DRAFT_STALE_MS;
+      target._rebootNoticeFlushTimer = setTimeout(fire, REBOOT_NOTICE_FLUSH_MS);
     }
 
     // Re-offer the notice WITHIN this launch. The cross-launch retry (the notice
@@ -3852,7 +3963,7 @@ function createSessionManager(deps) {
           return;
         }
         log.warn('intent', `reboot notice for ${target.name} unconfirmed ${Math.round((Date.now() - parkedAt) / 1000)}s after park (no turn since) — re-offering, attempt ${attempt + 1}/${REBOOT_NOTICE_MAX_ATTEMPTS}`);
-        this.maybeDeliverRebootNotice();
+        this.maybeDeliverRebootNotice({ retry: true });
       };
       target._rebootNoticeRetryFire = fire;
       target._rebootNoticeRetryDelay = delay;
@@ -8810,6 +8921,17 @@ function createSessionManager(deps) {
 
     _flushParkedNow(target, tag, kind = 'park-flush') {
       if (target._dead) return { ok: true, count: 0 };
+      // Any forced flush ends the notice's deferral chain, not just the operator's
+      // (flushPending). The chain otherwise dies only on a real turn or its own
+      // flush, so a pane kept warm past the 300s park cap left it alive after the
+      // cap had already delivered the notice — and the next unrelated park would
+      // then be forced out early by a timer that no longer had anything to deliver.
+      //
+      // Ahead of the count check below on purpose: an empty mailbox means another
+      // drainer already took the notice, so the chain has nothing left to deliver
+      // either. Moving this after that early return would leave it armed in exactly
+      // the case where it is most certainly stale.
+      if (target._rebootNoticeFlushTimer) { clearTimeout(target._rebootNoticeFlushTimer); target._rebootNoticeFlushTimer = null; }
       // Claim LATE, like the boot-ready drain: drainPending DELETES the parked
       // files, and enqueue returns before the queue has written anything, so
       // claiming here meant a wiped or never-reached write destroyed the only
@@ -8862,6 +8984,8 @@ function createSessionManager(deps) {
       }
       const r = this._flushParkedNow(target, `flush.${process.pid}`, 'park-flush');
       if (target._parkCapTimer) { clearTimeout(target._parkCapTimer); target._parkCapTimer = null; }
+      // The notice's own deadline is cleared inside _flushParkedNow, for every
+      // forced flush rather than only this one.
       this._lastPendingCounts.delete(name);
       this._broadcast('pending-count', { name, count: 0 });
       return r;
