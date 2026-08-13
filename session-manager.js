@@ -75,6 +75,22 @@ const REBOOT_NOTICE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const REBOOT_NOTICE_RETRY_DELAYS = [30 * 1000, 120 * 1000];
 const REBOOT_NOTICE_MAX_ATTEMPTS = 3;
 
+// The notice's OWN deadline for a forced flush, separate from the generic park
+// cap (INJECT_QUIET_MAXWAIT, 5 min) it would otherwise inherit. A wake-up notice
+// that arrives five minutes after the wake is not a wake-up notice.
+//
+// Both fast drains bail on an open draft, so with one open the generic cap was
+// the only thing left and the notice sat for the full five minutes. This does
+// NOT relax that gate — it schedules _flushParkedNow, the same forced path the
+// operator's flush button uses, which is what rescued the notice every time.
+//
+// Derived, and both bounds are load-bearing:
+//   > INJECT_BOOT_MAXWAIT (20s) — past the queue's readiness cap a polite drain
+//     either already happened or is not going to, so this cannot pre-empt one.
+//   < REBOOT_NOTICE_RETRY_DELAYS[0] (30s) — firing after the first re-park would
+//     flush TWO copies of the notice joined into one body.
+const REBOOT_NOTICE_FLUSH_MS = 25 * 1000;
+
 // Defaults folded into the BASE of the env-scope merge, so every scope
 // (global/workspace/session/override) still beats them. They must NOT move to
 // the app-owned block applied after the merge (env-scopes.js) — those win by
@@ -2764,6 +2780,7 @@ function createSessionManager(deps) {
       clearTimeout(s._replayFallbackTimer);
       clearTimeout(s._parkedDrainFallbackTimer);
       clearTimeout(s._rebootNoticeRetryTimer);
+      clearTimeout(s._rebootNoticeFlushTimer);
       clearTimeout(s._specConfirmTimer);
       // Drops the pending debounce timer with it — a hint armed after the PTY
       // died would ride the next session under the same name. The offer
@@ -3715,7 +3732,7 @@ function createSessionManager(deps) {
         { parkable: true });
     }
 
-    maybeDeliverRebootNotice() {
+    maybeDeliverRebootNotice(opts = {}) {
       const store = getUiSettings && getUiSettings();
       if (!store) return;
       let settings;
@@ -3764,12 +3781,28 @@ function createSessionManager(deps) {
       const body = `notice: Clodex restarted and is running again (reboot requested at ${when}${reason ? `: ${reason}` : ''}).`;
 
       const target = this.sessions.get(notice.name);
+      // An armed retry means an offer for THIS notice is already in flight, so a
+      // second restore is not a second delivery opportunity — it only re-stamps an
+      // attempt. restoreSessionsForWorkspace runs once per workspace, so a
+      // two-workspace launch made two offers ~0.4s apart: the ladder burned to its
+      // ceiling before its first rung elapsed, the 30s rung was never used, and
+      // delivery fell through to the generic 5-minute cap. The budget is per notice,
+      // not per restore — suppress the duplicate rather than widen the budget.
+      //
+      // Keyed on the in-flight timer, not a launch-scoped flag: at the ceiling no
+      // timer is armed, and a later call must still reach the give-up-and-clear
+      // above. `retry` marks the ladder's own re-offer, which is not a duplicate.
+      if (!opts.retry && target && target._rebootNoticeRetryTimer) {
+        log.debug('intent', `reboot notice for ${notice.name} already in flight (retry armed) — not re-stamping an attempt`);
+        return;
+      }
       if (target && target.agentType) {
         try {
           if (target.agentType === 'claude') {
             const finalText = this._buildDeliveryText(target, 'reboot', body, 'dm');
             parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq(), null, false, this._bornFor(notice.name));
             this._armParkCap(target);
+            this._armRebootNoticeFlush(target);
             // Park is a promise to deliver, not a receipt — so this branch does NOT
             // clear(). The settings copy is the only durable one, and clearing it
             // here destroyed it while the parked file was still undelivered: a
@@ -3805,6 +3838,38 @@ function createSessionManager(deps) {
       } catch (e) {
         retainOrExpire(`park failed: ${e.message}`);
       }
+    }
+
+    // The notice's dedicated deadline: give the polite drains their window, then
+    // force the park out rather than inheriting the generic 5-minute cap.
+    //
+    // Scope note, deliberate: drainPending claims the seat's WHOLE park dir, so
+    // anything else parked for this seat leaves early with the notice. That is
+    // bounded — those deliveries are at most REBOOT_NOTICE_FLUSH_MS old and were
+    // headed for the same queue — and the turn check below means a seat that has
+    // already woken forces nothing at all.
+    _armRebootNoticeFlush(target) {
+      if (target._rebootNoticeFlushTimer) return;   // one deadline per launch, earliest governs
+      const parkedAt = Date.now();
+      // Named like the retry's fire, and for the same reason: a test drives it
+      // directly instead of waiting out 25s of wall clock.
+      const fire = () => {
+        target._rebootNoticeFlushTimer = null;
+        if (target._dead) return;
+        // A turn since the park means a drain already ran and the seat processed
+        // input — forcing here would splice for nothing. Same signal the retry
+        // ladder uses, and the seeded spawn stop is excluded for the same reason.
+        const stop = target.lastMainStop;
+        if (stop && !stop.seeded && Number.isFinite(stop.ts) && stop.ts > parkedAt) {
+          log.debug('inject', `reboot notice flush for ${target.name} skipped — seat took a turn since the park`);
+          return;
+        }
+        log.info('inject', `reboot notice flush cap (${REBOOT_NOTICE_FLUSH_MS / 1000}s) for ${target.name} — forcing the parked notice out`);
+        this._flushParkedNow(target, `reboot.${process.pid}`, 'park-flush');
+      };
+      target._rebootNoticeFlushFire = fire;
+      target._rebootNoticeFlushDelay = REBOOT_NOTICE_FLUSH_MS;
+      target._rebootNoticeFlushTimer = setTimeout(fire, REBOOT_NOTICE_FLUSH_MS);
     }
 
     // Re-offer the notice WITHIN this launch. The cross-launch retry (the notice
@@ -3852,7 +3917,7 @@ function createSessionManager(deps) {
           return;
         }
         log.warn('intent', `reboot notice for ${target.name} unconfirmed ${Math.round((Date.now() - parkedAt) / 1000)}s after park (no turn since) — re-offering, attempt ${attempt + 1}/${REBOOT_NOTICE_MAX_ATTEMPTS}`);
-        this.maybeDeliverRebootNotice();
+        this.maybeDeliverRebootNotice({ retry: true });
       };
       target._rebootNoticeRetryFire = fire;
       target._rebootNoticeRetryDelay = delay;
@@ -8862,6 +8927,9 @@ function createSessionManager(deps) {
       }
       const r = this._flushParkedNow(target, `flush.${process.pid}`, 'park-flush');
       if (target._parkCapTimer) { clearTimeout(target._parkCapTimer); target._parkCapTimer = null; }
+      // The operator's flush just drained the dir, so the notice's own deadline has
+      // nothing left to force and would only splice the NEXT park's contents early.
+      if (target._rebootNoticeFlushTimer) { clearTimeout(target._rebootNoticeFlushTimer); target._rebootNoticeFlushTimer = null; }
       this._lastPendingCounts.delete(name);
       this._broadcast('pending-count', { name, count: 0 });
       return r;
