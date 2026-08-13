@@ -27,6 +27,12 @@ blocks a release.
   reads. Those must-fixes are now delivered to the agent as follow-up rework.
   Rejecting a ticket that never closed still points you at `task respec`,
   which remains the verb for that.
+- A follow-up rework that could not be delivered no longer resets the ticket's
+  stall timer. It used to count as activity whether or not it arrived, so a
+  ticket that was going quiet for the worst reason — nobody could be told about
+  it — bought itself another full window of silence before the watchdog spoke
+  up. It is also no longer told that "no live seat holds" a ticket the lead is
+  in fact holding itself.
 - A ticket whose review comes back ACCEPT is now merged for you. The team lead
   used to be the one running `git merge` after every verdict; the loop now does
   it, runs the full suite on the result, and reverts the merge if that suite
