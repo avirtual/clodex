@@ -4589,11 +4589,29 @@ function createSessionManager(deps) {
       // loop has no way to act on a refusal here, and a second reviewer for a
       // round whose verdict has not landed is an anomaly worth spawning through
       // rather than a reason to strand the ticket.
+      //
+      // The name is unique per (ticket, ROUND), not per review. A verdict that
+      // fails to parse leaves _landVerdictOnTicket's counter unbumped while
+      // kill() still reaps the record, so a re-review of that ticket mints the
+      // same name and the same cost label a second time. Narrower than the
+      // collapse above — two reviews of ONE round, not two rounds merged — and
+      // bumping at spawn would trade it for a round number that counts spawns
+      // rather than verdicts, which is the number the loop's rework ladder reads.
       const roundTicket = reviewTicket ? this._loadTicket(team, reviewTicket) : null;
+      // _loadTicket returns null for a missing ticket AND for an unreadable
+      // board. Silent, that degrades a ticket review to the counter name and to
+      // `reviewRound = n - 1` — the exact t332 round collapse this mint exists to
+      // prevent, reintroduced with no signal. Logged so it is auditable.
+      if (reviewTicket && !roundTicket) {
+        log.warn('intent', `team-review for ticket ${reviewTicket}: ticket not readable from the board — falling back to the counter name and a seat-index round (rounds may collapse in the cost rollup)`);
+      }
       const ticketRound = roundTicket ? (Number(roundTicket.reviewRound) || 0) + 1 : 0;
       // The ticket number is required to be digits rather than name-checked: it
       // is the only part of this name not already in the counter name below, so
-      // a team name that would spell an illegal seat spells one either way.
+      // a team name that would spell an illegal seat spells one either way. The
+      // sibling mint _mintTicketSeat DOES check AGENT_NAME_RE and returns a
+      // structured refusal — it has a caller that can act on one; this path
+      // falls back to the counter name instead, so the asymmetry is deliberate.
       const ticketNum = /^t?(\d+)$/.exec(String(reviewTicket || ''));
       let name = null;
       if (ticketRound > 0 && ticketNum) {

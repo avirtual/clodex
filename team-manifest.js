@@ -742,6 +742,15 @@ function createTeamManifest({ fs, clodexHome } = {}) {
 // Only DIGIT suffixes strip. `shop-hand-wire` still resolves to nothing unless a
 // role of that name exists — a non-numeric tail names a different thing, and
 // waving it through to `hand` would make role resolution guess.
+//
+// `-rN` is the ONE lettered tail that strips, and only ahead of the numeric one:
+// a ticket's reviewer is named `<team>-reviewer-<ticket>-r<round>` so a watchdog
+// can address one review rather than whoever holds a recycled counter name. Both
+// tails must go or the key keeps the ticket number. This is a round, not a
+// second numbering scheme for collisions — the constraint at _mintTicketSeat
+// (session-manager.js) still holds, and a name this cannot decompose resolves to
+// no role at all: off the roster, no role prompt, and past the fail-CLOSED
+// _roleInUse guard.
 function matchSeatRole(team, seatName) {
   if (!team || !seatName || !team.roles) return null;
   if (seatName === team.lead) return 'lead' in team.roles ? 'lead' : null;
@@ -754,7 +763,7 @@ function matchSeatRole(team, seatName) {
   const has = (k) => Object.prototype.hasOwnProperty.call(team.roles, k);
   const suffix = seatName.slice(prefix.length);
   if (has(suffix)) return suffix;
-  const key = suffix.replace(/[-_]?\d+$/, '');
+  const key = suffix.replace(/-r\d+$/, '').replace(/[-_]?\d+$/, '');
   return key && has(key) ? key : null;
 }
 

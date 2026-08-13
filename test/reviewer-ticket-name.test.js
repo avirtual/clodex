@@ -25,6 +25,7 @@ const osReal = require('node:os');
 const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
+const { matchSeatRole, formatRoster } = require('../team-manifest');
 
 // Copied, not shared, for the reason review-verdict-ticket.test.js states: these
 // assertions are about the NAME, and a shared fixture makes either file's edits
@@ -234,6 +235,51 @@ test('a taken scoped name falls back to the counter rather than stranding the ti
     'the fallback is the counter name, and it must still be reserved');
   assert.strictEqual(rec.reviewTicket, 't1',
     'the verdict route survives the fallback — the name changed, not the ticket link');
+});
+
+// ── the name stays LEGIBLE to the team machinery ───────────────────────────
+//
+// The property item 1 actually buys is a watchdoggable seat, and a name is only
+// watchdoggable if `matchSeatRole` can decompose it: it is the sole decomposer,
+// and every consumer (the roster, the seat's own team block, the fail-CLOSED
+// _roleInUse guard) resolves through it. A name it returns null for is WORSE
+// than the recycled counter name — the seat is addressable but the roster denies
+// a reviewer is running. The first draft of this change shipped exactly that
+// name and 700 green tests missed it, because nothing here called the decomposer.
+
+const roleTeam = () => ({
+  name: 'shop', lead: 'boss',
+  roles: {
+    lead: { template: null, prompt: null, brief: null, dispatch: 'standing' },
+    hand: { template: null, prompt: null, brief: null, dispatch: 'standing' },
+    reviewer: { template: 'sonnet-review', prompt: null, brief: null, dispatch: 'standing' },
+  },
+});
+
+test('a ticket-scoped reviewer name decomposes to the reviewer role', () => {
+  const team = roleTeam();
+
+  assert.strictEqual(matchSeatRole(team, 'shop-reviewer-337-r2'), 'reviewer',
+    'a name the decomposer cannot read spawns a ROLE-LESS reviewer');
+  assert.strictEqual(matchSeatRole(team, 'shop-reviewer-1-r1'), 'reviewer');
+  assert.strictEqual(matchSeatRole(team, 'shop-reviewer-337-r10'), 'reviewer');
+
+  // The `-rN` strip must not become a general lettered-tail escape: a
+  // non-numeric tail names a different thing and resolution must not guess.
+  assert.strictEqual(matchSeatRole(team, 'shop-reviewer-337-rx'), null);
+  assert.strictEqual(matchSeatRole(team, 'shop-hand-wire'), null);
+  // And it must not resolve a name that is ONLY the round.
+  assert.strictEqual(matchSeatRole(team, 'shop-r1'), null);
+});
+
+test('a live ticket-scoped reviewer files under the reviewer row, not "no role"', () => {
+  const team = roleTeam();
+  const roster = formatRoster(team, [{ name: 'shop-reviewer-337-r1', label: 'working' }], { seat: 'boss' });
+
+  assert.match(roster, /- reviewer \([^)]*\)[^\n]* · live: shop-reviewer-337-r1 \(working\)/,
+    'the roster is the only listing a watchdog reads to find the seat');
+  assert.ok(!/also live, no role/.test(roster),
+    'a role-less bucket here means the roster is denying a reviewer is running');
 });
 
 // ── the constraint: the seed and the route are unchanged ───────────────────
