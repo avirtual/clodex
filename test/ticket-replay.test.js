@@ -595,6 +595,13 @@ test('a spilled replay carries the marker on the POINTER line, not only inside t
       + 'decides whether to open the file, and a seat that cannot tell a redelivery from a fresh assignment redoes '
       + 'finished work — the failure this marker exists to prevent, and a codex seat spends a whole turn on a Read '
       + 'to learn it');
+    // t353 r3: and the close verb rides that same line. A replayed seat is the one
+    // MOST likely to close in prose — it was respawned, so it holds no memory of the
+    // verb — and the body carrying it is in the file, behind the Read turn. The
+    // REPLAY marker alone satisfies the assertion above, so without this the verb
+    // could be dropped from the tag and every test here would still pass.
+    assert.match(got, /\[ticket t1 REPLAY\] close with \[agent:task done t1\]/,
+      'the replay pointer carries the close verb, not just the REPLAY marker');
     const spilled = fs.readFileSync(spills[0], 'utf8');
     assert.match(spilled, /BUILD THE WIDGET/, 'and the spec is what the file holds');
     assert.match(spilled, /REPLAY/, 'the in-body marker stays too — the pointer is an addition, not a move');

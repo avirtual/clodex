@@ -5166,7 +5166,11 @@ test('t353: a realistic dispatch spills, so the POINTER carries the id and the c
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   const spec = 'rework the widget so it stops double-counting on the retry path, and pin the new count';
-  assert.ok(spec.length > 83, 'ENTER: the spec must be long enough to spill, or the tag is not what the seat sees');
+  // Derived, not hardcoded: the 83-char boundary is 500 minus the head, so an edit
+  // to the close line moves it. A literal would silently stop meaning "long enough
+  // to spill" and start meaning "83".
+  assert.ok(spec.length > 500 - specBody('t1', '').length,
+    'ENTER: the spec must be long enough to spill, or the tag is not what the seat sees');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: spec });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   assert.ok(f.gated[0].body.length > 500,
@@ -6111,7 +6115,10 @@ test('task reject: lead reopens a DONE ticket, reason to the assignee, assignee 
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'done' });
-  f.gated.length = 0;
+  // Both arrays are cleared together and stay index-aligned: the same stub pushes
+  // to each on every delivery, so clearing one alone would leave the tag pin
+  // reading a row from the setup deliveries above.
+  f.gated.length = 0; f.tags.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'fix the edge case' });
   const t = f.one('t1');
   assert.strictEqual(t.state, 'open', 'reopened');
@@ -6121,6 +6128,34 @@ test('task reject: lead reopens a DONE ticket, reason to the assignee, assignee 
   // and sourcing the verb from the seeded role prompt is the stale-file dependency
   // the dispatch line exists to remove.
   assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: `[ticket t1 rejected] ${CLOSE_LINE('t1')}fix the edge case` }]);
+  // This site passed NO tag before t353. The tag rides regardless of whether the
+  // body spills — a SHORT reason like this one does not (426-byte head + 17), and
+  // the tag must not be a function of the reason's length.
+  assert.ok(f.gated[0].body.length < 500,
+    'ENTER: this reason is too short to spill — the point here is that the tag rides anyway');
+  assert.deepStrictEqual(f.tags, ['[ticket t1 rejected] close with [agent:task done t1]'],
+    'the rework pointer names the ticket and the verb');
+});
+
+// The case that actually ships. A real rejection reason is paragraphs, not a
+// phrase — the head is 426 bytes, so anything past ~74 chars of reason spills and
+// the pointer becomes the only text the seat reads. This site passed NO tag before
+// t353, so dropping it degrades the pointer to a bare "Message (N bytes) attached"
+// naming neither ticket nor verb: strictly worse than before this ticket existed.
+test('t353: a realistic lead rejection spills, so its POINTER carries the id and the verb', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  const reason = 'the retry path still double-counts when the second attempt lands inside the window, '
+    + 'and the new pin asserts the count without asserting the row it came from';
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'done' });
+  f.gated.length = 0; f.tags.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: reason });
+  assert.ok(f.gated[0].body.length > 500,
+    `ENTER: the rejection must actually spill (body was ${f.gated[0].body.length} bytes), or the tag is cosmetic`);
+  assert.deepStrictEqual(f.tags, ['[ticket t1 rejected] close with [agent:task done t1]'],
+    'a spilled rejection shows the seat nothing but this line');
 });
 
 test('task reject: rejecting a non-DONE ticket is bounced', () => {
