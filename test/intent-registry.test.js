@@ -144,12 +144,6 @@ function parseIntentLegacy(rawLine) {
 
 // --- the corpus --------------------------------------------------------------
 
-// Harvested LIVE from the three files named below rather than copied: every
-// non-interpolated string literal in them that mentions `[agent:` is a line
-// someone once thought worth asserting on. It does NOT grow with the suite —
-// a new intent test file contributes nothing until it is added here, which is
-// how a sub-verb went uncovered for an entire release cycle. The sub-verb
-// guards below, not this harvest, are what make coverage a mechanism.
 // Scan for string literals in CODE positions only. A quote-pairing regex over
 // raw bytes cannot do this: an apostrophe in prose (`caller's job`) opens a
 // literal that closes at the next quote anywhere downstream, so every literal
@@ -162,6 +156,12 @@ function parseIntentLegacy(rawLine) {
 // Regex literals are skipped for the same reason a comment is — an unbalanced
 // quote inside one (`/^\[agent:\?\] ... `\[agent:frobnicate now\]`/`) otherwise
 // desyncs everything after it.
+//
+// KNOWN LIMIT: `${}` depth is counted so a nested template literal cannot end
+// the outer one, but the count is brace-naive — a `}` inside a string inside an
+// interpolation (`${ x === '}' ? a : b }`) miscounts. No such site exists in the
+// harvested files today. It degrades to over-collecting one literal, not to
+// cross-file desync, because a template body carrying `${` is dropped downstream.
 function stringLiteralsInCode(src) {
   const out = [];
   // A `/` starts a regex only where an expression may begin. After an
@@ -198,17 +198,24 @@ function stringLiteralsInCode(src) {
     if (c === '"' || c === "'" || c === '`') {
       let j = i + 1;
       let body = '';
+      let depth = 0;
       while (j < src.length) {
         const d = src[j];
         if (d === '\\') { body += src.slice(j, j + 2); j += 2; continue; }
-        if (d === c) break;
+        if (c === '`' && d === '$' && src[j + 1] === '{') { depth++; body += '${'; j += 2; continue; }
+        if (depth > 0 && d === '}') { depth--; body += d; j++; continue; }
+        if (d === c && depth === 0) break;
         // An unterminated single/double quote is an apostrophe we mis-read;
         // abandon it rather than swallowing the rest of the file.
         if (d === '\n' && c !== '`') { j = -1; break; }
         body += d;
         j++;
       }
-      if (j > 0) { out.push(body); i = j + 1; prevSig = c; continue; }
+      // `src[j] === c` and not merely `j > 0`: the loop also exits by running
+      // off the end, and a backtick has no newline guard to stop it, so one
+      // unpartnered backtick would otherwise push the whole file tail as a
+      // literal — mass over-collection, the failure this scanner exists to end.
+      if (j > 0 && src[j] === c) { out.push(body); i = j + 1; prevSig = c; continue; }
     }
     if (!/\s/.test(c)) prevSig = c;
     i++;
@@ -216,6 +223,12 @@ function stringLiteralsInCode(src) {
   return out;
 }
 
+// Harvested LIVE from the three files named below rather than copied: every
+// non-interpolated string literal in them that mentions `[agent:` is a line
+// someone once thought worth asserting on. It does NOT grow with the suite —
+// a new intent test file contributes nothing until it is added here, which is
+// how a sub-verb went uncovered for an entire release cycle. The sub-verb
+// guards below, not this harvest, are what make coverage a mechanism.
 function harvestedLines() {
   const out = new Set();
   for (const f of ['intent-scanner.test.js', 'session-manager.test.js', 'ipc-prompt.test.js']) {
@@ -405,6 +418,65 @@ test('corpus is big enough to be evidence', () => {
   // The harvest must actually be finding things; a silent regex breakage would
   // otherwise reduce this test to the hand-written list.
   assert.ok(harvestedLines().length >= 40, 'harvest found suspiciously few lines');
+});
+
+// t348: the harvest used to pair quotes over raw bytes, so an apostrophe in a
+// prose comment desynced every literal below it. The floor above did NOT catch
+// that — the broken pairer cleared it at 1276 lines, because the mis-pairing
+// over-collected comment prose and code fragments far faster than it dropped
+// real literals. Only an exact-set assertion separates the two, which is why
+// this is deepStrictEqual and not a containment check: `includes` passes on the
+// broken pairer.
+test('t348: the literal scanner reads code positions only, exactly', () => {
+  const fixture = [
+    "const a = '[agent:who]';",
+    // The apostrophe alone does not prove the comment arm: the single-quote
+    // scan aborts at a newline, so it cannot desync past this line on its own.
+    // A BACKTICK in comment prose is the live vector — it legally spans lines,
+    // so an unskipped comment donates `[agent:ghost]` to the corpus as if a
+    // test had asserted on it. 16 such fragments were being collected for real.
+    "// column-1 enforcement is the caller's job — see `[agent:ghost]` below",
+    "const b = '[agent:context clear]';",
+    'const c = "[agent:dm bob] hi";',
+    // Same vector, block form: the backtick must not survive to the next line.
+    "/* block comment, odd ' quote, open `[agent:phantom]",
+    '   still inside the block comment */',
+    "const d = /^\\[agent:\\?\\] `\\[agent:frobnicate now\\]`/;",
+    "const e = '[agent:task done t1] report';",
+  ].join('\n');
+  assert.deepStrictEqual(stringLiteralsInCode(fixture), [
+    '[agent:who]',
+    '[agent:context clear]',
+    '[agent:dm bob] hi',
+    '[agent:task done t1] report',
+  ]);
+});
+
+test('t348: an unpartnered backtick cannot swallow the file tail', () => {
+  // The quote arms abort at a newline, but a backtick legally spans lines, so
+  // only the terminator check stops a stray one from returning everything after
+  // it as a single literal.
+  assert.deepStrictEqual(stringLiteralsInCode("const a = '[agent:who]';\nconst s = `unclosed\nmore [agent:dm bob] text\n"), ['[agent:who]']);
+});
+
+test('t348: a nested template literal does not end the outer one', () => {
+  assert.deepStrictEqual(stringLiteralsInCode('const a = `outer ${ `${inner}` } tail`;'), ['outer ${ `${inner}` } tail']);
+});
+
+// The end-to-end anchor for the whole ticket. `[agent:context clear]` sits below
+// the `caller's` apostrophe in intent-scanner.test.js and ADVERSARIAL carries
+// only the uppercase `[agent:context CLEAR]`, so this line can ONLY arrive via a
+// working harvest. It is also the exact literal a reviewer once claimed was
+// harvested when it was not — the claim this test makes permanently checkable.
+test('t348: the harvest reaches literals below a prose apostrophe', () => {
+  const harvested = harvestedLines();
+  assert.ok(harvested.includes('[agent:context clear]'),
+    'harvest lost the literals below the apostrophe in intent-scanner.test.js');
+  // The other half of the defect: byte-pairing swept in code fragments. A bare
+  // `});` is not a string literal in any of the harvested files, so its presence
+  // means the scanner is pairing quotes again rather than reading literals.
+  assert.ok(!harvested.some((l) => l.trim() === '});'),
+    'harvest is collecting code fragments, not string literals');
 });
 
 test('registry walk === legacy regex chain, field for field, over the whole corpus', () => {
