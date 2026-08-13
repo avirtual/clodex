@@ -65,7 +65,11 @@ function mkRepo() {
   git(dir, ['init', '-q', '-b', 'master']);
   git(dir, ['config', 'user.email', 't@t.t']);
   git(dir, ['config', 'user.name', 'T']);
-  fsReal.writeFileSync(pathReal.join(dir, '.gitignore'), 'node_modules/\nscripts/\nwt/\n');
+  // `.test-digest.lock/` is ignored in the real repo for the same reason it is
+  // ignored here: the suite-in-flight subjects PLANT one, and step 3 refuses a
+  // dirty tree — without this they would measure a clean-tree escalation and
+  // never reach the gate they are about.
+  fsReal.writeFileSync(pathReal.join(dir, '.gitignore'), 'node_modules/\nscripts/\nwt/\nwt2/\n.test-digest.lock/\n');
   fsReal.writeFileSync(pathReal.join(dir, 'base.txt'), 'base\n');
   git(dir, ['add', '.gitignore', 'base.txt']);
   git(dir, ['commit', '-q', '-m', 'base']);
@@ -89,7 +93,12 @@ function commitOnBranch(dir, branch, file, body) {
 // `suite` is the runner planted in the ROOT checkout, because the post-merge run
 // verifies MASTER and runs there — not in the ticket's worktree, which is where
 // the loop's own verify step runs.
-function mkMerge({ repo, ticketOver = {}, suite = 'green' } = {}) {
+// `gitOver` overrides individual gitWorktree functions. Used by ONE subject, to
+// reach an arm real git cannot be talked into from here: a merge that fails
+// before it starts needs an unresolvable branch, which step 2 rejects first. The
+// shape it returns is pinned against real git by the subject below it, so the
+// stub cannot drift into describing a merge git would never produce.
+function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAliveOver = null } = {}) {
   fsReal.mkdirSync(pathReal.join(repo.dir, 'scripts'), { recursive: true });
   fsReal.mkdirSync(pathReal.join(repo.dir, 'node_modules'), { recursive: true });
   fsReal.writeFileSync(pathReal.join(repo.dir, 'scripts', 'run-tests.js'), SUITE_STUBS[suite]);
@@ -144,9 +153,14 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green' } = {}) {
     fs: fsReal,
     path: pathReal,
     os: osReal,
+    // REAL, like gitWorktree: the suite-in-flight gate asks whether a pid that
+    // wrote a lock file is still running, and a stub answering `false` would
+    // turn every "a live suite holds the lock" subject into a merge that
+    // proceeded — the assertions would then be measuring the stub.
+    isAlive: isAliveOver || ((pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }),
     ensureDir: require('../fs-util').ensureDir,
     // REAL, deliberately — see the header. The merge WRITES to this repo.
-    gitWorktree: require('../git-worktree'),
+    gitWorktree: gitOver ? { ...require('../git-worktree'), ...gitOver } : require('../git-worktree'),
     childProcess: require('node:child_process'),
     countPending: require('../pending-store').countPending,
     isDraftOpen: require('../proxy-util').isDraftOpen,
@@ -296,6 +310,18 @@ test('the lead is told the merge landed, and that a CHANGELOG entry is owed', as
   // CHANGELOG.md is deliberately not written by the merge — it conflicts across
   // every live branch — so the debt must be STATED or the release ships without it.
   assert.match(notes[0].body, /CHANGELOG/, 'the CHANGELOG debt is stated');
+
+  // The body carries a complete, ready-to-fire `[agent:task accept t1]`, inert
+  // ONLY because prose precedes it on its line — IntentScanner's parse is
+  // ^-anchored. A reflow putting it at column 1 makes the LEAD auto-accept on
+  // receipt: seat retired, worktree destroyed, which is the one thing this step
+  // promises not to do and the one action here no revert undoes. Same pin
+  // test/session-manager.test.js keeps on the close verb.
+  assert.match(notes[0].body, /\[agent:task accept t1\]/,
+    'ENTER: the verb really is in the body, or the assertion below is vacuous');
+  for (const line of notes[0].body.split('\n')) {
+    assert.ok(!line.startsWith('[agent:'), `no line may START with an intent: ${JSON.stringify(line)}`);
+  }
 });
 
 test('the merge does NOT touch CHANGELOG.md and does NOT accept the ticket', async () => {
@@ -473,6 +499,58 @@ test('an already-merged branch is reported, not announced as a merge that happen
   assert.strictEqual(f.masterHead(), before, 'master is where it was');
 });
 
+test('a merge that fails before it STARTS reports aborted:false but not wedged', async () => {
+  // The shape the report has to distinguish, pinned against REAL git rather than
+  // asserted from the source: when the merge dies on argument handling, the tree
+  // is untouched, `merge --abort` fails too ("There is no merge to abort"), and
+  // there is no MERGE_HEAD. `aborted` and `wedged` are therefore NOT complements,
+  // which is the whole reason the caller must report off `wedged`.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const msg = pathReal.join(repo.dir, 'msg.txt');
+  fsReal.writeFileSync(msg, 'merge\n');
+  const head = git(repo.dir, ['rev-parse', 'master']);
+
+  const r = await require('../git-worktree').mergeNoFf(repo.dir, 'no-such-branch-anywhere', msg);
+
+  assert.strictEqual(r.ok, false, 'ENTER: the merge really did fail');
+  assert.strictEqual(r.aborted, false, 'and `merge --abort` failed too, having nothing to abort');
+  assert.strictEqual(r.wedged, false, 'but the checkout is NOT wedged — that is the distinction');
+  assert.ok(!/mid-merge/.test(r.error), 'so the error text must not claim a half-applied merge');
+  assert.strictEqual(git(repo.dir, ['rev-parse', 'master']), head, 'master did not move');
+  assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, '.git', 'MERGE_HEAD')), 'no MERGE_HEAD exists');
+});
+
+test('an untouched checkout is never reported to the lead as needing a human', async () => {
+  // The caller side of the same claim. `aborted:false` alone would say "the
+  // checkout is left mid-merge and needs a human" about a tree git never
+  // touched — a false alarm in the one message whose entire job is to be
+  // trusted. The stub returns exactly the shape the subject above measured off
+  // real git; step 2 rejects an unresolvable branch first, so this arm cannot be
+  // reached with a real one.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({
+    repo,
+    gitOver: {
+      mergeNoFf: async () => ({
+        ok: false, sha: null, moved: false, aborted: false, wedged: false, headBefore: null,
+        error: "merge: no-such-branch - not something we can merge",
+      }),
+    },
+  });
+  const before = f.masterHead();
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation');
+  assert.match(esc[0].body, /not something we can merge/, 'ENTER: it is the merge failure, not another step');
+  assert.ok(!/mid-merge|needs a human/.test(esc[0].body),
+    `an untouched tree must not be described as wedged: ${esc[0].body}`);
+  assert.strictEqual(f.masterHead(), before, 'and nothing moved');
+});
+
 // ── step 5: a red master is undone, never left ─────────────────────────────
 
 test('a suite that goes RED after the merge reverts the merge and escalates', async () => {
@@ -535,6 +613,262 @@ test('the post-merge suite runs in the ROOT checkout, on the merged master', asy
 
   assert.deepStrictEqual(seen, [repo.dir], 'the run is rooted at the team root, not the worktree');
   assert.deepStrictEqual(f.esc(), [], 'and it passed');
+});
+
+// ── serialization: one merge at a time, and never under a running suite ────
+
+test('a second ACCEPT cannot merge while the first ACCEPT is still running its suite', async () => {
+  // THE subject of round 2. Every other test in this file awaits a single call
+  // against a millisecond stub, so all of them stay green while two concurrent
+  // merges corrupt each other — which is exactly what happened.
+  //
+  // The window is a real suite (minutes), not a scheduler tick: A merges, blocks
+  // in its suite, and B's gates all pass because A's merge left the tree clean
+  // and on master. B's merge then rewrites the files under A's running child, so
+  // A's result describes A+B and A's revert either conflicts or leaves B merged
+  // and never verified.
+  //
+  // Measured by having the stub runner record master's HEAD AT RUN TIME: that is
+  // the tree the suite actually saw, and comparing it to the sha the run was
+  // supposed to verify is the corruption, stated directly.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'a.txt', 'work a\n');
+  git(repo.dir, ['branch', 'tl-2']);
+  commitOnBranch(repo.dir, 'tl-2', 'b.txt', 'work b\n');
+  const f = mkMerge({ repo });
+
+  // Two tickets, two branches, one root checkout.
+  const t1 = f.one('t1');
+  f.tstore.save(f.team.root, [t1, {
+    ...t1, id: 't2', taskDir: 'tasks/merge-fixture-2',
+    spec: 'the second ticket — tasks/merge-fixture-2',
+    worktree: { path: pathReal.join(repo.dir, 'wt2'), branch: 'tl-2', baseSha: repo.baseSha },
+  }]);
+
+  // A slow suite that reports what master looked like WHILE it ran. The head is
+  // read at ENTRY, before the block: that is the tree this run would actually
+  // have measured.
+  const sawDuringRun = [];
+  let release = null;
+  let announceEntry = null;
+  const held = new Promise((r) => { release = r; });
+  // Deterministic, NOT a sleep: a fixed wait for t1's merge is a race against
+  // real git, and it lost about half the time — reporting a serialization bug
+  // that was not there.
+  const firstSuiteEntered = new Promise((r) => { announceEntry = r; });
+  let first = true;
+  const real = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (team, ticket, runIn) => {
+    const mine = first; first = false;
+    sawDuringRun.push({ ticket: ticket.id, head: git(repo.dir, ['rev-parse', 'master']) });
+    if (mine) { announceEntry(); await held; }
+    return real(team, ticket, runIn);
+  };
+
+  // Fired the way _handleReviewDone fires them: NOT awaited.
+  const p1 = f.m._queueAutoMerge(f.team, 't1', LANDED, ACCEPT);
+  const p2 = f.m._queueAutoMerge(f.team, 't2', LANDED, ACCEPT);
+
+  // t1 has now merged and is inside its suite. Give t2 real time to race past it
+  // — this sleep can only produce a FALSE PASS if it is too short, never a false
+  // failure, because the state it guards is already established.
+  await firstSuiteEntered;
+  await new Promise((r) => setTimeout(r, 100));
+  const headDuringFirstSuite = git(repo.dir, ['rev-parse', 'master']);
+  const logDuringFirstSuite = f.masterLog();
+  assert.match(logDuringFirstSuite, /Merge t1:/, 'ENTER: t1 really did merge and really is mid-suite, or this measures nothing');
+  assert.ok(!/Merge t2:/.test(logDuringFirstSuite),
+    'the second merge must NOT land while the first ticket is still verifying its own');
+
+  release();
+  await Promise.all([p1, p2]);
+
+  // Both landed in the end — serialized, not dropped.
+  assert.deepStrictEqual(f.esc(), [], 'neither merge failed');
+  assert.strictEqual(f.landed().length, 2, 'and both were announced');
+  const finalLog = f.masterLog();
+  assert.match(finalLog, /Merge t1:/);
+  assert.match(finalLog, /Merge t2:/);
+
+  // The claim the whole subject exists for: each suite measured the tree its own
+  // merge produced, not a tree some other merge had moved underneath it.
+  assert.strictEqual(sawDuringRun.length, 2, 'ENTER: both suites ran');
+  assert.strictEqual(sawDuringRun[0].head, headDuringFirstSuite,
+    'the first suite verified the tree its own merge produced');
+  assert.notStrictEqual(sawDuringRun[1].head, sawDuringRun[0].head,
+    'and the second ran on a later tree — its own merge, after the first finished');
+});
+
+test('two ACCEPTs arriving as review-done are serialized too, not merely when queued directly', async () => {
+  // The wiring half of the serialization claim, and it is not redundant: the
+  // subject above calls _queueAutoMerge itself, so it stays green against a
+  // _handleReviewDone that went back to firing _autoMergeTicket unawaited —
+  // which is precisely the shape round 1 shipped. Measured through the real
+  // intent path instead.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'a.txt', 'work a\n');
+  git(repo.dir, ['branch', 'tl-2']);
+  commitOnBranch(repo.dir, 'tl-2', 'b.txt', 'work b\n');
+  const f = mkMerge({ repo });
+  const t1 = f.one('t1');
+  f.tstore.save(f.team.root, [t1, {
+    ...t1, id: 't2', taskDir: 'tasks/merge-fixture-2',
+    spec: 'the second ticket — tasks/merge-fixture-2',
+    worktree: { path: pathReal.join(repo.dir, 'wt2'), branch: 'tl-2', baseSha: repo.baseSha },
+  }]);
+
+  let release = null;
+  let announceEntry = null;
+  const held = new Promise((r) => { release = r; });
+  const firstSuiteEntered = new Promise((r) => { announceEntry = r; });
+  let first = true;
+  const real = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (team, ticket, runIn) => {
+    const mine = first; first = false;
+    if (mine) { announceEntry(); await held; }
+    return real(team, ticket, runIn);
+  };
+
+  // Two reviewers, two verdicts, delivered the way the reviewer seats deliver
+  // them — synchronously, one after the other, neither awaited.
+  const r1 = f.reviewer('team-reviewer-1', 't1');
+  const r2 = f.reviewer('team-reviewer-2', 't2');
+  f.m._handleReviewDone(r1, ACCEPT);
+  f.m._handleReviewDone(r2, ACCEPT);
+
+  await firstSuiteEntered;
+  await new Promise((r) => setTimeout(r, 100));
+  const mid = f.masterLog();
+  assert.match(mid, /Merge t1:/, 'ENTER: the first verdict really did drive a merge');
+  assert.ok(!/Merge t2:/.test(mid),
+    'the second verdict must not merge while the first is still verifying its own');
+
+  release();
+  // Drain the chain the intent handler built; there is no promise to await here,
+  // which is the whole reason the chain has to live on the manager.
+  await f.m._mergeChain;
+  assert.match(f.masterLog(), /Merge t2:/, 'and the second lands once the first is done');
+  assert.deepStrictEqual(f.esc(), [], 'neither escalated');
+});
+
+test('a merge refuses to start while a LIVE pid holds the root suite lock', async () => {
+  // The lead's exec grant runs `clodex-run-tests` in the root checkout and holds
+  // this lock for minutes. A merge landing mid-run rewrites the files under the
+  // running child, and the lead gets a spurious red with nothing naming the
+  // cause — suite-lock contention already produced one false rejection here.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const before = f.masterHead();
+  // OUR OWN pid: alive by construction, and no process is harmed by the probe.
+  fsReal.mkdirSync(pathReal.join(repo.dir, '.test-digest.lock'), { recursive: true });
+  fsReal.writeFileSync(pathReal.join(repo.dir, '.test-digest.lock', 'pid'), String(process.pid));
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation');
+  assert.match(esc[0].body, /suite-in-flight/, 'named as its own step, not folded into clean-tree');
+  assert.match(esc[0].body, new RegExp(String(process.pid)), 'and it names the pid holding the lock');
+  assert.strictEqual(f.masterHead(), before, 'nothing was merged');
+  assert.deepStrictEqual(f.landed(), [], 'and no merge was announced');
+});
+
+test('a liveness probe that throws stops the merge instead of being read as "nobody"', async () => {
+  // The gate's failure direction. A try/catch around the probe would swallow the
+  // throw into "no holder", silently disabling the one check that keeps a merge
+  // off a checkout with a suite running in it — a gate that fails open is worse
+  // than no gate, because the escalation it owes never arrives either.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  // The injected probe throws, rather than a stubbed _suiteLockHolder: the
+  // swallow this pins would live INSIDE that function, so replacing it wholesale
+  // would step over the code under test.
+  const f = mkMerge({ repo, isAliveOver: () => { throw new Error('probe exploded'); } });
+  const before = f.masterHead();
+  fsReal.mkdirSync(pathReal.join(repo.dir, '.test-digest.lock'), { recursive: true });
+  fsReal.writeFileSync(pathReal.join(repo.dir, '.test-digest.lock', 'pid'), '4242');
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation');
+  assert.match(esc[0].body, /probe exploded/, 'the throw reaches the lead');
+  assert.strictEqual(f.masterHead(), before, 'and nothing was merged');
+});
+
+test('a lock naming a DEAD pid is stale and does not block the merge forever', async () => {
+  // The runner reclaims a stale lock for exactly this reason: a killed suite
+  // never cleans up, and refusing every merge afterwards would be a wedge with
+  // no way out and no message.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  // A pid that has certainly exited: spawn one, wait for it, then use its pid.
+  const corpse = require('node:child_process').spawnSync(process.execPath, ['-e', '0']);
+  fsReal.mkdirSync(pathReal.join(repo.dir, '.test-digest.lock'), { recursive: true });
+  fsReal.writeFileSync(pathReal.join(repo.dir, '.test-digest.lock', 'pid'), String(corpse.pid));
+  assert.ok(corpse.pid > 0, 'ENTER: we have a real pid, and it has already exited');
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc(), [], 'a dead holder is not a reason to refuse');
+  assert.match(f.masterLog(), /Merge t1:/, 'and the merge went through');
+});
+
+// ── the verdict→merge gap ──────────────────────────────────────────────────
+
+test('a ticket reopened between the verdict and the merge is not merged', async () => {
+  // The gap is async (an ancestor check, then a whole suite) and the loop
+  // re-loads across every other such gap. A `task reject`/`cancel` landing in it
+  // reopens the ticket, and merging then lands work the team has just decided is
+  // not finished.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: { state: 'open' } });
+  const before = f.masterHead();
+  assert.strictEqual(f.one().state, 'open', 'ENTER: the ticket really is reopened');
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.strictEqual(f.masterHead(), before, 'nothing was merged onto master');
+  assert.deepStrictEqual(f.landed(), [], 'and nothing was announced');
+  // Silent: the lead who reopened it does not need telling that the loop noticed.
+  assert.deepStrictEqual(f.esc(), [], 'and it is not escalated either');
+});
+
+// ── an escalation the lead never receives ──────────────────────────────────
+
+test('a merge failure is stamped on the ticket, not only sent in a DM', async () => {
+  // loopStep is already deleted by the time the merge runs, so ticketInFlight is
+  // false and the stall sweep will never look at this ticket again. An
+  // escalation whose delivery fails is therefore lost outright — the lead can
+  // end up never learning the accept did not land. The board carries what the DM
+  // may not.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  git(repo.dir, ['checkout', '-q', '-b', 'somewhere-else']);
+  assert.ok(!('mergeError' in f.one()), 'ENTER: the record starts with no stamp');
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.strictEqual(f.one().mergeError, 'on-master',
+    'the failing step is on the record, so the board shows it even if the DM never arrived');
+});
+
+test('a merge that later succeeds clears an earlier failure off the board', async () => {
+  // A stale field on a board is read as current: a ticket that failed at
+  // clean-tree, was fixed and then merged must not keep showing the old failure.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: { mergeError: 'clean-tree' } });
+  assert.strictEqual(f.one().mergeError, 'clean-tree', 'ENTER: a stamp is there to clear');
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc(), [], 'ENTER: this run really did merge');
+  assert.ok(!('mergeError' in f.one()), 'the stale failure is gone');
 });
 
 // ── the wiring: only an ACCEPT, only a ticket review ───────────────────────
@@ -629,8 +963,22 @@ test('no code path in the merge can push, and none stages with -A', () => {
   const sm = fsReal.readFileSync(pathReal.join(__dirname, '..', 'session-manager.js'), 'utf8');
   for (const [name, src] of [['git-worktree.js', gw], ['session-manager.js', sm]]) {
     assert.ok(!/'push'/.test(src), `${name} must never invoke git push`);
-    assert.ok(!/'add',\s*'-A'/.test(src) && !/'-A'/.test(src), `${name} must never stage with -A`);
   }
+  // The staging ban is scoped to git-worktree.js and to argv shapes that could
+  // STAGE, not to the two-character string '-A' anywhere in a 9000-line module.
+  // A blanket scan fails on any future unrelated flag spelled -A, and the
+  // maintainer's cheapest fix for a false alarm is to weaken the pin — so the
+  // broad version protects less than the narrow one. git-worktree.js is the only
+  // module that assembles git argv at all (session-manager.js reaches git solely
+  // through it), which is what makes the narrowing lossless.
+  assert.ok(!/'git'|"git"|`git`/.test(sm),
+    'ENTER: session-manager.js never invokes git itself, or scoping the -A scan to git-worktree.js misses a site');
+  // `['add'` and not `'add',`: git-worktree.js legitimately runs
+  // `git worktree add`, which stages nothing. The ban is on argv that BEGINS
+  // with add — the staging command — and on the flags that would sweep a
+  // sibling seat's uncommitted work into a merge commit.
+  assert.ok(!/\['add'/.test(gw), 'git-worktree.js must never git-add — nothing here stages');
+  assert.ok(!/'-A'|'--all'/.test(gw), 'git-worktree.js must never stage with -A');
 });
 
 test('the revert of a merge passes a mainline, or the undo is not possible at all', () => {

@@ -5064,12 +5064,20 @@ function createSessionManager(deps) {
     // DEAD pid as absent for the same reason the runner reclaims it: a killed
     // run never cleans up, and refusing every merge forever afterwards would be
     // a wedge with no way out.
+    //
+    // The catch covers ONLY the read — an absent lock dir is the normal case and
+    // means nobody holds it. The liveness probe stays OUTSIDE it: a throw there
+    // swallowed into "nobody is running a suite" would silently disable the gate,
+    // and a gate that fails open is worse than none, since the escalation it owes
+    // never arrives either. Let it reach _autoMergeTicket's catch-all, which
+    // escalates and merges nothing.
     _suiteLockHolder(team) {
+      let pid = null;
       try {
-        const pid = Number(fs.readFileSync(path.join(team.root, '.test-digest.lock', 'pid'), 'utf8').trim());
-        if (!pid) return null;
-        return isAlive(pid) ? pid : null;
+        pid = Number(fs.readFileSync(path.join(team.root, '.test-digest.lock', 'pid'), 'utf8').trim()) || null;
       } catch { return null; }
+      if (!pid) return null;
+      return isAlive(pid) ? pid : null;
     }
 
     // What the DM could not deliver, left on the board. Re-load/mutate/save, the
