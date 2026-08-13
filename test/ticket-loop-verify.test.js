@@ -520,8 +520,56 @@ test('an unresolvable task dir escalates BEFORE the diff is computed, not after'
   assert.match(esc[0].body, /verify: task-dir/, 'the escalation names its own check, not the diff check');
   // The CAUSE and the FIX, not just the symptom: every one of the nine firings
   // read as a loop bug because the message named only "no resolvable task dir".
-  assert.match(esc[0].body, /spec has no `tasks\/…` path/, 'the evidence names the cause');
-  assert.match(esc[0].body, /task edit/, 'and the action that fixes it');
+  assert.match(esc[0].body, /names no `tasks\/…` path/, 'the evidence names the cause');
+  // The recovery must be one that EXISTS. Asserted as a real verb plus the two
+  // absences, because the first draft of this message prescribed `task edit`
+  // (no such verb in parseTask) and "re-run task done" (refused — the ticket is
+  // already done), and this pin locked that dead end in instead of catching it.
+  assert.match(esc[0].body, /\[agent:task reject t1\]/, 'the recovery names the verb that actually reopens it');
+  assert.doesNotMatch(esc[0].body, /task edit/, 'there is no `edit` verb in the task grammar');
+  assert.doesNotMatch(esc[0].body, /re-run `?task done/, 'and `done` is refused on an already-done ticket');
+  // The suggested verb is checked against the grammar itself, so a future rename
+  // of the intent breaks this test rather than silently making the advice stale.
+  const verbs = ['add', 'assign', 'start', 'done', 'reject', 'cancel', 'accept', 'park', 'list'];
+  const suggested = /\[agent:task ([a-z]+)/.exec(esc[0].body);
+  assert.ok(suggested, 'ENTER: the message must suggest a task intent at all');
+  assert.ok(verbs.includes(suggested[1]), `the suggested verb "${suggested[1]}" must be one parseTask accepts`);
+  assert.ok(intentEnabled('task'), 'ENTER: the task intent is enabled, so the advice is executable');
+});
+
+// The OTHER arm of the same check, and a regression the hoist introduced: a
+// taskDir that escapes confinement makes resolveTaskDir THROW. Before the hoist
+// that case escalated through _writeTicketDiff carrying the real reason; a
+// pre-check reading only `.ok` reports the spec-formatting sentence instead,
+// which is false for this arm, and drops the confinement error entirely.
+test('a REFUSED task dir escalates with the confinement error, not the missing-path advice', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  let diffCalls = 0;
+  const f = mkLoop({
+    repo,
+    // Reachable, not theoretical: extractTaskDir's charset admits `.` and `/`.
+    ticketOver: { taskDir: 'tasks/../../../../etc' },
+    wrapGit: (gw) => ({ ...gw, diffText: (...a) => { diffCalls += 1; return gw.diffText(...a); } }),
+  });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  assert.strictEqual(f.one().taskDir, 'tasks/../../../../etc', 'ENTER: the ticket carries an escaping path');
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'exactly one escalation');
+  assert.strictEqual(diffCalls, 0, 'this arm is caught before the diff too');
+  assert.strictEqual(f.created.length, 0, 'no reviewer is spawned');
+  assert.match(esc[0].body, /refused/, 'the confinement error rides the evidence');
+  assert.match(esc[0].body, /tasks\/\.\.\/\.\.\/\.\.\/\.\.\/etc/, 'and names the offending path');
+  // THE regression assertion: the missing-path story is false here, because the
+  // spec named a path — it was refused, not absent.
+  assert.doesNotMatch(esc[0].body, /names no `tasks\/…` path/,
+    'a refused path must not be reported as an absent one');
+  assert.doesNotMatch(esc[0].body, /task reject/,
+    'and re-filing the spec is not the recovery for a path that escapes confinement');
 });
 
 // The other half of the same fix: with the path on line 3 the loop now runs

@@ -6355,8 +6355,24 @@ function createSessionManager(deps) {
         //
         // The evidence names the CAUSE, not just the symptom: every one of those
         // firings read as a loop bug, and the fix is a line in the spec.
-        if (!this._ticketDiffDest(team, ticket).ok) {
-          fail('verify: task-dir', `ticket ${ticket.id} names no task dir to write the review diff into (taskDir: ${ticket.taskDir || 'none'}) — its spec has no \`tasks/…\` path anywhere in it. Fix: add the artifact dir to the ticket's spec (\`task edit\`), then re-run \`task done\`.`,
+        //
+        // TWO arms, kept apart because they have different causes and different
+        // recoveries. A MISSING taskDir is the spec-formatting case; a REFUSED
+        // one is `resolveTaskDir` throwing on a path that escapes confinement
+        // (`extractTaskDir`'s charset admits `.` and `/`, so `tasks/../../..`
+        // extracts fine). Collapsing them onto `.ok` and printing the
+        // spec-formatting sentence for both tells the lead something FALSE about
+        // the refused path and drops the only description of what was refused.
+        const dest = this._ticketDiffDest(team, ticket);
+        if (!dest.ok) {
+          // `task edit` and "re-run task done" are NOT the recovery and must not
+          // be suggested: there is no `edit` verb in the task grammar
+          // (intent-registry parseTask), and the ticket is already `done` here,
+          // which `_taskDone` refuses. `task reject` is what reopens it.
+          const fix = ticket.taskDir
+            ? `Fix: correct the path in the ticket's spec so it stays under the projects root.`
+            : `Its spec names no \`tasks/…\` path on any line. Fix: \`[agent:task reject ${ticket.id}] <reason>\` to reopen it, then re-file with the artifact dir in the spec.`;
+          fail('verify: task-dir', `ticket ${ticket.id} has no usable task dir to write the review diff into (taskDir: ${ticket.taskDir || 'none'}): ${dest.error}. ${fix}`,
             'checked the task dir BEFORE computing a diff; no diff computed, no reviewer spawned');
           return;
         }
