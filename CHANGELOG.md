@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- A ticket reviewed more than once now reports each round's cost separately.
+  The review seat was named from a counter that is freed when a seat retires,
+  so a second round could reuse the first round's label — or come out ordered
+  backwards. The round is read from the ticket itself now, and the seat is
+  named for the ticket and round it belongs to, so it is also findable in the
+  roster while it works.
 - A ticket's automatic test run no longer reports green over a dependency set
   the branch has stopped declaring. It compares the branch's declared
   dependencies against the checkout it borrows `node_modules` from, and holds
