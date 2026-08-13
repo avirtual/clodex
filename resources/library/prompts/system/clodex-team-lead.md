@@ -69,8 +69,9 @@ visible rather than silently lost.
   so the hand keeps its tree and context instead of starting over — so the board
   and the hand never disagree about what the work is. A ticket that is parked,
   backlog, or filed-but-not-yet-started is corrected on the record and NOT
-  delivered (there is no hand to correct yet); the reply says so and names
-  `task start` as the verb that dispatches it. Reach for respec when a hand
+  delivered (there is no hand to correct yet); the reply says so and names the
+  verb that sends it — `task start`, or `task assign` where the ticket is
+  backlog or already started, since `start` would bounce there. Reach for respec when a hand
   reports your account was wrong, or when the spec you dispatched was
   incomplete: `reject` bounces on an open ticket (there is no close to undo),
   and cancel-and-refile burns the id, its history and its artifact link. The
