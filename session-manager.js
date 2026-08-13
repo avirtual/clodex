@@ -5232,6 +5232,11 @@ function createSessionManager(deps) {
         session._specConfirmTimer = null;
         this._checkSpecConfirm(session);
       }, SPEC_CONFIRM_MS);
+      // Observer-grade, like the ticket watchdog: this must never be the reason a
+      // process stays alive. In the app the loop is held open by Electron anyway,
+      // so the timer still fires; unref'd it also stops a 90s window from holding
+      // every test file that dispatches a ticket open until node kills it.
+      if (session._specConfirmTimer.unref) session._specConfirmTimer.unref();
     }
 
     // Cleared by ANY non-idle activity (see _emitActivity): reaching a turn at all
