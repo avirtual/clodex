@@ -402,6 +402,77 @@ test('shadowIntentKey: body is trimmed and capped at 200 chars', () => {
   assert.strictEqual(key, 'a|dm|bob|' + 'z'.repeat(200));
 });
 
+// ── t313: the head must not short-circuit on `sub` ──────────────────────────
+//
+// The head was a `||` chain, so for any verb carrying a `sub` every later
+// field was unreachable and two BODYLESS siblings of the same sub hashed
+// identically: `[agent:task start t210]` and `[agent:task start t309]` both
+// became `agent|task|start|`. The intra-turn `fired` Set then swallowed the
+// second with a log.warn the emitting seat never sees — measured live on a
+// pair of `task accept`s, where one ticket's branch and worktree simply never
+// appeared.
+//
+// Both directions are pinned together on purpose. Splitting siblings apart is
+// only half the requirement: the dedupe must still COLLAPSE a genuine
+// double-paste, and a key change that made duplicates look distinct would let
+// a repeated `task cancel` execute twice — worse than the drop it fixes.
+// Every case drives the real parser, so "identical" is decided by the
+// mechanism rather than by a hand-built object pair.
+
+test('shadowIntentKey: bodyless siblings with distinct ids do NOT collide', () => {
+  const a = parseIntent('[agent:task start t210]');
+  const b = parseIntent('[agent:task start t309]');
+  assert.strictEqual(a.id, 't210', 'ENTER: the parser really put the id on the intent');
+  assert.strictEqual(b.id, 't309', 'ENTER: and on the sibling too — otherwise the keys below differ for no reason');
+  assert.notStrictEqual(shadowIntentKey('me', a), shadowIntentKey('me', b));
+
+  const c = parseIntent('[agent:task accept t330]');
+  const d = parseIntent('[agent:task accept t331]');
+  assert.notStrictEqual(shadowIntentKey('me', c), shadowIntentKey('me', d));
+});
+
+test('shadowIntentKey: a genuine duplicate still hashes identically (dedupe stays load-bearing)', () => {
+  for (const line of [
+    '[agent:task start t210]',
+    '[agent:task cancel t7] dropping this',
+    '[agent:team role-rm hand]',
+    '[agent:dm bob] hi',
+    '[agent:spawn name:a cwd:/x]',
+  ]) {
+    assert.strictEqual(
+      shadowIntentKey('me', parseIntent(line)), shadowIntentKey('me', parseIntent(line)),
+      `a double-pasted ${line} must collapse — a distinct key here means it executes twice`,
+    );
+  }
+});
+
+test('shadowIntentKey: every discriminator behind `sub` reaches the key', () => {
+  const pairs = [
+    ['[agent:team role-rm hand]', '[agent:team role-rm designer]'],       // name
+    ['[agent:task assign t1 hand]', '[agent:task assign t1 bob]'],        // who
+    ['[agent:team role-rename a b]', '[agent:team role-rename a c]'],     // to
+    ['[agent:task list open]', '[agent:task list done]'],                 // filter
+    ['[agent:spawn name:a cwd:/x]', '[agent:spawn name:a cwd:/y]'],       // cwd
+  ];
+  for (const [x, y] of pairs) {
+    const a = parseIntent(x), b = parseIntent(y);
+    assert.ok(a && b, `ENTER: both lines parse (${x} / ${y}) — a null here would compare nothing`);
+    assert.notStrictEqual(shadowIntentKey('me', a), shadowIntentKey('me', b), `${x} vs ${y}`);
+  }
+});
+
+// The key is a pure function of the parse output, so it must never read
+// anything a plugin's `parse` invented: an intent carrying a field outside the
+// allowlist (a timestamp is the dangerous shape) must key exactly as one
+// without it, or two identical emissions stop deduping.
+test('shadowIntentKey: fields outside the allowlist do not enter the key', () => {
+  const base = { type: 'thing', sub: 'go', id: 'x1', body: 'b' };
+  assert.strictEqual(
+    shadowIntentKey('me', { ...base, ts: Date.now(), nonce: Math.random() }),
+    shadowIntentKey('me', base),
+  );
+});
+
 // --- looksLikeIntent (near-miss detector for the silent-drop bounce) ---------
 // Returns the CLEANED line on a match so the bounce can quote it without ANSI
 // noise; null otherwise. parseIntent stays null for near-misses by design (it
