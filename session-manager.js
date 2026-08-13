@@ -93,6 +93,13 @@ const REBOOT_NOTICE_MAX_ATTEMPTS = 3;
 //     later round can join the ladder's re-park. Accepted, not overlooked — it
 //     costs one duplicated line, and t229 already rules a duplicate the safe
 //     direction. Do not "fix" it by bounding the re-arm; see _armRebootNoticeFlush.
+//
+// This deadline does NOT make the retry ladder redundant, and the ladder must not
+// be simplified away now that it exists. The queue's readiness gate writes anyway
+// once INJECT_BOOT_MAXWAIT elapses, so on a slow seat — t229 measured a 105s
+// transcript re-render — a flush at 25s can still evaporate into a booting CLI.
+// That is recoverable only because the ladder is there: the notice survives in
+// settings, the re-park follows, and the T+150s rung lands after the render.
 const REBOOT_NOTICE_FLUSH_MS = 25 * 1000;
 
 // How long the pane must have been untouched before the forced flush is allowed
@@ -3903,6 +3910,11 @@ function createSessionManager(deps) {
       };
       target._rebootNoticeFlushFire = fire;
       target._rebootNoticeFlushDelay = REBOOT_NOTICE_FLUSH_MS;
+      // Stamped for the same reason as the delay above: the staleness threshold is
+      // the operator's whole protection against a spliced draft, and a test that
+      // only exercises it at 1s and 60s stays green if it drifts down to
+      // INJECT_QUIET_MS, which is exactly the value that reinstates the splice.
+      target._rebootNoticeDraftStaleMs = REBOOT_NOTICE_DRAFT_STALE_MS;
       target._rebootNoticeFlushTimer = setTimeout(fire, REBOOT_NOTICE_FLUSH_MS);
     }
 
@@ -8914,6 +8926,11 @@ function createSessionManager(deps) {
       // flush, so a pane kept warm past the 300s park cap left it alive after the
       // cap had already delivered the notice — and the next unrelated park would
       // then be forced out early by a timer that no longer had anything to deliver.
+      //
+      // Ahead of the count check below on purpose: an empty mailbox means another
+      // drainer already took the notice, so the chain has nothing left to deliver
+      // either. Moving this after that early return would leave it armed in exactly
+      // the case where it is most certainly stale.
       if (target._rebootNoticeFlushTimer) { clearTimeout(target._rebootNoticeFlushTimer); target._rebootNoticeFlushTimer = null; }
       // Claim LATE, like the boot-ready drain: drainPending DELETES the parked
       // files, and enqueue returns before the queue has written anything, so

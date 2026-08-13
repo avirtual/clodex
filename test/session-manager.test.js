@@ -1861,6 +1861,14 @@ test('t360 reboot notice: the park arms a SHORT dedicated flush deadline, not th
     `must clear INJECT_BOOT_MAXWAIT (20s), got ${s._rebootNoticeFlushDelay}ms`);
   assert.ok(s._rebootNoticeFlushDelay < 30_000,
     `must fire before the first retry re-parks, got ${s._rebootNoticeFlushDelay}ms`);
+  // The staleness threshold's own bound, pinned directly rather than via the 1s /
+  // 60s cases either side of it: those stay green if it drifts down to
+  // INJECT_QUIET_MS, and that is precisely the value that reinstates the splice —
+  // that gate is tuned not to cut mid-WORD, while this one has to clear a pause
+  // mid-COMPOSITION. A drift guard on an already-correct constant, so unlike the
+  // rest of this file it passes against the unfixed code too.
+  assert.ok(s._rebootNoticeDraftStaleMs > 2_000,
+    `the draft-staleness threshold (${s._rebootNoticeDraftStaleMs}ms) must exceed INJECT_QUIET_MS (2s), or a mid-composition pause is spliceable again`);
   disarm();
 });
 
