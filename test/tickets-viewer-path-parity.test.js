@@ -153,7 +153,12 @@ test('viewer extractTaskDir agrees with core tickets-store', () => {
     '/Users/someone/.clodex/projects/proj-1234abcd/tasks/deep-work — go',
     '~/.clodex/projects/proj-1234abcd/tasks/deep-work — go',
     'no artifact path anywhere in this line',
-    'second line has it\ntasks/not-found — only the FIRST line is read',
+    // Both copies scan every line, so both must find this one — a copy left on
+    // the first-line-only rule returns null here and diverges loudly.
+    'a title\n\ntasks/on-line-three — the natural place a lead writes it',
+    // The tie-break, which the two copies must agree on: earliest LINE wins, so
+    // a whole-text scan in one copy (absolute anywhere beats bare) diverges.
+    'tasks/first-one/spec.md\nbody names /Users/x/.clodex/projects/p-1234abcd/tasks/second-one',
     'tasks/with.dots-and_underscores/nested',
     '',
     null,
@@ -161,6 +166,8 @@ test('viewer extractTaskDir agrees with core tickets-store', () => {
 
   assert.ok(specs.some((s) => typeof s === 'string' && s.startsWith('/Users/')),
     'ENTER: the specs list must reach the absolute-path case');
+  assert.ok(specs.some((s) => typeof s === 'string' && s.includes('\n\ntasks/on-line-three')),
+    'ENTER: the specs list must reach the later-line case');
 
   for (const s of specs) {
     assert.strictEqual(viewer.extractTaskDir(s), coreStore.extractTaskDir(s),
@@ -172,8 +179,14 @@ test('viewer extractTaskDir agrees with core tickets-store', () => {
     viewer.extractTaskDir('/Users/someone/.clodex/projects/proj-1234abcd/tasks/deep-work — go'),
     '/Users/someone/.clodex/projects/proj-1234abcd/tasks/deep-work',
     'the absolute form must not be truncated to its tasks/ tail');
-  assert.strictEqual(viewer.extractTaskDir('second line has it\ntasks/nope'), null,
-    'only the first line is read');
+  // Said outright as well, so a pair that drifted together back to the
+  // first-line-only rule fails here rather than agreeing on null.
+  assert.strictEqual(viewer.extractTaskDir('a title\n\ntasks/found'), 'tasks/found',
+    'every line is scanned, not just the first');
+  assert.strictEqual(
+    viewer.extractTaskDir('tasks/one\n/Users/x/.clodex/projects/p-1234abcd/tasks/two'),
+    'tasks/one',
+    'the earliest LINE wins — abs-before-rel applies within a line, not across the text');
 });
 
 test('viewer ticketStarted agrees with core tickets-store', () => {

@@ -26,6 +26,10 @@ const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { ticketInFlight } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
+// The REAL parser, used to execute the recovery an escalation prescribes rather
+// than to pattern-match it: a copy of the grammar in this file would agree with
+// itself after a rename and let the advice go stale silently.
+const { parseWithRegistry } = require('../intent-registry');
 
 const SHIPPED_REVIEWER_TEMPLATE = {
   name: 'clodex-team-reviewer',
@@ -174,6 +178,10 @@ function commitOnBranch(dir, branch, file, body) {
 function mkLoop({
   repo, ticketOver = {}, noLeadSession = false, noReviewerPrompt = false, suite = 'green',
   suiteTimeoutMs = null,
+  // Wraps the REAL git-worktree rather than replacing it, so a caller can count
+  // which git operations the loop reached without giving up the real ones the
+  // header argues for. Identity by default: an unwrapped fixture is unchanged.
+  wrapGit = (gw) => gw,
 } = {}) {
   stubSuite(repo, suite);
   const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-loop-'));
@@ -233,7 +241,7 @@ function mkLoop({
     ensureDir: require('../fs-util').ensureDir,
     // The REAL module, deliberately: see the header. A stub here would assert
     // only that the loop calls the functions it calls.
-    gitWorktree: require('../git-worktree'),
+    gitWorktree: wrapGit(require('../git-worktree')),
     // REAL child_process, like gitWorktree above and for the same reason: the
     // suite check's claim is that a runner actually executed and its exit code
     // was read, and a stubbed spawn proves only that the loop called spawn. The
@@ -482,6 +490,125 @@ test('an empty diff escalates rather than reaching a reviewer with nothing to re
   assert.match(esc[0].body, /verify: diff/);
   assert.match(esc[0].body, /is empty despite 1 commit/, 'the evidence names the contradiction it found');
   assert.strictEqual(f.created.length, 0);
+});
+
+// Nine measured firings, each one computing a diff (78625 bytes at the worst)
+// against a destination that was already unresolvable when the step began. The
+// check moved AHEAD of the diff, so the wasted git pass is not merely reported
+// — it never runs.
+test('an unresolvable task dir escalates BEFORE the diff is computed, not after', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  let diffCalls = 0;
+  const f = mkLoop({
+    repo,
+    // The ~86% case: a spec naming no artifact dir anywhere, so no taskDir.
+    ticketOver: { spec: 'a title with no artifact path\n\nbody prose', taskDir: undefined },
+    wrapGit: (gw) => ({ ...gw, diffText: (...a) => { diffCalls += 1; return gw.diffText(...a); } }),
+  });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  assert.strictEqual(f.one().taskDir, undefined, 'ENTER: the ticket really carries no task dir');
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'exactly one escalation');
+  // THE assertion of this test. A pass-through wrapper is the only way to see
+  // it: the escalation body reads almost the same either way, and every other
+  // observable (no reviewer, no diff file, one escalation) was ALREADY true
+  // when the loop computed 78kB and threw it away.
+  assert.strictEqual(diffCalls, 0, 'no diff is computed for a ticket with nowhere to put one');
+  assert.strictEqual(f.diffFile().length, 0, 'and nothing is written');
+  assert.strictEqual(f.created.length, 0, 'no reviewer is spawned');
+  assert.match(esc[0].body, /verify: task-dir/, 'the escalation names its own check, not the diff check');
+  // The CAUSE and the FIX, not just the symptom: every one of the nine firings
+  // read as a loop bug because the message named only "no resolvable task dir".
+  assert.match(esc[0].body, /names no `tasks\/…` path/, 'the evidence names the cause');
+  // The recovery must be one that EXISTS. Asserted as a real verb plus the two
+  // absences, because the first draft of this message prescribed `task edit`
+  // (no such verb in parseTask) and "re-run task done" (refused — the ticket is
+  // already done), and this pin locked that dead end in instead of catching it.
+  assert.match(esc[0].body, /\[agent:task reject t1\]/, 'the recovery names the verb that actually reopens it');
+  assert.doesNotMatch(esc[0].body, /task edit/, 'there is no `edit` verb in the task grammar');
+  assert.doesNotMatch(esc[0].body, /re-run `?task done/, 'and `done` is refused on an already-done ticket');
+  // The advice is EXECUTED, not pattern-matched. Two earlier versions of this
+  // pin failed the same way at different depths: the first asserted a literal
+  // (`task edit`) the parser refuses, the second compared the verb against a
+  // hand-copied list of the grammar — which is not a binding to it, so renaming
+  // the verb in parseTask left both the copy and the assertion agreeing while
+  // the escalation prescribed something the parser would reject. The only thing
+  // that cannot drift is running the real parser over the real message.
+  const lit = /\[agent:task[^\]]*\]/.exec(esc[0].body);
+  assert.ok(lit, 'ENTER: the message must suggest a task intent at all');
+  const parsed = parseWithRegistry(`${lit[0]} the spec names no artifact dir`);
+  assert.ok(parsed && parsed.type === 'task', 'the suggested intent must actually parse');
+  assert.strictEqual(parsed.sub, 'reject', 'and it is the verb that reopens a done ticket');
+  assert.strictEqual(parsed.id, 't1', 'carrying the ticket the escalation is about');
+  assert.ok(intentEnabled('task'), 'ENTER: the task intent is enabled, so the advice is executable');
+
+  // END-TO-END: the parsed intent is DRIVEN, so this pins that the recovery
+  // WORKS rather than that the string looks right. The ticket is still `done`
+  // here — _escalateTicket clears loopStep only — which is exactly the state
+  // _taskReject demands, and that coupling is invisible to any string check.
+  assert.strictEqual(f.one().state, 'done', 'ENTER: escalation leaves the ticket done, which is what reject needs');
+  f.m._handleTask(f.m.sessions.get('lead'), { ...parsed, body: 'the spec names no artifact dir' });
+  assert.strictEqual(f.one().state, 'open', 'following the advice actually reopens the ticket');
+});
+
+// The OTHER arm of the same check, and a regression the hoist introduced: a
+// taskDir that escapes confinement makes resolveTaskDir THROW. Before the hoist
+// that case escalated through _writeTicketDiff carrying the real reason; a
+// pre-check reading only `.ok` reports the spec-formatting sentence instead,
+// which is false for this arm, and drops the confinement error entirely.
+test('a REFUSED task dir escalates with the confinement error, not the missing-path advice', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  let diffCalls = 0;
+  const f = mkLoop({
+    repo,
+    // Reachable, not theoretical: extractTaskDir's charset admits `.` and `/`.
+    ticketOver: { taskDir: 'tasks/../../../../etc' },
+    wrapGit: (gw) => ({ ...gw, diffText: (...a) => { diffCalls += 1; return gw.diffText(...a); } }),
+  });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  assert.strictEqual(f.one().taskDir, 'tasks/../../../../etc', 'ENTER: the ticket carries an escaping path');
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'exactly one escalation');
+  assert.strictEqual(diffCalls, 0, 'this arm is caught before the diff too');
+  assert.strictEqual(f.created.length, 0, 'no reviewer is spawned');
+  assert.match(esc[0].body, /refused/, 'the confinement error rides the evidence');
+  assert.match(esc[0].body, /tasks\/\.\.\/\.\.\/\.\.\/\.\.\/etc/, 'and names the offending path');
+  // THE regression assertion: the missing-path story is false here, because the
+  // spec named a path — it was refused, not absent.
+  assert.doesNotMatch(esc[0].body, /names no `tasks\/…` path/,
+    'a refused path must not be reported as an absent one');
+  assert.doesNotMatch(esc[0].body, /task reject/,
+    'and re-filing the spec is not the recovery for a path that escapes confinement');
+});
+
+// The other half of the same fix: with the path on line 3 the loop now runs
+// clean. Without the extractTaskDir widening this is the ticket shape that
+// escalated ~86% of the time.
+test('a spec naming its task dir on a LATER line reaches the reviewer', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const spec = 't1 — the title\n\ntasks/loop-fixture — the artifact dir\n';
+  const f = mkLoop({ repo, ticketOver: { spec, taskDir: ticketsMod.extractTaskDir(spec) } });
+  assert.strictEqual(f.one().taskDir, 'tasks/loop-fixture',
+    'ENTER: extractTaskDir must have found the line-3 path, or this measures the line-1 case');
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.deepStrictEqual(f.esc(), [], 'nothing escalates');
+  assert.strictEqual(f.created.length, 1, 'the reviewer is spawned');
+  assert.strictEqual(f.diffFile().length, 1, 'and its diff was written');
 });
 
 test('escalation tears nothing down and clears the loop hold', async () => {

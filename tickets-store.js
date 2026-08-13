@@ -90,8 +90,8 @@ function ticketTitle(specText) {
   return '(untitled)';
 }
 
-// Optional artifact link: if the spec text's FIRST LINE names a task dir,
-// capture it verbatim (string only — no fs validation). Links ticket → on-disk
+// Optional artifact link: the task dir named ANYWHERE in the spec text, captured
+// verbatim (string only — no fs validation). Links ticket → on-disk
 // spec/journal. Absent → null.
 //
 // Both forms are accepted because artifacts moved out of the project repo to
@@ -102,12 +102,30 @@ function ticketTitle(specText) {
 const TASK_DIR_ABS_RE = /(?:~|\/)[A-Za-z0-9._/-]*\/tasks\/[A-Za-z0-9._/-]+/;
 const TASK_DIR_REL_RE = /tasks\/[A-Za-z0-9._/-]+/;
 
+// Scanned LINE BY LINE, earliest line wins, abs-before-rel within each line.
+// Not a single match against the whole text, and the difference is not stylistic:
+// applied globally, abs-before-rel would let an absolute path further down beat a
+// bare `tasks/foo` on line 1, CHANGING the answer for tickets that resolve today.
+// Line-by-line is a strict superset — a spec whose first line matches gets the
+// byte-identical result it got when only that line was read.
+//
+// It reads the whole spec because a path under a title (line 3, the natural
+// place) was invisible: measured at ~86% of a live seven-ticket queue, and the
+// loop then computed a diff up to 78kB before finding it had nowhere to write it.
+//
+// The first line's OTHER two consumers are unaffected by construction, and that
+// is what makes this widening safe: `ticketTitle` reads line 1 itself, and
+// `branchSlug` is only ever called on that title — so nothing downstream of the
+// slug can see a path this function found on line 3.
 function extractTaskDir(specText) {
-  const firstLine = String(specText == null ? '' : specText).split('\n')[0] || '';
-  const abs = firstLine.match(TASK_DIR_ABS_RE);
-  if (abs) return abs[0];
-  const m = firstLine.match(TASK_DIR_REL_RE);
-  return m ? m[0] : null;
+  const lines = String(specText == null ? '' : specText).split('\n');
+  for (const line of lines) {
+    const abs = line.match(TASK_DIR_ABS_RE);
+    if (abs) return abs[0];
+    const m = line.match(TASK_DIR_REL_RE);
+    if (m) return m[0];
+  }
+  return null;
 }
 
 // The branch-name half of the ticket's first line, which serves three consumers

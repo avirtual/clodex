@@ -114,11 +114,9 @@ test('ticketTitle: first non-empty line, trimmed and capped; empty → (untitled
   assert.ok(ticketTitle(long).length <= 80 && ticketTitle(long).endsWith('…'));
 });
 
-test('extractTaskDir: captures a tasks/<dir> path on the FIRST line only', () => {
+test('extractTaskDir: captures a tasks/<dir> path on ANY line of the spec', () => {
   assert.strictEqual(extractTaskDir('do tasks/25-team-tickets/spec.md now'), 'tasks/25-team-tickets/spec.md');
   assert.strictEqual(extractTaskDir('no path here'), null);
-  // Only the first line is scanned.
-  assert.strictEqual(extractTaskDir('first line\nsee tasks/9-foo'), null);
   assert.strictEqual(extractTaskDir(''), null);
   // Artifacts moved out of the repo, so the absolute form must survive WHOLE.
   // `tasks/` occurs inside it, so a bare-pattern-first implementation would
@@ -127,6 +125,70 @@ test('extractTaskDir: captures a tasks/<dir> path on the FIRST line only', () =>
   assert.strictEqual(extractTaskDir(`sweep ${abs} now`), abs);
   assert.strictEqual(extractTaskDir('~/.clodex/projects/api-1a2b3c4d/tasks/foo'),
     '~/.clodex/projects/api-1a2b3c4d/tasks/foo');
+});
+
+// THE defect this widening fixes. Measured over the live board at 03:30: six of
+// seven queued tickets had taskDir=None, all of them written this way — a title,
+// a blank, then the path. The loop reached its verify step, computed a diff (up
+// to 78625 bytes) and had nowhere to write it.
+test('extractTaskDir: a path under a title — line 3, the natural place — resolves', () => {
+  const spec = [
+    't320 — the loop hard-fails a finished ticket',
+    '',
+    '/Users/x/.clodex/projects/api-1a2b3c4d/tasks/taskdir-line1 — the artifact',
+    '',
+    'Body prose.',
+  ].join('\n');
+  assert.strictEqual(extractTaskDir(spec),
+    '/Users/x/.clodex/projects/api-1a2b3c4d/tasks/taskdir-line1');
+  // The bare form, equally far down.
+  assert.strictEqual(extractTaskDir('a title\n\nsee tasks/9-foo for the spec'), 'tasks/9-foo');
+  // A spec whose FIRST line is blank used to extract null even with the path on
+  // line 2: the title comes from the first NON-EMPTY line but the scan read
+  // lines[0] literally, so the two disagreed about where the ticket starts.
+  assert.strictEqual(extractTaskDir('\ntasks/9-foo — go'), 'tasks/9-foo');
+});
+
+// The tie-break, stated so a rewrite cannot quietly pick the other one. It is
+// EARLIEST LINE first — not "the absolute form anywhere beats a bare one". A
+// whole-text scan applying abs-before-rel globally would return the line-4 path
+// below, which changes the answer for a ticket that resolves correctly TODAY.
+test('extractTaskDir: the earliest line wins, and abs beats rel only WITHIN a line', () => {
+  const twoLines = [
+    'tasks/first-one/spec.md — the title',
+    'body mentions /Users/x/.clodex/projects/api-1a2b3c4d/tasks/second-one too',
+  ].join('\n');
+  assert.strictEqual(extractTaskDir(twoLines), 'tasks/first-one/spec.md',
+    'the line-1 path wins even though the later one is absolute');
+  // Within ONE line the absolute form still wins wherever it sits, because
+  // `tasks/` occurs inside it: this is the anti-truncation ordering, unchanged.
+  assert.strictEqual(
+    extractTaskDir('tasks/bare and /Users/x/.clodex/projects/api-1a2b3c4d/tasks/abs'),
+    '/Users/x/.clodex/projects/api-1a2b3c4d/tasks/abs');
+});
+
+// The regression this widening could plausibly cause, and the reason the fix is
+// line-by-line inside extractTaskDir rather than anywhere near the title.
+// branchSlug is called ONLY on ticket.title (session-manager `_mintTicketSeat`),
+// and the title is the first NON-EMPTY line — so a path found on line 3 must be
+// invisible to the slug. If it ever is not, a hand's worktree, its branch and
+// the lead's merge target stop agreeing, silently.
+test('branchSlug: a tasks/ path on a LATER line does not reach the branch name', () => {
+  const spec = [
+    't321 — trim the output buffer',
+    '',
+    'Artifact: /Users/x/.clodex/projects/api-1a2b3c4d/tasks/trim-buffer/SPEC.md',
+    'Also see tasks/older-work/notes.md for the earlier attempt.',
+  ].join('\n');
+  // ENTER: the fixture must actually be one where the widening changed the
+  // extraction — otherwise this pins the slug over a spec the fix never touched.
+  assert.strictEqual(extractTaskDir(spec),
+    '/Users/x/.clodex/projects/api-1a2b3c4d/tasks/trim-buffer/SPEC.md',
+    'ENTER: the later-line path must be the one extractTaskDir now finds');
+  assert.strictEqual(ticketTitle(spec), 't321 — trim the output buffer',
+    'ENTER: the title must still be line 1');
+  assert.strictEqual(branchSlug(ticketTitle(spec)), 'trim-the-output-buffer',
+    'the branch is slugged from the title alone — no path, no line-3 words');
 });
 
 // The three branch names below were MINTED, not invented: each is what the

@@ -108,13 +108,18 @@ function ticketTitle(specText) {
 }
 
 // The absolute form is matched FIRST because `tasks/` appears inside it — bare
-// first would truncate an absolute path to its tail.
+// first would truncate an absolute path to its tail. Scanned line by line,
+// earliest line wins: a single match over the whole text would apply
+// abs-before-rel globally and change the answer for specs that resolve today.
 function extractTaskDir(specText) {
-  const firstLine = String(specText == null ? '' : specText).split('\n')[0] || '';
-  const abs = firstLine.match(/(?:~|\/)[A-Za-z0-9._/-]*\/tasks\/[A-Za-z0-9._/-]+/);
-  if (abs) return abs[0];
-  const m = firstLine.match(/tasks\/[A-Za-z0-9._/-]+/);
-  return m ? m[0] : null;
+  const lines = String(specText == null ? '' : specText).split('\n');
+  for (const line of lines) {
+    const abs = line.match(/(?:~|\/)[A-Za-z0-9._/-]*\/tasks\/[A-Za-z0-9._/-]+/);
+    if (abs) return abs[0];
+    const m = line.match(/tasks\/[A-Za-z0-9._/-]+/);
+    if (m) return m[0];
+  }
+  return null;
 }
 
 // Core's tickets-store.ticketStarted, copied for the same §4 reason and read by
