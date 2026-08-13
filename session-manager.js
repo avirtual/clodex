@@ -5275,12 +5275,18 @@ function createSessionManager(deps) {
     _armSpecConfirmTimer(session) {
       session._specConfirmTimer = setTimeout(() => {
         session._specConfirmTimer = null;
-        this._checkSpecConfirm(session);
+        // The redelivery path reaches _buildDeliveryText -> spillToFile, which is
+        // real fs work and can throw. This fires 90s after EVERY dispatch in the
+        // app's main process, where a throw out of a setTimeout callback is not a
+        // failed redelivery but an unhandled exception in the host.
+        try { this._checkSpecConfirm(session); }
+        catch (e) { log.error('intent', `spec confirmation check failed for ${session.name}: ${e.message}`); }
       }, SPEC_CONFIRM_MS);
-      // Observer-grade, like the ticket watchdog: this must never be the reason a
-      // process stays alive. In the app the loop is held open by Electron anyway,
-      // so the timer still fires; unref'd it also stops a 90s window from holding
-      // every test file that dispatches a ticket open until node kills it.
+      // Observer-grade, like the ticket watchdog, in BOTH senses: it must never be
+      // the reason a process stays alive, and never the reason one dies. In the app
+      // the loop is held open by Electron anyway, so the timer still fires; unref'd
+      // it also stops a 90s window from holding every test file that dispatches a
+      // ticket open until node kills it.
       if (session._specConfirmTimer.unref) session._specConfirmTimer.unref();
     }
 

@@ -1036,6 +1036,13 @@ test('t349: a spec PARKED to a busy seat is not watched — consuming it produce
     assert.strictEqual(app.seen('team-hand'), before,
       'ENTER: the spec must have PARKED rather than been written — if it was injected instead, this fixture '
       + 'never reaches the state it names and the assertion below passes for the wrong reason');
+    // Same trap the held-park test closes: a park that FAILS is caught by
+    // _maybeParkDelivery, and _injectText then queues the text behind the busy hold
+    // instead of writing it — so nothing reaches the PTY, nothing arms, and the
+    // assertions here pass with the spec in neither the park store nor the terminal.
+    assert.strictEqual(app.parked('team-hand', /BUILD THE WIDGET/), 1,
+      'ENTER: the spec must actually BE parked — "nothing was written" is equally true of a park that failed '
+      + 'and left the text queued behind the busy hold, which is not the state this test names');
     assert.ok(!s._specUnconfirmed,
       'a parked spec must NOT arm the latch: the out-of-process hook drains it mid-loop and a seat already '
       + '"thinking" emits no fresh activity edge for it (ActivityTracker._set dedupes on unchanged state), so '
@@ -1141,8 +1148,6 @@ test('t349: a stranded ticket that resolves to no live seat escalates instead of
   } finally { app.stop(); }
 });
 
-after(() => { setImmediate(() => process.exit(0)); });
-
 // The OTHER park, and the one the round-1 fix missed. A dialog-blocked seat is the
 // single hold `urgent` cannot override (shouldHoldDm returns noUrgent for
 // attention==='permission'), so a dispatch to one lands in _parkHeldDelivery rather
@@ -1221,3 +1226,48 @@ test('t349: a seat that went busy while the unit waited in the gates does not ar
       + 'and then redeliver into a working seat');
   } finally { app.stop(); }
 });
+
+// The timer fires 90s after EVERY dispatch, in the app's main process. The
+// redelivery path underneath it does real fs work (_buildDeliveryText -> spillToFile),
+// so "the check threw" must degrade to a logged error rather than an unhandled
+// exception in the host. This is a mutant on the CATCH, not on the happy path.
+test('t349: a throw inside the confirmation check is contained, not raised into the host', async () => {
+  const world = mkWorld();
+  const errs = [];
+  const app = boot(world, {
+    deps: {
+      specConfirmMs: 20,
+      log: { info: () => {}, warn: () => {}, error: (_t, m) => errs.push(String(m)), debug: () => {} },
+    },
+  });
+  try {
+    const lead = await app.spawn('lead');
+    const s = await app.spawn('team-hand');
+    await replayPassed(app, 'team-hand');
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+    await settled(app, 'team-hand');
+    assert.ok(s._specUnconfirmed,
+      'ENTER: the latch must be armed, or the timer below never runs and this test proves nothing');
+
+    // The throw has to come from INSIDE the timer callback, which is the only place
+    // the try/catch under test can protect. Replacing the method reaches it because
+    // the callback dispatches through `this`.
+    app.m._checkSpecConfirm = () => { throw new Error('BOOM: fs failed under the redelivery'); };
+    // Re-arm so the patched method is what the next firing calls.
+    app.m._armSpecConfirmTimer(s);
+
+    // An unhandled throw out of a setTimeout callback would reach the process, and
+    // node's default is to terminate the run — so surviving this await IS the
+    // assertion. Uncaught, the file dies here instead of reporting a failure.
+    await new Promise((r) => setTimeout(r, 120));
+
+    assert.ok(errs.some((m) => /BOOM/.test(m)),
+      'the throw must be CAUGHT AND LOGGED: an observer-grade timer that dies silently is indistinguishable '
+      + 'from one that never fired, and this one runs after every dispatch in the app');
+    assert.ok(errs.some((m) => /team-hand/.test(m)),
+      'and the log must name the seat, or an operator reading it cannot tell which dispatch went unconfirmed');
+  } finally { app.stop(); }
+});
+
+after(() => { setImmediate(() => process.exit(0)); });
