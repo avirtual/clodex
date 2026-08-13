@@ -147,8 +147,10 @@ function parseIntentLegacy(rawLine) {
 // Scan for string literals in CODE positions only. A quote-pairing regex over
 // raw bytes cannot do this: a quote in prose opens a literal that closes at the
 // next quote anywhere downstream, so every literal after it pairs on shifted
-// boundaries. A BACKTICK in a comment is the vector with reach — single quotes
-// abort at the newline, so `caller's job` cannot desync past its own line.
+// boundaries. A BACKTICK in a comment is the vector with reach: in THIS scanner
+// single quotes abort at the newline, so `caller's job` cannot desync past its
+// own line; under the old byte pairer it could, which is what dropped
+// `[agent:context clear]`.
 //
 // The mis-pairing was silent in BOTH directions, and over-collection was the
 // larger half. (t348 measured 106 real literals dropped and 1100 comment/code
@@ -440,7 +442,8 @@ test('t348: the literal scanner reads code positions only, exactly', () => {
     // scan aborts at a newline, so it cannot desync past this line on its own.
     // A BACKTICK in comment prose is the live vector — it legally spans lines,
     // so an unskipped comment donates `[agent:ghost]` to the corpus as if a
-    // test had asserted on it. 16 such fragments were being collected for real.
+    // test had asserted on it. (t348 measured 16 such fragments against a
+    // one-off oracle — historical, not checkable here; this fixture is.)
     "// column-1 enforcement is the caller's job — see `[agent:ghost]` below",
     "const b = '[agent:context clear]';",
     'const c = "[agent:dm bob] hi";',
