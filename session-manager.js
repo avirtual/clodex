@@ -5346,10 +5346,16 @@ function createSessionManager(deps) {
           // exists and going silent when it does not leaves the lead — the only
           // reader on either arm here — unable to tell "preservation failed"
           // from "nobody thought to look".
-          const evidence = !suite.ran ? ''
+          // The "do not re-run" advice holds only where the revert SUCCEEDED.
+          // On the two arms that leave the merge standing, re-running really
+          // does reproduce, and those arms are exactly where the lead is acting
+          // by hand — so the clause is built per-arm rather than once.
+          const keptWhere = (reverted) => (!suite.ran ? ''
             : (kept.ok
-              ? ` Full output (assertion text, diff and stack) preserved at ${kept.path} — read it instead of re-running, which would measure the reverted tree.`
-              : ` The failing output could not be preserved (${kept.error}).`);
+              ? (reverted
+                ? ` Full output (assertion text, diff and stack) preserved at ${kept.path} — read it instead of re-running, which would measure the reverted tree.`
+                : ` Full output (assertion text, diff and stack) preserved at ${kept.path} — read it; ${MERGE_TARGET_BRANCH} still carries the merge.`)
+              : ` The failing output could not be preserved (${kept.error}).`));
 
           // The revert is a write to the shared root checkout exactly as the
           // merge is, so it needs the same gate — and it needs it MORE, because
@@ -5385,14 +5391,14 @@ function createSessionManager(deps) {
               ? `is RED: the merge ${merged.sha} IS on it and the suite FAILED`
               : `carries an UNVERIFIED merge ${merged.sha}: its suite never ran`;
             fail('revert-blocked', `${why}\n\n${MERGE_TARGET_BRANCH} ${state}, and it was left that way deliberately: a test suite is running in ${team.root} (pid ${blocker}), so reverting now would rewrite the files under it.`,
-              `merged ${branch} as ${merged.sha} and did NOT revert. Undo it yourself once that suite finishes: \`git -C ${team.root} revert -m 1 ${merged.sha}\`.${evidence}`);
+              `merged ${branch} as ${merged.sha} and did NOT revert. Undo it yourself once that suite finishes: \`git -C ${team.root} revert -m 1 ${merged.sha}\`.${keptWhere(false)}`);
             return;
           }
           const rev = await gitWorktree.revertCommit(team.root, merged.sha)
             .catch((e) => ({ ok: false, error: e.message }));
           fail('suite', why, (rev.ok
             ? `merged ${branch} as ${merged.sha}, ran the suite in ${team.root}, then REVERTED the merge (${rev.sha}) — ${MERGE_TARGET_BRANCH} is green again and the branch is untouched`
-            : `merged ${branch} as ${merged.sha} and the revert ALSO failed (${rev.error}) — ${MERGE_TARGET_BRANCH} is left carrying the merge and needs a human`) + evidence);
+            : `merged ${branch} as ${merged.sha} and the revert ALSO failed (${rev.error}) — ${MERGE_TARGET_BRANCH} is left carrying the merge and needs a human`) + keptWhere(rev.ok));
           return;
         }
 

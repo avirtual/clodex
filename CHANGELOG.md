@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- The same failing output is now kept when a merge is undone. Clodex merges
+  a reviewed branch, runs the suite again, and reverts the merge if that
+  run fails — but the output of the run that justified the revert was
+  discarded, which is the one report you cannot get back by re-running,
+  since the tree has already been reverted underneath you. It is now saved
+  and named in the escalation, and the message tells you to re-run instead
+  only on the paths where the merge was actually undone. A save that fails
+  no longer leaves a half-written file behind looking like the real thing.
 - A reviewer's "no must-fixes" is now understood however it is emphasised.
   Clodex merges a reviewed branch automatically when the verdict accepts it
   and lists no must-fixes — but it read the list literally, so a reviewer
