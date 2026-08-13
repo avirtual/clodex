@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- The guard that checks every intent in the code is exercised by a test now
+  reads the code as code. It had been pairing quote characters over raw bytes,
+  so a backtick inside a comment opened a "string" that ran on for lines —
+  dropping real intents from the set it checks while collecting a thousand
+  fragments that were never intents at all. Comments, regular expressions and
+  nested template interpolation are now understood, and the count the guard
+  reports is one you can trust.
 - That same guard now also refuses to read a predicate it does not understand,
   rather than quietly reporting on the part it could parse.
 - The guard that keeps the intent parser and its test corpus in step now also
