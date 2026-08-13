@@ -26,6 +26,10 @@ const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { ticketInFlight } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
+// The REAL parser, used to execute the recovery an escalation prescribes rather
+// than to pattern-match it: a copy of the grammar in this file would agree with
+// itself after a rename and let the advice go stale silently.
+const { parseWithRegistry } = require('../intent-registry');
 
 const SHIPPED_REVIEWER_TEMPLATE = {
   name: 'clodex-team-reviewer',
@@ -528,13 +532,28 @@ test('an unresolvable task dir escalates BEFORE the diff is computed, not after'
   assert.match(esc[0].body, /\[agent:task reject t1\]/, 'the recovery names the verb that actually reopens it');
   assert.doesNotMatch(esc[0].body, /task edit/, 'there is no `edit` verb in the task grammar');
   assert.doesNotMatch(esc[0].body, /re-run `?task done/, 'and `done` is refused on an already-done ticket');
-  // The suggested verb is checked against the grammar itself, so a future rename
-  // of the intent breaks this test rather than silently making the advice stale.
-  const verbs = ['add', 'assign', 'start', 'done', 'reject', 'cancel', 'accept', 'park', 'list'];
-  const suggested = /\[agent:task ([a-z]+)/.exec(esc[0].body);
-  assert.ok(suggested, 'ENTER: the message must suggest a task intent at all');
-  assert.ok(verbs.includes(suggested[1]), `the suggested verb "${suggested[1]}" must be one parseTask accepts`);
+  // The advice is EXECUTED, not pattern-matched. Two earlier versions of this
+  // pin failed the same way at different depths: the first asserted a literal
+  // (`task edit`) the parser refuses, the second compared the verb against a
+  // hand-copied list of the grammar — which is not a binding to it, so renaming
+  // the verb in parseTask left both the copy and the assertion agreeing while
+  // the escalation prescribed something the parser would reject. The only thing
+  // that cannot drift is running the real parser over the real message.
+  const lit = /\[agent:task[^\]]*\]/.exec(esc[0].body);
+  assert.ok(lit, 'ENTER: the message must suggest a task intent at all');
+  const parsed = parseWithRegistry(`${lit[0]} the spec names no artifact dir`);
+  assert.ok(parsed && parsed.type === 'task', 'the suggested intent must actually parse');
+  assert.strictEqual(parsed.sub, 'reject', 'and it is the verb that reopens a done ticket');
+  assert.strictEqual(parsed.id, 't1', 'carrying the ticket the escalation is about');
   assert.ok(intentEnabled('task'), 'ENTER: the task intent is enabled, so the advice is executable');
+
+  // END-TO-END: the parsed intent is DRIVEN, so this pins that the recovery
+  // WORKS rather than that the string looks right. The ticket is still `done`
+  // here — _escalateTicket clears loopStep only — which is exactly the state
+  // _taskReject demands, and that coupling is invisible to any string check.
+  assert.strictEqual(f.one().state, 'done', 'ENTER: escalation leaves the ticket done, which is what reject needs');
+  f.m._handleTask(f.m.sessions.get('lead'), { ...parsed, body: 'the spec names no artifact dir' });
+  assert.strictEqual(f.one().state, 'open', 'following the advice actually reopens the ticket');
 });
 
 // The OTHER arm of the same check, and a regression the hoist introduced: a
