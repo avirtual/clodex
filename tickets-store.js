@@ -266,9 +266,17 @@ function extractMustFix(verdictText) {
 // notification exists to stop, so the placeholder is re-tested here, wrapped.
 const MUSTFIX_PLACEHOLDER_RE = /^[\s(\[]*(?:none|n\/a|nothing|-+|—)[\s.)\]]*$/i;
 
+// The first-line form drops the dash arms. A body whose whole content is `---`
+// means no must-fixes, but a body OPENING with `---` is a markdown rule above a
+// real list — inheriting the dash arms there would count `---\n- item\n- item`
+// as zero and silence the gate over genuine must-fixes, which is the failure
+// this counter exists to prevent, arriving through its own fix.
+const MUSTFIX_PLACEHOLDER_WORD_RE = /^[\s(\[]*(?:none|n\/a|nothing)[\s.)\]]*$/i;
+
 function countMustFix(mustFixText) {
   if (mustFixText == null) return 0;
   const text = String(mustFixText);
+  const lines = text.split('\n');
   // The placeholder is matched against the section's FIRST line, not the whole
   // blob: a reviewer who writes `MUST-FIX: (none)` and then explains himself
   // underneath leaves prose that no section header closes, so `extractMustFix`
@@ -280,9 +288,10 @@ function countMustFix(mustFixText) {
   // Matching only the first line is what keeps this from being a widening: a
   // real list still counts, so an ACCEPT that genuinely lists must-fixes is
   // still the contradiction the merge gate refuses.
-  const firstLine = text.split('\n').find((l) => l.trim()) || '';
-  if (MUSTFIX_PLACEHOLDER_RE.test(firstLine.trim())) return 0;
-  const lines = text.split('\n');
+  const nonEmpty = lines.filter((l) => l.trim());
+  const firstLine = nonEmpty.length ? nonEmpty[0].trim() : '';
+  const re = nonEmpty.length > 1 ? MUSTFIX_PLACEHOLDER_WORD_RE : MUSTFIX_PLACEHOLDER_RE;
+  if (re.test(firstLine)) return 0;
   let n = 0;
   for (const line of lines) if (/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S/.test(line)) n++;
   // The floor: a bare unmarked item is one must-fix, not zero. Only reached

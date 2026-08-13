@@ -848,16 +848,16 @@ test('countMustFix: a placeholder that OPENS the section is zero however much pr
   assert.ok(/^\s*- \*\*MF1/m.test(String(body)), 'ENTER: the explanatory bullets are in the body');
   assert.ok(String(body).split('\n').length > 5, 'ENTER: the body is the multi-line blob, not a bare placeholder');
 
-  // Against the unfixed countMustFix this is 3 (the prose bullets), and the
-  // live file it was lifted from produced 6 — a clean ACCEPT refused as a
-  // contradiction.
+  // Against the unfixed countMustFix this is 5 — MF1, MF2, and the three
+  // new-defect-hunt bullets — and the full live file it was lifted from
+  // produced 6. A clean ACCEPT, refused as a contradiction.
   assert.strictEqual(countMustFix(body), 0,
     'a section opening with (none) declares no must-fixes, whatever explains it');
 });
 
 test('countMustFix: the placeholder is the whole first line, never a prefix of it', () => {
   const cases = [
-    // The bug: placeholder first, prose after. Zero.
+    // The bug: placeholder first, prose after. Unfixed these counted 2 and 1.
     ['(none)\n\n  Why the items are closed:\n\n  - **MF1** — traced.\n  - **MF2** — traced.', 0],
     ['none\nthe previous round is genuinely closed', 0],
     // Bare placeholder still zero — guarded so the fix cannot regress it.
@@ -876,6 +876,31 @@ test('countMustFix: the placeholder is the whole first line, never a prefix of i
     ['\n\n(none)\n\n  - explanatory bullet', 0],
     // Prose FIRST, placeholder later, is not a placeholder section.
     ['- the guard is inverted\n\n(none)', 1],
+  ];
+  for (const [input, expected] of cases) {
+    assert.strictEqual(countMustFix(input), expected,
+      `countMustFix(${JSON.stringify(input)}) must be ${expected}`);
+  }
+});
+
+// t367 r2 MF1: the first-line rule must NOT inherit the dash arms. A body whose
+// whole content is `---` is no-must-fixes (the base already read it that way),
+// but a body OPENING with `---` is a markdown rule above a real list. Counting
+// those as zero would silence the gate over genuine must-fixes — the very
+// failure this counter exists to prevent, reintroduced by its own fix.
+test('countMustFix: a leading markdown RULE does not swallow the list under it', () => {
+  const cases = [
+    // Red against r1: each of these counted 0 with the dash arms inherited.
+    ['---\n- the guard is inverted\n- the sweep drops the row', 2],
+    ['-\n- the guard is inverted', 1],
+    ['—\n- the guard is inverted', 1],
+    ['***\n- the guard is inverted', 1],
+    ['---\nthe guard is inverted', 1],
+    // The whole-blob dash form keeps meaning none, exactly as on master.
+    ['---', 0], ['-', 0], ['—', 0], ['  ---  ', 0],
+    // And a dash rule under a WORD placeholder is still none — the word form
+    // is what the multi-line branch matches on.
+    ['(none)\n\n---\n\n  explanatory prose', 0],
   ];
   for (const [input, expected] of cases) {
     assert.strictEqual(countMustFix(input), expected,
