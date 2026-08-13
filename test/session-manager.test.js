@@ -7153,6 +7153,50 @@ test('t328 watchdog: a legacy UNASSIGNED record is exempt though it reads as sta
   assert.strictEqual(f.one('t1').nudgedAt, null);
 });
 
+// --- t331: the exemption is PER-TICKET, not a sweep abort -------------------
+
+test('t331 watchdog: an exempt ticket skips itself, not the rest of the board', async () => {
+  // The exemption is a `continue`. Every other fixture that reaches it has a
+  // SINGLE-ELEMENT board, where `continue` and `break` are indistinguishable —
+  // so mutating it to `break` killed nothing in the suite. This is the pin.
+  //
+  // ORDER IS LOAD-BEARING AND MUST NOT BE TIDIED: the exempt ticket has to come
+  // FIRST in array order. Put it second and a `break` still lets t1 alarm, the
+  // test passes, and the pin is itself vacuous — which is the exact defect
+  // class it was written to close. Both tickets are stale past the window, so
+  // the exemption is the only thing that can skip t1; a fresh t1 would exit at
+  // the age gate instead and pin a different `continue`.
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead'); f.seat('team-hand');
+  // t1: assigned, never started — exempt. Filed first, so the sweep meets it first.
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'backlog, never dispatched' });
+  // t2: started and then quiet — the case the watchdog exists for.
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
+  const arr = f.load();
+  arr.forEach((t) => { t.lastActivityAt = Date.now() - stallMs * 2; });
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+
+  const board = f.load();
+  assert.deepStrictEqual(board.map((t) => t.id), ['t1', 't2'],
+    'ENTER: the exempt ticket is FIRST on the board, or a `break` would still let the stalled one alarm');
+  const [t1, t2] = board;
+  assert.strictEqual(t1.startedAt, null, 'ENTER: t1 is unstarted, so it reaches the exemption');
+  assert.strictEqual(t1.assignee, 'hand', 'ENTER: and assigned, so the unassigned term is not what skips it');
+  assert.ok(t2.startedAt != null, 'ENTER: t2 is started, so nothing exempts it');
+  assert.ok(Date.now() - t2.lastActivityAt > stallMs, 'ENTER: and stale past the window, so only the sweep reaching it decides');
+
+  await f.m._sweepTickets(Date.now());
+
+  const alarms = f.gated.filter((g) => /stalled/.test(g.body));
+  assert.strictEqual(alarms.length, 1, 'exactly one alarm: the exemption skipped t1 only, and the sweep carried on to t2');
+  assert.match(alarms[0].body, /\[ticket t2\]/, 'and it names t2 — the started ticket BEHIND the exempt one in array order');
+  assert.strictEqual(f.one('t1').nudgedAt, null, 'the exempt ticket is still unstamped');
+});
+
 test('watchdog: a per-team watchdogMs override tightens the stall window', async () => {
   const f = mkTasks();
   f.team.watchdogMs = 1000; // 1s
