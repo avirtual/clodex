@@ -3,13 +3,18 @@
 // clodex stores user-authored subagents as markdown-with-frontmatter files in
 // ~/.clodex/agents/*.md (the same on-disk shape as Claude Code's own
 // .claude/agents/*.md, so a file is copy-paste portable into a project or
-// ~/.claude). At spawn, the enabled subset is transformed into the CLI's
-// inline `--agents <json>` flag — a session-only, priority-2 overlay that
-// writes nothing to disk and never touches the user's repo or ~/.claude.
+// ~/.claude). At spawn, the enabled subset is scaffolded into a session-only
+// Claude Code *plugin* directory and injected via a second `--plugin-dir`,
+// alongside the skills plugin — writing nothing into the user's repo.
+//
+// This replaced an inline `--agents <json>` flag (t403), at two costs: the CLI
+// namespaces plugin agents `<manifest.name>:<agent>` with NO bare-name alias,
+// and reads a narrower field set than the flag did — see qualifiedAgentName
+// and PLUGIN_AGENT_FIELDS.
 //
 // Kept dependency-free (no electron, no fs) so it can be unit-tested under
 // plain node, mirroring proxy-util.js. The fs-backed library lives in main.js
-// and feeds parsed records into buildAgentsArg().
+// and feeds parsed records into buildAgentPlugin().
 
 // Parse a leading `---\n ... \n---` frontmatter block. The agent schema only
 // needs scalar fields and comma-lists (name/description/tools/model/...), so
@@ -34,45 +39,67 @@ function parseAgentFrontmatter(content) {
   return { meta, body: m[2].trim() };
 }
 
-const _toList = (s) => String(s).split(',').map((x) => x.trim()).filter(Boolean);
+// NOT the skills plugin's `clodex-skills`, and not an agents/ sibling inside
+// it: that scaffolder returns null (skipping the whole dir) when no skill is
+// enabled, dropping the agents of a session that enables agents and no skills.
+const AGENT_PLUGIN_NAME = 'clodex-agents';
 
-// Transform one parsed agent (frontmatter meta + body) into the object the
-// CLI's --agents flag expects. `prompt` is the markdown body, `tools` /
-// `disallowedTools` / `skills` become arrays, scalars pass through. Fields
-// the CLI doesn't know are simply omitted.
-function agentDef(meta, body) {
+// The only name a library agent answers to as `subagent_type` — the loader
+// namespaces every plugin agent and registers no bare-name alias.
+const qualifiedAgentName = (name) => `${AGENT_PLUGIN_NAME}:${name}`;
+
+// The frontmatter keys the PLUGIN agent loader reads, verified against the
+// installed 2.1.232 binary. Anything else is dropped rather than emitted: the
+// loader warns per spawn on three of the four below and ignores the fourth.
+const PLUGIN_AGENT_FIELDS = [
+  'description', 'when_to_use', 'tools', 'disallowedTools', 'skills',
+  'model', 'color', 'effort', 'maxTurns', 'background', 'memory', 'isolation',
+];
+
+// What the flag-era encoder mapped and the plugin loader does not. The spawn
+// warns on these: silent, an operator keeps believing a permissionMode they
+// authored is in force.
+const DROPPED_AGENT_FIELDS = ['permissionMode', 'initialPrompt', 'hooks', 'mcpServers'];
+
+// Render one library agent as the file the plugin loader parses. The loader
+// prefers a frontmatter `name:` over the file stem, so the canonical name is
+// forced here (any authored one dropped), exactly as skillMd does — otherwise
+// the library and dispatch names drift. Values are double-quoted via
+// JSON.stringify: the CLI parses this as real YAML, where an unquoted `:` or
+// `#` re-parses as a map or truncates, silently un-discovering the agent.
+function agentMd(name, meta, body) {
   meta = meta || {};
-  const def = {};
-  if (meta.description) def.description = meta.description;
-  if (body) def.prompt = String(body);
-  if (meta.model) def.model = meta.model;
-  if (meta.tools) def.tools = _toList(meta.tools);
-  if (meta.disallowedTools) def.disallowedTools = _toList(meta.disallowedTools);
-  if (meta.skills) def.skills = _toList(meta.skills);
-  if (meta.permissionMode) def.permissionMode = meta.permissionMode;
-  if (meta.color) def.color = meta.color;
-  if (meta.effort) def.effort = meta.effort;
-  if (meta.initialPrompt) def.initialPrompt = meta.initialPrompt;
-  if (meta.maxTurns != null && /^\d+$/.test(String(meta.maxTurns).trim())) {
-    def.maxTurns = Number(meta.maxTurns);
+  const lines = [`name: ${JSON.stringify(String(name))}`];
+  for (const k of PLUGIN_AGENT_FIELDS) {
+    const v = meta[k];
+    if (v == null || v === '') continue;
+    lines.push(`${k}: ${JSON.stringify(String(v))}`);
   }
-  return def;
+  return `---\n${lines.join('\n')}\n---\n${String(body || '').trim()}\n`;
 }
 
-// Build the --agents JSON object for a set of enabled agent names against a
-// library list ([{ name, meta, body }, ...]). Names no longer on disk are
-// skipped silently (a session can outlive a deleted agent). Returns null
-// when nothing valid is enabled, so the caller can omit the flag entirely.
-function buildAgentsArg(names, library) {
+// Build the plugin scaffold for enabled agent names against a library list
+// ([{ name, meta, body }, ...]), or null when nothing valid is enabled. Names
+// no longer on disk are skipped silently (a session can outlive a deleted
+// agent). The manifest name MUST differ from the skills plugin's: two
+// --plugin-dir entries sharing one both load and collide, last wins, silently.
+function buildAgentPlugin(names, library, pluginName = AGENT_PLUGIN_NAME) {
   if (!Array.isArray(names) || names.length === 0) return null;
   const byName = new Map((library || []).map((a) => [a.name, a]));
-  const obj = {};
+  const agents = [];
   for (const n of names) {
     const a = byName.get(n);
     if (!a) continue;
-    obj[n] = agentDef(a.meta || {}, a.body || '');
+    agents.push({ name: n, md: agentMd(n, a.meta || {}, a.body || '') });
   }
-  return Object.keys(obj).length ? obj : null;
+  if (!agents.length) return null;
+  const manifest = {
+    name: pluginName,
+    version: '0.0.0',
+    description: 'clodex session-injected subagents',
+    author: { name: 'clodex' },
+  };
+  return { manifest, agents };
 }
 
 // The built-in subagents the CLI injects into the roster (each costs its
@@ -80,16 +107,16 @@ function buildAgentsArg(names, library) {
 // filters it out of the injected listing — a real roster trim (traced through
 // the listing builder; confirmed on the wire) AND stops delegation to it.
 // Names are case-sensitive — exactly the agentType strings, verified present
-// across live transcripts. Not every session injects all six (a session
-// launched with --agents/append-prompt can drop claude-code-guide/statusline-
-// setup), so denying an absent one is a harmless no-op. Shared (main computes
-// the enabled roster for the skill-ref check; the renderer checklist offers
-// them for denial) — single source, never duplicate.
+// across live transcripts. Not every session injects all six (one launched with
+// an agent overlay / append-prompt can drop claude-code-guide/statusline-setup),
+// so denying an absent one is a harmless no-op. Shared (main computes the
+// enabled roster for the skill-ref check; the renderer checklist offers them
+// for denial) — single source, never duplicate.
 const BUILTIN_AGENTS = ['Explore', 'Plan', 'general-purpose', 'claude', 'claude-code-guide', 'statusline-setup'];
 
-// permissions.deny rules that suppress built-in subagents. Because --agents is
-// ADDITIVE (built-ins stay registered), merely supplying a lean agent does not
-// stop the model from falling back to the heavy general-purpose; denying the
+// permissions.deny rules that suppress built-in subagents. Because the agent
+// overlay is ADDITIVE (built-ins stay registered), supplying a lean agent does
+// not stop the model falling back to the heavy general-purpose; denying the
 // built-ins is what forces the lean choice. The CLI's listing builder filters
 // denied agentTypes (Agent(name), case-sensitive) out of the injected roster
 // before emitting it, so a deny also reclaims that agent's per-turn description
@@ -100,5 +127,7 @@ function denyAgentRules(denyBuiltins) {
 }
 
 module.exports = {
-  parseAgentFrontmatter, agentDef, buildAgentsArg, denyAgentRules, BUILTIN_AGENTS,
+  parseAgentFrontmatter, agentMd, buildAgentPlugin, qualifiedAgentName,
+  denyAgentRules, BUILTIN_AGENTS, AGENT_PLUGIN_NAME,
+  PLUGIN_AGENT_FIELDS, DROPPED_AGENT_FIELDS,
 };

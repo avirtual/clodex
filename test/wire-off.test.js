@@ -78,7 +78,7 @@ function mkManager({ proxyBase = null, wireShadow = true } = {}) {
     WIRE_INTENTS_LIVE: true,
     setupClaudeHook: hooks.setupClaudeHook,
     setupCodexHook: () => {},
-    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {},
+    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
     buildIpcPrompt: () => '', writeClaudeDigestFile: () => false,
     teeBlindBackend: () => null,
     readEffectiveClaudeEnv: () => ({}),
@@ -96,7 +96,7 @@ function mkManager({ proxyBase = null, wireShadow = true } = {}) {
     // test; it is the minimum that lets the claude arm reach the session object.
     getAgentLibrary: () => ({ list: () => [] }),
     unionEnabled: () => [],
-    buildAgentsArg: () => null,
+    writeAgentPlugin: () => null, effectiveInjectedAgents: () => [],
     writeSkillPlugin: () => null,
     effectiveInjectedSkills: () => [],
     unresolvedSubagentRefs: () => [],

@@ -496,6 +496,10 @@ const selectionArm = createSelectionArm({
 
 const SKILL_PLUGINS_DIR = path.join(REGISTRY_DIR, 'skill-plugins');
 const SKILL_PLUGIN_NAME = 'clodex-skills';
+// A sibling of skill-plugins/, not a subdir of it: the two scaffolders each
+// rm -rf their own <root>/<session> on every spawn, so sharing a root would
+// make either one's rebuild delete the other's dir.
+const AGENT_PLUGINS_DIR = path.join(REGISTRY_DIR, 'agent-plugins');
 
 
 
@@ -543,6 +547,48 @@ function cleanupSkillPlugin(name) {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
 
+// Mirrors effectiveInjectedSkills. The spawn-time reference check depends on
+// this being the set actually SCAFFOLDED, not the set requested.
+function effectiveInjectedAgents(name, agents) {
+  const lib = agentLibrary.list();
+  const effective = unionEnabled(agents, lib, name);
+  const byName = new Map(lib.map((a) => [a.name, a]));
+  return effective.map((n) => byName.get(n)).filter(Boolean);
+}
+
+// Scaffold the per-session subagent plugin and return its directory (for a
+// second --plugin-dir), or null when nothing is enabled. Rebuilt from scratch
+// each spawn so a removed/edited library agent can't linger.
+function writeAgentPlugin(name, agents) {
+  const records = effectiveInjectedAgents(name, agents);
+  const plugin = buildAgentPlugin(records.map((a) => a.name), records, AGENT_PLUGIN_NAME);
+  // Second instance of writeSkillPlugin's hazard: the rmSync below is RECURSIVE
+  // and fires on every claude spawn, before the no-agents bail, so `dir` must be
+  // a confined child of AGENT_PLUGINS_DIR or the delete lands on ~/.clodex
+  // (name `..`) or $HOME (`../..`).
+  const dir = confine(AGENT_PLUGINS_DIR, name);
+  if (dir === null) throw new Error(`invalid session name: ${name}`);
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  if (!plugin) return null;
+  const manifestDir = path.join(dir, '.claude-plugin');
+  ensureDir(manifestDir);
+  fs.writeFileSync(path.join(manifestDir, 'plugin.json'), JSON.stringify(plugin.manifest, null, 2), { mode: 0o600 });
+  const agentsDir = path.join(dir, 'agents');
+  ensureDir(agentsDir);
+  for (const a of plugin.agents) {
+    fs.writeFileSync(path.join(agentsDir, `${a.name}.md`), a.md, { mode: 0o600 });
+  }
+  return dir;
+}
+
+function cleanupAgentPlugin(name) {
+  // Same recursive delete on the teardown path — confined for the same reason,
+  // and silent on a refused name, exactly as cleanupSkillPlugin.
+  const dir = confine(AGENT_PLUGINS_DIR, name);
+  if (dir === null) return;
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+}
+
 
 const CLAUDE_SL_COMPONENTS = ['model', 'context', 'cost', 'cwd', 'git-branch'];
 const CODEX_SL_COMPONENTS = [
@@ -571,7 +617,7 @@ function rebuildAllStatusScripts(manager) {
 
 
 const { PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, AUTO_COMPACT, shouldAutoCompact, autoCompactDecision, isHumanPtyInput, draftChunkSignal, isDraftOpen, peerStatusLabel, shouldHoldDm, updateApplies, boxWirescopeView } = require('./proxy-util');
-const { buildAgentsArg, denyAgentRules, BUILTIN_AGENTS } = require('./agents-util');
+const { buildAgentPlugin, qualifiedAgentName, denyAgentRules, BUILTIN_AGENTS, AGENT_PLUGIN_NAME, DROPPED_AGENT_FIELDS } = require('./agents-util');
 const { extractFileTouches, noteFileTouches, vetFileIntent } = require('./file-touch');
 const { createSubagentStore, noteSubagentTurn, feedSince } = require('./subagent-ring');
 const { classifyNotification } = require('./attention');
@@ -871,7 +917,8 @@ const SessionManager = createSessionManager({
     WIRE_INTENTS_LIVE,
     WIRE_SHADOW,
     BUILTIN_AGENTS,
-    buildAgentsArg,
+    DROPPED_AGENT_FIELDS,
+    qualifiedAgentName,
     buildIpcPrompt,
     childProcess: require('child_process'),
     claimParkedById,
@@ -879,7 +926,9 @@ const SessionManager = createSessionManager({
     cleanupClaudeHook,
     cleanupCodexHook,
     cleanupSkillPlugin,
+    cleanupAgentPlugin,
     effectiveInjectedSkills,
+    effectiveInjectedAgents,
     unresolvedSubagentRefs,
     codexStatusLineArg,
     collectSystemDiagnostics,
@@ -979,6 +1028,7 @@ const SessionManager = createSessionManager({
     whichBin,
     writeClaudeDigestFile,
     writeSkillPlugin,
+    writeAgentPlugin,
   getPersistence: () => persistence,
   getTemplates: () => templates,
   getUiSettings: () => uiSettings,

@@ -330,7 +330,8 @@ function createSessionManager(deps) {
     WIRE_INTENTS_LIVE,
     WIRE_SHADOW,
     BUILTIN_AGENTS,
-    buildAgentsArg,
+    DROPPED_AGENT_FIELDS,
+    qualifiedAgentName,
     buildIpcPrompt,
     childProcess,
     claimParkedById,
@@ -338,7 +339,9 @@ function createSessionManager(deps) {
     cleanupClaudeHook,
     cleanupCodexHook,
     cleanupSkillPlugin,
+    cleanupAgentPlugin,
     effectiveInjectedSkills,
+    effectiveInjectedAgents,
     unresolvedSubagentRefs,
     codexStatusLineArg,
     collectSystemDiagnostics,
@@ -442,6 +445,7 @@ function createSessionManager(deps) {
     whichBin,
     writeClaudeDigestFile,
     writeSkillPlugin,
+    writeAgentPlugin,
     getPersistence, getTemplates, getUiSettings, getEnvScopes, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp,
@@ -1233,26 +1237,46 @@ function createSessionManager(deps) {
               });
             }
           }
+          // Both overlays ride --plugin-dir but gate on DIFFERENT flags: a
+          // user-supplied plugin dir replaces the skills scaffold by intent,
+          // yet cannot express the agent library, so it must not drop it.
+          // Sampled BEFORE the agents block pushes its own, or the skills gate
+          // reads our push as the user's and drops every injected skill.
+          const userPluginDir = args.includes('--plugin-dir');
+          const agentRecords = effectiveInjectedAgents(name, agents);
           if (!args.includes('--agents')) {
-            const agentLib = getAgentLibrary().list();
-            const effectiveAgents = unionEnabled(agents, agentLib, name);
-            const agentsObj = buildAgentsArg(effectiveAgents, agentLib);
-            if (agentsObj) args.push('--agents', JSON.stringify(agentsObj));
+            const agentPluginDir = writeAgentPlugin(name, agents);
+            if (agentPluginDir) args.push('--plugin-dir', agentPluginDir);
+            // The CLI's own warning for three of these goes to a log the
+            // operator doesn't read, and initialPrompt gets none at all.
+            for (const rec of agentRecords) {
+              const dropped = DROPPED_AGENT_FIELDS.filter((f) => (rec.meta || {})[f]);
+              if (dropped.length) {
+                warnings.push(`Agent "${rec.name}" sets ${dropped.join(', ')}, which the plugin loader ignores — that field has no effect on this session. Move the agent to .claude/agents/ if you need it.`);
+              }
+            }
+          } else {
+            cleanupAgentPlugin(name);
           }
-          if (!args.includes('--plugin-dir')) {
+          if (!userPluginDir) {
             const pluginDir = writeSkillPlugin(name, injectSkills);
             if (pluginDir) args.push('--plugin-dir', pluginDir);
             try {
               const records = effectiveInjectedSkills(name, injectSkills);
               if (records.length) {
-                const agentLib = getAgentLibrary().list();
                 const deny = Array.isArray(denyBuiltins) ? denyBuiltins : [];
+                // Library agents match by QUALIFIED name — a skill saying
+                // `subagent_type: "test-runner"` no longer dispatches even with
+                // test-runner enabled. Built-ins keep bare names.
                 const enabled = new Set([
-                  ...unionEnabled(agents, agentLib, name),
+                  ...agentRecords.map((a) => qualifiedAgentName(a.name)),
                   ...BUILTIN_AGENTS.filter((b) => !deny.includes(b)),
                 ]);
                 for (const { skill, ref } of unresolvedSubagentRefs(records, enabled)) {
-                  warnings.push(`Skill "${skill}" calls subagent "${ref}", which isn't enabled for this session — that delegation will fail. Enable it (or remove the deny) in the session's agents.`);
+                  const hint = agentRecords.some((a) => a.name === ref)
+                    ? ` Use "${qualifiedAgentName(ref)}" — library subagents are namespaced.`
+                    : ' Enable it (or remove the deny) in the session\'s agents.';
+                  warnings.push(`Skill "${skill}" calls subagent "${ref}", which isn't enabled for this session — that delegation will fail.${hint}`);
                 }
               }
             } catch {}
@@ -2694,7 +2718,7 @@ function createSessionManager(deps) {
       if (s.ctxWatcher) { try { s.ctxWatcher.close(); } catch {} }
       if (s.transport) s.transport.stop();
       if (s.agentType) registry.unregister(name);
-      if (s.agentType === 'claude') { cleanupClaudeHook(name); cleanupSkillPlugin(name); }
+      if (s.agentType === 'claude') { cleanupClaudeHook(name); cleanupSkillPlugin(name); cleanupAgentPlugin(name); }
       if (s.agentType === 'codex') cleanupCodexHook(name, s.cwd);
       this.sessions.delete(name);
       const live = new Set(this.sessions.keys());

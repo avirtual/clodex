@@ -32,8 +32,17 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   Wire registration happens BEFORE the pty spawn (`_ensureWire`); failure
   falls back silently to the jsonl path. `setupClaudeHook` →
   `--settings {name}-hook.json`; `--add-dir` for the messages dir;
-  `--agents` JSON from the agent library; `--plugin-dir` for injected
-  skills; `--resume <id>` (+`--fork-session`) when resuming.
+  TWO `--plugin-dir`s, each a session-only scaffold under its own root — the
+  agent library (`agent-plugins/`, manifest `clodex-agents`) and the injected
+  skills (`skill-plugins/`, manifest `clodex-skills`). The manifest names must
+  stay distinct: two dirs sharing one collide silently, last wins. Agents moved
+  off `--agents` (t403) to keep the definitions out of `ps`; the cost is that
+  the CLI namespaces them, so a library agent dispatches ONLY as
+  `clodex-agents:<name>` — there is no bare-name alias — and the plugin loader
+  ignores `permissionMode`/`initialPrompt`/`hooks`/`mcpServers` (a spawn warns
+  when an enabled agent sets one). A user-passed `--plugin-dir` stands the
+  skills scaffold down but NOT the agents, which it cannot express;
+  `--resume <id>` (+`--fork-session`) when resuming.
   The agent/skill enabled set is UNIONED at spawn with any `sessions:`-scoped
   library items assigned to this session (`scope-util.unionEnabled`) —
   assignment is intent, computed each spawn and NEVER written back to the

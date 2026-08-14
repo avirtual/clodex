@@ -68,6 +68,23 @@ test('unresolvedSubagentRefs: extracts multiple refs on one line, only the unena
   assert.deepStrictEqual(out, [{ skill: 'grok', ref: 'Explore' }]);
 });
 
+test('unresolvedSubagentRefs: a namespaced ref matches whole, not at its prefix', () => {
+  // Library agents dispatch as `<plugin>:<agent>` and answer to nothing else.
+  // A charset that stopped at `:` would capture `clodex-agents` and warn about
+  // an agent that IS enabled — a permanent false warning on every spawn.
+  const records = [{ name: 'test-green', content: 'subagent_type: "clodex-agents:test-runner"' }];
+  assert.deepStrictEqual(unresolvedSubagentRefs(records, new Set(['clodex-agents:test-runner'])), []);
+});
+
+test('unresolvedSubagentRefs: a BARE ref to a namespaced agent still warns', () => {
+  // The migration case: clodex-test-green.md ships `subagent_type:
+  // "test-runner"`, which stopped dispatching when agents moved to the plugin
+  // dir. Enabling the agent must NOT silence this — the bare name is the bug.
+  const records = [{ name: 'test-green', content: 'subagent_type: "test-runner"' }];
+  assert.deepStrictEqual(unresolvedSubagentRefs(records, new Set(['clodex-agents:test-runner'])),
+    [{ skill: 'test-green', ref: 'test-runner' }]);
+});
+
 test('unresolvedSubagentRefs: dedupes repeated skill+ref pairs', () => {
   const records = [{ name: 'grok', content: 'subagent_type: worker ... later subagent_type=worker again' }];
   assert.deepStrictEqual(unresolvedSubagentRefs(records, new Set()), [{ skill: 'grok', ref: 'worker' }]);

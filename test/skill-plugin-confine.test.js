@@ -39,10 +39,21 @@ function bodyOf(fn) {
   return rest.slice(0, end);
 }
 
-test('every recursive delete of a skill-plugin dir is confined first', () => {
-  for (const fn of ['writeSkillPlugin', 'cleanupSkillPlugin']) {
+// Both scaffolders are the same hazard over a different root, so the pins are
+// one table: <function, the root it must confine against>. A new plugin
+// scaffolder that forgets its row here is the case this shape exists to make
+// hard to reach — the row is the only place the root is named.
+const CONFINED = [
+  ['writeSkillPlugin', 'SKILL_PLUGINS_DIR'],
+  ['cleanupSkillPlugin', 'SKILL_PLUGINS_DIR'],
+  ['writeAgentPlugin', 'AGENT_PLUGINS_DIR'],
+  ['cleanupAgentPlugin', 'AGENT_PLUGINS_DIR'],
+];
+
+test('every recursive delete of a plugin-scaffold dir is confined first', () => {
+  for (const [fn, root] of CONFINED) {
     const body = bodyOf(fn);
-    const guard = body.indexOf('confine(SKILL_PLUGINS_DIR');
+    const guard = body.indexOf(`confine(${root}`);
     const del = body.indexOf('fs.rmSync');
 
     assert.ok(del !== -1, `${fn} still contains the rmSync this guards — if it moved, move this test`);
@@ -53,20 +64,40 @@ test('every recursive delete of a skill-plugin dir is confined first', () => {
 
     // And the raw join must be gone, not merely supplemented — leaving it
     // would mean the confined value is computed and then ignored.
-    assert.ok(!body.includes('path.join(SKILL_PLUGINS_DIR, name)'),
+    assert.ok(!body.includes(`path.join(${root}, name)`),
       `${fn} must not still build the dir with an unconfined path.join`);
   }
 });
 
-test('the two call sites fail DIFFERENTLY, and deliberately so', () => {
-  // writeSkillPlugin throws: a spawn under a name that cannot be confined must
+test('the two roots are siblings, so neither rebuild deletes the other', () => {
+  // Each scaffolder rm -rf's <its root>/<session> on every spawn. Nesting the
+  // agent root inside the skill root (or vice versa) would make one overlay's
+  // rebuild silently delete the other's dir for the same session — the spawn
+  // would then pass a --plugin-dir that no longer exists.
+  const skill = SRC.match(/^const SKILL_PLUGINS_DIR = .*$/m);
+  const agent = SRC.match(/^const AGENT_PLUGINS_DIR = .*$/m);
+  assert.ok(skill && agent, 'both roots are declared at module scope');
+  const leafOf = (line) => line[0].match(/'([^']+)'\)/)[1];
+  const a = leafOf(skill);
+  const b = leafOf(agent);
+  assert.notStrictEqual(a, b, 'the two scaffold roots must be distinct dirs');
+  assert.ok(!a.startsWith(`${b}/`) && !b.startsWith(`${a}/`),
+    'neither scaffold root may nest inside the other');
+});
+
+test('the write/cleanup call sites fail DIFFERENTLY, and deliberately so', () => {
+  // The write path throws: a spawn under a name that cannot be confined must
   // abort rather than continue with a half-built plugin dir.
-  assert.match(bodyOf('writeSkillPlugin'), /throw new Error\(`invalid session name/,
-    'writeSkillPlugin aborts the spawn on a refused name');
-  // cleanupSkillPlugin returns: it runs on the exit path, where throwing would
-  // break teardown for an unrelated session.
-  assert.match(bodyOf('cleanupSkillPlugin'), /if \(dir === null\) return;/,
-    'cleanupSkillPlugin refuses silently on the teardown path');
+  for (const fn of ['writeSkillPlugin', 'writeAgentPlugin']) {
+    assert.match(bodyOf(fn), /throw new Error\(`invalid session name/,
+      `${fn} aborts the spawn on a refused name`);
+  }
+  // The cleanup path returns: it runs on exit, where throwing would break
+  // teardown for an unrelated session.
+  for (const fn of ['cleanupSkillPlugin', 'cleanupAgentPlugin']) {
+    assert.match(bodyOf(fn), /if \(dir === null\) return;/,
+      `${fn} refuses silently on the teardown path`);
+  }
 });
 
 test('the spill join documents why it does NOT need confine()', () => {

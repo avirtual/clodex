@@ -167,7 +167,7 @@ function mkManager({ units = [], extraDeps = {} } = {}) {
     log: { info: () => {}, warn: () => {}, error: () => {} },
     setupClaudeHook: () => path.join(root, 'settings.json'),
     setupCodexHook: () => {},
-    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {},
+    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
     writeClaudeDigestFile: () => true,
     buildIpcPrompt: () => '',
     bakePrompt: () => '',   // written to disk by create(); null throws in writeFileSync
@@ -181,7 +181,7 @@ function mkManager({ units = [], extraDeps = {} } = {}) {
     mergeClaudeSystemPrompt: (a) => ({ cleaned: [...a], append: null }),
     readAppendBodies: () => [],
     pluginGrammarLines: () => [],
-    buildAgentsArg: () => [],
+    writeAgentPlugin: () => null, effectiveInjectedAgents: () => [],
     effectiveInjectedSkills: () => [],
     unresolvedSubagentRefs: () => [],
     // Real pure leaves rather than stubs: create() runs them on the way to the
