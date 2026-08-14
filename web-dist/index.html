@@ -5530,6 +5530,36 @@ body {
   text-align: center;
   user-select: text;
 }
+.intent-mark {
+  border-left: 2px solid var(--accent);
+  pointer-events: none;
+}
+.intent-mark-fire {
+  border-left-color: var(--accent);
+  background: rgba(233, 69, 96, .13);
+}
+.intent-mark-inert {
+  border-left-color: var(--warn);
+  background: rgba(229, 192, 123, .13);
+}
+[data-theme=claude] .intent-mark-fire {
+  background: rgba(217, 119, 87, .14);
+}
+[data-theme=claude] .intent-mark-inert {
+  background: rgba(217, 165, 91, .16);
+}
+[data-theme=paper] .intent-mark-fire {
+  background: rgba(193, 95, 60, .12);
+}
+[data-theme=paper] .intent-mark-inert {
+  background: rgba(133, 90, 20, .14);
+}
+[data-theme=light] .intent-mark-fire {
+  background: rgba(193, 95, 60, .12);
+}
+[data-theme=light] .intent-mark-inert {
+  background: rgba(154, 107, 30, .14);
+}
 
 /* renderer/web/app.css */
 /*! Bundled license information:
@@ -5721,7 +5751,7 @@ body {
     <div id="agents-list"></div>
     <div id="agents-empty" class="hint">
       No agents yet. Click <strong>+ New</strong> to define a custom subagent.<br><br>
-      Stored as markdown in <code>~/.clodex/agents/</code>. Enable them per session in the New / Edit Session dialog (Claude only) — they spawn via <code>--agents</code> and touch no repo.
+      Stored as markdown in <code>~/.clodex/agents/</code>. Enable them per session in the New / Edit Session dialog (Claude only) — they inject via a session-only <code>--plugin-dir</code> and touch no repo. The model dispatches them by their namespaced name, <code>clodex-agents:&lt;name&gt;</code>.
     </div>
   </div>
 
@@ -5974,7 +6004,7 @@ body {
       <div class="popover-title"><span>Agents — <span id="agents-popover-name"></span></span><button type="button" class="popover-close" id="agents-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
       <div id="popover-agents-list" class="agent-checklist"></div>
-      <span class="hint-text">Checked custom subagents are injected into this session (<code>--agents</code>).</span>
+      <span class="hint-text">Checked custom subagents are injected into this session (via a session-only <code>--plugin-dir</code>), and dispatch as <code>clodex-agents:&lt;name&gt;</code>.</span>
       <div class="popover-subhead">Built-in Agents</div>
       <div id="popover-builtins-list" class="agent-checklist"></div>
       <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster — reclaiming their per-turn description tokens — and no longer delegatable. This removes the capability too, so it's a trim <em>and</em> a behavior change. Not every session loads all of these; denying an absent one is a no-op.</span>
@@ -20725,35 +20755,54 @@ ${i3.join("\n")}
         }
         return { meta, body: m[2].trim() };
       }
-      var _toList = (s) => String(s).split(",").map((x) => x.trim()).filter(Boolean);
-      function agentDef(meta, body) {
+      var AGENT_PLUGIN_NAME = "clodex-agents";
+      var qualifiedAgentName = (name) => `${AGENT_PLUGIN_NAME}:${name}`;
+      var PLUGIN_AGENT_FIELDS = [
+        "description",
+        "when_to_use",
+        "tools",
+        "disallowedTools",
+        "skills",
+        "model",
+        "color",
+        "effort",
+        "maxTurns",
+        "background",
+        "memory",
+        "isolation"
+      ];
+      var DROPPED_AGENT_FIELDS = ["permissionMode", "initialPrompt", "hooks", "mcpServers"];
+      function agentMd(name, meta, body) {
         meta = meta || {};
-        const def = {};
-        if (meta.description) def.description = meta.description;
-        if (body) def.prompt = String(body);
-        if (meta.model) def.model = meta.model;
-        if (meta.tools) def.tools = _toList(meta.tools);
-        if (meta.disallowedTools) def.disallowedTools = _toList(meta.disallowedTools);
-        if (meta.skills) def.skills = _toList(meta.skills);
-        if (meta.permissionMode) def.permissionMode = meta.permissionMode;
-        if (meta.color) def.color = meta.color;
-        if (meta.effort) def.effort = meta.effort;
-        if (meta.initialPrompt) def.initialPrompt = meta.initialPrompt;
-        if (meta.maxTurns != null && /^\d+$/.test(String(meta.maxTurns).trim())) {
-          def.maxTurns = Number(meta.maxTurns);
+        const lines = [`name: ${JSON.stringify(String(name))}`];
+        for (const k of PLUGIN_AGENT_FIELDS) {
+          const v = meta[k];
+          if (v == null || v === "") continue;
+          lines.push(`${k}: ${JSON.stringify(String(v))}`);
         }
-        return def;
+        return `---
+${lines.join("\n")}
+---
+${String(body || "").trim()}
+`;
       }
-      function buildAgentsArg(names, library) {
+      function buildAgentPlugin(names, library, pluginName = AGENT_PLUGIN_NAME) {
         if (!Array.isArray(names) || names.length === 0) return null;
         const byName = new Map((library || []).map((a) => [a.name, a]));
-        const obj = {};
+        const agents = [];
         for (const n of names) {
           const a = byName.get(n);
           if (!a) continue;
-          obj[n] = agentDef(a.meta || {}, a.body || "");
+          agents.push({ name: n, md: agentMd(n, a.meta || {}, a.body || "") });
         }
-        return Object.keys(obj).length ? obj : null;
+        if (!agents.length) return null;
+        const manifest = {
+          name: pluginName,
+          version: "0.0.0",
+          description: "clodex session-injected subagents",
+          author: { name: "clodex" }
+        };
+        return { manifest, agents };
       }
       var BUILTIN_AGENTS = ["Explore", "Plan", "general-purpose", "claude", "claude-code-guide", "statusline-setup"];
       function denyAgentRules(denyBuiltins) {
@@ -20762,10 +20811,14 @@ ${i3.join("\n")}
       }
       module.exports = {
         parseAgentFrontmatter,
-        agentDef,
-        buildAgentsArg,
+        agentMd,
+        buildAgentPlugin,
+        qualifiedAgentName,
         denyAgentRules,
-        BUILTIN_AGENTS
+        BUILTIN_AGENTS,
+        AGENT_PLUGIN_NAME,
+        PLUGIN_AGENT_FIELDS,
+        DROPPED_AGENT_FIELDS
       };
     }
   });
@@ -20998,6 +21051,7 @@ ${i3.join("\n")}
         opts = opts || {};
         const canReenable = !!opts.canReenable;
         const skillsLocked = !!opts.skillsLocked;
+        const oos = new Map((opts.outOfScope || []).map((s) => [s.name, s.dir || null]));
         container.innerHTML = "";
         if (!names || !names.length) {
           container.innerHTML = '<span class="hint-text">No skills detected yet \u2014 they appear once the session has run a turn.</span>';
@@ -21007,18 +21061,23 @@ ${i3.join("\n")}
           const eff = effective[name];
           const lowerOff = !!(eff && eff.value === "off");
           const clodexOff = disabledSet.has(name);
-          const readonly = skillsLocked || lowerOff && !canReenable;
+          const outOfScope = oos.has(name);
+          const readonly = skillsLocked || outOfScope || lowerOff && !canReenable;
           const row = document.createElement("label");
           row.className = "agent-check" + (readonly ? " skill-readonly" : "");
           const cb = document.createElement("input");
           cb.type = "checkbox";
           cb.value = name;
-          cb.checked = !clodexOff && !lowerOff;
+          cb.checked = !clodexOff && !lowerOff && !outOfScope;
           if (readonly) cb.disabled = true;
           const txt = document.createElement("span");
           let note = "";
           if (skillsLocked) note = ' <span class="skill-src">locked by policy</span>';
           else if (lowerOff) note = ` <span class="skill-src">off via ${esc(eff.source)} settings</span>`;
+          else if (outOfScope) {
+            const dir = oos.get(name);
+            note = dir ? ` <span class="skill-src">only under ${esc(dir)}</span>` : ' <span class="skill-src">not loaded here</span>';
+          }
           txt.innerHTML = `<strong>${esc(name)}</strong>${note}`;
           row.appendChild(cb);
           row.appendChild(txt);
@@ -21159,7 +21218,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         };
         return { manifest, skills };
       }
-      var SUBAGENT_REF_RE = /subagent_type\s*[:=]\s*["']?([A-Za-z0-9_-]+)["']?/g;
+      var SUBAGENT_REF_RE = /subagent_type\s*[:=]\s*["']?([A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*)["']?/g;
       function unresolvedSubagentRefs(records, enabled) {
         const ok = enabled instanceof Set ? enabled : new Set(enabled || []);
         const out = [];
@@ -21960,6 +22019,599 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // intent-catalog.js
+  var require_intent_catalog = __commonJS({
+    "intent-catalog.js"(exports, module) {
+      var GATEABLE_INTENTS = [
+        { type: "dm", label: "Direct messages (dm)" },
+        { type: "who", label: "List peers (who)" },
+        { type: "context", label: "Self context control (compact/clear/reload)" },
+        { type: "memory", label: "Memory management (remember/recall)" },
+        { type: "spawn", label: "Spawn peer sessions (spawn)" },
+        { type: "file", label: "Surface files on screen (file)" },
+        { type: "resend", label: "Escalate a parked dm (resend)" },
+        { type: "exec", label: "Run exec commands (exec)" },
+        { type: "remind", label: "Durable self-reminders (remind)" },
+        { type: "notify-user", label: "Operator inbox notes (notify-user)" },
+        // Privileged (Task 27) — see PRIVILEGED_INTENTS. Gateable like the rest, but
+        // OFF unless explicitly granted (absence does NOT enable it), and an
+        // agent-initiated grant is stripped at the mint/wire boundary.
+        { type: "term", label: "Run commands in the seat's terminal (term) \u2014 privileged, off by default" },
+        { type: "reboot", label: "Relaunch the app (reboot) \u2014 privileged, off by default" }
+      ];
+      var PRIVILEGED_INTENTS = /* @__PURE__ */ new Set(["reboot", "term"]);
+      var GATEABLE_TYPES = new Set(GATEABLE_INTENTS.map((i) => i.type));
+      function intentEnabled(type, intentsList) {
+        if (!GATEABLE_TYPES.has(type)) return true;
+        if (!Array.isArray(intentsList)) return !PRIVILEGED_INTENTS.has(type);
+        return intentsList.includes(type);
+      }
+      function withoutPrivilegedIntents(intentsList) {
+        if (!Array.isArray(intentsList)) return intentsList;
+        return intentsList.filter((t) => !PRIVILEGED_INTENTS.has(t));
+      }
+      function intentsAllowlistFromChecked(checkedTypes) {
+        const checked = new Set(checkedTypes);
+        const enabled = GATEABLE_INTENTS.filter((i) => checked.has(i.type)).map((i) => i.type);
+        const nonPrivCount = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).length;
+        const isDefault = enabled.length === nonPrivCount && enabled.every((t) => !PRIVILEGED_INTENTS.has(t));
+        return isDefault ? null : enabled;
+      }
+      function deniedIntentCount(intentsList) {
+        return GATEABLE_INTENTS.filter(
+          (i) => !PRIVILEGED_INTENTS.has(i.type) && !intentEnabled(i.type, intentsList)
+        ).length;
+      }
+      module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount };
+    }
+  });
+
+  // intent-registry.js
+  var require_intent_registry = __commonJS({
+    "intent-registry.js"(exports, module) {
+      var {
+        GATEABLE_INTENTS,
+        PRIVILEGED_INTENTS,
+        intentEnabled,
+        intentsAllowlistFromChecked,
+        withoutPrivilegedIntents
+      } = require_intent_catalog();
+      var { DEFAULT_PLUGIN_SCOPE, pluginReaches } = require_plugin_api();
+      function parseDm(cleaned) {
+        const m = cleaned.match(/^\[agent:dm\s+(\S+?)(\s+urgent)?\]\s*(.*)/s);
+        return m ? { type: "dm", target: m[1], urgent: !!m[2], body: m[3] } : null;
+      }
+      function parseResend(cleaned) {
+        const m = cleaned.match(/^\[agent:resend\s+([a-z0-9]+)\]\s*$/i);
+        return m ? { type: "resend", id: m[1].toLowerCase() } : null;
+      }
+      function parseWho(cleaned) {
+        return /^\[agent:who\]\s*$/.test(cleaned) ? { type: "who" } : null;
+      }
+      function parseName(cleaned) {
+        return /^\[agent:name\]\s*$/.test(cleaned) ? { type: "name" } : null;
+      }
+      function parseContext(cleaned) {
+        const m = cleaned.match(/^\[agent:context\s+(\S+)\]\s*(.*)/s);
+        return m ? { type: "context", sub: m[1].toLowerCase(), body: m[2] } : null;
+      }
+      function parseMemory(cleaned) {
+        const m = cleaned.match(/^\[agent:memory\s+(\S+)\]\s*(.*)/s);
+        return m ? { type: "memory", sub: m[1].toLowerCase(), body: m[2] } : null;
+      }
+      function parseFile(cleaned) {
+        const m = cleaned.match(/^\[agent:file\s+(\S+)\s+(.+?)\]\s*$/);
+        return m ? { type: "file", sub: m[1].toLowerCase(), path: m[2].trim() } : null;
+      }
+      function parseExec(cleaned) {
+        const m = cleaned.match(/^\[agent:exec\s+(\S+)\]\s*(.*)/s);
+        return m ? { type: "exec", cmd: m[1], body: m[2] } : null;
+      }
+      function parseTerm(cleaned, raw) {
+        const RE = /^\[agent:term\s+(\S+)\]\s*(.*)/s;
+        const m = cleaned.match(RE);
+        if (!m) return null;
+        const sub = m[1].toLowerCase();
+        let body = m[2];
+        if (typeof raw === "string" && raw !== cleaned) {
+          const rm = raw.match(RE);
+          if (rm && rm[1].toLowerCase() === sub) body = rm[2];
+        }
+        return { type: "term", sub, body };
+      }
+      function parseRemind(cleaned) {
+        const m = cleaned.match(/^\[agent:remind\s+([^\]]+)\]\s*(.*)/s);
+        return m ? { type: "remind", spec: m[1].trim(), body: m[2] } : null;
+      }
+      function parseNotifyUser(cleaned) {
+        const m = cleaned.match(/^\[agent:notify-user\]\s*(.*)/s);
+        return m ? { type: "notify-user", body: m[1] } : null;
+      }
+      function parseTeamReview(cleaned) {
+        const m = cleaned.match(/^\[agent:team-review\]\s*(.*)/s);
+        return m ? { type: "team-review", body: m[1] } : null;
+      }
+      function parseReviewDone(cleaned) {
+        const m = cleaned.match(/^\[agent:review-done\]\s*(.*)/s);
+        return m ? { type: "review-done", body: m[1] } : null;
+      }
+      function parseReboot(cleaned) {
+        const m = cleaned.match(/^\[agent:reboot\]\s*(.*)/s);
+        return m ? { type: "reboot", body: m[1] } : null;
+      }
+      function parseTask(cleaned) {
+        const m = cleaned.match(/^\[agent:task\s+(add|assign|start|done|reject|respec|cancel|accept|park|list)\b([^\]]*)\]\s*(.*)/s);
+        if (!m) return null;
+        const sub = m[1];
+        const argToks = m[2].trim().split(/\s+/).filter(Boolean);
+        const body = m[3];
+        if (sub === "add") {
+          const park = argToks.includes("park");
+          const rest = argToks.filter((t) => t !== "park");
+          return { type: "task", sub, who: rest[0] || null, id: null, park, body };
+        }
+        if (sub === "assign") return { type: "task", sub, id: argToks[0] || null, who: argToks[1] || null, body: "" };
+        if (sub === "list") return { type: "task", sub, id: null, who: null, filter: argToks[0] || null, body: "" };
+        if (sub === "park" || sub === "start") return { type: "task", sub, id: argToks[0] || null, who: null, body: "" };
+        return { type: "task", sub, id: argToks[0] || null, who: null, body };
+      }
+      function parseTeam(cleaned) {
+        const m = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog)\b([^\]]*)\]\s*(.*)/s);
+        if (!m) return null;
+        const sub = m[1];
+        const argStr = m[2];
+        const body = m[3];
+        const promptM = argStr.match(/\bprompt:(\S+)/);
+        const templateM = argStr.match(/\btemplate:(\S+)/);
+        const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
+        if (sub === "role-add" || sub === "role-set") {
+          return { type: "team", sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, body };
+        }
+        if (sub === "role-rm") return { type: "team", sub, name: positional[0] || null, body: "" };
+        if (sub === "role-rename") return { type: "team", sub, name: positional[0] || null, to: positional[1] || null, body: "" };
+        const ms = positional[0] != null ? Number(positional[0]) : null;
+        return { type: "team", sub, ms: Number.isFinite(ms) ? ms : null, body: "" };
+      }
+      function parseSpawn(cleaned) {
+        const m = cleaned.match(/^\[agent:spawn\s+(.+)\]\s*$/);
+        if (!m) return null;
+        const argstr = m[1];
+        const nameM = argstr.match(/\bname:(\S+)/);
+        const cwdM = argstr.match(/\bcwd:(\S+)/);
+        const tplM = argstr.match(/\btemplate:(\S+)/);
+        const wtM = argstr.match(/\bworktree:(\S+)/);
+        return {
+          type: "spawn",
+          name: nameM ? nameM[1] : null,
+          cwd: cwdM ? cwdM[1] : null,
+          template: tplM ? tplM[1] : null,
+          worktree: wtM ? wtM[1] : null
+        };
+      }
+      var NONE = () => "none";
+      var GREEDY = () => "greedy";
+      var CORE_ROWS = [
+        { type: "dm", parse: parseDm, bodyMode: GREEDY },
+        { type: "resend", parse: parseResend, bodyMode: NONE },
+        { type: "who", parse: parseWho, bodyMode: NONE },
+        { type: "name", parse: parseName, bodyMode: NONE },
+        { type: "context", parse: parseContext, bodyMode: (i) => i.sub === "compact" || i.sub === "reload" || i.sub === "clear" ? "greedy" : "none" },
+        { type: "memory", parse: parseMemory, bodyMode: (i) => i.sub === "remember" ? "greedy" : "none" },
+        { type: "file", parse: parseFile, bodyMode: NONE },
+        // Line-scoped, unlike every other body-carrying row here: the command is
+        // whatever follows the bracket on THAT line and nothing after it. Greedy
+        // capture (how this shipped) could only ever swallow the agent's next lines
+        // into the command, and vetTermCommand rejects any body with a newline — so
+        // prose written under a correct command turned it into a refusal instead of
+        // running it. A body that must survive vetting cannot span lines, which is
+        // what makes this row different from dm/memory/task.
+        { type: "term", parse: parseTerm, bodyMode: NONE },
+        { type: "exec", parse: parseExec, bodyMode: () => "json" },
+        { type: "remind", parse: parseRemind, bodyMode: GREEDY },
+        { type: "notify-user", parse: parseNotifyUser, bodyMode: GREEDY },
+        { type: "team-review", parse: parseTeamReview, bodyMode: GREEDY },
+        { type: "review-done", parse: parseReviewDone, bodyMode: GREEDY },
+        { type: "reboot", parse: parseReboot, bodyMode: NONE },
+        { type: "task", parse: parseTask, bodyMode: (i) => i.sub === "add" || i.sub === "done" || i.sub === "reject" || i.sub === "respec" || i.sub === "cancel" || i.sub === "accept" ? "greedy" : "none" },
+        { type: "team", parse: parseTeam, bodyMode: (i) => i.sub === "role-add" || i.sub === "role-set" ? "greedy" : "none" },
+        { type: "spawn", parse: parseSpawn, bodyMode: NONE }
+      ].map((r) => Object.freeze({
+        ...r,
+        gateable: GATEABLE_INTENTS.some((i) => i.type === r.type),
+        privileged: PRIVILEGED_INTENTS.has(r.type),
+        label: (GATEABLE_INTENTS.find((i) => i.type === r.type) || {}).label || null,
+        // NULL for every core row on purpose: ipc-prompt.js owns the core grammar
+        // lines and its order is independent of GATEABLE_INTENTS. Filling this in
+        // would duplicate the bytes IPC_PROMPT is pinned on.
+        promptLines: null,
+        handler: null,
+        source: "core"
+      }));
+      var CORE_TYPES = new Set(CORE_ROWS.map((r) => r.type));
+      var RESERVED_TYPES = /* @__PURE__ */ new Set([...CORE_TYPES, "end", "escape", "unknown"]);
+      var PLUGIN_VERB_RE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
+      var pluginRows = [];
+      function registerIntent(spec, source, opts = {}) {
+        const src = String(source || "").trim();
+        if (!src) throw new Error("intent registration requires a source plugin id");
+        const type = String(spec && (spec.verb || spec.type) || "");
+        if (!PLUGIN_VERB_RE.test(type)) throw new Error(`invalid intent verb: ${JSON.stringify(type)}`);
+        if (RESERVED_TYPES.has(type)) throw new Error(`intent verb "${type}" is reserved by core`);
+        const holder = pluginRows.find((r) => r.type === type);
+        if (holder) {
+          const err = new Error(`intent verb "${type}" is already registered by plugin "${holder.source}"`);
+          err.code = "EVERBTAKEN";
+          err.verb = type;
+          err.heldBy = holder.source;
+          throw err;
+        }
+        if (typeof spec.parse !== "function") throw new Error(`intent verb "${type}" needs a parse function`);
+        if (spec.bodyMode != null && typeof spec.bodyMode !== "function") {
+          throw new Error(`intent verb "${type}": bodyMode must be a function of the parsed intent`);
+        }
+        const row = Object.freeze({
+          type,
+          // Wrapped so a plugin's parse can neither throw into the scanner nor return
+          // an intent claiming to be some OTHER verb (which would route into a core
+          // case in _handleIntent's switch).
+          parse: (cleaned) => {
+            let out;
+            try {
+              out = spec.parse(cleaned);
+            } catch {
+              return null;
+            }
+            if (!out || typeof out !== "object") return null;
+            return { ...out, type };
+          },
+          bodyMode: (intent) => {
+            if (!spec.bodyMode) return "none";
+            let m;
+            try {
+              m = spec.bodyMode(intent);
+            } catch {
+              return "none";
+            }
+            return m === "greedy" || m === "json" ? m : "none";
+          },
+          gateable: true,
+          privileged: true,
+          // FORCED (rule P1) — any manifest claim is ignored
+          label: String(spec.label || `${type} (plugin: ${src})`),
+          promptLines: spec.promptLines != null ? String(spec.promptLines) : null,
+          handler: typeof spec.handler === "function" ? spec.handler : null,
+          source: src,
+          // The MANIFEST's scope, threaded by the host at register() — never read off
+          // `spec`, which is the plugin's own argument. A plugin that could declare its
+          // own scope could declare itself global and undo the operator's decision.
+          scope: opts.scope === "session" ? "session" : DEFAULT_PLUGIN_SCOPE
+        });
+        pluginRows.push(row);
+        let disposed = false;
+        return () => {
+          if (disposed) return;
+          disposed = true;
+          const idx = pluginRows.indexOf(row);
+          if (idx >= 0) pluginRows.splice(idx, 1);
+        };
+      }
+      function unregisterSource(source) {
+        for (let i = pluginRows.length - 1; i >= 0; i--) {
+          if (pluginRows[i].source === source) pluginRows.splice(i, 1);
+        }
+      }
+      function _resetPluginRows() {
+        pluginRows.length = 0;
+      }
+      function rows() {
+        return [...CORE_ROWS, ...pluginRows];
+      }
+      function rowFor(type) {
+        return CORE_ROWS.find((r) => r.type === type) || pluginRows.find((r) => r.type === type) || null;
+      }
+      function pluginRowFor(type) {
+        return pluginRows.find((r) => r.type === type) || null;
+      }
+      function rowVisibleTo(row, grants) {
+        if (!row || row.scope !== "session") return true;
+        return pluginReaches(row.source, grants);
+      }
+      function visiblePluginRows(grants) {
+        return pluginRows.filter((r) => rowVisibleTo(r, grants));
+      }
+      function parseWithRegistry(cleaned, raw) {
+        for (const r of CORE_ROWS) {
+          const out = r.parse(cleaned, raw);
+          if (out) return out;
+        }
+        for (const r of pluginRows) {
+          const out = r.parse(cleaned, raw);
+          if (out) return out;
+        }
+        return null;
+      }
+      function bodyModeFor(intent) {
+        if (!intent || !intent.type) return "none";
+        const r = rowFor(intent.type);
+        if (!r) return "none";
+        try {
+          return r.bodyMode(intent) || "none";
+        } catch {
+          return "none";
+        }
+      }
+      function intentEnabledFor(type, intentsList) {
+        if (pluginRowFor(type)) return Array.isArray(intentsList) && intentsList.includes(type);
+        return intentEnabled(type, intentsList);
+      }
+      function withoutPrivilegedIntentsFor(intentsList) {
+        if (!Array.isArray(intentsList)) return intentsList;
+        return withoutPrivilegedIntents(intentsList).filter((t) => !pluginRowFor(t));
+      }
+      function catalogRows(grants) {
+        return [
+          ...GATEABLE_INTENTS.map((i) => ({ type: i.type, label: i.label, privileged: PRIVILEGED_INTENTS.has(i.type), source: "core" })),
+          ...visiblePluginRows(grants).map((r) => ({ type: r.type, label: r.label, privileged: true, source: r.source }))
+        ];
+      }
+      function allowlistFromChecked(checkedTypes) {
+        const checked = new Set(checkedTypes);
+        const pluginChecked = pluginRows.filter((r) => checked.has(r.type)).map((r) => r.type);
+        const core = intentsAllowlistFromChecked(checkedTypes);
+        if (!pluginChecked.length) return core;
+        const coreEnabled = Array.isArray(core) ? core : GATEABLE_INTENTS.filter((i) => checked.has(i.type)).map((i) => i.type);
+        return [...coreEnabled, ...pluginChecked];
+      }
+      function pluginGrammarLines(intentsList, grants) {
+        return visiblePluginRows(grants).filter((r) => r.promptLines && intentEnabledFor(r.type, intentsList)).map((r) => r.promptLines);
+      }
+      var CORE_VALID_INTENT_NAMES = [
+        "dm",
+        "resend",
+        "who",
+        "name",
+        "context",
+        "memory",
+        "spawn",
+        "file",
+        "exec",
+        "remind",
+        "notify-user",
+        "team-review",
+        "review-done",
+        "task",
+        "term",
+        "reboot"
+      ];
+      function validIntentNames(grants) {
+        return [...CORE_VALID_INTENT_NAMES, ...visiblePluginRows(grants).map((r) => r.type), "end"];
+      }
+      module.exports = {
+        CORE_ROWS,
+        CORE_TYPES,
+        RESERVED_TYPES,
+        PLUGIN_VERB_RE,
+        CORE_VALID_INTENT_NAMES,
+        registerIntent,
+        unregisterSource,
+        rows,
+        rowFor,
+        pluginRowFor,
+        rowVisibleTo,
+        visiblePluginRows,
+        parseWithRegistry,
+        bodyModeFor,
+        intentEnabledFor,
+        withoutPrivilegedIntentsFor,
+        catalogRows,
+        allowlistFromChecked,
+        pluginGrammarLines,
+        validIntentNames,
+        _resetPluginRows
+      };
+    }
+  });
+
+  // intent-scanner.js
+  var require_intent_scanner = __commonJS({
+    "intent-scanner.js"(exports, module) {
+      var { parseWithRegistry } = require_intent_registry();
+      var ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07/g;
+      var PREFIX_CHARS = new Set(" 	\u2B24\u25CF\u2022\u25B6\u25B7\u25BA\u25B9\u25CB\u25CF\u25C9\u25CE\u25C6\u25C7\u25A0\u25A1\u25AA\u25AB\u2605\u2606\u2192\u27F6\u2500\u2501\xB7\u2023\u2219\u226B\xBB");
+      function stripDecorators(line) {
+        let i = 0;
+        while (i < line.length && PREFIX_CHARS.has(line[i])) i++;
+        return line.slice(i);
+      }
+      function cleanLine(line) {
+        return stripDecorators(line.replace(ANSI_RE, ""));
+      }
+      function parseIntent(rawLine) {
+        const cleaned = cleanLine(rawLine).trim();
+        if (!cleaned) return null;
+        const escMatch = cleaned.match(/^\\(\[agent:.*)/);
+        if (escMatch) return { type: "escape", text: escMatch[1] };
+        if (/^\[agent:end\]\s*$/.test(cleaned)) return { type: "end" };
+        return parseWithRegistry(cleaned, stripDecorators(rawLine).trim());
+      }
+      function fencedLines(lines) {
+        const fenced = new Array(lines.length).fill(false);
+        let open = null;
+        for (let k = 0; k < lines.length; k++) {
+          const m = lines[k].match(/^\s*(`{3,}|~{3,})(.*)$/);
+          if (m) {
+            const ch = m[1][0];
+            if (!open) {
+              open = { ch, len: m[1].length };
+              fenced[k] = true;
+              continue;
+            }
+            if (ch === open.ch && m[1].length >= open.len && !m[2].trim()) {
+              open = null;
+              fenced[k] = true;
+              continue;
+            }
+          }
+          if (open) fenced[k] = true;
+        }
+        return fenced;
+      }
+      function looksLikeIntent(rawLine) {
+        const cleaned = cleanLine(rawLine).trim();
+        return cleaned.startsWith("[agent:") ? cleaned : null;
+      }
+      var KEY_FIELDS = ["sub", "target", "name", "id", "cmd", "spec", "who", "to", "filter", "template", "cwd", "worktree", "park", "ms"];
+      function shadowIntentKey(agent, intent) {
+        const parts = [];
+        for (const f of KEY_FIELDS) {
+          const v = intent[f];
+          if (v === null || v === void 0 || v === "" || v === false) continue;
+          parts.push(String(v));
+        }
+        const head = parts.join("/") + (intent.urgent ? "+urgent" : "");
+        const body = (intent.body || intent.path || intent.text || "").trim().slice(0, 200);
+        return `${agent}|${intent.type}|${head}|${body}`;
+      }
+      module.exports = { ANSI_RE, PREFIX_CHARS, cleanLine, parseIntent, fencedLines, looksLikeIntent, shadowIntentKey };
+    }
+  });
+
+  // renderer/lib/intent-marks.js
+  var require_intent_marks = __commonJS({
+    "renderer/lib/intent-marks.js"(exports, module) {
+      "use strict";
+      var { cleanLine, parseIntent, fencedLines } = require_intent_scanner();
+      var SCAN_ROWS = 2e3;
+      function logicalLines(rows) {
+        const out = [];
+        let i = 0;
+        while (i < rows.length) {
+          let end = i;
+          while (end + 1 < rows.length && rows[end + 1].isWrapped) end += 1;
+          let text = "";
+          for (let k = i; k <= end; k += 1) text += rows[k].text;
+          out.push({ start: i, end, text });
+          i = end + 1;
+        }
+        return out;
+      }
+      function classifyText(raw) {
+        if (!cleanLine(raw).includes("[agent:")) return null;
+        const parsed = parseIntent(raw);
+        if (!parsed) return "inert";
+        return parsed.type === "escape" ? null : "fire";
+      }
+      function classifyRows(rows) {
+        const lines = logicalLines(rows);
+        const fenced = fencedLines(lines.map((l) => cleanLine(l.text)));
+        const marks = [];
+        for (let i = 0; i < lines.length; i += 1) {
+          if (fenced[i]) continue;
+          const kind = classifyText(lines[i].text);
+          if (kind) marks.push({ start: lines[i].start, end: lines[i].end, kind });
+        }
+        return marks;
+      }
+      module.exports = { classifyRows, classifyText, logicalLines, SCAN_ROWS };
+    }
+  });
+
+  // renderer/intent-highlight.js
+  var require_intent_highlight = __commonJS({
+    "renderer/intent-highlight.js"(exports, module) {
+      var { classifyRows, SCAN_ROWS } = require_intent_marks();
+      var DEBOUNCE_MS = 80;
+      var RULER_VAR = { fire: "--accent", inert: "--warn" };
+      function createIntentHighlight(terminal, { getVar } = {}) {
+        let shown = [];
+        let timer = null;
+        let disposed = false;
+        const readVar = getVar || ((name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim());
+        const rulerColor = (kind) => readVar(RULER_VAR[kind]) || "#888888";
+        function paint(line, kind) {
+          const buf = terminal.buffer.active;
+          const marker = terminal.registerMarker(line - (buf.baseY + buf.cursorY));
+          if (!marker) return null;
+          const decoration = terminal.registerDecoration({
+            marker,
+            // Bottom layer, full width: a wash BEHIND the row, so its own colours
+            // and selection survive.
+            width: terminal.cols,
+            layer: "bottom",
+            overviewRulerOptions: { color: rulerColor(kind), position: "right" }
+          });
+          if (!decoration) {
+            marker.dispose();
+            return null;
+          }
+          decoration.onRender((el) => {
+            el.classList.add("intent-mark", `intent-mark-${kind}`);
+          });
+          return { marker, decoration, cols: terminal.cols };
+        }
+        function reconcile() {
+          timer = null;
+          if (disposed) return;
+          const buf = terminal.buffer.active;
+          if (buf.type !== "normal") return;
+          const total = buf.length;
+          const from = Math.max(0, total - SCAN_ROWS);
+          const rows = [];
+          for (let y = from; y < total; y += 1) {
+            const l = buf.getLine(y);
+            rows.push({ text: l ? l.translateToString(true) : "", isWrapped: !!(l && l.isWrapped) });
+          }
+          const want = /* @__PURE__ */ new Map();
+          for (const m of classifyRows(rows)) want.set(from + m.start, m.kind);
+          const kept = [];
+          for (const cur of shown) {
+            if (cur.marker.isDisposed) {
+              cur.decoration.dispose();
+              continue;
+            }
+            const line = cur.marker.line;
+            if (line < from) {
+              kept.push(cur);
+              continue;
+            }
+            if (want.get(line) === cur.kind && cur.cols === terminal.cols) {
+              want.delete(line);
+              kept.push(cur);
+              continue;
+            }
+            cur.decoration.dispose();
+            cur.marker.dispose();
+          }
+          for (const [line, kind] of want) {
+            const made = paint(line, kind);
+            if (made) kept.push({ ...made, kind });
+          }
+          shown = kept;
+        }
+        const schedule = () => {
+          if (disposed || timer) return;
+          timer = setTimeout(reconcile, DEBOUNCE_MS);
+        };
+        const subs = [terminal.onWriteParsed(schedule), terminal.onResize(schedule)];
+        return {
+          refresh: schedule,
+          count: () => shown.length,
+          dispose() {
+            disposed = true;
+            if (timer) clearTimeout(timer);
+            for (const s of subs) s.dispose();
+            for (const { decoration, marker } of shown) {
+              decoration.dispose();
+              if (!marker.isDisposed) marker.dispose();
+            }
+            shown = [];
+          }
+        };
+      }
+      module.exports = { createIntentHighlight };
+    }
+  });
+
   // renderer/banners.js
   var require_banners = __commonJS({
     "renderer/banners.js"(exports, module) {
@@ -22092,53 +22744,6 @@ helper=${d.helperPath}`;
         return { currentXtermTheme };
       }
       module.exports = { initThemes };
-    }
-  });
-
-  // intent-catalog.js
-  var require_intent_catalog = __commonJS({
-    "intent-catalog.js"(exports, module) {
-      var GATEABLE_INTENTS = [
-        { type: "dm", label: "Direct messages (dm)" },
-        { type: "who", label: "List peers (who)" },
-        { type: "context", label: "Self context control (compact/clear/reload)" },
-        { type: "memory", label: "Memory management (remember/recall)" },
-        { type: "spawn", label: "Spawn peer sessions (spawn)" },
-        { type: "file", label: "Surface files on screen (file)" },
-        { type: "resend", label: "Escalate a parked dm (resend)" },
-        { type: "exec", label: "Run exec commands (exec)" },
-        { type: "remind", label: "Durable self-reminders (remind)" },
-        { type: "notify-user", label: "Operator inbox notes (notify-user)" },
-        // Privileged (Task 27) — see PRIVILEGED_INTENTS. Gateable like the rest, but
-        // OFF unless explicitly granted (absence does NOT enable it), and an
-        // agent-initiated grant is stripped at the mint/wire boundary.
-        { type: "term", label: "Run commands in the seat's terminal (term) \u2014 privileged, off by default" },
-        { type: "reboot", label: "Relaunch the app (reboot) \u2014 privileged, off by default" }
-      ];
-      var PRIVILEGED_INTENTS = /* @__PURE__ */ new Set(["reboot", "term"]);
-      var GATEABLE_TYPES = new Set(GATEABLE_INTENTS.map((i) => i.type));
-      function intentEnabled(type, intentsList) {
-        if (!GATEABLE_TYPES.has(type)) return true;
-        if (!Array.isArray(intentsList)) return !PRIVILEGED_INTENTS.has(type);
-        return intentsList.includes(type);
-      }
-      function withoutPrivilegedIntents(intentsList) {
-        if (!Array.isArray(intentsList)) return intentsList;
-        return intentsList.filter((t) => !PRIVILEGED_INTENTS.has(t));
-      }
-      function intentsAllowlistFromChecked(checkedTypes) {
-        const checked = new Set(checkedTypes);
-        const enabled = GATEABLE_INTENTS.filter((i) => checked.has(i.type)).map((i) => i.type);
-        const nonPrivCount = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).length;
-        const isDefault = enabled.length === nonPrivCount && enabled.every((t) => !PRIVILEGED_INTENTS.has(t));
-        return isDefault ? null : enabled;
-      }
-      function deniedIntentCount(intentsList) {
-        return GATEABLE_INTENTS.filter(
-          (i) => !PRIVILEGED_INTENTS.has(i.type) && !intentEnabled(i.type, intentsList)
-        ).length;
-      }
-      module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount };
     }
   });
 
@@ -25248,7 +25853,7 @@ helper=${d.helperPath}`;
             res.names || [],
             new Set(res.disabledSkills || []),
             res.effective || {},
-            { skillsLocked: res.skillsLocked, canReenable: res.canReenable }
+            { skillsLocked: res.skillsLocked, canReenable: res.canReenable, outOfScope: res.outOfScope }
           );
           setSkillLibCache(res.skillLib || []);
           if (getSkillLibCache().length) {
@@ -29037,6 +29642,7 @@ ${detail}` });
       var { createIpcLog } = require_ipc_log();
       var { createInboxDrawer } = require_inbox_drawer();
       var { createTermSearch } = require_term_search();
+      var { createIntentHighlight } = require_intent_highlight();
       var { initBanners } = require_banners();
       var { initThemes } = require_themes();
       var { initLibraryDrawers } = require_library_drawers();
@@ -30056,6 +30662,7 @@ ${detail}` });
             })));
           }
         });
+        const intentHighlight = createIntentHighlight(terminal);
         const searchAddon = new SearchAddon();
         terminal.loadAddon(searchAddon);
         searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
@@ -30084,7 +30691,7 @@ ${detail}` });
           }
           window.api.writeToSession(name, data);
         });
-        sessions.set(name, { terminal, fitAddon, searchAddon, wrapperEl, peer });
+        sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, wrapperEl, peer });
         updateWindowTitle();
         return { terminal, fitAddon, searchAddon, wrapperEl };
       }
@@ -30173,6 +30780,7 @@ ${detail}` });
             if (!keepPersisted) window.api.peerDetach(s.peer.id, s.peer.name);
             forgetControlMirror(s.peer.id, s.peer.name);
           }
+          if (s.intentHighlight) s.intentHighlight.dispose();
           s.terminal.dispose();
           s.wrapperEl.remove();
           sessions.delete(name);
@@ -34206,7 +34814,7 @@ ${res.stderr}` : "");
             sc.names || [],
             new Set(sc.disabledSkills || []),
             sc.effective || {},
-            { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable }
+            { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable, outOfScope: sc.outOfScope }
           );
           setSkillLibCache(sc.skillLib || []);
           if ((sc.skillLib || []).length) {
