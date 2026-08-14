@@ -52,6 +52,26 @@ function classifyText(raw) {
   return parseIntent(raw) ? 'fire' : 'inert';
 }
 
+// The `[agent:…]` token inside one row's text, as { offset, length } in STRING
+// offsets — the caller owns the offset→column mapping, which is not the same
+// number on a row carrying double-width characters.
+//
+// Read on the HEAD row alone, never the joined logical line, so a token split
+// across a wrap boundary yields the head-row remainder and the mark clips there
+// instead of spilling. Bracket token only: the closing `]` is included, a
+// same-line dm body is not — the body is the operator's own prose and tinting
+// it is what this scoping exists to stop.
+//
+// null = the token does not start on this row at all (the bracket itself was
+// split by the wrap). The caller decides what an unlocatable span means; it
+// must not guess a column from a match it did not find.
+function intentSpan(text) {
+  const at = text.indexOf('[agent:');
+  if (at < 0) return null;
+  const close = text.indexOf(']', at);
+  return { offset: at, length: (close < 0 ? text.length : close + 1) - at };
+}
+
 // rows: [{ text, isWrapped }] in buffer order. Returns marks anchored to the
 // HEAD row of each logical line, as offsets into `rows`.
 function classifyRows(rows) {
@@ -61,9 +81,11 @@ function classifyRows(rows) {
   for (let i = 0; i < lines.length; i += 1) {
     if (fenced[i]) continue;
     const kind = classifyText(lines[i].text);
-    if (kind) marks.push({ start: lines[i].start, end: lines[i].end, kind });
+    if (!kind) continue;
+    const { start, end } = lines[i];
+    marks.push({ start, end, kind, span: intentSpan(rows[start].text) });
   }
   return marks;
 }
 
-module.exports = { classifyRows, classifyText, logicalLines, SCAN_ROWS };
+module.exports = { classifyRows, classifyText, intentSpan, logicalLines, SCAN_ROWS };

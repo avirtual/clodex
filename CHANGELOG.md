@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- An intent mark now highlights the `[agent:…]` itself rather than washing the
+  whole terminal row. An intent starts its own line, so most of that row was
+  empty terminal getting a background — and on a `[agent:dm …]` the wash ran
+  over the message body too. The scrollbar tick is unchanged, so finding an
+  intent without scrolling still works exactly as before.
+
 - The terminal intent marks no longer light up every sentence that merely
   *mentions* an intent. Agents discuss intents constantly, and a mark on each
   of those lines turned the screen into a mosaic that hid the handful of real

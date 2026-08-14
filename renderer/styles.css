@@ -4261,8 +4261,10 @@ html, body {
   pointer-events: none; /* the row's file links stay clickable through it */
 }
 .intent-mark-fire { border-left-color: var(--accent); background: rgba(233, 69, 96, .13); }
-/* Written like an intent, will NOT fire — prose before the bracket, an unknown
-   verb. Warn-coloured because the silence is the bug being surfaced. */
+/* Written AS an intent (bracket at line start) and will NOT fire — an unknown
+   verb, a malformed arg list. Warn-coloured because the silence is the bug
+   being surfaced. A line that merely mentions an intent mid-prose gets no mark
+   at all: it was never going to fire, and marking those buried the real ones. */
 .intent-mark-inert { border-left-color: var(--warn); background: rgba(229, 192, 123, .13); }
 
 /* Paper and light are LIGHT grounds: a wash tuned on the dark default turns

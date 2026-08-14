@@ -636,13 +636,16 @@ Own state + DOM, `init*(deps)`:
   is NOT a session, and nothing here should make it look like one.
 - **term-search.js**, **banners.js**, **themes.js**, **library-drawers.js**
   (prompts/agents/skills drawers).
-- **intent-highlight.js** — marks emitted `[agent:…]` rows in a terminal and
-  ticks them in the scrollbar lane. RECONCILES against the buffer per pass
+- **intent-highlight.js** — marks the emitted `[agent:…]` TOKEN in a terminal
+  and ticks its row in the scrollbar lane (one decoration does both: span-scoped
+  on screen, line-granular in the ruler). RECONCILES against the buffer per pass
   rather than appending: decorations are push-based, and the CLI repaints its
   live tail. Skips the pass while the ALTERNATE buffer is active (it reads
   empty, so a pass there would dispose every real mark), and re-reads
   `marker.line` instead of trusting a stored index, which scrollback trim
-  shifts. Disposed BEFORE its terminal.
+  shifts. Maps the token's string offset to a buffer COLUMN by walking cell
+  widths — a wide char is two cells and one index, so `indexOf` as a column
+  misplaces the span. Disposed BEFORE its terminal.
 - **inbox-drawer.js** — operator inbox for `[agent:notify-user]` notes +
   the sidebar-footer unread badge; no core state, but takes `openFilePeek`
   and `showToast` by injection so a link in a note lands in the same peek

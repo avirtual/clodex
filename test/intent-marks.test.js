@@ -15,7 +15,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { classifyRows, classifyText, logicalLines, SCAN_ROWS } = require('../renderer/lib/intent-marks');
+const { classifyRows, classifyText, intentSpan, logicalLines, SCAN_ROWS } = require('../renderer/lib/intent-marks');
 
 const rows = (...texts) => texts.map((t) => (typeof t === 'string' ? { text: t, isWrapped: false } : t));
 const wrapped = (text) => ({ text, isWrapped: true });
@@ -119,7 +119,41 @@ test('a space at the wrap boundary survives the join', () => {
 
 test('an intent split across the wrap boundary is still fire, not inert', () => {
   const marks = classifyRows([{ text: '[agent:dm ', isWrapped: false }, wrapped('bob] a body')]);
-  assert.deepStrictEqual(marks, [{ start: 0, end: 1, kind: 'fire' }]);
+  // The span is read on the HEAD row alone, so a token cut by the wrap reports
+  // the head-row remainder — the caller clips there rather than spilling the
+  // mark onto the continuation row.
+  assert.deepStrictEqual(marks, [{ start: 0, end: 1, kind: 'fire', span: { offset: 0, length: 10 } }]);
+});
+
+// --- intentSpan: which characters the mark covers ----------------------------
+//
+// STRING offsets, deliberately: the offset→column mapping belongs to the
+// caller, which has the cells. These say WHAT is covered, not where it lands.
+
+test('the span is the bracket token, body excluded', () => {
+  assert.deepStrictEqual(intentSpan('[agent:dm bob] hello there'), { offset: 0, length: 14 });
+});
+
+test('the span includes the closing bracket', () => {
+  const text = '[agent:who]';
+  const { offset, length } = intentSpan(text);
+  assert.strictEqual(text.slice(offset, offset + length), '[agent:who]');
+});
+
+test('the span starts at the bracket, not at the decoration before it', () => {
+  // These rows still fire — the scanner strips the bullet — so the row is
+  // marked; the mark just points at the intent rather than at the glyph.
+  assert.deepStrictEqual(intentSpan('  • [agent:who]'), { offset: 4, length: 11 });
+});
+
+test('a token cut by the wrap spans to the end of the head row', () => {
+  // Clipped, not extended into the continuation: see the classifyRows case.
+  assert.deepStrictEqual(intentSpan('[agent:dm '), { offset: 0, length: 10 });
+});
+
+test('a row whose bracket was itself split reports no span', () => {
+  // The caller must not invent a column from a match it did not find.
+  assert.strictEqual(intentSpan('t:who] body'), null);
 });
 
 // --- classifyRows: anchoring, fences, reduction ------------------------------
@@ -128,7 +162,7 @@ test('a wrapped intent is marked once, anchored to its HEAD row', () => {
   const marks = classifyRows(rows('[agent:dm bob] a body that', wrapped(' spills over'), 'plain'));
   // ENTER: the wrapped intent is present at all, and as ONE mark on row 0 —
   // a per-row scan would mark row 1 too, or mark neither.
-  assert.deepStrictEqual(marks, [{ start: 0, end: 1, kind: 'fire' }]);
+  assert.deepStrictEqual(marks, [{ start: 0, end: 1, kind: 'fire', span: { offset: 0, length: 14 } }]);
 });
 
 test('an intent inside a fenced block is left unmarked', () => {
@@ -140,7 +174,7 @@ test('a real intent BELOW a closed fence is still marked', () => {
   // ENTER: guards the fence-state reduction — if the fence never closed, this
   // row would vanish and the empty-set assertion above would still pass.
   const marks = classifyRows(rows('```', '[agent:who]', '```', '[agent:name]'));
-  assert.deepStrictEqual(marks, [{ start: 3, end: 3, kind: 'fire' }]);
+  assert.deepStrictEqual(marks, [{ start: 3, end: 3, kind: 'fire', span: { offset: 0, length: 12 } }]);
 });
 
 test('a tilde fence quotes an intent too', () => {
@@ -165,8 +199,8 @@ test('fire and inert are distinguished in one pass, and prose is skipped', () =>
   // ENTER: rows 0 and 3 survive, so the absence of row 1 is an absence in a set
   // that was really scanned rather than one the gate emptied.
   assert.deepStrictEqual(marks, [
-    { start: 0, end: 0, kind: 'fire' },
-    { start: 3, end: 3, kind: 'inert' },
+    { start: 0, end: 0, kind: 'fire', span: { offset: 0, length: 11 } },
+    { start: 3, end: 3, kind: 'inert', span: { offset: 0, length: 17 } },
   ]);
 });
 
@@ -194,5 +228,5 @@ test('escaped and fenced rows survive as unmarked among marked ones', () => {
   // ENTER: the fire row is present, so the two absences below it are absences
   // in a set that was actually scanned, not in one the reduction emptied.
   const marks = classifyRows(rows('\\[agent:who]', '[agent:who]', '```', '[agent:name]', '```'));
-  assert.deepStrictEqual(marks, [{ start: 1, end: 1, kind: 'fire' }]);
+  assert.deepStrictEqual(marks, [{ start: 1, end: 1, kind: 'fire', span: { offset: 0, length: 11 } }]);
 });
