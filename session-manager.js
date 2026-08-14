@@ -4702,19 +4702,35 @@ function createSessionManager(deps) {
       if (s.activityState !== 'idle') return;
       const fifo = s._dmUnconfirmed || (s._dmUnconfirmed = []);
       fifo.push({ sender: senderName, at: Date.now() });
-      while (fifo.length > DM_LATCH_CAP) {
-        fifo.shift();
-        s._dmUnconfirmedDropped = (s._dmUnconfirmedDropped || 0) + 1;
-      }
-      // Restarted on every push, not left running from the first: the window
-      // measures each unit's own silence, so at fire time EVERY entry is at
-      // least SPEC_CONFIRM_MS old. Leaving the first timer would report a unit
-      // written a second before the deadline as unconfirmed after one second.
-      clearTimeout(s._dmConfirmTimer);
-      this._armDmConfirmTimer(s);
+      while (fifo.length > DM_LATCH_CAP) this._overflowDmEntry(s, fifo.shift());
+      // Pegged to the OLDEST outstanding unit and never restarted by a later
+      // one. Restarting on each push starves the detector into silence in
+      // exactly its own case: a wedged seat is the seat people keep dm-ing, and
+      // `urgent` short-circuits shouldHoldDm ahead of the idle band, so urgent
+      // dms keep being INJECTED into a wedged seat forever — including the
+      // resends this mechanism's own notice tells senders to make. A stream
+      // faster than one per window would push the deadline out indefinitely
+      // while entries accumulate and nobody is ever told. Each unit still gets
+      // its full window: _checkDmConfirm reports only the units that are
+      // actually ripe and re-arms for the remainder.
+      if (!s._dmConfirmTimer) this._armDmConfirmTimer(s);
     }
 
-    _armDmConfirmTimer(session) {
+    // The cap bounds per-seat MEMORY, and must not bound per-seat SENDERS: a
+    // dropped unit keeps its sender, coalesced into one record per sender (so
+    // the bound is the session count). Dropping the entry outright silenced
+    // precisely the sender whose message was starved out, while still counting
+    // it into the total the broadcast reports — a report that is mute toward the
+    // one party it exists to inform.
+    _overflowDmEntry(session, gone) {
+      const ov = session._dmOverflow || (session._dmOverflow = new Map());
+      const rec = ov.get(gone.sender);
+      if (rec) { rec.count += 1; rec.at = Math.min(rec.at, gone.at); }
+      else ov.set(gone.sender, { count: 1, at: gone.at });
+    }
+
+    _armDmConfirmTimer(session, delayMs = SPEC_CONFIRM_MS) {
+      clearTimeout(session._dmConfirmTimer);
       session._dmConfirmTimer = setTimeout(() => {
         session._dmConfirmTimer = null;
         // Fires SPEC_CONFIRM_MS after every dm to an idle seat, in the app's main
@@ -4722,7 +4738,7 @@ function createSessionManager(deps) {
         // exception in the host rather than a failed report.
         try { this._checkDmConfirm(session); }
         catch (e) { log.error('intent', `dm confirmation check failed for ${session.name}: ${e.message}`); }
-      }, SPEC_CONFIRM_MS);
+      }, delayMs);
       // Observer-grade in both senses, like the two ticket-side watchers: never
       // the reason a process stays alive, never the reason one dies.
       if (session._dmConfirmTimer.unref) session._dmConfirmTimer.unref();
@@ -4736,7 +4752,7 @@ function createSessionManager(deps) {
     // and a seat that took a turn is not silent.
     _clearDmConfirm(session) {
       session._dmUnconfirmed = [];
-      session._dmUnconfirmedDropped = 0;
+      session._dmOverflow = null;
       session._dmUnconfirmedLast = null;
       clearTimeout(session._dmConfirmTimer);
       session._dmConfirmTimer = null;
@@ -4754,19 +4770,56 @@ function createSessionManager(deps) {
         this._armDmConfirmTimer(session);
         return;
       }
-      const entries = fifo.slice();
-      const dropped = session._dmUnconfirmedDropped || 0;
+      const now = Date.now();
+      // PARTIAL drain: only the units that have had their full window. The rest
+      // stay and the timer re-arms for the remainder, which is what lets the
+      // deadline be pegged to the oldest without judging a unit written a second
+      // before it. A ripe set can also be EMPTY here — the cap shifts out the
+      // entry the pending timer was pegged to, so it fires early relative to the
+      // new oldest. That must re-arm, not return: returning is how an overflowing
+      // seat goes permanently silent. (Draining every window instead of
+      // accumulating also makes the cap far less reachable than it looks.)
+      const ripe = [];
+      while (fifo.length && now - fifo[0].at >= SPEC_CONFIRM_MS) ripe.push(fifo.shift());
+      if (!ripe.length) {
+        this._armDmConfirmTimer(session, Math.max(0, SPEC_CONFIRM_MS - (now - fifo[0].at)));
+        return;
+      }
+      // Overflow records are attributed to THIS report: they are older than
+      // everything surviving in the fifo by construction, so they are ripe
+      // whenever anything is.
+      const overflow = session._dmOverflow
+        ? [...session._dmOverflow].map(([sender, r]) => ({ sender, count: r.count, at: r.at }))
+        : [];
+      const dropped = overflow.reduce((n, r) => n + r.count, 0);
+      session._dmOverflow = null;
+      const entries = ripe.slice();
       const total = entries.length + dropped;
-      const oldest = entries[0].at;
-      const ageS = Math.round((Date.now() - oldest) / 1000);
-      session._dmUnconfirmed = [];
-      session._dmUnconfirmedDropped = 0;
+      const oldest = Math.min(entries[0].at, ...overflow.map((r) => r.at));
+      const ageS = Math.round((now - oldest) / 1000);
+      // Re-armed for whatever is still young, so one wedge produces a report per
+      // window rather than one report ever. The repetition is the feature: it is
+      // how a sender whose message arrived after an earlier report gets told.
+      if (fifo.length) this._armDmConfirmTimer(session, Math.max(0, SPEC_CONFIRM_MS - (now - fifo[0].at)));
       // Kept, not discarded, and cleared only by a turn: this is what lets the
       // stall sweep attribute a silent seat to a swallowed dm rather than to
       // stalled work, which is the misattribution the sweep makes today.
-      session._dmUnconfirmedLast = { entries, at: oldest, firedAt: Date.now() };
+      // ACCUMULATES across reports — a sustained wedge fires repeatedly, and
+      // replacing here would shrink the evidence to the last window during
+      // exactly the stall the attribution exists for.
+      const prev = session._dmUnconfirmedLast;
+      session._dmUnconfirmedLast = {
+        entries: prev ? [...prev.entries, ...entries] : entries,
+        // Dropped units are counted here too, so the sweep clause and the
+        // broadcast describe the same backlog with the same number.
+        dropped: (prev ? prev.dropped || 0 : 0) + dropped,
+        at: prev ? Math.min(prev.at, oldest) : oldest,
+        firedAt: now,
+      };
 
-      const senders = [...new Set(entries.map((e) => e.sender))];
+      // Every sender with something outstanding in this report, dropped ones
+      // included — the whole point of keeping overflow records.
+      const senders = [...new Set([...entries.map((e) => e.sender), ...overflow.map((r) => r.sender)])];
       log.warn('intent', `${total} dm${total === 1 ? '' : 's'} written to ${session.name} but no turn started after ${ageS}s — telling ${senders.join(', ')}; nothing re-sent`);
       // FIRST, and never inside the per-sender loop: the notice below travels by
       // the very channel whose reliability is in question — a sender that is
@@ -4783,8 +4836,17 @@ function createSessionManager(deps) {
         // broadcast above already carries the event.
         const sender = this.sessions.get(who);
         if (!sender || !sender.agentType || sender._dead) continue;
-        const mine = entries.filter((e) => e.sender === who);
-        const mineAgeS = Math.round((Date.now() - mine[0].at) / 1000);
+        // This sender's share includes its DROPPED units. A sender whose only
+        // message was shifted out by the cap would otherwise reach this loop
+        // with an empty share and be told nothing — the starved sender is
+        // exactly the one that needs the notice.
+        const ovMine = overflow.find((r) => r.sender === who);
+        const mineCount = entries.filter((e) => e.sender === who).length + (ovMine ? ovMine.count : 0);
+        const mineAt = Math.min(
+          ...entries.filter((e) => e.sender === who).map((e) => e.at),
+          ...(ovMine ? [ovMine.at] : []),
+        );
+        const mineAgeS = Math.round((Date.now() - mineAt) / 1000);
         // The hedge is chosen by the TOTAL outstanding, not by this sender's
         // share: another sender's concurrent write is what destroyed this one's
         // draft, so a sender holding the only one of its own messages is still
@@ -4792,8 +4854,8 @@ function createSessionManager(deps) {
         // "may not have been seen" and not "was lost" — a confidently wrong
         // report is worse than a hedged one, and §3 is why the discrimination
         // cannot be had.
-        const one = mine.length === 1;
-        const noun = one ? 'your message' : `your ${mine.length} messages`;
+        const one = mineCount === 1;
+        const noun = one ? 'your message' : `your ${mineCount} messages`;
         const verb = one ? 'was' : 'were';
         const when = one ? `${mineAgeS}s ago` : `(oldest ${mineAgeS}s ago)`;
         const hedge = total === 1
@@ -4819,9 +4881,18 @@ function createSessionManager(deps) {
       if (!s) return null;
       const last = (s._dmUnconfirmedLast && s._dmUnconfirmedLast.entries) || [];
       const live = s._dmUnconfirmed || [];
+      // Cap-dropped units count HERE as well as in the broadcast's total. Two
+      // numbers describing one seat's silence that disagree cost an hour to
+      // reconcile, and the sweep clause is read next to the broadcast.
+      const dropped = ((s._dmUnconfirmedLast && s._dmUnconfirmedLast.dropped) || 0)
+        + (s._dmOverflow ? [...s._dmOverflow.values()].reduce((n, r) => n + r.count, 0) : 0);
       const all = [...last, ...live];
-      if (!all.length) return null;
-      return { count: all.length, at: all[0].at };
+      const count = all.length + dropped;
+      if (!count) return null;
+      const at = Math.min(...all.map((e) => e.at),
+        ...(s._dmOverflow ? [...s._dmOverflow.values()].map((r) => r.at) : []),
+        ...(s._dmUnconfirmedLast ? [s._dmUnconfirmedLast.at] : []));
+      return { count, at };
     }
 
     _setRelayRoster(via, roster) {

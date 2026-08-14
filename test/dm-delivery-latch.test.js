@@ -230,6 +230,17 @@ async function swallowed(opts = {}) {
   return { app, sender, target };
 }
 
+// Entries armed by a real delivery are milliseconds old, and the report drains
+// only the units that have had their FULL window — so a test calling the check
+// directly must age them first. Aged rather than run at a short window: at a
+// window short enough to elapse on its own, the production timer races the check
+// the test is about to make, and the latch is spent before it can be looked at.
+function ripen(target, byMs = 61_000) {
+  assert.ok(target._dmUnconfirmed && target._dmUnconfirmed.length,
+    'ENTER: there must be an outstanding unit to ripen, or the check below returns early');
+  target._dmUnconfirmed.forEach((e) => { e.at -= byMs; });
+}
+
 // ── arming ──────────────────────────────────────────────────────────────────
 
 test('t388: a dm INJECTED into an idle seat arms the latch, with its sender recorded', async () => {
@@ -341,11 +352,20 @@ test('t388: the activity edge clears the dm latch — a NEW field inherits no de
     // exactly what a later edit removes without noticing. Both get their own pin.
     assert.ok(target._dmUnconfirmed.length && target._dmConfirmTimer,
       'ENTER: latch and timer must both be live for their clearing to mean anything');
+    // All THREE pieces of state, not just the fifo: the cap-dropped record is
+    // the one a clear is most likely to be written without.
+    target._dmOverflow = new Map([['starved', { count: 2, at: Date.now() - 1000 }]]);
     app.m._emitActivity('target', 'thinking');
     assert.strictEqual(target._dmUnconfirmed.length, 0, 'the fifo is cleared on the non-idle edge');
     assert.strictEqual(target._dmUnconfirmedLast, null,
       'and so is the expired-latch record: it exists to attribute SILENCE, and a seat that took a turn is not '
       + 'silent — left set it would keep blaming a delivered dm for every later stall');
+    assert.ok(!target._dmOverflow || target._dmOverflow.size === 0,
+      'and so is the OVERFLOW record. Left behind, a seat that demonstrably took a turn keeps reporting a '
+      + 'backlog of dropped dms forever, and _dmLatchEvidence keeps returning non-null for it');
+    assert.strictEqual(app.m._dmLatchEvidence('target'), null,
+      'ENTER-shaped: the evidence reads all three, so this is the assertion that catches a clear which '
+      + 'forgets one of them');
   } finally { app.stop(); }
 });
 
@@ -370,6 +390,7 @@ test('t388: a swallowed dm is reported to its sender, hedged, and says nothing w
   const { app, sender, target } = await swallowed();
   try {
     const before = app.seen('sender');
+    ripen(target);
     app.m._checkDmConfirm(target);
     const notice = await settled(app, 'sender', /has not started a turn/);
     assert.ok(notice.length > before.length, 'ENTER: the report must be a NEW write to the sender');
@@ -398,6 +419,7 @@ test('t388: NOTHING is re-sent to the target — the refusal, asserted where it 
   const { app, target } = await swallowed();
   try {
     const before = app.seen('target');
+    ripen(target);
     app.m._checkDmConfirm(target);
     await settled(app, 'sender', /has not started a turn/);
     await new Promise((r) => setTimeout(r, 40));
@@ -421,6 +443,7 @@ test('t388: a multi-sender window is reported as "may not have been seen", never
 
     const beforeSender = app.seen('sender');
     const beforeOther = app.seen('other');
+    ripen(target);
     app.m._checkDmConfirm(target);
     await settled(app, 'sender', /may not have been seen/);
     await settled(app, 'other', /may not have been seen/);
@@ -453,6 +476,7 @@ test('t388: the broadcast fires even when no sender can be told — the report i
     // would leave the event unrecorded anywhere.
     app.m.sessions.delete('sender');
     const before = app.casts.length;
+    ripen(target);
     app.m._checkDmConfirm(target);
     await new Promise((r) => setTimeout(r, 40));
     const fresh = app.casts.slice(before)
@@ -475,6 +499,7 @@ test('t388: the report does not arm a latch of its own — an unconfirmed report
       'ENTER: the SENDER must be idle when the notice is written — that is the exact condition the arm tests, '
       + 'so a busy sender would make the absence below true for a reason that has nothing to do with the arm '
       + 'staying opt-in');
+    ripen(target);
     app.m._checkDmConfirm(target);
     await settled(app, 'sender', /has not started a turn/);
     await new Promise((r) => setTimeout(r, 40));
@@ -511,6 +536,7 @@ test('t388: a target on a permission dialog RE-ARMS rather than reporting, and r
 
     // The dialog is answered. The re-armed window must now be able to report.
     target.needsAttention = null;
+    ripen(target);
     app.m._checkDmConfirm(target);
     const notice = await settled(app, 'sender', /has not started a turn/);
     assert.ok(notice.length > beforeSender.length,
@@ -535,17 +561,232 @@ test('t388: a check with nothing outstanding reports nothing (the timer is not t
   } finally { app.stop(); }
 });
 
-test('t388: the window restarts on each new dm, so no unit is judged before its own silence', async () => {
-  const { app, target } = await swallowed();
+// ── starvation: the deadline belongs to the OLDEST unit ─────────────────────
+//
+// The property here replaced an earlier test that asserted only
+// `notStrictEqual(timer, firstTimer)` — "the timer object changed", which is
+// true of the starvable implementation and the fixed one alike, for different
+// reasons. An assertion satisfied by the defect AND the fix pins nothing, and
+// every mutant of the timer policy passed straight through it. What is asserted
+// now is the deadline: a later dm must NOT move the earlier unit's report.
+
+test('t388: a later dm does not push out an earlier unit\'s deadline (the starvation regression)', async () => {
+  const app = boot({ deps: { specConfirmMs: 200 } });
   try {
-    const first = target._dmConfirmTimer;
-    app.m._handleIntent('sender', dm('target', 'A LATER MESSAGE'));
-    await settled(app, 'target', /A LATER MESSAGE/);
-    assert.strictEqual(target._dmUnconfirmed.length, 2, 'ENTER: the second unit must have armed');
-    assert.notStrictEqual(target._dmConfirmTimer, first,
-      'the timer is REPLACED by the later write. Left running from the first unit, a dm written one second '
-      + 'before the deadline would be reported as unconfirmed after one second of silence — the window has to '
-      + "measure each unit's own silence, not the oldest one's");
+    await app.spawn('sender');
+    const target = await app.spawn('target');
+    // Armed directly rather than through deliveries: the property is the timer
+    // policy, and at a window short enough to observe, real deliveries race the
+    // check they are meant to feed.
+    app.m._armDmConfirm('target', 'sender', 'injected');
+    const firstAt = target._dmUnconfirmed[0].at;
+    const deadline = target._dmConfirmTimer;
+    // A stream of later dms, each arriving well inside the window. Under the
+    // restart-on-every-push policy each of these moved the deadline, so a seat
+    // dm-ed faster than the window NEVER reported — and `urgent` bypasses
+    // shouldHoldDm's idle band, so nothing upstream bounds that stream.
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 30));
+      app.m._armDmConfirm('target', 'sender', 'injected');
+    }
+    assert.strictEqual(target._dmUnconfirmed.length, 6,
+      'ENTER: all six units must be outstanding, or the starvation below cannot be exercised');
+    assert.strictEqual(target._dmUnconfirmed[0].at, firstAt,
+      'ENTER: the oldest entry must still be the first one');
+    assert.strictEqual(target._dmConfirmTimer, deadline,
+      'the pending timer is the SAME object across all five later pushes: the deadline belongs to the oldest '
+      + 'outstanding unit and no later traffic may reschedule it. Re-arming here is the starvation — a wedged '
+      + 'seat is precisely the seat people keep dm-ing, and our own notice tells them to resend urgent');
+
+    const notice = await settled(app, 'sender', /has not started a turn/, 200);
+    assert.match(notice, /has not started a turn/,
+      'and the report FIRES on the oldest unit\'s own schedule while the stream continues — a detector that '
+      + 'can be starved into silence by traffic to the seat it is watching is not a detector');
+  } finally { app.stop(); }
+});
+
+test('t388: only the RIPE units are drained; a young one keeps its full window', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000 } });
+  try {
+    await app.spawn('sender');
+    const target = await app.spawn('target');
+    // `at` values crafted, and the check called directly: at a window short
+    // enough for a real delivery to age past, EVERY entry is ripe, and a fixture
+    // where everything is ripe cannot tell a partial drain from a full one.
+    const now = Date.now();
+    target._dmUnconfirmed = [
+      { sender: 'sender', at: now - 90_000 },   // ripe
+      { sender: 'sender', at: now - 61_000 },   // ripe
+      { sender: 'sender', at: now - 1_000 },    // young
+    ];
+    app.m._checkDmConfirm(target);
+    assert.strictEqual(target._dmUnconfirmed.length, 1,
+      'the two ripe units drain and the young one STAYS: draining it too is the defect the pegged deadline '
+      + 'would otherwise introduce — a unit written a second before the oldest\'s deadline reported after a '
+      + 'second of silence');
+    assert.strictEqual(target._dmUnconfirmed[0].at, now - 1_000, 'and it is the young one that survived');
+    assert.ok(target._dmConfirmTimer,
+      'with the window re-armed for the remainder — a partial drain that stops arming loses every surviving '
+      + 'unit, which is the same silence by another route');
+    assert.ok(target._dmConfirmTimer._idleTimeout <= 59_000 && target._dmConfirmTimer._idleTimeout > 55_000,
+      'and re-armed for the REMAINDER of the young unit\'s window, not a fresh full one');
+    const notice = await settled(app, 'sender', /has not started a turn/);
+    assert.match(notice, /your 2 messages/,
+      'and the report covers exactly the drained units, not the outstanding one');
+  } finally { app.stop(); }
+});
+
+test('t388: a fire with nothing ripe re-arms rather than returning (the cap shifts the pegged entry)', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000 } });
+  try {
+    await app.spawn('sender');
+    const target = await app.spawn('target');
+    const now = Date.now();
+    // The shape a cap overflow leaves behind: the timer was pegged to an entry
+    // the cap has since shifted out, so it fires early relative to the new
+    // oldest and finds nothing ripe.
+    target._dmUnconfirmed = [{ sender: 'sender', at: now - 5_000 }];
+    const before = app.seen('sender');
+    app.m._checkDmConfirm(target);
+    assert.strictEqual(target._dmUnconfirmed.length, 1, 'the unripe unit is kept, not dropped');
+    assert.ok(target._dmConfirmTimer,
+      'and the window is RE-ARMED. Returning here is how an overflowing seat goes permanently silent: the '
+      + 'timer that would have reported it has already fired and nothing re-arms it');
+    assert.ok(target._dmConfirmTimer._idleTimeout <= 55_000 && target._dmConfirmTimer._idleTimeout > 50_000,
+      'for the REMAINDER of that unit\'s window (~55s), not a fresh full one. A full re-arm here gives the '
+      + 'surviving unit two windows of silence instead of one every time the cap fires');
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(app.seen('sender'), before,
+      'and NOTHING is reported on an early fire — reporting an unripe unit is the report-after-one-second bug');
+  } finally { app.stop(); }
+});
+
+test('t388: one wedge reports once per window — the repeat is the feature, not noise', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000 } });
+  try {
+    await app.spawn('sender');
+    const target = await app.spawn('target');
+    const now = Date.now();
+    target._dmUnconfirmed = [{ sender: 'sender', at: now - 61_000 }];
+    app.m._checkDmConfirm(target);
+    const first = await settled(app, 'sender', /has not started a turn/);
+    const firstCasts = app.casts.filter((c) => c.payload && c.payload.kind === 'dm-unconfirmed').length;
+    assert.strictEqual(firstCasts, 1, 'ENTER: the first window must have reported');
+
+    // A later dm to the same still-wedged seat, ripe in its own window.
+    target._dmUnconfirmed = [{ sender: 'sender', at: now - 61_000 }];
+    app.m._checkDmConfirm(target);
+    await settled(app, 'sender', /has not started a turn[\s\S]*has not started a turn/);
+    assert.strictEqual(app.casts.filter((c) => c.payload && c.payload.kind === 'dm-unconfirmed').length, 2,
+      'a SECOND report fires for the second window. Suppressing the repeat as noise is what leaves a sender '
+      + 'whose message arrived after an earlier report told nothing at all');
+    assert.ok(app.seen('sender').length > first.length, 'and its sender is told again, not only the log');
+  } finally { app.stop(); }
+});
+
+test('t388: the evidence ACCUMULATES across reports, so a sustained wedge does not shrink it', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000 } });
+  try {
+    await app.spawn('sender');
+    const target = await app.spawn('target');
+    const now = Date.now();
+    target._dmUnconfirmed = [{ sender: 'sender', at: now - 90_000 }];
+    app.m._checkDmConfirm(target);
+    assert.strictEqual(app.m._dmLatchEvidence('target').count, 1, 'ENTER: the first report must be evidence');
+    target._dmUnconfirmed = [{ sender: 'sender', at: now - 61_000 }];
+    app.m._checkDmConfirm(target);
+    const ev = app.m._dmLatchEvidence('target');
+    assert.strictEqual(ev.count, 2,
+      'both reported units are still evidence. Replacing _dmUnconfirmedLast per report shrinks the backlog to '
+      + 'the last window during exactly the sustained wedge the attribution exists for');
+    assert.ok(ev.at <= now - 90_000, 'and the span still starts at the OLDEST unit, not the latest report');
+    assert.ok(target._dmUnconfirmedLast.at <= now - 90_000,
+      'and the accumulated record itself carries the oldest `at`, not the newest report\'s. Read through the '
+      + 'surviving entries this looks right either way; it stops looking right the moment the cap folds an '
+      + 'entry into a dropped count, where the record\'s own `at` is all that is left of it');
+  } finally { app.stop(); }
+});
+
+test('t388: a cap-dropped unit still tells its sender, and is counted the same everywhere', async () => {
+  // Cap 2 so the drop is reachable; the partial drain makes the production cap
+  // of 8 nearly unreachable, which is why this is injected rather than driven.
+  const app = boot({ deps: { specConfirmMs: 60_000, dmLatchCap: 2 } });
+  try {
+    await app.spawn('starved');
+    await app.spawn('sender');
+    const target = await app.spawn('target');
+    app.m._armDmConfirm('target', 'starved', 'injected');
+    app.m._armDmConfirm('target', 'sender', 'injected');
+    app.m._armDmConfirm('target', 'sender', 'injected');
+    assert.strictEqual(target._dmUnconfirmed.length, 2,
+      'ENTER: the cap must have dropped one, or nothing below is about a drop');
+    assert.ok(!target._dmUnconfirmed.some((e) => e.sender === 'starved'),
+      'ENTER: and the dropped one must be the starved sender\'s');
+
+    const ev = app.m._dmLatchEvidence('target');
+    assert.strictEqual(ev.count, 3,
+      'the evidence counts the dropped unit. Counting only survivors makes the sweep clause disagree with the '
+      + 'broadcast total about one seat\'s backlog');
+
+    // The dropped unit is the OLDEST thing this seat is holding — which is the
+    // normal case, since the cap drops from the front.
+    target._dmUnconfirmed.forEach((e) => { e.at -= 61_000; });
+    target._dmOverflow.get('starved').at = Date.now() - 300_000;
+    app.m._checkDmConfirm(target);
+    const notice = await settled(app, 'starved', /has not started a turn/);
+    assert.match(notice, /has not started a turn/,
+      'and the STARVED sender is told. Building the notice list from surviving entries only leaves the one '
+      + 'party whose message was actually dropped as the one party never informed');
+    assert.match(notice, /your message to target was written/,
+      'and its notice COUNTS that dropped unit as this sender\'s own: a share computed from surviving entries '
+      + 'reaches the starved sender with an empty share and tells it about "your 0 messages", which is a '
+      + 'notice that names no message at all');
+    assert.doesNotMatch(notice, /your 0 messages|NaN/,
+      'never an empty or unarithmetic share — the age is computed from entries this sender may have none of');
+    const cast = app.casts.filter((c) => c.payload && c.payload.kind === 'dm-unconfirmed').pop();
+    assert.match(cast.payload.body, /^3 dms/, 'the broadcast counts all three');
+    assert.match(cast.payload.body, /starved/, 'and names the starved sender it counted');
+    assert.match(cast.payload.body, /after 30[01]s/,
+      'and ages the backlog from the OLDEST unit INCLUDING the dropped one (300s), not from the oldest '
+      + 'survivor (61s). The cap drops from the front, so the dropped units are always the oldest — an age '
+      + 'read past them under-reports how long the seat has been silent by exactly the interesting amount');
+
+    // The overflow records are CONSUMED by the report that covered them.
+    assert.strictEqual(app.m._dmLatchEvidence('target').count, 3,
+      'ENTER: the reported units are still evidence, so the count below is about re-reporting and not decay');
+    target._dmUnconfirmed = [{ sender: 'sender', at: Date.now() - 61_000 }];
+    app.m._checkDmConfirm(target);
+    const second = app.casts.filter((c) => c.payload && c.payload.kind === 'dm-unconfirmed').pop();
+    assert.match(second.payload.body, /^1 dm /,
+      'a LATER window counts only its own units. Leaving the overflow records in place re-reports the same '
+      + 'dropped messages every window for as long as the seat stays wedged, and the total grows without any '
+      + 'new message having been lost');
+
+    // And a turn clears the dropped units along with everything else.
+    app.m._emitActivity('target', 'thinking');
+    assert.strictEqual(app.m._dmLatchEvidence('target'), null,
+      'a turn retires the OVERFLOW too: dropped units left behind by the clear keep a seat that demonstrably '
+      + 'took a turn permanently accused of holding a swallowed dm');
+  } finally { app.stop(); }
+});
+
+test('t388: a sender\'s dropped units keep the OLDEST age, not the newest', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000, dmLatchCap: 1 } });
+  try {
+    await app.spawn('starved');
+    await app.spawn('target');
+    const target = app.m.sessions.get('target');
+    // Two drops from one sender, coalesced into one record. The record must span
+    // from the OLDEST of them: it is what the notice ages and what the sweep
+    // clause reports as the backlog's start.
+    target._dmUnconfirmed = [{ sender: 'starved', at: 1_000 }, { sender: 'starved', at: 5_000 }];
+    app.m._armDmConfirm('target', 'other', 'injected');
+    assert.ok(target._dmOverflow && target._dmOverflow.get('starved'),
+      'ENTER: both of the starved sender\'s units must have overflowed into one record');
+    assert.strictEqual(target._dmOverflow.get('starved').count, 2, 'ENTER: coalesced, not replaced');
+    assert.strictEqual(target._dmOverflow.get('starved').at, 1_000,
+      'the record spans from the OLDEST dropped unit. Taking the newest under-reports how long the seat has '
+      + 'been holding that sender\'s traffic, which is the one number the report is judged on');
   } finally { app.stop(); }
 });
 
@@ -594,6 +835,7 @@ test('t388: the latch evidence outlives the report, which is when the stall swee
     const live = app.m._dmLatchEvidence('target');
     assert.ok(live && live.count === 1, 'ENTER: a live latch must be visible as evidence');
 
+    ripen(target);
     app.m._checkDmConfirm(target);
     await settled(app, 'sender', /has not started a turn/);
     assert.strictEqual(target._dmUnconfirmed.length, 0,
