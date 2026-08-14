@@ -1296,4 +1296,331 @@ test('t349: a throw inside the confirmation check is contained, not raised into 
   } finally { app.stop(); }
 });
 
+// ── t387: the same latch over the three seat-bound ticket REDIRECTS ──
+//
+// A rejection or a follow-up set of must-fixes is written back to a seat that is
+// already working the ticket, and until now nothing watched that write at all.
+// The loss is worse than a lost spec in one specific way: the seat keeps working
+// the version that was just rejected, and the stall sweep reports it as a stalled
+// seat — so the operator is told the wrong CAUSE, which is what these tests pin
+// alongside the redelivery itself.
+//
+// The redirect kind reuses `_specConfirmTimer` rather than minting a second timer
+// field, which is what makes it inherit the disarm-on-activity and
+// clear-on-cleanup defences. Inheritance by construction is an argument, not
+// evidence, so each of those defences is asserted on the REDIRECT path below
+// rather than assumed from the spec path's coverage.
+
+// A dispatched ticket whose spec latch has been RETIRED by a real turn, closed,
+// and then rejected by the lead — i.e. a seat holding a redirect and nothing
+// else. The turn matters: without it the spec latch is still armed and every
+// assertion below could be reading the spec mechanism's bytes instead of the
+// redirect's, which is the reduction-ate-the-row failure this file's t349 block
+// already had to defend against once.
+async function redirected(world, opts = {}) {
+  const { app, s, lead } = await dispatched(world, opts);
+  // Clears the spec latch the way production does — through a turn, not by
+  // assignment — and leaves the seat idle so the redirect can arm.
+  app.m._emitActivity('team-hand', 'thinking');
+  app.m._emitActivity('team-hand', 'idle');
+  assert.strictEqual(s._specUnconfirmed, null,
+    'ENTER: the SPEC latch must be gone before the rejection — otherwise a redelivery asserted below could be '
+    + 'the spec mechanism firing, and every kind-specific assertion here would be reading the wrong bytes');
+
+  const all = world.tickets();
+  all.find((t) => t.id === 't1').state = 'done';
+  world.tstore.save(world.team.root, all);
+  app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'FIX THE WIDGET MOUNT' });
+  const got = await settled(app, 'team-hand', /FIX THE WIDGET MOUNT/);
+  assert.match(got, /FIX THE WIDGET MOUNT/,
+    'ENTER: the rejection must have been written at all — with no first delivery there is nothing for the '
+    + 'latch to confirm and every assertion below holds vacuously');
+  for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.ok(app.seen('team-hand').endsWith('\r'),
+    'ENTER: the rejection delivery must be COMPLETE before a test baselines the terminal');
+  return { app, s, lead };
+}
+
+test('t387: a seat that never starts a turn after a REJECTION is redelivered to, exactly once', async () => {
+  const world = mkWorld();
+  const { app, s } = await redirected(world);
+  try {
+    assert.ok(s._specUnconfirmed,
+      'ENTER: the rejection write must ARM the latch — this is the mutant of dropping the onWrite hook at the '
+      + '_taskReject call site, and unarmed every assertion below is vacuous');
+    assert.strictEqual(s._specUnconfirmed.kind, 'redirect',
+      'and it must be armed as a REDIRECT: the kind is what selects the rebuild and the escalation label, so a '
+      + 'redirect latched as a spec would redeliver the SPEC text over a rejection');
+
+    const first = app.seen('team-hand');
+    fireConfirm(app, s);
+    const after = await settled(app, 'team-hand', /REDELIVERY/);
+    assert.match(after, /REDELIVERY/,
+      'a rejection whose seat never took a turn must be redelivered — nothing else in the system can tell a '
+      + 'swallowed redirect from a delivered one, and the seat is meanwhile working the rejected version');
+    assert.ok(after.length > first.length, 'ENTER: the redelivery must be a SECOND write, not a re-read of the first');
+    // Sliced past the first copy on purpose. Matched against the whole buffer this
+    // assertion is vacuous — the reason is already in there from the FIRST
+    // delivery, so a redelivery rebuilt with an empty reason passes it untouched.
+    assert.match(after.slice(first.length), /FIX THE WIDGET MOUNT/,
+      'and the redelivery must carry the REASON, not just an announcement — the reason is not persisted on the '
+      + 'ticket record, so a rebuild that re-derived from the record would hand the seat an empty rejection');
+    assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.retried, true,
+      'and the retry must be spent — an unspent budget redelivers forever into a live composer');
+  } finally { app.stop(); }
+});
+
+// The half of the ticket that is about ATTRIBUTION rather than delivery. With the
+// spec label reused, the lead is told a seat never got its task about a seat that
+// has been working the ticket for an hour — and the sweep's "stalled seat" reading
+// is exactly the wrong place to send them looking.
+test('t387: an undelivered rejection escalates as a REDIRECT, not as a spec and not as a stall', async () => {
+  const world = mkWorld();
+  const { app, s } = await redirected(world);
+  try {
+    fireConfirm(app, s);
+    await settled(app, 'team-hand', /REDELIVERY/);
+    assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.retried, true,
+      'ENTER: the retry must be spent, or the second window below redelivers again instead of escalating');
+
+    const beforeLead = app.seen('lead');
+    fireConfirm(app, s);
+    const leadSaw = await settled(app, 'lead', /ESCALATED/);
+    assert.ok(leadSaw.length > beforeLead.length, 'ENTER: the escalation must be a new write to the lead');
+    assert.match(leadSaw, /redirect-undelivered/,
+      'the step must name the REDIRECT: this is the mutant of reusing the spec-undelivered label, and it is the '
+      + 'misattribution the ticket exists to retire');
+    assert.doesNotMatch(leadSaw, /spec-undelivered/,
+      'and it must NOT report a spec — the spec arrived and was worked; what was lost is the rejection');
+    assert.match(leadSaw, /never saw the rejected/,
+      'the evidence must say the seat was never told, in those terms — a lead reading a silent seat on an open '
+      + 'ticket defaults to "stalled", and replacing that guess is half the value of watching this path');
+    assert.strictEqual(s._specUnconfirmed, null, 'and the latch is released, so nothing re-fires behind the escalation');
+  } finally { app.stop(); }
+});
+
+test('t387: a seat that starts a turn after a rejection is never redelivered to', async () => {
+  const world = mkWorld();
+  const { app, s } = await redirected(world);
+  try {
+    assert.ok(s._specUnconfirmed, 'ENTER: the latch must be armed for its clearing to mean anything');
+    // The defence the redirect kind INHERITS by reusing _specConfirmTimer and
+    // _specUnconfirmed. Asserted on this path anyway: "it inherits it" is a claim
+    // about the code, and a second timer field added later would break it silently.
+    app.m._emitActivity('team-hand', 'thinking');
+    assert.strictEqual(s._specUnconfirmed, null,
+      'a started turn clears the REDIRECT latch too — the seat cannot submit without having consumed the '
+      + 'rejection, which is the same entailment the spec latch rides');
+    const first = app.seen('team-hand');
+    fireConfirm(app, s);
+    await new Promise((r) => setTimeout(r, 30));
+    assert.strictEqual(app.seen('team-hand'), first,
+      'a seat mid-turn must receive NOTHING — splicing a second copy of the must-fixes into a live composer is '
+      + 'a worse failure than the one being fixed');
+  } finally { app.stop(); }
+});
+
+test('t387: a rejection PARKED behind a permission dialog does not arm the latch', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await dispatched(world);
+  try {
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+    const all = world.tickets();
+    all.find((t) => t.id === 't1').state = 'done';
+    world.tstore.save(world.team.root, all);
+
+    // A dialog-blocked seat parks everything sent to it. The park is DURABLE and
+    // owned by its own drains, and it emits no fresh activity edge when it drains
+    // into a thinking seat — so arming here would redeliver a rejection into a
+    // seat that has it and is acting on it.
+    s.needsAttention = { kind: 'permission', ts: Date.now(), message: 'allow?' };
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'FIX THE WIDGET MOUNT' });
+    for (let i = 0; i < 200 && app.parked('team-hand', /FIX THE WIDGET MOUNT/) === 0; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.strictEqual(app.parked('team-hand', /FIX THE WIDGET MOUNT/), 1,
+      'ENTER: the rejection must actually be PARKED — if it was injected instead, the latch assertion below is '
+      + 'about the wrong disposition entirely and would pass against an arm that fires on every write');
+    assert.ok(!s._specUnconfirmed,
+      'a parked rejection must not arm: the park has its own durability and produces no edge to confirm, so the '
+      + 'latch would run its full window over a delivery that landed and redeliver into a working seat');
+  } finally { app.stop(); }
+});
+
+test('t387: a rejection written into an already-busy seat does not arm the latch', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await dispatched(world);
+  try {
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+    const all = world.tickets();
+    all.find((t) => t.id === 't1').state = 'done';
+    world.tstore.save(world.team.root, all);
+
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'FIX THE WIDGET MOUNT' });
+    // Busy at WRITE time. The arm runs inside `produce`, so this is the state it
+    // reads — a seat already thinking emits no fresh edge for the unit it consumes.
+    s.activityState = 'thinking';
+    const got = await settled(app, 'team-hand', /FIX THE WIDGET MOUNT/);
+    assert.match(got, /FIX THE WIDGET MOUNT/,
+      'ENTER: the rejection must have been WRITTEN — a park here would make the assertion below true for the '
+      + 'unrelated reason the test above already covers');
+    assert.ok(!s._specUnconfirmed,
+      'a write into a thinking seat must not arm the redirect latch, for the same reason it does not arm the '
+      + 'spec latch: the consumed unit produces no fresh activity edge to clear it');
+  } finally { app.stop(); }
+});
+
+// The mutant here is the retry-budget carry condition matching on ticketId alone.
+// That reads correct — it IS the same ticket — and it silently denies the redirect
+// the single retry this whole ticket exists to give it, on precisely the tickets
+// that have already had delivery trouble.
+test('t387: a spec that spent its retry does not deny a later redirect on the same ticket its own', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await dispatched(world);
+  try {
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+    // A spec latch on t1 with its budget already spent — the state the mutant
+    // carries forward across kinds.
+    s._specUnconfirmed = { ticketId: 't1', kind: 'spec', at: Date.now(), retried: true };
+
+    const all = world.tickets();
+    all.find((t) => t.id === 't1').state = 'done';
+    world.tstore.save(world.team.root, all);
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'FIX THE WIDGET MOUNT' });
+    await settled(app, 'team-hand', /FIX THE WIDGET MOUNT/);
+
+    assert.ok(s._specUnconfirmed, 'ENTER: the rejection must have re-armed the latch');
+    assert.strictEqual(s._specUnconfirmed.kind, 'redirect',
+      'ENTER: the latch must now be the REDIRECT one — still reading `spec` means the arm never ran and the '
+      + 'budget assertion below is about the state this test planted, not about the carry rule');
+    assert.strictEqual(s._specUnconfirmed.retried, false,
+      'the redirect gets its OWN retry: the budget carries forward only within one kind, and a spent spec '
+      + 'budget bleeding across would leave the rejection unwatched after a single write');
+  } finally { app.stop(); }
+});
+
+// The non-injected arm drops the latch so it does not watch for an edge that will
+// never come. Dropping it UNCONDITIONALLY is the mutant: a parked redirect would
+// then retire a spec latch that is still legitimately watching an unconsumed spec.
+test('t387: a diverted redirect drops only its OWN latch, not a live spec latch on the same ticket', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    assert.ok(s._specUnconfirmed && s._specUnconfirmed.kind === 'spec',
+      'ENTER: a SPEC latch must be live on t1 — with nothing armed, "it survived" is vacuously true');
+    const planted = s._specUnconfirmed;
+
+    app.m._armSpecConfirm('team-hand', 't1', 'parked', { label: 'rejected', reason: 'r', from: 'lead' });
+    assert.strictEqual(s._specUnconfirmed, planted,
+      'a parked REDIRECT must leave the spec latch exactly as it found it — the spec is still unconsumed and '
+      + 'still the only thing watching it, and an unconditional drop here retires it silently');
+
+    app.m._armSpecConfirm('team-hand', 't1', 'parked');
+    assert.strictEqual(s._specUnconfirmed, null,
+      'ENTER: a parked SPEC still drops the spec latch — without this the assertion above would also pass '
+      + 'against an arm whose non-injected branch does nothing at all');
+  } finally { app.stop(); }
+});
+
+test('t387: the FOLLOW-UP must-fixes path arms the same latch', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await redirected(world);
+  try {
+    // Retire the first rejection's latch through a turn, and leave the ticket
+    // open-with-reworkRound — the state that routes `reject` to _taskRejectFollowUp
+    // rather than to a second reopen.
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+    assert.strictEqual(s._specUnconfirmed, null, 'ENTER: the rejection latch must be retired first');
+    const t = world.tickets().find((x) => x.id === 't1');
+    assert.strictEqual(t.state, 'open', 'ENTER: the rejection must have reopened the ticket');
+    assert.ok(Number(t.reworkRound) > 0,
+      'ENTER: reworkRound must be set — it is what routes the next reject to the FOLLOW-UP path, and without it '
+      + 'this test exercises the reopen path the test above already covers');
+
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
+    const got = await settled(app, 'team-hand', /ALSO FIX THE LATCH/);
+    assert.match(got, /more must-fixes/,
+      'ENTER: this must be the FOLLOW-UP delivery, not a second reopen — they are different call sites and only '
+      + 'one of them is under test here');
+    assert.ok(s._specUnconfirmed,
+      'the follow-up must arm too: a seat that never sees its second set of must-fixes is in exactly the state '
+      + 'this ticket describes, holding a closed premise with the sweep calling it stalled');
+    assert.strictEqual(s._specUnconfirmed.kind, 'redirect', 'and as a redirect');
+    assert.strictEqual(s._specUnconfirmed.label, 'more must-fixes',
+      'labelled as the follow-up, so the escalation names what was actually lost rather than a generic rejection');
+  } finally { app.stop(); }
+});
+
+test('t387: the LOOP rejection path arms the same latch', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+    assert.strictEqual(s._specUnconfirmed, null, 'ENTER: the spec latch must be retired first');
+
+    const r = app.m._rejectTicketFromLoop(world.team, 't1', 'SUITE RED: three failures');
+    assert.ok(r && r.ok, `ENTER: the loop rejection must have succeeded (${r && r.error})`);
+    const got = await settled(app, 'team-hand', /SUITE RED/);
+    assert.match(got, /SUITE RED: three failures/, 'ENTER: the rework must have been written to the seat');
+    assert.ok(s._specUnconfirmed,
+      'the loop rejection must arm too — it is the path that fires unattended, so a seat that never sees it '
+      + 'keeps working the branch the suite just rejected with nobody watching');
+    assert.strictEqual(s._specUnconfirmed.kind, 'redirect', 'and as a redirect');
+  } finally { app.stop(); }
+});
+
+// The redelivery is marked for the same reason a spec REPLAY is: the seat may be
+// holding an unsubmitted copy of the first write, and nothing else in the text
+// distinguishes a second delivery from a second, different rejection. The FIRST
+// delivery must not carry the marker — a seat told "you already saw this" the
+// first time is being lied to.
+test('t387: the redirect marker rides the redelivery only, and the first copy is unchanged', async () => {
+  const world = mkWorld();
+  const { app, s } = await redirected(world);
+  try {
+    const first = app.seen('team-hand');
+    assert.doesNotMatch(first, /REDELIVERY/,
+      'the FIRST rejection must not be marked as a redelivery — this is the mutant of building both copies with '
+      + 'the replay head, and it tells a seat it has already seen must-fixes that are new');
+    assert.match(first, /\[ticket t1 rejected\]/,
+      'ENTER: the first copy keeps the bytes it had before the latch existed, so the label the escalation and '
+      + 'the redelivery both reuse is the one the seat actually saw');
+    assert.match(first, /CLOSE WITH: \[agent:task done t1\]/,
+      'and the close verb still rides it — rework closes the ticket a second time');
+
+    fireConfirm(app, s);
+    const after = await settled(app, 'team-hand', /REDELIVERY/);
+    const second = after.slice(first.length);
+    assert.match(second, /already sent to you once/,
+      'the redelivery must say so in the text, not just in a tag — over the spill threshold the tag is all the '
+      + 'seat sees before deciding to read, but the body is what it acts on');
+    assert.match(second, /CLOSE WITH: \[agent:task done t1\]/,
+      'and the redelivery carries the close verb too — it is a full replacement copy, not a pointer to the first');
+  } finally { app.stop(); }
+});
+
+test('t387: a redirect latch and its timer are dropped when the seat dies', async () => {
+  const world = mkWorld();
+  const { app, s } = await redirected(world);
+  try {
+    assert.ok(s._specUnconfirmed && s._specConfirmTimer,
+      'ENTER: both the latch and its timer must be live, or the cleanup assertion below is vacuous');
+    // The redirect kind reuses _specConfirmTimer precisely so it lands in
+    // _cleanup's existing clearTimeout list. Asserted rather than assumed: a
+    // future second timer field would leave a 90s timer firing at a dead session.
+    app.m._cleanup('team-hand');
+    assert.ok(!app.m.sessions.get('team-hand'), 'ENTER: cleanup must have removed the session');
+    fireConfirm(app, s);
+    assert.doesNotThrow(() => app.m._checkSpecConfirm(s),
+      'a check running against a cleaned-up session must not throw into the host timer');
+  } finally { app.stop(); }
+});
+
 after(() => { setImmediate(() => process.exit(0)); });
