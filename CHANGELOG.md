@@ -19,6 +19,20 @@ blocks a release.
   was never told — instead of reporting it as a seat that stalled, which is the
   same silence with the wrong cause attached.
 
+- A message to an agent that never reads it now tells you. If a dm is typed
+  into a seat and that seat never starts a turn, the sender is told about it
+  roughly a minute and a half later, and the event shows up in the IPC log.
+  Nothing is re-sent automatically — the resend is yours to make, because only
+  you know whether the message is safe to repeat. The wording hedges on
+  purpose: when several messages are outstanding at one seat there is no way to
+  tell which of them landed, so it says they may not have been seen rather than
+  claiming a loss it cannot prove.
+
+- A stalled-ticket alarm now says when the seat may simply never have been
+  told. Previously a seat that swallowed its instructions looked exactly like a
+  seat stuck on the work, and every reaction that follows from that reading is
+  the wrong one.
+
 ## 5.7.0 — 2026-08-14 — tickets that run themselves
 
 Most of this release is one story: a ticket now goes from a written spec to a

@@ -4737,7 +4737,16 @@ function createSessionManager(deps) {
         // process, where a throw out of a setTimeout callback is an unhandled
         // exception in the host rather than a failed report.
         try { this._checkDmConfirm(session); }
-        catch (e) { log.error('intent', `dm confirmation check failed for ${session.name}: ${e.message}`); }
+        catch (e) {
+          log.error('intent', `dm confirmation check failed for ${session.name}: ${e.message}`);
+          // The timer was nulled above and the throw skipped every re-arm inside
+          // the check, so a surviving fifo would go unwatched until some later
+          // push armed a fresh full window — silence in the one case this exists
+          // to end, arrived at through the error path.
+          if (session._dmUnconfirmed && session._dmUnconfirmed.length && !session._dmConfirmTimer) {
+            this._armDmConfirmTimer(session);
+          }
+        }
       }, delayMs);
       // Observer-grade in both senses, like the two ticket-side watchers: never
       // the reason a process stays alive, never the reason one dies.

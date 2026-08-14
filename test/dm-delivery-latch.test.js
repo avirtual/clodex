@@ -571,7 +571,13 @@ test('t388: a check with nothing outstanding reports nothing (the timer is not t
 // now is the deadline: a later dm must NOT move the earlier unit's report.
 
 test('t388: a later dm does not push out an earlier unit\'s deadline (the starvation regression)', async () => {
-  const app = boot({ deps: { specConfirmMs: 200 } });
+  // The five pushes below must ALL land inside one window, or the assertion
+  // measures scheduling rather than policy: the timer would fire mid-loop, the
+  // check would drain the ripe entry and re-arm a new object, and the test would
+  // flake red for a reason that has nothing to do with the deadline. 50ms of
+  // pushes against a 500ms window leaves an order of magnitude of slack on a
+  // loaded box.
+  const app = boot({ deps: { specConfirmMs: 500 } });
   try {
     await app.spawn('sender');
     const target = await app.spawn('target');
@@ -586,7 +592,7 @@ test('t388: a later dm does not push out an earlier unit\'s deadline (the starva
     // dm-ed faster than the window NEVER reported — and `urgent` bypasses
     // shouldHoldDm's idle band, so nothing upstream bounds that stream.
     for (let i = 0; i < 5; i++) {
-      await new Promise((r) => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, 10));
       app.m._armDmConfirm('target', 'sender', 'injected');
     }
     assert.strictEqual(target._dmUnconfirmed.length, 6,
@@ -598,7 +604,7 @@ test('t388: a later dm does not push out an earlier unit\'s deadline (the starva
       + 'outstanding unit and no later traffic may reschedule it. Re-arming here is the starvation — a wedged '
       + 'seat is precisely the seat people keep dm-ing, and our own notice tells them to resend urgent');
 
-    const notice = await settled(app, 'sender', /has not started a turn/, 200);
+    const notice = await settled(app, 'sender', /has not started a turn/, 400);
     assert.match(notice, /has not started a turn/,
       'and the report FIRES on the oldest unit\'s own schedule while the stream continues — a detector that '
       + 'can be starved into silence by traffic to the seat it is watching is not a detector');
@@ -824,6 +830,18 @@ test('t388: a throw inside the dm check is contained, not raised into the host',
       + 'from one that never fired');
     assert.ok(errs.some((msg) => /target/.test(msg)),
       'and the log must name the seat, or an operator cannot tell which delivery went unwatched');
+    // Containment alone would leave the SURVIVING fifo unwatched: the callback
+    // nulls the timer before the check, and the throw skips every re-arm inside
+    // it, so without the catch's own re-arm this latch waits for a later push to
+    // start a fresh full window — the silence this mechanism exists to end,
+    // reached through its error path. Re-arming on a persistently throwing check
+    // costs one logged error per window on a seat that is already wedged, which
+    // is the same trade the permission-dialog re-arm makes.
+    assert.strictEqual((target._dmUnconfirmed || []).length, 1,
+      'ENTER: the fifo must have survived the throw, or the re-arm below has nothing to watch');
+    assert.ok(target._dmConfirmTimer,
+      'a throw must leave the latch ARMED: an unwatched non-empty fifo reports nothing until some later dm '
+      + 'happens to arm it, and the report it owes is the one already overdue');
   } finally { app.stop(); }
 });
 
