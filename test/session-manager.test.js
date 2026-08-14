@@ -6019,6 +6019,57 @@ test('t168 _gatedDeliver reports QUEUED, not delivered — the write happens lat
     'and the old key must be GONE — a caller left reading `.delivered` would silently see undefined and treat every success as a failure');
 });
 
+// t388: the sweep's stall body gains ONE cause sentence when the stalled seat has
+// a live or recently-expired unconfirmed-dm latch. _dmLatchEvidence and
+// formatStallBody are each pinned on their own elsewhere; what these two pin is
+// the WIRING, which is the part that can be absent while both halves pass.
+test('t388 a stall on a seat holding an unconfirmed dm names the swallow as the possible cause', async () => {
+  const f = mkTasks();
+  f.seat('lead'); const hand = f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const stallMs = 60 * 60 * 1000;
+  const ts = f.load();
+  ts[0].lastActivityAt = Date.now() - (stallMs * 4);
+  f.tstore.save(f.team.root, ts);
+  // The seat was written to and never took a turn. Armed through the real arm at
+  // the real disposition, so the evidence the sweep reads is the state the
+  // production path produces rather than a hand-set field.
+  f.m._armDmConfirm('team-hand', 'lead', 'injected');
+  assert.strictEqual((hand._dmUnconfirmed || []).length, 1,
+    'ENTER: the latch must be armed, or the clause below is absent for the trivial reason and this test pins nothing');
+  f.gated.length = 0;
+  await f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the sweep found the stall and alarmed');
+  const body = f.gated[0].body;
+  assert.match(body, /stalled: hand quiet/,
+    'ENTER: this is the STALL body — the orphan and loop-held arms are different bodies and the clause is '
+    + 'deliberately not on either');
+  assert.match(body, /may be a swallowed delivery rather than a stalled seat/,
+    'the lead is told the seat may never have been spoken to. Without this the alarm reads as a stalled seat, '
+    + 'and every action that follows from that reading is aimed at the wrong actor');
+  clearTimeout(hand._dmConfirmTimer);
+});
+
+test('t388 a stall on a seat with no dm history carries no cause clause', async () => {
+  const f = mkTasks();
+  f.seat('lead'); const hand = f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const stallMs = 60 * 60 * 1000;
+  const ts = f.load();
+  ts[0].lastActivityAt = Date.now() - (stallMs * 4);
+  f.tstore.save(f.team.root, ts);
+  assert.strictEqual((hand._dmUnconfirmed || []).length, 0,
+    'ENTER: no latch on this seat — that is the whole difference from the test above');
+  f.gated.length = 0;
+  await f.m._sweepTeamTickets({ ...f.team, watchdogMs: stallMs }, Date.now());
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the sweep still alarmed — the clause is the only variable');
+  assert.doesNotMatch(f.gated[0].body, /swallowed/,
+    'an ordinary stall keeps its ordinary wording: a cause sentence on every alarm carries no information and '
+    + 'teaches the lead to skip the line on the alarms where it does');
+});
+
 test('t82 the watchdog nudge itself stays passive (decision: alarm to the lead, but not a work assignment)', async () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
