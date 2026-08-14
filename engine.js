@@ -609,6 +609,7 @@ const { ctxReminderFor } = require('./ctx-reminder');
 const { bakePrompt, promptCacheDir, readCache } = require('./ipc-prompt-cache');
 const { enqueueNotice, versionNoticeFor, clearNotices } = require('./notice-queue');
 const { buildSkillPlugin, parseSkillFrontmatter, unresolvedSubagentRefs } = require('./skills-util');
+const { classifySkillRoster, emptyRoster } = require('./skill-roster');
 const { unionEnabled } = require('./scope-util');
 const { sshRun } = require('./ssh-run');
 const { probePeer, fixSessionName, buildDeployFixBriefing, classifyDeployFolder, homeRelativize, resolveDeployFolder } = require('./peer-deploy');
@@ -630,18 +631,10 @@ function parseSkillRoster(name) {
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
     const real = fs.realpathSync(linkPath);
     const lines = fs.readFileSync(real, 'utf8').split('\n');
-    let names = [];
-    for (const line of lines) {
-      if (!line || line.indexOf('skill_listing') === -1) continue;
-      let obj;
-      try { obj = JSON.parse(line); } catch { continue; }
-      const att = obj && obj.type === 'attachment' ? obj.attachment : null;
-      if (att && att.type === 'skill_listing' && Array.isArray(att.names)) {
-        names = att.names; // last one wins — reflects the current roster
-      }
-    }
-    return names;
-  } catch { return []; }
+    // The seed is passed as alwaysInScope so a scoped directory that reuses a
+    // built-in's name can't get the built-in marked out-of-scope.
+    return classifySkillRoster(lines, { alwaysInScope: CLAUDE_SKILLS });
+  } catch { return emptyRoster(); }
 }
 
 function readEffectiveSkillState(cwd) {
@@ -1331,15 +1324,18 @@ function readSkillCatalog(name) {
   const entry = persistence.get(name);
   const disabled = entry && Array.isArray(entry.disabledSkills) ? entry.disabledSkills : [];
   const eff = readEffectiveSkillState(entry ? entry.cwd : null);
+  const scan = parseSkillRoster(name);
   const names = [...new Set([
     ...CLAUDE_SKILLS,
-    ...parseSkillRoster(name),
+    ...scan.roster,
+    ...scan.outOfScope.map((s) => s.name),
     ...disabled,
     ...Object.keys(eff.overrides),
   ])].sort();
   return {
     ok: true,
     names,
+    outOfScope: scan.outOfScope,     // reachable only under their own dir; name+dir
     disabledSkills: disabled,        // the session's own layer-4 off list
     effective: eff.overrides,        // lower-layer state, per skill (value+source)
     skillsLocked: eff.skillsLocked,  // managed-policy lock on the skills surface

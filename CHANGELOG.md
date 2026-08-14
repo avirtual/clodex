@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- The per-session Skills popover shows the skills the session actually has
+  again. If a project defines directory-scoped skills (a `.claude/skills`
+  folder that only applies under, say, `app/`), those were taking over the
+  list — the popover offered skills the session could not use, while some of
+  the ones it really had loaded went missing and could not be turned off.
+  Scoped skills are still listed, but greyed out and labelled with the
+  directory they apply under, so it is clear which ones this session can
+  actually toggle.
+
 ## 5.8.0 — 2026-08-14 — agents that get themselves unstuck
 
 - The ticket watchdog gained a middle rung: before the lead is alarmed about a

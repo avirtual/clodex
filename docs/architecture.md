@@ -569,6 +569,12 @@ worktree, which is why membership is by repo.
   `unionEnabled` / `reconcilePartialSelection` — the `workspace:`/`sessions:`
   frontmatter scope predicate + spawn-union + scoped-checklist save semantics.
 - **agents-util.js**, **skills-util.js** — the agent and skill library layers.
+- **skill-roster.js** — `classifySkillRoster`: splits a transcript's
+  `skill_listing` attachments into the session's roster (`isInitial: true`,
+  last one wins) and the DIRECTORY-SCOPED sets (`isInitial: false`, keyed by
+  source dir) that load only under their own directory. Engine keeps the
+  realpath+read and passes lines in. The opposite direction from skills-util,
+  which writes clodex's own library OUT to a plugin scaffold.
 - **external-link.js** — the scheme filter for "open this URL in the user's
   browser", shared by BOTH hosts (main's window-open/will-navigate guards and
   the renderer's WebLinksAddon). True ONLY for http/https — the sole schemes

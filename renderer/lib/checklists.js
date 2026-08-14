@@ -15,7 +15,10 @@
 // byte-identical moves; only the cache access is seamed.
 //
 // DOM-bound (document.createElement + esc route through the global document),
-// so no unit tests per the R1 rule — move-only fidelity is the guarantee.
+// so no unit tests per the R1 rule — move-only fidelity is the guarantee. The
+// exception is the skill rows' read-only decision, which is NOT a move
+// (test/skill-checklist-scope.test.js): an out-of-scope row that still collects
+// into the off list writes an entry that disables nothing.
 
 const { esc } = require('./format');
 // NOTE — this file no longer requires intent-catalog. The gateable-intent rows
@@ -321,6 +324,9 @@ function renderSkillChecklist(container, names, disabledSet, effective, opts) {
   opts = opts || {};
   const canReenable = !!opts.canReenable;
   const skillsLocked = !!opts.skillsLocked;
+  // name -> source dir. These load only while the seat works under that dir, so
+  // clodex's off list can't reach them: read-only, like a lower-layer off.
+  const oos = new Map((opts.outOfScope || []).map((s) => [s.name, s.dir || null]));
   container.innerHTML = '';
   if (!names || !names.length) {
     container.innerHTML = '<span class="hint-text">No skills detected yet — they appear once the session has run a turn.</span>';
@@ -330,20 +336,28 @@ function renderSkillChecklist(container, names, disabledSet, effective, opts) {
     const eff = effective[name];
     const lowerOff = !!(eff && eff.value === 'off');
     const clodexOff = disabledSet.has(name);
+    const outOfScope = oos.has(name);
     // Read-only when clodex's layer-4 write can't actually change it: a lower-
-    // layer off we can't re-enable yet, or a managed-policy lock.
-    const readonly = skillsLocked || (lowerOff && !canReenable);
+    // layer off we can't re-enable yet, a managed-policy lock, or a skill that
+    // isn't loaded here at all.
+    const readonly = skillsLocked || outOfScope || (lowerOff && !canReenable);
     const row = document.createElement('label');
     row.className = 'agent-check' + (readonly ? ' skill-readonly' : '');
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.value = name;
-    cb.checked = !clodexOff && !lowerOff;
+    cb.checked = !clodexOff && !lowerOff && !outOfScope;
     if (readonly) cb.disabled = true;
     const txt = document.createElement('span');
     let note = '';
     if (skillsLocked) note = ' <span class="skill-src">locked by policy</span>';
     else if (lowerOff) note = ` <span class="skill-src">off via ${esc(eff.source)} settings</span>`;
+    else if (outOfScope) {
+      const dir = oos.get(name);
+      note = dir
+        ? ` <span class="skill-src">only under ${esc(dir)}</span>`
+        : ' <span class="skill-src">not loaded here</span>';
+    }
     txt.innerHTML = `<strong>${esc(name)}</strong>${note}`;
     row.appendChild(cb);
     row.appendChild(txt);
