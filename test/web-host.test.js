@@ -43,8 +43,18 @@ async function startHost({ registerHandlers, token, sessions, stores } = {}) {
 }
 
 // Minimal WS client: a message queue + a `next()` that awaits the next frame.
+//
+// 127.0.0.1, never `localhost`, and the rest of the suite already agrees. The
+// host binds the wildcard (`listen(port)` with no address), which on this
+// platform is `::` — and a wildcard bind does NOT conflict with a process
+// holding the SAME port on `[::1]` specifically, so `listen(0)` will hand out a
+// port another program is already listening on. `localhost` resolves to `::1`
+// first, where the more specific bind wins, so the connection lands in the
+// other program: a real one on this box is TextMate's rmate listener on 52698,
+// which answers `220 ... RMATE` and fails the HTTP parse. Ephemeral ports are
+// 49152-65535 here, so any such listener is inside the range this can draw.
 function connect(port, { token } = {}) {
-  const ws = new WebSocket(`ws://localhost:${port}${token ? `?token=${encodeURIComponent(token)}` : ''}`);
+  const ws = new WebSocket(`ws://127.0.0.1:${port}${token ? `?token=${encodeURIComponent(token)}` : ''}`);
   const queue = [];
   const waiters = [];
   ws.on('message', (raw) => {
@@ -71,7 +81,7 @@ function connect(port, { token } = {}) {
 // Raw HTTP GET → { status, body }, for the token gate + the /healthz exemption.
 function httpGet(port, pathname) {
   return new Promise((resolve, reject) => {
-    http.get({ host: 'localhost', port, path: pathname }, (res) => {
+    http.get({ host: '127.0.0.1', port, path: pathname }, (res) => {
       let body = '';
       res.on('data', (c) => { body += c; });
       res.on('end', () => resolve({ status: res.statusCode, body }));
