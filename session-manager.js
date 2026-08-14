@@ -2818,11 +2818,38 @@ function createSessionManager(deps) {
         if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       }
       if (s && state !== 'idle') s.lastMainStop = null;
-      // A turn started, so the last spec write reached a composer that submitted it.
+      // A turn started — but a turn confirms THIS write only if this write caused
+      // it, and on a fresh seat it frequently did not. Measured on t408: the spec
+      // was injected at spawn+1s and wiped by the boot re-render, an unrelated
+      // roster park drained 12s later, and the turn the seat took to READ THE
+      // ROSTER cleared the spec latch. The record said delivered, the seat held
+      // nothing, and the one mechanism built to notice had already stood down.
+      //
+      // So the turn is ATTRIBUTED before it clears anything: the transcript records
+      // what the CLI actually consumed, and the dispatch names its ticket id on the
+      // pointer line. Absent ⇒ the seat turned for something else and is still
+      // owed its spec, so the latch stays armed and its deadline redelivers.
+      //
+      // Ordering is what makes this sound rather than racy: the activity edge is
+      // derived FROM the transcript (JsonlWatcher), and the CLI writes the user
+      // message before the turn it triggers — so a spec that was consumed is
+      // already on disk whenever this runs.
+      //
+      // Bounded fs work despite sitting in the hot path: gated on a latch that is
+      // set only inside the 90s window after a dispatch, and cleared by the first
+      // attributable edge — at most one tail-read per dispatch, not per edge.
       if (s && state !== 'idle' && s._specUnconfirmed) {
-        s._specUnconfirmed = null;
-        clearTimeout(s._specConfirmTimer);
-        s._specConfirmTimer = null;
+        const u = s._specUnconfirmed;
+        // null (no transcript, unreadable link) trusts the turn, as before: the
+        // probe must never manufacture a redelivery out of its own blind spot.
+        const has = this._seatTranscriptHas(s.name, u.ticketId);
+        if (has === false) {
+          log.warn('inject', `${s.name} started a turn but ${u.ticketId} is absent from its transcript — not clearing the latch, the turn was something else`);
+        } else {
+          s._specUnconfirmed = null;
+          clearTimeout(s._specConfirmTimer);
+          s._specConfirmTimer = null;
+        }
       }
       // Same edge, same meaning, for the plain-dm latch — and it is a SEPARATE
       // field, so unlike t387's redirect kind it inherits nothing from the spec

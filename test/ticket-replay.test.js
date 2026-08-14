@@ -195,6 +195,16 @@ function boot(world, opts = {}) {
     m, spawn, stop, emit,
     seen: (name) => writes.get(name) || '',
     wipeUntil: (name, ms) => keepFrom.set(name, Date.now() + ms),
+    // What the CLI actually CONSUMED, which is a different record from `seen`
+    // (what this process wrote at the PTY) — and the difference between the two is
+    // the whole subject of t409. Written under the world's REGISTRY_DIR because
+    // that is where the manager's probe looks; a plain file rather than the
+    // production symlink, since realpathSync resolves both.
+    transcript: (name, text) => {
+      const p = pathFor(world.home, name, 'transcript');
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.appendFileSync(p, text);
+    },
     // How many parked entries MATCH — not how many exist. "Nothing reached the PTY"
     // is equally true of a park that THREW (_parkHeldDelivery catches, returns null,
     // and the log is a stub here), so a park must be proven positively. Matched
@@ -246,6 +256,19 @@ async function replayPassed(app, name, tries = 400) {
   assert.fail(`ENTER: the replay pass never ran for ${name}, so every absence assertion below is vacuous`);
 }
 
+// The stamp rides the WRITE, not the enqueue, so it lands a few ticks after the
+// bytes appear at the PTY — `settled` returning is not evidence the record has
+// caught up. Every test that reads `deliveredTo`, and every fixture that hands a
+// world to a second process, needs the record settled first; without this they
+// race the queue and read a null that the next tick fills in.
+async function stamped(world, id = 't1', tries = 400) {
+  for (let i = 0; i < tries; i++) {
+    if (world.tickets().find((t) => t.id === id)?.deliveredTo) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.fail(`ENTER: ${id} was never stamped delivered, so a later assertion about the stamp reads a record this fixture never built`);
+}
+
 // Wait for the ordering a test means to create rather than sleeping into it.
 async function fallbackArmed(s, tries = 400) {
   for (let i = 0; i < tries; i++) {
@@ -283,6 +306,10 @@ async function assigned(world, who = 'hand') {
   assert.match(got, /BUILD THE WIDGET/,
     'ENTER: the seat must receive the spec on the ORIGINAL assignment — if this delivery never happened, a '
     + 'replay in the next process would be indistinguishable from the assign path simply running late');
+  // Before the teardown: the stamp lands at write time, so stopping here without
+  // waiting leaves the on-disk record in whichever half-written state the queue
+  // happened to reach — and every second-process test below reads that record.
+  await stamped(world);
   app.stop();
   return app;
 }
@@ -1257,6 +1284,141 @@ test('t349: a seat that went busy while the unit waited in the gates does not ar
 // redelivery path underneath it does real fs work (_buildDeliveryText -> spillToFile),
 // so "the check threw" must degrade to a logged error rather than an unhandled
 // exception in the host. This is a mutant on the CATCH, not on the happy path.
+// ── t409: a turn is only evidence about the write that CAUSED it ──
+//
+// Observed live: `task start t408` minted the worktree, branch and seat, the
+// record read `state: open, assignee: clodex-hand-408, spec: 3171 bytes`, and the
+// seat had no spec — it saw only the roster and correctly stood by. Nothing was
+// wrong from outside: a live seat, idle, a healthy record. The operator noticed
+// before any mechanism did.
+//
+// Two defects compose, and BOTH are needed for silence. The stamp is taken from
+// `{queued:true}` (the bytes are in the queue, not at the seat), so a write wiped
+// by the boot re-render is recorded delivered and never replayed again; and the
+// 90s latch built to catch exactly that had already been cleared by the turn the
+// seat took to read an unrelated roster park. Each test below kills one.
+
+test('t409: a turn the transcript cannot attribute does NOT clear the latch', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    // The t408 interleaving: the spec write was wiped, so it is absent from the
+    // transcript, and the seat then turns for something else entirely — a roster
+    // park draining ~12s after spawn. Modelled as a real transcript that records
+    // the roster and NOT the ticket, because that difference is the only thing
+    // separating this from the healthy case below.
+    app.transcript('team-hand', '{"role":"user","content":"[agent:from team] roster: lead clodex"}\n');
+    app.m._emitActivity('team-hand', 'thinking');
+    // Back to idle, which is where t408 actually sat: it read the roster, said "no
+    // task spec attached", and stood by. The transit matters for the redelivery
+    // below — a seat still mid-turn parks it instead, which is a different (and
+    // already covered) path.
+    app.m._emitActivity('team-hand', 'idle');
+
+    assert.ok(s._specUnconfirmed,
+      'a turn over text that is NOT this spec must leave the latch armed — clearing on any turn is what made '
+      + 'the loss silent: the seat read a roster, the mechanism read "it started", and the spec was gone');
+
+    // And the deadline still does its job, which is the point of staying armed.
+    const first = app.seen('team-hand');
+    fireConfirm(app, s);
+    const after = await settled(app, 'team-hand', /REPLAY/);
+    assert.match(after, /REPLAY/,
+      'so the spec is redelivered — an unattributable turn must not consume the one mechanism that would '
+      + 'otherwise notice');
+    assert.ok(after.length > first.length, 'ENTER: a SECOND write, not a re-read of the first');
+  } finally { app.stop(); }
+});
+
+test('t409: a turn over the spec ITSELF still clears the latch, and no redelivery follows', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    // The healthy case, and the mutation guard for the test above: if attribution
+    // were implemented as "never clear", that test would pass and this one would
+    // fail. The seat consumed the dispatch, so its id is in the transcript — the
+    // id and not the body, because a spilled dispatch announces only the pointer
+    // line and that is what production actually matches on.
+    app.transcript('team-hand', '{"role":"user","content":"[ticket t1] close with [agent:task done t1]"}\n');
+    app.m._emitActivity('team-hand', 'thinking');
+
+    assert.strictEqual(s._specUnconfirmed, null,
+      'a turn over the delivered spec clears the latch — this is the confirmation the mechanism exists to '
+      + 'take, and a fix that stopped taking it would redeliver into every live seat');
+
+    const first = app.seen('team-hand');
+    fireConfirm(app, s);
+    await new Promise((r) => setTimeout(r, 30));
+    assert.strictEqual(app.seen('team-hand'), first,
+      'and nothing is redelivered: splicing a second copy of the spec into a seat that is working it is a '
+      + 'worse failure than the one being fixed');
+  } finally { app.stop(); }
+});
+
+test('t409: an unreadable transcript trusts the turn rather than manufacturing a redelivery', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    // No transcript at all — a seat whose hook never installed. The probe cannot
+    // answer, and its blind spot must not become an alarm: it would redeliver into
+    // every codex seat and every seat with a broken hook, forever.
+    app.m._emitActivity('team-hand', 'thinking');
+    assert.strictEqual(s._specUnconfirmed, null,
+      'an unanswerable probe falls back to the pre-t409 behaviour — "cannot say" must never be read as '
+      + '"the seat did not get it", because those two justify opposite actions');
+  } finally { app.stop(); }
+});
+
+test('t409: a replay still waiting in the boot gate is NOT stamped delivered', async () => {
+  const world = mkWorld();
+  await assigned(world);
+  // Clear the stamp the assigning process left, so the absence asserted below is
+  // THIS process declining to stamp and not simply an untouched empty field.
+  const seed = world.tickets();
+  delete seed.find((t) => t.id === 't1').deliveredTo;
+  world.tstore.save(world.team.root, seed);
+
+  // A seat that never announces bracketed paste, with the boot cap far out of
+  // reach: the delivery is enqueued and then sits in the queue's ready loop,
+  // unwritten. `_deliverTicketSpec` returns `{queued:true}` throughout — which is
+  // exactly why that return cannot be the stamp.
+  const app2 = boot(world, {
+    deps: { bootDrainSettleMs: 60_000, INJECT_BOOT_MAXWAIT: 60_000, InjectQueue: FastQueue },
+  });
+  try {
+    const s = await app2.spawn('team-hand');   // no emit(): never announces
+    // Driven DIRECTLY rather than waiting for a boot edge, because the edge is
+    // what this fixture is holding shut: the two drains that would call it are
+    // both parked behind the same gate, so a test that waited would be asserting
+    // the absence of a stamp for a pass that never ran — vacuous against every
+    // implementation, correct or not.
+    const done = app2.m._replayOpenTickets(s);
+    assert.strictEqual(done, true,
+      'ENTER: the replay must have RESOLVED to this seat and handed its spec to the queue — a pass that '
+      + 'skipped the ticket (wrong seat, no spec) stamps nothing for reasons that have nothing to do with '
+      + 'this test');
+    assert.strictEqual(app2.seen('team-hand'), '',
+      'ENTER: and the queue must still be holding it — if the bytes were released the seat really was told, '
+      + 'and the assertion below would be demanding the absence of a legitimate stamp');
+
+    const t = world.tickets().find((x) => x.id === 't1');
+    assert.strictEqual(t.state, 'open', 'ENTER: still open, so this is the record a later replay would read');
+    assert.ok(!t.deliveredTo,
+      'a spec still sitting in the queue must NOT be stamped delivered: a seat that dies in the gates is '
+      + 'never written to at all, and the stamp is what suppresses every later replay — so recording a '
+      + 'delivery the queue never released turns a recoverable loss into a permanent one');
+
+    // And the stamp is not merely DELAYED past the assertion: releasing the gate
+    // must produce it. Without this the test would also pass against code that
+    // never stamps at all, which would break the replay's once-per-incarnation bound.
+    app2.emit('team-hand', '\x1b[?2004h');
+    await settled(app2, 'team-hand', /BUILD THE WIDGET/);
+    await stamped(world);
+    assert.strictEqual(world.tickets().find((x) => x.id === 't1').deliveredTo.incarnation, s.incarnation,
+      'once the write is released the stamp lands, with this incarnation key — deferring it must not lose it');
+  } finally { app2.stop(); }
+});
+
 test('t349: a throw inside the confirmation check is contained, not raised into the host', async () => {
   const world = mkWorld();
   const errs = [];
