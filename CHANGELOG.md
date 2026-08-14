@@ -63,6 +63,16 @@ blocks a release.
   seat stuck on the work, and every reaction that follows from that reading is
   the wrong one.
 
+- The test that guards the suite's own mutex no longer blames the code it is
+  testing when the fault is its own. If the harness launched the script and got
+  no answer back at all, it used to report that as "the script wrote nothing" —
+  an accusation against the file under test, which sent a reader off to diff
+  something that was never at fault. It now tells those two cases apart, says
+  plainly which one happened, and retries only the case where it heard nothing.
+  A run that answers *wrongly* is still failed on the first attempt at full
+  strength, and a genuine deadlock still goes red — a test made robust by
+  dropping what it detects would be worse than the flake it hides.
+
 ## 5.7.0 — 2026-08-14 — tickets that run themselves
 
 Most of this release is one story: a ticket now goes from a written spec to a

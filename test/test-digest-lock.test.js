@@ -37,12 +37,11 @@ const SCRIPT = path.join(__dirname, '..', 'scripts', 'test-digest.sh');
 //
 // The script itself cannot produce this shape: its only wait arm ALWAYS prints
 // "another suite run is already going" before exiting, so a silent death at the
-// cap is the harness, never the protocol. Measured budget for the whole script
-// body against the stub `node` is ~250-550ms, and 700 runs under a load average
-// of 54 (spinners plus a continuously re-running suite) produced a worst case of
-// 554ms and zero starvations — the 60s cap has ~100x headroom and is NOT the
-// mechanism. That is why nothing here raises it: a bigger number would only
-// make an unexplained failure rarer and harder to catch.
+// cap is the harness, never the protocol. The cap has ~100x headroom over the
+// measured script budget and is NOT the mechanism (measured 2026-08-14 under
+// load, numbers and method in tasks/digest-lock-fixture-starves/journal.md).
+// That is why nothing here raises it: a bigger number would only make an
+// unexplained failure rarer and harder to catch.
 function spawnFailure(res) {
   if (res.error) return `${res.error.code || res.error.message}`;
   // Killed by a signal with no status: a cap or an external kill, not an exit.
@@ -243,10 +242,10 @@ function withFakeLock(holderPid, check) {
     // NO file argument: the lock guards a SWEEP (the only mode that reaches the
     // port-binding tests), so a named-file run deliberately does not take it.
     // The sweep finds stub.test.js in this throwaway root.
-    const res = require('node:child_process').spawnSync(
+    const res = withRetry('the fake-lock sweep', () => require('node:child_process').spawnSync(
       process.execPath, [path.join(root, 'scripts', 'run-tests.js')],
       { encoding: 'utf-8', cwd: root, timeout: 120000, env },
-    );
+    ));
     check(`${res.stdout || ''}${res.stderr || ''}`, lockDir);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
@@ -302,10 +301,10 @@ test('lock: a named-file run ignores a held lock — the suite spawns this runne
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   try {
-    const res = require('node:child_process').spawnSync(
+    const res = withRetry('the named-file run past a held lock', () => require('node:child_process').spawnSync(
       process.execPath, [path.join(root, 'scripts', 'run-tests.js'), stub],
       { encoding: 'utf-8', cwd: root, timeout: 120000, env },
-    );
+    ));
     const out = `${res.stdout || ''}${res.stderr || ''}`;
     assert.match(out, /TOTALS:/,
       'a named-file run must proceed while a sweep holds the lock, or the suite blocks on its own children');
@@ -349,10 +348,10 @@ test('lock: the lock override does NOT leak into the test children', () => {
     // A NAMED FILE, so the outer runner does not take a lock either: the claim
     // under test is about env propagation, and a lock wait would only add
     // minutes of noise to it.
-    const res = spawnSync(
+    const res = withRetry('the nested-runner env probe', () => spawnSync(
       process.execPath, [path.join(root, 'scripts', 'run-tests.js'), stub],
       { encoding: 'utf-8', cwd: root, timeout: 120000, env },
-    );
+    ));
     const out = `${res.stdout || ''}${res.stderr || ''}`;
     assert.match(out, /TOTALS:/,
       'ENTER: the runner produced no totals, so the probe below describes a run that never happened');
@@ -389,10 +388,15 @@ test('lock: a lock dir that cannot be created is refused BY NAME', () => {
   try {
     // NO file argument: only a SWEEP takes the lock, so only a sweep reaches
     // the failure this pins.
-    const res = spawnSync(
+    // Wrapped even though the expected outcome here is a FAILED run: the
+    // refusal is an ordinary exit that `spawnFailure` returns null for, so the
+    // retry cannot mask it. A timed-out spawn, by contrast, satisfies the
+    // no-TOTALS guard vacuously and then fails the match below — pointing the
+    // reader at the lock code for a spawn that never answered.
+    const res = withRetry('the unwritable-lock-dir refusal', () => spawnSync(
       process.execPath, [path.join(root, 'scripts', 'run-tests.js')],
       { encoding: 'utf-8', cwd: root, timeout: 120000, env },
-    );
+    ));
     const out = `${res.stdout || ''}${res.stderr || ''}`;
     assert.ok(!/TOTALS:/.test(out),
       'ENTER: the run must have died on the lock, not gone on to execute the suite');
@@ -573,8 +577,10 @@ function captureRealTap({ fillers = 0, bigDiff = false, escape = false } = {}) {
     fs.writeFileSync(path.join(dir, 'cap.test.js'), src);
     const env = { ...process.env };
     delete env.NODE_TEST_CONTEXT;
-    const res = spawnSync(process.execPath, ['--test', '--test-reporter=tap'],
-      { cwd: dir, encoding: 'utf-8', timeout: 60000, env });
+    const res = withRetry('the real-TAP capture', () => spawnSync(
+      process.execPath, ['--test', '--test-reporter=tap'],
+      { cwd: dir, encoding: 'utf-8', timeout: 60000, env },
+    ));
     return `${res.stdout || ''}${res.stderr || ''}`;
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
