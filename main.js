@@ -347,6 +347,29 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
     console.log(`[RENDERER ${String(e.level).toUpperCase()}]`, e.message);
   });
 
+  // A reload strands this window's peer terminals, and this is the edge that
+  // sheds them. The renderer's release edge (`releasePeer`) runs off renderer
+  // state, so a reload destroys it while the main-side want lives on: a seat
+  // the fresh renderer does not re-show keeps an open stream and a real shell
+  // on someone else's machine, with nothing left that could ever close them.
+  //
+  // `did-start-navigation`, NOT `did-finish-load`: finish-load is the page's
+  // `load` event, by which time the fresh renderer's own `peer:wtermOpen` may
+  // already have arrived — dropping there would shoot down a terminal the
+  // operator is actively watching. Navigation START is strictly after the old
+  // document's last IPC and strictly before the new document exists, which is
+  // what makes that race impossible rather than merely unlikely.
+  //
+  // Main frame and cross-document only: an in-page navigation keeps the
+  // document, so the renderer that placed the wants is still there holding them.
+  // No first-load discriminator is needed — the initial loadFile fires this too,
+  // and a workspace that owns no wants drops nothing.
+  win.webContents.on('did-start-navigation', (details) => {
+    if (!details || !details.isMainFrame || details.isSameDocument) return;
+    const pm = engine ? engine.getPeerManager() : null;
+    if (pm) pm.dropWtermsForWindow(workspaceId);
+  });
+
   // Zoom is per-webContents and resets on load, so re-apply on every
   // did-finish-load (covers Cmd+R); the nudge refits xterm.
   win.webContents.on('did-finish-load', () => {

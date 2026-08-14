@@ -1293,20 +1293,29 @@ function registerIpcHandlers(deps) {
       const conn = getPeerManager() && getPeerManager().get(w.peerId);
       return conn ? { conn, seat: w.name } : null;
     };
-    handle('peer:wtermOpen', (_e, key) => new Promise((resolve) => {
+    // The SENDER is load-bearing on open and close, and this is the one place
+    // that knows it. `_wterms` is keyed by seat per connection, so without a
+    // window recorded here a want has no owner: the renderer that placed it
+    // reloads, its `held` dies with it, and the stream and its shell are
+    // stranded on the far box with nothing left that could close them. The
+    // workspace id is the window: it is 1:1 with a BrowserWindow, and these
+    // handlers register only under `enableDrawerServices`, which the web host
+    // turns off — so the desktop host is the only registrar.
+    const wtermOwner = (e) => (workspaceOfSenderStrict ? workspaceOfSenderStrict(e) : workspaceOfSender(e));
+    handle('peer:wtermOpen', (e, key) => new Promise((resolve) => {
       const t = peerSeat(key);
       if (!t) return resolve({ ok: false, error: 'no such peer session' });
-      t.conn.wtermOpen(t.seat, resolve);
+      t.conn.wtermOpen(t.seat, wtermOwner(e), resolve);
     }));
     handle('peer:wtermResize', (_e, key, cols, rows) => new Promise((resolve) => {
       const t = peerSeat(key);
       if (!t) return resolve({ ok: false, error: 'no such peer session' });
       t.conn.wtermResize(t.seat, cols, rows, resolve);
     }));
-    handle('peer:wtermClose', (_e, key) => new Promise((resolve) => {
+    handle('peer:wtermClose', (e, key) => new Promise((resolve) => {
       const t = peerSeat(key);
       if (!t) return resolve({ ok: false, error: 'no such peer session' });
-      t.conn.wtermClose(t.seat, resolve);
+      t.conn.wtermClose(t.seat, wtermOwner(e), resolve);
     }));
     // Fire-and-forget, same shape as peer:input and for the same reason: a
     // keystroke that waits for a reply makes typing feel like the network.

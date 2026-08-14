@@ -465,21 +465,30 @@ test('wterm:* refuse when the sender resolves to no workspace', () => {
 // the serving box's grammar, becomes null there, and null is the key of that
 // box's SEATLESS WORKSPACE SHELL — so a passthrough is not a 404, it is every
 // peer row quietly sharing one remote terminal.
-function registerPeerDesktop(conns) {
+function registerPeerDesktop(conns, overrides) {
   return registerDesktop({
     getPeerManager: () => ({ get: (id) => conns[id] || null }),
+    ...overrides,
   });
 }
 
 test('peer:wterm* split the composite key — the @ never reaches the connection', async () => {
   const calls = [];
   const conn = {
-    wtermOpen: (seat, cb) => { calls.push(['open', seat]); cb({ ok: true }); },
+    wtermOpen: (seat, owner, cb) => { calls.push(['open', seat, owner]); cb({ ok: true }); },
     wtermInput: (seat, data, cb) => { calls.push(['input', seat, data]); cb({ ok: true }); },
     wtermResize: (seat, c, r, cb) => { calls.push(['resize', seat, c, r]); cb({ ok: true }); },
-    wtermClose: (seat, cb) => { calls.push(['close', seat]); cb({ ok: true }); },
+    wtermClose: (seat, owner, cb) => { calls.push(['close', seat, owner]); cb({ ok: true }); },
   };
-  const handlers = registerPeerDesktop({ 'peer-1': conn });
+  // The open/close pair also carries the SENDER's workspace, and it is resolved
+  // through the STRICT variant — the same seam the local `wterm:*` family uses,
+  // so a payload cannot name a window the sender does not own. That id is what
+  // gives the far-side want an owner: without one a renderer reload strands the
+  // stream and its shell on the peer's machine with nothing left to close them.
+  const handlers = registerPeerDesktop({ 'peer-1': conn }, {
+    workspaceOfSenderStrict: () => 'ws1',
+    workspaceOfSender: () => 'ws-WRONG',
+  });
 
   assert.ok(handlers['peer:wtermOpen'], 'ENTER: the peer terminal handlers registered');
 
@@ -489,20 +498,20 @@ test('peer:wterm* split the composite key — the @ never reaches the connection
   assert.deepStrictEqual(await handlers['peer:wtermClose']({}, 'bob@peer-1'), { ok: true });
 
   assert.deepStrictEqual(calls, [
-    ['open', 'bob'],
+    ['open', 'bob', 'ws1'],
     ['input', 'bob', 'ls\r'],
     ['resize', 'bob', 120, 40],
-    ['close', 'bob'],
-  ], 'every handler addressed the BARE seat, and the peerId chose the connection');
+    ['close', 'bob', 'ws1'],
+  ], 'every handler addressed the BARE seat, the peerId chose the connection, and open/close carried the sender\'s own workspace');
 });
 
 test('peer:wterm* refuse a key whose seat half fails the wire grammar', async () => {
   const calls = [];
   const conn = {
-    wtermOpen: (seat, cb) => { calls.push(seat); cb({ ok: true }); },
+    wtermOpen: (seat, _owner, cb) => { calls.push(seat); cb({ ok: true }); },
     wtermInput: (seat, data, cb) => { calls.push(seat); cb({ ok: true }); },
     wtermResize: (seat, c, r, cb) => { calls.push(seat); cb({ ok: true }); },
-    wtermClose: (seat, cb) => { calls.push(seat); cb({ ok: true }); },
+    wtermClose: (seat, _owner, cb) => { calls.push(seat); cb({ ok: true }); },
   };
   const handlers = registerPeerDesktop({ 'peer-1': conn });
 

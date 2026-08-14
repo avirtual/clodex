@@ -118,8 +118,8 @@ test('a refused stream reports the reason and does not come back; a broken one d
   try {
     await waitFor('the peer to come online', () => conn.online);
 
-    conn.wtermOpen('refused', () => {});
-    conn.wtermOpen('broken', () => {});
+    conn.wtermOpen('refused', 'w1', () => {});
+    conn.wtermOpen('broken', 'w1', () => {});
 
     await waitFor('the refused open to be answered', () => state.refused >= 1);
     await waitFor('the broken stream to reconnect at least twice', () => state.broken >= 3);
@@ -154,7 +154,7 @@ test('the status chooses the sentence — 404 is a missing seat, not a disabled 
   conn.start();
   try {
     await waitFor('the peer to come online', () => conn.online);
-    conn.wtermOpen('refused', () => {});
+    conn.wtermOpen('refused', 'w1', () => {});
     await waitFor('the refusal to be reported', () => closed.length >= 1);
     assert.deepStrictEqual(closed, [peerShellRefusal('no-seat', 'box')], 'reported as a missing seat');
     assert.notStrictEqual(peerShellRefusal('no-seat', 'box'), peerShellRefusal('off', 'box'),
@@ -177,7 +177,7 @@ test('an unmapped status still refuses out loud', async () => {
   conn.start();
   try {
     await waitFor('the peer to come online', () => conn.online);
-    conn.wtermOpen('refused', () => {});
+    conn.wtermOpen('refused', 'w1', () => {});
     await waitFor('the refusal to be reported', () => closed.length >= 1);
     assert.deepStrictEqual(closed, [peerShellRefusal('failed', 'box')], 'fell back to a generic refusal');
     assert.strictEqual(state.refused, 1, 'and still did not retry an unrecognised "no"');
