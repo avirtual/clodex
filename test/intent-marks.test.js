@@ -30,17 +30,23 @@ test('an intent with a body head will fire', () => {
   assert.strictEqual(classifyText('[agent:dm someone] hello there'), 'fire');
 });
 
-test('prose before the bracket is inert, not fire', () => {
-  // The half that earns the feature: this does NOT fire today and nothing says so.
-  assert.strictEqual(classifyText('as I said [agent:who]'), 'inert');
-});
-
-test('an unknown verb is inert', () => {
+test('an unknown verb at line start is inert', () => {
+  // ENTER for the whole `inert` kind: the line-start gate below removes every
+  // mid-line case, and the sample it was measured against contained no
+  // line-start near-miss at all. If this stops holding, `inert` is dead code
+  // that no other test would notice.
   assert.strictEqual(classifyText('[agent:notaverb]'), 'inert');
 });
 
-test('a malformed arg list is inert', () => {
+test('a malformed arg list at line start is inert', () => {
   assert.strictEqual(classifyText('[agent:dm]'), 'inert');
+});
+
+test('an indented or decorated near-miss is still inert', () => {
+  // The gate is applied AFTER cleanLine, so the decoration that a firing intent
+  // survives must not be what disqualifies a failing one.
+  assert.strictEqual(classifyText('    [agent:notaverb]'), 'inert');
+  assert.strictEqual(classifyText('• [agent:notaverb]'), 'inert');
 });
 
 test('an escaped intent is left unmarked', () => {
@@ -66,8 +72,22 @@ test('ANSI colour around the intent does not hide it', () => {
   assert.strictEqual(classifyText('\x1b[32m[agent:who]\x1b[39m'), 'fire');
 });
 
-test('an intent mid-prose after a real word is inert even with a valid verb', () => {
-  assert.strictEqual(classifyText('see [agent:dm bob] for the syntax'), 'inert');
+// --- prose that merely MENTIONS an intent is not marked at all ---------------
+
+test('prose before the bracket is left unmarked, not inert', () => {
+  // Agents discuss intents constantly. Measured over 206 rows of real output:
+  // 23 inert marks, every one of them mid-line prose, none a line-start near
+  // miss — the kind was pure noise on screen. `inert` is for a line that was
+  // MEANT to fire and did not; this line was never going to.
+  assert.strictEqual(classifyText('as I said [agent:who]'), null);
+  assert.strictEqual(classifyText('see [agent:dm bob] for the syntax'), null);
+  assert.strictEqual(classifyText('I will emit [agent:who] shortly'), null);
+});
+
+test('a bracket mid-line gets NO mark, not a quieter one', () => {
+  // The decision is "unmarked", not "a third kind": a mid-line mention carries
+  // nothing to find later, so a dimmer wash would still be the mosaic.
+  assert.strictEqual(classifyText('prose then [agent:bogusverb] more prose'), null);
 });
 
 // --- logicalLines: wrapped rows ---------------------------------------------
@@ -135,16 +155,17 @@ test('a DECORATED fence row still quotes what is inside it', () => {
   assert.deepStrictEqual(classifyRows(rows('• ```', '[agent:who]', '• ```')), []);
 });
 
-test('fire and inert are distinguished in one pass', () => {
+test('fire and inert are distinguished in one pass, and prose is skipped', () => {
   const marks = classifyRows(rows(
     '[agent:who]',
     'prose then [agent:who]',
     'nothing here',
     '[agent:bogusverb]',
   ));
+  // ENTER: rows 0 and 3 survive, so the absence of row 1 is an absence in a set
+  // that was really scanned rather than one the gate emptied.
   assert.deepStrictEqual(marks, [
     { start: 0, end: 0, kind: 'fire' },
-    { start: 1, end: 1, kind: 'inert' },
     { start: 3, end: 3, kind: 'inert' },
   ]);
 });

@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- The terminal intent marks no longer light up every sentence that merely
+  *mentions* an intent. Agents discuss intents constantly, and a mark on each
+  of those lines turned the screen into a mosaic that hid the handful of real
+  emissions. A mark now needs the `[agent:…]` to start the line, exactly as
+  firing does — so the warning colour is back to meaning what it should: a
+  line that was written to fire and didn't.
+
 - An intent an agent writes in **bold** or *italics* now fires instead of
   being silently ignored. Agents reach for emphasis when a line matters — a
   review verdict, a handoff — and that was exactly the line that vanished:

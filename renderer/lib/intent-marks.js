@@ -7,7 +7,7 @@
 // BELIEVED: one that promises a turn which never happens costs a session, so a
 // regex free to drift from the real scan is worse than no mark at all.
 
-const { cleanLine, parseIntent, fencedLines } = require('../../intent-scanner');
+const { cleanLine, parseIntent, fencedLines, looksLikeIntent } = require('../../intent-scanner');
 
 // Bounded rescan window, against re-deriving the whole scrollback per write.
 // It exceeds the configured scrollback, so the window starts at row 0; raising
@@ -36,14 +36,20 @@ function logicalLines(rows) {
 // 'fire' | 'inert' | null. null = leave it alone: an escape is deliberate
 // QUOTING, and marking what someone wrote ABOUT an intent defeats finding the
 // one that fired.
+//
+// The gate is looksLikeIntent — intent-scanner's own near-miss predicate, which
+// anchors the bracket to the START of the cleaned line. A `.includes('[agent:')`
+// gate marked every sentence an agent wrote ABOUT an intent: measured over 206
+// rows of real output, 23 of 23 inert marks were mid-line prose and none was a
+// line-start near-miss, so the mark was mostly noise. Widening this back to a
+// substring test brings that back, and also starts marking `\[agent:…]`, whose
+// backslash survives cleanLine and is what keeps the escape unmarked here.
 function classifyText(raw) {
-  if (!cleanLine(raw).includes('[agent:')) return null;
-  // No escape or prose-before-bracket guard on purpose: parseIntent returns
-  // `escape` for one and null for the other, and a second copy of a rule it
-  // enforces would be free to disagree with the scan this predicts.
-  const parsed = parseIntent(raw);
-  if (!parsed) return 'inert';
-  return parsed.type === 'escape' ? null : 'fire';
+  if (!looksLikeIntent(raw)) return null;
+  // No second copy of the near-miss rule: parseIntent returning null IS the
+  // near miss, and a private guard would be free to disagree with the scan
+  // this predicts.
+  return parseIntent(raw) ? 'fire' : 'inert';
 }
 
 // rows: [{ text, isWrapped }] in buffer order. Returns marks anchored to the
