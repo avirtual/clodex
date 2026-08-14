@@ -67,6 +67,13 @@ const DROPPED_AGENT_FIELDS = ['permissionMode', 'initialPrompt', 'hooks', 'mcpSe
 // the library and dispatch names drift. Values are double-quoted via
 // JSON.stringify: the CLI parses this as real YAML, where an unquoted `:` or
 // `#` re-parses as a map or truncates, silently un-discovering the agent.
+//
+// Quoting the NUMERIC fields too is safe, not an oversight: the loader coerces
+// each with String()-tolerant parsers rather than a typeof check, so "5" and 5
+// are the same value to it (verified in 2.1.232, and by probe — a quoted
+// maxTurns of 1 logged "Reached max turns limit (1)"). A non-numeric value is
+// rejected BY THE LOADER, which warns and drops that one field; the agent
+// still loads. So no digit filter is needed here.
 function agentMd(name, meta, body) {
   meta = meta || {};
   const lines = [`name: ${JSON.stringify(String(name))}`];

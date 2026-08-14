@@ -71,6 +71,20 @@ test('agentMd: a value holding YAML syntax is emitted as a quoted scalar', () =>
   assert.strictEqual(JSON.parse(line.slice('description: '.length)), desc);
 });
 
+test('agentMd: a numeric field is quoted, which the loader still coerces', () => {
+  // Pins the ENCODING as verified, not as assumed. 2.1.232 parses maxTurns via
+  // a String()-tolerant integer coercion, not a typeof check, so the quoted
+  // form is accepted — confirmed by probe: a quoted maxTurns of 1 produced no
+  // load warning and logged "Reached max turns limit (1)" at dispatch.
+  // A non-numeric value is the LOADER's to reject (it warns and drops the one
+  // field, keeping the agent), so agentMd deliberately does not filter it.
+  const md = agentMd('a', { description: 'd', maxTurns: '5' }, 'p');
+  assert.ok(md.includes('maxTurns: "5"'), 'the numeric rides as a quoted scalar');
+  const bad = agentMd('a', { description: 'd', maxTurns: 'lots' }, 'p');
+  assert.ok(bad.includes('maxTurns: "lots"'), 'ENTER: a non-numeric is passed through, not dropped here');
+  assert.ok(bad.includes('description: "d"'), 'ENTER: the agent still carries its required field');
+});
+
 test('agentMd: no frontmatter value can break out of the block', () => {
   // A body-fence injected through a value would end the frontmatter early and
   // the rest of the fields would read as prose.
