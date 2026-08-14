@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- A reviewer that never starts is now reported instead of sitting silent. A
+  freshly spawned reviewer seat can receive its scope and never take a first
+  turn; it stayed alive and idle indefinitely, and nothing noticed until an
+  operator happened to look. It is now reported to the team lead, with the
+  recovery that works spelled out in the alarm.
+- A ticket whose seat no longer exists now says so. Previously it was reported
+  as a quiet hand — advice to wait for a seat that had been retired — and once
+  that first alarm had fired the ticket went permanently silent. It now names
+  the situation and its three exits: reassign, cancel, or park.
 - Terminal exec no longer loses characters out of the command it types. It
   abandons the current line, then waits for the shell's answer to go quiet
   before typing, because the signal that clears the line also discards input
