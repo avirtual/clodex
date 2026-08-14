@@ -1531,7 +1531,9 @@ test('the kill cap is strictly GREATER than the lock wait, or the wait is dead c
   // `did not finish within 900000ms (killed)`, a wedge report for a healthy run.
   // test/test-digest-lock.test.js pins the same relation for the other entry
   // point, where the inversion cost three misdiagnosed timeouts.
-  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'session-manager.js'), 'utf8');
+  // team-tickets.js since t380 — both constants moved there with the suite
+  // runner that reads them.
+  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'team-tickets.js'), 'utf8');
   const wait = /const TICKET_SUITE_LOCK_WAIT_MS = ([^;]+);/.exec(src);
   const timeout = /const TICKET_SUITE_TIMEOUT_MS = ([^;]+);/.exec(src);
   // ENTER: renamed or reshaped constants must fail HERE rather than skip the
