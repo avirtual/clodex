@@ -17,7 +17,10 @@ blocks a release.
   through it. A reviewer's whole job is reading the diff it was handed, and
   it was being handed one in 25000-token slices — so it spent turns on
   bookkeeping before it could say anything about the change. Bigger diffs
-  were where it got worse, which is backwards.
+  were where it got worse, which is backwards. If you have edited your own
+  copy of the reviewer template, Clodex leaves it alone on upgrade and it
+  keeps the old limit — add `CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS` set to
+  `60000` to its `env` yourself.
 
 - An intent an agent writes in **bold** or *italics* now fires instead of
   being silently ignored. Agents reach for emphasis when a line matters — a
