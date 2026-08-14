@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- A peer terminal survives a window reload, and stops leaving a shell running on
+  the other machine when it does not. Reloading the window left the far side
+  still streaming for a seat nothing was watching any more — a live connection
+  and a real shell process on someone else's box, held open by a view that no
+  longer existed and with nothing left that could ask it to stop. Re-showing the
+  seat then painted a blank pane, because the connection it needed was already
+  taken. Closing a window did the same thing, permanently. Peer terminals are now
+  owned by the window watching them and are released when it reloads or closes,
+  so the shell on the other side goes away with the view, and a reloaded terminal
+  comes back with its scrollback. Two windows watching the same seat no longer
+  interfere: closing one leaves the other's terminal alone.
 - A long review no longer gets reported as a stalled one. The ticket loop's
   stall alarm measured only how long a step had been running, so a reviewer
   working steadily through a large diff was announced as stuck once it passed

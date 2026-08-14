@@ -94,9 +94,8 @@ carries an `owners` set of workspace ids (recorded from the IPC sender, strict �
 an unresolvable sender is refused on BOTH doors, never defaulted: an open filed
 under a placeholder could never be dropped, and an anonymous close can neither
 be swallowed nor honoured without harming one case or the other); the stream is
-torn down
-only when that set empties, so one window hiding a seat cannot detach another
-window watching it. Both edges where a renderer stops existing drop the
+torn down only when that set empties, so one window hiding a seat cannot detach
+another window watching it. Both edges where a renderer stops existing drop the
 window's wants — `did-start-navigation` (reload) and the window's `closed`
 handler — because the renderer's own release edge runs off renderer state and
 cannot survive either. Those drops tear down locally and send no close POST:
