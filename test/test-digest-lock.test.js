@@ -22,6 +22,71 @@ const { execFileSync, spawn, spawnSync } = require('node:child_process');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'test-digest.sh');
 
+// A spawn that never returned an ANSWER, told apart from one that answered
+// wrongly — and the distinction is the whole point.
+//
+// `spawnSync` reports a child it killed at `timeout` as `error.code ===
+// 'ETIMEDOUT'` with status null, signal SIGTERM and EMPTY stderr. A fixture
+// that reads only stderr and status launders that into "the script wrote
+// nothing", which is a statement about the code under test — so a starved
+// harness accuses the script. That happened for real (t396, 2026-08-14): the
+// gate went red at 5522/5523 on a run reported at 61690ms, the hand had to
+// prove by hand that its diff could not reach the test, and a re-run was green
+// with no code change. One rework round lost to a message pointing the wrong
+// way.
+//
+// The script itself cannot produce this shape: its only wait arm ALWAYS prints
+// "another suite run is already going" before exiting, so a silent death at the
+// cap is the harness, never the protocol. Measured budget for the whole script
+// body against the stub `node` is ~250-550ms, and 700 runs under a load average
+// of 54 (spinners plus a continuously re-running suite) produced a worst case of
+// 554ms and zero starvations — the 60s cap has ~100x headroom and is NOT the
+// mechanism. That is why nothing here raises it: a bigger number would only
+// make an unexplained failure rarer and harder to catch.
+function spawnFailure(res) {
+  if (res.error) return `${res.error.code || res.error.message}`;
+  // Killed by a signal with no status: a cap or an external kill, not an exit.
+  if (res.status === null && res.signal) return `killed by ${res.signal}`;
+  return null;
+}
+
+// Runs `attempt` and returns its result, retrying ONCE if the spawn produced no
+// answer at all.
+//
+// RETRIED ON `spawnFailure` ALONE, WHICH IS WHY THIS DOES NOT WEAKEN ANYTHING.
+// The retry key is "the harness got nothing", never "the script said something
+// wrong": a run that completes and emits a bad digest is returned on the first
+// attempt and fails its assertions at full strength, exactly as before. The
+// tests here exist because two concurrent suites deadlock at 0% CPU, and a
+// genuine deadlock times out on BOTH attempts and still goes red — an
+// inconclusive spawn is never converted into a pass or a skip, because a
+// fixture made robust by dropping what it detects is worse than the flake.
+//
+// The retry is LOUD on purpose. A silent one hides the very thing that has now
+// cost a rework round twice.
+function withRetry(what, attempt) {
+  const first = attempt();
+  const failed = spawnFailure(first);
+  if (!failed) return first;
+  console.error(`# ${what}: the spawn returned no answer (${failed}) — retrying once`);
+  const second = attempt();
+  const failedAgain = spawnFailure(second);
+  if (failedAgain) {
+    // Both attempts died without an answer. NAMED as the harness's own failure,
+    // because the alternative is the ENTER guard below reporting "the script
+    // wrote nothing to stderr" — which blames the script for the harness not
+    // getting a reply, and sends the reader to diff a file that is not at fault.
+    assert.fail(
+      `${what}: the fixture never got an answer from the script — ${failed}, then ${failedAgain}. `
+      + 'This is the HARNESS failing, not the digest script: a real lock wait always prints its '
+      + 'refusal before giving up, so a silent death at the cap is not the protocol under test. '
+      + 'Do not raise the timeout on this evidence (measured budget is ~0.5s against a 60s cap); '
+      + 'look for what blocked the spawn.',
+    );
+  }
+  return second;
+}
+
 // The lock block, lifted out of the script and pointed at a stub `node`, so the
 // protocol under test is the SHIPPED text rather than a paraphrase of it. If the
 // script's lock changes shape, this extraction fails loudly instead of silently
@@ -377,8 +442,10 @@ function runDigest({ tap, exit, cwd }) {
   delete env.NODE_TEST_CONTEXT;
   const keep = path.join(home, 'test-failures', 'last.txt');
   try {
-    const res = spawnSync('/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
-      { encoding: 'utf-8', cwd: cwd || root, timeout: 60000, env });
+    const res = withRetry('runDigest', () => spawnSync(
+      '/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
+      { encoding: 'utf-8', cwd: cwd || root, timeout: 60000, env },
+    ));
     const lines = (res.stderr || '').split('\n').filter((l) => l.trim() !== '');
     return {
       tree: path.basename(root),
@@ -625,8 +692,10 @@ test('keep: a stale dump from an earlier failure is replaced, not appended to', 
       CLODEX_HOME: home,
     };
     delete env.NODE_TEST_CONTEXT;
-    spawnSync('/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
-      { encoding: 'utf-8', cwd: root, timeout: 60000, env });
+    withRetry('stale-dump run', () => spawnSync(
+      '/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
+      { encoding: 'utf-8', cwd: root, timeout: 60000, env },
+    ));
     const after = fs.readFileSync(keep, 'utf-8');
     assert.match(after, /^ *not ok 1 - the failing subtest$/m,
       'ENTER: the current failure is not in the file, so what follows would be about nothing');
@@ -689,8 +758,10 @@ test('keep: an unwritable destination costs the dump, never the digest', () => {
       CLODEX_HOME: home,
     };
     delete env.NODE_TEST_CONTEXT;
-    const res = spawnSync('/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
-      { encoding: 'utf-8', cwd: root, timeout: 60000, env });
+    const res = withRetry('unwritable-destination run', () => spawnSync(
+      '/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
+      { encoding: 'utf-8', cwd: root, timeout: 60000, env },
+    ));
     const lines = (res.stderr || '').split('\n').filter((l) => l.trim() !== '');
     assert.ok(lines.length > 0, 'ENTER: the script wrote no stderr at all');
     assert.strictEqual(lines[lines.length - 1],
@@ -738,8 +809,10 @@ function keepFor(tap, exit = 1) {
       CLODEX_HOME: home,
     };
     delete env.NODE_TEST_CONTEXT;
-    spawnSync('/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
-      { encoding: 'utf-8', cwd: root, timeout: 60000, env });
+    withRetry('keepFor', () => spawnSync(
+      '/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
+      { encoding: 'utf-8', cwd: root, timeout: 60000, env },
+    ));
     const keep = path.join(home, 'test-failures', 'last.txt');
     return fs.existsSync(keep) ? fs.readFileSync(keep, 'utf-8') : null;
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -852,8 +925,10 @@ test('keep: the digest shows the home-relative path a reader can actually type',
       CLODEX_HOME: path.join(home, '.clodex'),
     };
     delete env.NODE_TEST_CONTEXT;
-    const res = spawnSync('/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
-      { encoding: 'utf-8', cwd: root, timeout: 60000, env });
+    const res = withRetry('run-dir teardown run', () => spawnSync(
+      '/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')],
+      { encoding: 'utf-8', cwd: root, timeout: 60000, env },
+    ));
     const lines = (res.stderr || '').split('\n').filter((l) => l.trim() !== '');
     assert.ok(lines.length > 0, 'ENTER: the script wrote nothing to stderr');
     assert.strictEqual(lines[lines.length - 1],
@@ -941,9 +1016,11 @@ const GREEN_TAP = ['TAP version 13', 'ok 1 - a case', '1..1',
   '# tests 3', '# pass 3', '# fail 0'].join('\n');
 
 function runWithPayload(root, payload, env, opts = {}) {
-  const res = spawnSync('/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')], {
-    encoding: 'utf-8', cwd: opts.cwd || root, timeout: 60000, env, input: payload,
-  });
+  const res = withRetry('runWithPayload', () => spawnSync(
+    '/bin/sh', [path.join(root, 'scripts', 'test-digest.sh')], {
+      encoding: 'utf-8', cwd: opts.cwd || root, timeout: 60000, env, input: payload,
+    },
+  ));
   const lines = (res.stderr || '').split('\n').filter((l) => l.trim() !== '');
   return { lines, digest: lines[lines.length - 1], code: res.status };
 }
@@ -1144,4 +1221,80 @@ test('def: the schema refuses an empty `tree` before the script ever runs', () =
   assert.strictEqual(r.ok, false, 'an empty tree must not validate');
   assert.match(r.error, /minLength/,
     'and the bounce must name the reason, or the caller retries the same empty value');
+});
+
+// ── the harness's own failure, told apart from the script's ─────────────────
+// The guard tests above all reduce to "the script wrote nothing to stderr". A
+// spawn the harness KILLED produces exactly that shape while saying nothing
+// about the script, so without the classifier below every one of them can
+// accuse the code under test of a fault that is the fixture's. That is not
+// hypothetical: it cost a rework round on t396.
+
+test('harness: a spawn killed at its cap is classified as a harness failure', () => {
+  // The real thing, not a hand-made object: `spawnSync` populating `error` on a
+  // timeout is the vendor behaviour the classifier is built on, and a mocked
+  // result would pin the mock instead. Cheap because the cap is 200ms.
+  const res = spawnSync('/bin/sh', ['-c', 'sleep 10'], { encoding: 'utf-8', timeout: 200 });
+  assert.strictEqual(res.stderr, '',
+    'ENTER: a timed-out spawn must present as EMPTY stderr, which is the whole reason it is '
+    + 'indistinguishable from a silent script — if node started reporting here, this guard is moot');
+  assert.strictEqual(spawnFailure(res), 'ETIMEDOUT',
+    'a spawn killed at its cap must be NAMED, not laundered into "the script wrote nothing"');
+});
+
+test('harness: a script that ran and answered is NOT a harness failure', () => {
+  // The other side of the classifier, and the one that keeps it from swallowing
+  // real failures: a script that exits NONZERO with a message has answered, so
+  // it must pass straight through to the assertions rather than being retried.
+  const res = spawnSync('/bin/sh', ['-c', 'echo refused 1>&2; exit 1'],
+    { encoding: 'utf-8', timeout: 60000 });
+  assert.strictEqual(res.status, 1, 'ENTER: the fixture must have produced a real nonzero exit');
+  assert.strictEqual(spawnFailure(res), null,
+    'a real answer — even a failing one — must never be treated as a harness fault, or a genuinely '
+    + 'broken lock would be retried into silence');
+});
+
+test('harness: withRetry retries ONLY a no-answer spawn, and returns a real answer once', () => {
+  // The property that makes the retry safe to have at all. A wrong answer must
+  // be delivered on the FIRST attempt: retrying one would re-run a genuinely
+  // broken lock until it happened to look fine, which is the blind spot the
+  // ticket forbids.
+  let calls = 0;
+  const answered = withRetry('fixture', () => {
+    calls += 1;
+    return spawnSync('/bin/sh', ['-c', 'echo nope 1>&2; exit 3'], { encoding: 'utf-8' });
+  });
+  assert.strictEqual(calls, 1, 'a script that answered must be run ONCE, never retried');
+  assert.strictEqual(answered.status, 3, 'and its real verdict must survive the wrapper');
+
+  // A no-answer spawn that recovers: retried, and the second answer is used.
+  let n = 0;
+  const recovered = withRetry('fixture', () => {
+    n += 1;
+    return n === 1
+      ? spawnSync('/bin/sh', ['-c', 'sleep 10'], { encoding: 'utf-8', timeout: 200 })
+      : spawnSync('/bin/sh', ['-c', 'echo ok 1>&2; exit 0'], { encoding: 'utf-8' });
+  });
+  assert.strictEqual(n, 2, 'a spawn that returned no answer must be retried exactly once');
+  assert.strictEqual(recovered.status, 0, 'and the answer that did arrive is the one used');
+});
+
+test('harness: two no-answer spawns FAIL, naming the harness — never a pass or a skip', () => {
+  // THE CONSTRAINT THAT MATTERS. A genuine deadlock — the 0% CPU wedge these
+  // tests exist to catch — times out on both attempts, so it must still go RED.
+  // A fixture made robust by converting an inconclusive run into a pass or a
+  // skip would cost a wedged box, which is far worse than the flake it fixes.
+  assert.throws(
+    () => withRetry('fixture', () => spawnSync('/bin/sh', ['-c', 'sleep 10'],
+      { encoding: 'utf-8', timeout: 200 })),
+    (err) => {
+      assert.match(err.message, /never got an answer/,
+        'the failure must say the harness got no answer');
+      assert.match(err.message, /HARNESS failing, not the digest script/,
+        'and it must point at the harness, or the reader diffs a script that is not at fault');
+      assert.match(err.message, /Do not raise the timeout/,
+        'and it must head off the retime, which is the wrong lesson this whole ticket is about');
+      return true;
+    },
+  );
 });
