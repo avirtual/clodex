@@ -5245,9 +5245,23 @@ function createTicketMethods(deps, shared) {
     //
     // The lead is excluded because it is rung 3's RECIPIENT: an automated write
     // into the operator-facing session has no rung above it to catch a mistake.
-    _wakeSeatEligible(team, seat) {
+    // `now`/`stallMs` are only for the per-seat budget below; every other check
+    // here is a state test.
+    _wakeSeatEligible(team, seat, now, stallMs) {
       if (!seat || seat._dead) return false;
       if (seat.name === team.lead) return false;
+      // ONE wake per seat per stall window, across ALL of its tickets. The budget
+      // is per-SEAT because the composer is: two of a seat's tickets stalling
+      // together would otherwise write twice into one terminal, and the second
+      // Ctrl-U destroys whatever the first produced.
+      //
+      // Per-ticket stamps cannot express this — `wakeAt` lives on the record and
+      // two records know nothing of each other. Nor does the shared
+      // `_stallLiveSample` prevent it: the second ticket's sample is unreadable
+      // only while the FIRST keeps probing, and the first stops the moment it
+      // wakes, handing the second a readable gap plus an already-true
+      // `_stallWedgedOnce` — a wake with no confirm of its own.
+      if (seat._stallWakeAt && (now - seat._stallWakeAt) < stallMs) return false;
       // Claude-only for the same reason `_armReviewStartCheck` is: the probe
       // reads `transcript.jsonl`, which only the Claude hook writes, so a codex
       // seat would classify wedged on a one-signal read of permanent silence.
@@ -5300,7 +5314,7 @@ function createTicketMethods(deps, shared) {
     // Ctrl-U itself. The sweep's decision and the write are separated by the
     // boot-ready gate, the quiet gate and queue depth, and a seat that takes a
     // turn inside that gap must not be written to.
-    _wakeStalledSeat(team, ticket, seat, now) {
+    _wakeStalledSeat(team, ticket, seat, now, stallMs) {
       const tid = ticket.id;
       const seenAt = ticket.lastActivityAt || null;
       const finalText = this._buildDeliveryText(seat, 'ticket-watchdog',
@@ -5308,7 +5322,7 @@ function createTicketMethods(deps, shared) {
       this._injectText(seat, '', {
         produce: () => {
           try {
-            if (!this._wakeSeatEligible(team, seat)) return null;
+            if (!this._wakeSeatEligible(team, seat, now, stallMs)) return null;
             const fresh = ticketsStore.load(team.root);
             const rec = fresh.find((x) => x.id === tid);
             if (!rec) return null;
@@ -5327,6 +5341,11 @@ function createTicketMethods(deps, shared) {
             // judged, not from when the queue happened to write.
             rec.wakeAt = now;
             ticketsStore.save(team.root, fresh);
+            // The seat-side half of the budget, stamped in the same critical
+            // section as the record's so the two cannot disagree. On the SESSION,
+            // like the liveness samples, so it dies with the seat rather than
+            // denying a wake to a fresh seat that reused the name.
+            seat._stallWakeAt = now;
             return finalText;
           } catch (e) {
             log.error('ticket', `wake stamp for ${tid} failed: ${e.message}`);
@@ -5632,14 +5651,14 @@ function createTicketMethods(deps, shared) {
             // become eligible by waiting, so deferring on one would delay the
             // alarm by the full grace window to reach the same refusal — those
             // alarm at the window exactly as they did before rung 2 existed.
-            if (graceLeft && this._wakeSeatEligible(team, wakeSeat)) {
+            if (graceLeft && this._wakeSeatEligible(team, wakeSeat, now, stallMs)) {
               let verdict = null;
               try { verdict = (await this._sampleSeatLiveness(wakeSeat, now, stallMs, 'stall')).verdict; }
               catch { verdict = null; }   // an unreadable probe alarms, never silences
               if (verdict === 'wedged') {
                 // Re-checked inside `produce` at write time; this is the cheap
                 // refusal, not the guarantee.
-                this._wakeStalledSeat(team, after, wakeSeat, now);
+                this._wakeStalledSeat(team, after, wakeSeat, now, stallMs);
                 continue;
               }
               // Short of wedged-confirmed — including `unknown`, which is "no

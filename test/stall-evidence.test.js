@@ -185,6 +185,60 @@ test('zero commits and no commits are distinguished from an unmeasurable branch'
   assert.ok(!/commit/.test(unknown), 'a failed git probe says nothing about commits');
 });
 
+// ── t400: the wake clause ──────────────────────────────────────────────────
+//
+// Rung 2 injects one automated line into a wedged-confirmed seat before the lead
+// is told anything. When that wake produced no turn, the alarm that follows must
+// say so: the lead needs to know the cheap option was already spent, or its first
+// move is to spend it again by hand.
+
+test('t400: an unanswered wake gets its own sentence, on the bare body and the evidence body alike', () => {
+  const bare = formatStallBody({ ticketId: 't1', who: 'hand', age: '35m', wake: { age: '2m' } });
+  const full = formatStallBody({
+    ticketId: 't1', who: 'hand', age: '35m', commits: 0, dirty: true,
+    tool: { tool: 'Bash', outcome: 'pending' }, wake: { age: '2m' },
+  });
+  const clause = /an automated wake was injected 2m ago and produced no turn/;
+  assert.match(bare, clause,
+    'the bare-head case carries it too — a seat with no evidence to show is exactly where a wake is most telling');
+  assert.match(full, clause, 'and so does the body that already has bits and a verdict');
+  assert.ok(!full.includes('\n'), 'still one line: it fires into the lead prompt stream');
+});
+
+test('t400: no wake, no clause — the sentence never rides an alarm that had no rung 2', () => {
+  const body = formatStallBody({ ticketId: 't1', who: 'hand', age: '30m', commits: 0 });
+  assert.ok(!/automated wake|produced no turn/.test(body),
+    'a clause on every alarm carries no information and teaches the lead to skip the line on the alarms where it does');
+});
+
+test('t400: the wake clause states the MEASUREMENT and never a verdict', () => {
+  const body = formatStallBody({ ticketId: 't1', who: 'hand', age: '35m', wake: { age: '2m' } });
+  // The design's explicit refusal. Under the I/O-blocked-child case the tree-CPU
+  // probe cannot see, a wake fired at a HEALTHY seat queues behind the running
+  // tool and produces a turn later — so "a write cannot recover this seat" is not
+  // merely unproven, it is sometimes false. `formatStallBody`'s existing verdict
+  // clauses are inferences the tool outcome DOES support; this one has no such
+  // support and must stay a bare fact.
+  assert.ok(!/cannot be recovered|cannot recover|beyond|dead|unrecoverable|give up|kill/i.test(body),
+    'no verdict: the fact alone tells the lead rung 2 was spent, and what to do with that is the lead`s call '
+    + 'against the other evidence in the same alarm');
+  assert.match(body, /produced no turn/, 'ENTER: the clause IS present — the absence above is about its wording');
+});
+
+test('t400: the wake clause and the swallowed-dm clause coexist, and the dm reading comes first', () => {
+  // Both are cause sentences and both can be true at once: a seat that was never
+  // told anything, then woken. Order matters — whether the seat ever received the
+  // work changes what an unanswered wake means, so it must be read first.
+  const body = formatStallBody({
+    ticketId: 't1', who: 'hand', age: '35m',
+    dmLatch: { count: 2, age: '40m' }, wake: { age: '2m' },
+  });
+  assert.match(body, /swallowed delivery/, 'ENTER: the dm clause is present');
+  assert.match(body, /automated wake/, 'ENTER: and so is the wake clause');
+  assert.ok(body.indexOf('swallowed delivery') < body.indexOf('automated wake'),
+    'the dm reading first: "was it ever told anything" reframes "and then it ignored a wake"');
+});
+
 // ── formatOrphanBody (t377) ────────────────────────────────────────────────
 //
 // Measured on t376: a retired hand's ticket alarmed `stalled: hand quiet 31m
