@@ -249,6 +249,10 @@ function createTicketMethods(deps, shared) {
     path,
     pathFor,
     getPersistence,
+    // whenReady-assigned in engine.js, so it crosses as a lazy getter like the
+    // others here. Used by _cancelTicketReminders to drop the reminders bound to
+    // a ticket that just closed.
+    getRemindScheduler,
     getTemplates,
     getUserDataPath,
     gitWorktree,
@@ -4621,7 +4625,32 @@ function createTicketMethods(deps, shared) {
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} cancelled` });
       this._writeTicketCost(team, ticket);
       log.info('intent', `task cancel ${ticket.id} by ${session.name}`);
-      reply(`ticket ${ticket.id} cancelled${next ? ` — next: ${next.id} delivered to ${seat}` : ''}`);
+      const dropped = this._cancelTicketReminders(session.name, ticket.id);
+      reply(`ticket ${ticket.id} cancelled${next ? ` — next: ${next.id} delivered to ${seat}` : ''}${dropped ? ` ${dropped}` : ''}`);
+    },
+
+    // Drop the reminders BOUND to a ticket (`[agent:remind for t42 …]`) when it
+    // reaches a terminal close. Returns a report fragment, or '' when nothing was
+    // bound — the common case, which must stay silent.
+    //
+    // Called from accept and cancel ONLY. `done` is deliberately not a caller:
+    // a reject reopens a done ticket, and the reminder is still wanted through
+    // the rework round. `state = 'open'` is written by both rejection
+    // transitions, so a done ticket is not closed out until accept.
+    //
+    // `agent` is the LEAD (both callers are lead-gated), which is also the owner
+    // the scheduler enforces against — a bound reminder is still its owner's.
+    // Never throws into a close path: a reminder that outlives its ticket is the
+    // bug this fixes, but failing to CLOSE the ticket over it would be worse.
+    _cancelTicketReminders(agent, ticketId) {
+      let sched = null;
+      try { sched = getRemindScheduler && getRemindScheduler(); } catch { sched = null; }
+      if (!sched || typeof sched.cancelForTicket !== 'function') return '';
+      let ids = [];
+      try { ids = sched.cancelForTicket(agent, ticketId) || []; } catch { return ''; }
+      if (!ids.length) return '';
+      log.info('intent', `ticket ${ticketId} closed — cancelled ${ids.length} bound reminder(s): ${ids.join(', ')}`);
+      return `— ${ids.length} bound reminder(s) cancelled (${ids.join(', ')}).`;
     },
 
     // Write the revival link onto the TICKET, at the last moment it is knowable.
@@ -4726,7 +4755,8 @@ function createTicketMethods(deps, shared) {
         }
         this._broadcast('ipc-message', { type: 'task', from: session.name, to: seatName || '(unassigned)', body: `ticket ${ticket.id} accepted` });
         log.info('intent', `task accept ${ticket.id} by ${session.name}: ${msg}`);
-        reply(msg);
+        const dropped = this._cancelTicketReminders(session.name, ticket.id);
+        reply(dropped ? `${msg} ${dropped}` : msg);
       };
 
       // No branch to reason about (a ticket worked in the main checkout): there

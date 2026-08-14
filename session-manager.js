@@ -3900,6 +3900,31 @@ function createSessionManager(deps) {
         return;
       }
 
+      // A `for <id>` binding names a ticket that must actually exist on this
+      // seat's team, and the check is here rather than in the parser because the
+      // parser is a pure leaf with no board to consult. Binding to a ticket that
+      // is not on the board can never be cancelled — which reproduces exactly the
+      // orphaned-reminder bug, minus the visible reminder that something was
+      // supposed to happen. So it bounces instead of arming.
+      if (parsed.ticket) {
+        let team = null;
+        try { team = resolveTeam(session.cwd); } catch { team = null; }
+        if (!team) {
+          const e = `no team here — a "for ${parsed.ticket}" binding needs a team board`;
+          reply(e);
+          this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${e}` });
+          return;
+        }
+        let known = false;
+        try { known = ticketsStore.load(team.root).some((t) => t && t.id === parsed.ticket); } catch { known = false; }
+        if (!known) {
+          const e = `no ticket ${parsed.ticket} on ${team.name} — nothing to bind this reminder to`;
+          reply(e);
+          this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${e}` });
+          return;
+        }
+      }
+
       const r = sched.add(who, spec, body);
       if (!r.ok) {
         reply(r.error);

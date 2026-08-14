@@ -8,6 +8,9 @@
 // in isolation with a fake clock.
 //
 // Spec grammar (v1, self-reminders only):
+//   [for <ticketId>]   optional binding PREFIX on any schedule kind — the
+//                      reminder is cancelled when that ticket reaches a terminal
+//                      close (accept/cancel). See TICKET BINDING below.
 //   every <interval>   recurring   — Ns/Nm/Nh/Nd, minimum 60s (runaway guard)
 //   in <duration>      one-shot    — Ns/Nm/Nh/Nd, must be > 0
 //   at <HH:MM|ISO>     one-shot    — clock time (past today rolls to tomorrow)
@@ -21,6 +24,29 @@
 // error string is what the handler bounces loudly (exec's tone). nextFireAt
 // returns epoch-ms for the next timed fire strictly after `fromMs`, or null for
 // the event/management kinds and for an absolute one-shot already in the past.
+//
+// TICKET BINDING (`for <id>` prefix). A reminder armed against a ticket outlives
+// it: the ticket closes, nothing cancels the reminder, and it fires later
+// carrying instructions about finished work — asserting a state that was true at
+// dispatch. Binding is EXPLICIT and never inferred from the body: string-matching
+// a free-text body would cancel a reminder that merely MENTIONS a ticket, and
+// would fail silently the day an id is written differently.
+//
+// PREFIX, not suffix, and this is the load-bearing choice. A trailing `for <id>`
+// would have to be peeled inside every kind's arm — and it is genuinely
+// ambiguous against two of them: `cron` counts 5 whitespace fields (a suffix
+// makes it 7) and `at` accepts an arbitrary ISO string. A prefix is peeled once,
+// before the head is read, and leaves every arm's tail exactly as it was.
+// Ambiguity against a body that starts with "for" cannot arise: the binding lives
+// in the SPEC (the bracket interior), the body is outside the `]`.
+//
+// Rejected: inferring the id by scanning the body (silent mis-cancellation, see
+// above) and a `ticket=<id>` k=v form (a whole sub-grammar for one key).
+//
+// An unparseable or unknown binding must bounce LOUDLY at arm time — a binding
+// that silently fails to bind reproduces the exact bug it exists to fix, minus
+// the visible reminder that something was supposed to happen. That is why every
+// failure below is an `err(...)` and none of them degrade to "just don't bind".
 
 // Recurring floor: a sub-minute self-reminder loop is a runaway generator into
 // the DM pipeline, so `every` under this bounces (in/at/cron are one-shot or
@@ -31,6 +57,10 @@ const DURATION_RE = /^(\d+)\s*([smhd])$/;
 const UNIT_MS = { s: 1000, m: 60 * 1000, h: 60 * 60 * 1000, d: 24 * 60 * 60 * 1000 };
 const HHMM_RE = /^([01]?\d|2[0-3]):([0-5]\d)$/;
 const ID_RE = /^[a-z0-9]+$/i;
+// A ticket id as minted by tickets-store's nextTicketId: `t` + decimal counter.
+// Narrow ON PURPOSE — a permissive pattern would accept a typo'd id, bind to a
+// ticket that will never close, and leave the reminder to fire stale anyway.
+const TICKET_ID_RE = /^t\d+$/i;
 
 // A cron field's inclusive value bounds, in field order.
 const CRON_BOUNDS = [
@@ -122,13 +152,48 @@ function cronMatches(cron, date) {
 // schedule. Pure — no clock read; timing that depends on "now" is deferred to
 // nextFireAt.
 function parseRemindSpec(spec) {
-  const s = String(spec == null ? '' : spec).trim();
+  let s = String(spec == null ? '' : spec).trim();
   if (!s) return err('empty remind spec');
+
+  // Peel the optional `for <ticketId>` binding before the head is read, so every
+  // schedule arm below parses exactly the string it did before this existed.
+  let ticket = null;
+  const bind = s.match(/^for(?:\s+([\s\S]*))?$/i);
+  if (bind) {
+    const tail = (bind[1] || '').trim();
+    if (!tail) return err('"for" needs a ticket id — e.g. "for t42 in 40m"');
+    const parts = tail.match(/^(\S+)(?:\s+([\s\S]*))?$/);
+    const id = parts[1];
+    if (!TICKET_ID_RE.test(id)) {
+      return err(`invalid ticket id "${id}" in remind binding (expected e.g. t42)`);
+    }
+    const tailRest = (parts[2] || '').trim();
+    // A binding with nothing after it is not a schedule. Bouncing here rather
+    // than falling through keeps the error about the real mistake instead of
+    // reporting an empty spec the caller never wrote.
+    if (!tailRest) return err(`"for ${id}" needs a schedule after it — e.g. "for ${id} in 40m"`);
+    ticket = id.toLowerCase();
+    s = tailRest;
+  }
 
   const m = s.match(/^(\S+)(?:\s+([\s\S]*))?$/);
   const head = m[1].toLowerCase();
   const rest = (m[2] || '').trim();
 
+  // list/cancel are management commands with no record to bind, so a binding on
+  // one is a mistake that would otherwise be silently discarded.
+  if (ticket && (head === 'list' || head === 'cancel')) {
+    return err(`"for ${ticket}" cannot be combined with "${head}" — a ticket binding belongs on a schedule`);
+  }
+  // Attach the binding to whatever the schedule arms return. Written as a
+  // conditional spread at each return site would repeat it seven times; wrapping
+  // the switch keeps every arm untouched.
+  const bound = (r) => (ticket && r.ok ? { ...r, ticket } : r);
+  return bound(parseSchedule(head, rest));
+}
+
+// The schedule arms proper — everything after any `for <id>` binding is peeled.
+function parseSchedule(head, rest) {
   switch (head) {
     case 'list':
       if (rest) return err(`unexpected text after "list": "${rest}"`);
