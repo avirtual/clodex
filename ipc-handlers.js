@@ -1301,11 +1301,21 @@ function registerIpcHandlers(deps) {
     // workspace id is the window: it is 1:1 with a BrowserWindow, and these
     // handlers register only under `enableDrawerServices`, which the web host
     // turns off — so the desktop host is the only registrar.
+    //
+    // STRICT resolution, and unresolved is a REFUSAL — the same ruling the
+    // local `wterm:*` family makes on the same input, for a reason that is
+    // sharper here. The shared helper falls back to the default workspace, and
+    // an owner nothing will ever drop is precisely the undroppable want this
+    // ticket exists to eliminate: every dropper (the navigation listener, the
+    // close handler) passes a REAL workspace id, so a fallback or a sentinel
+    // bucket could never be matched by any of them.
     const wtermOwner = (e) => (workspaceOfSenderStrict ? workspaceOfSenderStrict(e) : workspaceOfSender(e));
     handle('peer:wtermOpen', (e, key) => new Promise((resolve) => {
       const t = peerSeat(key);
       if (!t) return resolve({ ok: false, error: 'no such peer session' });
-      t.conn.wtermOpen(t.seat, wtermOwner(e), resolve);
+      const owner = wtermOwner(e);
+      if (!owner) return resolve({ ok: false, error: 'no workspace for this window' });
+      t.conn.wtermOpen(t.seat, owner, resolve);
     }));
     handle('peer:wtermResize', (_e, key, cols, rows) => new Promise((resolve) => {
       const t = peerSeat(key);

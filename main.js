@@ -335,6 +335,14 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
     // from, so it dies with the window — unlike sessions, which survive a close
     // detached and replay their buffered output on reattach.
     if (engine) { const w = engine.getDrawerPtys(); if (w) w.kill(workspaceId); }
+    // A PEER terminal dies with the window for the same reason, and this edge
+    // is not optional: a close is not a navigation, so the listener below never
+    // fires for it, and after unregisterWindow no future navigation for this
+    // workspace can. Unlike the reload case there is no later edge to
+    // self-heal, so a want left here strands an SSE, the far box's watcher mark
+    // and a spawned shell permanently. Refcounted, so another window still
+    // showing the seat keeps it.
+    if (engine) { const pm = engine.getPeerManager(); if (pm) pm.dropWtermsForWindow(workspaceId); }
     manager.unregisterWindow(workspaceId);
     refreshAppMenu();
     refreshTrayMenu();
@@ -347,18 +355,27 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
     console.log(`[RENDERER ${String(e.level).toUpperCase()}]`, e.message);
   });
 
-  // A reload strands this window's peer terminals, and this is the edge that
-  // sheds them. The renderer's release edge (`releasePeer`) runs off renderer
-  // state, so a reload destroys it while the main-side want lives on: a seat
-  // the fresh renderer does not re-show keeps an open stream and a real shell
-  // on someone else's machine, with nothing left that could ever close them.
+  // A RELOAD strands this window's peer terminals; the `closed` handler above
+  // covers the other edge where a renderer stops existing. The renderer's
+  // release edge (`releasePeer`) runs off renderer state, so a reload destroys
+  // it while the main-side want lives on: a seat the fresh renderer does not
+  // re-show keeps an open stream and a real shell on someone else's machine,
+  // with nothing left that could ever close them.
   //
   // `did-start-navigation`, NOT `did-finish-load`: finish-load is the page's
-  // `load` event, by which time the fresh renderer's own `peer:wtermOpen` may
-  // already have arrived — dropping there would shoot down a terminal the
-  // operator is actively watching. Navigation START is strictly after the old
-  // document's last IPC and strictly before the new document exists, which is
-  // what makes that race impossible rather than merely unlikely.
+  // `load` event, by which time the fresh renderer's own `peer:wtermOpen` has
+  // very likely arrived — dropping there would routinely shoot down a terminal
+  // the operator is actively watching.
+  //
+  // The bound this buys, stated exactly, because Electron does not promise the
+  // stronger thing: the drop cannot remove a want from a LIVE renderer, since
+  // the document placing wants is already being torn down. It is not ordered
+  // against an `invoke` still in flight — one handled after the drop re-creates
+  // the want, which then takes the dedupe path and gets no `replay`, so that
+  // one reload degrades to the blank pane t224 pinned until the operator
+  // hides and re-shows. Bounded and self-healing: the re-created want is owned
+  // by the still-registered workspace, so the next navigation or the close hook
+  // sheds it. It is NOT an orphan, which is what this ticket is about.
   //
   // Main frame and cross-document only: an in-page navigation keeps the
   // document, so the renderer that placed the wants is still there holding them.

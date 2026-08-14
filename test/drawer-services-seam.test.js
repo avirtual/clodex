@@ -530,3 +530,33 @@ test('peer:wterm* refuse a key whose seat half fails the wire grammar', async ()
 
 // createEngine's background timers keep the loop alive; exit once results flush.
 after(() => { setImmediate(() => process.exit(0)); });
+
+// t379: the peer half of the refusal above, and the reason it is not merely
+// symmetry. A want is dropped by WORKSPACE ID — main's navigation and close
+// hooks both pass a real one — so an owner that is null or a default could
+// never be matched by any dropper. That is an undroppable want: an SSE, the far
+// box's watcher mark and a spawned shell on someone else's machine with nothing
+// left that could ever close them, which is the exact defect the ownership was
+// introduced to eliminate. Refusing is what keeps the fix from re-creating it.
+test('peer:wtermOpen refuses when the sender resolves to no workspace', async () => {
+  const calls = [];
+  const conn = {
+    wtermOpen: (seat, owner, cb) => { calls.push(['open', seat, owner]); cb({ ok: true }); },
+    wtermInput: (seat, data, cb) => { calls.push(['input', seat, data]); cb({ ok: true }); },
+    wtermResize: (seat, c, r, cb) => { calls.push(['resize', seat, c, r]); cb({ ok: true }); },
+    wtermClose: (seat, owner, cb) => { calls.push(['close', seat, owner]); cb({ ok: true }); },
+  };
+  const handlers = registerPeerDesktop({ 'peer-1': conn }, {
+    workspaceOfSenderStrict: () => null,
+    // What the shared fallback WOULD have said. Present so this test fails if
+    // the handler is switched to the loose resolver, which is the regression
+    // that re-creates the undroppable want.
+    workspaceOfSender: () => 'default',
+  });
+
+  assert.ok(handlers['peer:wtermOpen'], 'ENTER: the peer terminal handlers registered');
+
+  const res = await handlers['peer:wtermOpen']({}, 'bob@peer-1');
+  assert.strictEqual(res.ok, false, 'the open is refused rather than filed under a placeholder owner');
+  assert.deepStrictEqual(calls, [], 'and nothing reached the connection at all');
+});

@@ -52,14 +52,16 @@ function webHostKey(w) {
 
 // A wterm owner is a WINDOW, addressed by its workspace id. Normalized to a
 // string because the Set is compared against ids arriving from two unrelated
-// callers — an IPC sender's workspace and main.js's navigation handler — and a
-// Set keyed by mixed types would silently hold two entries for one window,
-// leaving a want nothing drops. `null` is a legitimate owner (a sender with no
-// resolvable workspace) and must not collide with a window that is literally
-// named "null" — hence a sentinel with a LEADING SPACE, which no workspace id
-// can contain: they are `default` or `ws-<digits>-<base36>`.
+// callers — an IPC sender's workspace and main.js's window hooks — and a Set
+// keyed by mixed types would silently hold two entries for one window, leaving
+// a want nothing drops.
+//
+// There is deliberately no sentinel for an absent owner: an unresolvable sender
+// is REFUSED at the open (ipc-handlers), because a want filed under a key no
+// dropper ever passes is exactly the undroppable want this ownership exists to
+// prevent.
 function ownerKey(owner) {
-  return owner === null || owner === undefined ? ' none' : String(owner);
+  return String(owner);
 }
 
 // The scheme half of a dial, in ONE place, exported so it can be tested without
@@ -478,6 +480,12 @@ class PeerConnection {
   // drops EVERY watcher of the seat, so one still in flight when the fresh
   // renderer re-opens would kill the stream it just got. Dropping the POST is
   // what makes the re-show race-free rather than merely usually-fast-enough.
+  //
+  // The visible cost, since it is invisible to the box's operator: no POST
+  // means no `wtermClose` callback there, so a reload or a window close
+  // produces no "a peer closed its view" chip in their ops log, where an
+  // ordinary hide does. The stream and its mark still go — only the sentence is
+  // missing.
   dropWtermsForWindow(owner) {
     const key = ownerKey(owner);
     for (const [seat, w] of [...this._wterms]) {
@@ -583,9 +591,25 @@ class PeerConnection {
     // of the seat, so closing while a second window is still showing it would
     // kill that window's pane — the same hazard term-tab's `held` bookkeeping
     // guards on the renderer side, one layer down.
+    //
+    // A close whose owner did not resolve (the window died with the call in
+    // flight) must still SHED, or the refcount would have quietly turned the
+    // one path whose job is closing into a no-op — which is what it did before
+    // t379's rework, a regression on the sole path that exists to close things.
+    //
+    // It cannot decrement, because it does not know WHICH window is leaving. So
+    // it keys on ambiguity: with a single owner the caller must be that owner,
+    // so shed. With several, the seat is genuinely still wanted by somebody and
+    // tearing down would kill a live window's pane over a caller we cannot
+    // identify; the dead window's want is shed by main's `closed` hook instead,
+    // which drops by workspace id and knows exactly who left.
     if (w) {
-      w.owners.delete(ownerKey(owner));
-      if (w.owners.size > 0) return cb({ ok: true });
+      if (owner === null || owner === undefined) {
+        if (w.owners.size > 1) return cb({ ok: true });
+      } else {
+        w.owners.delete(ownerKey(owner));
+        if (w.owners.size > 0) return cb({ ok: true });
+      }
     }
     this._teardownWterm(seat);
     if (!w) return cb({ ok: true });

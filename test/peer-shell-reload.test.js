@@ -117,6 +117,15 @@ const W2 = 'workspace-2';
 // keying by window rather than shedding the connection's streams.
 function reloadRenderer(conn, windowId = W1) { conn.dropWtermsForWindow(windowId); }
 
+// A window CLOSE. Identical here by construction — main calls the same drop
+// with the same id — and that identity is the point rather than a shortcut:
+// the two edges must shed the same way, so the behaviour below is asserted
+// once and the WIRING of each edge is pinned separately against main.js source
+// (a closed window cannot be driven from this process). The close edge matters
+// more than the reload one: after `unregisterWindow` no navigation for that
+// workspace can ever fire, so a want left here is permanent.
+function closeWindow(conn, windowId = W1) { conn.dropWtermsForWindow(windowId); }
+
 // --- 1. the claim as filed --------------------------------------------------
 
 test('a reload re-opens the seat: one stream, one shell, and a snapshot for the fresh renderer', async () => {
@@ -225,8 +234,17 @@ test('a reload costs exactly one re-open on the wire, never a second concurrent 
 
     assert.deepStrictEqual(gets, ['/api/wterm/alice', '/api/wterm/alice'],
       'one re-open, and only one — the fresh renderer opened for real and nothing opened a third time');
-    assert.deepStrictEqual(concurrent, [0, 0],
-      'and each of those arrived with NO stream already held for the seat: the reload closed before it re-opened, so the two never overlap');
+    // Asserted as a universal rather than as the exact array `[0, 0]`: that
+    // shape depends on the serving box processing the old socket's close before
+    // the re-open's GET is routed, which holds over loopback but is not
+    // guaranteed on a loaded box. A flake there would read as a duplicate-
+    // stream regression — the most expensive possible misdiagnosis on this
+    // file, since that is the very thing t224 disproved. The property that
+    // actually matters is that no open ever arrives on top of a live stream.
+    assert.ok(concurrent.every((n) => n === 0),
+      `every open arrived with NO stream already held for the seat, so the reload closed before it re-opened and the two never overlap (saw ${JSON.stringify(concurrent)})`);
+    assert.strictEqual(concurrent.length, 2,
+      'ENTER: and both opens really were sampled, so the universal above is over two observations and not vacuously true of an empty list');
   } finally {
     conn.stop();
     server.stop();
@@ -409,6 +427,103 @@ test('one window closing a shared seat does not detach the other window', async 
     assert.deepStrictEqual(closes, ['alice'],
       'the LAST window out closes it for real — refcounting defers the close, it does not lose it');
     assert.deepStrictEqual(watched(server), [], 'and the stream is gone');
+  } finally {
+    conn.stop();
+    server.stop();
+  }
+});
+
+// --- 4. the window-close edge -----------------------------------------------
+// A close is not a navigation, so it needs its own hook, and it is the WORSE of
+// the two edges: a reload's orphan is self-healing (a later navigation for that
+// workspace would shed it), while after `unregisterWindow` no navigation for it
+// can ever fire again. The stream, the far box's watcher mark and the spawned
+// shell are then held forever by a window that does not exist.
+
+test('closing a window sheds its seats and leaves the surviving window alone', async () => {
+  const { server, spawns } = servingBox();
+  await server.start();
+  const conn = consumer(server.port);
+  conn.start();
+  try {
+    await waitFor('the peer to come online', () => conn.online);
+
+    // Two windows, DIFFERENT seats — the case where a connection-wide shed
+    // would look correct for the closing window and destroy the other one.
+    await new Promise((r) => conn.wtermOpen('alice', W1, r));
+    await new Promise((r) => conn.wtermOpen('bob', W2, r));
+    await waitFor('both seats to be watched', () => watched(server).length === 2);
+    assert.deepStrictEqual(watched(server), ['alice', 'bob'],
+      'ENTER: both windows really are watching a seat, so the shed below is measured against two live streams');
+
+    closeWindow(conn, W1);
+    await new Promise((r) => setTimeout(r, 250));
+
+    assert.deepStrictEqual(watched(server), ['bob'],
+      'the closed window took its seat with it and left the other window streaming');
+    assert.ok(!conn._wterms.has('alice'), 'and the want is gone on this side too, not merely the stream');
+    assert.deepStrictEqual(spawns, ['alice', 'bob'],
+      'ENTER: both shells were genuinely asked for, so this is a shed of a real stream');
+  } finally {
+    conn.stop();
+    server.stop();
+  }
+});
+
+// --- 5. an unresolvable sender ----------------------------------------------
+// A window that dies with an `invoke` in flight resolves to no workspace. The
+// open is REFUSED rather than filed under a placeholder, because a want no
+// dropper can ever name is precisely the undroppable want this ownership
+// exists to prevent — the ticket's own defect, re-created by its own fix.
+// Refusal is also the ruling the local `wterm:*` family already makes.
+
+test('a close whose window is gone still sheds, rather than being swallowed by the refcount', async () => {
+  const { server, closes } = servingBox();
+  await server.start();
+  const conn = consumer(server.port);
+  conn.start();
+  try {
+    await waitFor('the peer to come online', () => conn.online);
+    await new Promise((r) => conn.wtermOpen('alice', W1, r));
+    await waitFor('alice to be watched', () => watched(server).includes('alice'));
+
+    // The sole viewer's window died as it called close, so no owner resolves.
+    // Pre-refcount this shed the stream; a refcount that only ever deletes a
+    // named owner would return ok and shed NOTHING, turning the one path whose
+    // job is closing into a no-op.
+    await new Promise((r) => conn.wtermClose('alice', null, r));
+    await waitFor('the close to reach the far box', () => closes.length >= 1);
+
+    assert.deepStrictEqual(watched(server), [],
+      'the stream is gone — an unowned close is the "nobody is watching" case and must still shed');
+    assert.deepStrictEqual(closes, ['alice'], 'and the far box was told, so its watcher mark clears');
+    assert.ok(!conn._wterms.has('alice'), 'and no want is left behind on this side');
+  } finally {
+    conn.stop();
+    server.stop();
+  }
+});
+
+test('an unowned close does NOT tear down a seat another window is still watching', async () => {
+  const { server, closes } = servingBox();
+  await server.start();
+  const conn = consumer(server.port);
+  conn.start();
+  try {
+    await waitFor('the peer to come online', () => conn.online);
+    await new Promise((r) => conn.wtermOpen('alice', W1, r));
+    await new Promise((r) => conn.wtermOpen('alice', W2, r));
+    await waitFor('alice to be watched', () => watched(server).includes('alice'));
+    assert.strictEqual(conn._wterms.get('alice').owners.size, 2,
+      'ENTER: two windows hold the seat, so the shed below would be visible if it happened');
+
+    await new Promise((r) => conn.wtermClose('alice', null, r));
+    await new Promise((r) => setTimeout(r, 250));
+
+    assert.deepStrictEqual(watched(server), ['alice'],
+      'live windows still hold it, so an unowned close must not take their pane down');
+    assert.deepStrictEqual(closes, [],
+      'and nothing reached the far box, whose close route would have dropped every watcher');
   } finally {
     conn.stop();
     server.stop();
