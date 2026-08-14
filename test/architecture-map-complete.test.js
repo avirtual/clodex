@@ -143,7 +143,11 @@ function namedIn(text, basename) {
 // failure message points at the string a human has to go delete.
 function extractEntries(text) {
   const out = new Set();
-  for (const [, tok] of text.matchAll(ENTRY_TOKEN)) {
+  for (const [, raw] of text.matchAll(ENTRY_TOKEN)) {
+    // `./foo.js` names the same module as `foo.js`, but the lookup set holds the
+    // unprefixed form — left as written it would read as a stale entry for a
+    // module that exists.
+    const tok = raw.startsWith('./') ? raw.slice(2) : raw;
     if (tok.endsWith('.test.js')) continue; // test/ is not this map's population
     if (tok.includes('/')) {
       // Qualified: an entry only if it points inside the scanned population.
