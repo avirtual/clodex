@@ -40,6 +40,15 @@ def strip_ansi(s):
     s = re.sub(r'\x1b[@-Z\\-_]', '', s)
     return re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', s)
 
+# MARKER is a substring of NUDGE, so the answer is only counted where it occurs
+# APART from the echoed prompt -- and the removal has to survive the CLI's redraw.
+# echo-probe.py documents that cursor moves land BETWEEN glyphs, so strip_ansi can
+# leave the echo differently spaced from the string we sent; a plain `.replace`
+# then removes nothing and the leftover echo reads as an answer. Collapsing
+# whitespace on both sides makes the removal insensitive to that.
+def answered(out, text, marker):
+    return marker in re.sub(r'\s+', '', out).replace(re.sub(r'\s+', '', text), '')
+
 def drain(fd, sec):
     end = time.time() + sec
     got = []
@@ -133,13 +142,13 @@ print('composer live before delivery 1 (want False):', pre)
 inject(fd, NUDGE)
 out1 = strip_ansi(drain(fd, 8).decode('utf-8', 'replace'))
 echoed1 = NUDGE[:25] in out1
-answered1 = MARKER in out1.replace(NUDGE, '')
+answered1 = answered(out1, NUDGE, MARKER)
 print('delivery 1 -- echoed: %s  answered: %s' % (echoed1, answered1))
 
 inject(fd, NUDGE)
 out2 = strip_ansi(drain(fd, 25).decode('utf-8', 'replace'))
 echoed2 = NUDGE[:25] in out2
-answered2 = MARKER in out2.replace(NUDGE, '')
+answered2 = answered(out2, NUDGE, MARKER)
 print('delivery 2 -- echoed: %s  answered: %s' % (echoed2, answered2))
 
 print()
@@ -147,9 +156,15 @@ if pre:
     print('INCONCLUSIVE: composer was already live, so delivery 1 was not swallowed.')
 elif answered1:
     print('INCONCLUSIVE: delivery 1 landed; no loss to recover from.')
-elif echoed2 or answered2:
+elif answered2:
+    # `answered2` ALONE. An echo without a submit is not a landed delivery, it is
+    # the failure -- text sitting in a composer nobody pressed Enter on. An
+    # `echoed2 or answered2` verdict would publish that half-result as a pass on a
+    # re-run, which is the whole reason these probes are committed rather than
+    # described.
     print('RESULT: a single (non-chaining) modal -- REDELIVERY LANDS.')
     print('        Shape (a) IS viable for a one-shot non-composer state.')
+    print('        (sub-result: delivery 2 echoed = %s)' % echoed2)
 else:
     print('RESULT: a single (non-chaining) modal -- redelivery is ALSO swallowed.')
     print('        Shape (a) does not rescue even a one-shot modal.')

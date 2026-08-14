@@ -5976,6 +5976,13 @@ function createSessionManager(deps) {
       // forces claude today (the C2 tool-cap constant), so this guard is about a
       // future caller, not about a case that exists.
       if (!s || s.agentType !== 'claude' || s._dead) return;
+      // Stamped on the FIRST arm only, and every later arm reuses it: the
+      // redelivery arms a second window, and the permission-dialog branch re-arms
+      // UNCAPPED, so a constant in the escalation prose is wrong by however many
+      // windows have run — "spawned 90s ago" for a seat stuck on a dialog for an
+      // hour is a false statement in the one sentence an operator reads to decide
+      // whether to look now.
+      if (!s._reviewStartArmedAt) s._reviewStartArmedAt = Date.now();
       s._reviewStartTimer = setTimeout(() => {
         s._reviewStartTimer = null;
         try { this._checkReviewStarted(s, leadName); }
@@ -6012,11 +6019,17 @@ function createSessionManager(deps) {
           ts: Date.now(), from: 'clodex', to: session.name, kind: 'review-renudged',
           body: `${session.name} never started — re-sending the start nudge`,
         });
-        // Same text as the spawn site, and contentless for the same reason: the
-        // scope lives in the system prompt, and a second copy of it here would be
-        // the two-copies-disagree bug that comment warns about.
+        // Contentless for the spawn site's reason: the scope lives in the system
+        // prompt, and a second copy here would be the two-copies-disagree bug.
+        //
+        // The trailing clause is not politeness. A nudge submitted at t=89.9s
+        // leaves the seat idle-with-no-transcript when this fires at t=90s, so the
+        // retry parks and drains at the seat's next idle edge — AFTER its first
+        // turn, telling a reviewer mid-review to "Begin" and inviting a second
+        // report. That race cannot be closed from outside the seat, so the prose
+        // makes the duplicate harmless instead of pretending a guard closed it.
         this._deliverParkedActive(session.name, leadName,
-          'Your review scope is in your system prompt. Begin.', 'dm');
+          'Your review scope is in your system prompt. Begin — ignore this if you have already started.', 'dm');
         // Watch the redelivery the same way the first nudge was watched. Without
         // this the retry is fire-and-forget and a seat that stays silent after it
         // is never escalated — the failure would go quiet instead of getting
@@ -6034,7 +6047,11 @@ function createSessionManager(deps) {
         body: `${session.name} never started its review`,
       });
       this._gatedDeliver(leadName, 'clodex-team',
-        `[review ${session.name}] spawned ${Math.round(SPEC_CONFIRM_MS / 1000)}s ago, was re-sent its start nudge, and has STILL taken no turn — no transcript exists, so it never started. `
+        // Measured from the first arm, not a constant: see the stamp's comment.
+        // The `|| Date.now()` yields a visibly wrong 0s rather than `NaN s` for a
+        // session that reaches here unarmed — a wrong number sends an operator to
+        // look at the seat, NaN reads as a broken tool and sends them elsewhere.
+        `[review ${session.name}] spawned ${Math.round((Date.now() - (session._reviewStartArmedAt || Date.now())) / 1000)}s ago, was re-sent its start nudge, and has STILL taken no turn — no transcript exists, so it never started. `
         + 'Its scope is in its system prompt and is intact; what was lost is the nudge that starts it, and re-sending it did not help. '
         + `Recover with an urgent dm to ${session.name} re-sending the scope and telling it to ignore the message if it already has it — NOT a respawn, which mints a second seat and strands this one's mail.`,
         false, `[review ${session.name}] never started`);
