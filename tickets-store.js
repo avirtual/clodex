@@ -398,4 +398,31 @@ function ticketInFlight(ticket) {
   return ticket.state === 'done' && !!ticket.loopStep;
 }
 
-module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, branchSlug, TICKETS_FILE };
+// Is this ticket CLOSED OUT — past any point where a verb will name it again?
+// Returns the reason as a phrase (for the message that refuses to bind to it),
+// or null when the ticket is still live. Predicate and phrasing are one function
+// on purpose: a caller that tests the boolean and a caller that prints the
+// reason cannot drift into disagreeing about which tickets are terminal.
+//
+// NOT the same question as ticketInFlight, and the gap between them is real: a
+// `done` ticket is not in flight once its loop step is gone, but it is very much
+// still live — a reject reopens it, and an accept is still to come.
+//
+// Terminal is exactly two things:
+//   * `cancelled` — _taskCancel refuses any non-open ticket, so nothing can
+//     name it again.
+//   * `closedOut` — stamped by the accept arms that genuinely close the ticket
+//     out (merged, and no-branch-recorded). It CANNOT be inferred from
+//     `acceptedAt`: that is stamped on every accept arm including the two that
+//     invite a second accept ("Merge it, then accept again"), so a ticket
+//     awaiting its merge would read as terminal while it is still live.
+function ticketTerminalReason(ticket) {
+  if (!ticket) return null;
+  if (ticket.state === 'cancelled') return 'cancelled';
+  if (ticket.closedOut) return 'accepted and closed out';
+  return null;
+}
+
+const ticketTerminal = (ticket) => ticketTerminalReason(ticket) !== null;
+
+module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, ticketTerminal, ticketTerminalReason, branchSlug, TICKETS_FILE };

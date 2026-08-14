@@ -35,6 +35,9 @@
 //     stale one).
 //   * `on compact` schedules carry a null nextFireAt (no timer) — they fire only
 //     via fireCompactFor(), the event hook the compact rendezvous calls.
+//   * A record may carry a `ticket` binding (the spec's `for <id>` prefix).
+//     Nothing here fires on it; it is a selector for cancelForTicket, which the
+//     ticket close path calls.
 
 const { parseRemindSpec, nextFireAt } = require('./remind-schedule');
 
@@ -148,7 +151,7 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
           return { ok: false, error: 'that time is already in the past' };
         }
       }
-      const record = store.add({ agent, kind: sched.kind, spec, body, nextFireAt: first });
+      const record = store.add({ agent, kind: sched.kind, spec, body, nextFireAt: first, ticket: sched.ticket || null });
       this._rearm();
       return { ok: true, record };
     },
@@ -162,6 +165,28 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
       store.remove(id);
       this._rearm();
       return true;
+    },
+
+    // Drop every schedule this agent owns that is BOUND to `ticketId` — the
+    // `for <id>` prefix. Called when a ticket reaches a terminal close (accept
+    // or cancel, NOT done: a reject reopens a done ticket and the reminder is
+    // still wanted through the rework round).
+    //
+    // Same-agent ownership is enforced exactly as cancel() does, and for the
+    // same reason: a bound reminder is still its owner's reminder. The natural
+    // owner is the lead who armed it, and both terminal verbs are lead-gated, so
+    // the lead's own bound reminders are the ones this reaches.
+    //
+    // Returns the ids removed (possibly none) so the caller can say so; one
+    // _rearm at the end rather than per-record, since a cancelled fire may have
+    // been the nearest.
+    cancelForTicket(agent, ticketId) {
+      if (!agent || !ticketId) return [];
+      const want = String(ticketId).toLowerCase();
+      const doomed = store.listForAgent(agent).filter((r) => r.ticket && String(r.ticket).toLowerCase() === want);
+      for (const rec of doomed) store.remove(rec.id);
+      if (doomed.length) this._rearm();
+      return doomed.map((r) => r.id);
     },
 
     // Every schedule this agent owns (for `remind list`). Verbatim records —

@@ -1083,6 +1083,9 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   // `[agent:remind cancel <id>]` token has to satisfy the scheduler's ID_RE
   // ([a-z0-9]+). `nextFireAt` is null for oncompact (event-driven, no timer);
   // this store does no timing — it mints id + createdAt and round-trips fields.
+  // `ticket` is the optional `for <id>` binding: present only on bound records,
+  // and what the scheduler's cancelForTicket selects on when a ticket is
+  // accepted or cancelled.
   const reminders = {
     _load() {
       try {
@@ -1106,7 +1109,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     listForAgent(agent) {
       return this._load().filter((r) => r.agent === agent);
     },
-    add({ agent, kind, spec, body = '', nextFireAt = null }) {
+    add({ agent, kind, spec, body = '', nextFireAt = null, ticket = null }) {
       const all = this._load();
       const id = this._mintId(all);
       const rec = {
@@ -1114,6 +1117,10 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         nextFireAt: (typeof nextFireAt === 'number' ? nextFireAt : null),
         createdAt: Date.now(),
         lastFiredAt: null,
+        // Present only when bound. A conditional spread rather than a null
+        // field: every unbound record stays byte-identical to what this store
+        // wrote before bindings existed, so the on-disk file does not churn.
+        ...(ticket ? { ticket } : {}),
       };
       all.push(rec);
       this._save(all);
