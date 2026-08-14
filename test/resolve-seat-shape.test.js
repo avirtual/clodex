@@ -116,6 +116,7 @@ test('review purpose: the whole shape, with no template', () => {
       FORCE_PROMPT_CACHING_5M: '1',
       CLODEX_DISABLE_IPC_PROMPT: '1',
       CLODEX_SPAWNER_HINT: 'off',
+      CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS: '60000',
     },
     envDropped: [],
     envBadType: [],
