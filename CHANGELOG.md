@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- A rejection that never reaches its seat now says so. When a ticket is sent
+  back for rework, Clodex watches that the seat actually starts a turn on it;
+  if the message was swallowed, it redelivers once and then tells you the seat
+  was never told — instead of reporting it as a seat that stalled, which is the
+  same silence with the wrong cause attached.
+
 ## 5.7.0 — 2026-08-14 — tickets that run themselves
 
 Most of this release is one story: a ticket now goes from a written spec to a

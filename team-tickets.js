@@ -1751,6 +1751,13 @@ function createTicketMethods(deps, shared) {
       // on ONE ticket are two different unconsumed writes — carrying a spent spec
       // budget onto the redirect would deny the redirect the single retry this
       // ticket exists to give it.
+      //
+      // LABEL is deliberately not part of the key. Two redirects on one ticket
+      // (`rejected`, then `more must-fixes`) share a budget, and the second's
+      // leading Ctrl-U destroys the first's draft anyway — so tracking them
+      // separately would promise a discrimination the PTY cannot deliver. That
+      // mirrors the spec/respec discipline exactly; do not add it in either
+      // direction without changing REPLACE-not-stack first.
       const prior = s._specUnconfirmed;
       const retried = !!(prior && prior.ticketId === ticketId && prior.kind === kind && prior.retried);
       clearTimeout(s._specConfirmTimer);
@@ -1991,7 +1998,7 @@ function createTicketMethods(deps, shared) {
         // reassignment, and the role resolver simply picking a different sibling for
         // the same role. Both drop the latch correctly, but only the second means a
         // silent seat went unwatched, and nothing else would leave a trace of it.
-        log.info('intent', `spec latch for ${u.ticketId} dropped at ${session.name}: the ticket now resolves to ${holder}`);
+        log.info('intent', `${u.kind === 'redirect' ? 'redirect' : 'spec'} latch for ${u.ticketId} dropped at ${session.name}: the ticket now resolves to ${holder}`);
         session._specUnconfirmed = null;
         return;
       }
@@ -2006,7 +2013,7 @@ function createTicketMethods(deps, shared) {
       const isRedirect = u.kind === 'redirect';
       const step = isRedirect ? 'redirect-undelivered' : 'spec-undelivered';
       const what = isRedirect ? `${u.label || 'rejection'} for ${u.ticketId}` : `spec for ${u.ticketId}`;
-      const wrote = isRedirect ? 'the rejection was written' : 'its spec was written';
+      const wrote = isRedirect ? `the ${u.label || 'rejection'} was written` : 'its spec was written';
 
       if (!holder) {
         session._specUnconfirmed = null;
