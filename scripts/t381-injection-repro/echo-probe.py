@@ -43,6 +43,17 @@ argv = sys.argv[1:] or ['claude']
 pid, fd = pty.fork()
 if pid == 0:
     os.environ['TERM'] = 'xterm-256color'
+    # Dropped in EVERY probe here: these run from inside a Claude seat,
+    # and an inherited session env changes what the child does.
+    # CLAUDE_CONFIG_DIR is EXEMPT from the drop: it is how this probe's modal arm
+    # selects a fresh, un-onboarded config, and popping it turns the swallow case
+    # back into a healthy composer -- measuring nothing while looking like a pass.
+    _cfg = os.environ.get('CLAUDE_CONFIG_DIR')
+    for _k in [_k for _k in os.environ if _k.startswith('CLAUDE')]:
+        os.environ.pop(_k, None)
+    os.environ.pop('CLAUDECODE', None)
+    if _cfg:
+        os.environ['CLAUDE_CONFIG_DIR'] = _cfg
     os.execvp(argv[0], argv)
 set_size(fd, 40, 100)
 buf = []
@@ -61,7 +72,16 @@ tail = strip_ansi(b''.join(buf[mark:]).decode('utf-8', 'replace'))
 print('len(SPEC) =', len(SPEC))
 print('UNIQUE_SPEC_MARKER_ZQX echoed:', 'UNIQUE_SPEC_MARKER_ZQX' in tail)
 print('first spec line echoed:', 'a representative spec body' in tail)
-print('rendered as Pasted-text placeholder:', bool(re.search(r'Pasted text|\+\d+ lines', tail)))
+# The CLI's own redraw interleaves cursor moves between glyphs, so strip_ansi
+# leaves "[Pastedtext#1+16lines]" with the spaces gone. Matching on spaced text
+# silently reports False and inverts the finding -- allow optional whitespace.
+placeholder = bool(re.search(r'Pasted\s*text|\+\s*\d+\s*lines', tail))
+verbatim = 'UNIQUE_SPEC_MARKER_ZQX' in tail
+print('rendered as Pasted-text placeholder:', placeholder)
+# Why shape (b) cannot work for the payload that matters: a content check over the
+# echo is blind to a spec, because the spec's text never reaches the screen.
+print('FINDING a spec does NOT echo verbatim (so echo-matching is blind to it): %s'
+      % (placeholder and not verbatim))
 print('--- echo tail ---')
 print(tail[-1800:])
 try:

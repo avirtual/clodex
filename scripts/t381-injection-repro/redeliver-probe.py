@@ -44,6 +44,11 @@ os.makedirs(d, exist_ok=True)
 pid, fd = pty.fork()
 if pid == 0:
     os.environ['TERM'] = 'xterm-256color'
+    # Dropped in EVERY probe here: these run from inside a Claude seat,
+    # and an inherited session env changes what the child does.
+    for _k in [_k for _k in os.environ if _k.startswith('CLAUDE')]:
+        os.environ.pop(_k, None)
+    os.environ.pop('CLAUDECODE', None)
     os.environ['CLAUDE_CONFIG_DIR'] = d
     os.execvp('claude', ['claude'])
 set_size(fd, 40, 100)

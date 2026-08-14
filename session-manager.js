@@ -5957,11 +5957,18 @@ function createSessionManager(deps) {
     // A seat that took a turn cannot be idle-with-no-transcript — it reached idle
     // THROUGH thinking, which is what writes the file.
     //
-    // ONE-SHOT and detection-only. No re-send: the seat that DID get its nudge is
-    // indistinguishable from here after the fact, and re-nudging it costs a full
-    // duplicate cold review. The lead recovers by hand — an urgent dm re-sending
-    // the scope, never a respawn (a respawn mints a second seat and strands the
-    // first's `born`-stamped mail; see _armParkedDrainFallback).
+    // REDELIVERS ONCE, then escalates. The nudge at the spawn site is deliberately
+    // CONTENTLESS ('…scope is in your system prompt. Begin.'), so a second copy
+    // duplicates no content and can strand nothing — worst case a reviewer is told
+    // to begin twice. That is what makes this safe where a spec redelivery needs
+    // _checkSpecConfirm's whole latch argument to be.
+    //
+    // Measured, 3/3, against the real CLI (scripts/t381-injection-repro): a seat
+    // sitting in a single modal swallows one delivery WHOLE — text and Enter both —
+    // and the NEXT delivery lands. That is exactly the recovery this check used to
+    // ask the lead to perform by hand, and the operator's one-poke rescue of
+    // clodex-reviewer-377-r1 is the same event. Chained modals (first-run
+    // onboarding) still defeat it; that is a boot-time shape, not this one.
     _armReviewStartCheck(seatName, leadName) {
       const s = this.sessions.get(seatName);
       // Claude-only, because the artifact is: `transcript.jsonl` is written by the
@@ -5994,14 +6001,41 @@ function createSessionManager(deps) {
       }
       if (session.activityState !== 'idle') return;   // it started; nothing owed
       if (this._seatHasTranscript(session.name)) return;
-      log.error('intent', `reviewer ${session.name} produced no transcript ${SPEC_CONFIRM_MS / 1000}s after spawn — it never took a first turn`);
+
+      // First window: re-send the nudge rather than waking the lead. The two
+      // guards above are what make this safe — a seat that started between the arm
+      // and here is either non-idle or has a transcript, so it is never poked.
+      if (!session._reviewNudgeRetried) {
+        session._reviewNudgeRetried = true;
+        log.warn('intent', `reviewer ${session.name} has taken no turn ${SPEC_CONFIRM_MS / 1000}s after spawn — re-sending the start nudge once`);
+        this._broadcast('ipc-message', {
+          ts: Date.now(), from: 'clodex', to: session.name, kind: 'review-renudged',
+          body: `${session.name} never started — re-sending the start nudge`,
+        });
+        // Same text as the spawn site, and contentless for the same reason: the
+        // scope lives in the system prompt, and a second copy of it here would be
+        // the two-copies-disagree bug that comment warns about.
+        this._deliverParkedActive(session.name, leadName,
+          'Your review scope is in your system prompt. Begin.', 'dm');
+        // Watch the redelivery the same way the first nudge was watched. Without
+        // this the retry is fire-and-forget and a seat that stays silent after it
+        // is never escalated — the failure would go quiet instead of getting
+        // louder, which is worse than the bug this fixes.
+        this._armReviewStartCheck(session.name, leadName);
+        return;
+      }
+
+      // Two nudges, no turn. Whatever is wrong is not a single lost write — a
+      // chained modal, or something else entirely — and a third copy will not fix
+      // it. Hand it to the lead, who can look at the seat.
+      log.error('intent', `reviewer ${session.name} produced no transcript after a re-sent nudge — it never took a first turn`);
       this._broadcast('ipc-message', {
         ts: Date.now(), from: 'clodex', to: session.name, kind: 'review-unstarted',
         body: `${session.name} never started its review`,
       });
       this._gatedDeliver(leadName, 'clodex-team',
-        `[review ${session.name}] spawned ${Math.round(SPEC_CONFIRM_MS / 1000)}s ago and has taken NO turn — no transcript exists, so it never started. `
-        + 'Its scope is in its system prompt and is intact; what was lost is the nudge that starts it. '
+        `[review ${session.name}] spawned ${Math.round(SPEC_CONFIRM_MS / 1000)}s ago, was re-sent its start nudge, and has STILL taken no turn — no transcript exists, so it never started. `
+        + 'Its scope is in its system prompt and is intact; what was lost is the nudge that starts it, and re-sending it did not help. '
         + `Recover with an urgent dm to ${session.name} re-sending the scope and telling it to ignore the message if it already has it — NOT a respawn, which mints a second seat and strands this one's mail.`,
         false, `[review ${session.name}] never started`);
     }
