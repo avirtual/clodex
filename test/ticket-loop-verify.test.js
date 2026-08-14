@@ -2766,7 +2766,7 @@ test('t375: a SUCCESSFUL write leaves the dump and no scratch file beside it', a
 // records exactly that mistake being made here).
 
 // A live reviewer seat for `ticketId`, with a transcript of `size` bytes.
-// The record fields are the ones `_liveReviewSeatFor` resolves on, which are the
+// The record fields are the ones `_liveReviewSeatsFor` resolves on, which are the
 // same ones review-done routes a verdict on.
 function reviewerSeat(f, ticketId, size, name = 'team-reviewer-1-r1') {
   f.persistence.upsert({ name, ephemeral: true, reviewFor: 'lead', reviewTicket: ticketId });
@@ -2850,6 +2850,14 @@ test('t384: THE COMPOSING CASE — flat transcript with rising CPU must not alar
 
   // Deliberately NOT grown: the seat is composing a long message.
   await sweepAt(f, t0 + 40_000, parseCpuTime('0:53.13'));
+  // THREE sweeps, not two, and the third is what makes this a mutant-killer
+  // again. Since the two-consecutive-wedged rule landed, a growth-only probe
+  // reaches only ONE unconfirmed wedge in two sweeps, downgrades it to
+  // `unknown`, and passes a two-sweep fixture green — the name would claim a
+  // kill it no longer had. The confirmation step moved the boundary this
+  // fixture was written against without failing it, the same way it did to the
+  // two-seat subject below.
+  await sweepAt(f, t0 + 80_000, parseCpuTime('0:54.31'));
 
   assert.strictEqual(rv.session._reviewLiveSample.size, sizeAtBaseline,
     'ENTER: the transcript really did not grow — this is the shape a growth-only probe calls wedged');
@@ -3019,8 +3027,16 @@ test('t384 r2: with two seats on one ticket, ANY live one suppresses', async () 
   assert.strictEqual(stranded.session._reviewWedgedOnce, true,
     'ENTER: the stranded seat really is at a CONFIRMED wedge — it would alarm on its own');
   assert.ok(stranded.session._reviewLiveSample, 'ENTER: and it really was sampled, not skipped');
+  // What this proves, precisely: a CONFIRMED wedge on one seat does not alarm
+  // while a sibling exists that is not wedged. The sibling suppresses on
+  // `unknown`, not on `moving` — the early return on the stranded seat's
+  // `unknown` in sweeps 1 and 2 meant the working seat was never sampled, so
+  // sweep 3 is its first. That is weaker than the comment above describes, and
+  // deliberately left alone: growing the working seat earlier would re-open the
+  // fixture that just caught mutant J, and a first-match probe still fails here
+  // either way because it never reaches the sibling at all.
   assert.strictEqual(nudgesOf(f).length, 0,
-    'the working seat suppresses, though a stranded sibling is confirmed wedged');
+    'a confirmed wedge is not reported while a sibling seat is anything but wedged');
 });
 
 test('t384 r2: a too-short gap does not reset the baseline — the coupling is latency, not silence', async () => {
@@ -3055,4 +3071,73 @@ test('t384 r2: a too-short gap does not reset the baseline — the coupling is l
   await sweepAt(f, t0 + 80_000, 50_000);
   assert.strictEqual(nudgesOf(f).length, 1,
     'a readable verdict is eventually reached — deferred, never deleted');
+});
+
+test('t384 r3: the idle-alive clause reports the MEASURED flat stretch, not the ticket age', async () => {
+  // Two different durations, and the clause names the seat's. `flatFor` only
+  // reaches stallMs after the ticket has been quiet for at least twice that, so
+  // passing the ticket age says "2h" about a seat measured flat for 40m — a
+  // confidently-wrong number in an alarm, which is what stall-evidence.js's
+  // header refuses.
+  //
+  // Pinned HERE and not in the unit test: the formatter is handed a
+  // self-consistent pair and cannot tell they came from different clocks. The
+  // mismatch only exists at the call site.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const t0 = Date.now();
+  heldAtReview(f, 60 * 60 * 1000, t0);
+  const rv = reviewerSeat(f, 't1', 1_000_000);
+
+  await sweepAt(f, t0, 50_000);
+  // 40m later: CPU well past the rate threshold, transcript never grown. That is
+  // idle-alive — burning CPU for longer than the whole stall window with nothing
+  // written — and it is the only verdict whose clause carries a duration.
+  await sweepAt(f, t0 + (40 * 60 * 1000), 60_000);
+
+  const n = nudgesOf(f);
+  assert.strictEqual(n.length, 1, 'ENTER: the alarm fired, so there is a clause to inspect');
+  assert.match(n[0].body, /is running \(CPU is accruing\)/, 'ENTER: and it is the idle-alive clause');
+  assert.match(n[0].body, /no progress for 2h/, 'the TICKET has been quiet for 100m');
+  assert.match(n[0].body, /written nothing for 40m/, 'but the SEAT was measured flat for 40m');
+  assert.ok(!/written nothing for 2h/.test(n[0].body),
+    'the seat clause must not borrow the ticket clock — that is the confidently-wrong field');
+});
+
+test('t384 r3: a too-short gap does not CLEAR a wedge confirmation either', async () => {
+  // The same trap as the subject above, one layer over, and introduced by the
+  // fix for it: `_reviewWedgedOnce` is new state, and new defensive state needs
+  // the defence the old state just got. Clearing the flag on `unknown` means an
+  // all-short-gap cadence alternates wedged/unknown forever — the flag is reset
+  // before it can ever be read a second time, so the confirmation never
+  // completes and the alarm is gone permanently. Silent alarm deletion, which is
+  // the one outcome this ticket forbids.
+  //
+  // Every sweep here is 10s apart, all below MIN_GAP_MS.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const t0 = Date.now();
+  heldAtReview(f, 60 * 60 * 1000, t0);
+  const rv = reviewerSeat(f, 't1', 1_000_000);
+
+  await sweepAt(f, t0, 50_000);
+  await sweepAt(f, t0 + 10_000, 50_000);
+  await sweepAt(f, t0 + 20_000, 50_000);
+  // 30s past the kept baseline: the first pair that spans MIN_GAP_MS. Flat on
+  // both signals, so this is a wedge — held, not fired.
+  await sweepAt(f, t0 + 30_000, 50_000);
+  assert.strictEqual(rv.session._reviewWedgedOnce, true,
+    'ENTER: a wedge really was seen and recorded — the fixture reached the state it names');
+  assert.strictEqual(nudgesOf(f).length, 0, 'ENTER: and one wedge alone does not alarm');
+
+  // The short-gap sweep that used to wipe it. `unknown` means "could not read",
+  // which is neither a confirmation nor a refutation.
+  await sweepAt(f, t0 + 40_000, 50_000);
+  assert.strictEqual(rv.session._reviewWedgedOnce, true,
+    'an unreadable sample must not clear a wedge that was already measured');
+
+  await sweepAt(f, t0 + 50_000, 50_000);
+  await sweepAt(f, t0 + 60_000, 50_000);   // 30s past the new baseline: wedged, confirmed
+  assert.strictEqual(nudgesOf(f).length, 1,
+    'the confirmation survives the short gaps, so the alarm still eventually fires');
 });

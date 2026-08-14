@@ -9315,7 +9315,13 @@ function createSessionManager(deps) {
           const confirmed = s._reviewWedgedOnce === true;
           s._reviewWedgedOnce = true;
           if (!confirmed) verdict = 'unknown';
-        } else {
+        } else if (r.verdict !== 'unknown') {
+          // An unreadable sample neither confirms NOR clears a wedge. Clearing on
+          // `unknown` re-enters the bug the baseline guard above just fixed, one
+          // layer over: under a sweep interval below MIN_GAP_MS the verdicts
+          // alternate wedged/unknown forever, the flag is reset before it can be
+          // read a second time, and the alarm never fires — silent alarm deletion,
+          // reintroduced by the confirmation step that was itself a hardening fix.
           s._reviewWedgedOnce = false;
         }
         // ANY seat alive suppresses: with two records sharing a ticket id, a
@@ -9543,7 +9549,14 @@ function createSessionManager(deps) {
             + formatReviewSeatClause({
               seat: seatInfo && seatInfo.seat, verdict: seatInfo && seatInfo.verdict,
               cpuRead: !!(seatInfo && seatInfo.cpuRead),
-              flatFor: seatInfo && seatInfo.flatFor, age: humanizeAge(now - last),
+              flatFor: seatInfo && seatInfo.flatFor,
+              // The MEASURED flat stretch, not the ticket's quiet age. They are
+              // different durations and the clause names the seat's: `flatFor`
+              // only reaches `stallMs` after the ticket has been quiet for at
+              // least twice that, so passing the ticket age says "1h" about a
+              // seat measured flat for 30m. The formatter cannot catch this —
+              // it is handed a self-consistent pair — so the mismatch lives here.
+              age: seatInfo && seatInfo.flatFor != null ? humanizeAge(seatInfo.flatFor) : null,
             });
         } else {
           this._stallProbing.add(tid);
