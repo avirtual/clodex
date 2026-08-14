@@ -10,11 +10,16 @@
 // bulleted `• [agent:who]` still matches, but an INDENTED one won't (the
 // leading space survives cleanLine only if it's not in PREFIX_CHARS — space IS,
 // so indentation is also stripped here; column-1 enforcement is the caller's).
+// It then unwraps symmetric markdown emphasis (stripEmphasis).
 
 const { parseWithRegistry } = require('./intent-registry');
 
 const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07/g;
 const PREFIX_CHARS = new Set(' \t\u2B24\u25CF\u2022\u25B6\u25B7\u25BA\u25B9\u25CB\u25CF\u25C9\u25CE\u25C6\u25C7\u25A0\u25A1\u25AA\u25AB\u2605\u2606\u2192\u27F6\u2500\u2501\u00B7\u2023\u2219\u226B\u00BB');
+
+// No backtick: inline code QUOTES an intent, it must not fire one.
+const EMPHASIS_MARKS = ['*', '_'];
+const INTENT_SHAPE = /^\\?\[agent:/;
 
 function stripDecorators(line) {
   let i = 0;
@@ -22,8 +27,26 @@ function stripDecorators(line) {
   return line.slice(i);
 }
 
+// A wrapper HUGS its content — that is what keeps `* [agent:who] *` a bullet.
+function wrapped(s, m) {
+  return s.startsWith(m) && s.endsWith(m) && /^\S(?:.*\S)?$/s.test(s.slice(1, -1));
+}
+
+// Symmetric pairs only, never a PREFIX_CHARS decorator: an unpaired leading `*`
+// is a bullet, so stripping it would fire `* [agent:dm bob]` in prose. Kept only
+// when it reveals an intent, so prose reaches every caller byte-identical.
+function stripEmphasis(line) {
+  let s = line.trim();
+  for (;;) {
+    const mark = EMPHASIS_MARKS.find((m) => wrapped(s, m));
+    if (!mark) break;
+    s = s.slice(1, -1);
+  }
+  return INTENT_SHAPE.test(s) ? s : line;
+}
+
 function cleanLine(line) {
-  return stripDecorators(line.replace(ANSI_RE, ''));
+  return stripEmphasis(stripDecorators(line.replace(ANSI_RE, '')));
 }
 
 function parseIntent(rawLine) {
@@ -56,7 +79,7 @@ function parseIntent(rawLine) {
   // whose body is EXECUTED reads it (parseTerm): for everything else the strip
   // is a convenience, but for a shell command it would rewrite the payload and
   // run the rewrite, which is what the vetter refuses to let happen.
-  return parseWithRegistry(cleaned, stripDecorators(rawLine).trim());
+  return parseWithRegistry(cleaned, stripEmphasis(stripDecorators(rawLine)).trim());
 }
 
 // Fenced code blocks are QUOTES. A markdown fence only RENDERS as a quoted

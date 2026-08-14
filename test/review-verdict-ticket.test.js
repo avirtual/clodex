@@ -1129,3 +1129,106 @@ test('countMustFix: bounding the run loses no spelling — the unwrap loop handl
       `countMustFix(${JSON.stringify(input)}) must be ${expected}`);
   }
 });
+
+// ── t404: the delivering line survives markdown emphasis ───────────────────
+// The incident this file's §2 machinery exists for was defeated one layer
+// EARLIER than any assertion above reaches: a reviewer wrote a correct REWORK
+// verdict and emitted `**[agent:review-done]**`. The intent never parsed, so
+// _handleReviewDone was never called at all and the ticket sat at `review`
+// until a watchdog called the seat wedged. Every test above starts by calling
+// that handler directly, which is precisely the step the bug skipped — so the
+// proof has to start from TURN TEXT and run the real scan.
+
+function verdictTurn(f, rec, text) {
+  // The real _extractIntents + the real parseIntent, then the real dispatch.
+  // Nothing about this path is stubbed between the agent's bytes and the
+  // ticket record; a stubbed parse here would assert the fix into existence.
+  const intents = f.m._extractIntents(text);
+  return { intents, dispatch: () => Promise.all(intents.map((i) => f.m._handleIntent(rec.name, i))) };
+}
+
+test('a BOLDED review-done reaches the ticket loop and lands its verdict (t404)', async () => {
+  const f = mkVerdict({
+    parseIntent: require('../intent-scanner').parseIntent,
+    looksLikeIntent: require('../intent-scanner').looksLikeIntent,
+    execBodyCap: 64 * 1024,
+  });
+  openTicket(f);
+  const rec = spawnReviewer(f, 'review the diff', { ticketId: 't1' });
+
+  const turn = [
+    'Here is my verdict.',
+    '',
+    '**[agent:review-done]**',
+    'VERDICT: REWORK',
+    '',
+    'MUST-FIX',
+    '- the guard is inverted',
+  ].join('\n');
+
+  const { intents, dispatch } = verdictTurn(f, rec, turn);
+
+  // ENTER, and the whole point of the ticket: the emphasised line PARSED. Left
+  // to the record assertions alone, a scan that dropped it would fail below
+  // with "verdict is null", which reads like a routing bug and sends the next
+  // reader to _landVerdictOnTicket instead of the scanner.
+  assert.deepStrictEqual(intents.map((i) => i.type), ['review-done'],
+    'the bolded line must parse as review-done — this is the step the incident skipped');
+
+  await dispatch();
+
+  const t = f.one('t1');
+  assert.strictEqual(t.verdict, 'REWORK', 'the verdict reached the RECORD, not just the parser');
+  assert.strictEqual(t.mustFix, '- the guard is inverted');
+  assert.strictEqual(t.reviewRound, 1);
+  assert.deepStrictEqual(f.killed, [rec.name], 'and the seat still retires');
+});
+
+test('the verdict body rides the bolded line exactly as it rides a bare one (t404)', async () => {
+  // Same turn text, wrapper removed. Asserting EQUALITY of the two outcomes is
+  // what makes this a tolerance rather than a second code path: a fix that
+  // parsed the bold form but truncated its greedy body at the trailing `**`
+  // would satisfy the test above and lose the must-fix list here.
+  const run = async (line) => {
+    const f = mkVerdict({
+      parseIntent: require('../intent-scanner').parseIntent,
+      looksLikeIntent: require('../intent-scanner').looksLikeIntent,
+      execBodyCap: 64 * 1024,
+    });
+    openTicket(f);
+    const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+    const turn = `${line}\nVERDICT: REWORK\n\nMUST-FIX\n- one\n- two`;
+    const intents = f.m._extractIntents(turn);
+    assert.strictEqual(intents.length, 1, `ENTER: ${line} produced exactly one intent`);
+    await f.m._handleIntent(rec.name, intents[0]);
+    const t = f.one('t1');
+    return { verdict: t.verdict, mustFix: t.mustFix, round: t.reviewRound };
+  };
+
+  const bare = await run('[agent:review-done]');
+  const bold = await run('**[agent:review-done]**');
+
+  assert.deepStrictEqual(bare, { verdict: 'REWORK', mustFix: '- one\n- two', round: 1 },
+    'ENTER: the bare form still carries its whole body — the baseline must be the real one');
+  assert.deepStrictEqual(bold, bare, 'the emphasised form must be indistinguishable downstream');
+});
+
+test('a bolded review-done inside a FENCE stays quoted (t404)', async () => {
+  // The fence is the documented way to write an intent one does not want
+  // fired. The unwrap runs per line inside the scan, so a fence check that ran
+  // after it would start firing the examples in every doc that shows one.
+  const f = mkVerdict({
+    parseIntent: require('../intent-scanner').parseIntent,
+    looksLikeIntent: require('../intent-scanner').looksLikeIntent,
+    execBodyCap: 64 * 1024,
+  });
+  openTicket(f);
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+
+  const intents = f.m._extractIntents('Close it like this:\n\n```\n**[agent:review-done]**\nVERDICT: ACCEPT\n```\n');
+  assert.deepStrictEqual(intents, [], 'nothing in a fence fires, emphasised or not');
+
+  assert.strictEqual(f.one('t1').verdict, undefined, 'and no verdict was written');
+  assert.deepStrictEqual(f.killed, [], 'the reviewer seat is untouched');
+  assert.ok(f.m.sessions.get(rec.name), 'ENTER: the seat was live throughout — an absent seat would make the above vacuous');
+});
