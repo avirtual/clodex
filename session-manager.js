@@ -288,6 +288,7 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
+const { createTicketMethods } = require('./team-tickets');
 
 const TICKET_STALL_MS = 30 * 60 * 1000;
 
@@ -10663,6 +10664,22 @@ function createSessionManager(deps) {
         this._armParkedDrainFallback(session, file, periodMs, deadline, true);
       }, periodMs);
     }
+  }
+
+  // Graft the teams/tickets half (t380) onto the prototype. defineProperty and
+  // not Object.assign: class methods are non-enumerable, and "no behaviour
+  // change" includes property descriptors — an enumerable graft would change
+  // what any for-in or spread over the prototype chain sees.
+  //
+  // The grafted methods run with `this` = the manager, so the ticket state they
+  // use stays where it is: `_ticketWatch` / `_stallProbing` are still
+  // initialised in the constructor above and NOT here. Moving that init into
+  // team-tickets.js would need a new `_initTicketState()` call, which is a
+  // behavioural edit — accepted residue, deliberately.
+  const ticketMethods = createTicketMethods(deps, { ticketsStore, nameConflict });
+  for (const [k, v] of Object.entries(ticketMethods)) {
+    Object.defineProperty(SessionManager.prototype, k,
+      { value: v, writable: true, configurable: true, enumerable: false });
   }
 
   return SessionManager;
