@@ -513,6 +513,13 @@ function createSessionManager(deps) {
   // production ordering never produces. 90s in production.
   const SPEC_CONFIRM_MS = Number.isFinite(deps.specConfirmMs) ? deps.specConfirmMs : 90 * 1000;
 
+  // How many outstanding dm units one seat's latch remembers. A bound, not a
+  // tuning: the latch reports rather than acts, so the only cost of a deep FIFO
+  // is memory on a seat nobody is reading. Overflow drops the OLDEST and counts
+  // it — the dropped unit's sender loses its notice, which is one more reason the
+  // broadcast is the load-bearing half of the report and not decoration.
+  const DM_LATCH_CAP = Number.isFinite(deps.dmLatchCap) ? deps.dmLatchCap : 8;
+
   // clodexHome is INJECTED, never left to the store's default: the board now
   // resolves under it, so a test that repoints REGISTRY_DIR would otherwise read
   // and write the operator's real ~/.clodex board.
@@ -2657,6 +2664,7 @@ function createSessionManager(deps) {
       clearTimeout(s._rebootNoticeRetryTimer);
       clearTimeout(s._rebootNoticeFlushTimer);
       clearTimeout(s._specConfirmTimer);
+      clearTimeout(s._dmConfirmTimer);
       clearTimeout(s._reviewStartTimer);
       // Drops the pending debounce timer with it — a hint armed after the PTY
       // died would ride the next session under the same name. The offer
@@ -2790,6 +2798,14 @@ function createSessionManager(deps) {
         s._specUnconfirmed = null;
         clearTimeout(s._specConfirmTimer);
         s._specConfirmTimer = null;
+      }
+      // Same edge, same meaning, for the plain-dm latch — and it is a SEPARATE
+      // field, so unlike t387's redirect kind it inherits nothing from the spec
+      // latch above by construction. That is the whole reason this line and the
+      // _cleanup entry each carry their own test: a new caller of existing state
+      // gets that state's defences for free, and a new field never does.
+      if (s && state !== 'idle' && ((s._dmUnconfirmed && s._dmUnconfirmed.length) || s._dmUnconfirmedLast)) {
+        this._clearDmConfirm(s);
       }
       // Same edge, same meaning, for a reviewer's first turn. The check re-reads
       // `activityState` itself and would decline anyway, so this is the cheap arm
@@ -3247,7 +3263,11 @@ function createSessionManager(deps) {
         case 'dm': {
           const localTarget = this.sessions.get(intent.target);
           if (localTarget && localTarget.agentType) {
-            const r = this._gatedDeliver(intent.target, senderName, intent.body, intent.urgent === true);
+            // The ONE site where a live local sender exists to be told, which is
+            // why the latch is armed from here and not from inside
+            // _gatedDeliver — see _armDmConfirm.
+            const r = this._gatedDeliver(intent.target, senderName, intent.body, intent.urgent === true, '',
+              (disposition) => this._armDmConfirm(intent.target, senderName, disposition));
             if (r.parked || r.held) {
               const parkId = r.parked || null;
               if (session) {
@@ -4641,6 +4661,167 @@ function createSessionManager(deps) {
       // synchronously and is therefore exact; only success is a statement about the
       // future. A caller needing certainty passes _deliverMessage an onWrite hook.
       return { queued: true };
+    }
+
+    // ── The plain-dm delivery latch (t388) ──────────────────────────────────
+    //
+    // A dm written into an idle seat that then never starts a turn was, until
+    // now, invisible in every direction: the sender is told "queued", the
+    // operator's log shows a delivery, and mode-2004 stays on in the swallowing
+    // state, so `_bootReadySeen` latches and the queue's ready-gate is a no-op
+    // true. Every signal this process has reads healthy while the message
+    // vanishes. That is why this exists at a failure nobody can put a frequency
+    // on: you cannot measure a silent failure without a detector.
+    //
+    // It DETECTS AND REPORTS. It does not retry, dedupe, order, or confirm
+    // per-unit, and it must not grow any of those (DESIGN.md §3): the content of
+    // a dm is arbitrary, so a duplicate can be expensive to execute and no board
+    // record proves the copy identical; and dms arrive concurrently, so with two
+    // units outstanding the second's leading Ctrl-U destroys the first's eaten
+    // draft and one turn-edge cannot say which unit cleared. Detection is what
+    // survives those two; nothing more does.
+    //
+    // Armed ONLY from the `'dm'` arm of _handleIntent, and deliberately not from
+    // inside _gatedDeliver: there it would cover all 16 delivery sites including
+    // the notices this fires, and an unconfirmed report of an unconfirmed report
+    // has no fixed point.
+    _armDmConfirm(targetName, senderName, disposition) {
+      const s = this.sessions.get(targetName);
+      if (!s || !s.agentType || s._dead) return;
+      // 'parked' is durable and drained out-of-process mid-loop, so it produces
+      // no activity edge to confirm and would latch forever. Unlike the spec
+      // latch this does NOT clear on a non-injected disposition: that latch keys
+      // on one ticket and a park supersedes its own earlier write, while these
+      // entries are independent units from independent senders — a parked unit
+      // says nothing about an injected one still sitting eaten.
+      if (disposition !== 'injected') return;
+      // Read at WRITE time (this runs inside the queue's producer, which is the
+      // whole reason the hook exists). A seat that went busy while the unit
+      // waited in the gates got it into a live turn, and a seat already working
+      // is by definition not the wedged shape this catches.
+      if (s.activityState !== 'idle') return;
+      const fifo = s._dmUnconfirmed || (s._dmUnconfirmed = []);
+      fifo.push({ sender: senderName, at: Date.now() });
+      while (fifo.length > DM_LATCH_CAP) {
+        fifo.shift();
+        s._dmUnconfirmedDropped = (s._dmUnconfirmedDropped || 0) + 1;
+      }
+      // Restarted on every push, not left running from the first: the window
+      // measures each unit's own silence, so at fire time EVERY entry is at
+      // least SPEC_CONFIRM_MS old. Leaving the first timer would report a unit
+      // written a second before the deadline as unconfirmed after one second.
+      clearTimeout(s._dmConfirmTimer);
+      this._armDmConfirmTimer(s);
+    }
+
+    _armDmConfirmTimer(session) {
+      session._dmConfirmTimer = setTimeout(() => {
+        session._dmConfirmTimer = null;
+        // Fires SPEC_CONFIRM_MS after every dm to an idle seat, in the app's main
+        // process, where a throw out of a setTimeout callback is an unhandled
+        // exception in the host rather than a failed report.
+        try { this._checkDmConfirm(session); }
+        catch (e) { log.error('intent', `dm confirmation check failed for ${session.name}: ${e.message}`); }
+      }, SPEC_CONFIRM_MS);
+      // Observer-grade in both senses, like the two ticket-side watchers: never
+      // the reason a process stays alive, never the reason one dies.
+      if (session._dmConfirmTimer.unref) session._dmConfirmTimer.unref();
+    }
+
+    // A turn started, so the seat's composer submitted. For a multi-entry FIFO
+    // the earlier entries were Ctrl-U-destroyed INTO the submitted line's
+    // history — either way nothing is still sitting eaten, and finer
+    // discrimination is exactly what DESIGN.md §3 established cannot be had.
+    // `_dmUnconfirmedLast` goes too: it exists to attribute a seat's SILENCE,
+    // and a seat that took a turn is not silent.
+    _clearDmConfirm(session) {
+      session._dmUnconfirmed = [];
+      session._dmUnconfirmedDropped = 0;
+      session._dmUnconfirmedLast = null;
+      clearTimeout(session._dmConfirmTimer);
+      session._dmConfirmTimer = null;
+    }
+
+    _checkDmConfirm(session) {
+      const fifo = session._dmUnconfirmed;
+      if (!fifo || !fifo.length || session._dead) return;
+      // A dialog is the one wait that is legitimately unbounded and produces no
+      // activity. Re-arm rather than clear — the dm may still be unread behind
+      // it — and uncapped, because the operator may answer at any time and a
+      // seat that never woke is still worth reporting an hour later. It cannot
+      // leak: the timer is unref'd and _cleanup clears it when the session dies.
+      if (session.needsAttention && session.needsAttention.kind === 'permission') {
+        this._armDmConfirmTimer(session);
+        return;
+      }
+      const entries = fifo.slice();
+      const dropped = session._dmUnconfirmedDropped || 0;
+      const total = entries.length + dropped;
+      const oldest = entries[0].at;
+      const ageS = Math.round((Date.now() - oldest) / 1000);
+      session._dmUnconfirmed = [];
+      session._dmUnconfirmedDropped = 0;
+      // Kept, not discarded, and cleared only by a turn: this is what lets the
+      // stall sweep attribute a silent seat to a swallowed dm rather than to
+      // stalled work, which is the misattribution the sweep makes today.
+      session._dmUnconfirmedLast = { entries, at: oldest, firedAt: Date.now() };
+
+      const senders = [...new Set(entries.map((e) => e.sender))];
+      log.warn('intent', `${total} dm${total === 1 ? '' : 's'} written to ${session.name} but no turn started after ${ageS}s — telling ${senders.join(', ')}; nothing re-sent`);
+      // FIRST, and never inside the per-sender loop: the notice below travels by
+      // the very channel whose reliability is in question — a sender that is
+      // itself in a swallowing state loses the notice to the same failure. The
+      // broadcast is the out-of-band path that keeps this from being circular,
+      // so it must not be reachable only through the path it is covering for.
+      this._broadcast('ipc-message', {
+        ts: Date.now(), from: 'clodex', to: session.name, kind: 'dm-unconfirmed',
+        body: `${total} dm${total === 1 ? '' : 's'} to ${session.name} (from ${senders.join(', ')}) written but no turn started after ${ageS}s — nothing was re-sent`,
+      });
+
+      for (const who of senders) {
+        // A sender that died inside the window has nowhere to be told; the
+        // broadcast above already carries the event.
+        const sender = this.sessions.get(who);
+        if (!sender || !sender.agentType || sender._dead) continue;
+        const mine = entries.filter((e) => e.sender === who);
+        const mineAgeS = Math.round((Date.now() - mine[0].at) / 1000);
+        // The hedge is chosen by the TOTAL outstanding, not by this sender's
+        // share: another sender's concurrent write is what destroyed this one's
+        // draft, so a sender holding the only one of its own messages is still
+        // in the ambiguous case whenever the seat's window held more than one.
+        // "may not have been seen" and not "was lost" — a confidently wrong
+        // report is worse than a hedged one, and §3 is why the discrimination
+        // cannot be had.
+        const one = mine.length === 1;
+        const noun = one ? 'your message' : `your ${mine.length} messages`;
+        const verb = one ? 'was' : 'were';
+        const when = one ? `${mineAgeS}s ago` : `(oldest ${mineAgeS}s ago)`;
+        const hedge = total === 1
+          ? 'it may have been swallowed before it was read'
+          : `${one ? 'it' : 'they'} may not have been seen`;
+        const ambiguity = total === 1 ? ''
+          : ` ${total} messages were outstanding at that seat and concurrent writes overwrite one another's unsubmitted text, so which of them landed cannot be told from here.`;
+        this._injectText(sender,
+          `[agent:dm] ${noun} to ${session.name} ${verb} written into its terminal ${when} and ${session.name} `
+          + `has not started a turn since — ${hedge}.${ambiguity} NOTHING was re-sent, and nothing will be. `
+          + `If it matters, resend it yourself: \`[agent:dm ${session.name} urgent] <message>\` lands immediately. `
+          + `(A seat that displayed the message and simply stayed idle looks the same from here, so this can be a false alarm.)`,
+          { parkable: true });
+      }
+    }
+
+    // Evidence for the stall sweep: has this seat a live or recently-expired
+    // unconfirmed-dm latch? Both sets are returned as one span because they are
+    // the same silence — `_dmUnconfirmedLast` holds what a fired report covered
+    // and is cleared by a turn, so anything in it is still unaccounted for.
+    _dmLatchEvidence(seatName) {
+      const s = this.sessions.get(seatName);
+      if (!s) return null;
+      const last = (s._dmUnconfirmedLast && s._dmUnconfirmedLast.entries) || [];
+      const live = s._dmUnconfirmed || [];
+      const all = [...last, ...live];
+      if (!all.length) return null;
+      return { count: all.length, at: all[0].at };
     }
 
     _setRelayRoster(via, roster) {
