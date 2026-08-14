@@ -104,7 +104,12 @@ function lastToolFrom(text) {
 // work", and every exit that follows from that (ask it, nudge it, kill it) is
 // wrong if the seat was never told anything. The evidence bits answer "what has
 // it done"; this answers "is it even the actor".
-function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits = null, dirty = null, dmLatch = null }) {
+// `wake` is `{age}` when rung 2 already injected an automated wake this episode
+// and no turn followed. It states the MEASUREMENT only — no verdict clause. "A
+// write cannot recover this seat" would be an inference, and it is wrong under
+// the I/O-blocked-child case the tree-CPU probe cannot see: a wake fired there
+// queues behind a running tool and produces a turn later.
+function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits = null, dirty = null, dmLatch = null, wake = null }) {
   const head = repeat > 0
     ? `[ticket ${ticketId}] STILL stalled (repeat ${repeat}): ${who} quiet ${age}`
     : `[ticket ${ticketId}] stalled: ${who} quiet ${age}`;
@@ -122,14 +127,18 @@ function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits 
     ? ` — ${dmLatch.count === 1 ? 'a dm' : `${dmLatch.count} dms`} written to it ${dmLatch.age} ago never `
       + 'produced a turn: this may be a swallowed delivery rather than a stalled seat'
     : '';
-  if (!bits.length) return `${head}${cause}`;
+  // Rides beside `cause` so the bare-head case carries it too, and AFTER it: the
+  // swallowed-dm reading is about whether the seat was ever told anything, which
+  // changes what an unanswered wake means.
+  const woke = wake ? ` — an automated wake was injected ${wake.age} ago and produced no turn` : '';
+  if (!bits.length) return `${head}${cause}${woke}`;
   // The reading, not just the facts. The lead dismissed t312 by reasoning from a
   // dirty tree alone; naming which way the evidence points is what makes the
   // alarm cheaper to act on than a hand probe.
   let verdict = '';
   if (tool && tool.outcome === 'pending') verdict = ' — wedged mid-call, or a legitimately slow one';
   else if (tool && tool.outcome === 'error') verdict = ' — the last call failed; a killed turn looks like this';
-  return `${head} (${bits.join(', ')})${verdict}${cause}`;
+  return `${head} (${bits.join(', ')})${verdict}${cause}${woke}`;
 }
 
 // A ticket whose assignee resolves to NO live seat. Not a stall — nothing is

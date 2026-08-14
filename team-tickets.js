@@ -43,6 +43,7 @@ const {
   readTail, lastToolFrom, formatStallBody, formatOrphanBody,
   parseCpuTime, sumTreeCpuMs, classifyReviewSeat, formatReviewSeatClause, didGrow,
 } = require('./stall-evidence');
+const { isDraftOpen } = require('./proxy-util');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { matchSeatRole } = require('./team-manifest');
@@ -201,6 +202,13 @@ function reviewerModelArgs(extraArgs) {
 
 const TICKET_STALL_MS = 30 * 60 * 1000;
 
+// How long past the stall window the rung-2 wake may defer the lead's first
+// alarm. Baseline sweep + confirm sweep + jitter is 2-3 minutes; this bounds it,
+// so a probe stuck at `unknown` alarms rather than deferring forever. The
+// deferral becoming silent alarm DELETION is the failure class this file has
+// been burned by three times (MIN_GAP_MS, the wedged-confirm clear, t376).
+const WAKE_GRACE_MS = 5 * 60 * 1000;
+
 // The branch an accepted ticket lands on. A literal, matching what
 // scripts/release.sh's preflight demands, and deliberately NOT
 // gitWorktree.defaultBranch(): that prefers origin/HEAD, which answers about a
@@ -277,6 +285,18 @@ function createTicketMethods(deps, shared) {
     // here as well would put the same default in two files.
     SPEC_CONFIRM_MS,
   } = shared;
+
+  // How long a wake has to produce a turn before rung 3 fires. The SAME window
+  // as the spec latch's, aliased rather than re-derived: both measure "a write
+  // was made and no turn followed", and two numbers for one question drift.
+  //
+  // LEAD-VISIBILITY BOUND: the first rung-3 alarm fires no later than
+  // `stallMs + WAKE_GRACE_MS + WAKE_CONFIRM_MS` after last activity. The confirm
+  // term is load-bearing and cannot be gated away — a wake fired just inside the
+  // grace window still opens a full take-window behind it. The doubling ladder
+  // is untouched: it keys off `nudgedAt - lastActivityAt`, which rung 2 never
+  // writes.
+  const WAKE_CONFIRM_MS = SPEC_CONFIRM_MS;
 
   // Injectable ONLY so the kill arm is reachable from a test. Without a seam no
   // subject can pin "a runner that never exits is SIGKILLed and ESCALATES,
@@ -5217,6 +5237,105 @@ function createTicketMethods(deps, shared) {
       })();
     },
 
+    // The structural half of the rung-2 wake gate — everything the liveness
+    // classifier cannot see. Called at SWEEP time and again inside `produce`,
+    // from one definition: the write-time re-check exists precisely because
+    // these can change between the two, so two copies would drift in the one
+    // direction that writes into a seat the sweep would have refused.
+    //
+    // The lead is excluded because it is rung 3's RECIPIENT: an automated write
+    // into the operator-facing session has no rung above it to catch a mistake.
+    _wakeSeatEligible(team, seat) {
+      if (!seat || seat._dead) return false;
+      if (seat.name === team.lead) return false;
+      // Claude-only for the same reason `_armReviewStartCheck` is: the probe
+      // reads `transcript.jsonl`, which only the Claude hook writes, so a codex
+      // seat would classify wedged on a one-signal read of permanent silence.
+      if (seat.agentType !== 'claude') return false;
+      // And the transcript must actually be READABLE, which is the property the
+      // claude test above stands in for rather than a second copy of it. -1 is
+      // "could not read", and `didGrow` refuses to call -1 -> -1 growth, so a
+      // broken symlink leaves the wedge verdict resting on CPU alone — the
+      // one-signal read that excludes codex, reached by a different route.
+      // Refusing here costs a genuinely wedged seat nothing but its wake: it
+      // alarms at the window exactly as it did before rung 2 existed.
+      if (this._seatTranscriptSize(seat.name) < 0) return false;
+      if (seat.activityState !== 'idle') return false;
+      // Injection ends with Enter, which would ANSWER the dialog.
+      if (seat.needsAttention && seat.needsAttention.kind === 'permission') return false;
+      // The latch IS the recovery mechanism for an unconsumed write, and it
+      // redelivers the actual content. A wake's induced turn clears it as if
+      // consumed while the Ctrl-U destroyed the draft it was about.
+      if (seat._specUnconfirmed) return false;
+      // Same shape one layer over: the induced turn would clear the fifo before
+      // its 90s report ever told the senders. `_dmUnconfirmedLast` does NOT
+      // block — those senders have been told.
+      if (seat._dmUnconfirmed && seat._dmUnconfirmed.length) return false;
+      try { if (isDraftOpen(seat)) return false; } catch { return false; }
+      return true;
+    },
+
+    // The one line a wake injects. Hedged for every race the gate cannot close:
+    // the produce-to-Enter gap, and a tool child blocked on I/O (no CPU accrues
+    // anywhere in the tree, so a healthy seat can classify wedged).
+    //
+    // The "no spec" exit is not decoration. The seat's eaten draft may have BEEN
+    // the spec, with the spec latch's one retry already spent — waking a seat
+    // that knows only a ticket id, with no way to say so, strands it.
+    _wakeText(ticket, now, lead) {
+      const last = ticket.lastActivityAt || ticket.openedAt || now;
+      return `[ticket ${ticket.id} wake] this ticket has had no activity for ${humanizeAge(now - last)} `
+        + `and this seat has taken no turn in that time, so this is an automated wake — nothing new is being asked. `
+        + `If your last turn was interrupted (an API error, a lost delivery), resume the ticket and close with `
+        + `${ticketCloseVerb(ticket.id)} as before. If you are already working or have already closed it, ignore this. `
+        + `If you never received the ticket's spec, say so: [agent:dm ${lead}] ticket ${ticket.id} reached me with no spec.`;
+    },
+
+    // Rung 2: one injected line into a wedged-confirmed seat, before the lead is
+    // told anything.
+    //
+    // `parkable` is deliberately ABSENT: a parked wake drains on the seat's next
+    // turn, which is the thing that is never coming. `produce` aborts instead —
+    // it runs inside the queue's critical section, so returning null cancels the
+    // Ctrl-U itself. The sweep's decision and the write are separated by the
+    // boot-ready gate, the quiet gate and queue depth, and a seat that takes a
+    // turn inside that gap must not be written to.
+    _wakeStalledSeat(team, ticket, seat, now) {
+      const tid = ticket.id;
+      const seenAt = ticket.lastActivityAt || null;
+      const finalText = this._buildDeliveryText(seat, 'ticket-watchdog',
+        this._wakeText(ticket, now, team.lead), 'dm', `[ticket ${tid} wake]`);
+      this._injectText(seat, '', {
+        produce: () => {
+          try {
+            if (!this._wakeSeatEligible(team, seat)) return null;
+            const fresh = ticketsStore.load(team.root);
+            const rec = fresh.find((x) => x.id === tid);
+            if (!rec) return null;
+            if (!ticketInFlight(rec)) return null;
+            // The episode this wake was decided FOR. Activity inside the window
+            // ends the stall, and waking then spends the next episode's one wake
+            // before it starts.
+            if ((rec.lastActivityAt || null) !== seenAt) return null;
+            // The real double-wake dedup: the decision point sits outside the
+            // `_stallProbing` window, so no sweep-side set serializes this, and
+            // whichever producer runs first stamps.
+            const recLast = rec.lastActivityAt || rec.openedAt || 0;
+            if (rec.wakeAt && rec.wakeAt - recLast > 0) return null;
+            // Stamped BEFORE the bytes go out, and with `now` rather than
+            // Date.now(): the take-window is measured from the instant the sweep
+            // judged, not from when the queue happened to write.
+            rec.wakeAt = now;
+            ticketsStore.save(team.root, fresh);
+            return finalText;
+          } catch (e) {
+            log.error('ticket', `wake stamp for ${tid} failed: ${e.message}`);
+            return null;
+          }
+        },
+      });
+    },
+
     // Two-signal liveness for the seat behind a `loopStep: review` ticket.
     //
     // The samples come from CONSECUTIVE SWEEPS, not from two readings inside
@@ -5493,6 +5612,44 @@ function createTicketMethods(deps, shared) {
           // await path reach a classification the gate above deliberately refused.
           const seatNow = this._ticketAssigneeSeat(team, after);
           orphanNow = !foreignRole && !seatNow;
+          // RUNG 2, between the stall window and the lead's first alarm. Reads
+          // `seatNow`, never the pre-await snapshot: a seat that spawned during
+          // the git probe is exactly the one this must not wake.
+          //
+          // `wakeAge` is read the way `prevAge` reads `nudgedAt` — relative to
+          // the episode — so a stamp predating this episode's activity reads as
+          // not-attempted and needs no clearing site.
+          const wakeSeat = orphanNow ? null : this.sessions.get(seatNow);
+          const wakeAge = after.wakeAt ? after.wakeAt - (after.lastActivityAt || after.openedAt || 0) : 0;
+          if (wakeSeat && prevAge <= 0 && wakeAge <= 0) {
+            // Bounded by the grace window, and the bound is enforced BEFORE the
+            // probe: with rung 3 held, `nudgedAt` stays null and `prevAge <= 0`
+            // holds forever, so an ungated wake could fire hours in — after the
+            // lead already owns the recovery.
+            const graceLeft = (now - last) < (stallMs + WAKE_GRACE_MS);
+            // Only a seat the gates could still admit is worth waiting for. A
+            // codex seat, an unreadable transcript or the lead itself can never
+            // become eligible by waiting, so deferring on one would delay the
+            // alarm by the full grace window to reach the same refusal — those
+            // alarm at the window exactly as they did before rung 2 existed.
+            if (graceLeft && this._wakeSeatEligible(team, wakeSeat)) {
+              let verdict = null;
+              try { verdict = (await this._sampleSeatLiveness(wakeSeat, now, stallMs, 'stall')).verdict; }
+              catch { verdict = null; }   // an unreadable probe alarms, never silences
+              if (verdict === 'wedged') {
+                // Re-checked inside `produce` at write time; this is the cheap
+                // refusal, not the guarantee.
+                this._wakeStalledSeat(team, after, wakeSeat, now);
+                continue;
+              }
+              // Short of wedged-confirmed — including `unknown`, which is "no
+              // baseline yet" rather than a reading. Bounded by the grace test
+              // above, so this defers at most a few sweeps and never silently.
+              continue;
+            }
+          } else if (wakeAge > 0 && (now - after.wakeAt) < WAKE_CONFIRM_MS) {
+            continue;   // the take-window: the wake may still produce a turn
+          }
           // Read from the SEAT the ticket resolves to now, not from the pre-await
           // snapshot: the same staleness the re-resolve above exists to fix would
           // otherwise attribute one seat's silence to another seat's latch.
@@ -5516,6 +5673,10 @@ function createTicketMethods(deps, shared) {
               // loop-held arm names a stuck STEP, where a seat's dm history is
               // not what is stalled.
               dmLatch: dmEv && { count: dmEv.count, age: humanizeAge(now - dmEv.at) },
+              // Only when the stamp belongs to THIS episode: `wakeAge` carries
+              // that test, so the raw field would report a previous episode's
+              // wake as evidence about this one.
+              wake: wakeAge > 0 ? { age: humanizeAge(now - after.wakeAt) } : null,
             });
         }
         this._gatedDeliver(team.lead, 'ticket-watchdog',
