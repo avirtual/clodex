@@ -84,11 +84,27 @@ const REVIEWER_TOOL_CAP = ['Read', 'Grep', 'Glob'];
 // ceiling: exactly the keys the SHIPPED default reviewer template uses. A template
 // env key outside this set is DROPPED LOUDLY (a note in the lead's confirm line),
 // never honored. Not an authority source — same posture as REVIEWER_TOOL_CAP.
+// CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS is admitted on a different footing
+// from its four neighbours, and the distinction is the one that keeps this list
+// a ceiling: the others turn a Clodex mechanism off, this one is a RESOURCE
+// knob. Its worst case over a doctored template is a seat that reads too much
+// or — set to garbage — cannot Read at all. Neither redirects the seat to
+// another backend, another credential or another model, which is what the list
+// exists to refuse. A key whose abuse costs context is not a key whose abuse
+// costs authority; admitting the first does not soften the refusal of the
+// second.
+//
+// It must be PLAIN DIGITS. The CLI does parseInt(v, 10) and takes any result
+// > 0, so '6e4' becomes 6 and '1e6' becomes 1 — a one-token Read cap that
+// fails every read, one API roundtrip at a time, while passing the > 0 gate
+// that would otherwise reject it. test/reviewer-read-token-cap.test.js pins the
+// digits-only form against exactly that edit.
 const REVIEWER_ENV_ALLOWLIST = new Set([
   'CLAUDE_CODE_DISABLE_CLAUDE_MDS',
   'FORCE_PROMPT_CACHING_5M',
   'CLODEX_DISABLE_IPC_PROMPT',
   'CLODEX_SPAWNER_HINT',
+  'CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS',
 ]);
 
 // The ONE filter for every agent-initiated env. It lived in three hand-rolled
@@ -151,6 +167,10 @@ const REVIEWER_FALLBACK = {
     FORCE_PROMPT_CACHING_5M: '1',
     CLODEX_DISABLE_IPC_PROMPT: '1',
     CLODEX_SPAWNER_HINT: 'off',
+    // Plain digits, never exponent form — see REVIEWER_ENV_ALLOWLIST. Read's
+    // 25000-token default makes a reviewer paginate through the one diff we
+    // most want read in a single pass.
+    CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS: '60000',
   },
 };
 

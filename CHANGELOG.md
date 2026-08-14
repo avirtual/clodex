@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- Review seats now read a large file in one pass instead of paginating
+  through it. A reviewer's whole job is reading the diff it was handed, and
+  it was being handed one in 25000-token slices — so it spent turns on
+  bookkeeping before it could say anything about the change. Bigger diffs
+  were where it got worse, which is backwards.
+
 - An intent an agent writes in **bold** or *italics* now fires instead of
   being silently ignored. Agents reach for emphasis when a line matters — a
   review verdict, a handoff — and that was exactly the line that vanished:

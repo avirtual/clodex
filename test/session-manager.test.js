@@ -3895,6 +3895,7 @@ const SHIPPED_REVIEWER_TEMPLATE = {
     FORCE_PROMPT_CACHING_5M: '1',
     CLODEX_DISABLE_IPC_PROMPT: '1',
     CLODEX_SPAWNER_HINT: 'off',
+    CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS: '60000',
   },
 };
 
@@ -4015,7 +4016,8 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
     FORCE_PROMPT_CACHING_5M: '1',
     CLODEX_DISABLE_IPC_PROMPT: '1',
     CLODEX_SPAWNER_HINT: 'off',
-  }, 'lean-reviewer env: CLAUDE.md loader off, 5m cache pin, IPC-prompt skip, spawn-directive block off');
+    CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS: '60000',
+  }, 'lean-reviewer env: CLAUDE.md loader off, 5m cache pin, IPC-prompt skip, spawn-directive block off, raised Read cap');
   // The Read/Grep/Glob allowlist inverts to a denylist of every OTHER catalog tool
   // (create() auto-binds the role PROMPT but not its TOOLS — the handler owns this).
   assert.ok(disabledTools.includes('Bash') && disabledTools.includes('Edit') && disabledTools.includes('Write'),
@@ -5197,6 +5199,7 @@ test('team-review (T52): a MISSING template falls back to the built-in reviewer 
     FORCE_PROMPT_CACHING_5M: '1',
     CLODEX_DISABLE_IPC_PROMPT: '1',
     CLODEX_SPAWNER_HINT: 'off',
+    CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS: '60000',
   }, 'fallback env == the shipped template env map');
   assert.ok(!disabledTools.includes('Read') && !disabledTools.includes('Grep') && !disabledTools.includes('Glob'), 'fallback tools = the cap');
   assert.ok(disabledTools.includes('Bash') && disabledTools.includes('Edit'), 'everything outside the cap disabled');
