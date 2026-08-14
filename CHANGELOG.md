@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- A long review no longer gets reported as a stalled one. The ticket loop's
+  stall alarm measured only how long a step had been running, so a reviewer
+  working steadily through a large diff was announced as stuck once it passed
+  the window. It now checks the reviewer itself before raising the alarm, using
+  two signals rather than one: a review that is writing, or that is thinking
+  about what to write next, is left alone. A genuinely stuck reviewer is still
+  reported, and now names the seat and what was measured about it. Where the
+  second signal cannot be read, the alarm still fires and says so rather than
+  claiming more than it knows.
 - A reviewer template that names a model is now honored. Setting `--model` in a
   reviewer template had no effect: the review path discarded the template's
   arguments wholesale, so every reviewer spawned on the default model however it
