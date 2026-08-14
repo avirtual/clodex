@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- A reviewer template that names a model is now honored. Setting `--model` in a
+  reviewer template had no effect: the review path discarded the template's
+  arguments wholesale, so every reviewer spawned on the default model however it
+  was configured. `--model` is now carried through on its own — the rest of a
+  template's arguments are still refused, deliberately, because a reviewer's
+  whole premise is a tool cap that raw CLI arguments would walk straight past.
 - A reviewer that never starts is now restarted automatically instead of
   sitting silent. A freshly spawned reviewer seat can receive its scope and
   never take a first turn: the message that starts it is swallowed whole, and
