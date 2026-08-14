@@ -168,6 +168,13 @@ function formatOrphanBody({ ticketId, who, age, commits = null, dirty = null }) 
 // Null on anything unrecognized rather than a guessed 0: 0 reads as "no CPU
 // accrued", which is the WEDGE verdict, so a parse failure would alarm about a
 // healthy seat with a confidently wrong number behind it.
+//
+// The match is unanchored, so procps' `DD-HH:MM:SS` (Linux, past 24h of CPU)
+// loses its day field and reads as `HH:MM:SS`. Deliberate to leave: the result
+// is one negative delta per day rollover on a child that has burned a day of
+// CPU, absorbed by the same two-consecutive-wedged confirm that absorbs a
+// child exiting mid-gap. Anchoring instead would return null there, which is
+// "no CPU signal" — the direction that alarms about a live seat.
 function parseCpuTime(text) {
   if (!text) return null;
   const m = /(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)/.exec(String(text).trim());

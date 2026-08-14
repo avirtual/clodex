@@ -2922,6 +2922,33 @@ test('t384: the probe runs ONLY at the review step — other steps are unqualifi
   assert.ok(!/reviewer|WEDGED/.test(n[0].body), 'so the body claims nothing about one');
 });
 
+test('t399: a one-off tree-CPU DROP is absorbed by the confirm step', async () => {
+  // Tree sums are NOT monotonic the way one pid's TIME is: a child that exits
+  // between samples takes its accumulated CPU OUT of the total, so the delta
+  // goes negative while the root accrues normally. `cpuAccrued` is a `>=` on
+  // that delta, so the drop reads `wedged` — and the two-consecutive rule is
+  // the only thing standing between that and an alarm about a healthy seat.
+  // Asserted through the REAL sampler rather than a re-implemented downgrade,
+  // because a copy of the confirm logic drifts and this is the property that
+  // makes the phase-2 wake safe to write.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const t0 = Date.now();
+  heldAtReview(f, 60 * 60 * 1000, t0);
+  reviewerSeat(f, 't1', 1_270_000);
+
+  await sweepAt(f, t0, parseCpuTime('4:10.00'));                       // root + a busy child
+  await sweepAt(f, t0 + (2 * 60 * 1000), parseCpuTime('0:15.00'));     // the child exited: the sum DROPS
+  assert.strictEqual(nudgesOf(f).length, 0,
+    'ENTER: the drop alone raised nothing — one non-monotonic step is not a wedge');
+  // And the seat is not left latched: CPU accruing again clears it, so the drop
+  // cannot combine with a later single bad sample to alarm.
+  await sweepAt(f, t0 + (4 * 60 * 1000), parseCpuTime('0:45.00'));
+  await sweepAt(f, t0 + (6 * 60 * 1000), parseCpuTime('0:45.00'));
+  assert.strictEqual(nudgesOf(f).length, 0,
+    'a drop followed by one flat sample is still only one confirmed wedge, which does not alarm');
+});
+
 test('t384: a review step with NO live reviewer alarms as before, mentioning no seat', async () => {
   // The seat retired, or never spawned. There is nothing to probe, and the
   // pre-t384 alarm is the right one — silence here would delete the alarm for

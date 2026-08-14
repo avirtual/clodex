@@ -528,6 +528,20 @@ test('t399: an ORPHANED child (ppid 1) is excluded ON PURPOSE', () => {
     'the orphan is a stranger to the tree, and counting it would suppress real wedges');
 });
 
+test('t399: a pid that is its own ancestor TERMINATES, and is counted once', () => {
+  // `ps` is a snapshot of a moving table, so a racy read can name a pid inside
+  // its own descendant chain. Without the visited set the walk revisits it
+  // forever and the sweep hangs — silently, since the probe is awaited. The
+  // obvious "simplify the walk" edit is what this pins.
+  const rows = [
+    psRow(100, 1, '0:01.00'),
+    psRow(200, 100, '0:02.00'),
+    psRow(100, 200, '0:01.00'),   // impossible in a consistent table; not in a snapshot
+  ];
+  assert.strictEqual(sumTreeCpuMs(rows, 100), 3000,
+    'the cycle is walked once, not forever, and contributes its CPU a single time');
+});
+
 test('t399: a tree-CPU DROP does not on its own produce a wedge-confirm', () => {
   // Tree sums are NOT monotonic (a single pid's TIME is). A child that exits
   // between samples takes its accumulated CPU OUT of the total, so the delta can
@@ -549,9 +563,9 @@ test('t399: a tree-CPU DROP does not on its own produce a wedge-confirm', () => 
   const r = classifyReviewSeat(prev, cur);
   assert.strictEqual(r.verdict, 'wedged',
     'the drop DOES read as wedged here — which is exactly why the confirm step must survive');
-
-  // The confirm step, as the sampler applies it: first wedge is downgraded.
-  const confirm = (verdict, once) => (verdict === 'wedged' && once !== true) ? 'unknown' : verdict;
-  assert.strictEqual(confirm(r.verdict, false), 'unknown',
-    'a single drop is absorbed: it can never wake or alarm on its own');
+  // That the confirm step ABSORBS this is pinned against the real sampler, in
+  // ticket-loop-verify.test.js ('a one-off tree-CPU DROP is absorbed by the
+  // confirm step'). Re-implementing the downgrade here would be a copy of
+  // `_sampleSeatLiveness`'s logic that drifts silently — the failure this
+  // file's header records for `didGrow`.
 });
