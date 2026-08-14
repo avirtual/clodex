@@ -305,6 +305,12 @@ test('t377: a reviewer with no transcript is reported to the lead as never start
     assert.ok(s._reviewStartTimer, 'ENTER: the spawn armed the check');
 
     app.alarms.length = 0;
+    // TWO windows now: the first re-sends the nudge (t381), and only a seat still
+    // silent after that redelivery is escalated. Driving the check once here would
+    // assert the alarm against a state production never reaches.
+    app.m._checkReviewStarted(s, 'lead');
+    assert.deepStrictEqual(app.alarms, [],
+      'ENTER: the first window redelivers instead of alarming — the lead is not woken for a seat that has not been re-nudged yet');
     app.m._checkReviewStarted(s, 'lead');
 
     assert.strictEqual(app.alarms.length, 1, 'the lead is told exactly once');
@@ -402,5 +408,210 @@ test('t377: a retired reviewer is not reported — the check outlives the seat',
     // timers alike — and the test file then hangs until node kills it rather than
     // failing. Production has no such gap: the real retire goes through _cleanup.
     app.m.sessions.set('crew-reviewer-1', s);
+  } finally { app.stop(); }
+});
+
+// --- t381: the lost nudge is re-sent, not just reported ----------------------
+//
+// Measured against the real CLI (scripts/t381-injection-repro), 3/3: a seat
+// sitting in a single modal swallows one delivery WHOLE — text and Enter both —
+// and the NEXT delivery lands. So the recovery this check used to ask the lead to
+// perform by hand ("recover with an urgent dm") is one the machine can do itself,
+// and the operator's one-poke rescue of clodex-reviewer-377-r1 was exactly it.
+//
+// The nudge is contentless by construction, which is what makes redelivering it
+// safe: it duplicates no scope, so the worst case is a reviewer told to begin
+// twice. A SPEC redelivery would need _checkSpecConfirm's whole latch argument.
+
+// How many start-nudges are parked for the seat right now. The park is the real
+// channel (_deliverParkedActive), so counting parked bodies is what proves a
+// redelivery was actually handed to the seat rather than merely decided on.
+function nudgeCount(app, name) {
+  const dir = path.join(app.root, 'pending');
+  let n = 0;
+  for (let i = 0; i < 64; i++) {
+    const one = pendingStore.peekPending(dir, name);
+    if (!one) break;
+    n++;
+    break;   // peek does not consume; count via the store's own counter instead
+  }
+  return pendingStore.countPending(dir, name) || n;
+}
+
+test('t381: a silent reviewer gets its start nudge RE-SENT before the lead is ever woken', async () => {
+  const app = boot();
+  try {
+    app.setPending('lead');
+    await app.m.create('lead', 'claude', app.root, [], null, 'ws');
+    const lead = app.m.sessions.get('lead');
+
+    app.setPending('crew-reviewer-1');
+    app.m._handleTeamReview(lead, SCOPE);
+    await settled(app, 'crew-reviewer-1');
+    const s = reviewerSeat(app, { transcript: null });
+
+    // ENTER: the seat is in the measured failure shape. Without these the test
+    // could pass against a check that declines for an unrelated reason.
+    assert.ok(s && !s._dead, 'ENTER: the reviewer seat is alive');
+    assert.strictEqual(s.activityState, 'idle', 'ENTER: and idle — it has taken no turn');
+    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+      'ENTER: and has produced no transcript');
+    const before = nudgeCount(app, 'crew-reviewer-1');
+    assert.ok(before >= 1, 'ENTER: the spawn parked a first nudge — the redelivery below must be a SECOND one');
+
+    app.alarms.length = 0;
+    // Cleared FIRST, or the assertion below reads the timer the SPAWN armed and is
+    // true no matter what the check does — a fire-and-forget retry would pass it.
+    clearTimeout(s._reviewStartTimer);
+    s._reviewStartTimer = null;
+    app.m._checkReviewStarted(s, 'lead');
+
+    // The redelivery itself, at the channel the seat actually reads.
+    const after = nudgeCount(app, 'crew-reviewer-1');
+    assert.strictEqual(after, before + 1,
+      'the nudge is re-sent: exactly one more delivery is parked for the seat');
+    assert.deepStrictEqual(app.alarms, [],
+      'and the lead is NOT woken for it — a recovery the machine can perform is not an escalation');
+    assert.ok(s._reviewNudgeRetried, 'the retry is latched, so it cannot repeat');
+    assert.ok(s._reviewStartTimer,
+      're-armed to watch the redelivery: a fire-and-forget retry would let a still-silent seat go quiet instead of escalating');
+  } finally { app.stop(); }
+});
+
+test('t381: the re-sent nudge carries no scope — it is the same contentless start signal', async () => {
+  // The nudge dm is deliberately contentless (the test above pins it for the
+  // spawn). A redelivery that "helpfully" restated the scope would reintroduce
+  // exactly the two-copies-disagree bug, on the losable channel, at the moment
+  // the seat is least able to receive it.
+  const app = boot();
+  try {
+    app.setPending('lead');
+    await app.m.create('lead', 'claude', app.root, [], null, 'ws');
+    const lead = app.m.sessions.get('lead');
+
+    app.setPending('crew-reviewer-1');
+    app.m._handleTeamReview(lead, SCOPE);
+    await settled(app, 'crew-reviewer-1');
+    const s = reviewerSeat(app, { transcript: null });
+
+    // Drain the spawn's nudge so what remains is unambiguously the redelivery.
+    const dir = path.join(app.root, 'pending');
+    const first = pendingStore.drainPending(dir, 'crew-reviewer-1', 'test-1', app.m._bornFor('crew-reviewer-1'));
+    assert.ok(first.length >= 1, 'ENTER: the spawn nudge was there to drain, so the body below is the RE-SEND');
+
+    app.m._checkReviewStarted(s, 'lead');
+
+    const resent = pendingStore.drainPending(dir, 'crew-reviewer-1', 'test-2', app.m._bornFor('crew-reviewer-1'));
+    assert.strictEqual(resent.length, 1, 'ENTER: exactly one redelivery to inspect');
+    assert.ok(/Begin/.test(resent[0]), 'it is still a start signal');
+    assert.ok(!resent[0].includes(SCOPE),
+      'and it does NOT restate the scope — the prompt is the single source, on the channel that cannot be lost');
+  } finally { app.stop(); }
+});
+
+test('t381: a reviewer that starts BECAUSE of the re-sent nudge is never escalated', async () => {
+  // THE TRANSITION, which is the feature: the seat has no transcript at the first
+  // window, is re-nudged, and takes its turn only afterwards. Asserting the two
+  // end states from either side of this would be t377's own mistake — four states
+  // pinned and the crossing between them untested, which is where the bug lives.
+  const app = boot();
+  try {
+    app.setPending('lead');
+    await app.m.create('lead', 'claude', app.root, [], null, 'ws');
+    const lead = app.m.sessions.get('lead');
+
+    app.setPending('crew-reviewer-1');
+    app.m._handleTeamReview(lead, SCOPE);
+    await settled(app, 'crew-reviewer-1');
+    const s = reviewerSeat(app, { transcript: null });
+    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+      'ENTER: silent at the first window — the state the redelivery exists for');
+
+    app.alarms.length = 0;
+    app.m._checkReviewStarted(s, 'lead');          // window 1: re-sends
+    assert.ok(s._reviewNudgeRetried, 'ENTER: the redelivery really happened');
+    assert.deepStrictEqual(app.alarms, [], 'ENTER: and nothing was escalated yet');
+
+    // The nudge lands and the seat starts — the measured single-modal recovery.
+    reviewerSeat(app, { transcript: '{"type":"assistant"}\n' });
+    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), true,
+      'ENTER: the seat has now CROSSED the boundary — it took a turn after the re-send');
+
+    app.m._checkReviewStarted(s, 'lead');          // window 2: sees the turn
+    assert.deepStrictEqual(app.alarms, [],
+      'a reviewer rescued by the redelivery is never reported: the recovery succeeded, so there is nothing to tell the lead');
+  } finally { app.stop(); }
+});
+
+test('t381: a reviewer still silent after the re-send IS escalated, and the prose says it was re-sent', async () => {
+  // The redelivery must not become a way to go quiet. A chained modal defeats it
+  // (measured: first-run onboarding), so the second window has to be louder than
+  // the first, not softer — and it must not repeat the old prose, which claimed
+  // no redelivery had been attempted.
+  const app = boot();
+  try {
+    app.setPending('lead');
+    await app.m.create('lead', 'claude', app.root, [], null, 'ws');
+    const lead = app.m.sessions.get('lead');
+
+    app.setPending('crew-reviewer-1');
+    app.m._handleTeamReview(lead, SCOPE);
+    await settled(app, 'crew-reviewer-1');
+    const s = reviewerSeat(app, { transcript: null });
+
+    app.alarms.length = 0;
+    app.m._checkReviewStarted(s, 'lead');
+    assert.deepStrictEqual(app.alarms, [], 'ENTER: window 1 redelivered rather than alarming');
+    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+      'ENTER: and the seat is STILL silent — the redelivery did not take');
+
+    app.m._checkReviewStarted(s, 'lead');
+
+    assert.strictEqual(app.alarms.length, 1, 'the lead is told exactly once, at the second window');
+    const body = app.alarms[0].body;
+    assert.match(body, /re-sent/, 'the prose says the nudge was already re-sent');
+    assert.match(body, /STILL taken no turn/,
+      'and that it did not help — the old wording claimed no redelivery was attempted, which is now false');
+    assert.match(body, /urgent dm/, 'the human recovery is still named');
+    assert.match(body, /NOT a respawn/, 'and the one that strands mail is still warned against');
+
+    // A third window must not produce a second alarm or a third nudge.
+    app.alarms.length = 0;
+    app.m._checkReviewStarted(s, 'lead');
+    assert.strictEqual(app.alarms.length, 1,
+      'the escalation repeats at most once per window and never re-nudges — the latch is spent');
+  } finally { app.stop(); }
+});
+
+test('t381: a reviewer on a permission dialog is re-armed, never re-nudged', async () => {
+  // A dialog is not this defect: the seat has its scope and is asking about it.
+  // Poking it would inject into the one non-composer state Clodex already knows
+  // about — and shouldHoldDm deliberately holds for exactly this case.
+  const app = boot();
+  try {
+    app.setPending('lead');
+    await app.m.create('lead', 'claude', app.root, [], null, 'ws');
+    const lead = app.m.sessions.get('lead');
+
+    app.setPending('crew-reviewer-1');
+    app.m._handleTeamReview(lead, SCOPE);
+    await settled(app, 'crew-reviewer-1');
+    const s = reviewerSeat(app, { transcript: null });
+    s.needsAttention = { kind: 'permission' };
+    const before = nudgeCount(app, 'crew-reviewer-1');
+    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+      'ENTER: no transcript, so only the dialog check can hold the redelivery');
+
+    app.alarms.length = 0;
+    clearTimeout(s._reviewStartTimer);
+    s._reviewStartTimer = null;
+    app.m._checkReviewStarted(s, 'lead');
+
+    assert.strictEqual(nudgeCount(app, 'crew-reviewer-1'), before,
+      'nothing is re-sent to a seat blocked on a dialog');
+    assert.ok(!s._reviewNudgeRetried,
+      'and the one-shot retry is NOT spent — it must still be available once the dialog is answered');
+    assert.deepStrictEqual(app.alarms, [], 'no alarm either');
+    assert.ok(s._reviewStartTimer, 're-armed, so a dialog answered later is still checked');
   } finally { app.stop(); }
 });
