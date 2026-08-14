@@ -7,7 +7,7 @@
 // BELIEVED: one that promises a turn which never happens costs a session, so a
 // regex free to drift from the real scan is worse than no mark at all.
 
-const { cleanLine, parseIntent, fencedLines } = require('../../intent-scanner');
+const { cleanLine, parseIntent, fencedLines, looksLikeIntent } = require('../../intent-scanner');
 
 // Bounded rescan window, against re-deriving the whole scrollback per write.
 // It exceeds the configured scrollback, so the window starts at row 0; raising
@@ -36,14 +36,40 @@ function logicalLines(rows) {
 // 'fire' | 'inert' | null. null = leave it alone: an escape is deliberate
 // QUOTING, and marking what someone wrote ABOUT an intent defeats finding the
 // one that fired.
+//
+// The gate is looksLikeIntent — intent-scanner's own near-miss predicate, which
+// anchors the bracket to the START of the cleaned line. A `.includes('[agent:')`
+// gate marked every sentence an agent wrote ABOUT an intent: measured over 206
+// rows of real output, 23 of 23 inert marks were mid-line prose and none was a
+// line-start near-miss, so the mark was mostly noise. Widening this back to a
+// substring test brings that back, and also starts marking `\[agent:…]`, whose
+// backslash survives cleanLine and is what keeps the escape unmarked here.
 function classifyText(raw) {
-  if (!cleanLine(raw).includes('[agent:')) return null;
-  // No escape or prose-before-bracket guard on purpose: parseIntent returns
-  // `escape` for one and null for the other, and a second copy of a rule it
-  // enforces would be free to disagree with the scan this predicts.
-  const parsed = parseIntent(raw);
-  if (!parsed) return 'inert';
-  return parsed.type === 'escape' ? null : 'fire';
+  if (!looksLikeIntent(raw)) return null;
+  // No second copy of the near-miss rule: parseIntent returning null IS the
+  // near miss, and a private guard would be free to disagree with the scan
+  // this predicts.
+  return parseIntent(raw) ? 'fire' : 'inert';
+}
+
+// The `[agent:…]` token inside one row's text, as { offset, length } in STRING
+// offsets — the caller owns the offset→column mapping, which is not the same
+// number on a row carrying double-width characters.
+//
+// Read on the HEAD row alone, never the joined logical line, so a token split
+// across a wrap boundary yields the head-row remainder and the mark clips there
+// instead of spilling. Bracket token only: the closing `]` is included, a
+// same-line dm body is not — the body is the operator's own prose and tinting
+// it is what this scoping exists to stop.
+//
+// null = the token does not start on this row at all (the bracket itself was
+// split by the wrap). The caller decides what an unlocatable span means; it
+// must not guess a column from a match it did not find.
+function intentSpan(text) {
+  const at = text.indexOf('[agent:');
+  if (at < 0) return null;
+  const close = text.indexOf(']', at);
+  return { offset: at, length: (close < 0 ? text.length : close + 1) - at };
 }
 
 // rows: [{ text, isWrapped }] in buffer order. Returns marks anchored to the
@@ -55,9 +81,11 @@ function classifyRows(rows) {
   for (let i = 0; i < lines.length; i += 1) {
     if (fenced[i]) continue;
     const kind = classifyText(lines[i].text);
-    if (kind) marks.push({ start: lines[i].start, end: lines[i].end, kind });
+    if (!kind) continue;
+    const { start, end } = lines[i];
+    marks.push({ start, end, kind, span: intentSpan(rows[start].text) });
   }
   return marks;
 }
 
-module.exports = { classifyRows, classifyText, logicalLines, SCAN_ROWS };
+module.exports = { classifyRows, classifyText, intentSpan, logicalLines, SCAN_ROWS };

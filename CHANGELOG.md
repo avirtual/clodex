@@ -13,6 +13,19 @@ blocks a release.
 
 ## Unreleased
 
+- The terminal intent marks no longer light up every sentence that merely
+  *mentions* an intent. Agents discuss intents constantly, and a mark on each
+  of those lines turned the screen into a mosaic that hid the handful of real
+  emissions. A mark now needs the `[agent:…]` to start the line, exactly as
+  firing does — so the warning colour is back to meaning what it should: a
+  line that was written to fire and didn't.
+
+- An intent mark now highlights the `[agent:…]` itself rather than washing the
+  whole terminal row. An intent starts its own line, so most of that row was
+  empty terminal getting a background — and on a `[agent:dm …]` the wash ran
+  over the message body too. The scrollbar tick is unchanged, so finding an
+  intent without scrolling still works exactly as before.
+
 - Review seats now read a large file in one pass instead of paginating
   through it. A reviewer's whole job is reading the diff it was handed, and
   it was being handed one in 25000-token slices — so it spent turns on
