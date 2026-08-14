@@ -286,16 +286,13 @@ function createTicketMethods(deps, shared) {
     SPEC_CONFIRM_MS,
   } = shared;
 
-  // How long a wake has to produce a turn before rung 3 fires. The SAME window
-  // as the spec latch's, aliased rather than re-derived: both measure "a write
-  // was made and no turn followed", and two numbers for one question drift.
+  // How long a wake has to produce a turn before rung 3 fires. Aliased to the
+  // spec latch's window rather than re-derived: both measure "a write was made
+  // and no turn followed", and two numbers for one question drift.
   //
-  // LEAD-VISIBILITY BOUND: the first rung-3 alarm fires no later than
-  // `stallMs + WAKE_GRACE_MS + WAKE_CONFIRM_MS` after last activity. The confirm
-  // term is load-bearing and cannot be gated away — a wake fired just inside the
-  // grace window still opens a full take-window behind it. The doubling ladder
-  // is untouched: it keys off `nudgedAt - lastActivityAt`, which rung 2 never
-  // writes.
+  // The first rung-3 alarm fires no later than `stallMs + WAKE_GRACE_MS +
+  // WAKE_CONFIRM_MS`. The confirm term cannot be gated away — a wake fired just
+  // inside the grace window still opens a full take-window behind it.
   const WAKE_CONFIRM_MS = SPEC_CONFIRM_MS;
 
   // Injectable ONLY so the kill arm is reachable from a test. Without a seam no
@@ -5237,42 +5234,29 @@ function createTicketMethods(deps, shared) {
       })();
     },
 
-    // The structural half of the rung-2 wake gate — everything the liveness
-    // classifier cannot see. Called at SWEEP time and again inside `produce`,
-    // from one definition: the write-time re-check exists precisely because
-    // these can change between the two, so two copies would drift in the one
-    // direction that writes into a seat the sweep would have refused.
-    //
-    // The lead is excluded because it is rung 3's RECIPIENT: an automated write
-    // into the operator-facing session has no rung above it to catch a mistake.
-    // `now`/`stallMs` are only for the per-seat budget below; every other check
-    // here is a state test.
+    // The structural half of the rung-2 wake gate. Called at SWEEP time and
+    // again inside `produce` from this one definition: the states change between
+    // the two, so a second copy would drift in the direction that writes into a
+    // seat the sweep refused. The lead is excluded as rung 3's RECIPIENT — an
+    // automated write into the operator's session has no rung above it.
     _wakeSeatEligible(team, seat, now, stallMs) {
       if (!seat || seat._dead) return false;
       if (seat.name === team.lead) return false;
-      // ONE wake per seat per stall window, across ALL of its tickets. The budget
-      // is per-SEAT because the composer is: two of a seat's tickets stalling
-      // together would otherwise write twice into one terminal, and the second
-      // Ctrl-U destroys whatever the first produced.
-      //
-      // Per-ticket stamps cannot express this — `wakeAt` lives on the record and
-      // two records know nothing of each other. Nor does the shared
-      // `_stallLiveSample` prevent it: the second ticket's sample is unreadable
-      // only while the FIRST keeps probing, and the first stops the moment it
-      // wakes, handing the second a readable gap plus an already-true
-      // `_stallWedgedOnce` — a wake with no confirm of its own.
+      // ONE wake per seat per stall window, across ALL of its tickets: the budget
+      // is per-SEAT because the composer is, and a second Ctrl-U destroys what the
+      // first produced. Per-ticket `wakeAt` cannot express this (two records know
+      // nothing of each other), and `_stallLiveSample` does not either — the first
+      // ticket stops probing the moment it wakes, handing the second a readable
+      // gap plus an already-true `_stallWedgedOnce`.
       if (seat._stallWakeAt && (now - seat._stallWakeAt) < stallMs) return false;
       // Claude-only for the same reason `_armReviewStartCheck` is: the probe
       // reads `transcript.jsonl`, which only the Claude hook writes, so a codex
       // seat would classify wedged on a one-signal read of permanent silence.
       if (seat.agentType !== 'claude') return false;
-      // And the transcript must actually be READABLE, which is the property the
-      // claude test above stands in for rather than a second copy of it. -1 is
-      // "could not read", and `didGrow` refuses to call -1 -> -1 growth, so a
-      // broken symlink leaves the wedge verdict resting on CPU alone — the
-      // one-signal read that excludes codex, reached by a different route.
-      // Refusing here costs a genuinely wedged seat nothing but its wake: it
-      // alarms at the window exactly as it did before rung 2 existed.
+      // Not a second copy of the claude test — that stands in for readability,
+      // this checks it. `didGrow` refuses -1 -> -1, so a broken symlink leaves the
+      // wedge verdict on CPU alone: the one-signal read that excludes codex,
+      // reached by another route.
       if (this._seatTranscriptSize(seat.name) < 0) return false;
       if (seat.activityState !== 'idle') return false;
       // Injection ends with Enter, which would ANSWER the dialog.
@@ -5306,14 +5290,12 @@ function createTicketMethods(deps, shared) {
     },
 
     // Rung 2: one injected line into a wedged-confirmed seat, before the lead is
-    // told anything.
-    //
-    // `parkable` is deliberately ABSENT: a parked wake drains on the seat's next
-    // turn, which is the thing that is never coming. `produce` aborts instead —
-    // it runs inside the queue's critical section, so returning null cancels the
-    // Ctrl-U itself. The sweep's decision and the write are separated by the
-    // boot-ready gate, the quiet gate and queue depth, and a seat that takes a
-    // turn inside that gap must not be written to.
+    // told anything. `parkable` is deliberately ABSENT — a parked wake drains on
+    // the seat's next turn, which is the thing that is never coming. `produce`
+    // aborts instead, inside the queue's critical section, so returning null
+    // cancels the Ctrl-U itself. The sweep's decision and the write are separated
+    // by the boot-ready gate, the quiet gate and queue depth, and a seat that
+    // takes a turn inside that gap must not be written to.
     _wakeStalledSeat(team, ticket, seat, now, stallMs) {
       const tid = ticket.id;
       const seenAt = ticket.lastActivityAt || null;
@@ -5646,11 +5628,12 @@ function createTicketMethods(deps, shared) {
             // holds forever, so an ungated wake could fire hours in — after the
             // lead already owns the recovery.
             const graceLeft = (now - last) < (stallMs + WAKE_GRACE_MS);
-            // Only a seat the gates could still admit is worth waiting for. A
-            // codex seat, an unreadable transcript or the lead itself can never
-            // become eligible by waiting, so deferring on one would delay the
-            // alarm by the full grace window to reach the same refusal — those
-            // alarm at the window exactly as they did before rung 2 existed.
+            // ANY structural refusal alarms now rather than deferring, against
+            // §7 — permanent ones (codex, unreadable transcript, the lead) can
+            // never become eligible by waiting, and the transient ones (dialog,
+            // latch, draft, mid-turn) are chosen to alarm too: that is exactly
+            // the pre-rung-2 behaviour, and the overlap is narrow because
+            // `_touchTicketActivity` fires on the turn edge.
             if (graceLeft && this._wakeSeatEligible(team, wakeSeat, now, stallMs)) {
               let verdict = null;
               try { verdict = (await this._sampleSeatLiveness(wakeSeat, now, stallMs, 'stall')).verdict; }

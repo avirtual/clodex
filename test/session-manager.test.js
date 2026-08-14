@@ -8465,8 +8465,6 @@ test('t400 (c) two stalled tickets on ONE seat produce ONE wake, and the second 
     + 'would make one seat`s second ticket permanently invisible to the lead');
 });
 
-// The ladder is rung 2's blast radius, and it must be zero: `nudgedAt` is the
-// only field the doubling gate reads, and rung 2 never writes it.
 // Rung 2's blast radius on the ladder must be zero: the doubling gate reads only
 // `nudgedAt`, and rung 2 never writes it.
 //
@@ -8570,7 +8568,7 @@ test('t400 all ELEVEN `nudgedAt = null` sites also move lastActivityAt, so `wake
     return 0;
   };
   const missing = sites.filter((ln) => !lines.slice(methodStart(ln), ln)
-    .some((l) => /\.lastActivityAt = /.test(l)));
+    .some((l) => !l.trim().startsWith('//') && /\.lastActivityAt = /.test(l)));
   assert.deepStrictEqual(missing, [],
     'a site that clears `nudgedAt` WITHOUT moving `lastActivityAt` carries the previous episode`s `wakeAt` across '
     + 'the boundary, so the new episode reads as already-woken and the fresh seat never gets its one wake. '
