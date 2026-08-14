@@ -7004,9 +7004,9 @@ const HOUR = 60 * 60 * 1000;
 // A literal 24h in this file would keep passing if the product's constant moved,
 // which is the one change the boundary test exists to catch.
 const RECENT_DONE_MS = (() => {
-  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'session-manager.js'), 'utf-8');
+  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'team-tickets.js'), 'utf-8');
   const m = src.match(/const RECENT_DONE_MS = ([^;]+);/);
-  assert.ok(m, 'ENTER: found RECENT_DONE_MS in session-manager.js');
+  assert.ok(m, 'ENTER: found RECENT_DONE_MS in team-tickets.js');
   return Function(`return (${m[1]})`)();
 })();
 

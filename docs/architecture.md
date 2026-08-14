@@ -274,6 +274,17 @@ adapter that hosts it. The modules below are what the engine assembles.
   renderers through opaque handles, and the file's own WINDOW BRIDGE header
   states that contract. Its collaborators all arrive through the
   `createSessionManager(deps)` destructure, which is the list.
+- **team-tickets.js** — the teams/tickets half of the same class (t380): board
+  verbs, seat shaping/spawn, spec delivery, review/verdict/auto-merge, the
+  ticket loop + suite, watchdog/stall sweep, team role editing, retire. It
+  returns METHODS, not an API: `createSessionManager` grafts them onto
+  `SessionManager.prototype`, so they run with `this` = the manager and ticket
+  state stays on the instance. **A file split, NOT a decoupling** — every
+  cross-boundary call is still `this.<name>()`, so the coupling graph is
+  unchanged and `free-identifier-leaks.test.js` structurally cannot see the
+  seam (it scans module-scope names; a prototype lookup is not one).
+  `ticket-mixin-surface.test.js` is what guards it, and its `this.*` inventory
+  is the starting spec if the boundary is ever made real.
 - **app-menus.js** — tray + application menu builders (the `createAppMenus`
   return is the list).
 - **remote-wiring.js** — RemoteServer construction/reconciliation

@@ -456,7 +456,11 @@ test('listing parity: the duplicated window and cap constants agree at source', 
     assert.ok(m, `ENTER: found ${name} in ${path.basename(file)}`);
     return Function(`return (${m[1]})`)();
   };
-  const CORE = path.join(__dirname, '..', 'session-manager.js');
+  // team-tickets.js, not session-manager.js: the board constants moved there
+  // with _taskList in the t380 split. The ENTER assertion inside scrape() is
+  // what makes a repoint like this fail loudly instead of silently comparing
+  // the script against nothing.
+  const CORE = path.join(__dirname, '..', 'team-tickets.js');
   for (const name of ['RECENT_DONE_MS', 'RECENT_DONE_CAP']) {
     const core = scrape(CORE, name);
     assert.ok(core > 0, `ENTER: ${name} scraped to a real value (${core})`);

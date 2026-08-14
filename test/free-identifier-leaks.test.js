@@ -83,8 +83,8 @@ const SCANNED_MODULES = [
   // The ticket record store (t309). Scanned for the same reason the scope is:
   // `ticketInFlight` was extracted here from two literal copies in
   // session-manager.js, and a dangling reference left by that kind of move is
-  // caught by nothing else in this file — session-manager.js is not in the
-  // reverse-scan list. `fs`/`path` arrive as parameters, so it is a pure leaf.
+  // caught by nothing else in this file. `fs`/`path` arrive as parameters, so
+  // it is a pure leaf.
   'tickets-store.js',
   // The stall alarm's evidence reader (t322). `fs` arrives as a parameter and
   // the manager reads it through the deps object, so a `log.`/`path.` reaching
@@ -198,6 +198,16 @@ const SCANNED_MODULES = [
   // free identifier here would be a reach into whichever scope happened to be
   // loaded first.
   'peer-shell.js',
+  // The teams/tickets half of SessionManager (t380). Carved out of
+  // session-manager.js, which is itself an extraction from the main scope, so a
+  // MAIN_SCOPE name reaching it through that path is this test's case exactly.
+  // The forward scan is the weaker half of its guard: the methods here run
+  // grafted onto SessionManager.prototype, so their reach into core is carried
+  // by `this.*`, which resolves on the prototype chain at runtime and NEVER
+  // appears as a free identifier. That seam is gated by
+  // test/ticket-mixin-surface.test.js; this entry only catches the module-scope
+  // half (a moved body still reaching for a coordinator const).
+  'team-tickets.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction
@@ -387,7 +397,18 @@ const CONTROL_KW = new Set([
   'if', 'for', 'while', 'switch', 'catch', 'return', 'do', 'else',
   'typeof', 'await', 'new', 'in', 'of', 'instanceof', 'void', 'delete', 'yield',
 ]);
-function collectMethodParams(code) {
+// `withNames` also records the HEAD'S OWN NAME as a definition, for the reverse
+// gate only. A class method is a binding the reverse gate must see: `this._x()`
+// strips to `._x` → `.`, but the declaration `_x(a) {` leaves `_x` as a bare
+// token, so without this every method of a scanned class reads as a dangling
+// reference to itself. Measured on session-manager.js — the first class file the
+// reverse loop ever scanned — that is 218 false positives, i.e. the gate off.
+// The forward scan does NOT pass it: there a name shared with the coordinator is
+// the thing being looked for, and treating a method head as a local definition
+// would mask it. Over-collection here is the same safe bias as collectParams
+// (it can mask a would-be dangler, never manufacture one), and the `body` check
+// below is what already proves the head is a definition and not a call.
+function collectMethodParams(code, withNames) {
   const defs = new Set();
   for (const m of code.matchAll(/\b([a-zA-Z_$][\w$]*)\s*\(/g)) {
     if (CONTROL_KW.has(m[1])) continue;
@@ -401,7 +422,10 @@ function collectMethodParams(code) {
           let t = k + 1;
           while (t < code.length && /\s/.test(code[t])) t++;
           const body = code[t] === '{' || (code[t] === '=' && code[t + 1] === '>');
-          if (body) addIds(code.slice(open + 1, k), defs);
+          if (body) {
+            addIds(code.slice(open + 1, k), defs);
+            if (withNames) defs.add(m[1]);
+          }
           break;
         }
       }
@@ -627,6 +651,10 @@ function definedNames(rawSrc) {
   const src = stripComments(rawSrc);
   const defs = new Set([...moduleScopeNames(rawSrc), ...ownDefinitions(rawSrc)]);
   for (const p of collectParams(src)) defs.add(p);
+  // withNames: class/object method heads bind their own name. See the note on
+  // collectMethodParams — without it a scanned class file's every method reads
+  // as dangling.
+  for (const p of collectMethodParams(src, true)) defs.add(p);
   for (const d of collectDeclarations(src)) defs.add(d);
   for (const mm of src.matchAll(/\bfunction\s*\*?\s*([a-zA-Z_$][\w$]*)\s*\(/g)) defs.add(mm[1]);
   for (const mm of src.matchAll(/\bcatch\s*\(\s*([^)]*)\)/g)) addIds(mm[1], defs);
@@ -651,7 +679,8 @@ const BUILTINS = [
   // ECMAScript built-in values/constructors.
   'Object', 'Array', 'String', 'Number', 'Boolean', 'Symbol', 'BigInt', 'Math',
   'JSON', 'Date', 'RegExp', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Promise',
-  'Proxy', 'Reflect', 'Error', 'TypeError', 'RangeError', 'Function', 'Infinity',
+  'Proxy', 'Reflect', 'Error', 'TypeError', 'RangeError', 'SyntaxError',
+  'Function', 'Infinity',
   'NaN', 'undefined', 'globalThis', 'parseInt', 'parseFloat', 'isNaN',
   'isFinite', 'encodeURIComponent', 'decodeURIComponent', 'encodeURI',
   'decodeURI', 'structuredClone', 'btoa', 'atob',
@@ -679,13 +708,35 @@ function danglingRefs(scopeFile) {
   return [...used].filter((n) => !defs.has(n) && !AMBIENT.has(n)).sort();
 }
 
+// Justified survivors of the reverse scan, per file. Same rule as WHITELIST:
+// every entry names a scanner limit, never a real dangler waived.
+const DANGLING_WHITELIST = {
+  // `static CONTEXT_COMMANDS = { … }` — a static class FIELD. definedNames
+  // covers const/let/var, params and method heads; no declaration form in it
+  // matches a class field, so the field's own name reads as a reference to
+  // itself. The same shape in team-tickets.js would be caught by the forward
+  // scan instead, and there are no other class fields in either file.
+  'session-manager.js': new Set(['CONTEXT_COMMANDS']),
+};
+
 // engine.js is here for the same reason it is in MAIN_SCOPE: it holds the
 // coordinator names now, so it is the file an extraction most plausibly leaves a
 // dangling caller in. It was absent from this list entirely — the reverse half
 // of F013.
-for (const scope of ['renderer/renderer.js', 'main.js', 'engine.js']) {
+//
+// session-manager.js + team-tickets.js join as the t380 split's reverse half,
+// and it is the half that matters most there: the forward scan measures each
+// against MAIN_SCOPE, which says nothing about the ~15 ticket-owned module
+// consts (TICKET_STALL_MS, humanizeAge, REVIEWER_FALLBACK, …) that moved from
+// one file to the other. A use left behind in session-manager after the move is
+// a runtime ReferenceError on the ticket path, and NOTHING else in this repo
+// looks for it — the forward scan can't (the name is in neither MAIN_SCOPE), and
+// the unit suite reaches those paths only with a PTY.
+for (const scope of ['renderer/renderer.js', 'main.js', 'engine.js',
+  'session-manager.js', 'team-tickets.js']) {
   test(`${scope} references no names that moved out of its scope`, () => {
-    const dangling = danglingRefs(scope);
+    const wl = DANGLING_WHITELIST[scope] || new Set();
+    const dangling = danglingRefs(scope).filter((n) => !wl.has(n));
     assert.deepStrictEqual(
       dangling, [],
       `dangling references in ${scope} (a name it uses is defined nowhere in-scope — an extraction moved it into a module without leaving a destructured binding): ${dangling.join(', ')}`,
@@ -763,6 +814,23 @@ test('ownDefinitions keeps every param of a factory with call-expression default
   const callDefs = ownDefinitions('start(freeName, otherFree);');
   assert.ok(!callDefs.has('freeName'), 'call argument absorbed as a param');
   assert.ok(!callDefs.has('otherFree'), 'call argument absorbed as a param');
+});
+
+test('a class method name is a definition for the reverse gate, not for the forward one', () => {
+  // The t380 defect: a class METHOD declaration binds a name, but only the
+  // reverse gate may treat it as one. Without this, every method of a scanned
+  // class reads as a dangling reference to itself (218 of them in
+  // session-manager.js — the gate off, disguised as a whitelist).
+  const cls = 'class M {\n  _taskAdd(body) { return this._taskDone(body); }\n}';
+  assert.ok(definedNames(cls).has('_taskAdd'),
+    'class method head not collected as a binding — the reverse gate will self-alarm');
+  // …and the forward direction must NOT collect it: there, a name shared with
+  // the coordinator scope is precisely the leak being hunted, so admitting a
+  // method head as a local definition would mask it.
+  assert.ok(!collectMethodParams(cls).has('_taskAdd'),
+    'method head leaked into the forward scan defs, where it can mask a real leak');
+  assert.ok(collectMethodParams(cls).has('body'),
+    'method-shorthand param lost');
 });
 
 test('ownDefinitions collects method-shorthand params', () => {

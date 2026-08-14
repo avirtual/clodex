@@ -108,7 +108,14 @@ test('a labelled record mints a ticket-keyed proxy agent id; an unlabelled one k
 // cannot spawn a PTY, so they are pinned here the way create-mint-census.js
 // pins its call sites — against the source.
 test('create() mints from the record label, and both spawn paths seed it before create()', () => {
+  // The contract now spans BOTH halves of the t380 split, and the two halves
+  // are read separately rather than concatenated: create() and ALWAYS_PRESERVE
+  // are core, the two spawn paths are ticket machinery. Concatenating would let
+  // an anchor satisfy itself from the wrong file — including the seed-BEFORE-
+  // create ordering in part 2, which is a position comparison and would then be
+  // measuring an offset across a file boundary.
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
+  const ticketSrc = fs.readFileSync(path.join(__dirname, '..', 'team-tickets.js'), 'utf8');
 
   // 1. The mint reads the label off the record rather than taking the raw name.
   assert.match(src, /const labelFrom = \(existingEntry && existingEntry\.wireLabel\) \|\| name;/,
@@ -124,9 +131,13 @@ test('create() mints from the record label, and both spawn paths seed it before 
   // point — the property is an ordering in the source that no runnable unit test
   // can observe without spawning a PTY. Re-anchor it on the moved code; do NOT
   // loosen the pattern until it passes, which retires the check silently.
-  const seeds = src.match(/wireLabel: \w+ \}/g) || [];
+  const seeds = ticketSrc.match(/wireLabel: \w+ \}/g) || [];
   assert.strictEqual(seeds.length, 2,
     `expected exactly 2 wireLabel seeds (reviewer + ticket seat), found ${seeds.length}`);
+  // ENTER: and none stayed behind in core, which would mean the move split a
+  // spawn path in half rather than carrying it across.
+  assert.strictEqual((src.match(/wireLabel: \w+ \}/g) || []).length, 0,
+    'a wireLabel seed is still in session-manager.js — both spawn paths moved to team-tickets.js');
 
   for (const [label, seedRe, createRe] of [
     // t308 put `reviewTicket` on this same stub, between the two anchored lines.
@@ -136,8 +147,8 @@ test('create() mints from the record label, and both spawn paths seed it before 
     ['reviewer', /reviewFor: session\.name,\n(?:\s*\/\/[^\n]*\n)*\s*\.\.\.\(reviewTicket \? \{ reviewTicket \} : \{\}\),\n\s*\.\.\.\(reviewLabel \?/, /name, type, cwd, shape\.extraArgs, null, shape\.workspaceId,/],
     ['ticket seat', /name: seat\.name, ephemeral: true,\n\s*\.\.\.\(seatLabel \?/, /seat\.name, shape\.type, shape\.cwd,/],
   ]) {
-    const seedAt = src.search(seedRe);
-    const createAt = src.search(createRe);
+    const seedAt = ticketSrc.search(seedRe);
+    const createAt = ticketSrc.search(createRe);
     // ENTER: both anchors were actually found. A -1 from either search would
     // make the ordering comparison below true for the wrong reason.
     assert.ok(seedAt > 0, `${label}: the wireLabel seed must be present`);
