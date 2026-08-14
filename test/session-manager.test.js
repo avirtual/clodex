@@ -8033,6 +8033,572 @@ test('t327 the repeat number is the ladder RUNG, distinct on every one of them',
   assert.match(nudges[3].body, /quiet 4h/, 'rung 3 is the 4h alarm');
 });
 
+// --- t400: rung 2, the automated wake ---------------------------------------
+//
+// The gate is a two-signal probe over CONSECUTIVE sweeps, so every test here
+// drives at least three: sweep 1 has no baseline and answers `unknown`, sweep 2
+// classifies `wedged` for the first time and is deliberately not trusted, and
+// sweep 3 is the confirm that may wake. A fixture driving ONE sweep would
+// measure the deferral and mistake it for the gate.
+const WAKE_STALL_MS = 30 * 60 * 1000;
+const WAKE_GRACE_MS = 5 * 60 * 1000;
+const WAKE_CONFIRM_MS = 90 * 1000;
+
+function mkWake(seatProps = {}, extra = {}, agoMs = WAKE_STALL_MS) {
+  const f = mkTasks(extra);
+  f.seat('lead');
+  const hand = f.seat('team-hand', '/proj', seatProps);
+  // A READABLE transcript, which is a precondition rather than scenery:
+  // `_seatTranscriptSize` answers -1 when it cannot read, `didGrow` refuses -1
+  // in either direction, and the seat would then classify wedged on CPU alone —
+  // the one-signal read the gate refuses. Without this file every test below
+  // would measure the refusal instead of the case it names.
+  const target = pathReal.join(f.home, 'hand-transcript.jsonl');
+  fsReal.writeFileSync(target, '');
+  fsReal.mkdirSync(runDirForReal(f.home, 'team-hand'), { recursive: true });
+  fsReal.symlinkSync(target, pathForReal(f.home, 'team-hand', 'transcript'));
+  assert.strictEqual(f.m._seatTranscriptSize('team-hand'), 0,
+    'ENTER: the probe must READ the transcript, or every wake below is refused for the wrong reason');
+  // Flat by default: the wedge shape. `_samplePtyTreeCpuMs` shells out to `ps`,
+  // which would measure this test runner's own tree.
+  let cpu = 5000;
+  f.m._samplePtyTreeCpuMs = () => Promise.resolve(cpu);
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const quiet = Date.now() - agoMs;
+  const arr = f.load();
+  arr[0].lastActivityAt = quiet;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0; f.injected.length = 0;
+  const at = (mins) => quiet + Math.round(mins * 60 * 1000);
+  const sweep = (mins) => f.m._sweepTeamTickets({ ...f.team, watchdogMs: WAKE_STALL_MS }, at(mins));
+  return {
+    f, hand, quiet, at, sweep, target,
+    setCpu: (v) => { cpu = v; },
+    grow: (n) => fsReal.writeFileSync(target, 'x'.repeat(n)),
+    alarms: () => f.gated.filter((g) => /stalled/.test(g.body)),
+    wakes: () => f.injected.filter((x) => /wake\]/.test(x)),
+  };
+}
+
+test('t400 the wake needs a CONFIRMED wedge: the first wedged sweep defers, the second wakes', async () => {
+  const w = mkWake();
+  await w.sweep(30);
+  assert.deepStrictEqual(w.wakes(), [], 'sweep 1 has no baseline — `unknown` is not a reading');
+  await w.sweep(31);
+  assert.deepStrictEqual(w.wakes(), [],
+    'sweep 2 is the FIRST wedged verdict, and one is never enough: whole-second CPU resolution and the '
+    + 'tree sum`s one non-monotonic step both produce a single false wedge');
+  assert.deepStrictEqual(w.alarms(), [], 'ENTER: and nothing has alarmed yet, so the wake below is rung 2 and not a late rung 3');
+  await w.sweep(32);
+  assert.strictEqual(w.wakes().length, 1, 'the confirming sweep wakes the seat');
+  assert.match(w.wakes()[0], /automated wake — nothing new is being asked/,
+    'the text says it asks for nothing: a seat that IS working must be able to ignore it');
+  assert.match(w.wakes()[0], /never received the ticket`s spec|never received the ticket's spec/,
+    'and it carries the no-spec exit — the eaten draft may have BEEN the spec, with the latch`s one retry spent');
+  assert.deepStrictEqual(w.alarms(), [], 'the wake DEFERS the lead`s alarm — that is the whole point of a middle rung');
+  assert.ok(typeof w.f.one('t1').wakeAt === 'number', 'and it stamps the attempt on the record');
+});
+
+test('t400 a seat with CPU accruing is never woken — the tree-CPU signal is what keeps a working seat safe', async () => {
+  const w = mkWake();
+  await w.sweep(30);
+  w.setCpu(5000 + 60_000);   // a minute of CPU across a minute of gap: unmistakably alive
+  await w.sweep(31);
+  w.setCpu(5000 + 120_000);
+  await w.sweep(32);
+  assert.deepStrictEqual(w.wakes(), [],
+    'a seat burning CPU inside a tool call reads idle and writes nothing to its transcript — the tree sum is '
+    + 'the ONLY signal that separates it from a wedge, and waking it splices into live work');
+});
+
+test('t400 a seat whose transcript is GROWING is never woken', async () => {
+  const w = mkWake();
+  await w.sweep(30);
+  w.grow(100);
+  await w.sweep(31);
+  w.grow(200);
+  await w.sweep(32);
+  assert.deepStrictEqual(w.wakes(), [], 'transcript growth is `moving` — the seat is demonstrably producing');
+});
+
+// The §5 structural exclusions, as one table. Each row is a seat state that is
+// wedged-confirmed by the PROBE and must still never be written to, so the probe
+// is held constant and the seat state is the only variable — a row that refused
+// for a probe reason would pass while measuring nothing.
+//
+// Every row also asserts the ALARM still fires, which is the half that makes
+// these refusals safe rather than silent: a gate that refused the wake AND
+// swallowed rung 3 would leave the seat unreported, which is strictly worse than
+// the pre-rung-2 behaviour it replaces.
+for (const [what, props, why] of [
+  ['a permission dialog', { needsAttention: { kind: 'permission' } },
+    'injection ends with Enter, which would ANSWER the dialog'],
+  ['a live spec latch', { _specUnconfirmed: { at: Date.now() } },
+    'the latch IS the recovery mechanism and redelivers the real content; the wake`s induced turn would clear it as if consumed'],
+  ['a live dm-unconfirmed fifo', { _dmUnconfirmed: [{ at: Date.now(), from: 'x' }] },
+    'the induced turn clears the fifo before its 90s report ever tells the senders'],
+  ['an open operator draft', { lastUserInputTs: Date.now(), lastUserSubmitTs: 0 },
+    'Ctrl-U destroys whatever is sitting unsubmitted — the operator`s own text'],
+  ['a seat mid-turn', { activityState: 'thinking' },
+    'a write queues behind the turn and can only add noise'],
+  ['a codex seat', { agentType: 'codex' },
+    'the transcript probe is claude-only, so the wedge would rest on CPU alone'],
+]) {
+  test(`t400 gate: ${what} refuses the wake, and the ALARM still fires`, async () => {
+    const w = mkWake(props);
+    for (const m of [30, 31, 32, 33]) await w.sweep(m);
+    assert.deepStrictEqual(w.wakes(), [], `${what} must never be written to: ${why}`);
+    assert.strictEqual(w.alarms().length, 1,
+      'and the lead is still told — a refusal that also swallowed rung 3 would be silent alarm deletion');
+    assert.strictEqual(w.f.one('t1').wakeAt, undefined, 'nothing was attempted, so nothing is stamped');
+  });
+}
+
+// The lead is rung 3's RECIPIENT, so a self-assigned ticket has no rung above the
+// wake to catch a mistake. Its own row because the exclusion is by NAME, not by
+// seat state — every gate above would pass.
+test('t400 gate: the LEAD`s own seat is never woken, even wedged-confirmed', async () => {
+  const f = mkTasks();
+  const lead = f.seat('lead');
+  const target = pathReal.join(f.home, 'lead-transcript.jsonl');
+  fsReal.writeFileSync(target, '');
+  fsReal.mkdirSync(runDirForReal(f.home, 'lead'), { recursive: true });
+  fsReal.symlinkSync(target, pathForReal(f.home, 'lead', 'transcript'));
+  assert.strictEqual(f.m._seatTranscriptSize('lead'), 0,
+    'ENTER: the lead`s transcript reads, so only the name check can refuse this');
+  f.m._samplePtyTreeCpuMs = () => Promise.resolve(5000);
+  f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'lead', id: null, body: 'i will do this' });
+  f.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const quiet = Date.now() - WAKE_STALL_MS;
+  const arr = f.load(); arr[0].lastActivityAt = quiet; f.tstore.save(f.team.root, arr);
+  f.injected.length = 0;
+  assert.strictEqual(f.m._ticketAssigneeSeat(f.team, f.one('t1')), 'lead',
+    'ENTER: the ticket really does resolve to the lead — otherwise this refuses for want of a seat');
+  for (const m of [30, 31, 32, 33]) {
+    await f.m._sweepTeamTickets({ ...f.team, watchdogMs: WAKE_STALL_MS }, quiet + m * 60 * 1000);
+  }
+  assert.deepStrictEqual(f.injected.filter((x) => /wake\]/.test(x)), [],
+    'an automated write into the operator-facing session has no rung above it');
+});
+
+// PRODUCE ABORT. The sweep's decision and the queue's write are separated by the
+// boot-ready gate, the quiet gate and queue depth, so everything the gate checked
+// can change in between — and the Ctrl-U that leads every injection is
+// destructive, so a late write is not merely noise. `produce` is the only hook
+// that runs at the last instant.
+//
+// mkPark's _injectText models the queue by calling produce at write time, so
+// mutating state BEFORE the sweep returns reaches the producer exactly as a real
+// gap would. Each row asserts BOTH halves: no bytes AND no stamp — a stamp
+// without bytes spends the episode's one wake on a write that never happened.
+for (const [what, mutate] of [
+  ['the seat starts a turn on its own', (w) => { w.hand.activityState = 'thinking'; }],
+  ['an operator draft opens', (w) => { w.hand.lastUserInputTs = Date.now(); w.hand.lastUserSubmitTs = 0; }],
+  ['a permission dialog appears', (w) => { w.hand.needsAttention = { kind: 'permission' }; }],
+  ['the seat dies', (w) => { w.hand._dead = true; }],
+  ['the ticket closes', (w) => {
+    const a = w.f.load(); a[0].state = 'done'; a[0].closedAt = Date.now(); w.f.tstore.save(w.f.team.root, a);
+  }],
+  ['the seat speaks, moving activity', (w) => {
+    const a = w.f.load(); a[0].lastActivityAt = Date.now(); w.f.tstore.save(w.f.team.root, a);
+  }],
+]) {
+  test(`t400 produce abort: ${what} between the decision and the write — no bytes, no stamp`, async () => {
+    const w = mkWake();
+    await w.sweep(30);
+    await w.sweep(31);
+    // Armed on the CONFIRMING sweep only, so the mutation lands in the real gap
+    // rather than suppressing the decision itself.
+    let reached = false;
+    const realInject = w.f.m._injectText;
+    w.f.m._injectText = (s, text, opts) => {
+      reached = true;
+      mutate(w);
+      return realInject.call(w.f.m, s, text, opts);
+    };
+    await w.sweep(32);
+    assert.ok(reached, 'ENTER: the sweep must have DECIDED to wake, or this pins the gate and not the abort');
+    assert.deepStrictEqual(w.wakes(), [], 'the producer returned null, so the Ctrl-U itself never happened');
+    assert.strictEqual(w.f.one('t1').wakeAt, undefined,
+      'and nothing was stamped: an aborted produce must leave the episode`s one wake unspent');
+  });
+}
+
+// EPISODE SEMANTICS. `wakeAt` is read episode-relative (`wakeAt - last`), exactly
+// as `prevAge` reads `nudgedAt`, which is what lets it need no clearing site.
+test('t400 a wake that TAKES ends the episode with no alarm at all', async () => {
+  const w = mkWake();
+  for (const m of [30, 31, 32]) await w.sweep(m);
+  assert.strictEqual(w.wakes().length, 1, 'ENTER: the wake fired, or there is nothing for the seat to answer');
+  // The seat takes a turn — the real path, through the activity stamp a PTY turn
+  // fires, not a poke at the store.
+  w.f.m._reconcileTickets(w.f.team);
+  w.f.m._touchTicketActivity('team-hand');
+  await w.sweep(34);
+  assert.deepStrictEqual(w.alarms(), [],
+    'the wake WORKED, so the lead is never told: "took" is a signal that changed, not a timeout that elapsed');
+});
+
+test('t400 a wake that does NOT take alarms at the confirm window, naming the wake', async () => {
+  const w = mkWake();
+  for (const m of [30, 31, 32]) await w.sweep(m);
+  assert.strictEqual(w.wakes().length, 1, 'ENTER: a wake was injected at 32m');
+  const wakeAt = w.f.one('t1').wakeAt;
+  assert.strictEqual(wakeAt, w.at(32), 'ENTER: stamped with the instant the sweep JUDGED, not when the queue wrote');
+  // Inside the take-window: the seat may still answer.
+  await w.sweep(32 + (WAKE_CONFIRM_MS / 60000) - 0.25);
+  assert.deepStrictEqual(w.alarms(), [], 'the take-window is still open — alarming here would not have waited for the answer');
+  await w.sweep(32 + (WAKE_CONFIRM_MS / 60000) + 0.25);
+  assert.strictEqual(w.alarms().length, 1, 'past the window, rung 3 fires');
+  assert.match(w.alarms()[0].body, /an automated wake was injected .* ago and produced no turn/,
+    'and it names the attempt: the lead must know rung 2 already spent the cheap option');
+  assert.doesNotMatch(w.alarms()[0].body, /cannot be recovered|cannot recover|dead|beyond recovery/,
+    'the fact ONLY, never a verdict — a wake fired at a seat blocked on I/O produces a turn later, so any '
+    + '"a write cannot help this seat" claim would be an inference the measurement does not support');
+});
+
+// The clause is episode-scoped too, not just the wake decision. Reading the raw
+// `wakeAt` here would tell the lead "a wake was injected 3h ago and produced no
+// turn" about an episode that ENDED — the seat did answer, worked, and went quiet
+// again. That is the confidently-wrong field this module exists to prevent, and
+// it points the lead away from the seat exactly when the seat is the problem.
+//
+// Added after a surviving mutant: swapping `wakeAge > 0` for `after.wakeAt` left
+// the whole file green, because every other test either has no stale stamp or
+// never reaches the alarm while carrying one.
+test('t400 a PRIOR episode`s wake is not reported as evidence about THIS one', async () => {
+  // Codex, so the wake gate refuses and the alarm is reached at the window while
+  // a stale stamp sits on the record — the shape where the two readings diverge.
+  const w = mkWake({ agentType: 'codex' });
+  const arr = w.f.load();
+  arr[0].wakeAt = w.at(-60);          // an hour before this episode even began
+  w.f.tstore.save(w.f.team.root, arr);
+  const rec = w.f.one('t1');
+  assert.ok(rec.wakeAt < rec.lastActivityAt,
+    'ENTER: the stamp predates this episode`s activity, which is what makes `wakeAge` non-positive');
+  for (const m of [30, 31, 32, 33, 34, 35, 36]) await w.sweep(m);
+  assert.strictEqual(w.alarms().length, 1, 'ENTER: an alarm was reached WHILE the stale stamp was on the record');
+  assert.doesNotMatch(w.alarms()[0].body, /automated wake/,
+    'the previous episode`s wake says nothing about this one: the seat answered it, worked, and went quiet again — '
+    + 'reporting it would point the lead at a wake that already succeeded');
+});
+
+test('t400 a stale wakeAt from a PRIOR episode reads as not-attempted, and the new episode gets its own wake', async () => {
+  const w = mkWake();
+  for (const m of [30, 31, 32]) await w.sweep(m);
+  assert.strictEqual(w.wakes().length, 1, 'ENTER: episode 1 spent its wake');
+  const firstWakeAt = w.f.one('t1').wakeAt;
+  // The seat speaks — episode 1 ends — and then goes quiet again. `wakeAt` is
+  // deliberately NOT cleared by anything: the arithmetic is what invalidates it.
+  const a = w.f.load();
+  a[0].lastActivityAt = w.at(100);
+  w.f.tstore.save(w.f.team.root, a);
+  assert.strictEqual(w.f.one('t1').wakeAt, firstWakeAt,
+    'ENTER: the stale stamp is STILL on the record — this pins the arithmetic, not a clearing site');
+  assert.ok(firstWakeAt < w.at(100),
+    'ENTER: and it predates the new episode, which is exactly what makes `wakeAt - last` non-positive');
+  for (const m of [130, 131, 132]) await w.sweep(m);
+  assert.strictEqual(w.wakes().length, 2, 'the new episode gets its OWN wake — a stale stamp must not deny it one');
+  // Deliberately a RANGE, not an instant. `_stallWedgedOnce` is a session field
+  // that survives the episode boundary (only a moving/idle-alive verdict clears
+  // it), so a continuously-wedged seat enters its second episode with the confirm
+  // already satisfied and wakes a sweep earlier than a fresh seat would. Benign —
+  // the confirm exists to reject a single BAD SAMPLE, and this seat has produced
+  // several consistent ones — but pinning the exact sweep would freeze that
+  // incidental coupling into a requirement.
+  assert.ok(w.f.one('t1').wakeAt > w.at(100),
+    'and the stamp is re-taken inside the episode it belongs to, so `wakeAt - lastActivityAt` reads positive again');
+});
+
+// The deferral must be BOUNDED. A probe that can never produce a reading is the
+// shape that would otherwise defer forever, and silent alarm deletion is the
+// failure class this file has been burned by three times.
+test('t400 a verdict stuck at `unknown` alarms at the grace bound, not never', async () => {
+  const w = mkWake();
+  // The probe is stubbed rather than starved, and the difference matters. Closing
+  // the sweeps below MIN_GAP_MS does NOT produce a permanent `unknown`:
+  // `_sampleSeatLiveness` keeps the older baseline on an unreadable gap precisely
+  // so the gap GROWS until it qualifies — the coupling enforces itself instead of
+  // resting on a comment. So that route self-heals and would pin nothing. What
+  // this test is about is the sweep's own contract: whatever the reason a reading
+  // never arrives, the deferral is bounded.
+  let probes = 0;
+  w.f.m._sampleSeatLiveness = () => { probes += 1; return Promise.resolve({ verdict: 'unknown', cpuRead: false }); };
+  for (let i = 0; i <= 24; i += 1) await w.sweep(30 + i * 0.5);
+  assert.ok(probes > 0, 'ENTER: the sweep really did reach the probe — otherwise this pins an earlier gate');
+  assert.deepStrictEqual(w.wakes(), [], 'ENTER: no reading was ever obtained, so no wake could fire');
+  assert.strictEqual(w.alarms().length, 1,
+    'the alarm still arrives: a deferral that can become permanent is the alarm DELETED, which is the failure class '
+    + 'this file has been burned by three times');
+  // And it arrives AT the bound rather than merely eventually — an unbounded
+  // deferral that happens to end is not what the grace window promises.
+  assert.match(w.alarms()[0].body, /quiet 35m/,
+    'at the grace bound, not a sweep later: `stallMs + WAKE_GRACE_MS` is 35m here');
+});
+
+// (b) THE HONEST BOUND. The ticket offered "gate the wake so `stallMs + GRACE`
+// holds" or "restate the invariant with the confirm term". The first cannot
+// deliver what it claims — a wake fired just inside the grace window still opens
+// a full take-window behind it — so BOTH are done: the gate is kept (it closes a
+// real hole, below), and the invariant is stated with the confirm term. This test
+// pins the number that is actually true.
+test('t400 (b) the lead-visibility bound is stallMs + GRACE + CONFIRM, and it is TIGHT', async () => {
+  const w = mkWake();
+  // A wake fired as late as the grace window permits is the worst case for the
+  // bound, so it is the one worth pinning. Sweeps land just under the bound.
+  const graceMins = WAKE_GRACE_MS / 60000;
+  await w.sweep(30);
+  await w.sweep(30 + graceMins - 1.5);
+  await w.sweep(30 + graceMins - 0.5);
+  assert.strictEqual(w.wakes().length, 1, 'ENTER: a wake fired LATE in the grace window — the worst case for the bound');
+  // Measured from the WAKE, which is what the take-window is relative to — not
+  // from the bound's worst case. The wake landed at 34.5m, so its window closes
+  // at 34.5m + 90s = 36m, and it is that instant the sweep is checked against.
+  // An earlier draft compared against `30 + grace + confirm` (36.5m) and read the
+  // 36m alarm as a violation; the bound is an upper limit on the first alarm, not
+  // a prediction of it.
+  const wakeMins = w.f.one('t1').wakeAt === w.at(30 + graceMins - 0.5) ? 30 + graceMins - 0.5 : null;
+  assert.ok(wakeMins != null, 'ENTER: the wake was stamped at the sweep that fired it, which anchors the window');
+  await w.sweep(wakeMins + (WAKE_CONFIRM_MS / 60000) - 0.25);
+  assert.deepStrictEqual(w.alarms(), [],
+    'inside the take-window the seat may still answer — so `stallMs + GRACE` alone is NOT the true bound, '
+    + 'and stating it would be a promise the code does not keep');
+  await w.sweep(wakeMins + (WAKE_CONFIRM_MS / 60000) + 0.25);
+  assert.strictEqual(w.alarms().length, 1, 'the alarm arrives once the window closes');
+  // The bound itself: the worst case above is still under it, which is the claim
+  // the code's comment makes and the only one worth pinning.
+  const boundMins = 30 + graceMins + (WAKE_CONFIRM_MS / 60000);
+  assert.ok(wakeMins + (WAKE_CONFIRM_MS / 60000) + 0.25 <= boundMins,
+    `the first alarm lands no later than stallMs + GRACE + CONFIRM (${boundMins}m) — the honest number, `
+    + 'and one a gate on the grace window alone could not deliver');
+});
+
+// §5.13. Once rung 3 has spoken the lead OWNS the recovery, and a late automated
+// write can collide with what the lead is doing about it — a reassign
+// re-delivers the spec, a respawn mints a new seat while the queued wake still
+// targets the old name. The wake belongs strictly BEFORE the episode's first
+// alarm. Added after a surviving mutant: dropping the `prevAge` term from the
+// sweep's condition left every other test in this file green.
+test('t400 once the LEAD has been told, the wake is over: no write after rung 3 has spoken', async () => {
+  const w = mkWake();
+  // The stamp is placed as if the alarm had fired under a TIGHTER `watchdogMs`
+  // than the sweep now runs with, and that is the whole construction rather than
+  // a convenience. Under a steady window the guard is unreachable: the doubling
+  // gate above needs `age >= 2*prevAge` (>= 60m) while the grace gate needs
+  // `age < stallMs + GRACE` (< 35m), and the two cannot both hold. A stamp taken
+  // at a 5m window makes the doubling gate open at 10m, so the wake block is
+  // genuinely reached with `prevAge > 0` — which is the only state in which this
+  // guard is the thing doing the refusing.
+  //
+  // Verified by mutant: with `prevAge <= 0` dropped from the sweep's condition
+  // this test fails and every other test in the file stays green.
+  const arr = w.f.load();
+  arr[0].nudgedAt = w.at(5);
+  w.f.tstore.save(w.f.team.root, arr);
+  const rec = w.f.one('t1');
+  const prevAge = rec.nudgedAt - rec.lastActivityAt;
+  assert.ok(prevAge > 0, 'ENTER: `prevAge` is positive — that is what "the lead has been told" means');
+  assert.ok(2 * prevAge < WAKE_STALL_MS + WAKE_GRACE_MS,
+    'ENTER: and the doubling gate opens BEFORE the grace window closes, so the wake block is actually reached — '
+    + 'without this the test would pass on an unreachable branch and pin nothing');
+  for (const m of [30, 31, 32, 33, 34]) await w.sweep(m);
+  assert.deepStrictEqual(w.wakes(), [],
+    'the lead owns recovery from here: a late wake races the lead`s own reassign or respawn, and the queued '
+    + 'write would land on a seat the lead may already have replaced');
+});
+
+test('t400 (b) the grace GATE holds even when rung 3 never spoke: no wake hours into a stall', async () => {
+  // Why the gate is kept despite not delivering the bound on its own. `prevAge`
+  // reads `nudgedAt`, which is stamped only by a delivery that REACHED THE WRITE
+  // — so a held alarm leaves it null and `prevAge <= 0` holds forever. Ungated,
+  // the wake would still fire hours in, long after the §5.13 point where the lead
+  // owns recovery.
+  const w = mkWake();
+  w.f.m._gatedDeliver = () => ({ held: 'blocked on a permission dialog' });
+  for (const m of [30, 31, 32]) await w.sweep(m);
+  assert.strictEqual(w.f.one('t1').nudgedAt, null,
+    'ENTER: the alarm was HELD, so nothing stamped `nudgedAt` — this is the state that defeats the prevAge guard');
+  const woken = w.wakes().length;
+  for (const m of [200, 201, 202, 400, 401, 402]) await w.sweep(m);
+  assert.strictEqual(w.wakes().length, woken,
+    'no wake hours into the stall: past the grace window the episode belongs to the lead, whether or not the alarm landed');
+});
+
+// (c) TWO STALLED TICKETS, ONE SEAT — designed explicitly, not left emergent.
+//
+// The ticket suggested the shared `_stallLiveSample` already defers the second
+// ticket forever (gap 0 → `unknown` every sweep). It does NOT, and this test is
+// what showed it: the second ticket's gap is unreadable only while the FIRST
+// keeps probing, and the first stops the moment it wakes — its take-window
+// `continue`s before reaching the probe. The second then sees a readable 60s gap
+// AND an already-true `_stallWedgedOnce` (a seat field, never cleared by the
+// `unknown` branch), so it wakes one sweep later with no confirm of its own.
+// Two Ctrl-U writes into one composer, which is the t357 hazard exactly.
+//
+// The fix is a per-SEAT wake budget (`_stallWakeAt`), because the composer is
+// per-seat. Per-ticket `wakeAt` stamps cannot express it: two records know
+// nothing of each other.
+test('t400 (c) two stalled tickets on ONE seat produce ONE wake, and the second still alarms', async () => {
+  const w = mkWake();
+  w.f.m._handleTask(w.f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the second spec' });
+  w.f.m._handleTask(w.f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
+  const arr = w.f.load();
+  for (const t of arr) t.lastActivityAt = w.quiet;
+  w.f.tstore.save(w.f.team.root, arr);
+  w.f.gated.length = 0; w.f.injected.length = 0;
+  assert.strictEqual(w.f.load().length, 2, 'ENTER: two tickets');
+  assert.strictEqual(w.f.m._ticketAssigneeSeat(w.f.team, w.f.one('t2')), 'team-hand',
+    'ENTER: and BOTH resolve to the same seat — that is the whole shape');
+  // Swept well past the first wake's take-window, which is exactly where the
+  // second wake appeared before the per-seat budget existed.
+  for (const m of [30, 31, 32, 33, 34, 35, 36, 37]) await w.sweep(m);
+  assert.strictEqual(w.wakes().length, 1,
+    'ONE wake, not two: the seat has one composer, and the second Ctrl-U would destroy whatever the first produced');
+  assert.match(w.wakes()[0], /ticket t1 wake/, 'and it is the FIRST ticket that spent it — whichever the sweep reaches first');
+  assert.ok(typeof w.hand._stallWakeAt === 'number',
+    'the budget lives on the SEAT, not the record: two ticket records know nothing of each other, so a per-ticket '
+    + 'stamp cannot express "this terminal has been written to"');
+  const alarmed = w.alarms().map((g) => g.body.match(/\[ticket (t\d+)\]/)[1]);
+  assert.ok(alarmed.includes('t2'),
+    'ENTER + the safety half: the un-woken ticket still ALARMS at the grace bound. Riding the deferral forever '
+    + 'would make one seat`s second ticket permanently invisible to the lead');
+});
+
+// The ladder is rung 2's blast radius, and it must be zero: `nudgedAt` is the
+// only field the doubling gate reads, and rung 2 never writes it.
+// Rung 2's blast radius on the ladder must be zero: the doubling gate reads only
+// `nudgedAt`, and rung 2 never writes it.
+//
+// Asserted against a CONTROL run rather than against literal rungs. The wake
+// defers the FIRST alarm by its take-window, which shifts `prevAge` and therefore
+// every later rung's absolute time — so a literal 30/60/120/240 pin fails for a
+// reason that is not the ladder breaking. What must be invariant is the ordinal
+// SEQUENCE: none skipped, none repeated, none identical. An earlier draft pinned
+// the literals and mistook the shift for a defect.
+test('t400 the doubling ladder is UNCHANGED by a seat that gets woken', async () => {
+  const ordinals = async (w) => {
+    for (let m = 30; m <= 300; m += 1) await w.sweep(m);
+    return w.alarms().map((n) => {
+      const hit = n.body.match(/STILL stalled \(repeat (\d+)\)/);
+      return hit ? Number(hit[1]) : 0;
+    });
+  };
+  const woken = mkWake();
+  const got = await ordinals(woken);
+  assert.strictEqual(woken.wakes().length, 1,
+    'ENTER: a wake really did fire in this episode, or the ladder was never at risk and this test is vacuous');
+  // The control differs in ONE way: a codex seat is refused by the gate, so no
+  // wake is ever attempted. Everything else — schedule, stall window, evidence —
+  // is identical.
+  const control = mkWake({ agentType: 'codex' });
+  const want = await ordinals(control);
+  assert.deepStrictEqual(control.wakes(), [], 'ENTER: the control was never woken — that is the only variable');
+  assert.deepStrictEqual(got, want,
+    'the rungs and their ordinals are exactly what they are with rung 2 absent: the doubling gate keys off '
+    + '`nudgedAt`, which the wake never writes');
+  assert.deepStrictEqual(got, [...new Set(got)],
+    'ENTER + the t327 defect restated: every ordinal is DISTINCT, so a ladder collapsed to "repeat 1" forever '
+    + 'cannot pass by matching an equally-collapsed control');
+  assert.ok(got.length >= 3, 'ENTER: several rungs were reached, or an equality over one element proves nothing');
+});
+
+// §8: reviewers are NOT woken. A never-started reviewer already has its own
+// purpose-built rung 2 (_armReviewStartCheck), and a quiet reviewer may be a
+// FINISHED one whose verdict was lost — waking it produces a second, possibly
+// contradictory verdict on a loop that may have moved on.
+test('t400 a wedged-confirmed REVIEW seat is never written to by the sweep', async () => {
+  const w = mkWake();
+  const arr = w.f.load();
+  arr[0].state = 'done';
+  arr[0].loopStep = 'review';
+  arr[0].closedAt = w.quiet;
+  arr[0].lastActivityAt = w.quiet;
+  w.f.tstore.save(w.f.team.root, arr);
+  w.f.gated.length = 0; w.f.injected.length = 0;
+  assert.strictEqual(w.f.one('t1').loopStep, 'review', 'ENTER: the ticket is loop-held at review, which is the excluded arm');
+  for (const m of [30, 31, 32, 33, 34]) await w.sweep(m);
+  assert.deepStrictEqual(w.f.injected.filter((x) => /wake\]/.test(x)), [],
+    'the loop owns its reviewer: a second waker racing _armReviewStartCheck into one composer is the t357 shape');
+});
+
+// THE CLEARING-SITE AUDIT, over all ELEVEN `nudgedAt = null` writers.
+//
+// `wakeAt` self-invalidates by arithmetic (`wakeAt - lastActivityAt <= 0` reads
+// as not-attempted), which needs no clearing site — but ONLY where the writer
+// that clears `nudgedAt` also MOVES `lastActivityAt`. A writer that cleared
+// `nudgedAt` alone would carry the old episode's `wakeAt` into the new one and
+// silently deny the new seat its one wake.
+//
+// Eleven, not the eight an older inventory listed: dispatch, assign and respec
+// were omitted there. All three are correct as written — so the count is stated
+// here explicitly, because a reader who greps and finds eleven against a
+// documented eight cannot tell a gap from a deliberate exclusion.
+//
+// Scanned from SOURCE rather than driven through eleven handlers: the property
+// is "no site anywhere clears the stamp without moving the clock", and a
+// behavioural test can only cover the sites someone remembered to write.
+test('t400 all ELEVEN `nudgedAt = null` sites also move lastActivityAt, so `wakeAt` needs no clearing site', () => {
+  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'team-tickets.js'), 'utf-8');
+  const lines = src.split('\n');
+  const sites = [];
+  // Every CLEAR, wherever it sits on the line and whatever the receiver is
+  // called. Two narrower patterns were tried and both let a mutant through: one
+  // restricted to the three names in use today (`ticket`, `rec`, `t`), and one
+  // anchored to the start of the line, which misses a clear nested inside a brace
+  // block. A scan that silently stops counting leaves the new site unaudited AND
+  // invisible, which is worse than not scanning at all — so the pattern is the
+  // loosest thing that still means "an assignment of null to a nudgedAt field",
+  // with comment lines excluded because this file discusses the sites in prose.
+  lines.forEach((line, i) => {
+    if (line.trim().startsWith('//')) return;
+    if (/\.nudgedAt\s*=\s*null\s*;/.test(line)) sites.push(i + 1);
+  });
+  assert.strictEqual(sites.length, 11,
+    `ENTER: exactly ELEVEN clearing sites (found ${sites.length} at ${sites.join(', ')}). A different count means a `
+    + 'site was added or removed, and the new one has NOT been audited — that is what this test is for');
+  // Scoped to the ENCLOSING METHOD, not a fixed line count. A fixed window has to
+  // be tuned to the widest real gap (23 lines, at the `_taskDone` loop-eligible
+  // site, where a long comment sits between the stamp and the clear) — and a
+  // window that wide is then loose enough to certify a genuinely broken site from
+  // an unrelated branch above it. The method boundary is the honest scope: it is
+  // where "this writer stamps the clock" is actually decidable.
+  const methodStart = (ln) => {
+    for (let i = ln - 1; i >= 0; i -= 1) {
+      if (/^    (?:async )?_?\w+\(/.test(lines[i])) return i;
+    }
+    return 0;
+  };
+  const missing = sites.filter((ln) => !lines.slice(methodStart(ln), ln)
+    .some((l) => /\.lastActivityAt = /.test(l)));
+  assert.deepStrictEqual(missing, [],
+    'a site that clears `nudgedAt` WITHOUT moving `lastActivityAt` carries the previous episode`s `wakeAt` across '
+    + 'the boundary, so the new episode reads as already-woken and the fresh seat never gets its one wake. '
+    + 'Fix such a site by adding `delete rec.wakeAt` beside it');
+});
+
+// The behavioural half of the audit, on the two paths where a fresh wake budget
+// matters most: assign and respec are the RECOVERY paths, so a new seat arriving
+// on a ticket that was already woken must get its own wake.
+test('t400 a REASSIGNED ticket carrying a stale wakeAt still gets the new seat its own wake', async () => {
+  // Aged so the SIMULATED sweep clock stays in the past: the sweeps below stamp
+  // `wakeAt` from their own `now`, while `assign` stamps `lastActivityAt` from
+  // the real `Date.now()`. With the default age the wake lands in the future
+  // relative to the assign, and the comparison below inverts for a reason that is
+  // the fixture's clock and not the code's behaviour.
+  const w = mkWake({}, {}, 3 * WAKE_STALL_MS);
+  for (const m of [30, 31, 32]) await w.sweep(m);
+  assert.ok(typeof w.f.one('t1').wakeAt === 'number', 'ENTER: episode 1 was woken, so there IS a stale stamp to carry');
+  w.f.m._handleTask(w.f.seat('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
+  const rec = w.f.one('t1');
+  assert.ok(typeof rec.wakeAt === 'number',
+    'ENTER: assign does NOT clear `wakeAt` — this pins the arithmetic, not a clearing site');
+  assert.strictEqual(rec.nudgedAt, null, 'ENTER: assign cleared `nudgedAt`, which is the site being audited');
+  assert.ok(rec.lastActivityAt > rec.wakeAt,
+    'and it moved `lastActivityAt` PAST the stale stamp — that is precisely what makes `wakeAt - last` non-positive '
+    + 'and the new episode wakeable');
+});
+
 test('t327 an off-ladder previous alarm still yields a sane rung, never 0 or a fraction', async () => {
   // The ordinal is derived (log2 of prevAge/stallMs), so it has to be judged off
   // the happy path too: sweeps run every 60s and the app can be shut when a rung

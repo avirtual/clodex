@@ -13,6 +13,22 @@ blocks a release.
 
 ## Unreleased
 
+- The ticket watchdog gained a middle rung: before the lead is alarmed about a
+  stalled ticket, a seat that is demonstrably wedged gets one automated wake —
+  a single injected line asking it to resume, nothing new. A hand that lost a
+  turn to an API error recovers on its own instead of waiting for the lead to
+  notice and poke it by hand. The bar for writing into a terminal is high,
+  because every injection destroys whatever is sitting unsubmitted in the
+  composer: the seat must show no transcript growth and no CPU anywhere in its
+  process tree across two consecutive sweeps, be idle, hold no unanswered
+  delivery, and have no operator draft open — and all of it is re-checked at the
+  last instant before the write, which is cancelled if anything changed. A seat
+  gets at most one wake per stall window no matter how many of its tickets are
+  stalled, since it has only one composer. If the wake produces no turn within
+  90s the lead is alarmed as before, now told that the wake was already tried.
+  The lead's first alarm is delayed by at most the wake's grace and confirm
+  windows, and never suppressed.
+
 - The watchdog's seat-liveness probe now measures CPU across the seat's whole
   process tree instead of the CLI process alone. A seat inside a long tool call
   (a build, a test run) keeps its CPU in the child while its transcript stays
