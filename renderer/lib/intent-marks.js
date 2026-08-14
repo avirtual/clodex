@@ -9,16 +9,16 @@
 
 const { cleanLine, parseIntent, fencedLines } = require('../../intent-scanner');
 
-// Bounded rescan window. Fence state restarts at the window top, so a fence
-// opened above it reads as closed — bounded staleness, against re-deriving a
-// 50k-row scrollback on every write.
+// Bounded rescan window, against re-deriving the whole scrollback per write.
+// It exceeds the configured scrollback, so the window starts at row 0; raising
+// scrollback past it lets the window open mid-fence, reading that fence as
+// closed. Pinned in intent-marks.test.js.
 const SCAN_ROWS = 2000;
 
 // xterm sets `isWrapped` on the CONTINUATION row; the head reads false. A head
 // absorbs rows until the next unwrapped one, so the grammar sees the line the
 // agent wrote, not a cell-width slice. A window opening mid-wrap reads a
-// continuation as a head, yielding a truncated line that fails to parse —
-// the safe direction.
+// continuation as a head — a truncated line that fails to parse, the safe way.
 function logicalLines(rows) {
   const out = [];
   let i = 0;

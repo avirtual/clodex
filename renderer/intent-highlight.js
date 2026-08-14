@@ -46,7 +46,9 @@ function createIntentHighlight(terminal, { getVar } = {}) {
     decoration.onRender((el) => {
       el.classList.add('intent-mark', `intent-mark-${kind}`);
     });
-    return { marker, decoration };
+    // cols is frozen into the decoration at registration, so it is carried here
+    // to detect the resize that stranded it.
+    return { marker, decoration, cols: terminal.cols };
   }
 
   function reconcile() {
@@ -64,6 +66,12 @@ function createIntentHighlight(terminal, { getVar } = {}) {
     const rows = [];
     for (let y = from; y < total; y += 1) {
       const l = buf.getLine(y);
+      // Trim every row, continuations included. A wrapped row is full to
+      // `cols`, so there is no real trailing space for this to eat. Switching
+      // continuations to translateToString(false) to "preserve" one is wrong:
+      // where a double-width char cannot fit the last cell, xterm leaves that
+      // cell EMPTY, and the untrimmed form materializes it as a space that was
+      // never typed — measured injecting `[agent:dm  一bob]` at cols=11.
       rows.push({ text: l ? l.translateToString(true) : '', isWrapped: !!(l && l.isWrapped) });
     }
 
@@ -78,7 +86,13 @@ function createIntentHighlight(terminal, { getVar } = {}) {
       // Only lines inside the window were re-derived, so one above it is kept
       // rather than read as "no longer wanted".
       if (line < from) { kept.push(cur); continue; }
-      if (want.get(line) === cur.kind) { want.delete(line); kept.push(cur); continue; }
+      // A stale width is repainted like a changed kind: keeping the row would
+      // otherwise leave the wash stopping short of a widened terminal.
+      if (want.get(line) === cur.kind && cur.cols === terminal.cols) {
+        want.delete(line);
+        kept.push(cur);
+        continue;
+      }
       cur.decoration.dispose();
       cur.marker.dispose();
     }

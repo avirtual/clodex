@@ -12,7 +12,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { classifyRows, classifyText, logicalLines } = require('../renderer/lib/intent-marks');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { classifyRows, classifyText, logicalLines, SCAN_ROWS } = require('../renderer/lib/intent-marks');
 
 const rows = (...texts) => texts.map((t) => (typeof t === 'string' ? { text: t, isWrapped: false } : t));
 const wrapped = (text) => ({ text, isWrapped: true });
@@ -84,6 +87,21 @@ test('an unwrapped row stands alone', () => {
   ]);
 });
 
+test('a space at the wrap boundary survives the join', () => {
+  // The caller must NOT right-trim a row that continues: a soft-wrapped row is
+  // full to `cols`, so a space in its last cell is real content. Trimmed, the
+  // join fuses the words and a FIRED intent reads as inert — the false "did
+  // not fire" that invites a double emission.
+  const out = logicalLines([{ text: '[agent:dm ', isWrapped: false }, wrapped('bob] hi')]);
+  assert.deepStrictEqual(out, [{ start: 0, end: 1, text: '[agent:dm bob] hi' }]);
+  assert.strictEqual(classifyText(out[0].text), 'fire');
+});
+
+test('an intent split across the wrap boundary is still fire, not inert', () => {
+  const marks = classifyRows([{ text: '[agent:dm ', isWrapped: false }, wrapped('bob] a body')]);
+  assert.deepStrictEqual(marks, [{ start: 0, end: 1, kind: 'fire' }]);
+});
+
 // --- classifyRows: anchoring, fences, reduction ------------------------------
 
 test('a wrapped intent is marked once, anchored to its HEAD row', () => {
@@ -133,6 +151,22 @@ test('fire and inert are distinguished in one pass', () => {
 
 test('an empty buffer yields no marks', () => {
   assert.deepStrictEqual(classifyRows([]), []);
+});
+
+test('SCAN_ROWS still exceeds the terminal scrollback it is sized against', () => {
+  // The bounded window truncates fence state at its top, which is harmless
+  // only while the window covers the whole buffer. renderer.js builds its
+  // Terminal without a `scrollback` option, so xterm's default 1000 applies.
+  // A future bump past SCAN_ROWS silently creates the mid-fence-window case,
+  // and this fails when it does instead of leaving a stale comment behind.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const configured = src.match(/scrollback:\s*(\d+)/);
+  const scrollback = configured ? Number(configured[1]) : 1000;
+  assert.ok(
+    SCAN_ROWS > scrollback,
+    `SCAN_ROWS (${SCAN_ROWS}) must exceed the terminal scrollback (${scrollback}); ` +
+    'below it the scan window can open inside a fence and read it as closed.',
+  );
 });
 
 test('escaped and fenced rows survive as unmarked among marked ones', () => {
