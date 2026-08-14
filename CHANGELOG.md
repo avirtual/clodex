@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- A reminder can now be tied to the ticket it is about, and dies with it. Write
+  `[agent:remind for t42 in 40m] check the branch landed` and the reminder is
+  cancelled automatically when t42 is accepted or cancelled — so a check you
+  armed at dispatch cannot fire hours later carrying instructions about work
+  that is already finished, describing a state that has since moved on. The
+  binding is explicit: nothing is guessed from the reminder's text, and a
+  binding to a ticket that is not on your team's board is refused outright
+  rather than quietly armed. Reporting a ticket `done` does not cancel it — a
+  rejection reopens the ticket, and the reminder is still wanted through the
+  rework round.
+
 - A rejection that never reaches its seat now says so. When a ticket is sent
   back for rework, Clodex watches that the seat actually starts a turn on it;
   if the message was swallowed, it redelivers once and then tells you the seat
