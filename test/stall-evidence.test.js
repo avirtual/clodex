@@ -16,7 +16,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { readTail, lastToolFrom, formatStallBody } = require('../stall-evidence');
+const { readTail, lastToolFrom, formatStallBody, formatOrphanBody } = require('../stall-evidence');
 
 function jsonl(...entries) {
   return entries.map((e) => JSON.stringify(e)).join('\n') + '\n';
@@ -166,4 +166,53 @@ test('zero commits and no commits are distinguished from an unmeasurable branch'
   assert.match(zero, /no commits/);
   assert.match(some, /1 commit\b/);
   assert.ok(!/commit/.test(unknown), 'a failed git probe says nothing about commits');
+});
+
+// ── formatOrphanBody (t377) ────────────────────────────────────────────────
+//
+// Measured on t376: a retired hand's ticket alarmed `stalled: hand quiet 31m
+// (no commits)` and then `STILL stalled (repeat 1): hand quiet 1h`. No hand was
+// quiet; no hand existed. The tests below are about the alarm not borrowing the
+// stall's wording, because the wording is what tells the lead where to look.
+
+test('t377: an orphan alarm cannot be mistaken for a stall — the wording diverges', () => {
+  const orphan = formatOrphanBody({ ticketId: 't376', who: 'hand', age: '1h', commits: 0 });
+  const stall = formatStallBody({ ticketId: 't376', who: 'hand', age: '1h', commits: 0 });
+  // ENTER: the two bodies are built from IDENTICAL inputs. Without this the test
+  // could be contrasting two different situations and pass for no reason.
+  assert.notStrictEqual(orphan, stall, 'same inputs, different alarms');
+  assert.match(stall, /stalled: hand quiet 1h/, 'ENTER: the stall phrasing is what it is');
+  assert.ok(!/stalled: /.test(orphan),
+    'the orphan never opens with "stalled:" — that phrase is the lead`s cue to go look at a seat');
+  assert.match(orphan, /not stalled/, 'it denies the reading explicitly rather than merely omitting it');
+  assert.match(orphan, /not a live seat/, 'it names the one fact that matters');
+  assert.match(orphan, /UNASSIGNED/, 'and the state the ticket is actually in');
+});
+
+test('t377: the orphan alarm names the three exits, since none of them is "wait"', () => {
+  // A stall alarm is actionable by waiting — the seat may come back. An orphan
+  // never resolves itself, so a body that does not name an exit leaves the lead
+  // with an alarm and no move.
+  const b = formatOrphanBody({ ticketId: 't376', who: 'hand', age: '1h' });
+  assert.match(b, /reassign/i);
+  assert.match(b, /cancel/i);
+  assert.match(b, /park/i);
+  assert.match(b, /nothing is working on it/, 'and says plainly that no work is in flight');
+});
+
+test('t377: the orphan alarm carries git evidence but never a tool outcome', () => {
+  // Commits/dirty decide between the exits, so they ride. A tool outcome cannot:
+  // there is no seat, so there is no transcript to have read one from, and a
+  // field claiming otherwise would carry the alarm's authority behind a fiction.
+  const b = formatOrphanBody({ ticketId: 't376', who: 'hand', age: '1h', commits: 3, dirty: true });
+  assert.match(b, /3 commits/, 'ENTER: the evidence really is in the body');
+  assert.match(b, /tree dirty/);
+  assert.ok(!/last tool|never returned|errored/.test(b), 'no tool claim is possible without a seat');
+  const bare = formatOrphanBody({ ticketId: 't376', who: 'hand', age: '1h' });
+  assert.ok(!/commit|dirty|clean/.test(bare), 'an unmeasurable branch invents nothing');
+});
+
+test('t377: the orphan body stays one line, like every alarm in the prompt stream', () => {
+  const b = formatOrphanBody({ ticketId: 't376', who: 'clodex-hand-376', age: '2h', commits: 3, dirty: true });
+  assert.ok(!b.includes('\n'), 'no newlines');
 });
