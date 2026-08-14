@@ -129,7 +129,7 @@ const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 're
 // Only the store constructor stays here: createSessionManager builds the ONE
 // instance and lends it to team-tickets.js. Every record helper that used to be
 // destructured alongside it moved with the verbs that call them (t380).
-const { createTicketsStore } = require('./tickets-store');
+const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
@@ -3915,10 +3915,26 @@ function createSessionManager(deps) {
           this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${e}` });
           return;
         }
-        let known = false;
-        try { known = ticketsStore.load(team.root).some((t) => t && t.id === parsed.ticket); } catch { known = false; }
-        if (!known) {
+        let row = null;
+        try { row = ticketsStore.load(team.root).find((t) => t && t.id === parsed.ticket) || null; } catch { row = null; }
+        if (!row) {
           const e = `no ticket ${parsed.ticket} on ${team.name} — nothing to bind this reminder to`;
+          reply(e);
+          this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${e}` });
+          return;
+        }
+        // Existence is not enough, and this is the same bug the whole ticket is
+        // about: a binding to an ALREADY-TERMINAL ticket can never be collected,
+        // because no verb will name it again — _taskCancel refuses a non-open
+        // ticket, and an accept that closed out is not repeated. So it would arm
+        // and then fire stale, which is precisely what this feature prevents.
+        //
+        // The SAME predicate decides here and at close time (ticketTerminal /
+        // ticketTerminalReason in tickets-store), so the set refused here and
+        // the set collected there cannot drift apart.
+        const why = ticketTerminalReason(row);
+        if (why) {
+          const e = `ticket ${parsed.ticket} is ${why} — nothing left to bind to`;
           reply(e);
           this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${e}` });
           return;

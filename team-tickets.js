@@ -4725,9 +4725,15 @@ function createTicketMethods(deps, shared) {
       try { rec = seatName ? getPersistence().get(seatName) : null; } catch { rec = null; }
       const branch = (rec && rec.worktree && rec.worktree.branch) || (ticket.worktree && ticket.worktree.branch) || null;
 
-      const finish = (msg) => {
+      // `closedOut` is passed by the CALLING ARM, never derived here: finish()
+      // runs on all four accept paths and cannot tell them apart, and that is
+      // exactly the conflation this parameter exists to prevent. Two of the four
+      // arms end with "Merge it, then accept again" — they are not terminal, and
+      // a reminder bound to the ticket is most wanted precisely there.
+      const finish = (msg, closedOut = false) => {
         ticket.acceptedAt = Date.now();
         ticket.acceptedBy = session.name;
+        if (closedOut) ticket.closedOut = true;
         if (note) ticket.acceptNote = note;
         ticket.lastActivityAt = ticket.acceptedAt;
         // Accept ENDS the loop's hold, and both writes below must say so.
@@ -4746,6 +4752,7 @@ function createTicketMethods(deps, shared) {
         if (row) {
           row.acceptedAt = ticket.acceptedAt;
           row.acceptedBy = ticket.acceptedBy;
+          if (closedOut) row.closedOut = true;
           if (note) row.acceptNote = note;
           row.lastActivityAt = ticket.lastActivityAt;
           delete row.loopStep;
@@ -4755,7 +4762,12 @@ function createTicketMethods(deps, shared) {
         }
         this._broadcast('ipc-message', { type: 'task', from: session.name, to: seatName || '(unassigned)', body: `ticket ${ticket.id} accepted` });
         log.info('intent', `task accept ${ticket.id} by ${session.name}: ${msg}`);
-        const dropped = this._cancelTicketReminders(session.name, ticket.id);
+        // Cancellation is gated on the SAME fact the stamp is: only an accept
+        // that closed the ticket out collects its reminders. On the other two
+        // arms the reply says "Merge it, then accept again" — cancelling there
+        // would drop "check the branch landed" in the very message reporting
+        // that it did not.
+        const dropped = closedOut ? this._cancelTicketReminders(session.name, ticket.id) : '';
         reply(dropped ? `${msg} ${dropped}` : msg);
       };
 
@@ -4765,7 +4777,9 @@ function createTicketMethods(deps, shared) {
       // licensed.
       if (!branch) {
         if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
-        finish(`ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was torn down${seatName ? ` (${seatName} left as it is)` : ''}`);
+        // Terminal: there is no branch to merge and no second accept to invite,
+        // so acceptance is the whole story for this ticket.
+        finish(`ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was torn down${seatName ? ` (${seatName} left as it is)` : ''}`, true);
         return;
       }
 
@@ -4774,6 +4788,9 @@ function createTicketMethods(deps, shared) {
       if (!m.ok) {
         if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
         if (seatName && this.sessions.has(seatName)) await this.archive(seatName);
+        // NOT terminal (no `closedOut`): the reply below invites another accept
+        // once the merge fact can be established, so the ticket is still live
+        // and any reminder bound to it is still wanted.
         finish(`ticket ${ticket.id} accepted, but the merge check could NOT run for branch ${branch} (${m.error || 'unknown error'}) — treated as NOT merged: `
           + `${seatName ? `${seatName} was archived, and its ` : 'its '}worktree and branch were KEPT. Nothing was removed.`);
         return;
@@ -4782,6 +4799,10 @@ function createTicketMethods(deps, shared) {
       if (!m.merged) {
         if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
         if (seatName && this.sessions.has(seatName)) await this.archive(seatName);
+        // NOT terminal (no `closedOut`), same reasoning: "Merge it, then accept
+        // again" is an explicit invitation to come back. Cancelling a bound
+        // reminder in the message that reports the branch did NOT land is the
+        // worst possible moment for it.
         finish(`ticket ${ticket.id} accepted, but branch ${branch} is NOT merged into ${m.base} — `
           + `${seatName ? `${seatName} was archived (resumable), and its ` : 'its '}worktree and branch were KEPT. `
           + `Merge it, then [agent:task accept ${ticket.id}] again to clean up.`);
@@ -4804,7 +4825,9 @@ function createTicketMethods(deps, shared) {
             : `${seatName} retired`);
       }
       parts.push(del.ok ? `branch ${branch} deleted` : `branch ${branch} could NOT be deleted (${del.error})`);
-      finish(`ticket ${ticket.id} accepted — merged into ${m.base}; ${parts.join('; ')}.`);
+      // Terminal: merged, seat retired, branch deleted. Nothing here invites a
+      // second accept, so this is where a bound reminder has done its job.
+      finish(`ticket ${ticket.id} accepted — merged into ${m.base}; ${parts.join('; ')}.`, true);
     },
 
     // Park an ALREADY-OPEN ticket, or the unpark direction if it is parked. A

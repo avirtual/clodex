@@ -29,6 +29,7 @@ const assert = require('node:assert');
 const fsReal = require('node:fs');
 const pathReal = require('node:path');
 const osReal = require('node:os');
+const { execFileSync } = require('node:child_process');
 
 const { initStores } = require('../stores');
 const { createRemindScheduler } = require('../remind-scheduler');
@@ -69,6 +70,31 @@ function fakeClock(startMs) {
   };
 }
 
+// A real git repo, so the accept arms are reached through the real merge check
+// rather than a stub. The distinction the rework turns on — merged vs
+// not-merged vs check-could-not-run — is exactly a git fact, and a stubbed
+// gitWorktree would let a subject claim to exercise the not-merged arm while
+// actually taking whichever arm the stub was written to return.
+function mkRepo() {
+  const dir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t395-repo-'));
+  const git = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
+  git(['init', '-q', '-b', 'master']);
+  git(['config', 'user.email', 't@t.t']);
+  git(['config', 'user.name', 'T']);
+  fsReal.writeFileSync(pathReal.join(dir, 'base.txt'), 'base\n');
+  git(['add', 'base.txt']);
+  git(['commit', '-q', '-m', 'base']);
+  // `landed` is an ancestor of master (merged); `pending` carries a commit
+  // master does not have (genuinely not merged).
+  git(['branch', 'landed']);
+  git(['checkout', '-q', '-b', 'pending']);
+  fsReal.writeFileSync(pathReal.join(dir, 'work.txt'), 'work\n');
+  git(['add', 'work.txt']);
+  git(['commit', '-q', '-m', 'work']);
+  git(['checkout', '-q', 'master']);
+  return { dir, git };
+}
+
 // A manager wired to a REAL tickets store and a REAL remind scheduler over the
 // same temp home, with a lead seat and two open tickets (t1, t2).
 //
@@ -79,7 +105,8 @@ function fakeClock(startMs) {
 function mkFixture() {
   const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t395-'));
   const userData = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t395-ud-'));
-  const repoDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t395-repo-'));
+  const repo = mkRepo();
+  const repoDir = repo.dir;
 
   const stores = initStores(userData, { log: console, registryDir: home });
   const clock = fakeClock(T0);
@@ -114,6 +141,14 @@ function mkFixture() {
       if (i >= 0) store[i] = { ...store[i], ...e }; else store.push({ ...e });
     },
     remove: (n) => { const i = store.findIndex((x) => x.name === n); if (i >= 0) store.splice(i, 1); },
+    // Reached for real: the two NON-terminal accept arms archive the seat rather
+    // than retiring it (the work is unmerged, so the seat must stay resumable).
+    // Those arms are the subject of half the rework, so this is on the live path
+    // here, not fixture padding.
+    setArchived: (n, archived) => {
+      const e = store.find((x) => x.name === n);
+      if (e) e.archivedAt = archived ? Date.now() : null;
+    },
     setStripLevel: () => {},
     setAutoCompact: () => {},
   };
@@ -199,6 +234,7 @@ function mkFixture() {
 
   return {
     m, team, lead, reply, replies, tstore, scheduler, clock, fires, logs, injected,
+    repo, persistence,
     store: stores.reminders,
     one: (id) => tstore.load(team.root).find((t) => t.id === id),
     setState: (id, patch) => {
@@ -516,6 +552,186 @@ test('accept after a reject round finally cancels it', async () => {
 
     assert.ok(f.one('t1').acceptedAt, 'ENTER: the accept landed');
     assert.strictEqual(f.store.get(before.id), null, 'the terminal close collects it');
+  } finally { f.cleanup(); }
+});
+
+// ── liveness: which tickets may be bound to at all ──────────────────────────
+//
+// The arm-time guard and the close-time cancellation must refuse and collect the
+// SAME set, or a binding lands on a ticket no verb will ever name again — this
+// ticket's own bug, reproduced inside its fix.
+
+test('binding to a CANCELLED ticket bounces and names the state', () => {
+  const f = mkFixture();
+  try {
+    f.m._taskCancel(f.lead, f.team, { id: 't1', body: 'dropped' }, f.reply);
+    assert.strictEqual(f.one('t1').state, 'cancelled', 'ENTER: t1 is really cancelled');
+
+    const mine = f.arm('for t1 in 40m', 'too late');
+
+    assert.deepStrictEqual(mine, [], 'nothing armed — no verb will ever name t1 again');
+    assert.match(f.injected.join('\n'), /ticket t1 is cancelled — nothing left to bind to/,
+      'and the bounce names the STATE, not a generic refusal');
+  } finally { f.cleanup(); }
+});
+
+test('binding to an ACCEPTED-AND-MERGED ticket bounces and names the state', async () => {
+  const f = mkFixture();
+  try {
+    // Real merged branch, so the accept takes the genuinely-terminal arm.
+    f.setState('t1', { state: 'done', report: 'did it', worktree: { branch: 'landed' } });
+    await f.m._taskAccept(f.lead, f.team, { id: 't1' }, f.reply);
+    assert.strictEqual(f.one('t1').closedOut, true, 'ENTER: the accept genuinely closed t1 out');
+
+    const mine = f.arm('for t1 in 40m', 'too late');
+
+    assert.deepStrictEqual(mine, [], 'nothing armed');
+    assert.match(f.injected.join('\n'), /ticket t1 is accepted and closed out — nothing left to bind to/);
+  } finally { f.cleanup(); }
+});
+
+test('binding to a DONE-but-not-yet-accepted ticket SUCCEEDS — it is still live', () => {
+  const f = mkFixture();
+  try {
+    // The counterweight to the two subjects above: `done` is reversible, an
+    // accept is still to come, and a lead has every reason to arm a reminder
+    // here. A guard that refused this would be over-broad in a way the two
+    // bounce subjects alone cannot detect.
+    const hand = f.m.sessions.get('team-hand');
+    f.m._taskDone(hand, f.team, { id: 't1', body: 'reported.' }, f.reply);
+    assert.strictEqual(f.one('t1').state, 'done', 'ENTER: t1 is done');
+    assert.ok(!f.one('t1').closedOut, 'ENTER: but NOT closed out');
+
+    const mine = f.arm('for t1 in 40m', 'check it lands');
+
+    assert.strictEqual(mine.length, 1, 'the reminder armed');
+    assert.strictEqual(mine[0].ticket, 't1', 'and is bound');
+  } finally { f.cleanup(); }
+});
+
+test('binding to a ticket awaiting its merge SUCCEEDS — an unmerged accept is not terminal', async () => {
+  const f = mkFixture();
+  try {
+    // `acceptedAt` is stamped on this arm too, which is exactly why it cannot be
+    // the liveness marker: predicating on it would refuse a binding here, on a
+    // ticket whose branch has not landed and which the lead was just told to
+    // accept again.
+    f.setState('t1', { state: 'done', report: 'did it', worktree: { branch: 'pending' } });
+    await f.m._taskAccept(f.lead, f.team, { id: 't1' }, f.reply);
+    assert.match(f.replies.join('\n'), /is NOT merged/, 'ENTER: the not-merged arm really ran');
+    assert.ok(f.one('t1').acceptedAt, 'ENTER: acceptedAt IS stamped on this arm');
+    assert.ok(!f.one('t1').closedOut, 'ENTER: but the ticket is not closed out');
+
+    const mine = f.arm('for t1 in 40m', 'check the branch landed');
+    assert.strictEqual(mine.length, 1, 'binding is still allowed — the ticket is live');
+  } finally { f.cleanup(); }
+});
+
+// ── which ACCEPT collects the reminder ─────────────────────────────────────
+
+test('a bound reminder SURVIVES an accept that reports NOT MERGED, and still fires', async () => {
+  const f = mkFixture();
+  try {
+    f.arm('for t1 in 40m', 'check the branch landed');
+    const before = boundTo(f.store, 'lead', 't1');
+    assert.ok(before, 'ENTER: a reminder exists, bound to t1');
+    assert.strictEqual(before.nextFireAt, T0 + 40 * MIN, 'ENTER: and is scheduled');
+
+    f.setState('t1', { state: 'done', report: 'did it', worktree: { branch: 'pending' } });
+    await f.m._taskAccept(f.lead, f.team, { id: 't1' }, f.reply);
+    assert.match(f.replies.join('\n'), /is NOT merged/, 'ENTER: the not-merged arm really ran');
+    assert.match(f.replies.join('\n'), /accept t1\] again/, 'ENTER: and it invited a second accept');
+
+    const after = f.store.get(before.id);
+    assert.ok(after, 'the reminder survives — the branch did NOT land, so it is still wanted');
+    assert.strictEqual(after.nextFireAt, T0 + 40 * MIN, 'and is still SCHEDULED, not merely present');
+    f.clock.advance(41 * MIN);
+    assert.deepStrictEqual(f.fires.map((x) => x.body), ['check the branch landed'], 'and it genuinely fires');
+    assert.doesNotMatch(f.replies.join('\n'), /bound reminder/, 'and nothing claimed a cancellation');
+  } finally { f.cleanup(); }
+});
+
+test('a bound reminder SURVIVES the check-could-not-run arm', async () => {
+  const f = mkFixture();
+  try {
+    // Absence of evidence is not merged-ness: this arm keeps the tree and the
+    // branch and invites another accept, so it must keep the reminder too.
+    f.arm('for t1 in 40m', 'check the branch landed');
+    const before = boundTo(f.store, 'lead', 't1');
+    assert.ok(before, 'ENTER: a reminder exists, bound to t1');
+
+    f.setState('t1', { state: 'done', report: 'did it', worktree: { branch: 'no-such-branch' } });
+    await f.m._taskAccept(f.lead, f.team, { id: 't1' }, f.reply);
+    assert.match(f.replies.join('\n'), /merge check could NOT run/, 'ENTER: that arm really ran');
+
+    const after = f.store.get(before.id);
+    assert.ok(after, 'the reminder survives an inconclusive check');
+    assert.strictEqual(after.nextFireAt, T0 + 40 * MIN, 'and is still scheduled');
+    f.clock.advance(41 * MIN);
+    assert.deepStrictEqual(f.fires.map((x) => x.body), ['check the branch landed']);
+  } finally { f.cleanup(); }
+});
+
+test('the SECOND accept — the one that merges — is what finally collects it', async () => {
+  const f = mkFixture();
+  try {
+    // The pair that proves the arms are DISTINGUISHED rather than accidentally
+    // both working: same ticket, same reminder, two accepts, and only the second
+    // one collects. Either arm being wrong breaks exactly one half of this.
+    f.arm('for t1 in 40m', 'check the branch landed');
+    const before = boundTo(f.store, 'lead', 't1');
+    assert.ok(before, 'ENTER: a reminder exists, bound to t1');
+
+    f.setState('t1', { state: 'done', report: 'did it', worktree: { branch: 'pending' } });
+    await f.m._taskAccept(f.lead, f.team, { id: 't1' }, f.reply);
+    assert.ok(f.store.get(before.id), 'ENTER: it survived the unmerged accept');
+    assert.strictEqual(f.one('t1').state, 'done', 'ENTER: and the ticket is still done, so accept may run again');
+
+    // The lead merges, then accepts again — the flow the first reply prescribed.
+    f.repo.git(['merge', '-q', 'pending']);
+    await f.m._taskAccept(f.lead, f.team, { id: 't1' }, f.reply);
+
+    assert.strictEqual(f.one('t1').closedOut, true, 'ENTER: this accept closed the ticket out');
+    assert.strictEqual(f.store.get(before.id), null, 'and NOW the reminder is collected');
+    assert.match(f.replies.join('\n'), /1 bound reminder\(s\) cancelled/);
+  } finally { f.cleanup(); }
+});
+
+test('the terminal stamp survives the re-read fallback, so a vanished row cannot be re-bound', async () => {
+  const f = mkFixture();
+  try {
+    // finish() writes the stamp TWICE — onto the re-read row, and onto its own
+    // in-memory copy for the fallback save taken when the re-read cannot find
+    // the row. Every other subject here takes the re-read path, which left the
+    // in-memory write unmeasured: a mutant deleting it scored exactly what the
+    // fix scored, and by the rule that an identical score means the subject
+    // cannot reach the behaviour, this subject exists to reach it.
+    //
+    // The condition is forced through the code's OWN seam rather than by
+    // stubbing the store: _stampTicketRevival runs between the load and the
+    // re-read, so a ticket that disappears there models the board being
+    // rewritten under an accept in flight. That the fallback still records the
+    // terminal fact is what stops the ticket being bindable again afterwards.
+    f.arm('for t1 in 40m', 'about t1');
+    const before = boundTo(f.store, 'lead', 't1');
+    assert.ok(before, 'ENTER: a reminder exists, bound to t1');
+
+    f.setState('t1', { state: 'done', report: 'did it' });   // no branch → terminal arm
+    f.m._stampTicketRevival = () => {
+      f.tstore.save(f.team.root, f.tstore.load(f.team.root).filter((t) => t.id !== 't1'));
+      return null;
+    };
+    await f.m._taskAccept(f.lead, f.team, { id: 't1' }, f.reply);
+
+    const row = f.one('t1');
+    assert.ok(row, 'ENTER: the fallback save restored the row, so there is something to assert about');
+    assert.strictEqual(row.closedOut, true, 'the terminal fact survives the fallback');
+    assert.strictEqual(f.store.get(before.id), null, 'and the accept still collected the reminder');
+
+    // The point of the stamp: the ticket cannot be bound to again.
+    const mine = f.arm('for t1 in 40m', 'too late');
+    assert.deepStrictEqual(mine, [], 'a terminal ticket refuses a new binding');
+    assert.match(f.injected.join('\n'), /ticket t1 is accepted and closed out/);
   } finally { f.cleanup(); }
 });
 
