@@ -240,20 +240,25 @@ const REVIEWER_FALLBACK = {
 // token can ride along with it.
 function reviewerModelArgs(extraArgs) {
   const a = Array.isArray(extraArgs) ? extraArgs : [];
+  // A model NAME never begins with '-'. Refusing one that does keeps this
+  // function fail-closed on its own terms: otherwise `['--model','--dangerously-
+  // skip-permissions']` emits that flag into the reviewer's argv, and whether it
+  // is read as a flag or swallowed as a bogus model name depends on the CLI's
+  // parser — an authority decision this allowlist must not delegate downstream.
+  const usable = (v) => typeof v === 'string' && v && !v.startsWith('-');
   for (let i = 0; i < a.length; i++) {
     const tok = a[i];
     if (typeof tok !== 'string') continue;
     // Only the FIRST model token is honored: a last-wins CLI would let a second
     // one override it, which would make the allowlist's choice not the effective one.
     if (tok === '--model' || tok === '-m') {
-      const v = a[i + 1];
       // A trailing flag with no value is dropped entirely rather than emitted
       // bare — a bare --model would consume whatever argv token followed it.
-      return (typeof v === 'string' && v) ? ['--model', v] : [];
+      return usable(a[i + 1]) ? ['--model', a[i + 1]] : [];
     }
     if (tok.startsWith('--model=')) {
       const v = tok.slice('--model='.length);
-      return v ? ['--model', v] : [];
+      return usable(v) ? ['--model', v] : [];
     }
   }
   return [];

@@ -600,6 +600,28 @@ test('t386: only the FIRST --model survives, and a valueless trailing --model is
   );
 });
 
+test('t386: a flag-shaped model VALUE is refused, not forwarded', () => {
+  // Cold-review finding. The carve-out rebuilds the pair, so no SIBLING token
+  // rides — but the value slot itself was unscreened, and a template can put a
+  // flag there. Forwarding it would leave whether it parses as a flag or as a
+  // bogus model name up to the CLI's argv parser, which is an authority
+  // decision this allowlist must not delegate downstream.
+  for (const extraArgs of [
+    ['--model', '--dangerously-skip-permissions'],
+    ['--model=--dangerously-skip-permissions'],
+    ['-m', '--allowedTools'],
+  ]) {
+    const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', extraArgs }], { leadArgs: [] });
+    const team = teamWith({ reviewer: { template: 'rv' } });
+    const args = m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs;
+    assert.deepStrictEqual(args, [], `${JSON.stringify(extraArgs)}: refused outright`);
+    assert.ok(
+      !args.includes('--dangerously-skip-permissions'),
+      'a flag must never reach argv through the model value slot',
+    );
+  }
+});
+
 test('t386: a reviewer template with no extraArgs is unchanged by the carve-out', () => {
   // The shipped template carries no extraArgs at all, so this is the shape that
   // actually spawns today. It must still be exactly the posture.
