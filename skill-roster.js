@@ -27,7 +27,9 @@ function dirsFor(content, names) {
     const m = FROM_RE.exec(line);
     if (!m) continue;
     const rest = line.slice(2);
-    for (const n of names) {
+    // Longest first: one name can be a colon-prefix of another (`read` vs
+    // `read:extended`), and shortest-first lets the prefix steal the bullet.
+    for (const n of [...names].sort((a, b) => b.length - a.length)) {
       if (rest.startsWith(`${n}:`)) { out.set(n, m[1].trim()); break; }
     }
   }

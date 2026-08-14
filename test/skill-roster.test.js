@@ -206,3 +206,29 @@ test('empty / nullish input does not throw', () => {
     assert.deepStrictEqual(classifySkillRoster(v), { roster: [], outOfScope: [], sawRoster: false });
   }
 });
+
+// A name that is a colon-prefix of another is not hypothetical: `read` is in the
+// measured crypto listing, and a plugin is free to ship `read:extended` beside
+// it. Matched shortest-first, the prefix claims the longer name's bullet and the
+// longer name goes dirless — so both dirs are asserted, not just the survivor's.
+test('a name that prefixes another does not steal its bullet', () => {
+  const pair = ['read', 'read:extended'];
+  const rec = JSON.stringify({
+    type: 'attachment',
+    attachment: {
+      type: 'skill_listing',
+      isInitial: false,
+      skillCount: 2,
+      names: pair,
+      content: [
+        `- read: does a thing (from app/.claude/skills — applies when working on files under app/)`,
+        `- read:extended: does a thing (from lib/.claude/skills — applies when working on files under lib/)`,
+      ].join('\n'),
+    },
+  });
+  const got = classifySkillRoster([rec]);
+  assert.deepStrictEqual(got.outOfScope, [
+    { name: 'read', dir: 'app/' },
+    { name: 'read:extended', dir: 'lib/' },
+  ]);
+});
