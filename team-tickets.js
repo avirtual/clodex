@@ -266,6 +266,12 @@ function createTicketMethods(deps, shared) {
     // _taskAssign, AND exported (ipc-handlers imports it). Passed in rather
     // than moved so the export keeps its home and no require cycle is created.
     nameConflict,
+    // Derived core-side (session-manager.js, beside BOOT_DRAIN_SETTLE_MS) and
+    // borrowed here. It measures how long an injected unit has to produce a turn
+    // edge — inject/activity plumbing, not ticket lifecycle — and the dm latch
+    // core-side is its third borrower. Re-deriving it from `deps.specConfirmMs`
+    // here as well would put the same default in two files.
+    SPEC_CONFIRM_MS,
   } = shared;
 
   // Injectable ONLY so the kill arm is reachable from a test. Without a seam no
@@ -274,17 +280,6 @@ function createTicketMethods(deps, shared) {
   // ship green while measuring nothing.
   const TICKET_SUITE_TIMEOUT = Number.isFinite(deps.ticketSuiteTimeoutMs)
     ? deps.ticketSuiteTimeoutMs : TICKET_SUITE_TIMEOUT_MS;
-
-  // How long after a spec is WRITTEN — the clock starts at the queue's write, not
-  // at the enqueue, so the gates ahead of it do not eat the window — a seat has to
-  // START A TURN before the write is treated as lost. Not a stall threshold: it
-  // measures the FIRST turn only, and a seat that submitted anything at all has
-  // already cleared the latch, so this can never fire on a slow turn however long
-  // it runs.
-  // Injectable for tests, which drive it LONG and call the check directly — at 0
-  // the check races the delivery it is meant to judge and reads a latch the
-  // production ordering never produces. 90s in production.
-  const SPEC_CONFIRM_MS = Number.isFinite(deps.specConfirmMs) ? deps.specConfirmMs : 90 * 1000;
 
   return {
     sweepReviewerGraveyard() {
@@ -5381,7 +5376,12 @@ function createTicketMethods(deps, shared) {
           // `foreignRole` rides here too: it is a property of the ticket and the
           // sweeping team, not of the seat, so re-resolving without it would let the
           // await path reach a classification the gate above deliberately refused.
-          orphanNow = !foreignRole && !this._ticketAssigneeSeat(team, after);
+          const seatNow = this._ticketAssigneeSeat(team, after);
+          orphanNow = !foreignRole && !seatNow;
+          // Read from the SEAT the ticket resolves to now, not from the pre-await
+          // snapshot: the same staleness the re-resolve above exists to fix would
+          // otherwise attribute one seat's silence to another seat's latch.
+          const dmEv = seatNow ? this._dmLatchEvidence(seatNow) : null;
           // The orphan branch shares the probe above and diverges only here: the git
           // facts are what decide between reassign, cancel and park, so they are worth
           // the same calls. `ev.tool` is null for an orphan by construction — the
@@ -5395,6 +5395,12 @@ function createTicketMethods(deps, shared) {
             : formatStallBody({
               ticketId: tid, who: t.role || t.assignee, age: humanizeAge(now - last),
               repeat, tool: ev.tool, commits: ev.commits, dirty: ev.dirty,
+              // Why the seat is quiet, when this process happens to know: a dm
+              // was written into it and no turn ever followed. Only on this arm
+              // — the orphan arm has no seat to have been written to, and the
+              // loop-held arm names a stuck STEP, where a seat's dm history is
+              // not what is stalled.
+              dmLatch: dmEv && { count: dmEv.count, age: humanizeAge(now - dmEv.at) },
             });
         }
         this._gatedDeliver(team.lead, 'ticket-watchdog',

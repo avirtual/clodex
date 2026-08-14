@@ -398,3 +398,57 @@ test('t384: an UNREADABLE transcript never counts as growth against a readable o
   );
   assert.strictEqual(back.verdict, 'wedged', 'and neither is losing the file mid-review');
 });
+
+// ── t388: the swallowed-dm cause clause ────────────────────────────────────
+//
+// A seat that was written to and never took a turn is silent, and the sweep
+// reads that silence as a stalled seat. Every exit that follows from "stalled"
+// (ask it what is taking so long, nudge it, kill it) is wrong if the seat was
+// never told anything in the first place — so the clause does not add evidence,
+// it changes which actor the alarm is about.
+
+test('t388: a stall on a seat with an unconfirmed dm latch names the swallow as a possible cause', () => {
+  const plain = formatStallBody({ ticketId: 't1', who: 'hand', age: '30m', commits: 0 });
+  const withDm = formatStallBody({
+    ticketId: 't1', who: 'hand', age: '30m', commits: 0, dmLatch: { count: 1, age: '31m' },
+  });
+  // ENTER: both bodies are built from IDENTICAL inputs but for the latch, so the
+  // difference below cannot be some other field doing the work.
+  assert.notStrictEqual(plain, withDm, 'same inputs but the latch, different bodies');
+  assert.ok(!/swallowed/.test(plain),
+    'ENTER: the cause sentence must be ABSENT without a latch — unconditional, it would appear on every stall '
+    + 'alarm in the system and mean nothing on any of them');
+  assert.match(withDm, /a dm written to it 31m ago never produced a turn/,
+    'the clause states the observation, with the age of the write rather than of the ticket');
+  assert.match(withDm, /may be a swallowed delivery rather than a stalled seat/,
+    'and it names the alternative READING — that is the whole content of the line, since the lead defaults to '
+    + '"stalled" and every action that follows from it is wrong for a seat that was never told');
+  assert.match(withDm, /no commits/, 'without displacing the git evidence the alarm already carried');
+});
+
+test('t388: the cause clause rides a bare stall body too, where it matters most', () => {
+  // A swallowed dm is MOST likely on a seat with no evidence to show: it never
+  // started, so there is no tool, no commit, no dirty tree. A clause appended
+  // only to the parenthesised evidence list would be missing from exactly the
+  // shape it was built for.
+  const bare = formatStallBody({ ticketId: 't1', who: 'hand', age: '30m', dmLatch: { count: 1, age: '30m' } });
+  assert.ok(!/\(/.test(bare), 'ENTER: no evidence bits, so this is the bare-head shape');
+  assert.match(bare, /may be a swallowed delivery/, 'and the clause is still there');
+});
+
+test('t388: the clause counts the outstanding dms and stays singular for one', () => {
+  const one = formatStallBody({ ticketId: 't1', who: 'hand', age: '30m', dmLatch: { count: 1, age: '30m' } });
+  const many = formatStallBody({ ticketId: 't1', who: 'hand', age: '30m', dmLatch: { count: 3, age: '45m' } });
+  assert.match(one, /a dm written to it/, 'one reads as "a dm"');
+  assert.match(many, /3 dms written to it/, 'three reads as a count — the lead needs to know how much is unread');
+  assert.ok(!/1 dms/.test(one), 'and the singular is not the plural with a number in front of it');
+});
+
+test('t388: the body with a cause clause is still one glanceable line', () => {
+  const body = formatStallBody({
+    ticketId: 't1', who: 'hand', age: '2h', repeat: 1,
+    tool: { tool: 'Bash', outcome: 'error' }, commits: 3, dirty: true,
+    dmLatch: { count: 2, age: '2h' },
+  });
+  assert.ok(!body.includes('\n'), 'no newlines — this fires into the lead prompt stream');
+});

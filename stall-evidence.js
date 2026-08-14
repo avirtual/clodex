@@ -96,7 +96,15 @@ function lastToolFrom(text) {
 // `age` is pre-humanized by the caller (the sweep owns the clock and its own
 // formatter). `repeat` marks a re-escalation: an unmarked repeat reads as a new
 // stall and invites the lead to re-answer a question it already answered.
-function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits = null, dirty = null }) {
+// `dmLatch` is `{count, age}` when the seat has a live or recently-expired
+// unconfirmed-dm latch — a dm was written into its terminal and no turn ever
+// followed. It gets its own SENTENCE rather than a bit in the parenthesised
+// evidence list because it is the one input that changes the reading of the
+// whole alarm: the lead's default reading of a silent seat is "stalled on the
+// work", and every exit that follows from that (ask it, nudge it, kill it) is
+// wrong if the seat was never told anything. The evidence bits answer "what has
+// it done"; this answers "is it even the actor".
+function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits = null, dirty = null, dmLatch = null }) {
   const head = repeat > 0
     ? `[ticket ${ticketId}] STILL stalled (repeat ${repeat}): ${who} quiet ${age}`
     : `[ticket ${ticketId}] stalled: ${who} quiet ${age}`;
@@ -108,14 +116,20 @@ function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits 
   }
   if (commits != null) bits.push(commits === 0 ? 'no commits' : `${commits} commit${commits === 1 ? '' : 's'}`);
   if (dirty != null) bits.push(dirty ? 'tree dirty' : 'tree clean');
-  if (!bits.length) return head;
+  // Appended to whichever shape the body takes, so the bare-head case carries it
+  // too: a swallowed dm is most likely on a seat with no evidence to show.
+  const cause = dmLatch
+    ? ` — ${dmLatch.count === 1 ? 'a dm' : `${dmLatch.count} dms`} written to it ${dmLatch.age} ago never `
+      + 'produced a turn: this may be a swallowed delivery rather than a stalled seat'
+    : '';
+  if (!bits.length) return `${head}${cause}`;
   // The reading, not just the facts. The lead dismissed t312 by reasoning from a
   // dirty tree alone; naming which way the evidence points is what makes the
   // alarm cheaper to act on than a hand probe.
   let verdict = '';
   if (tool && tool.outcome === 'pending') verdict = ' — wedged mid-call, or a legitimately slow one';
   else if (tool && tool.outcome === 'error') verdict = ' — the last call failed; a killed turn looks like this';
-  return `${head} (${bits.join(', ')})${verdict}`;
+  return `${head} (${bits.join(', ')})${verdict}${cause}`;
 }
 
 // A ticket whose assignee resolves to NO live seat. Not a stall — nothing is
