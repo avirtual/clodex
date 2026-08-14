@@ -2681,7 +2681,7 @@ test('park→drain carries the stamp end to end: a successor is refused, the add
 test('_cleanup does NOT delete the pending store — a restart must not destroy parked DMs', () => {
   const { m, PENDING_DIR } = mkPark({
     registry: { unregister: () => {} },
-    cleanupClaudeHook: () => {}, cleanupSkillPlugin: () => {},
+    cleanupClaudeHook: () => {}, cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
     // `path` and a real `fs` are REQUIRED here, not decoration. The rm this test
     // pins the absence of was `fs.rmSync(path.join(PENDING_DIR, name), …)` inside
     // a bare `try {} catch {}`. The default harness injects no `path`, so a
@@ -2712,7 +2712,7 @@ test('_cleanup does NOT delete the pending store — a restart must not destroy 
 test('_cleanup disarms every timer the session owns (a fired timer on a dead seat re-enters the manager)', () => {
   const { m } = mkPark({
     registry: { unregister: () => {} },
-    cleanupClaudeHook: () => {}, cleanupSkillPlugin: () => {},
+    cleanupClaudeHook: () => {}, cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
     path: pathReal, fs: fsReal,
   });
   const TIMER_FIELDS = [
@@ -4100,7 +4100,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
     matchSeatRole: () => null,
     getAgentLibrary: () => ({ list: () => [] }),
     unionEnabled: () => [],
-    buildAgentsArg: () => null,
+    writeAgentPlugin: () => null, effectiveInjectedAgents: () => [],
     writeSkillPlugin: () => null,
     effectiveInjectedSkills: () => [],
     getPersistence: () => ({ list: () => [], get: () => null, upsert: (e) => upserts.push(e), setSessionId: () => {} }),

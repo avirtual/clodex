@@ -87,7 +87,11 @@ function buildSkillPlugin(names, library, pluginName = 'clodex-skills') {
 // literal Task-tool field name, so this regex has a low false-positive rate;
 // it accepts `:` or `=`, optional quotes, and the `[A-Za-z0-9_-]` agentType
 // charset (matching BUILTIN_AGENTS + the library name regex).
-const SUBAGENT_REF_RE = /subagent_type\s*[:=]\s*["']?([A-Za-z0-9_-]+)["']?/g;
+// The name may itself contain `:` — plugin-supplied agents dispatch as
+// `<plugin>:<agent>`, the only form a library agent answers to. Matching the
+// separator+segment as a repeat is what stops a qualified name truncating at
+// its prefix and warning about an agent that IS enabled.
+const SUBAGENT_REF_RE = /subagent_type\s*[:=]\s*["']?([A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*)["']?/g;
 
 // Scan the EXACT set of injected skill records ([{ name, content }, ...] — the
 // same union writeSkillPlugin scaffolds, so we never warn about a skill that

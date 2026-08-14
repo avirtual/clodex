@@ -69,7 +69,7 @@ function mkManager(overrides = {}) {
     log: { info: () => {}, warn: (...a) => warns.push(a.join(' ')), error: () => {}, debug: () => {} },
     setupClaudeHook: () => path.join(root, 'settings.json'),
     setupCodexHook: () => {},
-    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {},
+    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
     writeClaudeDigestFile: () => true,
     buildIpcPrompt: () => '',
     bakePrompt: () => '',
@@ -83,7 +83,7 @@ function mkManager(overrides = {}) {
     mergeClaudeSystemPrompt: (a) => ({ cleaned: [...a], append: null }),
     readAppendBodies: () => [],
     pluginGrammarLines: () => [],
-    buildAgentsArg: () => [],
+    writeAgentPlugin: () => null, effectiveInjectedAgents: () => [],
     effectiveInjectedSkills: () => [],
     unresolvedSubagentRefs: () => [],
     // Real pure leaves: the body-capture mode for `context clear` is part of what

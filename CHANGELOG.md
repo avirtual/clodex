@@ -13,6 +13,27 @@ blocks a release.
 
 ## Unreleased
 
+- Custom subagents no longer travel on the seat's command line. Enabling one
+  used to spawn the CLI with the whole agent definition — prompt included —
+  inline in `--agents`, where anyone running `ps` could read it and where a
+  long enough roster would eventually hit the argument-length limit. They now
+  install the same way skills do, through a session-only plugin directory
+  under `~/.clodex`, so nothing about them is visible in the process list.
+
+  **This changes how the model calls them.** A library subagent is now
+  dispatched as `clodex-agents:<name>` rather than `<name>` — the CLI
+  namespaces plugin-supplied agents and accepts no short form. Nothing needs
+  changing for the model itself, which reads its roster fresh each session,
+  but a *skill* of yours that names a subagent explicitly (`subagent_type:
+  "test-runner"`) needs the prefixed name. Clodex warns at spawn, naming the
+  skill and the form to use, whenever an injected skill calls an agent the
+  session cannot reach.
+
+  One trade came with it: `permissionMode`, `initialPrompt`, `hooks` and
+  `mcpServers` in an agent's frontmatter are ignored on this path. None of the
+  bundled agents uses them; if one of yours does, a spawn now warns rather
+  than letting the field quietly do nothing.
+
 - Intents an agent emits are now marked in the terminal, with a tick in the
   scrollbar lane, so you can see at a glance whether one was actually sent
   instead of scrolling back through a wall of prose to look for it. Lines that

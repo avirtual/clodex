@@ -88,7 +88,7 @@ function boot(extraDeps = {}) {
     findProjectRoot: () => null,
     setupClaudeHook: () => path.join(root, 'settings.json'),
     setupCodexHook: (name) => fs.mkdirSync(runDirFor(root, name), { recursive: true }),
-    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {},
+    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
     writeClaudeDigestFile: () => false,
     buildIpcPrompt: () => '',
     // The bytes actually written to the file the CLI reads. Asserting HERE and not
@@ -113,7 +113,7 @@ function boot(extraDeps = {}) {
     readAppendBodies: () => [], pluginGrammarLines: () => [],
     getAgentLibrary: () => ({ list: () => [] }),
     getPromptLibrary: () => ({ raw: () => null }),
-    buildAgentsArg: () => null, effectiveInjectedSkills: () => [],
+    writeAgentPlugin: () => null, effectiveInjectedAgents: () => [], effectiveInjectedSkills: () => [],
     unresolvedSubagentRefs: () => [], writeSkillPlugin: () => null,
     unionEnabled: require('../scope-util').unionEnabled,
     intentEnabled: require('../intent-catalog').intentEnabled,

@@ -157,7 +157,7 @@
     <div id="agents-list"></div>
     <div id="agents-empty" class="hint">
       No agents yet. Click <strong>+ New</strong> to define a custom subagent.<br><br>
-      Stored as markdown in <code>~/.clodex/agents/</code>. Enable them per session in the New / Edit Session dialog (Claude only) — they spawn via <code>--agents</code> and touch no repo.
+      Stored as markdown in <code>~/.clodex/agents/</code>. Enable them per session in the New / Edit Session dialog (Claude only) — they inject via a session-only <code>--plugin-dir</code> and touch no repo. The model dispatches them by their namespaced name, <code>clodex-agents:&lt;name&gt;</code>.
     </div>
   </div>
 
@@ -410,7 +410,7 @@
       <div class="popover-title"><span>Agents — <span id="agents-popover-name"></span></span><button type="button" class="popover-close" id="agents-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
       <div id="popover-agents-list" class="agent-checklist"></div>
-      <span class="hint-text">Checked custom subagents are injected into this session (<code>--agents</code>).</span>
+      <span class="hint-text">Checked custom subagents are injected into this session (via a session-only <code>--plugin-dir</code>), and dispatch as <code>clodex-agents:&lt;name&gt;</code>.</span>
       <div class="popover-subhead">Built-in Agents</div>
       <div id="popover-builtins-list" class="agent-checklist"></div>
       <span class="hint-text">Unchecked built-ins are denied (<code>Agent(name)</code>): filtered out of the roster — reclaiming their per-turn description tokens — and no longer delegatable. This removes the capability too, so it's a trim <em>and</em> a behavior change. Not every session loads all of these; denying an absent one is a no-op.</span>

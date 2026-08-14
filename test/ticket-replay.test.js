@@ -118,7 +118,7 @@ function boot(world, opts = {}) {
     // The real one creates run/<name>/ as a side effect, and create()'s codex arm
     // writes instructions.md into it without an ensureDir of its own.
     setupCodexHook: (name) => fs.mkdirSync(runDirFor(root, name), { recursive: true }),
-    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {},
+    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
     writeClaudeDigestFile: () => false,
     buildIpcPrompt: () => '', bakePrompt: () => '',
     teeBlindBackend: () => null,
@@ -131,7 +131,7 @@ function boot(world, opts = {}) {
     readAppendBodies: () => [], pluginGrammarLines: () => [],
     getAgentLibrary: () => ({ list: () => [] }),
     getPromptLibrary: () => ({ raw: () => null }),
-    buildAgentsArg: () => null, effectiveInjectedSkills: () => [],
+    writeAgentPlugin: () => null, effectiveInjectedAgents: () => [], effectiveInjectedSkills: () => [],
     unresolvedSubagentRefs: () => [], writeSkillPlugin: () => null,
     unionEnabled: require('../scope-util').unionEnabled,
     intentEnabled: require('../intent-catalog').intentEnabled,

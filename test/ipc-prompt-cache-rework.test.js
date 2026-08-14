@@ -95,7 +95,7 @@ function reuseArgFor({ resumeId = null, mint = false, extraArgs = [] } = {}) {
     pluginGrammarLines: () => [],
     mergeClaudeSystemPrompt: (extraArgs, ipcPrompt) => ({ cleaned: [...extraArgs], append: ipcPrompt }),
     cleanupClaudeHook: () => {},
-    cleanupSkillPlugin: () => {},
+    cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
     ensureDir: (d) => fs.mkdirSync(d, { recursive: true }),
     MSG_DIR: path.join(root, 'messages'),
     runDirFor,
@@ -104,7 +104,7 @@ function reuseArgFor({ resumeId = null, mint = false, extraArgs = [] } = {}) {
     JsonlWatcher: class { constructor() {} start() {} stop() {} },
     getAgentLibrary: () => ({ list: () => [] }),
     unionEnabled: () => [],
-    buildAgentsArg: () => null,
+    writeAgentPlugin: () => null, effectiveInjectedAgents: () => [],
     writeSkillPlugin: () => null,
     effectiveInjectedSkills: () => [],
     getRemoteServer: () => null,
@@ -176,7 +176,7 @@ function mkManager(root) {
     log: { info: () => {}, warn: () => {}, error: () => {} },
     registry: { unregister: () => {} },
     cleanupClaudeHook: (name) => fs.rmSync(runDirFor(root, name), { recursive: true, force: true }),
-    cleanupSkillPlugin: () => {},
+    cleanupSkillPlugin: () => {}, cleanupAgentPlugin: () => {},
   });
   return new SessionManager();
 }
