@@ -277,7 +277,10 @@ const teamCost = require('./team-cost');
 const { buildReviewScope } = require('./ticket-review-scope');
 const { findRepoRoot } = require('./project-root');
 const { projectDirFor } = require('./clodex-paths');
-const { readTail, lastToolFrom, formatStallBody, formatOrphanBody } = require('./stall-evidence');
+const {
+  readTail, lastToolFrom, formatStallBody, formatOrphanBody,
+  parseCpuTime, classifyReviewSeat, formatReviewSeatClause, didGrow,
+} = require('./stall-evidence');
 // Aliased deliberately: the manager has its OWN trackedSessionIds() method with
 // a different contract (every id across all sessions, no argument). This is the
 // per-entry union, and the two must not be mistaken for each other.
@@ -6116,10 +6119,22 @@ function createSessionManager(deps) {
     // the opposite of `_stallEvidence`'s policy, and deliberately: there an absent
     // field degrades an alarm that fires anyway, here it IS the alarm.
     _seatHasTranscript(name) {
+      return this._seatTranscriptSize(name) > 0;
+    }
+
+    // The same probe, read as a NUMBER instead of a boolean. Split out rather
+    // than duplicated: t384's liveness test needs growth between two sweeps, and
+    // a second resolver would be free to disagree with this one about where a
+    // seat's transcript is — silently, and in the direction that alarms.
+    //
+    // -1, not 0, for an unreadable link. 0 is a real size (a seat that has
+    // written nothing), and collapsing the two makes an fs error look like a
+    // seat that produced nothing, which is a claim this cannot support.
+    _seatTranscriptSize(name) {
       try {
         const link = pathFor(REGISTRY_DIR, name, 'transcript');
-        return fs.statSync(fs.realpathSync(link)).size > 0;
-      } catch { return false; }
+        return fs.statSync(fs.realpathSync(link)).size;
+      } catch { return -1; }
     }
 
     // Cleared by ANY non-idle activity (see _emitActivity): reaching a turn at all
@@ -9195,6 +9210,126 @@ function createSessionManager(deps) {
       return out;
     }
 
+    // The live reviewer seats for a ticket. Resolved off the SAME record fields
+    // review-done routes a verdict on (`ephemeral` + `reviewTicket`), so "the
+    // seat this ticket's review belongs to" means one thing in both places. A
+    // separate rule here could disagree, and the disagreement would be silent:
+    // the alarm would probe some other seat's liveness and report it as this
+    // review's.
+    //
+    // SCOPED TO THE TEAM'S PROJECT, like every sibling resolver in this file
+    // (`_teamLiveSeats`, `_ticketAssigneeSeat`). `nextTicketId` maxes over ONE
+    // board's list, so `t1` exists on every project at once — an unscoped walk
+    // lets project B's live reviewer answer for project A's `t1` and SUPPRESS
+    // its alarm, which is silent alarm deletion on a board with no seat at all.
+    // `_sweepTeamTickets` documents this same per-BOARD/per-PROJECT hazard for
+    // `watchdogMs`; this is the same trap one resolver over. The reviewer's cwd
+    // IS `team.root` (resolveSeatShape sets it), so the test is exact.
+    //
+    // Returns ALL matches, not the first. `keepHold` deliberately leaves a
+    // round-1 seat alive still carrying `reviewTicket` while round 2 runs, so
+    // two records legitimately share one ticket id and map order decides which
+    // one a first-match probe reads — it could measure a stranded seat and call
+    // the working one wedged.
+    _liveReviewSeatsFor(team, ticketId) {
+      const out = [];
+      for (const s of this.sessions.values()) {
+        if (!s.agentType || s._dead) continue;
+        let root; try { root = this._projectRootFor(s.cwd); } catch { root = null; }
+        if (!root || root !== team.root) continue;
+        let rec = null;
+        try { rec = getPersistence().get(s.name); } catch { rec = null; }
+        if (rec && rec.ephemeral && rec.reviewTicket === ticketId) out.push(s);
+      }
+      return out;
+    }
+
+    // Accumulated CPU for a pid, in ms, or null when it cannot be read.
+    //
+    // `ps` rather than anything in-process: the reviewer is a SEPARATE process
+    // (a CLI under a pty), so `process.cpuUsage()` measures this app and would
+    // answer confidently about the wrong thing.
+    //
+    // Null on every failure, and the classifier treats null as "no CPU signal"
+    // rather than as zero — zero is the wedge verdict, so a failed sample would
+    // otherwise alarm about a healthy seat.
+    _sampleCpuMs(pid) {
+      return new Promise((resolve) => {
+        if (!Number.isInteger(pid) || pid <= 0) { resolve(null); return; }
+        try {
+          childProcess.execFile('ps', ['-o', 'time=', '-p', String(pid)], { timeout: 5000 }, (err, stdout) => {
+            resolve(err ? null : parseCpuTime(stdout));
+          });
+        } catch { resolve(null); }
+      });
+    }
+
+    // Two-signal liveness for the seat behind a `loopStep: review` ticket.
+    //
+    // The samples come from CONSECUTIVE SWEEPS, not from two readings inside
+    // one: the sweep already runs every 60s, and sleeping inside a watchdog
+    // timer to take a second sample would block the pass behind it. The cost is
+    // that the first sweep after a seat appears has no baseline and returns
+    // 'unknown' — one sweep, 60s, against a 30m stall window.
+    //
+    // The sample lives on the SESSION, not in a manager-level map, so it dies
+    // with the seat. A map keyed by seat name would accumulate an entry per
+    // review round for the life of the process, and a stale entry under a reused
+    // name would be compared against a different seat's history.
+    async _probeReviewSeat(team, ticket, now, stallMs) {
+      const seats = this._liveReviewSeatsFor(team, ticket.id);
+      if (!seats.length) return null;   // no live reviewer — the loop-held body stands unqualified
+      let worst = null;
+      for (const s of seats) {
+        const size = this._seatTranscriptSize(s.name);
+        const cpuMs = await this._sampleCpuMs(s.pty && s.pty.pid);
+        const prev = s._reviewLiveSample || null;
+        const cur = {
+          at: now,
+          size,
+          cpuMs,
+          // Anchors "how long has it written nothing" across sweeps. Seeded at
+          // the first sample rather than left null: the seat may have been
+          // writing for an hour before this probe existed, and claiming a flat
+          // stretch we never measured is the confidently-wrong field
+          // stall-evidence.js refuses.
+          lastGrowthAt: (!prev || didGrow(prev.size, size)) ? now : (prev.lastGrowthAt || prev.at),
+        };
+        const r = classifyReviewSeat(prev, cur, { stallMs });
+        // A gap too short to read is NOT a sample. Overwriting the baseline with
+        // it would reset the clock every sweep, so under a sweep interval below
+        // MIN_GAP_MS no pair could ever span the minimum and the probe would
+        // answer `unknown` forever — the review alarm gone, silently. Keeping the
+        // older baseline turns that coupling from silence into latency: the gap
+        // grows until it qualifies, and the constraint enforces itself rather
+        // than resting on a comment nobody reads.
+        if (r.verdict !== 'unknown' || !prev) s._reviewLiveSample = cur;
+        // TWO CONSECUTIVE wedged verdicts before the alarm. Linux procps reports
+        // CPU in WHOLE SECONDS (macOS gives centiseconds), so a composing turn
+        // accruing 0.35s across a short gap reads as exactly 0 there — a single
+        // bad sample that looks identical to a wedge. Repeating the verdict costs
+        // one sweep against a 30m window and hardens the probe against any
+        // one-off bad sample, not just this platform's.
+        let verdict = r.verdict;
+        if (verdict === 'wedged') {
+          const confirmed = s._reviewWedgedOnce === true;
+          s._reviewWedgedOnce = true;
+          if (!confirmed) verdict = 'unknown';
+        } else {
+          s._reviewWedgedOnce = false;
+        }
+        // ANY seat alive suppresses: with two records sharing a ticket id, a
+        // stranded round-1 seat must not be able to raise an alarm about a round
+        // 2 that is working. Where the resolver is ambiguous this ticket fails
+        // toward "alive" — its whole purpose is removing false alarms.
+        if (verdict === 'moving' || verdict === 'unknown') {
+          return { seat: s.name, ...r, verdict };
+        }
+        if (!worst) worst = { seat: s.name, ...r, verdict };
+      }
+      return worst;
+    }
+
     // Async since t322: the alarm body carries git facts, and git is async. The
     // caller (_sweepTickets) does not await — a slow probe must not delay the
     // reconcile pass behind it — so overlapping sweeps are possible and
@@ -9362,8 +9497,54 @@ function createSessionManager(deps) {
         // it and the loop-held arm never re-resolves.
         let orphanNow = orphan;
         if (loopHeld) {
+          // THE REVIEW STEP IS THE ONE LOOP STEP WITH A LIVE SEAT BEHIND IT, and
+          // until t384 it was the only step with no seat-liveness input at all:
+          // the orphan test excludes loop-held tickets (correctly — they name a
+          // step, not an assignee), so `loopStep` age was the whole signal. A 39KB
+          // diff takes longer than the window, so the longest-running step was
+          // also the one that cried wolf. Measured on t377: the alarm fired at 30m
+          // while the reviewer was demonstrably working.
+          //
+          // Suppression requires BOTH signals to say alive, and the probe is
+          // consulted ONLY at `review` — the other steps have no seat to ask
+          // about, and a probe that returns null there must not be read as a
+          // verdict.
+          let seatInfo = null;
+          if (t.loopStep === 'review') {
+            this._stallProbing.add(tid);
+            try { seatInfo = await this._probeReviewSeat(team, t, now, stallMs); }
+            catch { /* a failed probe alarms unqualified — never silences */ }
+            finally { this._stallProbing.delete(tid); }
+            // Re-read after the await for the same reason the seat branch does:
+            // the review can land while `ps` runs, and alarming about a step the
+            // ticket has already left is the false positive in a new costume.
+            const after = ticketsStore.load(team.root).find((x) => x.id === tid);
+            if (!after || !ticketInFlight(after) || after.loopStep !== 'review') continue;
+            if ((after.lastActivityAt || null) !== seenAt) continue;
+            // DEMONSTRABLY ALIVE: transcript growing, or CPU accruing on a turn
+            // that has not flushed yet. Not a widened window and not a removed
+            // alarm — the ticket stays in-flight and the next sweep asks again,
+            // so a seat that wedges later is still caught.
+            //
+            // `unknown` defers too, and that is the whole point rather than a
+            // convenience: it means a reviewer seat IS live but this is the first
+            // sample, so there is no baseline to read growth against. Alarming
+            // there is the blind pre-t384 alarm — the measured false positive,
+            // fired at the first sweep past the window at a seat nobody asked
+            // about. Deferring costs ONE sweep (60s) against a 30m window, and it
+            // is bounded: the sample is stored below, so the next sweep has a
+            // baseline and either classifies or alarms. A seat that is not live
+            // returns null and never reaches this, so nothing can defer forever
+            // on a seat that no longer exists.
+            if (seatInfo && (seatInfo.verdict === 'moving' || seatInfo.verdict === 'unknown')) continue;
+          }
           const head = repeat > 0 ? `[ticket ${tid}] STILL stalled (repeat ${repeat}): ` : `[ticket ${tid}] stalled: `;
-          body = `${head}the ticket loop is stuck at "${t.loopStep}" — no progress for ${humanizeAge(now - last)} (the hand already reported; nothing was torn down)`;
+          body = `${head}the ticket loop is stuck at "${t.loopStep}" — no progress for ${humanizeAge(now - last)} (the hand already reported; nothing was torn down)`
+            + formatReviewSeatClause({
+              seat: seatInfo && seatInfo.seat, verdict: seatInfo && seatInfo.verdict,
+              cpuRead: !!(seatInfo && seatInfo.cpuRead),
+              flatFor: seatInfo && seatInfo.flatFor, age: humanizeAge(now - last),
+            });
         } else {
           this._stallProbing.add(tid);
           let ev = { tool: null, commits: null, dirty: null };
