@@ -41,7 +41,7 @@ const { buildReviewScope } = require('./ticket-review-scope');
 const { projectDirFor } = require('./clodex-paths');
 const {
   readTail, lastToolFrom, formatStallBody, formatOrphanBody,
-  parseCpuTime, classifyReviewSeat, formatReviewSeatClause, didGrow,
+  parseCpuTime, sumTreeCpuMs, classifyReviewSeat, formatReviewSeatClause, didGrow,
 } = require('./stall-evidence');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
@@ -5118,26 +5118,60 @@ function createTicketMethods(deps, shared) {
       });
     },
 
-    // Two-signal liveness for the seat behind a `loopStep: review` ticket.
+    // Accumulated CPU over a pty's whole process tree, in ms, or null.
     //
-    // The samples come from CONSECUTIVE SWEEPS, not from two readings inside
-    // one: the sweep already runs every 60s, and sleeping inside a watchdog
-    // timer to take a second sample would block the pass behind it. The cost is
-    // that the first sweep after a seat appears has no baseline and returns
-    // 'unknown' — one sweep, 60s, against a 30m stall window.
+    // One `ps` call for the entire process table rather than one per descendant:
+    // the tree is discovered FROM the snapshot, so a per-pid walk would need a
+    // call per level and would read a different instant at each one.
     //
-    // The sample lives on the SESSION, not in a manager-level map, so it dies
-    // with the seat. A map keyed by seat name would accumulate an entry per
-    // review round for the life of the process, and a stale entry under a reused
-    // name would be compared against a different seat's history.
-    async _probeReviewSeat(team, ticket, now, stallMs) {
-      const seats = this._liveReviewSeatsFor(team, ticket.id);
-      if (!seats.length) return null;   // no live reviewer — the loop-held body stands unqualified
-      let worst = null;
-      for (const s of seats) {
+    // No command column is requested, so every row is exactly three
+    // whitespace-separated fields and a row that yields anything else is
+    // dropped. That is what makes the split safe across ps flavors — BSD ps
+    // right-pads its columns and procps pads differently, but neither can
+    // introduce an interior space once the command is absent.
+    //
+    // Same null-on-failure contract and same 5s timeout as `_sampleCpuMs`.
+    _samplePtyTreeCpuMs(pid) {
+      return new Promise((resolve) => {
+        if (!Number.isInteger(pid) || pid <= 0) { resolve(null); return; }
+        try {
+          childProcess.execFile('ps', ['-axo', 'pid=,ppid=,time='], { timeout: 5000 }, (err, stdout) => {
+            if (err) { resolve(null); return; }
+            const rows = [];
+            for (const line of String(stdout || '').split('\n')) {
+              const f = line.trim().split(/\s+/);
+              if (f.length !== 3) continue;
+              const p = Number(f[0]);
+              const pp = Number(f[1]);
+              if (!Number.isInteger(p) || !Number.isInteger(pp)) continue;
+              rows.push({ pid: p, ppid: pp, timeText: f[2] });
+            }
+            resolve(sumTreeCpuMs(rows, pid));
+          });
+        } catch { resolve(null); }
+      });
+    },
+
+    // One seat's liveness sample/classify/confirm, shared by both probe arms.
+    //
+    // `kind` selects which pair of session fields holds the state: 'review' for
+    // the review-step probe, 'stall' for the rung-2 stall probe. Separate pairs
+    // on purpose — a seat is never both, but shared fields would let one probe's
+    // baseline corrupt the other's clock if that ever changed.
+    //
+    // Returns the classifier result with the confirmed verdict substituted; the
+    // ALL-seats walk lives in the caller, which is the only part that is
+    // review-specific.
+    _sampleSeatLiveness(s, now, stallMs, kind) {
+      const sampleField = kind === 'stall' ? '_stallLiveSample' : '_reviewLiveSample';
+      const onceField = kind === 'stall' ? '_stallWedgedOnce' : '_reviewWedgedOnce';
+      return (async () => {
         const size = this._seatTranscriptSize(s.name);
-        const cpuMs = await this._sampleCpuMs(s.pty && s.pty.pid);
-        const prev = s._reviewLiveSample || null;
+        // TREE CPU, not the CLI pid alone: a seat inside a long tool call has
+        // its CPU in the child and reads flat everywhere else, so a root-only
+        // sample calls a working seat wedged.
+        const cpuMs = await this._samplePtyTreeCpuMs(s.pty && s.pty.pid);
+        const prev = s[sampleField] || null;
         const cur = {
           at: now,
           size,
@@ -5157,17 +5191,18 @@ function createTicketMethods(deps, shared) {
         // older baseline turns that coupling from silence into latency: the gap
         // grows until it qualifies, and the constraint enforces itself rather
         // than resting on a comment nobody reads.
-        if (r.verdict !== 'unknown' || !prev) s._reviewLiveSample = cur;
+        if (r.verdict !== 'unknown' || !prev) s[sampleField] = cur;
         // TWO CONSECUTIVE wedged verdicts before the alarm. Linux procps reports
         // CPU in WHOLE SECONDS (macOS gives centiseconds), so a composing turn
         // accruing 0.35s across a short gap reads as exactly 0 there — a single
-        // bad sample that looks identical to a wedge. Repeating the verdict costs
-        // one sweep against a 30m window and hardens the probe against any
-        // one-off bad sample, not just this platform's.
+        // bad sample that looks identical to a wedge. It also absorbs the tree
+        // sum's one non-monotonic step (a child exiting between samples drops
+        // CPU out of the total). Repeating the verdict costs one sweep against a
+        // 30m window and hardens the probe against any one-off bad sample.
         let verdict = r.verdict;
         if (verdict === 'wedged') {
-          const confirmed = s._reviewWedgedOnce === true;
-          s._reviewWedgedOnce = true;
+          const confirmed = s[onceField] === true;
+          s[onceField] = true;
           if (!confirmed) verdict = 'unknown';
         } else if (r.verdict !== 'unknown') {
           // An unreadable sample neither confirms NOR clears a wedge. Clearing on
@@ -5176,16 +5211,38 @@ function createTicketMethods(deps, shared) {
           // alternate wedged/unknown forever, the flag is reset before it can be
           // read a second time, and the alarm never fires — silent alarm deletion,
           // reintroduced by the confirmation step that was itself a hardening fix.
-          s._reviewWedgedOnce = false;
+          s[onceField] = false;
         }
+        return { ...r, verdict };
+      })();
+    },
+
+    // Two-signal liveness for the seat behind a `loopStep: review` ticket.
+    //
+    // The samples come from CONSECUTIVE SWEEPS, not from two readings inside
+    // one: the sweep already runs every 60s, and sleeping inside a watchdog
+    // timer to take a second sample would block the pass behind it. The cost is
+    // that the first sweep after a seat appears has no baseline and returns
+    // 'unknown' — one sweep, 60s, against a 30m stall window.
+    //
+    // The sample lives on the SESSION, not in a manager-level map, so it dies
+    // with the seat. A map keyed by seat name would accumulate an entry per
+    // review round for the life of the process, and a stale entry under a reused
+    // name would be compared against a different seat's history.
+    async _probeReviewSeat(team, ticket, now, stallMs) {
+      const seats = this._liveReviewSeatsFor(team, ticket.id);
+      if (!seats.length) return null;   // no live reviewer — the loop-held body stands unqualified
+      let worst = null;
+      for (const s of seats) {
+        const r = await this._sampleSeatLiveness(s, now, stallMs, 'review');
         // ANY seat alive suppresses: with two records sharing a ticket id, a
         // stranded round-1 seat must not be able to raise an alarm about a round
         // 2 that is working. Where the resolver is ambiguous this ticket fails
         // toward "alive" — its whole purpose is removing false alarms.
-        if (verdict === 'moving' || verdict === 'unknown') {
-          return { seat: s.name, ...r, verdict };
+        if (r.verdict === 'moving' || r.verdict === 'unknown') {
+          return { seat: s.name, ...r };
         }
-        if (!worst) worst = { seat: s.name, ...r, verdict };
+        if (!worst) worst = { seat: s.name, ...r };
       }
       return worst;
     },

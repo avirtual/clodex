@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- The watchdog's seat-liveness probe now measures CPU across the seat's whole
+  process tree instead of the CLI process alone. A seat inside a long tool call
+  (a build, a test run) keeps its CPU in the child while its transcript stays
+  flat and its activity reads idle — all three signals pointing the same wrong
+  way, so a perfectly healthy seat was classified as wedged. Measured twice on
+  one box. This also changes the existing review-step probe, deliberately and in
+  the safe direction: a reviewer running a long verify child now reads as
+  running rather than wedged, and a genuinely wedged reviewer still alarms.
+
 - `[agent:remind list]` no longer shows a blank preview for a reminder whose
   body was written on the lines following the intent line. The reminder was
   always stored complete and always fired complete — only the listing was
