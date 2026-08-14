@@ -1,12 +1,11 @@
 # Clodex architecture — module map
 
-Post-refactor layout (2026-07, phases M1–M5 / R1–R4). Two processes:
-**main** (Electron main — flat `*.js` at the repo root) and **renderer**
-(`renderer/`). `main.js` and `renderer/renderer.js` are thin coordinators;
-everything else is a module with an explicit interface.
+Two processes: **main** (Electron main — flat `*.js` at the repo root) and
+**renderer** (`renderer/`). `main.js` and `renderer/renderer.js` are thin
+coordinators; everything else is a module with an explicit interface.
 
-This file answers "where does code live". The subsystem docs answer "how
-does it work and what must I not break":
+This file answers "where does code live", one line per module naming what it
+OWNS. The subsystem docs answer "how does it work and what must I not break":
 
 - [sessions.md](sessions.md) — session lifecycle: create/argv, hooks,
   transcript watching, exit/kill/restore, persistence, workspaces.
@@ -16,44 +15,49 @@ does it work and what must I not break":
   model, peers UI, deploy wizard, headless nodes.
 - [telemetry.md](telemetry.md) — wirescope client/poller/supervisor,
   autocompact, statusline, ctx reminders, updates, ops log.
+- [exec-tools.md](exec-tools.md) — the `[agent:exec]` registry and its
+  payload validation.
+- [renderer-events.md](renderer-events.md) — the renderer's event surface.
 
-Conventions the refactor established:
+`test/architecture-map-complete.test.js` is the ratchet: every module in the
+tree is either named here or carries an `EXEMPT` reason there.
+
+Conventions:
 
 - **Factory + deps object.** Extracted modules export `createX(deps)` /
   `initX(deps)` / `registerX(deps)`. Stable values inject by value; anything
   assigned in `app.whenReady()` (or declared below the init site) crosses as
   a lazy getter (`getX: () => x`); singletons the module writes cross as
   get+set pairs (`getRemoteServer`/`setRemoteServer`).
-- **The electron gap.** `session-manager.js` and the M3 infra modules never
-  `require('electron')` — electron-touching behavior injects as seam
-  functions, which is what makes them unit-testable. The gap was widened in
-  the engine-extraction arc: **`engine.js` assembles the entire electron-free
-  module graph** and only the host-adapter layer (`main.js`, `app-menus.js`,
-  `ipc-handlers.js`, `preload.js`) imports electron.
-  `test/electron-boundary.test.js` pins that allowed set — shrinking it is
-  welcome, growing it needs a documented ruling. See *Engine and host
+- **The electron gap.** `session-manager.js` and the infra modules around it
+  never `require('electron')` — electron-touching behavior injects as seam
+  functions, which is what makes them unit-testable. **`engine.js` assembles
+  the entire electron-free module graph** and only the host-adapter layer
+  (`main.js`, `app-menus.js`, `ipc-handlers.js`, `preload.js`) imports
+  electron. `test/electron-boundary.test.js` pins that allowed set — shrinking
+  it is welcome, growing it needs a documented ruling. See *Engine and host
   adapters* below.
 - **Leak gates.** `test/free-identifier-leaks.test.js` guards both
   directions of every extraction: a module referencing a coordinator-scope
   name that was never injected (forward), and a coordinator referencing a
   name that moved into a module (reverse, `danglingRefs`). New extractions
   MUST be added to `SCANNED_MODULES` / `RENDERER_SCANNED_MODULES`.
-- **Template literals are byte-sensitive.** Generated scripts (cli-hooks)
-  and injected HTML keep interior columns exactly; re-indenting a moved
-  multi-line template is a real bug class (broke every hook script once —
-  pinned by test).
+- **Template literals are byte-sensitive.** Generated scripts (cli-hooks,
+  term-shim) and injected HTML keep interior columns exactly; re-indenting a
+  moved multi-line template is a real bug class (broke every hook script once
+  — pinned by test).
 
 ## Main process
 
 ### Engine and host adapters
 
-The engine-extraction arc (2026-07, phases 1–4) split the main process into a
-plain-Node **engine** and thin **host adapters**, so the Electron desktop app
-is one frontend among several. There are three hosts today: the **Electron
-desktop app** (`main.js`), the **headless node** (`headless-main.js`, plain
-Node for Linux/k8s spokes), and — layered on the headless node — the **browser
-frontend** (`web-host.js` + the `web-dist/` bundle), whose packaged form is the
-Docker image under [`../docker/web/`](../docker/web/).
+The main process is a plain-Node **engine** plus thin **host adapters**, so the
+Electron desktop app is one frontend among several. There are three hosts
+today: the **Electron desktop app** (`main.js`), the **headless node**
+(`headless-main.js`, plain Node for Linux/k8s spokes), and — layered on the
+headless node — the **browser frontend** (`web-host.js` + the `web-dist/`
+bundle), whose packaged form is the Docker image under
+[`../docker/web/`](../docker/web/).
 
 - **engine.js** — `createEngine({ userDataPath, seams, log })` owns the whole
   electron-free bootstrap: stores → pollers → scheduler → log → wirescope +
@@ -62,7 +66,7 @@ Docker image under [`../docker/web/`](../docker/web/).
   a **flat handle object**: the six primary handles (`manager`, `stores`,
   `syncRemoteServer`, `syncPeerManager`, `restoreSessionsForWorkspace`,
   `shutdown`), the shared infra, the `get{RemoteServer,PeerManager,…}`
-  accessors, and the ~80-key helper surface `ipc-handlers.js` / `app-menus.js`
+  accessors, and the helper surface `ipc-handlers.js` / `app-menus.js`
   consume. The return is deliberately **broad, not a lean six-tuple**: the
   adapters need dozens of engine internals (`manager` most of all), and
   constructing `manager` in `main.js` would drag the entire electron-free graph
@@ -76,10 +80,9 @@ Docker image under [`../docker/web/`](../docker/web/).
   `setAppQuitting`, `appVersion`, `isPackaged`, `refreshAppMenu`,
   `scheduleAppMenuRefresh`, `refreshTrayMenu`, `scheduleTrayRefresh`,
   `restartHost`. A seam nothing reads is a lying contract — an inert
-  `getUserDataPath` seam was dropped in Phase 3 (the engine derives
-  `userDataPath` from its own param). `userDataPath` is a plain constructor
-  arg, not a seam.
-- **main.js** (~0.5k lines) — the **desktop adapter**. Its `whenReady`
+  `getUserDataPath` seam was dropped (the engine derives `userDataPath` from
+  its own param). `userDataPath` is a plain constructor arg, not a seam.
+- **main.js** — the **desktop adapter**. Its `whenReady`
   resolves `userDataPath` (`app.getPath('userData')`), builds the electron
   seams (`shell.openPath`, `Notification`, `app.relaunch`, the tray/menu
   refreshers), calls `createEngine`, then stacks the desktop-only layer on top:
@@ -101,69 +104,79 @@ Docker image under [`../docker/web/`](../docker/web/).
   `ws`), started by `headless-main.js` when `CLODEX_WEB_PORT` is set; the
   Electron app never loads it. It drives the SAME `registerIpcHandlers` map and
   event-push surface over a WebSocket that the desktop `window.api` speaks over
-  ipcRenderer — the browser client (`renderer/web/`, built by
-  `build/build-web.js` into `web-dist/`) rebuilds `window.api` from the shared
-  `api-contract.js` table, so the renderer runs unchanged. Optional
-  `CLODEX_WEB_TOKEN` gates every route + the WS upgrade + the hello frame;
-  absent = localhost trust. NOT in the leak-scanner lists (new code, not a
-  move-only extraction) and never imports electron. Packaged as the Docker image
-  in [`../docker/web/`](../docker/web/) (a two-stage build of the headless host +
-  the web bundle); the peer test-box in `../docker/` is unrelated.
+  ipcRenderer. Optional `CLODEX_WEB_TOKEN` gates every route + the WS upgrade +
+  the hello frame; absent = localhost trust. NOT in the leak-scanner lists (new
+  code, not a move-only extraction) and never imports electron. Packaged as the
+  Docker image in [`../docker/web/`](../docker/web/) (a two-stage build of the
+  headless host + the web bundle); the peer test-box in `../docker/` is
+  unrelated.
+- **api-contract.js** — the shared table of `window.api` methods and events.
+  The browser client (`renderer/web/`, built by `build/build-web.js` into
+  `web-dist/`) rebuilds `window.api` from it, so the renderer runs unchanged
+  under either host.
+- **preload.js** — the desktop side of the same contract: wraps
+  invoke/send/event-listener IPC as `window.api`.
+- **ipc-handlers.js** — every `ipcMain.handle/on` registration, run from
+  whenReady via `registerIpcHandlers(deps)`.
+- **app-menus.js** — tray + application menu builders (the `createAppMenus`
+  return is the list).
 
-### Coordinator
+### Host lifecycle and upgrade
 
-The module-graph bootstrap that once lived in `main.js`'s `whenReady` is now
-`engine.js` (see *Engine and host adapters* above); `main.js` is the desktop
-adapter that hosts it. The modules below are what the engine assembles.
+- **host-stamp.js** — is the RUNNING main process older than the code on disk?
+  Merging a fix implies no restart, so every intent-handling fix is inert for
+  the running host until the operator restarts; this is what says so.
+- **restart-waiter.js** — the countable/waitable logic behind the "Restart
+  Clodex" dialog: sustained-idle detection with clock, timers, session
+  snapshot and actions all injected, so it is testable with a fake clock.
+  main.js is the thin shell that wires the real dialog onto it.
+- **update-checker.js** — GitHub release poller (data layer only; main.js
+  keeps the notify/banner side effects).
+- **bin-materialize.js** — stamps the exec helper scripts into `~/.clodex/bin/`
+  at every launch. Overwrite-always: the packaged sources live sealed inside
+  `app.asar`, which an external `node` cannot require across, so the bin copy
+  is the stable path — and re-stamping kills version drift.
+- **dev-reload.js** — DEV-ONLY hot reload, wired from main.js only under
+  `CLODEX_DEV`. Two granularities: `renderer/**` reloads live windows in place;
+  a main-process `*.js` change relaunches the app.
 
-### Extracted by the refactor (M1–M5)
+### Sessions and PTY
 
-- **fs-util.js** — filesystem primitives (ensureDir etc.).
-- **intent-scanner.js** — `[agent:…]` intent matching on assistant text.
-- **argv-merge.js** — CLI argv assembly: prompt-channel merging +
-  context-window math.
-- **statusline.js** — statusline script generation + proxy-base resolution.
-- **transcript.js** — JSONL transcript → markdown/messages rendering.
-- **catalogs.js** — static shared constants (CLAUDE_TOOLS, THEME_KEYS,
-  AGENT_NAME_RE, DEFAULT_WORKSPACE_ID, …).
-- **stores.js** — `initStores(userDataPath, …)` builds every persistence
-  stores (sessions/workspaces/templates/prompts/agent+skill libraries/
-  defaults/ui-settings). Paths derive inside the factory, post-whenReady by
-  construction.
-- **ipc-prompt.js** — `IPC_PROMPT`, the canonical all-enabled literal that is
-  the sole source of truth for the agent-facing IPC protocol text, plus
-  `buildIpcPrompt(intentsList)` which assembles the per-seat variant (gating
-  grammar lines + the MEMORY section to a session's allowed intents via
-  intent-catalog's `intentEnabled`; double byte-pinned back to the literal).
-- **agent-transport.js** — per-agent registry (`run/<name>/agent.json`) +
-  Unix-socket (`run/<name>/agent.sock`) transport; discovery iterates
-  `run/*/agent.json`.
-- **clodex-paths.js** — the per-agent runtime path grammar under `~/.clodex`:
-  `pathFor(root, name, kind)` / `runDirFor(root, name)` over the artifact kinds
-  in `KINDS` (`clodex-paths.js`; count them with
-  `node -e "console.log(Object.keys(require('./clodex-paths').KINDS).length)"`),
-  the single source every mint site routes through. Pure leaf (no I/O, like
-  scope-util); NOT in the leak-scanner lists. Shared dirs (`messages/`,
-  `pending/`, `agents/`, `skills/`, …) stay at the root and are outside the
-  grammar.
-- **legacy-sweep.js** — one-time, marker-gated (`run/.migrated`), name-driven
-  migration of the OLD flat `{name}-*` artifacts into `run/<name>/`, plus a
-  log-only orphan pass. `runLegacySweep` deletes only `{knownName}{knownSuffix}`
-  (never filename-parsed, so shared `wire-shadow.jsonl` / `codex-session-hook.sh`
-  can't be misattributed); `findOrphans` is pure. Called from the whenReady
-  bootstrap.
-- **jsonl-watcher.js** — polls the per-agent transcript symlink, extracts
-  assistant turns, emits text/sessionId/activity.
-- **cli-hooks.js** — generates the per-session hook scripts + settings for
-  Claude and Codex (transcript symlink, ack/pending/ctxwarn drains).
-  Generated bytes are test-pinned.
+- **session-manager.js** — the SessionManager class and the largest module in
+  the engine (`wc -l session-manager.js`): PTY spawn/kill/restore, per-session
+  state, intent routing, DM delivery/parking, inject queue integration. Zero
+  electron — verifiably so (`grep -c "^[^/]*require('electron')"` → 0, the
+  `^[^/]*` skipping the header's own prohibition of it); it reaches
+  renderers through opaque handles, and the file's own WINDOW BRIDGE header
+  states that contract. Its collaborators all arrive through the
+  `createSessionManager(deps)` destructure, which is the list.
+  It also owns the **dm-delivery latch** — `_armDmConfirm`,
+  `_armDmConfirmTimer`, `_checkDmConfirm`, `_clearDmConfirm`,
+  `_overflowDmEntry`, `_dmLatchEvidence` — which makes a swallowed plain dm
+  visible to its sender instead of silently lost.
+  `SPEC_CONFIRM_MS` lives here, at the core/deps seam, and is lent BACK to the
+  tickets half through `createTicketMethods`'s second bag: one deadline serves
+  both the dm latch and the ticket spec-confirm latch, and splitting it would
+  let the two drift.
+- **session-args.js** — the pure field-resolution core of Edit Session:
+  `resolveSessionArgsPatch(patch, prev)` and the "undefined means untouched"
+  rule (an explicit `[]` or `null` DOES overwrite).
 - **session-restore.js** — the electron-free restore-on-launch leaf behind
   `app:restore-sessions`: iterates persisted entries → archived (never spawned,
   `{archived:true}`) / already-running (replay `pendingOutput`) / cold
   (`--resume`) / failed (`{failed:true}`, entry kept). Injected deps, unit-pinned.
+- **session-discovery.js** — scans for adoptable external agent processes
+  (opt-in startup discovery), excluding Clodex's own `livePids`; in
+  SCANNED_MODULES.
 - **session-meta.js** — `createSessionMeta({REGISTRY_DIR})`: cheap `fs.stat`
   last-activity timestamps + TTL-cached `gh pr view` PR status for the sidebar
   organizer (group/sort/filter). Electron-free; in SCANNED_MODULES.
+- **meta-tiers.js** — the shared vocabulary for sidebar-meta refreshes: which
+  keys belong to which cost tier, and how a refresh merges into what the
+  renderer already holds. Pure leaf, required by BOTH `session-meta.js`
+  (producer) and `renderer/renderer.js` (consumer) — it lives apart precisely
+  because session-meta pulls in fs + child_process, which the renderer must not
+  drag into the web bundle.
 - **session-info.js** — `createSessionInfo({fs,readline,homedir,pathFor,…})`:
   the sidebar ⓘ panel's data layer, gathered on demand (`session:info`). Sums
   `wire-totals.json` across a name's whole `sessionIds` history for the
@@ -171,84 +184,307 @@ adapter that hosts it. The modules below are what the engine assembles.
   (70MB/157ms — a sync read is ~10x that and copies the file into memory).
   Never merges the cost scopes (`session-info.js` names them and says why they
   are not interchangeable). Electron-free; in SCANNED_MODULES.
+- **jsonl-watcher.js** — polls the per-agent transcript symlink, extracts
+  assistant turns, emits text/sessionId/activity.
+- **cli-hooks.js** — generates the per-session hook scripts + settings for
+  Claude and Codex (transcript symlink, ack/pending/ctxwarn drains).
+  Generated bytes are test-pinned.
+- **argv-merge.js** — CLI argv assembly: prompt-channel merging +
+  context-window math.
+- **inject-queue.js** — serialized PTY injection with typing quiet-gate and
+  park-at-fire divert.
+- **ipc-prompt.js** — `IPC_PROMPT`, the canonical all-enabled literal that is
+  the sole source of truth for the agent-facing IPC protocol text, plus
+  `buildIpcPrompt(intentsList)` which assembles the per-seat variant (gating
+  grammar lines + the MEMORY section to a session's allowed intents via
+  intent-catalog's `intentEnabled`; double byte-pinned back to the literal).
+- **ipc-prompt-cache.js** — freezes a session's system prompt at spawn and
+  delivers later changes as a DIFF, so shipping an `ipc-prompt.js` edit does
+  not rewrite the system prompt underneath every `--resume`d conversation.
+- **notice-queue.js** — per-session one-off advisories, drained into the next
+  prompt by the UserPromptSubmit hook (`~/.clodex/notices/<name>/`). Carries
+  what the frozen prompt cannot: AT-MOST-ONCE (claim by rename, consume on
+  read), and **must not be merged with the prompt delta**, which is
+  at-least-once.
+- **claude-env.js** — a Claude session's EFFECTIVE process environment, merging
+  `process.env` with the settings layers the CLI loads (user < project < local),
+  and classifying whether that env routes the CLI to a TEE-BLIND backend
+  (Bedrock / Vertex) the wire tee cannot see.
+- **env-scopes.js** — merges the GUI-managed environment scopes over the base
+  process env for a wrapper PTY, and is the single source for the canonical
+  precedence. Pure fs/path, no electron.
+- **env-file.js** — atomic 0600 `KEY=value` env-file primitives. The shape both
+  the sandbox's `auth.env` and the host's `remote.env` use: values that reach a
+  process env yet never enter a config store, log or IPC result. Multi-key by
+  design — setting one key never disturbs another.
 - **git-worktree.js** — stdlib-only git worktree ops (create/remove/repoInfo/
   defaultBranch) behind the New-Session worktree option, `[agent:spawn
   worktree:<branch>]`, and the delete flow's awaited `removeWorktree`.
-  `execFile`, never a shell; in SCANNED_MODULES.
-  Team membership is a REPO, not a path: `team-manifest.js`'s `cwdInProject`
+  `execFile`, never a shell; in SCANNED_MODULES. Its ticket-seat consumers are
+  under *Teams and tickets*.
+- **transcript.js** — JSONL transcript → markdown/messages rendering.
+- **statusline.js** — statusline script generation + proxy-base resolution.
+- **ctx-reminder.js** — context-pressure reminders on the session's own tail.
+- **attention.js** — which sessions are asking for the operator's attention.
+
+### Intents and messaging
+
+- **intent-scanner.js** — `[agent:…]` intent matching on assistant text
+  (ANSI/decorator stripping, the `\[agent:…]` escape).
+- **intent-registry.js** — the single verb table three consumers read (the
+  scanner's parse chain, intent extraction in session-manager, and the
+  handler's routing switch). Do not reintroduce a parallel verb list in any
+  of them.
+- **intent-catalog.js** — the single source of truth for the GATEABLE intent
+  set: which verbs a session may be allowed or denied, in IPC-prompt order.
+  Three consumers across two processes read it (the fire-time gate in
+  `_handleIntent`, the renderer checklist, and `buildIpcPrompt`).
+- **exec-schema.js** — the payload validator for `[agent:exec <cmd>] {json}`.
+  Deliberately tiny (type/required/maxLength/enum + the `filename` token guard
+  + a raw-body size cap) so it stays auditable; a full ajv would not be.
+- **agent-transport.js** — per-agent registry (`run/<name>/agent.json`) +
+  Unix-socket (`run/<name>/agent.sock`) transport; discovery iterates
+  `run/*/agent.json`.
+- **pending-store.js** / **peer-outbox.js** — durable delivery parking
+  (local layer-3 / federation outbox).
+- **relay-protocol.js** — the bytes-on-the-wire commitments for hub-relay DM
+  federation: the relay ENVELOPE and the `POST /api/peer/roster` payload.
+  Dependency-free pure functions, so the main-process router and the wire layer
+  (`remote.js` / `peer-client.js`) agree by construction. Prose:
+  [messaging.md](messaging.md) §4.
+- **memory-store.js** — agent memory units (list/remember/recall/pin).
+- **remind-schedule.js** — the pure parse/timing leaf for `[agent:remind …]`:
+  a spec string → a normalized schedule, and the next fire time against an
+  injected `now`.
+- **remind-scheduler.js** — the durable-schedule ENGINE that ties that math to
+  the `reminders` store and drives delivery. The only piece with timers; clock
+  and timer primitives are injected.
+- **wire-intents.js** — intent helpers shared with the wire layer.
+
+### Teams and tickets
+
+The ticket cluster is five modules and a mixin, and the split is by lifetime,
+not by size:
+
+- **tickets-store.js** — the PROJECT ticket registry
+  (`projects/<leaf>-<hash8>/tickets.json`, moved off the team in t301). Owns the
+  record shape and the pure projections over it: `nextTicketId`, `ticketTitle`,
+  `extractTaskDir`, `extractMustFix`, `countMustFix`, `ticketStarted`,
+  `ticketInFlight`, `branchSlug`. Tickets FORMALIZE lead→member work as tracked
+  envelopes; they do not replace lifecycle-by-dm.
+- **tickets-migrate.js** — the one-time migration of each TEAM's board into the
+  PROJECT board it is rooted at. Modelled on `legacy-sweep.js`: pure leaf, one
+  exported function, called from `engine.js` inside a catch-and-log so a failure
+  degrades to a log line. COPY then mark — the source file is left in place.
+- **ticket-review-scope.js** — the reviewer's scope, built from the ticket
+  record and git ALONE (`buildReviewScope`, `VERDICT_GRAMMAR`). Zero lead prose
+  is the whole point: the measured defect it closes is every verdict costing two
+  round trips through a lead whose own verification had already happened.
+- **stall-evidence.js** — the evidence a stall alarm carries, so a lead can tell
+  a seat that is WRITING from a seat that is WEDGED without probing by hand. The
+  failure it prevents is measured: a watchdog fired "hand quiet 30m", the lead
+  checked the worktree was dirty with real work and dismissed it — the seat had
+  been SIGKILLed and the dirt was its corpse.
+- **team-cost.js** — per-ticket cost attribution. Pure leaf: no fs, no git, no
+  electron; callers pass the already-read inputs and every function is a
+  projection of them.
+- **team-tickets.js** — the teams/tickets half of the SessionManager class:
+  board verbs, seat shaping/spawn, spec delivery, review/verdict/auto-merge, the
+  ticket loop + suite, watchdog/stall sweep, team role editing, retire. It
+  returns METHODS, not an API: `createSessionManager` grafts them onto
+  `SessionManager.prototype`, so they run with `this` = the manager and ticket
+  state stays on the instance. **A file split, NOT a decoupling** — every
+  cross-boundary call is still `this.<name>()`, so the coupling graph is
+  unchanged and `free-identifier-leaks.test.js` structurally cannot see the
+  seam (it scans module-scope names; a prototype lookup is not one).
+  `ticket-mixin-surface.test.js` is what guards it, and its `this.*` inventory
+  is the starting spec if the boundary is ever made real.
+- **team-manifest.js** — the team roster and its membership predicate.
+  Team membership is a REPO, not a path: `cwdInProject`
   accepts a worktree of the root as a member, so seats in sibling worktrees stay
   on the roster and stay ticket-addressable. It reads the worktree's `.git` FILE
   rather than shelling out to git — `resolveTeam` runs on every roster render and
   ticket resolution, and a subprocess there would make membership a latency
   problem.
-  Branch per ticket: a role with `dispatch: "worktree"` in team.json gets a branch, a
-  worktree and a fresh seat per ticket. BOTH dispatch paths mint — `_taskAdd`
-  and `_taskAssign` (releasing a parked ticket), each via `_spawnTicketSeat`;
-  minting in only one silently opts the role out on the other. The
-  ticket is re-pinned from the ROLE to that seat name, which is what keeps the
-  seat one-shot — `_ticketAssigneeSeat` resolves a role to the first live seat
-  holding it, so a role-pinned ticket would route the next one into the previous
-  ticket's checkout.
-  A ticket that already HAS a tree never mints a second one: the seat name derives
-  from the ticket id, so `_mintTicketSeat` returns `taken` with that name.
-  `_taskAssign` splits three readings of taken, on LIVENESS not on the record —
-  the ticket's own live seat means re-send the spec to it (un-pinning would hand
-  this ticket's tree to another ticket's hand); a record with no live seat
-  (archive, natural exit, non-ephemeral retire) is a dead end that stays pinned and
-  names its recovery, since respawning would bypass `nameConflict` and split the
-  name across two rows; only a fully released name respawns onto the tree, which
-  `_existingTicketTree` re-verifies against `git worktree list` before reuse. The
-  check that matters there is `prunable`: a tree deleted outside git keeps its
-  admin entry and is listed like a live one, so path+branch alone would hand the
-  seat a `WORK IN:` path with nothing at the end of it (`locked` is excluded too —
-  an operator's explicit hands-off). `createWorktree` prunes first for the other
-  half of the same fact: the stale entry otherwise makes git refuse the branch
-  forever. `_ticketTreeHolder` is the occupancy gate git used to provide by
-  refusing one branch two checkouts: moving a ticket to a DIFFERENT worktree role
-  keeps the tree while changing the derived name, so reuse would otherwise spawn a
-  second seat into a checkout the first is still editing. That gate keys off the
-  TICKET's tree, not the destination's role — a plain role, a name-addressed seat,
-  lead and reviewer all receive the ticket's `WORK IN:` line just the same — and it
-  runs with the taken-but-not-live refusal ABOVE the reassign notice and above every
-  field `_taskAssign` writes: below them a refusal has already told the holder its
-  ticket moved, cleared `parked`, and pushed `lastActivityAt` past the watchdog's
-  one nudge, while replying that nothing changed. A spawn also MOVES the record's
-  worktree pointer off any other record naming that path (canonically — a record
-  written elsewhere can reach the same tree through a symlinked prefix):
-  `session:kill` reads the tree off whatever
-  record it deletes, so two records naming one path means deleting either force-
-  removes a live seat's checkout. That scan is NOT gated on reuse — deleting a
-  tree's directory by hand makes `createWorktree` prune and recompute the identical
-  default path, so a FRESH tree lands where an archived seat's record still points.
-  A reused tree is never
-  rolled back on a failed spawn (it holds the previous seat's commits) and the
-  ticket is not un-pinned there either — a role-assigned ticket carrying a live
-  `WORK IN:` pointer replays into every seat filling that role. The same holds when
-  `create()` succeeded and a later step threw: the tree is kept because a live seat
-  is in it, so the un-pin is skipped for that case too — as it is on the
-  `createWorktree`-failure exit, which is reached with the ticket still naming the
-  tree `_existingTicketTree` rejected — and that exit tests the ticket's tree
-  itself rather than `!reused && !live`, which coincides with it only on the paths
-  a CAUGHT throw takes today, and only while `clearTicketTree()` runs on exactly
-  that path. Both failure replies branch on the predicate rather than asserting the
-  un-pin: it is skipped in more states than the un-pin used to be. A live seat's record must NAME its
-  tree or `_ticketTreeHolder` cannot see the occupancy and `session:kill` orphans
-  the checkout, so the claim runs straight after `create()` and again in the catch
-  — `create()` can seat the session and then throw. Both go through one
-  `claimTree()`: the write and the move-off-other-records scan are ONE operation,
-  and splitting them is worse than either half — writing this seat's pointer alone
-  on the reuse path leaves two records naming one tree, which is the collision the
-  scan exists to close.
-  The ticket seat's cwd is the REPO, not its worktree: it is TOLD the path by the
-  `WORK IN:` line `_deliverTicketSpec` prepends, and cd's there itself. Booting it
-  in the tree would bind its transcript, project root and team block to a checkout
-  that is deleted with the session. The path is stored on the TICKET
-  (`ticket.worktree`) so a replay can re-tell a respawned seat. The
-  `[agent:spawn worktree:]` path is the other shape — there the seat's cwd IS the
-  worktree, which is why membership is by repo.
-- **session-discovery.js** — scans for adoptable external agent processes
-  (opt-in startup discovery), excluding Clodex's own `livePids`; in
-  SCANNED_MODULES.
+- **prompt-rails.js** — rail classification for library system prompts: the
+  prompt library mixes a full replace-class system prompt with an APPEND delta
+  that composes onto the append rail, and the team join path must not confuse
+  them. Pure leaf — the caller supplies `{ name, body }` rows.
+
+Branch per ticket: a role with `dispatch: "worktree"` in team.json gets a branch, a
+worktree and a fresh seat per ticket. BOTH dispatch paths mint — `_taskAdd`
+and `_taskAssign` (releasing a parked ticket), each via `_spawnTicketSeat`;
+minting in only one silently opts the role out on the other. The
+ticket is re-pinned from the ROLE to that seat name, which is what keeps the
+seat one-shot — `_ticketAssigneeSeat` resolves a role to the first live seat
+holding it, so a role-pinned ticket would route the next one into the previous
+ticket's checkout.
+A ticket that already HAS a tree never mints a second one: the seat name derives
+from the ticket id, so `_mintTicketSeat` returns `taken` with that name.
+`_taskAssign` splits three readings of taken, on LIVENESS not on the record —
+the ticket's own live seat means re-send the spec to it (un-pinning would hand
+this ticket's tree to another ticket's hand); a record with no live seat
+(archive, natural exit, non-ephemeral retire) is a dead end that stays pinned and
+names its recovery, since respawning would bypass `nameConflict` and split the
+name across two rows; only a fully released name respawns onto the tree, which
+`_existingTicketTree` re-verifies against `git worktree list` before reuse. The
+check that matters there is `prunable`: a tree deleted outside git keeps its
+admin entry and is listed like a live one, so path+branch alone would hand the
+seat a `WORK IN:` path with nothing at the end of it (`locked` is excluded too —
+an operator's explicit hands-off). `createWorktree` prunes first for the other
+half of the same fact: the stale entry otherwise makes git refuse the branch
+forever. `_ticketTreeHolder` is the occupancy gate git used to provide by
+refusing one branch two checkouts: moving a ticket to a DIFFERENT worktree role
+keeps the tree while changing the derived name, so reuse would otherwise spawn a
+second seat into a checkout the first is still editing. That gate keys off the
+TICKET's tree, not the destination's role — a plain role, a name-addressed seat,
+lead and reviewer all receive the ticket's `WORK IN:` line just the same — and it
+runs with the taken-but-not-live refusal ABOVE the reassign notice and above every
+field `_taskAssign` writes: below them a refusal has already told the holder its
+ticket moved, cleared `parked`, and pushed `lastActivityAt` past the watchdog's
+one nudge, while replying that nothing changed. A spawn also MOVES the record's
+worktree pointer off any other record naming that path (canonically — a record
+written elsewhere can reach the same tree through a symlinked prefix):
+`session:kill` reads the tree off whatever
+record it deletes, so two records naming one path means deleting either force-
+removes a live seat's checkout. That scan is NOT gated on reuse — deleting a
+tree's directory by hand makes `createWorktree` prune and recompute the identical
+default path, so a FRESH tree lands where an archived seat's record still points.
+A reused tree is never
+rolled back on a failed spawn (it holds the previous seat's commits) and the
+ticket is not un-pinned there either — a role-assigned ticket carrying a live
+`WORK IN:` pointer replays into every seat filling that role. The same holds when
+`create()` succeeded and a later step threw: the tree is kept because a live seat
+is in it, so the un-pin is skipped for that case too — as it is on the
+`createWorktree`-failure exit, which is reached with the ticket still naming the
+tree `_existingTicketTree` rejected — and that exit tests the ticket's tree
+itself rather than `!reused && !live`, which coincides with it only on the paths
+a CAUGHT throw takes today, and only while `clearTicketTree()` runs on exactly
+that path. Both failure replies branch on the predicate rather than asserting the
+un-pin: it is skipped in more states than the un-pin used to be. A live seat's record must NAME its
+tree or `_ticketTreeHolder` cannot see the occupancy and `session:kill` orphans
+the checkout, so the claim runs straight after `create()` and again in the catch
+— `create()` can seat the session and then throw. Both go through one
+`claimTree()`: the write and the move-off-other-records scan are ONE operation,
+and splitting them is worse than either half — writing this seat's pointer alone
+on the reuse path leaves two records naming one tree, which is the collision the
+scan exists to close.
+The ticket seat's cwd is the REPO, not its worktree: it is TOLD the path by the
+`WORK IN:` line `_deliverTicketSpec` prepends, and cd's there itself. Booting it
+in the tree would bind its transcript, project root and team block to a checkout
+that is deleted with the session. The path is stored on the TICKET
+(`ticket.worktree`) so a replay can re-tell a respawned seat. The
+`[agent:spawn worktree:]` path is the other shape — there the seat's cwd IS the
+worktree, which is why membership is by repo.
+
+### Peering and remote
+
+- **remote.js** — the remote/peer HTTP+SSE server (phone access + peering
+  owner side).
+- **remote-wiring.js** — RemoteServer construction/reconciliation
+  (`syncRemoteServer`). Peer terminal sharing is ONE box-wide capability:
+  `wtermCallbacks` returns nulls when it is off, so an ungranted box 501s and
+  omits the cap from hello.
+- **remote-token.js** — the operator's remote-wire token, GUI-managed and
+  persisted in `<userData>/remote.env` (0600, single key), so the peer-wire gate
+  survives restarts without an env var the operator has to remember.
+  DELIBERATELY separate from the sandbox's `auth.env`.
+- **auth-token.js** — the single operator-token predicate shared by BOTH HTTP
+  hosts (`web-host.js` and `remote.js`), so the two wires cannot drift on "does
+  this request carry the configured secret". Pure leaf: a token string in, a
+  `{ check, fromReq }` pair out.
+- **peer-client.js** — consuming side of the peering protocol (hello loop,
+  SSE attach, reconnect).
+- **peer-wiring.js** — PeerManager + TunnelManager reconciliation and
+  persisted-attachment/control helpers.
+- **tunnel-supervisor.js** — ONE supervised local port forward (`ssh -N -L` or
+  a vendor CLI's own), under three consumer-decided parameters: retry, port
+  stability, readiness. Both tunnel managers below are built on it.
+- **peer-tunnel.js** — `TunnelManager`: reconciles the peer settings list into
+  a set of supervised tunnels (supervision OF supervision lives here, not in
+  the supervisor).
+- **web-tunnel.js** — on-demand port forwards to a PEER'S WEB FRONTEND, so
+  "look at that box's GUI" is a click. Same supervisor as `peer-tunnel.js` under
+  different policy; the file says only what makes a web-view forward different,
+  and each difference is a parameter rather than a fork.
+- **peer-deploy.js** + **ssh-run.js** — deploy-wizard classification +
+  one-shot ssh transport.
+- **peer-input-queue.js** — PendingInput buffer behind type-to-take.
+- **peer-import.js** — seeds Clodex PEERS from clodexctl's contexts file, the
+  mirror of `cli/src/import.js`. Read-only on the CLI's file. IMPORT IS A COPY,
+  NOT A LINK: an imported peer keeps no back-reference to its context.
+- **peer-shell.js** — the decisions behind a terminal tab pointed at a PEER box:
+  whether the serving side offers one, what crosses the wire as a seat, and what
+  a refusal reads like on the consumer.
+
+### Plugins
+
+- **plugin-api.js** — the pure leaf both plugin-host halves share: constants,
+  id rules, the kill switch, and the invoke error envelope, so the engine host,
+  the renderer host, the loader and the tests agree by construction rather than
+  by three copies of a string.
+- **plugin-loader.js** — manifest discovery + validation
+  (`validateManifest`, `isNewerVersion`). An unrecognized `scope` is REFUSED,
+  never defaulted: `scopeOf` resolves anything unknown to `global`, so a typo on
+  a plugin meant to be invisible would silently load it everywhere.
+- **plugin-host-engine.js** — the main-process host. No unqualified `list()`:
+  `listAll()` is global, `listWorkspace(id)` is what per-window surfaces want,
+  and `fsScope` refuses PEERS rather than foreign workspaces — so nothing
+  downstream catches a global list handed to one window.
+
+### Hints, memory and vectors
+
+- **hint-arm.js** — automatic contextual hint arming: accumulate the draft as
+  the operator types, pre-arm on a typing pause, re-arm on Enter. THE ARM MUST
+  PRECEDE ENTER — a hint is `turn_start_only` + `once`, Enter reaches the CLI in
+  ~0ms and a rank takes 190–320ms, so arming ON Enter always lands a turn late.
+- **hint-retrieve.js** — the lexical retriever behind the injector: rank records
+  against a draft and pick the ones worth spending tail budget on. The
+  `retrieve(draft, {agent, limit}) -> [record]` interface is deliberately not
+  memory-specific.
+- **hint-embed.js** — semantic re-ranking over a local embedding model; its
+  header carries the measured split (28 paraphrase queries against the curated
+  `tags` ground truth) that justifies using it over the lexical pass alone.
+- **vector-store.js** — an append-only vector store: fixed-width float32 rows in
+  a binary blob plus a JSON sidecar mapping row → record. Not the JSON cache in
+  `hint-embed.js`, which holds the whole map in memory and rewrites on flush —
+  right for 184 curated units, wrong for a corpus that grows daily.
+- **basket-retrieve.js** — the retriever over the operator BASKET (things the
+  operator actually said, plus the reply that answered each). Same interface as
+  the memory retriever so the arming side never learns there are two sources;
+  a separate module because two measured properties of that corpus break the
+  memory retriever's assumptions.
+- **memory-load.js** — which memory units are LIVE in an agent's context right
+  now, as a fold over transitions Clodex already observes (digest delivery,
+  recall, /clear, compaction) — not an inference about what the model retained.
+  The injector asks it before spending tail budget re-stating a loaded unit.
+- **selection-hint.js** — the operator's drawer SELECTION as tail-hint TEXT, in
+  two tiers that differ by intent, not size: a PEEK (selecting while reading) is
+  a weak signal and rides one request; an explicit send is not.
+- **selection-arm.js** — WHICH CHANNEL carries that text and when it comes off.
+  Selecting (peek) goes to the wirescope tail, one-shot and short-TTL; the
+  explicit gesture takes the durable channel. The two-gestures/two-channels
+  split is the design.
+
+### Sandbox and external tools
+
+- **sandbox.js** — container-backed session placement. Electron-free and
+  deps-injected so the unit suite drives it with spawn/docker mocked;
+  `<userData>/<subdir>/compose.yaml` is regenerated from config on every Start
+  and is never the source of truth.
+- **tool-doctor.js** — external-tool presence detection: probe a list of tool
+  specs via an INJECTED `whichBin`, return a presence report plus pure UI copy.
+  The app warns or gates on this BEFORE a user spawns a session whose CLI is
+  missing.
+- **detect-cache.js** — a generic TTL + in-flight-dedupe cache around an async
+  probe, lifted out of `sandbox.js` so `tool-doctor.js` can share it without a
+  lean leaf pulling in compose generation, net and crypto.
+
+### Telemetry
+
+- **wirescope-proxy.js** — wirescope client + the ProxyPoller telemetry tick.
+- **wirescope-supervisor.js** — wirescope process supervision.
+- **wire-telemetry.js** — the pure telemetry projections over wire records.
 - **subagent-ring.js** — the per-session ring of subagent turns: `createSubagentStore`
   (one store per session, hung off the Session), `noteSubagentTurn` on the wire
   tee's write side, `feedSince` behind `proxy:subagentFeed`. Owns all five bounds
@@ -261,66 +497,81 @@ adapter that hosts it. The modules below are what the engine assembles.
   wirescope's — the chip strip stays wirescope-driven and the feed is looked up BY
   the chip's key, so a divergence shows an empty feed instead of failing. Pure leaf
   (no I/O, no electron, like file-touch.js); NOT in the leak-scanner lists.
-- **wirescope-proxy.js** — wirescope client + the ProxyPoller telemetry
-  tick.
-- **wirescope-supervisor.js** — wirescope process supervision.
-- **update-checker.js** — GitHub release poller (data layer only; main.js
-  keeps the notify/banner side effects).
-- **session-manager.js** — the SessionManager class and the largest module in
-  the engine (`wc -l session-manager.js`): PTY spawn/kill/restore, per-session
-  state, intent routing, DM delivery/parking, inject queue integration. Zero
-  electron — verifiably so (`grep -c "^[^/]*require('electron')"` → 0, the
-  `^[^/]*` skipping the header's own prohibition of it); it reaches
-  renderers through opaque handles, and the file's own WINDOW BRIDGE header
-  states that contract. Its collaborators all arrive through the
-  `createSessionManager(deps)` destructure, which is the list.
-- **team-tickets.js** — the teams/tickets half of the same class (t380): board
-  verbs, seat shaping/spawn, spec delivery, review/verdict/auto-merge, the
-  ticket loop + suite, watchdog/stall sweep, team role editing, retire. It
-  returns METHODS, not an API: `createSessionManager` grafts them onto
-  `SessionManager.prototype`, so they run with `this` = the manager and ticket
-  state stays on the instance. **A file split, NOT a decoupling** — every
-  cross-boundary call is still `this.<name>()`, so the coupling graph is
-  unchanged and `free-identifier-leaks.test.js` structurally cannot see the
-  seam (it scans module-scope names; a prototype lookup is not one).
-  `ticket-mixin-surface.test.js` is what guards it, and its `this.*` inventory
-  is the starting spec if the boundary is ever made real.
-- **app-menus.js** — tray + application menu builders (the `createAppMenus`
-  return is the list).
-- **remote-wiring.js** — RemoteServer construction/reconciliation
-  (`syncRemoteServer`).
-- **peer-wiring.js** — PeerManager + TunnelManager reconciliation and
-  persisted-attachment/control helpers.
-- **ipc-handlers.js** (~1.3k lines) — every `ipcMain.handle/on`
-  registration, run from whenReady via `registerIpcHandlers(deps)`.
+- **proxy-util.js** — proxy address/base helpers shared by the telemetry layers.
 
-### Pre-refactor modules (already factored before M1)
+### Workbench drawer (main side)
 
-- **inject-queue.js** — serialized PTY injection with typing quiet-gate and
-  park-at-fire divert.
-- **pending-store.js** / **peer-outbox.js** — durable delivery parking
-  (local layer-3 / federation outbox).
-- **memory-store.js** — agent memory units (list/remember/recall/pin).
-- **attention.js**, **ctx-reminder.js**, **file-touch.js**,
-  **proxy-util.js**, **agents-util.js**, **skills-util.js**,
-  **scope-util.js** (skill/agent visibility: `visibleTo` /
-  `autoEnabledFor` / `unionEnabled` / `reconcilePartialSelection` — the
-  `workspace:`/`sessions:` frontmatter scope predicate + spawn-union +
-  scoped-checklist save semantics),
-  **wire-intents.js**, **wire-telemetry.js** — pure helper layers.
-- **remote.js** — the remote/peer HTTP+SSE server (phone access + peering
-  owner side).
-- **peer-client.js** — consuming side of the peering protocol (hello loop,
-  SSE attach, reconnect).
-- **tunnel-supervisor.js** — ONE supervised local port forward (`ssh -N -L` or
-  a vendor CLI's own), under three consumer-decided parameters: retry, port
-  stability, readiness. Both tunnel managers below are built on it.
-- **peer-tunnel.js** — `TunnelManager`: reconciles the peer settings list into
-  a set of supervised tunnels (supervision OF supervision lives here, not in
-  the supervisor).
-- **peer-deploy.js** + **ssh-run.js** — deploy-wizard classification +
-  one-shot ssh transport.
-- **peer-input-queue.js** — PendingInput buffer behind type-to-take.
+- **drawer-pty.js** — the drawer's terminal tab, main side. A workbench terminal
+  is a NEW OBJECT, not a session, and the distinction is the whole design: no
+  entry in `sessions`, no `~/.clodex/run/<name>` registry file, no transcript.
+- **drawer-avail.js** — which drawer tabs a given seat can be SERVED, and what a
+  seat may type into one (`termAvailableFor`, `termBackendFor`,
+  `vetTermCommand`, `TERM_EXEC_MAX`). A pure leaf rather than lines inside
+  `term-tab.js`, which is DOM-bound.
+- **term-marks.js** — OSC 133 semantic prompt marks: the parser, and the prose
+  that describes a finished command back to the agent. A terminal is a screen,
+  not a stream of results, which is why the marks exist at all.
+- **term-shim.js** — the generated shell startup that emits those marks. THIS
+  REACHES INTO THE OPERATOR'S SHELL STARTUP, the most intrusive thing Clodex
+  does to a surface it does not own; its header is the constraint list.
+  Template-literal bytes matter here for the same reason as `cli-hooks.js`.
+- **ctl-service.js** — an in-process clodexctl REPL for the drawer's `ctl` tab.
+  MAIN-PROCESS, and that is a security property, not a layering preference:
+  `~/.clodex/cli/contexts.json` holds TOKENS, and a renderer-side client would
+  pull them into the renderer.
+
+### Persistence, paths and stores
+
+- **stores.js** — `initStores(userDataPath, …)` builds every persistence store
+  (sessions/workspaces/templates/prompts/agent+skill libraries/defaults/
+  ui-settings/reminders). Paths derive inside the factory, post-whenReady by
+  construction; the return object is the list.
+- **clodex-paths.js** — the per-agent runtime path grammar under `~/.clodex`:
+  `pathFor(root, name, kind)` / `runDirFor(root, name)` over the artifact kinds
+  in `KINDS` (`clodex-paths.js`; count them with
+  `node -e "console.log(Object.keys(require('./clodex-paths').KINDS).length)"`),
+  the single source every mint site routes through, plus `projectDirFor` for the
+  project board. Pure leaf (no I/O, like scope-util); NOT in the leak-scanner
+  lists. Shared dirs (`messages/`, `pending/`, `agents/`, `skills/`, …) stay at
+  the root and are outside the grammar — its header is the authority on which,
+  because a dir is there precisely because it must OUTLIVE `run/<name>/`.
+- **legacy-sweep.js** — one-time, marker-gated (`run/.migrated`), name-driven
+  migration of the OLD flat `{name}-*` artifacts into `run/<name>/`, plus a
+  log-only orphan pass. `runLegacySweep` deletes only `{knownName}{knownSuffix}`
+  (never filename-parsed, so shared `wire-shadow.jsonl` / `codex-session-hook.sh`
+  can't be misattributed); `findOrphans` is pure.
+- **project-root.js** — the git-repository root for a cwd, for keying a PROJECT
+  ticket board when no team owns that cwd. Pure leaf; `fs` injectable.
+- **path-confine.js** — one caller-supplied name, one path segment, POSITIVELY
+  confined to a directory Clodex owns. Positive because a charset regex is not
+  containment: `.` and `..` pass `/^[a-zA-Z0-9._-]{1,64}$/`. Pure leaf, no I/O.
+- **fs-util.js** — filesystem primitives (ensureDir etc.).
+- **file-touch.js** — recently-touched-file tracking. Pure leaf.
+- **file-edit.js** — the write-side policy for the file-peek Edit tab. The peek
+  is the only read surface that takes a bare absolute path, because reading
+  bytes into a modal is not an authority — writing them is, so the policy is
+  here, pure, with fs injected.
+- **file-resolve.js** — turn a path as it was DISPLAYED into a path that exists.
+  Every path a user clicks was written for a human (relative to the repo, to the
+  file it appears in, or shortened to fit a terminal); resolving it against the
+  MAIN PROCESS's cwd is the bug this closes. Pure leaf, fs injected.
+
+### Shared pure leaves
+
+- **catalogs.js** — static shared constants (CLAUDE_TOOLS, THEME_KEYS,
+  AGENT_NAME_RE, DEFAULT_WORKSPACE_ID, …).
+- **scope-util.js** — skill/agent visibility: `visibleTo` / `autoEnabledFor` /
+  `unionEnabled` / `reconcilePartialSelection` — the `workspace:`/`sessions:`
+  frontmatter scope predicate + spawn-union + scoped-checklist save semantics.
+- **agents-util.js**, **skills-util.js** — the agent and skill library layers.
+- **external-link.js** — the scheme filter for "open this URL in the user's
+  browser", shared by BOTH hosts (main's window-open/will-navigate guards and
+  the renderer's WebLinksAddon). True ONLY for http/https — the sole schemes
+  handed to `shell.openExternal`.
+- **sidebar-width.js** — the clamp/reset decision for the resizable sidebar.
+  Pure leaf shared by both hosts: `stores.js` clamps on read AND write through
+  it, and the renderer clamps every drag frame and the pre-paint localStorage
+  mirror through the same fn.
 
 ## CLI infra assets
 
@@ -337,7 +588,7 @@ adapter that hosts it. The modules below are what the engine assembles.
 
 ### Coordinator
 
-- **renderer/renderer.js** (~2.6k lines) — the regions that share
+- **renderer/renderer.js** — the regions that share
   coordinating state: sessions Map + activeSession, terminal management
   (createTerminal/switchSession/removeSession/remeasureReadonlyPeer), the
   sidebar render loop + session context menus, PTY data routing, the
@@ -347,67 +598,75 @@ adapter that hosts it. The modules below are what the engine assembles.
   preferences/edit-args dialogs, keyboard shortcuts, restore IIFE, and the
   island init sites.
 
-### Extracted by the refactor (R1–R4)
+### Islands
 
-- **renderer/lib/** — pure-ish leaves: `constants.js`, `format.js`
-  (string formatters, unit-tested), `render-html.js` (DOM-string builders),
-  `checklists.js` (render/collect checklist pairs; owns the library
-  caches behind setters), `session-actions.js` (the type→entries mapping for
-  the consolidated `⚙ session ▾` menu, unit-tested), `session-info-view.js`
-  (the ⓘ panel's rows as data — pure so the cost scopes and their labels
-  are unit-testable; the 07-15 three-scopes ruling is pinned there),
-  `subagent-policy.js` (`classifySubagent` — live/done/drop is POLICY, there is
-  no wire signal for it, and the sidebar child rows and the drawer's Activity
-  chips share this one copy so they cannot disagree), `subagent-feed.js`
-  (the accumulating turn feed as pure state, folding `proxy:subagentFeed` replies
-  into what the operator has seen; the cursor IS the dedup, and the feed owns no
-  running/done opinion of its own — that is the policy leaf's),
-  `activity-badge.js` (the badge state machine: which subagents did something
-  while the operator was NOT looking, so the away-period is the unit and
-  wirescope's `requests` is an advanced/not-advanced edge that never reaches
-  the screen).
-- **Islands** (own state + DOM, `init*(deps)`): `drawer-host.js` (the bottom
-  drawer as a TAB HOST — owns collapsed state, the tab strip, badges, the
-  `#main` layout contract and pane swapping; tenants register with
-  `{id, label, available, mount, onShow, onHide, onResize}` and get a
-  `notify(level)` back. Tab ids are frozen: `log`, `activity`, `ctl`, `term`.
+Own state + DOM, `init*(deps)`:
+
+- **drawer-host.js** — the bottom drawer as a TAB HOST: owns collapsed state,
+  the tab strip, badges, the `#main` layout contract and pane swapping; tenants
+  register with `{id, label, available, mount, onShow, onHide, onResize}` and get
+  a `notify(level)` back. Tab ids are frozen: `log`, `activity`, `ctl`, `term`.
   Its header comment carries the numbered rules a tenant author must not
-  re-derive),
-  `ipc-log.js` (the `log` tenant: rows + export only),
-  `activity-tab.js` (the `activity` tenant, and the seam between the two owners:
+  re-derive.
+- **ipc-log.js** — the `log` tenant: rows + export only.
+- **activity-tab.js** — the `activity` tenant, and the seam between the two owners:
   the CHIPS are wirescope's, off the free 5s `session-proxy` payload, and the FEED
   is ours, ONE `proxy:subagentFeed` read of subagent-ring.js for the SELECTED
   subagent only. A feed with no chip is not shown — one roster. Polling starts in
   `onShow` and stops in `onHide` with no idempotence of its own (the host
   guarantees alternating edges), so a hidden or collapsed tab costs nothing.
-  Replaced `subagent-popover.js`, whose feed died on any click elsewhere),
-  `term-search.js`, `banners.js`, `themes.js`, `library-drawers.js`
-  (prompts/agents/skills drawers),
-  `inbox-drawer.js` (operator inbox for `[agent:notify-user]` notes +
+- **ctl-tab.js** — the `ctl` tenant: a clodexctl REPL against one warm context
+  held in the MAIN process (`ctl-service.js`). The renderer sends a command
+  string and receives a rendered block; it never sees a token, a contexts file
+  or a transport, and it must not grow a client of its own.
+- **term-tab.js** — the `term` tenant: a REAL PTY in the workbench, not a
+  command runner. `vim`, `less` and interactive prompts must work, which is why
+  it is an xterm bound to a shell rather than a block list like the ctl tab. It
+  is NOT a session, and nothing here should make it look like one.
+- **term-search.js**, **banners.js**, **themes.js**, **library-drawers.js**
+  (prompts/agents/skills drawers).
+- **inbox-drawer.js** — operator inbox for `[agent:notify-user]` notes +
   the sidebar-footer unread badge; no core state, but takes `openFilePeek`
   and `showToast` by injection so a link in a note lands in the same peek
-  modal and toasts the same miss a path click in the terminal does).
-- **renderer/popovers/** — the popover family behind `popoverApi`:
-  `report-panel.js`, `context-popover.js`, `cost-popover.js`,
-  `bust-popover.js`, `files-popover.js` (also exports `openFilePeek` +
-  `isFilesPopoverForKey` for the peer subsystem), plus `session-info-popover.js`
-  (the sidebar row's ⓘ — anchored to the ROW, so it opens for a session that
-  isn't active, and off `window.api.sessionInfo` rather than the data seam
-  since it reads local persistence; peer rows build their own markup and
-  deliberately have no ⓘ), plus the ones that are NOT on the data seam by
-  design — grep the directory for `popoverApi` and the misses are the list:
-  `checklist-popovers.js` (tools/skills/agents/**intents**
-  — local config editors, direct `window.api`; tools/agents suppressed for
-  peers, but **skills takes an optional peer `source`** so the same popover
-  edits a peer session's skills over the wire under the `args` cap; the intents
-  popover applies IMMEDIATELY — the fire-time gate re-reads persistence — with an
-  optional restart only to refresh the seat's prompt),
-  `session-menus.js` (warm/strip/history dropdowns + the consolidated
-  `⚙ session ▾` launcher menu — local action menus), and
-  `team-roles-popover.js` (the team manifest is a file, not session state, so
-  it goes direct rather than through the local-vs-peer seam).
-  `selection-popover.js` also lives here but is the drawer's 📋 inspector on
-  `window.api.drawerInspectSelection`, a different subsystem, not a seam bypass.
+  modal and toasts the same miss a path click in the terminal does.
+- **plugin-host.js** — the renderer-side plugin host. Plugins hand it data or
+  callbacks, NEVER HTML: everything user-supplied is escaped here, and every
+  registered id becomes `"<pluginId>:<id>"` before it reaches the DOM, so a
+  `data-act` carrying a colon is by construction a plugin's and never core's.
+- **session-hovercard.js** — the custom hover card for sidebar rows, replacing
+  the native `title` tooltip (macOS-rendered: slow, unstylable). One shared
+  fixed-position node reused across rows, `pointer-events:none` so it can never
+  intercept interaction, killed on any mousedown/scroll/keydown.
+- **tooltip.js** — one shared attr-driven tooltip for the sidebar chrome, same
+  bg/border/radius as the hovercard family so the sidebar reads as one system
+  rather than a mix of custom cards and OS tips.
+
+### Popovers
+
+`renderer/popovers/` — the popover family behind `popoverApi`:
+`report-panel.js`, `context-popover.js`, `cost-popover.js`,
+`bust-popover.js`, `files-popover.js` (also exports `openFilePeek` +
+`isFilesPopoverForKey` for the peer subsystem), plus `session-info-popover.js`
+(the sidebar row's ⓘ — anchored to the ROW, so it opens for a session that
+isn't active, and off `window.api.sessionInfo` rather than the data seam
+since it reads local persistence; peer rows build their own markup and
+deliberately have no ⓘ), plus the ones that are NOT on the data seam by
+design — grep the directory for `popoverApi` and the misses are the list:
+`checklist-popovers.js` (tools/skills/agents/**intents**
+— local config editors, direct `window.api`; tools/agents suppressed for
+peers, but **skills takes an optional peer `source`** so the same popover
+edits a peer session's skills over the wire under the `args` cap; the intents
+popover applies IMMEDIATELY — the fire-time gate re-reads persistence — with an
+optional restart only to refresh the seat's prompt),
+`session-menus.js` (warm/strip/history dropdowns + the consolidated
+`⚙ session ▾` launcher menu — local action menus), and
+`team-roles-popover.js` (the team manifest is a file, not session state, so
+it goes direct rather than through the local-vs-peer seam).
+`selection-popover.js` also lives here but is the drawer's 📋 inspector on
+`window.api.drawerInspectSelection`, a different subsystem, not a seam bypass.
+
+### Peer runtime
+
 - **renderer/peers-ui.js** — the peer runtime: sidebar peer rows, peer bar,
   control + type-to-take, the peer event subscriptions
   (`grep -cE "api\.on[A-Za-z]+\(" renderer/peers-ui.js`), restore sweep,
@@ -417,11 +676,88 @@ adapter that hosts it. The modules below are what the engine assembles.
   `openPeerSession`, `peerDisplayHost`, `peerHideFromList`,
   `ensurePeerSessionVisible`, `openPeerArgs`.
 
+### renderer/lib — pure leaves
+
+DOM-free and unit-tested; peers-ui and the popovers are imperative and are not,
+which is why the judgement worth testing is pushed down here.
+
+- **constants.js**, **format.js** (string formatters), **render-html.js**
+  (DOM-string builders).
+- **checklists.js** — render/collect checklist pairs; owns the library caches
+  behind setters.
+- **session-actions.js** — the type→entries mapping for the consolidated
+  `⚙ session ▾` menu.
+- **session-info-view.js** — the ⓘ panel's rows as data, so the cost scopes and
+  their labels are unit-testable; the three-scopes ruling is pinned there.
+- **subagent-policy.js** — `classifySubagent`: live/done/drop is POLICY, there
+  is no wire signal for it, and the sidebar child rows and the drawer's Activity
+  chips share this one copy so they cannot disagree.
+- **subagent-feed.js** — the accumulating turn feed as pure state, folding
+  `proxy:subagentFeed` replies into what the operator has seen. The cursor IS
+  the dedup, and the feed owns no running/done opinion of its own.
+- **activity-badge.js** — the badge state machine: which subagents did something
+  while the operator was NOT looking, so the away-period is the unit and
+  wirescope's `requests` is an advanced/not-advanced edge that never reaches
+  the screen.
+- **turn-stat.js** — which turn number is shown, shared by the statusbar and the
+  sidebar hovercard so the two can never disagree.
+- **meta/session dialog leaves**: **args-model.js** (the Model field as a VIEW
+  onto the `--model` token inside extraArgs — no separate persisted field),
+  **env-edit.js** (the `KEY=value`-per-line textarea → the flat object `create()`
+  persists), **name-suggest.js** (`session-<counter>` minted before the global
+  reserved-name set is prefetched, so it must resolve collisions),
+  **tool-gate.js** (whether Create is allowed given the tools:check report, the
+  inline notice, and the missing-CLI overlay plan), **placement.js** (the "Run
+  in" selector: `'host'` or a sandbox BOX ID), **prefs-gate.js** (which
+  Preferences controls are inert given dialog state, plus the reason line).
+- **path-scan.js** — find path-like tokens (with an optional `:line`) in a line
+  of plain text, as offsets. Answers "what LOOKS like a path here" and nothing
+  about existence — resolution is main-side (`file-resolve.js`), because only
+  main can stat.
+- **gutter-scan.js** — recognize the line-number gutter the CLI prints under a
+  file-editing tool call, so those numbers become clickable. Offsets only.
+- **drop-paths.js** — the string typed at the prompt when files are dropped on a
+  session: each path shell-quoted, space-joined, one trailing space.
+- **ipc-export.js** — one grep-friendly line per message for the IPC log's
+  Export button, plus the download filename.
+- **mcp-group.js** — fold a wirescope tool roster into per-MCP-server groups.
+  MCP servers are the single biggest per-turn context carriage, which is why the
+  grouping is a leaf and not a rendering detail.
+- **sandbox-view.js** — the Sandbox dialog's presentation decisions
+  (`detectNotice`, `sandboxActionGate`, `boxRowStartGated`, …); a leaf so the
+  copy-selection logic, which is the part with real branches, is unit-tested.
+- **selection-view.js** — what the drawer's selection inspector SAYS given
+  main's `inspect()` answer.
+- **popover-drag.js** — make a `position:fixed` popover draggable by its title
+  bar; openers call `resetDrag()` so a fresh open re-anchors instead of
+  inheriting the last drag offset.
+- **peer-collapse.js** — per-workspace fold state for peer headers. The state
+  lives outside the DOM because `renderPeers()` rebuilds every row. The
+  persisted set names the peers the operator EXPANDED, never the folded ones.
+- **peer-visibility.js** — a peer's "visible sessions" selection: either
+  UNMATERIALIZED (no explicit array ⇒ every known session shows) or an explicit
+  whitelist.
+- **peer-web-view.js** — the pure decision behind the peer web-view (↗)
+  affordance: given a peer's live hello state and its web-tunnel state, does the
+  button render, what does it say, is a click a "close".
+- **served-banner.js** — the pure decision behind the sidebar notice that a peer
+  has a shell open on this machine: given the seats being watched, is the notice
+  shown and what does it say.
+- **team-roles.js** — the team-management popover's row model from a manifest,
+  plus the client-side validation worth a unit test.
+- **web-notify.js** — browser-frontend OS notifications. The desktop raises
+  them through main's `notifyOS` seam; a browser tab has no such channel.
+- **web-shortcuts.js** — the pure map from a keydown to a browser Alt-chord
+  action. A tab reserves Cmd+T/W/1-9 for its own chrome, so the desktop Cmd
+  shortcuts silently fail in-tab.
+
 ## Tests
 
 Plain `node --test` (`ls test/*.test.js | wc -l` for the file count; the runner
 prints the assertion total). Notable guards:
 
+- `test/architecture-map-complete.test.js` — the completeness ratchet on THIS
+  file: every module in the tree is named here or `EXEMPT` with a reason.
 - `test/free-identifier-leaks.test.js` — the two-directional extraction
   gate described above; its scanner self-tests pin the lexer classes that
   once hid real leaks (multi-line declarations, template interpolations,
