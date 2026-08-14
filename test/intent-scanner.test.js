@@ -540,3 +540,158 @@ test('fencedLines: unclosed fence runs to end of turn', () => {
 test('fencedLines: inline backticks are not fences', () => {
   assert.deepStrictEqual(fencedLines(['see `[agent:who]` inline', 'a ``` b']), [false, false]);
 });
+
+// --- markdown emphasis around an intent line (t404) -------------------------
+// A reviewer emitted `**[agent:review-done]**`. It did not parse, the seat went
+// idle holding a finished verdict, and a watchdog reported it wedged 33 minutes
+// later. The verdict BODY parser already tolerated `**VERDICT**`; the line that
+// DELIVERS it did not, and that asymmetry is the defect.
+
+test('parseIntent: symmetric emphasis around a whole intent line unwraps', () => {
+  assert.deepStrictEqual(parseIntent('**[agent:review-done]**'), { type: 'review-done', body: '' });
+  assert.deepStrictEqual(parseIntent('__[agent:review-done]__'), { type: 'review-done', body: '' });
+  assert.deepStrictEqual(parseIntent('*[agent:review-done]*'), { type: 'review-done', body: '' });
+  assert.deepStrictEqual(parseIntent('_[agent:review-done]_'), { type: 'review-done', body: '' });
+});
+
+test('parseIntent: emphasis applies to the WHOLE grammar, not just review-done', () => {
+  // The incident happened to be a verdict; the same wrapper could equally have
+  // eaten a close or a dm, and a fix scoped to one verb would leave those lost.
+  assert.deepStrictEqual(parseIntent('**[agent:who]**'), { type: 'who' });
+  assert.deepStrictEqual(parseIntent('**[agent:task done t42]**'),
+    parseIntent('[agent:task done t42]'));
+  assert.deepStrictEqual(parseIntent('**[agent:dm bob] hello**'),
+    { type: 'dm', target: 'bob', urgent: false, body: 'hello' });
+});
+
+test('parseIntent: nested and mixed emphasis unwrap layer by layer', () => {
+  assert.deepStrictEqual(parseIntent('***[agent:who]***'), { type: 'who' });
+  assert.deepStrictEqual(parseIntent('**_[agent:who]_**'), { type: 'who' });
+});
+
+test('parseIntent: emphasis does not defeat the escape — the quote still wins', () => {
+  // cleanLine unwraps BEFORE parseIntent's escape branch, which sits ahead of
+  // the registry. Reverse that order and a bolded example fires for real.
+  assert.deepStrictEqual(parseIntent('**\\[agent:who]**'), { type: 'escape', text: '[agent:who]' });
+  assert.deepStrictEqual(parseIntent('*\\[agent:dm bob] hi*'),
+    { type: 'escape', text: '[agent:dm bob] hi' });
+});
+
+test('parseIntent: an UNPAIRED leading marker is a markdown bullet and must not fire', () => {
+  // `* [agent:x]` is a list item in prose ABOUT an intent. Stripping `*` as a
+  // generic prefix char would make every such line in every doc fire.
+  assert.strictEqual(parseIntent('* [agent:who]'), null);
+  assert.strictEqual(parseIntent('- [agent:who]'), null);
+  assert.strictEqual(parseIntent('**[agent:who]'), null);
+  assert.strictEqual(parseIntent('[agent:who]**'), null);
+});
+
+test('parseIntent: mismatched marker pairs do not unwrap', () => {
+  assert.strictEqual(parseIntent('*[agent:who]_'), null);
+  assert.strictEqual(parseIntent('__[agent:who]**'), null);
+});
+
+test('parseIntent: bare emphasis markers are not an intent', () => {
+  // Guards the length floor: `**` alone must not slice into a negative-index
+  // remainder that then matches something.
+  assert.strictEqual(parseIntent('**'), null);
+  assert.strictEqual(parseIntent('****'), null);
+  assert.strictEqual(parseIntent('__'), null);
+});
+
+test('cleanLine: emphasis is unwrapped ONLY when it reveals an intent', () => {
+  assert.strictEqual(cleanLine('**[agent:who]**'), '[agent:who]');
+  // Prose reaches every other caller byte-identical: the near-miss bounce
+  // quotes this line, and the terminal mark scan tests it for `[agent:`.
+  assert.strictEqual(cleanLine('**bold prose**'), '**bold prose**');
+  assert.strictEqual(cleanLine('*emphasis*'), '*emphasis*');
+});
+
+test('cleanLine: decorators and emphasis compose in either arrangement', () => {
+  assert.strictEqual(cleanLine('• **[agent:who]**'), '[agent:who]');
+  assert.strictEqual(cleanLine('\x1b[1m**[agent:name]**\x1b[0m'), '[agent:name]');
+});
+
+test('looksLikeIntent: a bolded near-miss bounces, quoting the unwrapped line', () => {
+  // Without this the wrapper would ALSO hide the typo, so an agent whose verb
+  // was wrong AND bolded gets no bounce and no dispatch — silence twice over.
+  assert.strictEqual(looksLikeIntent('**[agent:frobnicate now]**'), '[agent:frobnicate now]');
+  assert.strictEqual(looksLikeIntent('**bold prose**'), null);
+});
+
+test('fencedLines + emphasis: a bolded intent inside a fence stays inert', () => {
+  // fencedLines reads raw lines; the caller skips fenced ones before parsing.
+  // Asserted together because the fence is the documented way to QUOTE an
+  // intent, and an unwrap that ran first would break that promise.
+  const lines = ['```', '**[agent:review-done]**', '```'];
+  assert.deepStrictEqual(fencedLines(lines), [true, true, true]);
+});
+
+test('parseIntent: a BACKTICKED intent stays quoted — inline code is not emphasis', () => {
+  // The inline counterpart of the fence, and the reason EMPHASIS_MARKS holds no
+  // backtick: `[agent:who]` is how every doc and dm in this repo mentions an
+  // intent without firing it. Adding ` to the list makes all of them fire.
+  assert.strictEqual(parseIntent('`[agent:who]`'), null);
+  assert.strictEqual(parseIntent('``[agent:review-done]``'), null);
+  assert.strictEqual(cleanLine('`[agent:who]`'), '`[agent:who]`');
+});
+
+test('parseIntent: a SPACED interior is a list item, not emphasis', () => {
+  // `* [agent:who] *` is a bullet whose line happens to end in a star. Markdown
+  // does not read it as emphasis either, and tickets-store's wrapper regex
+  // draws the same line for the same reason — a wrapper hugs its content.
+  assert.strictEqual(parseIntent('* [agent:who] *'), null);
+  assert.strictEqual(parseIntent('_ [agent:who] _'), null);
+  // Hugging it is the difference, nothing else about the line changes.
+  assert.deepStrictEqual(parseIntent('*[agent:who]*'), { type: 'who' });
+});
+
+test('parseIntent: the unwrap must REVEAL an intent at the start, not anywhere', () => {
+  // The keep-guard is anchored. A substring test would accept any emphasised
+  // prose that merely MENTIONS an intent, rewriting the line the near-miss
+  // bounce quotes and the terminal marks its rows from.
+  assert.strictEqual(cleanLine('*see the [agent:dm] docs*'), '*see the [agent:dm] docs*');
+  assert.strictEqual(parseIntent('*see the [agent:dm] docs*'), null);
+  assert.strictEqual(looksLikeIntent('*see the [agent:dm] docs*'), null);
+});
+
+test('parseIntent: only markdown emphasis unwraps — other paired glyphs do not', () => {
+  // Strikethrough, quotes and brackets are not emphasis; each added mark is a
+  // new way for prose to fire, so the list stays closed at `*` and `_`.
+  assert.strictEqual(parseIntent('~~[agent:who]~~'), null);
+  assert.strictEqual(parseIntent('"[agent:who]"'), null);
+  assert.strictEqual(parseIntent('([agent:who])'), null);
+});
+
+test('parseIntent: trailing whitespace AFTER the wrapper still fires', () => {
+  // A trailing space is invisible in a rendered turn and costs nothing to type,
+  // so it must not be the difference between a verdict landing and a seat going
+  // idle holding one. The unwrap trims before testing the wrapper for exactly
+  // this; without it `**[agent:x]** ` ends in a space, matches no closing run,
+  // and silently does not fire.
+  assert.deepStrictEqual(parseIntent('**[agent:review-done]** '), { type: 'review-done', body: '' });
+  assert.deepStrictEqual(parseIntent('  *[agent:who]*\t'), { type: 'who' });
+});
+
+test('parseIntent: whitespace INSIDE the wrapper keeps the line inert', () => {
+  // The mirror of the case above, and the reason the interior must hug: a
+  // closing marker separated from the content is a line that ENDS in a star,
+  // not a wrapper. Emphasis and a stray trailing glyph are different things.
+  assert.strictEqual(parseIntent('*[agent:who] *'), null);
+  assert.strictEqual(parseIntent('* [agent:who]*'), null);
+});
+
+test('parseIntent: an emphasised term body keeps its RAW bytes, so ANSI is refused not rewritten', () => {
+  // `term` is the one row whose body is EXECUTED, and the only reader of the
+  // raw second argument: the shell's ANSI strip would turn `echo a<ESC>[Kb`
+  // into `echo ab` — a command the agent never wrote — and then run it. The
+  // raw line must therefore be unwrapped the same way the cleaned one is, or
+  // it stops matching the row's regex and the body silently falls back to the
+  // stripped text. Asserted as EQUALITY with the bare form: the wrapper must
+  // not change which bytes reach vetTermCommand.
+  const bold = parseIntent('**[agent:term exec] echo a\x1b[Kb**');
+  const bare = parseIntent('[agent:term exec] echo a\x1b[Kb');
+  assert.ok(bare.body.includes('\x1b'), 'ENTER: the bare form really does carry the escape through');
+  assert.deepStrictEqual(bold, bare, 'emphasis must not strip the escape the vetter has to see');
+  assert.ok(bold.body.includes('\x1b'), 'the escape survives — refusal is the vetter\'s job, not a silent rewrite');
+});
