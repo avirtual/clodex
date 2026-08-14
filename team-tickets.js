@@ -1709,13 +1709,23 @@ function createTicketMethods(deps, shared) {
     // `disposition` is REQUIRED and has no default: the unsafe value is `injected`,
     // so a caller that forgets to pass one would arm a 90s latch over text it never
     // wrote. Defaulting is what made the hold-park's argument-less onWrite silent.
-    _armSpecConfirm(seatName, ticketId, disposition) {
+    //
+    // `redirect` present switches the latch to kind 'redirect' (a rejection or a
+    // follow-up must-fixes sent back to a working seat) and carries the text to
+    // rebuild it with. The four properties that make the spec retry safe hold
+    // verbatim at those sites — see _redirectDeliveryText — so this is one latch
+    // with two kinds, not two latches.
+    _armSpecConfirm(seatName, ticketId, disposition, redirect = null) {
       const s = this.sessions.get(seatName);
       if (!s || !s.agentType || s._dead) return;
+      const kind = redirect ? 'redirect' : 'spec';
       if (disposition !== 'injected') {
         // A late divert can park text this already armed over — drop the latch
-        // rather than leave it watching for an edge that will never come.
-        if (s._specUnconfirmed && s._specUnconfirmed.ticketId === ticketId) {
+        // rather than leave it watching for an edge that will never come. Matched
+        // on kind too: a parked REDIRECT must not silently retire a spec latch
+        // that is still legitimately watching an earlier unconsumed dispatch.
+        if (s._specUnconfirmed && s._specUnconfirmed.ticketId === ticketId
+            && s._specUnconfirmed.kind === kind) {
           s._specUnconfirmed = null;
           clearTimeout(s._specConfirmTimer);
           s._specConfirmTimer = null;
@@ -1734,14 +1744,41 @@ function createTicketMethods(deps, shared) {
       // An earlier unconfirmed spec is REPLACED, not stacked: the new write's
       // leading Ctrl-U clears whatever the old one left in the composer, so the
       // old latch describes a draft that no longer exists.
-      // The retry budget SURVIVES the replacement when it is the same ticket: the
-      // redelivery re-enters here through the write it triggered, and a budget reset
-      // there would make the one-shot retry unbounded.
+      // The retry budget SURVIVES the replacement when it is the same ticket AND
+      // the same kind: the redelivery re-enters here through the write it
+      // triggered, and a budget reset there would make the one-shot retry
+      // unbounded. Kind is part of the match because a spec and a later redirect
+      // on ONE ticket are two different unconsumed writes — carrying a spent spec
+      // budget onto the redirect would deny the redirect the single retry this
+      // ticket exists to give it.
       const prior = s._specUnconfirmed;
-      const retried = !!(prior && prior.ticketId === ticketId && prior.retried);
+      const retried = !!(prior && prior.ticketId === ticketId && prior.kind === kind && prior.retried);
       clearTimeout(s._specConfirmTimer);
-      s._specUnconfirmed = { ticketId, at: Date.now(), retried };
+      s._specUnconfirmed = redirect
+        ? { ticketId, kind, at: Date.now(), retried, ...redirect }
+        : { ticketId, kind, at: Date.now(), retried };
       this._armSpecConfirmTimer(s);
+    },
+
+    // The bytes of a seat-bound ticket REDIRECT — a rejection or a follow-up set
+    // of must-fixes handed back to the seat that is working the ticket.
+    //
+    // One builder for the first delivery AND the redelivery, so a replay is the
+    // first copy plus a head rather than a second rendering of it that can drift
+    // from it. With `replay` false the head is empty and the bytes are exactly
+    // what each call site wrote before this existed.
+    //
+    // The head does the same job as _deliverTicketSpec's: the seat may be holding
+    // an unsubmitted copy of the first write, and nothing else in the text lets it
+    // tell a redelivery from a second, different rejection. Read as the latter it
+    // would go looking for must-fixes that were never filed.
+    _redirectDeliveryText(ticketId, label, reason, replay = false) {
+      const head = replay
+        ? `[ticket ${ticketId} ${label} REDELIVERY] this was already sent to you once and no turn followed, so `
+          + `you may already be holding an unsubmitted copy of it — if you have already acted on these points, `
+          + `keep going rather than starting them again.\n`
+        : '';
+      return `${head}[ticket ${ticketId} ${label}] ${ticketCloseLine(ticketId)}${reason}`;
     },
 
     _armSpecConfirmTimer(session) {
@@ -1962,12 +1999,21 @@ function createTicketMethods(deps, shared) {
       // its role. Dropping this quietly alongside the reassignment case would be
       // this ticket's own premise failing inside its own fix: an open ticket whose
       // spec reached no one, and no one told.
+      // Every arm below reports in the vocabulary of what was actually lost. A
+      // redirect reported as an undelivered "spec" is the misattribution this
+      // extension exists to retire — the lead hears "the seat never got its task"
+      // about a seat that has been working the ticket for an hour.
+      const isRedirect = u.kind === 'redirect';
+      const step = isRedirect ? 'redirect-undelivered' : 'spec-undelivered';
+      const what = isRedirect ? `${u.label || 'rejection'} for ${u.ticketId}` : `spec for ${u.ticketId}`;
+      const wrote = isRedirect ? 'the rejection was written' : 'its spec was written';
+
       if (!holder) {
         session._specUnconfirmed = null;
-        log.error('intent', `spec for ${u.ticketId} is stranded — ${session.name} never started a turn and the ticket now resolves to no live seat`);
-        this._escalateTicket(team, u.ticketId, 'spec-undelivered',
-          `${session.name} never started a turn after its spec was written, and the ticket no longer resolves to any live seat`,
-          'the spec was injected once at dispatch; no redelivery was attempted because there is nobody to deliver to');
+        log.error('intent', `${what} is stranded — ${session.name} never started a turn and the ticket now resolves to no live seat`);
+        this._escalateTicket(team, u.ticketId, step,
+          `${session.name} never started a turn after ${wrote}, and the ticket no longer resolves to any live seat`,
+          `the ${isRedirect ? 'rejection' : 'spec'} was injected once; no redelivery was attempted because there is nobody to deliver to`);
         return;
       }
 
@@ -1979,14 +2025,22 @@ function createTicketMethods(deps, shared) {
         // composer (the Enter-eaten case), the redelivery's leading Ctrl-U
         // replaces that draft rather than concatenating with it.
         u.retried = true;
-        log.warn('intent', `spec for ${u.ticketId} unconfirmed on ${session.name} after ${SPEC_CONFIRM_MS / 1000}s (no turn started) — redelivering once`);
+        log.warn('intent', `${what} unconfirmed on ${session.name} after ${SPEC_CONFIRM_MS / 1000}s (no turn started) — redelivering once`);
         this._broadcast('ipc-message', {
-          ts: Date.now(), from: 'clodex', to: session.name, kind: 'spec-unconfirmed',
-          body: `ticket ${u.ticketId} spec written but no turn started — redelivering`,
+          ts: Date.now(), from: 'clodex', to: session.name,
+          kind: isRedirect ? 'redirect-unconfirmed' : 'spec-unconfirmed',
+          body: `ticket ${u.ticketId} ${isRedirect ? `${u.label || 'rejection'} written` : 'spec written'} but no turn started — redelivering`,
         });
         // Marked as a replay: the seat may be holding an unsubmitted copy, and it
         // must not read the second one as a second ticket.
-        const r = this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true, true);
+        // The redirect rebuilds from the latch's own snapshot of the text, not
+        // from the ticket record: the reason a rejection carries is not persisted
+        // anywhere on the record (only `reworkRound` is), so the snapshot IS the
+        // only source. It re-arms through the same onWrite hook, which is what
+        // makes the second window below reachable.
+        const r = isRedirect
+          ? this._deliverRedirectReplay(team, ticket, session.name, u)
+          : this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true, true);
         // A redelivery that reached nobody arms nothing, so the second window would
         // never run and the escalation below would be unreachable — the one case
         // where this mechanism most needs to speak (spec undeliverable, seat gone)
@@ -1998,9 +2052,9 @@ function createTicketMethods(deps, shared) {
             || 'unknown delivery failure';
           session._specUnconfirmed = null;
           log.error('intent', `redelivery of ${u.ticketId} to ${session.name} reached nobody (${why}) — escalating`);
-          this._escalateTicket(team, u.ticketId, 'spec-undelivered',
-            `${session.name} never started a turn after its spec was written, and the redelivery could not be handed to a seat: ${why}`,
-            'the spec was injected once at dispatch and a redelivery was attempted after the confirmation window');
+          this._escalateTicket(team, u.ticketId, step,
+            `${session.name} never started a turn after ${wrote}, and the redelivery could not be handed to a seat: ${why}`,
+            `the ${isRedirect ? 'rejection' : 'spec'} was injected once and a redelivery was attempted after the confirmation window`);
           return;
         }
         // A `parked` redelivery is durable but produces no edge to confirm, so there
@@ -2019,10 +2073,36 @@ function createTicketMethods(deps, shared) {
       // Two writes, no turn. Whatever is wrong is not a lost write, and a third
       // copy would not fix it — hand it to the lead, who can look at the seat.
       session._specUnconfirmed = null;
-      log.error('intent', `spec for ${u.ticketId} still unconfirmed on ${session.name} after a redelivery — escalating`);
-      this._escalateTicket(team, u.ticketId, 'spec-undelivered',
-        `${session.name} was written to twice and never started a turn (no activity for ${Math.round((Date.now() - u.at) / 1000)}s after dispatch)`,
-        'the spec was injected once at dispatch and redelivered once after the confirmation window');
+      log.error('intent', `${what} still unconfirmed on ${session.name} after a redelivery — escalating`);
+      // Spelled out for the redirect, because the lead's default reading of a
+      // silent seat on an open ticket is "stalled seat" and the whole value of
+      // watching this path is replacing that guess with what actually happened.
+      const evidence = isRedirect
+        ? `${session.name} never saw the ${u.label || 'rejection'}: it was written twice and the seat started no turn `
+          + `(no activity for ${Math.round((Date.now() - u.at) / 1000)}s). It is not stalled on the work — it was never told.`
+        : `${session.name} was written to twice and never started a turn (no activity for ${Math.round((Date.now() - u.at) / 1000)}s after dispatch)`;
+      this._escalateTicket(team, u.ticketId, step, evidence,
+        `the ${isRedirect ? 'rejection' : 'spec'} was injected once and redelivered once after the confirmation window`);
+    },
+
+    // The redirect's redelivery. Mirrors _deliverTicketSpec's contract exactly —
+    // same return shape, same arm-on-write hook — because _checkSpecConfirm's
+    // retry arm reads that shape to decide between escalating, standing down, and
+    // re-arming, and a second shape there would need a second copy of that logic.
+    //
+    // Re-resolves the seat rather than trusting the latch: the caller has already
+    // established the ticket still resolves to this session, and resolving again
+    // here would be a second answer to a settled question that could disagree.
+    _deliverRedirectReplay(team, ticket, seatName, u) {
+      const text = this._redirectDeliveryText(ticket.id, u.label, u.reason, true);
+      const r = this._gatedDeliver(seatName, u.from || 'clodex-team', text, true,
+        `[ticket ${ticket.id} ${u.label} REDELIVERY] close with ${ticketCloseVerb(ticket.id)}`,
+        (disposition) => this._armSpecConfirm(seatName, ticket.id, disposition,
+          { label: u.label, reason: u.reason, from: u.from }));
+      if (!r || r.error) return { undelivered: true };
+      if (r.parked) return { parked: r.parked, reason: r.reason || null };
+      if (r.held) return { held: true, reason: r.held };
+      return { queued: true };
     },
 
     _ticketDeliverySuffix(d, assignee) {
@@ -3772,8 +3852,14 @@ function createTicketMethods(deps, shared) {
         // prompt — the stale-file dependency this whole line exists to remove from
         // the dispatch path. The reason text pushes this well past the spill
         // threshold, so the tag carries the verb too.
-        const r = this._gatedDeliver(seat, 'ticket-loop', `[ticket ${ticket.id} rejected] ${ticketCloseLine(ticket.id)}${reason}`, true,
-          `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`);
+        // Watched like a spec, and for a sharper reason: a seat that never sees
+        // its rejection keeps working the version that was just rejected, and the
+        // stall sweep then reports it as a stalled seat — the wrong cause, which
+        // sends the lead looking at the seat instead of at the delivery.
+        const r = this._gatedDeliver(seat, 'ticket-loop', this._redirectDeliveryText(ticket.id, 'rejected', reason), true,
+          `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`,
+          (disposition) => this._armSpecConfirm(seat, ticket.id, disposition,
+            { label: 'rejected', reason, from: 'ticket-loop' }));
         this._reconcileTickets(team);
         this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: ticket.assignee || seat, body: `ticket ${ticket.id} rejected: suite red` });
         log.info('intent', `ticket ${ticket.id} rejected by the loop (suite red) → ${seat}`);
@@ -3866,8 +3952,10 @@ function createTicketMethods(deps, shared) {
           + `${this._spillRejectedPayload(session, 'task reject', reason)}`);
         return;
       }
-      const r = this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} more must-fixes] ${ticketCloseLine(ticket.id)}${reason}`, true,
-        `[ticket ${ticket.id} more must-fixes] close with ${ticketCloseVerb(ticket.id)}`);
+      const r = this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'more must-fixes', reason), true,
+        `[ticket ${ticket.id} more must-fixes] close with ${ticketCloseVerb(ticket.id)}`,
+        (disposition) => this._armSpecConfirm(seat, ticket.id, disposition,
+          { label: 'more must-fixes', reason, from: session.name }));
       if (!(r && (r.queued || r.parked))) {
         reply(`error: ${ticket.id} is already open for rework and the follow-up did NOT reach ${seat} `
           + `(${(r && (r.error || r.held)) || 'unknown delivery failure'})`
@@ -4404,8 +4492,10 @@ function createTicketMethods(deps, shared) {
       // the close line spills it, and an untagged pointer names neither the ticket
       // nor the verb. So the tag is added here rather than left to default.
       if (seat && seat !== team.lead) {
-        this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} rejected] ${ticketCloseLine(ticket.id)}${reason}`, true,
-          `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`);
+        this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'rejected', reason), true,
+          `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`,
+          (disposition) => this._armSpecConfirm(seat, ticket.id, disposition,
+            { label: 'rejected', reason, from: session.name }));
       }
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} rejected` });
