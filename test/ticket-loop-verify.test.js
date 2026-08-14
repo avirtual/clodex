@@ -2788,11 +2788,18 @@ function reviewerSeat(f, ticketId, size, name = 'team-reviewer-1-r1') {
 }
 
 // The sweep at `t`, with the reviewer's CPU reading whatever the caller says.
-// `_sampleCpuMs` is stubbed rather than `childProcess`: what is under test is
-// the classification, and a real `ps` would report THIS process's CPU, which is
-// a number nobody can make flat on demand.
+// The SAMPLER is stubbed rather than `childProcess`: what is under test is the
+// classification, and a real `ps` would report this process's tree, which is a
+// number nobody can make flat on demand — the fixture pid is not even in the
+// process table, so an unstubbed sampler returns null and every verdict here
+// collapses to `wedged` for the wrong reason.
+//
+// t399 moved the probe from the CLI pid to the pty's whole process TREE, so the
+// stubbed name is `_samplePtyTreeCpuMs`. The number it returns still means the
+// same thing to the classifier (accumulated ms), which is why every assertion
+// below is unchanged across that move.
 function sweepAt(f, t, cpuMs) {
-  f.m._sampleCpuMs = async () => cpuMs;
+  f.m._samplePtyTreeCpuMs = async () => cpuMs;
   return f.m._sweepTeamTickets(f.team, t);
 }
 
@@ -2904,7 +2911,7 @@ test('t384: the probe runs ONLY at the review step — other steps are unqualifi
     ...f.one(), state: 'done', loopStep: 'verify', lastActivityAt: t0 - (60 * 60 * 1000), nudgedAt: null,
   }]);
   let sampled = 0;
-  f.m._sampleCpuMs = async () => { sampled += 1; return 52_000; };
+  f.m._samplePtyTreeCpuMs = async () => { sampled += 1; return 52_000; };
 
   await f.m._sweepTeamTickets(f.team, t0);
 

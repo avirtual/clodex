@@ -18,7 +18,7 @@ const os = require('node:os');
 
 const {
   readTail, lastToolFrom, formatStallBody, formatOrphanBody,
-  parseCpuTime, classifyReviewSeat, formatReviewSeatClause,
+  parseCpuTime, sumTreeCpuMs, classifyReviewSeat, formatReviewSeatClause,
 } = require('../stall-evidence');
 
 // t384 — the two-signal reviewer liveness test.
@@ -451,4 +451,107 @@ test('t388: the body with a cause clause is still one glanceable line', () => {
     dmLatch: { count: 2, age: '2h' },
   });
   assert.ok(!body.includes('\n'), 'no newlines — this fires into the lead prompt stream');
+});
+
+// t399 — the tree-CPU probe. The subject is a MEASURED false wedge: on
+// 2026-08-15 a seat inside a long tool call read idle, flat, and ~zero CLI CPU
+// while 16 children burned ~88% each. All three signals lie in the same
+// direction, so the probe's own root-pid sample was the thing that had to change.
+//
+// Rows are the parsed shape of `ps -axo pid=,ppid=,time=`.
+const psRow = (pid, ppid, timeText) => ({ pid, ppid, timeText });
+
+test('t399: a busy CHILD counts toward the root — the measured false-wedge shape', () => {
+  const rows = [
+    psRow(100, 1, '0:00.30'),      // the CLI: essentially idle, mid tool call
+    psRow(200, 100, '5:00.00'),    // the tool: burning CPU
+  ];
+  assert.strictEqual(sumTreeCpuMs(rows, 100), 300 + 300_000,
+    'the root alone reads 300ms — the child is the entire signal');
+});
+
+test('t399: a busy child under a quiet CLI classifies MOVING, not wedged', () => {
+  // The end-to-end point of the helper: same transcript (flat), same root pid
+  // CPU (flat), and the ONLY difference is whether the sampler saw the child.
+  const flatRoot = [psRow(100, 1, '0:00.30')];
+  const withChild = (t) => [psRow(100, 1, '0:00.30'), psRow(200, 100, t)];
+  const gap = 60 * 1000;
+  const at0 = 1_000_000;
+
+  const rootOnly = {
+    prev: { at: at0, size: 500, cpuMs: sumTreeCpuMs(flatRoot, 100), lastGrowthAt: at0 },
+    cur: { at: at0 + gap, size: 500, cpuMs: sumTreeCpuMs(flatRoot, 100), lastGrowthAt: at0 },
+  };
+  assert.strictEqual(classifyReviewSeat(rootOnly.prev, rootOnly.cur).verdict, 'wedged',
+    'ENTER: root-only sampling really does produce the false wedge this fixes');
+
+  const tree = {
+    prev: { at: at0, size: 500, cpuMs: sumTreeCpuMs(withChild('1:00.00'), 100), lastGrowthAt: at0 },
+    cur: { at: at0 + gap, size: 500, cpuMs: sumTreeCpuMs(withChild('1:30.00'), 100), lastGrowthAt: at0 },
+  };
+  assert.strictEqual(classifyReviewSeat(tree.prev, tree.cur).verdict, 'moving',
+    'the same seat, sampled over its tree, is correctly alive');
+});
+
+test('t399: an ABSENT root pid is null, never a guessed 0', () => {
+  const rows = [psRow(100, 1, '0:10.00'), psRow(200, 100, '0:20.00')];
+  assert.strictEqual(sumTreeCpuMs(rows, 555), null,
+    'the process died — 0 would read as the WEDGE verdict about a seat that is merely gone');
+  assert.strictEqual(sumTreeCpuMs([], 100), null, 'an empty table is not a flat tree');
+  assert.strictEqual(sumTreeCpuMs(null, 100), null, 'a failed ps is not a flat tree');
+});
+
+test('t399: a deep tree sums every level, not just direct children', () => {
+  const rows = [
+    psRow(100, 1, '0:01.00'),
+    psRow(200, 100, '0:02.00'),
+    psRow(300, 200, '0:04.00'),
+    psRow(400, 300, '0:08.00'),   // great-grandchild: a shell running a build running a compiler
+  ];
+  assert.strictEqual(sumTreeCpuMs(rows, 100), 15_000,
+    'a stop at one level would read 3000 and call a working toolchain wedged');
+});
+
+test('t399: an ORPHANED child (ppid 1) is excluded ON PURPOSE', () => {
+  // Measured 2026-08-15: a backgrounded subshell reparents to init when its
+  // parent exits. A walk rooted at the pty pid therefore loses it, which is
+  // CORRECT here — widening the walk to catch it would let any unrelated
+  // process on the box suppress a real wedge (suppression-by-stranger). This
+  // pins the exclusion so the obvious "why doesn't the tree see my background
+  // build" fix cannot land silently.
+  const rows = [
+    psRow(100, 1, '0:01.00'),      // our root
+    psRow(200, 100, '0:02.00'),    // a real child
+    psRow(900, 1, '99:00.00'),     // orphan: was ours, now init's. NOT counted.
+  ];
+  assert.strictEqual(sumTreeCpuMs(rows, 100), 3000,
+    'the orphan is a stranger to the tree, and counting it would suppress real wedges');
+});
+
+test('t399: a tree-CPU DROP does not on its own produce a wedge-confirm', () => {
+  // Tree sums are NOT monotonic (a single pid's TIME is). A child that exits
+  // between samples takes its accumulated CPU OUT of the total, so the delta can
+  // go negative while the root is accruing normally. `cpuAccrued` is a `>=` on
+  // that delta, so the drop falls straight through to `wedged` — and the caller's
+  // two-consecutive-wedged confirm is the ONLY thing that keeps one such gap from
+  // reading as a real wedge.
+  const at0 = 2_000_000;
+  const gap = 60 * 1000;
+  const prevRows = [psRow(100, 1, '0:10.00'), psRow(200, 100, '4:00.00')];
+  const curRows = [psRow(100, 1, '0:15.00')];   // child exited; root accrued 5s
+  const prev = { at: at0, size: 500, cpuMs: sumTreeCpuMs(prevRows, 100), lastGrowthAt: at0 };
+  const cur = { at: at0 + gap, size: 500, cpuMs: sumTreeCpuMs(curRows, 100), lastGrowthAt: at0 };
+
+  assert.ok(cur.cpuMs < prev.cpuMs, 'ENTER: the sum really did DROP across the gap');
+  assert.ok(sumTreeCpuMs(curRows, 100) > sumTreeCpuMs(prevRows, 100) - 240_000,
+    'ENTER: and the root itself really was accruing while it dropped');
+
+  const r = classifyReviewSeat(prev, cur);
+  assert.strictEqual(r.verdict, 'wedged',
+    'the drop DOES read as wedged here — which is exactly why the confirm step must survive');
+
+  // The confirm step, as the sampler applies it: first wedge is downgraded.
+  const confirm = (verdict, once) => (verdict === 'wedged' && once !== true) ? 'unknown' : verdict;
+  assert.strictEqual(confirm(r.verdict, false), 'unknown',
+    'a single drop is absorbed: it can never wake or alarm on its own');
 });
