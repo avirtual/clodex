@@ -11,7 +11,20 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — tickets that run themselves
+
+Most of this release is one story: a ticket now goes from a written spec to a
+merged branch without anyone driving it. You file it, you start it, and Clodex
+mints a worktree and a seat, delivers the spec, runs the suite, sends the work
+to a cold reviewer that has never seen it, hands back rework with the must-fixes
+attached, and merges when the review approves — reporting to the team lead only
+when something needs a decision. Everything under it is the detail of making
+that boring: work that gets dropped now gets noticed, alarms name what they
+measured instead of guessing, and costs are attributed to whoever spent them.
+
+The parts you notice outside that: a peer terminal survives a window reload
+instead of coming back blank and leaving a shell running on the other machine,
+and the Tickets panel works without a team and lets you edit the board.
 
 - A peer terminal survives a window reload, and stops leaving a shell running on
   the other machine when it does not. Reloading the window left the far side
