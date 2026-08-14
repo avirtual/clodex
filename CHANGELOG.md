@@ -13,11 +13,14 @@ blocks a release.
 
 ## Unreleased
 
-- A reviewer that never starts is now reported instead of sitting silent. A
-  freshly spawned reviewer seat can receive its scope and never take a first
-  turn; it stayed alive and idle indefinitely, and nothing noticed until an
-  operator happened to look. It is now reported to the team lead, with the
-  recovery that works spelled out in the alarm.
+- A reviewer that never starts is now restarted automatically instead of
+  sitting silent. A freshly spawned reviewer seat can receive its scope and
+  never take a first turn: the message that starts it is swallowed whole, and
+  because the seat stays alive and idle every signal reads healthy, so nothing
+  noticed until an operator happened to look. Clodex now re-sends the start
+  nudge once, which is measurably enough to recover the seat, and reports it to
+  the team lead only if the seat is still silent after that. The re-sent nudge
+  carries no scope — the scope was never the part that got lost.
 - A ticket whose seat no longer exists now says so. Previously it was reported
   as a quiet hand — advice to wait for a seat that had been retired — and once
   that first alarm had fired the ticket went permanently silent. It now names
