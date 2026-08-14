@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — agents that get themselves unstuck
 
 - The ticket watchdog gained a middle rung: before the lead is alarmed about a
   stalled ticket, a seat that is demonstrably wedged gets one automated wake —
