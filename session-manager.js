@@ -227,6 +227,42 @@ const REVIEWER_FALLBACK = {
     CLODEX_SPAWNER_HINT: 'off',
   },
 };
+// The review path refuses a template's extraArgs wholesale (an agent-writable
+// array of raw CLI argv reaching a seat whose premise is a hard tool cap:
+// --allowedTools, --mcp-config and --dangerously-skip-permissions all ride
+// there, and REVIEWER_TOOL_CAP screens none of them). `--model` is the single
+// carve-out: it grants no authority — tools, posture and env each have their own
+// ceiling above — so honoring it cannot widen the seat, and refusing it made
+// every reviewer spawn as the default model however it was configured.
+// Returns [] when the template names no usable model, so the caller appends
+// nothing. An ALLOWLIST by construction: the value is rebuilt from the parsed
+// model, never passed through from the template's array, so no neighbouring
+// token can ride along with it.
+function reviewerModelArgs(extraArgs) {
+  const a = Array.isArray(extraArgs) ? extraArgs : [];
+  // A model NAME never begins with '-'. Refusing one that does keeps this
+  // function fail-closed on its own terms: otherwise `['--model','--dangerously-
+  // skip-permissions']` emits that flag into the reviewer's argv, and whether it
+  // is read as a flag or swallowed as a bogus model name depends on the CLI's
+  // parser — an authority decision this allowlist must not delegate downstream.
+  const usable = (v) => typeof v === 'string' && v && !v.startsWith('-');
+  for (let i = 0; i < a.length; i++) {
+    const tok = a[i];
+    if (typeof tok !== 'string') continue;
+    // Only the FIRST model token is honored: a last-wins CLI would let a second
+    // one override it, which would make the allowlist's choice not the effective one.
+    if (tok === '--model' || tok === '-m') {
+      // A trailing flag with no value is dropped entirely rather than emitted
+      // bare — a bare --model would consume whatever argv token followed it.
+      return usable(a[i + 1]) ? ['--model', a[i + 1]] : [];
+    }
+    if (tok.startsWith('--model=')) {
+      const v = tok.slice('--model='.length);
+      return usable(v) ? ['--model', v] : [];
+    }
+  }
+  return [];
+}
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, branchSlug } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { buildReviewScope } = require('./ticket-review-scope');
@@ -6730,7 +6766,16 @@ function createSessionManager(deps) {
         type,
         cwd: team.root,
         tpl,
-        extraArgs: postureArgs,
+        // MERGED onto postureArgs, never replacing them (that is the ticket
+        // arm's shape, and the reason a template can hand a ticket seat posture
+        // its opener does not hold). reviewerModelArgs is an allowlist of one
+        // flag — do not widen it to honor the template's array.
+        // Dropping the rest is an ADJUDICATED decision, not an omission: the
+        // rationale is owned by the test 'a reviewer template CANNOT contribute
+        // extraArgs'. Mirroring the ticket arm here reverts it. Twice now this
+        // branch has been read as an oversight because the reasoning lived only
+        // in that test.
+        extraArgs: [...postureArgs, ...reviewerModelArgs(shape && shape.extraArgs)],
         agents: [],
         denyBuiltins: [],
         disabledTools: CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t)),

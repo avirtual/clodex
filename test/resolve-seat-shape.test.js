@@ -485,3 +485,170 @@ test('a reviewer template CANNOT contribute extraArgs', () => {
     'the reviewer inherits the lead posture only; the template argv must lose',
   );
 });
+
+// --- t386: --model is the ONE allowlisted template arg on the review path ---
+//
+// The cap above stays: the review arm still refuses raw template argv. `--model`
+// is carved out of it because it is the one flag in that array that grants no
+// authority — it names a model, and cannot widen tools (REVIEWER_TOOL_CAP owns
+// those), permissions (postureArgs owns those) or env (REVIEWER_ENV_ALLOWLIST
+// owns that). Every test below pairs the carve-out with a denied flag IN THE
+// SAME template, because an allowlist that is only ever handed allowed input is
+// indistinguishable from blanket honoring.
+
+test('t386: the review path honors --model from the template, MERGED with posture', () => {
+  // The defect: this returned ['--dangerously-skip-permissions'] and the
+  // template's --model never reached argv, so no reviewer ever spawned as the
+  // model it was configured for.
+  const m = managerWith(
+    [{ name: 'rv', type: 'claude', cwd: '/repo', extraArgs: ['--model', 'claude-fable-5[1m]'] }],
+    { leadArgs: ['--dangerously-skip-permissions'] },
+  );
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  assert.deepStrictEqual(
+    m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs,
+    ['--dangerously-skip-permissions', '--model', 'claude-fable-5[1m]'],
+    'MERGED, not replaced: the posture the lead holds must survive the carve-out',
+  );
+});
+
+test('t386: --model rides while its siblings in the SAME template are dropped', () => {
+  // The allowlist boundary, crossed inside one call: one template, one
+  // extraArgs array, one flag honored and three refused. A per-template
+  // (rather than per-flag) filter passes every OTHER test in this block and
+  // dies here.
+  const m = managerWith(
+    [{
+      name: 'rv',
+      type: 'claude',
+      cwd: '/repo',
+      extraArgs: ['--allowedTools', 'Bash', '--model', 'sonnet', '--mcp-config', '/x.json'],
+    }],
+    { leadArgs: [] },
+  );
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  assert.deepStrictEqual(
+    m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs,
+    ['--model', 'sonnet'],
+    'only --model and its value survive; --allowedTools/--mcp-config and their values do not',
+  );
+});
+
+test('t386: a template CANNOT smuggle posture in alongside --model', () => {
+  // The escalation this carve-out must not open: the lead has NO posture, so
+  // anything resembling --dangerously-skip-permissions in the result came from
+  // the agent-writable template. This is the register's exposure (template args
+  // REPLACING postureArgs on the ticket path) reaching the review path, which
+  // is the one path currently closed to it.
+  const m = managerWith(
+    [{
+      name: 'rv',
+      type: 'claude',
+      cwd: '/repo',
+      extraArgs: ['--model', 'sonnet', '--dangerously-skip-permissions'],
+    }],
+    { leadArgs: [] },
+  );
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  const args = m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs;
+  assert.deepStrictEqual(args, ['--model', 'sonnet']);
+  assert.ok(
+    !args.includes('--dangerously-skip-permissions'),
+    'a template must never hand a reviewer posture its opener does not hold',
+  );
+});
+
+test('t386: the -m and --model=X spellings are honored and normalized', () => {
+  // Three spellings reach the same CLI flag. Honoring only the spaced form
+  // would make the carve-out silently inert for a template written either
+  // other way — the same class of silent no-op this ticket fixes.
+  for (const [spelling, extraArgs] of [
+    ['-m X', ['-m', 'fable', '--allowedTools', 'Bash']],
+    ['--model=X', ['--model=fable', '--allowedTools', 'Bash']],
+  ]) {
+    const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', extraArgs }], { leadArgs: [] });
+    const team = teamWith({ reviewer: { template: 'rv' } });
+    assert.deepStrictEqual(
+      m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs,
+      ['--model', 'fable'],
+      `${spelling}: normalized to the spaced form, siblings still dropped`,
+    );
+  }
+});
+
+test('t386: only the FIRST --model survives, and a valueless trailing --model is dropped', () => {
+  const m = managerWith(
+    [{ name: 'rv', type: 'claude', cwd: '/repo', extraArgs: ['--model', 'a', '--model', 'b'] }],
+    { leadArgs: [] },
+  );
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  assert.deepStrictEqual(
+    m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs, ['--model', 'a'],
+    'a second --model must not ride: a last-wins CLI would let it override the first',
+  );
+
+  // A dangling --model has no value to carry, and emitting the bare flag would
+  // make the CLI consume whatever token followed it in argv.
+  const m2 = managerWith(
+    [{ name: 'rv', type: 'claude', cwd: '/repo', extraArgs: ['--allowedTools', 'Bash', '--model'] }],
+    { leadArgs: ['--dangerously-skip-permissions'] },
+  );
+  assert.deepStrictEqual(
+    m2.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs,
+    ['--dangerously-skip-permissions'],
+    'nothing to honor; posture alone, and no bare --model left to swallow a neighbour',
+  );
+});
+
+test('t386: a flag-shaped model VALUE is refused, not forwarded', () => {
+  // Cold-review finding. The carve-out rebuilds the pair, so no SIBLING token
+  // rides — but the value slot itself was unscreened, and a template can put a
+  // flag there. Forwarding it would leave whether it parses as a flag or as a
+  // bogus model name up to the CLI's argv parser, which is an authority
+  // decision this allowlist must not delegate downstream.
+  for (const extraArgs of [
+    ['--model', '--dangerously-skip-permissions'],
+    ['--model=--dangerously-skip-permissions'],
+    ['-m', '--allowedTools'],
+  ]) {
+    const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', extraArgs }], { leadArgs: [] });
+    const team = teamWith({ reviewer: { template: 'rv' } });
+    const args = m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs;
+    assert.deepStrictEqual(args, [], `${JSON.stringify(extraArgs)}: refused outright`);
+    assert.ok(
+      !args.includes('--dangerously-skip-permissions'),
+      'a flag must never reach argv through the model value slot',
+    );
+  }
+});
+
+test('t386: a reviewer template with no extraArgs is unchanged by the carve-out', () => {
+  // The shipped template carries no extraArgs at all, so this is the shape that
+  // actually spawns today. It must still be exactly the posture.
+  const m = managerWith(
+    [{ name: 'rv', type: 'claude', cwd: '/repo' }],
+    { leadArgs: ['--dangerously-skip-permissions'] },
+  );
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  assert.deepStrictEqual(
+    m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs,
+    ['--dangerously-skip-permissions'],
+  );
+});
+
+test('t386: the TICKET path is untouched — it still takes template argv verbatim', () => {
+  // The carve-out is review-only. If it were applied to both arms, a hand
+  // template's --dangerously-skip-permissions would stop reaching its seat and
+  // every worktree hand would start prompting. That is a behaviour change this
+  // ticket does not authorize, so it is pinned from the other side.
+  const m = managerWith(
+    [{ name: 'ht', type: 'claude', cwd: '/repo', extraArgs: ['--model', 'opus', '--dangerously-skip-permissions'] }],
+    { leadArgs: [] },
+  );
+  const team = teamWith({ hand: { worktree: true, template: 'ht' } });
+  assert.deepStrictEqual(
+    m.resolveSeatShape(team, 'hand', 'ticket', LEAD).extraArgs,
+    ['--model', 'opus', '--dangerously-skip-permissions'],
+    'ticket arm: verbatim, including args the review arm refuses',
+  );
+});
