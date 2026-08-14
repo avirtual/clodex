@@ -266,6 +266,12 @@ function createTicketMethods(deps, shared) {
     // _taskAssign, AND exported (ipc-handlers imports it). Passed in rather
     // than moved so the export keeps its home and no require cycle is created.
     nameConflict,
+    // Derived core-side (session-manager.js, beside BOOT_DRAIN_SETTLE_MS) and
+    // borrowed here. It measures how long an injected unit has to produce a turn
+    // edge — inject/activity plumbing, not ticket lifecycle — and the dm latch
+    // core-side is its third borrower. Re-deriving it from `deps.specConfirmMs`
+    // here as well would put the same default in two files.
+    SPEC_CONFIRM_MS,
   } = shared;
 
   // Injectable ONLY so the kill arm is reachable from a test. Without a seam no
@@ -274,17 +280,6 @@ function createTicketMethods(deps, shared) {
   // ship green while measuring nothing.
   const TICKET_SUITE_TIMEOUT = Number.isFinite(deps.ticketSuiteTimeoutMs)
     ? deps.ticketSuiteTimeoutMs : TICKET_SUITE_TIMEOUT_MS;
-
-  // How long after a spec is WRITTEN — the clock starts at the queue's write, not
-  // at the enqueue, so the gates ahead of it do not eat the window — a seat has to
-  // START A TURN before the write is treated as lost. Not a stall threshold: it
-  // measures the FIRST turn only, and a seat that submitted anything at all has
-  // already cleared the latch, so this can never fire on a slow turn however long
-  // it runs.
-  // Injectable for tests, which drive it LONG and call the check directly — at 0
-  // the check races the delivery it is meant to judge and reads a latch the
-  // production ordering never produces. 90s in production.
-  const SPEC_CONFIRM_MS = Number.isFinite(deps.specConfirmMs) ? deps.specConfirmMs : 90 * 1000;
 
   return {
     sweepReviewerGraveyard() {

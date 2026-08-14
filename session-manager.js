@@ -496,6 +496,23 @@ function createSessionManager(deps) {
   const BOOT_DRAIN_SETTLE_MS = Number.isFinite(deps.bootDrainSettleMs) ? deps.bootDrainSettleMs : 750;
   const ROSTER_MAX_WAIT_MS = deps.rosterMaxWaitMs || 10000;
 
+  // How long an INJECTED unit has to produce a turn edge before the write is
+  // treated as lost. Not a stall threshold: it measures the FIRST turn after a
+  // write, and a seat that submitted anything at all has already cleared its
+  // latch, so this can never fire on a slow turn however long it runs.
+  //
+  // It lives HERE, not with the ticket verbs, because nothing in its value
+  // derives from the ticket lifecycle — it is a property of the inject/activity
+  // plumbing, and it now has three borrowers with only one of them ticket-shaped
+  // (the spec/redirect latch, the review-start nudge, and the dm latch below).
+  // Derived ONCE and lent to team-tickets.js through the shared bag: two
+  // `Number.isFinite(deps.specConfirmMs)` literals is the duplicated-default
+  // shape that drifts.
+  // Injectable for tests, which drive it LONG and call the checks directly — at
+  // 0 a check races the delivery it is meant to judge and reads a latch the
+  // production ordering never produces. 90s in production.
+  const SPEC_CONFIRM_MS = Number.isFinite(deps.specConfirmMs) ? deps.specConfirmMs : 90 * 1000;
+
   // clodexHome is INJECTED, never left to the store's default: the board now
   // resolves under it, so a test that repoints REGISTRY_DIR would otherwise read
   // and write the operator's real ~/.clodex board.
@@ -5287,7 +5304,7 @@ function createSessionManager(deps) {
   // initialised in the constructor above and NOT here. Moving that init into
   // team-tickets.js would need a new `_initTicketState()` call, which is a
   // behavioural edit — accepted residue, deliberately.
-  const ticketMethods = createTicketMethods(deps, { ticketsStore, nameConflict });
+  const ticketMethods = createTicketMethods(deps, { ticketsStore, nameConflict, SPEC_CONFIRM_MS });
   for (const [k, v] of Object.entries(ticketMethods)) {
     Object.defineProperty(SessionManager.prototype, k,
       { value: v, writable: true, configurable: true, enumerable: false });
