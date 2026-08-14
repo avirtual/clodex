@@ -18,6 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const { confine } = require('./path-confine');
+const { previewLine } = require('./body-preview');
 
 // A charset filter, NOT the containment check — it admits `.` and `..`, which
 // are spelled entirely in this charset. Containment is enforced positively in
@@ -269,7 +270,7 @@ function digestTiers(units, { budget = DIGEST_BUDGET, now = Date.now() } = {}) {
     + 'Recall any unit by id or keyword: [agent:memory recall] <id|query>.';
   const indexHead = '\nIndex (bodies on disk — recall to read):';
   const indexLine = (u, mark) => {
-    const first = (u.body.split('\n')[0] || '').slice(0, 80);
+    const first = previewLine(u.body, 80);
     const age = fmtAge(u.learned_at, now);
     return `\n- ${mark}${u.id}${u.scope ? ` [${u.scope}]` : ''} ${first}${age ? ` (${age})` : ''}`;
   };

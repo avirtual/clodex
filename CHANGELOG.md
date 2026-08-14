@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:remind list]` no longer shows a blank preview for a reminder whose
+  body was written on the lines following the intent line. The reminder was
+  always stored complete and always fired complete — only the listing was
+  wrong, so nothing was ever lost. It read as an empty body, which is worse
+  than it sounds: a readout that reports present data as absent teaches a rule
+  that is not true. The same first-line preview is now shared with the memory
+  index and the memory digest, which were not affected but would have been by
+  any change to how those bodies are stored.
+
 - A reminder can now be tied to the ticket it is about, and dies with it. Write
   `[agent:remind for t42 in 40m] check the branch landed` and the reminder is
   cancelled automatically once t42 is cancelled, or accepted in a way that

@@ -231,6 +231,11 @@ bundle), whose packaged form is the Docker image under
 
 - **intent-scanner.js** — `[agent:…]` intent matching on assistant text
   (ANSI/decorator stripping, the `\[agent:…]` escape).
+- **body-preview.js** — one-line preview of a stored intent body, for the four
+  readouts that show one (remind list, memory list, the memory digest index,
+  notify-user). Picks the first NON-EMPTY line: a greedy body written on the
+  lines following its intent line is stored with a leading newline, so
+  `split('\n')[0]` renders intact data as blank.
 - **intent-registry.js** — the single verb table three consumers read (the
   scanner's parse chain, intent extraction in session-manager, and the
   handler's routing switch). Do not reintroduce a parallel verb list in any
