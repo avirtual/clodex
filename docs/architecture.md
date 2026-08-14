@@ -636,6 +636,13 @@ Own state + DOM, `init*(deps)`:
   is NOT a session, and nothing here should make it look like one.
 - **term-search.js**, **banners.js**, **themes.js**, **library-drawers.js**
   (prompts/agents/skills drawers).
+- **intent-highlight.js** — marks emitted `[agent:…]` rows in a terminal and
+  ticks them in the scrollbar lane. RECONCILES against the buffer per pass
+  rather than appending: decorations are push-based, and the CLI repaints its
+  live tail. Skips the pass while the ALTERNATE buffer is active (it reads
+  empty, so a pass there would dispose every real mark), and re-reads
+  `marker.line` instead of trusting a stored index, which scrollback trim
+  shifts. Disposed BEFORE its terminal.
 - **inbox-drawer.js** — operator inbox for `[agent:notify-user]` notes +
   the sidebar-footer unread badge; no core state, but takes `openFilePeek`
   and `showToast` by injection so a link in a note lands in the same peek
@@ -721,6 +728,10 @@ which is why the judgement worth testing is pushed down here.
   inline notice, and the missing-CLI overlay plan), **placement.js** (the "Run
   in" selector: `'host'` or a sandbox BOX ID), **prefs-gate.js** (which
   Preferences controls are inert given dialog state, plus the reason line).
+- **intent-marks.js** — classify rendered terminal rows as a `fire` intent, an
+  `inert` one (intent-shaped, will not fire), or unmarked (escaped/fenced).
+  Uses intent-scanner's own grammar, never a private regex: a mark is believed,
+  so one promising a turn that never happens is worse than no mark.
 - **path-scan.js** — find path-like tokens (with an optional `:line`) in a line
   of plain text, as offsets. Answers "what LOOKS like a path here" and nothing
   about existence — resolution is main-side (`file-resolve.js`), because only

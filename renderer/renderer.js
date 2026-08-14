@@ -45,6 +45,7 @@ const { createDrawerHost } = require('./drawer-host');
 const { createIpcLog } = require('./ipc-log');
 const { createInboxDrawer } = require('./inbox-drawer');
 const { createTermSearch } = require('./term-search');
+const { createIntentHighlight } = require('./intent-highlight');
 const { initBanners } = require('./banners');
 const { initThemes } = require('./themes');
 const { initLibraryDrawers } = require('./library-drawers');
@@ -1138,6 +1139,8 @@ function createTerminal(name, peer = null) {
     },
   });
 
+  const intentHighlight = createIntentHighlight(terminal);
+
   const searchAddon = new SearchAddon();
   terminal.loadAddon(searchAddon);
   searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
@@ -1175,7 +1178,7 @@ function createTerminal(name, peer = null) {
     window.api.writeToSession(name, data);
   });
 
-  sessions.set(name, { terminal, fitAddon, searchAddon, wrapperEl, peer });
+  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, wrapperEl, peer });
   updateWindowTitle();
   return { terminal, fitAddon, searchAddon, wrapperEl };
 }
@@ -1288,6 +1291,9 @@ function removeSession(name, { keepPersisted = false } = {}) {
       if (!keepPersisted) window.api.peerDetach(s.peer.id, s.peer.name);
       forgetControlMirror(s.peer.id, s.peer.name);
     }
+    // Before the terminal: its decorations hold markers that the terminal owns,
+    // and disposing them afterwards throws on the marker lookup.
+    if (s.intentHighlight) s.intentHighlight.dispose();
     s.terminal.dispose();
     s.wrapperEl.remove();
     sessions.delete(name);

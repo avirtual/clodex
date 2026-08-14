@@ -231,6 +231,11 @@ const SCANNED_MODULES = [
 // R3) plus every new R3 popover module.
 const RENDERER_SCOPE = 'renderer/renderer.js';
 const RENDERER_SCANNED_MODULES = [
+  // The terminal intent-mark classification (t402). Read by intent-highlight.js,
+  // which is DOM-bound and untested, and it reaches ACROSS into a root module
+  // (intent-scanner) — so the guard that it never also reaches for a
+  // renderer.js name is the cheap half of keeping it a pure leaf.
+  'renderer/lib/intent-marks.js',
   'renderer/lib/constants.js',
   'renderer/lib/format.js',
   'renderer/lib/render-html.js',

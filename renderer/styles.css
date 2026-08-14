@@ -4250,3 +4250,26 @@ html, body {
   text-align: center;
   user-select: text; /* a version you cannot copy into a bug report is half useless */
 }
+
+/* Emitted [agent:…] intents. The wash sits on xterm's BOTTOM decoration layer,
+   so the row's own colours and its selection survive; the left rule is what
+   the eye actually catches when scanning, the wash alone reads as noise.
+   The scrollbar tick is drawn on canvas and cannot come from here — the island
+   reads --accent/--warn for it. */
+.intent-mark {
+  border-left: 2px solid var(--accent);
+  pointer-events: none; /* the row's file links stay clickable through it */
+}
+.intent-mark-fire { border-left-color: var(--accent); background: rgba(233, 69, 96, .13); }
+/* Written like an intent, will NOT fire — prose before the bracket, an unknown
+   verb. Warn-coloured because the silence is the bug being surfaced. */
+.intent-mark-inert { border-left-color: var(--warn); background: rgba(229, 192, 123, .13); }
+
+/* Paper and light are LIGHT grounds: a wash tuned on the dark default turns
+   muddy or invisible there, so each theme states its own. */
+[data-theme="claude"] .intent-mark-fire { background: rgba(217, 119, 87, .14); }
+[data-theme="claude"] .intent-mark-inert { background: rgba(217, 165, 91, .16); }
+[data-theme="paper"] .intent-mark-fire { background: rgba(193, 95, 60, .12); }
+[data-theme="paper"] .intent-mark-inert { background: rgba(133, 90, 20, .14); }
+[data-theme="light"] .intent-mark-fire { background: rgba(193, 95, 60, .12); }
+[data-theme="light"] .intent-mark-inert { background: rgba(154, 107, 30, .14); }

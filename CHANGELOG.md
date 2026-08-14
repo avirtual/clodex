@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- Intents an agent emits are now marked in the terminal, with a tick in the
+  scrollbar lane, so you can see at a glance whether one was actually sent
+  instead of scrolling back through a wall of prose to look for it. Lines that
+  only LOOK like an intent and will silently do nothing — prose ahead of the
+  bracket, a mistyped verb — get a differently coloured mark, which is the case
+  that used to cost a turn before anyone noticed. Quoted examples (escaped
+  `\[agent:…]` or inside a code fence) are deliberately left unmarked.
+
 - The per-session Skills popover shows the skills the session actually has
   again. If a project defines directory-scoped skills (a `.claude/skills`
   folder that only applies under, say, `app/`), those were taking over the
