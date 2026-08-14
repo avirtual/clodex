@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { atomicWriteFileSync } = require('./fs-util');
+const { previewLine } = require('./body-preview');
 
 // TWO JOBS WEAR `renameSync` IN THIS FILE, and only one of them is a write.
 //   * PUBLISH (parkDelivery, restoreParked) — a temp file renamed into place so
@@ -167,7 +168,11 @@ function peekPending(root, name, { max = 5, snipLen = 60 } = {}) {
     } catch { continue; }
     const m = text.match(/^\[agent:from ([^\]]+)\]\s?([\s\S]*)$/);
     const from = m ? m[1] : '?';
-    let body = (m ? m[2] : text).split('\n')[0].trim();
+    // previewLine is called WITHOUT a max: its own clamp is a bare slice with no
+    // ellipsis, so passing snipLen would truncate silently and the length test
+    // below could never fire. The ellipsis budget stays here, where it can spend
+    // one char of snipLen on the '…'.
+    let body = previewLine(m ? m[2] : text);
     if (body.length > snipLen) body = body.slice(0, snipLen - 1).trimEnd() + '…';
     out.push({ from, snippet: body });
   }

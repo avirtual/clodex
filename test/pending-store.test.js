@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, parkIdInUse, claimParkedById, agentDir } = require('../pending-store');
+const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, allParkedTexts, parkIdInUse, claimParkedById, agentDir } = require('../pending-store');
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'pending-test-'));
@@ -112,6 +112,47 @@ test('peekPending clamps the snippet to a single ellipsized line', () => {
   assert.ok(out[0].snippet.length <= 60, 'snippet clamped');
   assert.ok(out[0].snippet.endsWith('…'), 'ellipsized');
   assert.equal(out[1].snippet, 'line one', 'only the first line');
+});
+
+// The fifth member of the blank-preview family t390 closed at three sites. A dm
+// written as `[agent:dm x]` with its body on FOLLOWING lines parks as
+// `[agent:from x] \nbody`, so the old `split('\n')[0]` previewed line 0 — which
+// is empty — and the sidebar rendered its `|| '(no preview)'` fallback over a
+// body that was present and previewable the whole time.
+test('peekPending previews a following-lines body by its first REAL line', () => {
+  const root = tmpRoot();
+  const PARKED = '[agent:from bob] \nthe real first line\nand a second';
+  parkDelivery(root, 'a', PARKED, '0001');
+
+  // ENTER: the defect is invisible unless the body actually reached the store
+  // on following lines. A subject that parked nothing, or parked a body the
+  // greedy assembler flattened, makes an empty snippet the CORRECT answer and
+  // vacuums the assertion below.
+  assert.deepStrictEqual(allParkedTexts(root), [PARKED],
+    'ENTER: the parked record carries its following-lines body intact');
+  assert.strictEqual(PARKED.split('\n')[0], '[agent:from bob] ',
+    'ENTER: line 0 after the prefix is empty — this is the discriminating shape');
+
+  assert.deepStrictEqual(peekPending(root, 'a'),
+    [{ from: 'bob', snippet: 'the real first line' }]);
+});
+
+// Where the off-by-one lives: previewLine is called with no max, so the ellipsis
+// budget is spent here and nowhere else. slice(snipLen) instead of
+// slice(snipLen - 1) overruns by the width of the '…' it just made room for.
+test('peekPending ellipsizes a long following-lines body within snipLen', () => {
+  const root = tmpRoot();
+  const long = 'y'.repeat(200);
+  const PARKED = `[agent:from bob] \n${long}`;
+  parkDelivery(root, 'a', PARKED, '0001');
+
+  assert.deepStrictEqual(allParkedTexts(root), [PARKED],
+    'ENTER: the long body parked on a following line, not on the intent line');
+
+  const out = peekPending(root, 'a', { snipLen: 60 });
+  assert.deepStrictEqual(out, [{ from: 'bob', snippet: `${'y'.repeat(59)}…` }]);
+  assert.strictEqual(out[0].snippet.length, 60,
+    'the ellipsis is paid for out of snipLen, not added on top of it');
 });
 
 test('peekPending caps the number of entries parsed (max)', () => {

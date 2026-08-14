@@ -22,6 +22,12 @@ blocks a release.
   index and the memory digest, which were not affected but would have been by
   any change to how those bodies are stored.
 
+- The parked-message preview no longer reads "(no preview)" for a message that
+  has one. A dm whose body was written on the lines following the intent line
+  previewed its empty first line, so the sidebar fell back to the generic
+  marker — the message itself was always parked and delivered intact. Same
+  first-line preview as the reminder listing above.
+
 - A reminder can now be tied to the ticket it is about, and dies with it. Write
   `[agent:remind for t42 in 40m] check the branch landed` and the reminder is
   cancelled automatically once t42 is cancelled, or accepted in a way that
