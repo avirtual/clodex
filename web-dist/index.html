@@ -22418,13 +22418,27 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { parseWithRegistry } = require_intent_registry();
       var ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07/g;
       var PREFIX_CHARS = new Set(" 	\u2B24\u25CF\u2022\u25B6\u25B7\u25BA\u25B9\u25CB\u25CF\u25C9\u25CE\u25C6\u25C7\u25A0\u25A1\u25AA\u25AB\u2605\u2606\u2192\u27F6\u2500\u2501\xB7\u2023\u2219\u226B\xBB");
+      var EMPHASIS_MARKS = ["*", "_"];
+      var INTENT_SHAPE = /^\\?\[agent:/;
       function stripDecorators(line) {
         let i = 0;
         while (i < line.length && PREFIX_CHARS.has(line[i])) i++;
         return line.slice(i);
       }
+      function wrapped(s, m) {
+        return s.startsWith(m) && s.endsWith(m) && /^\S(?:.*\S)?$/s.test(s.slice(1, -1));
+      }
+      function stripEmphasis(line) {
+        let s = line.trim();
+        for (; ; ) {
+          const mark = EMPHASIS_MARKS.find((m) => wrapped(s, m));
+          if (!mark) break;
+          s = s.slice(1, -1);
+        }
+        return INTENT_SHAPE.test(s) ? s : line;
+      }
       function cleanLine(line) {
-        return stripDecorators(line.replace(ANSI_RE, ""));
+        return stripEmphasis(stripDecorators(line.replace(ANSI_RE, "")));
       }
       function parseIntent(rawLine) {
         const cleaned = cleanLine(rawLine).trim();
@@ -22432,7 +22446,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const escMatch = cleaned.match(/^\\(\[agent:.*)/);
         if (escMatch) return { type: "escape", text: escMatch[1] };
         if (/^\[agent:end\]\s*$/.test(cleaned)) return { type: "end" };
-        return parseWithRegistry(cleaned, stripDecorators(rawLine).trim());
+        return parseWithRegistry(cleaned, stripEmphasis(stripDecorators(rawLine)).trim());
       }
       function fencedLines(lines) {
         const fenced = new Array(lines.length).fill(false);
@@ -22480,7 +22494,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_intent_marks = __commonJS({
     "renderer/lib/intent-marks.js"(exports, module) {
       "use strict";
-      var { cleanLine, parseIntent, fencedLines } = require_intent_scanner();
+      var { cleanLine, parseIntent, fencedLines, looksLikeIntent } = require_intent_scanner();
       var SCAN_ROWS = 2e3;
       function logicalLines(rows) {
         const out = [];
@@ -22496,10 +22510,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return out;
       }
       function classifyText(raw) {
-        if (!cleanLine(raw).includes("[agent:")) return null;
-        const parsed = parseIntent(raw);
-        if (!parsed) return "inert";
-        return parsed.type === "escape" ? null : "fire";
+        if (!looksLikeIntent(raw)) return null;
+        return parseIntent(raw) ? "fire" : "inert";
+      }
+      function intentSpan(text) {
+        const at = text.indexOf("[agent:");
+        if (at < 0) return null;
+        const close = text.indexOf("]", at);
+        return { offset: at, length: (close < 0 ? text.length : close + 1) - at };
       }
       function classifyRows(rows) {
         const lines = logicalLines(rows);
@@ -22508,11 +22526,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
         for (let i = 0; i < lines.length; i += 1) {
           if (fenced[i]) continue;
           const kind = classifyText(lines[i].text);
-          if (kind) marks.push({ start: lines[i].start, end: lines[i].end, kind });
+          if (!kind) continue;
+          const { start, end } = lines[i];
+          marks.push({ start, end, kind, span: intentSpan(rows[start].text) });
         }
         return marks;
       }
-      module.exports = { classifyRows, classifyText, logicalLines, SCAN_ROWS };
+      module.exports = { classifyRows, classifyText, intentSpan, logicalLines, SCAN_ROWS };
     }
   });
 
@@ -22528,15 +22548,41 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let disposed = false;
         const readVar = getVar || ((name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim());
         const rulerColor = (kind) => readVar(RULER_VAR[kind]) || "#888888";
-        function paint(line, kind) {
+        function cellSpan(bufLine, { offset, length }) {
+          const cols = bufLine.length;
+          let idx = 0;
+          let x = null;
+          for (let i = 0; i < cols; i += 1) {
+            const cell = bufLine.getCell(i);
+            if (!cell) break;
+            if (cell.getWidth() === 0) continue;
+            if (x === null && idx >= offset) x = i;
+            if (idx >= offset + length) return { x, width: i - x };
+            idx += cell.getChars().length || 1;
+          }
+          return x === null ? null : { x, width: cols - x };
+        }
+        function sameSpan(line, span, cur) {
+          const bufLine = terminal.buffer.active.getLine(line);
+          const cells = span && bufLine && cellSpan(bufLine, span) || { x: 0, width: terminal.cols };
+          return cells.x === cur.x && cells.width === cur.width;
+        }
+        function paint(line, kind, span) {
           const buf = terminal.buffer.active;
           const marker = terminal.registerMarker(line - (buf.baseY + buf.cursorY));
           if (!marker) return null;
+          const bufLine = buf.getLine(line);
+          const cells = span && bufLine && cellSpan(bufLine, span) || { x: 0, width: terminal.cols };
           const decoration = terminal.registerDecoration({
             marker,
-            // Bottom layer, full width: a wash BEHIND the row, so its own colours
-            // and selection survive.
-            width: terminal.cols,
+            // Bottom layer: a wash BEHIND the row, so its own colours and selection
+            // survive. Scoped to the token — an intent starts its own line, so a
+            // full-width wash paints mostly empty terminal.
+            x: cells.x,
+            width: cells.width,
+            // The ruler tick stays LINE-granular: one decoration is span-scoped on
+            // screen and full-height in the ruler lane, and the tick is what solves
+            // finding an intent without scrolling.
             layer: "bottom",
             overviewRulerOptions: { color: rulerColor(kind), position: "right" }
           });
@@ -22547,7 +22593,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           decoration.onRender((el) => {
             el.classList.add("intent-mark", `intent-mark-${kind}`);
           });
-          return { marker, decoration, cols: terminal.cols };
+          return { marker, decoration, x: cells.x, width: cells.width };
         }
         function reconcile() {
           timer = null;
@@ -22562,7 +22608,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             rows.push({ text: l ? l.translateToString(true) : "", isWrapped: !!(l && l.isWrapped) });
           }
           const want = /* @__PURE__ */ new Map();
-          for (const m of classifyRows(rows)) want.set(from + m.start, m.kind);
+          for (const m of classifyRows(rows)) want.set(from + m.start, m);
           const kept = [];
           for (const cur of shown) {
             if (cur.marker.isDisposed) {
@@ -22574,7 +22620,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
               kept.push(cur);
               continue;
             }
-            if (want.get(line) === cur.kind && cur.cols === terminal.cols) {
+            const m = want.get(line);
+            if (m && m.kind === cur.kind && sameSpan(line, m.span, cur)) {
               want.delete(line);
               kept.push(cur);
               continue;
@@ -22582,9 +22629,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
             cur.decoration.dispose();
             cur.marker.dispose();
           }
-          for (const [line, kind] of want) {
-            const made = paint(line, kind);
-            if (made) kept.push({ ...made, kind });
+          for (const [line, m] of want) {
+            const made = paint(line, m.kind, m.span);
+            if (made) kept.push({ ...made, kind: m.kind });
           }
           shown = kept;
         }
