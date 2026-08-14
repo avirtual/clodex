@@ -279,7 +279,7 @@ const { findRepoRoot } = require('./project-root');
 const { projectDirFor } = require('./clodex-paths');
 const {
   readTail, lastToolFrom, formatStallBody, formatOrphanBody,
-  parseCpuTime, classifyReviewSeat, formatReviewSeatClause,
+  parseCpuTime, classifyReviewSeat, formatReviewSeatClause, didGrow,
 } = require('./stall-evidence');
 // Aliased deliberately: the manager has its OWN trackedSessionIds() method with
 // a different contract (every id across all sessions, no argument). This is the
@@ -9210,20 +9210,38 @@ function createSessionManager(deps) {
       return out;
     }
 
-    // The live reviewer seat for a ticket, or null. Resolved off the SAME record
-    // fields review-done routes a verdict on (`ephemeral` + `reviewTicket`), so
-    // "the seat this ticket's review belongs to" means one thing in both places.
-    // A separate rule here could disagree, and the disagreement would be silent:
+    // The live reviewer seats for a ticket. Resolved off the SAME record fields
+    // review-done routes a verdict on (`ephemeral` + `reviewTicket`), so "the
+    // seat this ticket's review belongs to" means one thing in both places. A
+    // separate rule here could disagree, and the disagreement would be silent:
     // the alarm would probe some other seat's liveness and report it as this
     // review's.
-    _liveReviewSeatFor(ticketId) {
+    //
+    // SCOPED TO THE TEAM'S PROJECT, like every sibling resolver in this file
+    // (`_teamLiveSeats`, `_ticketAssigneeSeat`). `nextTicketId` maxes over ONE
+    // board's list, so `t1` exists on every project at once — an unscoped walk
+    // lets project B's live reviewer answer for project A's `t1` and SUPPRESS
+    // its alarm, which is silent alarm deletion on a board with no seat at all.
+    // `_sweepTeamTickets` documents this same per-BOARD/per-PROJECT hazard for
+    // `watchdogMs`; this is the same trap one resolver over. The reviewer's cwd
+    // IS `team.root` (resolveSeatShape sets it), so the test is exact.
+    //
+    // Returns ALL matches, not the first. `keepHold` deliberately leaves a
+    // round-1 seat alive still carrying `reviewTicket` while round 2 runs, so
+    // two records legitimately share one ticket id and map order decides which
+    // one a first-match probe reads — it could measure a stranded seat and call
+    // the working one wedged.
+    _liveReviewSeatsFor(team, ticketId) {
+      const out = [];
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead) continue;
+        let root; try { root = this._projectRootFor(s.cwd); } catch { root = null; }
+        if (!root || root !== team.root) continue;
         let rec = null;
         try { rec = getPersistence().get(s.name); } catch { rec = null; }
-        if (rec && rec.ephemeral && rec.reviewTicket === ticketId) return s;
+        if (rec && rec.ephemeral && rec.reviewTicket === ticketId) out.push(s);
       }
-      return null;
+      return out;
     }
 
     // Accumulated CPU for a pid, in ms, or null when it cannot be read.
@@ -9258,25 +9276,58 @@ function createSessionManager(deps) {
     // with the seat. A map keyed by seat name would accumulate an entry per
     // review round for the life of the process, and a stale entry under a reused
     // name would be compared against a different seat's history.
-    async _probeReviewSeat(ticket, now, stallMs) {
-      const s = this._liveReviewSeatFor(ticket.id);
-      if (!s) return null;   // no live reviewer — the loop-held body stands unqualified
-      const size = this._seatTranscriptSize(s.name);
-      const cpuMs = await this._sampleCpuMs(s.pty && s.pty.pid);
-      const prev = s._reviewLiveSample || null;
-      const grew = !!(prev && typeof prev.size === 'number' && size > prev.size);
-      const cur = {
-        at: now,
-        size,
-        cpuMs,
-        // Anchors "how long has it written nothing" across sweeps. Seeded at the
-        // first sample rather than left null: the seat may have been writing for
-        // an hour before this probe existed, and claiming a flat stretch we never
-        // measured is the confidently-wrong field stall-evidence.js refuses.
-        lastGrowthAt: (!prev || grew) ? now : (prev.lastGrowthAt || prev.at),
-      };
-      s._reviewLiveSample = cur;
-      return { seat: s.name, ...classifyReviewSeat(prev, cur, { stallMs }) };
+    async _probeReviewSeat(team, ticket, now, stallMs) {
+      const seats = this._liveReviewSeatsFor(team, ticket.id);
+      if (!seats.length) return null;   // no live reviewer — the loop-held body stands unqualified
+      let worst = null;
+      for (const s of seats) {
+        const size = this._seatTranscriptSize(s.name);
+        const cpuMs = await this._sampleCpuMs(s.pty && s.pty.pid);
+        const prev = s._reviewLiveSample || null;
+        const cur = {
+          at: now,
+          size,
+          cpuMs,
+          // Anchors "how long has it written nothing" across sweeps. Seeded at
+          // the first sample rather than left null: the seat may have been
+          // writing for an hour before this probe existed, and claiming a flat
+          // stretch we never measured is the confidently-wrong field
+          // stall-evidence.js refuses.
+          lastGrowthAt: (!prev || didGrow(prev.size, size)) ? now : (prev.lastGrowthAt || prev.at),
+        };
+        const r = classifyReviewSeat(prev, cur, { stallMs });
+        // A gap too short to read is NOT a sample. Overwriting the baseline with
+        // it would reset the clock every sweep, so under a sweep interval below
+        // MIN_GAP_MS no pair could ever span the minimum and the probe would
+        // answer `unknown` forever — the review alarm gone, silently. Keeping the
+        // older baseline turns that coupling from silence into latency: the gap
+        // grows until it qualifies, and the constraint enforces itself rather
+        // than resting on a comment nobody reads.
+        if (r.verdict !== 'unknown' || !prev) s._reviewLiveSample = cur;
+        // TWO CONSECUTIVE wedged verdicts before the alarm. Linux procps reports
+        // CPU in WHOLE SECONDS (macOS gives centiseconds), so a composing turn
+        // accruing 0.35s across a short gap reads as exactly 0 there — a single
+        // bad sample that looks identical to a wedge. Repeating the verdict costs
+        // one sweep against a 30m window and hardens the probe against any
+        // one-off bad sample, not just this platform's.
+        let verdict = r.verdict;
+        if (verdict === 'wedged') {
+          const confirmed = s._reviewWedgedOnce === true;
+          s._reviewWedgedOnce = true;
+          if (!confirmed) verdict = 'unknown';
+        } else {
+          s._reviewWedgedOnce = false;
+        }
+        // ANY seat alive suppresses: with two records sharing a ticket id, a
+        // stranded round-1 seat must not be able to raise an alarm about a round
+        // 2 that is working. Where the resolver is ambiguous this ticket fails
+        // toward "alive" — its whole purpose is removing false alarms.
+        if (verdict === 'moving' || verdict === 'unknown') {
+          return { seat: s.name, ...r, verdict };
+        }
+        if (!worst) worst = { seat: s.name, ...r, verdict };
+      }
+      return worst;
     }
 
     // Async since t322: the alarm body carries git facts, and git is async. The
@@ -9461,7 +9512,7 @@ function createSessionManager(deps) {
           let seatInfo = null;
           if (t.loopStep === 'review') {
             this._stallProbing.add(tid);
-            try { seatInfo = await this._probeReviewSeat(t, now, stallMs); }
+            try { seatInfo = await this._probeReviewSeat(team, t, now, stallMs); }
             catch { /* a failed probe alarms unqualified — never silences */ }
             finally { this._stallProbing.delete(tid); }
             // Re-read after the await for the same reason the seat branch does:

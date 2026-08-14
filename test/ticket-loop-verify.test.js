@@ -2868,9 +2868,15 @@ test('t384: both signals flat DOES alarm, and names the seat', async () => {
 
   await sweepAt(f, t0, 52_000);
   await sweepAt(f, t0 + (2 * 60 * 1000), 52_000);   // no growth, no CPU
+  // ONE wedged classification is not enough since r2: Linux procps reports CPU
+  // in whole seconds, so a composing turn can read as exactly 0 for a single
+  // sample. The verdict must repeat before it alarms.
+  assert.strictEqual(nudgesOf(f).length, 0,
+    'ENTER: a single wedged sample is held, not fired — one bad sample must not alarm');
+  await sweepAt(f, t0 + (4 * 60 * 1000), 52_000);
 
   const n = nudgesOf(f);
-  assert.strictEqual(n.length, 1, 'a wedged reviewer is still reported');
+  assert.strictEqual(n.length, 1, 'a wedged reviewer is still reported, once the verdict repeats');
   assert.match(n[0].body, /loop is stuck at "review"/, 'the step wording survives');
   assert.match(n[0].body, new RegExp(rv.name), 'and now it names the seat to go look at');
   assert.match(n[0].body, /WEDGED/);
@@ -2931,7 +2937,122 @@ test('t384: a reviewer that wedges AFTER a healthy stretch is still caught', asy
   await sweepAt(f, t0 + (2 * 60 * 1000), 52_000);
   assert.strictEqual(nudgesOf(f).length, 0, 'ENTER: the healthy stretch really was suppressed');
 
-  // Now it wedges: nothing written, no CPU.
+  // Now it wedges: nothing written, no CPU. Two sweeps, because the verdict must
+  // repeat before it alarms (r2 nit 4).
   await sweepAt(f, t0 + (4 * 60 * 1000), 52_000);
-  assert.strictEqual(nudgesOf(f).length, 1, 'the next sweep catches it — suppression is not a latch');
+  await sweepAt(f, t0 + (6 * 60 * 1000), 52_000);
+  assert.strictEqual(nudgesOf(f).length, 1, 'the sweeps after it catch it — suppression is not a latch');
+});
+
+test('t384 r2 MUST-FIX: another project\'s reviewer cannot suppress THIS board\'s alarm', async () => {
+  // `nextTicketId` maxes over ONE board's list, so `t1` exists on every project
+  // simultaneously — two boards sharing a ticket id is the NORMAL case, not an
+  // edge. An unscoped walk of the sessions map lets project B's live reviewer
+  // answer for project A's `t1` and suppress its alarm, and project A has no
+  // seat at all: silent alarm deletion, which is the one outcome the spec
+  // forbids. Every sibling resolver in session-manager.js is project-scoped for
+  // this reason, and _sweepTeamTickets already documents the same per-BOARD /
+  // per-PROJECT hazard for `watchdogMs`.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const t0 = Date.now();
+  heldAtReview(f, 60 * 60 * 1000, t0);
+
+  // A live, HEALTHY reviewer for `t1` — belonging to a DIFFERENT project. Its
+  // cwd is a separate git repo, so `_projectRootFor` resolves it elsewhere.
+  const other = mkRepo();
+  const name = 'other-reviewer-1-r1';
+  f.persistence.upsert({ name, ephemeral: true, reviewFor: 'lead', reviewTicket: 't1' });
+  f.m.sessions.set(name, {
+    name, type: 'claude', agentType: 'claude', cwd: other.dir,
+    pty: { pid: 5150 }, activityState: 'idle',
+  });
+  const dir = pathReal.join(f.home, 'run', name);
+  fsReal.mkdirSync(dir, { recursive: true });
+  fsReal.writeFileSync(pathReal.join(dir, 'transcript.jsonl'), 'x'.repeat(500_000));
+
+  // ENTER: the foreign seat is live, carries THIS ticket's id, and is exactly
+  // the shape that would suppress — so the assertion below is about scoping,
+  // not about a seat that failed to qualify for some other reason.
+  assert.ok(f.m.sessions.get(name) && !f.m.sessions.get(name)._dead, 'ENTER: the other project\'s reviewer is live');
+  assert.strictEqual(f.persistence.get(name).reviewTicket, 't1', 'ENTER: and it claims the same ticket id');
+  assert.notStrictEqual(f.m._projectRootFor(other.dir), f.team.root, 'ENTER: but it belongs to another project');
+  assert.deepStrictEqual(f.m._liveReviewSeatsFor(f.team, 't1'), [],
+    'the resolver refuses it — this board has no reviewer seat');
+
+  await sweepAt(f, t0, 52_000);
+
+  const n = nudgesOf(f);
+  assert.strictEqual(n.length, 1, 'the seatless board still alarms — no foreign seat can silence it');
+  assert.match(n[0].body, /loop is stuck at "review"/);
+  assert.ok(!new RegExp(name).test(n[0].body), 'and the alarm names no seat, because this board has none');
+});
+
+test('t384 r2: with two seats on one ticket, ANY live one suppresses', async () => {
+  // `keepHold` leaves a round-1 seat alive still carrying `reviewTicket` while
+  // round 2 runs, so two records legitimately share one id. A first-match probe
+  // reads whichever the map yields first and can call a working round-2 seat
+  // wedged because a stranded round-1 seat is flat. Where the resolver is
+  // ambiguous this fails toward "alive": the ticket exists to remove false
+  // alarms, not to add a new way of producing them.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const t0 = Date.now();
+  heldAtReview(f, 60 * 60 * 1000, t0);
+
+  const stranded = reviewerSeat(f, 't1', 200_000, 'team-reviewer-1-r1');
+  const working = reviewerSeat(f, 't1', 900_000, 'team-reviewer-1-r2');
+  assert.strictEqual(f.m._liveReviewSeatsFor(f.team, 't1').length, 2,
+    'ENTER: both seats really do claim this ticket');
+
+  // THREE sweeps, and the count is load-bearing: a wedge must be seen TWICE
+  // before it alarms, so with only two sweeps the stranded seat is still at
+  // `unknown` and a first-match implementation would suppress for the WRONG
+  // reason — passing this test while carrying the defect. Only a CONFIRMED
+  // stranded wedge discriminates the two.
+  await sweepAt(f, t0, 52_000);
+  working.grow(120_000);
+  await sweepAt(f, t0 + (2 * 60 * 1000), 52_000);
+  working.grow(120_000);
+  await sweepAt(f, t0 + (4 * 60 * 1000), 52_000);
+
+  assert.strictEqual(stranded.session._reviewWedgedOnce, true,
+    'ENTER: the stranded seat really is at a CONFIRMED wedge — it would alarm on its own');
+  assert.ok(stranded.session._reviewLiveSample, 'ENTER: and it really was sampled, not skipped');
+  assert.strictEqual(nudgesOf(f).length, 0,
+    'the working seat suppresses, though a stranded sibling is confirmed wedged');
+});
+
+test('t384 r2: a too-short gap does not reset the baseline — the coupling is latency, not silence', async () => {
+  // MIN_GAP_MS (30s) must stay below the watchdog's sweep interval (60s), and
+  // nothing enforces that across the two files. If a sweep interval below 30s
+  // were configured and each sample overwrote the baseline, no pair could ever
+  // span the minimum: every probe answers `unknown`, the caller defers on
+  // `unknown`, and the review alarm is gone permanently with no error and no log
+  // line — this ticket's own failure mode, one layer up.
+  //
+  // Keeping the older baseline makes the gap GROW until it qualifies, so the
+  // constraint enforces itself instead of resting on a comment.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const t0 = Date.now();
+  heldAtReview(f, 60 * 60 * 1000, t0);
+  const rv = reviewerSeat(f, 't1', 1_000_000);
+
+  await sweepAt(f, t0, 50_000);
+  const baseline = rv.session._reviewLiveSample;
+  assert.ok(baseline, 'ENTER: a baseline was taken');
+
+  // Three sweeps 10s apart — every gap below MIN_GAP_MS.
+  await sweepAt(f, t0 + 10_000, 50_000);
+  await sweepAt(f, t0 + 20_000, 50_000);
+  assert.strictEqual(rv.session._reviewLiveSample.at, baseline.at,
+    'the baseline is KEPT, so the measurable gap keeps growing');
+
+  // 40s past the baseline: now the pair spans MIN_GAP_MS and classifies. Flat
+  // transcript, flat CPU — a wedge, held once, then confirmed.
+  await sweepAt(f, t0 + 40_000, 50_000);
+  await sweepAt(f, t0 + 80_000, 50_000);
+  assert.strictEqual(nudgesOf(f).length, 1,
+    'a readable verdict is eventually reached — deferred, never deleted');
 });

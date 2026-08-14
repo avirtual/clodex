@@ -191,6 +191,28 @@ function parseCpuTime(text) {
 // is 0.33% CPU, 7.5x below the composing seat's 2.5%, and far above what a
 // process blocked in a syscall accrues. Rate-normalized, so a sweep that runs
 // late does not silently tighten the threshold.
+//
+// PLATFORM: the margin above assumes macOS `ps`, which reports CPU to
+// CENTISECONDS. Linux procps reports whole seconds, and this repo runs there —
+// headless-main.js and the container sandbox are both real targets. At 1s
+// resolution a composing turn accruing 0.35s over a 16s gap reads as 0, i.e. as
+// wedged, which is precisely the false alarm this module exists to remove. The
+// caller's answer is not a bigger threshold (that would blind it to real
+// wedges) but requiring the verdict to REPEAT — see `_probeReviewSeat`.
+// Did the transcript grow between two samples? THE ONLY copy of this predicate:
+// a second one drifted from this within a single ticket, missing the `>= 0`
+// guards below and reintroducing the bug they exist to fix.
+//
+// A NEGATIVE size is the probe's "could not read", not a byte count, and both
+// ends must be real for a comparison to mean anything. Without the `>= 0` terms
+// an unreadable baseline (-1) followed by a readable but EMPTY transcript (0)
+// satisfies `0 > -1` and reads as growth — phantom evidence that a seat wrote
+// something, suppressing the alarm on a seat that has produced nothing at all.
+function didGrow(prevSize, curSize) {
+  return typeof prevSize === 'number' && typeof curSize === 'number'
+    && prevSize >= 0 && curSize >= 0 && curSize > prevSize;
+}
+
 const CPU_RATE_MS_PER_MIN = 200;
 // MUST stay BELOW the ticket watchdog's sweep interval (`startTicketWatchdog`,
 // 60s by default and parameterized). Samples come from consecutive sweeps, so a
@@ -203,14 +225,7 @@ function classifyReviewSeat(prev, cur, { stallMs = 30 * 60 * 1000 } = {}) {
   if (!prev || !cur) return { verdict: 'unknown', cpuRead: !!(cur && cur.cpuMs != null) };
   const gap = cur.at - prev.at;
   if (!(gap >= MIN_GAP_MS)) return { verdict: 'unknown', cpuRead: cur.cpuMs != null };
-  // A NEGATIVE size is the probe's "could not read", not a byte count, and both
-  // ends must be real for a comparison to mean anything. Without the `>= 0`
-  // terms an unreadable baseline (-1) followed by a readable but EMPTY
-  // transcript (0) satisfies `0 > -1` and reads as growth — phantom evidence
-  // that a seat wrote something, suppressing the alarm on a seat that has
-  // produced nothing at all.
-  const grew = typeof cur.size === 'number' && typeof prev.size === 'number'
-    && prev.size >= 0 && cur.size >= 0 && cur.size > prev.size;
+  const grew = didGrow(prev.size, cur.size);
   const cpuRead = cur.cpuMs != null && prev.cpuMs != null;
   const cpuAccrued = cpuRead
     && (cur.cpuMs - prev.cpuMs) >= ((gap / 60000) * CPU_RATE_MS_PER_MIN);
@@ -251,6 +266,6 @@ function formatReviewSeatClause({ seat, verdict, cpuRead = true, flatFor = null,
 
 module.exports = {
   readTail, lastToolFrom, formatStallBody, formatOrphanBody,
-  parseCpuTime, classifyReviewSeat, formatReviewSeatClause,
+  parseCpuTime, classifyReviewSeat, formatReviewSeatClause, didGrow,
   CPU_RATE_MS_PER_MIN, MIN_GAP_MS,
 };
