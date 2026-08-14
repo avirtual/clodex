@@ -9129,14 +9129,49 @@ function createSessionManager(deps) {
         // not: `_ticketAssigneeSeat` deliberately refuses to degrade a worktree pin
         // to its role, so a retired worktree seat resolves to null permanently
         // rather than being re-answered by a sibling.
+        // ANOTHER TEAM'S ticket, seen because the stall sweep is deduped per BOARD
+        // while the board is per PROJECT — the hazard `_sweepTickets` already
+        // documents for `watchdogMs`. Team A wins the dedup and resolves team B's
+        // ticket against A's `roles`, where B's role key is not a role at all: the
+        // pin fails `isRoleKey`, the seat name is not in A's live set, and a ticket
+        // with a perfectly live B seat reads as orphaned.
+        //
+        // That was survivable while this only changed WORDING. It is not now that it
+        // changes CLASSIFICATION: the orphan arm is one-shot, so B's genuinely
+        // stalled ticket would get one wrongly-worded alarm and then permanent
+        // silence — the same failure mode as the must-fix, arrived at sideways.
+        // Falling back to the stall body is the safe direction: a ticket that is
+        // merely mis-worded still keeps its escalation ladder.
+        //
+        // Applied at `orphanNow` (the classification that picks the body and the
+        // stamp) and deliberately NOT here: this gate only ever consults
+        // `orphanNudgedAt`, which cannot be set for a foreign ticket precisely
+        // because `orphanNow` refused it. A second copy of the term would be
+        // unreachable by any state, and an unreachable guard reads as a live
+        // invariant to the next person to touch this.
+        const foreignRole = !!(t.role && !(team.roles
+          && Object.prototype.hasOwnProperty.call(team.roles, t.role)));
         const orphan = !loopHeld && !this._ticketAssigneeSeat(team, t, live);
-        // ONE alarm, ever — not the geometric ladder below. The ladder re-escalates
-        // because a stall can end and the seat can come back; an orphan cannot
-        // resolve itself, so every repeat carries identical information and the
-        // whole cost of the defect was the repeating. `nudgedAt` is cleared by
-        // `task assign` and by seat activity, so a real reassignment does start a
-        // fresh episode — the silence is scoped to the unchanged situation.
-        if (orphan && t.nudgedAt) continue;
+        // ONE ORPHAN alarm, ever — not the geometric ladder below. The ladder
+        // re-escalates because a stall can end and the seat can come back; an
+        // orphan cannot resolve itself, so every repeat carries identical
+        // information and the whole cost of the t376 defect was the repeating.
+        //
+        // BOTH terms are load-bearing, and gating on `nudgedAt` ALONE is a defect
+        // that deletes the alarm rather than de-duplicating it. The live->orphan
+        // transition is the ticket's own motivating trace: t376 alarmed first as a
+        // live-but-quiet stall, which stamps `nudgedAt`, and the seat was retired
+        // only afterwards. With one term, every later sweep sees a truthy stamp and
+        // `continue`s forever — and `nudgedAt` is cleared only by activity
+        // (unreachable: there is no seat), assign, respec, park or a verdict. The
+        // lead would hear "hand quiet 31m" and then nothing, ever.
+        //
+        // `orphanNudgedAt` records that the ORPHAN message specifically has been
+        // sent. Keeping `nudgedAt` in the gate is what makes it need no new clearing
+        // sites: every existing `nudgedAt = null` writer (assign, activity, park,
+        // respec) already reopens the ticket to alarming, so a reassignment starts a
+        // clean episode exactly as before.
+        if (orphan && t.nudgedAt && t.orphanNudgedAt) continue;
         // NOT one nudge per episode any more (t322). `nudgedAt` is cleared only by
         // seat ACTIVITY, which by definition never comes during a stall, so a
         // single alarm the lead dismissed bought permanent silence: measured on
@@ -9203,6 +9238,11 @@ function createSessionManager(deps) {
         // between a silent seat and a dead verify step. It gets no seat evidence
         // for the same reason: the hand's last tool call is not what is stuck.
         let body;
+        // The classification the STAMP records, which is not always the one the
+        // eligibility gate computed: the git probe below is awaited, and a seat can
+        // come up while it runs. Declared out here because the onWrite closure reads
+        // it and the loop-held arm never re-resolves.
+        let orphanNow = orphan;
         if (loopHeld) {
           const head = repeat > 0 ? `[ticket ${tid}] STILL stalled (repeat ${repeat}): ` : `[ticket ${tid}] stalled: `;
           body = `${head}the ticket loop is stuck at "${t.loopStep}" — no progress for ${humanizeAge(now - last)} (the hand already reported; nothing was torn down)`;
@@ -9216,12 +9256,25 @@ function createSessionManager(deps) {
           // ticket exists to stop producing.
           const after = ticketsStore.load(team.root).find((x) => x.id === tid);
           if (!after || !ticketInFlight(after) || (after.lastActivityAt || null) !== seenAt) continue;
+          // Re-resolve the SEAT after the await too, not just the ticket record. The
+          // `lastActivityAt` re-read above cannot cover this: a seat that spawns
+          // during the git probe has touched nothing, so the record is byte-identical
+          // while the classification has flipped. Sending an orphan alarm — "not a
+          // live seat, reassign or cancel it" — about a seat that is now live is the
+          // same class of confidently-wrong report this ticket exists to remove, and
+          // it would additionally stamp `orphanNudgedAt` and suppress the real alarm.
+          // The walk is re-done rather than reusing `live`, which is this pass's
+          // pre-await snapshot and is exactly the stale thing in question.
+          // `foreignRole` rides here too: it is a property of the ticket and the
+          // sweeping team, not of the seat, so re-resolving without it would let the
+          // await path reach a classification the gate above deliberately refused.
+          orphanNow = !foreignRole && !this._ticketAssigneeSeat(team, after);
           // The orphan branch shares the probe above and diverges only here: the git
           // facts are what decide between reassign, cancel and park, so they are worth
           // the same calls. `ev.tool` is null for an orphan by construction — the
           // probe resolves its transcript through the same resolver that just
           // returned no seat — and formatOrphanBody takes no tool field at all.
-          body = orphan
+          body = orphanNow
             ? formatOrphanBody({
               ticketId: tid, who: t.assignee, age: humanizeAge(now - last),
               commits: ev.commits, dirty: ev.dirty,
@@ -9264,6 +9317,15 @@ function createSessionManager(deps) {
               // schedule untestable — the gate would measure a drift the caller
               // cannot control rather than the age the sweep decided on.
               rec.nudgedAt = now;
+              // Which MESSAGE was sent, alongside when. The eligibility gate needs
+              // to tell "already told the lead this seat is gone" from "already
+              // told the lead this seat is quiet", and `nudgedAt` cannot: it is one
+              // field for two messages, which is what silenced the live->orphan
+              // transition. Deleted rather than left stale on the stall arm, so a
+              // ticket that goes orphan->live->orphan (reassigned to a seat that
+              // then also dies) is not suppressed by the first round's stamp.
+              if (orphanNow) rec.orphanNudgedAt = now;
+              else delete rec.orphanNudgedAt;
               ticketsStore.save(team.root, fresh);
             } catch (e) { log.error('ticket', `nudge stamp for ${tid} failed: ${e.message}`); }
           });

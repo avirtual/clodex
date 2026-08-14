@@ -7639,6 +7639,54 @@ test('t377 watchdog: an orphaned ticket alarms ONCE and never climbs the repeat 
     'nothing changed and nothing can change on its own, so a second alarm is pure noise');
 });
 
+test('t377 watchdog: a ticket that goes live -> orphaned crosses the boundary and alarms AGAIN', async () => {
+  // THE case the ticket was written from, and the one the first round of these
+  // tests missed entirely: every other fixture here enters with the seat already
+  // gone or already live, so none of them crosses the transition — and the
+  // transition IS the feature. t376 was alarmed about as a live-but-quiet stall
+  // FIRST, and only retired afterwards.
+  //
+  // The first alarm stamps `nudgedAt`. A suppression that keys off `nudgedAt`
+  // alone therefore silences the orphan alarm that should follow, permanently:
+  // `nudgedAt` clears only on activity (impossible — the seat is gone), assign,
+  // respec, park or verdict. Net effect is the lead hearing "hand quiet 31m" and
+  // then nothing, ever — message 2 DELETED rather than upgraded, which is worse
+  // than the noise it replaced.
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead');
+  f.seat('team-hand-1');                 // LIVE for the first sweep
+  orphanedTicket(f, { stallMs });
+  const t0 = Date.now();
+
+  await f.m._sweepTickets(t0);
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the live-but-quiet stall alarmed');
+  assert.match(f.gated[0].body, /stalled: /,
+    'ENTER: and as a STALL — so the orphan path has not run yet and cannot be what stamps');
+  const stamped = f.one('t1').nudgedAt;
+  assert.ok(stamped, 'ENTER: the stall alarm stamped nudgedAt — the state that suppresses what follows');
+
+  // The retirement. Nothing else changes: the ticket stays open, stays assigned,
+  // and no activity can ever clear the stamp, because there is no seat to act.
+  f.m.sessions.delete('team-hand-1');
+  assert.strictEqual(f.m._ticketAssigneeSeat(f.team, f.one('t1')), null,
+    'ENTER: it now resolves to nobody — the boundary has been crossed');
+  assert.strictEqual(f.one('t1').nudgedAt, stamped,
+    'ENTER: and the stamp survived the retirement, since only activity/assign clears it');
+
+  f.gated.length = 0;
+  // Past the ladder rung too, so a stall would also have spoken here — the point
+  // is not that SOMETHING fires but that what fires is the orphan message.
+  await f.m._sweepTickets(t0 + stallMs * 3);
+
+  assert.strictEqual(f.gated.length, 1,
+    'the lead must be told the seat is gone — a live->orphan ticket that goes permanently silent is '
+    + 'strictly worse than the repeating noise this ticket set out to remove');
+  assert.match(f.gated[0].body, /not a live seat/, 'and it is the ORPHAN body, not a second stall');
+  assert.ok(!/stalled: /.test(f.gated[0].body), 'the stall wording is gone, per the ticket');
+});
+
 test('t377 watchdog: reassigning an orphaned ticket re-opens it to alarming', async () => {
   // The suppression above is scoped to the UNCHANGED situation, not to the
   // ticket forever. Without this, an orphan that was reassigned to a seat which
@@ -7664,6 +7712,122 @@ test('t377 watchdog: reassigning an orphaned ticket re-opens it to alarming', as
   await f.m._sweepTickets(Date.now());
   assert.strictEqual(f.gated.length, 1, 'the reassigned ticket is watched again');
   assert.match(f.gated[0].body, /stalled: /, 'and as an ordinary stall, since a seat holds it now');
+});
+
+test('t377 watchdog: a ticket orphaned, reassigned, then orphaned AGAIN alarms both times', async () => {
+  // The stamp is per-EPISODE, not once per ticket lifetime. A ticket reassigned to
+  // a seat that then also dies is a second, genuinely new orphaning, and the lead
+  // has heard nothing about it. Leaving the first round's `orphanNudgedAt` in place
+  // suppresses it — the must-fix's own failure mode, one lap later.
+  //
+  // This is what makes the `delete` on the stall arm load-bearing rather than
+  // tidiness: the reassignment's stall alarm is what clears the old stamp.
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead');
+  orphanedTicket(f, { stallMs });
+  const t0 = Date.now();
+
+  await f.m._sweepTickets(t0);
+  assert.match(f.gated[0].body, /not a live seat/, 'ENTER: round one orphaned and said so');
+  assert.ok(f.one('t1').orphanNudgedAt, 'ENTER: and stamped the orphan marker');
+
+  // Reassigned to a live seat, which then goes quiet: an ordinary stall, and the
+  // alarm that clears the orphan stamp.
+  f.seat('team-hand-1');
+  let arr = f.load();
+  arr[0].nudgedAt = null;                 // what `task assign` does
+  arr[0].lastActivityAt = t0 - stallMs * 2;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+  await f.m._sweepTickets(t0);
+  assert.match(f.gated[0].body, /stalled: /, 'ENTER: round two is a live stall');
+  assert.strictEqual(f.one('t1').orphanNudgedAt, undefined,
+    'ENTER: and the stall arm cleared the stale orphan stamp — the state the third round depends on');
+
+  // The second seat dies too. Nothing clears `nudgedAt` this time either.
+  f.m.sessions.delete('team-hand-1');
+  f.gated.length = 0;
+  await f.m._sweepTickets(t0 + stallMs * 3);
+
+  assert.strictEqual(f.gated.length, 1, 'the second orphaning is news, and must be reported');
+  assert.match(f.gated[0].body, /not a live seat/, 'and reported as an orphan, not a stall');
+});
+
+test('t377 watchdog: a seat that comes up DURING the git probe is not reported as orphaned', async () => {
+  // `orphan` is decided before `_stallEvidence` is awaited, and the post-await
+  // re-read checks `lastActivityAt` — which a seat that just spawned has not
+  // touched. So the record is byte-identical while the classification has
+  // flipped, and only re-resolving the seat can catch it.
+  //
+  // The stakes are higher than a mis-worded alarm: the orphan arm is one-shot, so
+  // stamping `orphanNudgedAt` here would suppress the REAL alarm afterwards.
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead');
+  orphanedTicket(f, { stallMs });        // no hand seat — orphaned as the sweep begins
+  // The seat arrives while git is running. Hooking the probe is what puts the
+  // spawn INSIDE the await window; doing it before the sweep would test nothing.
+  // The seat appears while the probe is awaited. It is added BEFORE the yield and
+  // the yield is explicit, rather than wrapping the real `_stallEvidence`: that one
+  // throws in this fixture (no gitWorktree dep) and the sweep swallows the throw,
+  // so a wrapper would never reach its own spawn — an instrumented run showed the
+  // hook entering and never completing.
+  //
+  // The returned shape is the REAL one for this fixture, not a convenient blank:
+  // every other orphan test here gets all-null evidence for the same reason, so
+  // nothing the assertions read is being faked away.
+  f.m._stallEvidence = async () => {
+    f.seat('team-hand-1');
+    await Promise.resolve();
+    return { tool: null, commits: null, dirty: null };
+  };
+
+  await f.m._sweepTickets(Date.now());
+
+  assert.strictEqual(f.gated.length, 1, 'ENTER: one alarm to inspect');
+  assert.ok(!/not a live seat/.test(f.gated[0].body),
+    'the seat is live by the time the body is built, so it must not be called absent');
+  assert.strictEqual(f.one('t1').orphanNudgedAt, undefined,
+    'and no orphan stamp is left behind, which would have suppressed the real alarm later');
+});
+
+test('t377 watchdog: another team`s ticket is never classified as orphaned', async () => {
+  // Two teams rooted at one project: the stall sweep dedups per BOARD, so team A
+  // resolves team B's ticket against A's `roles`. B's role key is not a role of
+  // A, so the pin fails isRoleKey, the seat name is absent from A's live set, and
+  // a ticket with a live B seat reads as orphaned.
+  //
+  // Wording alone was survivable. Classification is not: the orphan arm is
+  // one-shot, so B's genuinely stalled ticket would be alarmed about once, in the
+  // wrong words, and then never again.
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const arr = f.load();
+  arr[0].role = 'shipwright';           // a role of the OTHER team, unknown to this one
+  arr[0].assignee = 'other-shipwright-1';
+  arr[0].lastActivityAt = Date.now() - stallMs * 2;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+  assert.ok(!Object.prototype.hasOwnProperty.call(f.team.roles, 'shipwright'),
+    'ENTER: the role really is foreign to the sweeping team');
+  assert.strictEqual(f.m._ticketAssigneeSeat(f.team, f.one('t1')), null,
+    'ENTER: and it resolves to nothing HERE — so only the foreign-role guard can stop the orphan reading');
+
+  await f.m._sweepTickets(Date.now());
+
+  assert.strictEqual(f.gated.length, 1, 'ENTER: it still alarms — going silent would be the worse bug');
+  assert.ok(!/not a live seat/.test(f.gated[0].body),
+    'this sweep cannot see the other team`s roster, so it must not assert the seat is gone');
+  assert.match(f.gated[0].body, /stalled: /, 'it falls back to the stall body, which keeps its ladder');
+  assert.strictEqual(f.one('t1').orphanNudgedAt, undefined,
+    'and takes no one-shot stamp, so the ticket keeps escalating');
 });
 
 test('watchdog: a per-team watchdogMs override tightens the stall window', async () => {
