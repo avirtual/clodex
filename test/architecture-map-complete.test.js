@@ -72,11 +72,12 @@ function scanModules() {
 }
 
 // A bare substring match reads `engine.js` out of `plugin-host-engine.js`, which
-// would let a module go unmapped behind a longer name that contains it. The
-// lookbehind requires the basename to start at a name boundary.
+// would let a module go unmapped behind a longer name that contains it. Both
+// boundaries are load-bearing: the lookbehind for the containing-name case, the
+// lookahead so a prose mention of `tickets.json` cannot satisfy a `tickets.js`.
 function namedIn(text, basename) {
   const esc = basename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?<![A-Za-z0-9_.\\-])${esc}`).test(text);
+  return new RegExp(`(?<![A-Za-z0-9_.\\-])${esc}(?![A-Za-z0-9])`).test(text);
 }
 
 const modules = scanModules();
@@ -93,6 +94,17 @@ test('the scanned population is the tree, not an empty set', () => {
     assert.ok(modules.includes(m), `ENTER: ${m} did not survive the scan`);
   }
   assert.deepStrictEqual(modules, [...new Set(modules)], 'scan produced duplicates');
+  // EXEMPT and the presence check both key by BASENAME, so two same-named
+  // modules in different scanned dirs would share one map mention and one
+  // exemption — either could cover for the other silently. No collision exists
+  // today; this fails the day one is introduced, at the point of introduction.
+  const basenames = modules.map((m) => path.basename(m));
+  const collisions = basenames.filter((b, i) => basenames.indexOf(b) !== i);
+  assert.deepStrictEqual(
+    collisions,
+    [],
+    'two scanned modules share a basename — key EXEMPT and the presence check by relative path first'
+  );
 });
 
 test('the scan is a superset of what git tracks in the same directories', () => {
