@@ -6770,6 +6770,11 @@ function createSessionManager(deps) {
         // arm's shape, and the reason a template can hand a ticket seat posture
         // its opener does not hold). reviewerModelArgs is an allowlist of one
         // flag — do not widen it to honor the template's array.
+        // Dropping the rest is an ADJUDICATED decision, not an omission: the
+        // rationale is owned by the test 'a reviewer template CANNOT contribute
+        // extraArgs'. Mirroring the ticket arm here reverts it. Twice now this
+        // branch has been read as an oversight because the reasoning lived only
+        // in that test.
         extraArgs: [...postureArgs, ...reviewerModelArgs(shape && shape.extraArgs)],
         agents: [],
         denyBuiltins: [],
