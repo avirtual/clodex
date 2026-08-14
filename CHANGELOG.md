@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- An intent an agent writes in **bold** or *italics* now fires instead of
+  being silently ignored. Agents reach for emphasis when a line matters — a
+  review verdict, a handoff — and that was exactly the line that vanished:
+  the work was done, the message was written, and nothing was delivered.
+  Markdown bullets are untouched, so a list item that merely starts with a
+  star still does nothing, and quoted examples stay quoted.
+
 - Custom subagents no longer travel on the seat's command line. Enabling one
   used to spawn the CLI with the whole agent definition — prompt included —
   inline in `--agents`, where anyone running `ps` could read it and where a
