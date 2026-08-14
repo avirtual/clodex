@@ -144,4 +144,101 @@ function formatOrphanBody({ ticketId, who, age, commits = null, dirty = null }) 
   return `${head}${ev} — reassign it, cancel it, or park it; nothing is working on it and nothing will`;
 }
 
-module.exports = { readTail, lastToolFrom, formatStallBody, formatOrphanBody };
+// `ps -o time=` output -> milliseconds of accumulated CPU, or null.
+//
+// Two formats, both real: `MM:SS.cc` and `HH:MM:SS.cc` (ps switches at an hour).
+// The CENTISECONDS are the whole reason this is parsed rather than compared as a
+// string — a composing turn accrues ~0.57s over 40s, which is invisible at
+// second resolution and is exactly the signal that separates it from a wedge.
+//
+// Null on anything unrecognized rather than a guessed 0: 0 reads as "no CPU
+// accrued", which is the WEDGE verdict, so a parse failure would alarm about a
+// healthy seat with a confidently wrong number behind it.
+function parseCpuTime(text) {
+  if (!text) return null;
+  const m = /(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)/.exec(String(text).trim());
+  if (!m) return null;
+  const h = m[1] ? Number(m[1]) : 0;
+  const min = Number(m[2]);
+  const sec = Number(m[3]);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || !Number.isFinite(sec)) return null;
+  return Math.round(((h * 3600) + (min * 60) + sec) * 1000);
+}
+
+// Is a reviewer seat alive? Two signals, and it takes BOTH being flat to call a
+// wedge.
+//
+// Measured live on clodex-reviewer-377-r1, 2026-08-14, and every branch here is
+// one of those observations:
+//   03:08Z  transcript +135KB/8min, CPU rising   -> HEALTHY, working
+//   03:11Z  transcript FLAT 3 minutes, CPU 0:52.00->0:53.13 in 40s (~2.5%)
+//                                                -> HEALTHY, composing a long turn
+// The second is why transcript growth alone is not the test: a big assistant
+// message burns CPU and writes NOTHING to the transcript until it flushes, so a
+// growth-only probe calls a healthy seat wedged — the false alarm this exists to
+// remove, arrived at from the other side.
+//
+// `prev` is the previous sweep's sample; samples come from consecutive sweeps
+// rather than a sleep inside one, because the sweep is already periodic and a
+// 60s timer must not block on a second reading.
+//
+// Verdicts: 'moving' (suppress the alarm), 'wedged', 'idle-alive' (CPU moving,
+// transcript flat for longer than the stall window — alive but producing
+// nothing, which the spec keeps reportable), 'unknown' (no baseline yet, or the
+// gap is too short to read).
+//
+// CPU_RATE_MS_PER_MIN defends against both measured numbers at once: 200ms/min
+// is 0.33% CPU, 7.5x below the composing seat's 2.5%, and far above what a
+// process blocked in a syscall accrues. Rate-normalized, so a sweep that runs
+// late does not silently tighten the threshold.
+const CPU_RATE_MS_PER_MIN = 200;
+const MIN_GAP_MS = 30 * 1000;
+
+function classifyReviewSeat(prev, cur, { stallMs = 30 * 60 * 1000 } = {}) {
+  if (!prev || !cur) return { verdict: 'unknown', cpuRead: !!(cur && cur.cpuMs != null) };
+  const gap = cur.at - prev.at;
+  if (!(gap >= MIN_GAP_MS)) return { verdict: 'unknown', cpuRead: cur.cpuMs != null };
+  const grew = typeof cur.size === 'number' && typeof prev.size === 'number' && cur.size > prev.size;
+  const cpuRead = cur.cpuMs != null && prev.cpuMs != null;
+  const cpuAccrued = cpuRead
+    && (cur.cpuMs - prev.cpuMs) >= ((gap / 60000) * CPU_RATE_MS_PER_MIN);
+  if (grew) return { verdict: 'moving', cpuRead };
+  if (cpuAccrued) {
+    // Alive, but the transcript has not moved in longer than the whole stall
+    // window. Composing does not reach here: the measured composing stretch was
+    // 3 minutes against a 30m window. Reported with its own wording because the
+    // lead's next move differs — a wedged seat gets poked, a seat that has burned
+    // CPU for half an hour without writing gets read.
+    const flatFor = cur.lastGrowthAt != null ? (cur.at - cur.lastGrowthAt) : 0;
+    if (flatFor >= stallMs) return { verdict: 'idle-alive', cpuRead, flatFor };
+    return { verdict: 'moving', cpuRead };
+  }
+  return { verdict: 'wedged', cpuRead };
+}
+
+// The seat clause appended to a loop-held review alarm. Returns '' when there is
+// nothing true to say, so the caller can concatenate unconditionally.
+//
+// `cpuRead: false` is stated rather than swallowed. Without CPU the test is
+// growth-only, which is the probe that misfires on composing — so the alarm says
+// which of its two signals it actually had, instead of presenting a one-signal
+// reading with a two-signal alarm's authority.
+function formatReviewSeatClause({ seat, verdict, cpuRead = true, flatFor = null, age = null } = {}) {
+  if (!seat) return '';
+  if (verdict === 'wedged') {
+    return cpuRead
+      ? ` — reviewer ${seat} is WEDGED: no transcript growth and no CPU since the last sweep`
+      : ` — reviewer ${seat} has written nothing since the last sweep, and its CPU could not be sampled, so a long composing turn cannot be ruled out`;
+  }
+  if (verdict === 'idle-alive') {
+    const how = flatFor != null && age ? ` for ${age}` : '';
+    return ` — reviewer ${seat} is running (CPU is accruing) but has written nothing${how}`;
+  }
+  return '';
+}
+
+module.exports = {
+  readTail, lastToolFrom, formatStallBody, formatOrphanBody,
+  parseCpuTime, classifyReviewSeat, formatReviewSeatClause,
+  CPU_RATE_MS_PER_MIN, MIN_GAP_MS,
+};
