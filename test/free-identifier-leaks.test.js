@@ -92,6 +92,10 @@ const SCANNED_MODULES = [
   // nothing else in this file guards it.
   'stall-evidence.js',
   'session-meta.js',
+  // The skill_listing classifier (t401). A pure string/JSON leaf: engine.js
+  // keeps the realpath+read and passes lines in, which is what lets the roster
+  // vs directory-scoped split be asserted against fixtures without a session.
+  'skill-roster.js',
   // The ⓘ panel's data layer (t-sessioninfo). Every source it reads — fs,
   // readline, homedir, the registry dir, userData — arrives injected, which is
   // what makes the transcript scan testable against fixtures without an app.

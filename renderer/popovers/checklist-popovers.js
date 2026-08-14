@@ -152,7 +152,7 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (!res || !res.ok) { alert(source ? `Read skills on peer failed: ${res && res.error ? res.error : 'unknown error'}` : 'Session not found in persistence.'); return; }
     skillsEditingSource = source;
     renderSkillChecklist(popoverSkillsList, res.names || [], new Set(res.disabledSkills || []),
-      res.effective || {}, { skillsLocked: res.skillsLocked, canReenable: res.canReenable });
+      res.effective || {}, { skillsLocked: res.skillsLocked, canReenable: res.canReenable, outOfScope: res.outOfScope });
     // Library-injection section: only shown when the library is non-empty.
     setSkillLibCache(res.skillLib || []);
     if (getSkillLibCache().length) {

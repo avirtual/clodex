@@ -5535,7 +5535,7 @@ async function openArgsDialog(name, argsSource = null) {
   if (isSkillsEditable) {
     const sc = skillCatalog;
     renderSkillChecklist(argsSkillsList, sc.names || [], new Set(sc.disabledSkills || []),
-      sc.effective || {}, { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable });
+      sc.effective || {}, { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable, outOfScope: sc.outOfScope });
     setSkillLibCache(sc.skillLib || []);
     if ((sc.skillLib || []).length) {
       const auto = skillAutoSet(sc.skillLib, name);
