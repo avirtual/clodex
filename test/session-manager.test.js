@@ -4825,6 +4825,60 @@ test('team-review (T52): a TEMPLATE WIDER than the cap spawns CAPPED with a loud
     'the lead gets a loud line naming the beyond-cap tools and the operator-approval requirement');
 });
 
+test('team-review (t386): the template --model reaches the create() argv, merged with posture', async () => {
+  // The end-to-end half of the carve-out: resolve-seat-shape.test.js pins the
+  // SHAPE, and nothing pinned that the shape's extraArgs actually becomes the
+  // argv create() is called with. A rewiring that dropped shape.extraArgs at
+  // this call site passes every resolver test.
+  const { m, created, persistence } = mkReview({
+    reviewTemplate: { extraArgs: ['--model', 'fable', '--allowedTools', 'Bash'] },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  // The posture is derived from the LEAD's persisted args, so the merge only
+  // has something to merge onto if the lead actually holds it.
+  persistence.upsert({ name: 'lead', extraArgs: ['--dangerously-skip-permissions'] });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer must have spawned for the argv to mean anything');
+  assert.deepStrictEqual(
+    created[0][3], ['--dangerously-skip-permissions', '--model', 'fable'],
+    'posture then the allowlisted model; --allowedTools from the same template does NOT ride',
+  );
+});
+
+test('team-review (t386): a REFUSED template --model is reported, not silently defaulted', async () => {
+  // The bug this ticket exists to end is "configured a model, silently got the
+  // default". Fixing the drop while leaving the refusal silent reproduces it one
+  // layer in, so the refusal is loud on the same reply chain as the env/cap warns.
+  const { m, injected, created } = mkReview({
+    reviewTemplate: { extraArgs: ['--model', '--allowedTools'] },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'a bad model line still spawns a reviewer — a default-model review beats none');
+  assert.deepStrictEqual(created[0][3], [], 'the refused model reaches no argv');
+  assert.ok(
+    injected.some((t) => /reviewer template model "--model --allowedTools" is not a usable model name/.test(t)),
+    'the lead is told which model spec was refused and that the seat took the default',
+  );
+});
+
+test('team-review (t386): an HONORED --model produces no refusal line', async () => {
+  // The absence half: a warning wired to "a --model was seen" rather than "one
+  // was refused" fires on the working configuration, which trains the lead to
+  // ignore it. This is the case that separates the two.
+  const { m, injected } = mkReview({
+    reviewTemplate: { extraArgs: ['--model', 'fable'] },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.ok(injected.some((t) => /spawned team-reviewer-1/.test(t)), 'ENTER: the spawn reply is the line under test');
+  assert.ok(!injected.some((t) => /is not a usable model name/.test(t)),
+    'a model that was honored must not be reported as refused');
+});
+
 test('team-review (T52): a TEMPLATE NARROWER than the cap is honored (narrows, no warning)', async () => {
   const { m, injected, created } = mkReview({
     reviewTemplate: { tools: ['Read'] },

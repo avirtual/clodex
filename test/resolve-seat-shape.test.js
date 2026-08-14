@@ -70,6 +70,7 @@ test('ticket purpose: the whole shape, with no template', () => {
     effectiveTools: null,
     requestedTools: null,
     toolsMalformed: false,
+    modelRefused: null,
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
     execCommands: [],
@@ -105,6 +106,7 @@ test('review purpose: the whole shape, with no template', () => {
     // what distinguishes it from a template that asked for nothing USABLE.
     requestedTools: null,
     toolsMalformed: false,
+    modelRefused: null,
     systemPromptFile: 'clodex-team-reviewer',
     appendPromptFiles: [],
     execCommands: [],
@@ -155,6 +157,7 @@ test('review purpose: the whole shape, WITH a template (the production config)',
     effectiveTools: ['Read', 'Grep'],
     requestedTools: ['Read', 'Grep'],
     toolsMalformed: false,
+    modelRefused: null,
     systemPromptFile: 'rv-brief',
     appendPromptFiles: [],
     execCommands: [],
@@ -205,6 +208,7 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     effectiveTools: null,
     requestedTools: null,
     toolsMalformed: false,
+    modelRefused: null,
     beyondCap: [],
     promptEscaped: null,
     // The ROLE prompt wins over the template's.
@@ -606,20 +610,55 @@ test('t386: a flag-shaped model VALUE is refused, not forwarded', () => {
   // flag there. Forwarding it would leave whether it parses as a flag or as a
   // bogus model name up to the CLI's argv parser, which is an authority
   // decision this allowlist must not delegate downstream.
+  // leadArgs is NON-empty on purpose: with an empty lead posture the expected
+  // value is [], which is also what a mutant reverting the whole review arm
+  // returns — the assertion would read state the fixture already guaranteed.
+  // Expecting the posture instead shows the refusal falls back to POSTURE, not
+  // to nothing, which only the real code path produces.
   for (const extraArgs of [
     ['--model', '--dangerously-skip-permissions'],
     ['--model=--dangerously-skip-permissions'],
     ['-m', '--allowedTools'],
   ]) {
-    const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', extraArgs }], { leadArgs: [] });
+    const m = managerWith(
+      [{ name: 'rv', type: 'claude', cwd: '/repo', extraArgs }],
+      { leadArgs: ['--dangerously-skip-permissions'] },
+    );
     const team = teamWith({ reviewer: { template: 'rv' } });
     const args = m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs;
-    assert.deepStrictEqual(args, [], `${JSON.stringify(extraArgs)}: refused outright`);
-    assert.ok(
-      !args.includes('--dangerously-skip-permissions'),
-      'a flag must never reach argv through the model value slot',
+    assert.deepStrictEqual(
+      args, ['--dangerously-skip-permissions'],
+      `${JSON.stringify(extraArgs)}: refused, falling back to the lead posture`,
     );
+    // The posture token IS legitimately present above (the lead holds it), so
+    // "no --dangerously-skip-permissions" is not the property to assert here.
+    // What must not happen is a MODEL flag carrying it in: no --model at all.
+    assert.ok(!args.includes('--model'), 'no --model reaches argv from a flag-shaped value');
+    assert.strictEqual(args.length, 1, 'exactly the posture — nothing rode in beside it');
   }
+});
+
+test('t386: a REFUSED --model is reported on the shape, an honored one is not', () => {
+  // The refusal must be legible to the caller, or the fix reproduces its own bug
+  // one layer in: the operator configured a model, silently did not get it. The
+  // NEGATIVE half is what makes this more than a mirror of the parser — a
+  // modelRefused wired to "did we honor one" rather than "was one refused" would
+  // report on every template that names no model at all.
+  const shapeFor = (extraArgs) => {
+    const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', extraArgs }], { leadArgs: [] });
+    return m.resolveSeatShape(teamWith({ reviewer: { template: 'rv' } }), 'reviewer', 'review', LEAD);
+  };
+  assert.strictEqual(shapeFor(['--model', '--allowedTools']).modelRefused, '--model --allowedTools',
+    'the refused spec is reported verbatim, so the reply can name what to fix');
+  assert.strictEqual(shapeFor(['--model=']).modelRefused, '--model=',
+    'a fused form with an empty value is a refusal, not an absence');
+  assert.strictEqual(shapeFor(['-m']).modelRefused, '-m', 'a dangling flag is a refusal too');
+
+  // Absent, honored, and non-template cases must all stay quiet.
+  assert.strictEqual(shapeFor(['--model', 'fable']).modelRefused, null, 'an honored model reports nothing');
+  assert.strictEqual(shapeFor(['--allowedTools', 'Bash']).modelRefused, null,
+    'a template naming NO model has refused nothing — silence, not a warning');
+  assert.strictEqual(shapeFor(undefined).modelRefused, null, 'no extraArgs at all is not a refusal');
 });
 
 test('t386: a reviewer template with no extraArgs is unchanged by the carve-out', () => {

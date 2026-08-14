@@ -234,10 +234,15 @@ const REVIEWER_FALLBACK = {
 // carve-out: it grants no authority — tools, posture and env each have their own
 // ceiling above — so honoring it cannot widen the seat, and refusing it made
 // every reviewer spawn as the default model however it was configured.
-// Returns [] when the template names no usable model, so the caller appends
-// nothing. An ALLOWLIST by construction: the value is rebuilt from the parsed
-// model, never passed through from the template's array, so no neighbouring
-// token can ride along with it.
+// Returns { args, refused }. `args` is [] when the template names no usable
+// model, so the caller appends nothing. An ALLOWLIST by construction: the value
+// is rebuilt from the parsed model, never passed through from the template's
+// array, so no neighbouring token can ride along with it.
+//
+// `refused` carries the offending spec when a --model was PRESENT but not
+// honored, and it is not decoration: a silent refusal reproduces this function's
+// own bug one layer in — the operator configured a model, did not get it, and
+// nothing said so. The caller must surface it.
 function reviewerModelArgs(extraArgs) {
   const a = Array.isArray(extraArgs) ? extraArgs : [];
   // A model NAME never begins with '-'. Refusing one that does keeps this
@@ -249,19 +254,23 @@ function reviewerModelArgs(extraArgs) {
   for (let i = 0; i < a.length; i++) {
     const tok = a[i];
     if (typeof tok !== 'string') continue;
-    // Only the FIRST model token is honored: a last-wins CLI would let a second
-    // one override it, which would make the allowlist's choice not the effective one.
+    // The FIRST model token decides, valid or not — it is not "the first
+    // VALID one". A later well-formed --model does NOT rescue an earlier
+    // refused one, because a last-wins CLI would then have honored the
+    // earlier token this function rejected.
     if (tok === '--model' || tok === '-m') {
       // A trailing flag with no value is dropped entirely rather than emitted
       // bare — a bare --model would consume whatever argv token followed it.
-      return usable(a[i + 1]) ? ['--model', a[i + 1]] : [];
+      const v = a[i + 1];
+      if (usable(v)) return { args: ['--model', v], refused: null };
+      return { args: [], refused: typeof v === 'string' ? `${tok} ${v}` : tok };
     }
     if (tok.startsWith('--model=')) {
       const v = tok.slice('--model='.length);
-      return usable(v) ? ['--model', v] : [];
+      return usable(v) ? { args: ['--model', v], refused: null } : { args: [], refused: tok };
     }
   }
-  return [];
+  return { args: [], refused: null };
 }
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, branchSlug } = require('./tickets-store');
 const teamCost = require('./team-cost');
@@ -4765,6 +4774,12 @@ function createSessionManager(deps) {
       const capWarn = shape.beyondCap.length
         ? ` — requested [${shape.beyondCap.join(', ')}] beyond the reviewer cap [${REVIEWER_TOOL_CAP.join(', ')}] — requires operator approval; spawned with [${shape.effectiveTools.join(', ')}]`
         : '';
+      // A refused --model must not be silent: the operator configured a model,
+      // did not get it, and a quiet fallback to the default is the exact bug the
+      // --model carve-out exists to end.
+      const argsWarn = shape.modelRefused
+        ? ` — reviewer template model "${shape.modelRefused}" is not a usable model name (a value is required and cannot begin with "-") — ignored; spawned on the default model (fix the template's "extraArgs")`
+        : '';
 
       // Two refusals, one ruling: a `tools` the cap cannot honor must NOT fall back
       // to the full cap. The only fallback available grants more than the template
@@ -4936,7 +4951,7 @@ function createSessionManager(deps) {
             type: 'team-review', from: session.name, to: name, body: `review → ${name} @ ${cwd}`,
           });
           log.info('intent', `team-review by ${session.name} → ${name} (${type}) @ ${cwd}`);
-          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${envWarn}${promptWarn}${promptEscapeWarn}${tplWarn}`);
+          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${envWarn}${argsWarn}${promptWarn}${promptEscapeWarn}${tplWarn}`);
         } catch (err) {
           if (!this.sessions.has(name)) getPersistence().remove(name);
           log.error('intent', `team-review by ${session.name} → ${name} failed: ${err.message}`);
@@ -6674,6 +6689,10 @@ function createSessionManager(deps) {
           // Same posture: nothing off the review path judges the template's
           // `tools` at all, so there is no malformation to report.
           toolsMalformed: false,
+          // Always null here: the ticket arm honors the template's extraArgs
+          // verbatim, so no --model is ever refused and there is nothing to
+          // report. Present so both purposes return one key set.
+          modelRefused: null,
           // The template's systemPromptFile does NOT displace `def.prompt`: for
           // claude both ride --append-system-prompt-file and create() dedupes them
           // by name equality, so passing both is how a template-shaped seat still
@@ -6742,6 +6761,8 @@ function createSessionManager(deps) {
       // env and got none of it; the second never asked, and takes the default).
       const tplSuppliedEnv = !!(tpl && tpl.env && typeof tpl.env === 'object' && !Array.isArray(tpl.env));
 
+      const modelArgs = reviewerModelArgs(shape && shape.extraArgs);
+
       let systemPromptFile =
         (tpl && typeof tpl.systemPromptFile === 'string' && tpl.systemPromptFile)
           ? tpl.systemPromptFile
@@ -6775,7 +6796,10 @@ function createSessionManager(deps) {
         // extraArgs'. Mirroring the ticket arm here reverts it. Twice now this
         // branch has been read as an oversight because the reasoning lived only
         // in that test.
-        extraArgs: [...postureArgs, ...reviewerModelArgs(shape && shape.extraArgs)],
+        extraArgs: [...postureArgs, ...modelArgs.args],
+        // A --model that was present and refused. Carried, not re-derived at the
+        // call site: re-parsing would put a second copy of the allowlist there.
+        modelRefused: modelArgs.refused,
         agents: [],
         denyBuiltins: [],
         disabledTools: CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t)),
