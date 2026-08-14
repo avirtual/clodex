@@ -131,6 +131,7 @@ const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 're
 // destructured alongside it moved with the verbs that call them (t380).
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
+const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
 // ticketCloseLine is re-exported below rather than used here: it moved with the
@@ -3517,7 +3518,7 @@ function createSessionManager(deps) {
       }
 
       const rec = store.add({ from: who, workspaceId: session.workspaceId || null, body: text });
-      const preview = text.split('\n')[0].slice(0, 200);
+      const preview = previewLine(text, 200);
       try {
         notifyOS({
           title: who,
@@ -3884,7 +3885,10 @@ function createSessionManager(deps) {
       if (parsed.kind === 'list') {
         const mine = sched.listForAgent(who);
         if (!mine.length) { reply('no reminders scheduled'); return; }
-        const lines = mine.map((r) => `  ${r.id}  ${r.spec}${r.body ? ` — ${r.body.split('\n')[0].slice(0, 60)}` : ''}`);
+        const lines = mine.map((r) => {
+          const preview = previewLine(r.body, 60);
+          return `  ${r.id}  ${r.spec}${preview ? ` — ${preview}` : ''}`;
+        });
         reply(`${mine.length} reminder(s):\n${lines.join('\n')}`);
         return;
       }
@@ -4320,7 +4324,7 @@ function createSessionManager(deps) {
       if (sub === 'list') {
         const units = memoryStore.list(agent);
         const summary = units.length
-          ? units.map(u => `• ${u.id}${u.scope ? ` [${u.scope}]` : ''}${u.pinned ? ' (pinned)' : ''}: ${u.body.split('\n')[0].slice(0, 60)}`).join('\n')
+          ? units.map(u => `• ${u.id}${u.scope ? ` [${u.scope}]` : ''}${u.pinned ? ' (pinned)' : ''}: ${previewLine(u.body, 60)}`).join('\n')
           : '(no memories yet)';
         this._injectText(session, `[agent:memory] ${units.length} unit(s):\n${summary}`, { parkable: true });
         return;
