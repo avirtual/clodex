@@ -6793,9 +6793,7 @@ function createSessionManager(deps) {
         // flag — do not widen it to honor the template's array.
         // Dropping the rest is an ADJUDICATED decision, not an omission: the
         // rationale is owned by the test 'a reviewer template CANNOT contribute
-        // extraArgs'. Mirroring the ticket arm here reverts it. Twice now this
-        // branch has been read as an oversight because the reasoning lived only
-        // in that test.
+        // extraArgs'. Mirroring the ticket arm here reverts it.
         extraArgs: [...postureArgs, ...modelArgs.args],
         // A --model that was present and refused. Carried, not re-derived at the
         // call site: re-parsing would put a second copy of the allowlist there.
