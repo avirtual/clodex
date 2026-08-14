@@ -227,6 +227,37 @@ const REVIEWER_FALLBACK = {
     CLODEX_SPAWNER_HINT: 'off',
   },
 };
+// The review path refuses a template's extraArgs wholesale (an agent-writable
+// array of raw CLI argv reaching a seat whose premise is a hard tool cap:
+// --allowedTools, --mcp-config and --dangerously-skip-permissions all ride
+// there, and REVIEWER_TOOL_CAP screens none of them). `--model` is the single
+// carve-out: it grants no authority — tools, posture and env each have their own
+// ceiling above — so honoring it cannot widen the seat, and refusing it made
+// every reviewer spawn as the default model however it was configured.
+// Returns [] when the template names no usable model, so the caller appends
+// nothing. An ALLOWLIST by construction: the value is rebuilt from the parsed
+// model, never passed through from the template's array, so no neighbouring
+// token can ride along with it.
+function reviewerModelArgs(extraArgs) {
+  const a = Array.isArray(extraArgs) ? extraArgs : [];
+  for (let i = 0; i < a.length; i++) {
+    const tok = a[i];
+    if (typeof tok !== 'string') continue;
+    // Only the FIRST model token is honored: a last-wins CLI would let a second
+    // one override it, which would make the allowlist's choice not the effective one.
+    if (tok === '--model' || tok === '-m') {
+      const v = a[i + 1];
+      // A trailing flag with no value is dropped entirely rather than emitted
+      // bare — a bare --model would consume whatever argv token followed it.
+      return (typeof v === 'string' && v) ? ['--model', v] : [];
+    }
+    if (tok.startsWith('--model=')) {
+      const v = tok.slice('--model='.length);
+      return v ? ['--model', v] : [];
+    }
+  }
+  return [];
+}
 const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, branchSlug } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { buildReviewScope } = require('./ticket-review-scope');
@@ -6730,7 +6761,11 @@ function createSessionManager(deps) {
         type,
         cwd: team.root,
         tpl,
-        extraArgs: postureArgs,
+        // MERGED onto postureArgs, never replacing them (that is the ticket
+        // arm's shape, and the reason a template can hand a ticket seat posture
+        // its opener does not hold). reviewerModelArgs is an allowlist of one
+        // flag — do not widen it to honor the template's array.
+        extraArgs: [...postureArgs, ...reviewerModelArgs(shape && shape.extraArgs)],
         agents: [],
         denyBuiltins: [],
         disabledTools: CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t)),
