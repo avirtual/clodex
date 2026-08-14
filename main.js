@@ -335,6 +335,14 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
     // from, so it dies with the window — unlike sessions, which survive a close
     // detached and replay their buffered output on reattach.
     if (engine) { const w = engine.getDrawerPtys(); if (w) w.kill(workspaceId); }
+    // A PEER terminal dies with the window for the same reason, and this edge
+    // is not optional: a close is not a navigation, so the listener below never
+    // fires for it, and after unregisterWindow no future navigation for this
+    // workspace can. Unlike the reload case there is no later edge to
+    // self-heal, so a want left here strands an SSE, the far box's watcher mark
+    // and a spawned shell permanently. Refcounted, so another window still
+    // showing the seat keeps it.
+    if (engine) { const pm = engine.getPeerManager(); if (pm) pm.dropWtermsForWindow(workspaceId); }
     manager.unregisterWindow(workspaceId);
     refreshAppMenu();
     refreshTrayMenu();
@@ -345,6 +353,46 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
   // 'debug'), not a numeric index.
   win.webContents.on('console-message', (e) => {
     console.log(`[RENDERER ${String(e.level).toUpperCase()}]`, e.message);
+  });
+
+  // A RELOAD strands this window's peer terminals; the `closed` handler above
+  // covers the other edge where a renderer stops existing. The renderer's
+  // release edge (`releasePeer`) runs off renderer state, so a reload destroys
+  // it while the main-side want lives on: a seat the fresh renderer does not
+  // re-show keeps an open stream and a real shell on someone else's machine,
+  // with nothing left that could ever close them.
+  //
+  // `did-start-navigation`, NOT `did-finish-load`: finish-load is the page's
+  // `load` event, by which time the fresh renderer's own `peer:wtermOpen` has
+  // very likely arrived — dropping there would routinely shoot down a terminal
+  // the operator is actively watching.
+  //
+  // The bound this buys, stated exactly, because Electron does not promise the
+  // stronger thing: the drop cannot remove a want from a LIVE renderer, since
+  // the document placing wants is already being torn down. It is not ordered
+  // against an `invoke` still in flight — one handled after the drop re-creates
+  // the want, which then takes the dedupe path and gets no `replay`, so that
+  // one reload degrades to the blank pane t224 pinned until the operator
+  // hides and re-shows. Bounded and self-healing: the re-created want is owned
+  // by the still-registered workspace, so the next navigation or the close hook
+  // sheds it. It is NOT an orphan, which is what this ticket is about.
+  //
+  // The blank pane is fixed for the SOLE-OWNER case only, which is the common
+  // one. When a second window still holds the seat, the drop decrements rather
+  // than tearing down, so the reloading window's re-open takes the dedupe path,
+  // and the serving side writes `replay` only at stream-open — no snapshot, so
+  // that pane stays blank until the operator hides and re-shows it. Tearing the
+  // shared stream down instead would blank the OTHER window's live pane, which
+  // is worse; this is the deliberate trade, not an oversight.
+  //
+  // Main frame and cross-document only: an in-page navigation keeps the
+  // document, so the renderer that placed the wants is still there holding them.
+  // No first-load discriminator is needed — the initial loadFile fires this too,
+  // and a workspace that owns no wants drops nothing.
+  win.webContents.on('did-start-navigation', (details) => {
+    if (!details || !details.isMainFrame || details.isSameDocument) return;
+    const pm = engine ? engine.getPeerManager() : null;
+    if (pm) pm.dropWtermsForWindow(workspaceId);
   });
 
   // Zoom is per-webContents and resets on load, so re-apply on every

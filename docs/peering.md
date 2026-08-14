@@ -89,6 +89,20 @@ Attach streams reconnect with 1s→20s doubling backoff; **replay is
 best-effort scrollback, not terminal state** — clients reset before
 applying and re-replay (never resume) on reconnect.
 
+**A wterm want is owned by a WINDOW and dies with it.** Each `_wterms` entry
+carries an `owners` set of workspace ids (recorded from the IPC sender, strict —
+an unresolvable sender is refused on BOTH doors, never defaulted: an open filed
+under a placeholder could never be dropped, and an anonymous close can neither
+be swallowed nor honoured without harming one case or the other); the stream is
+torn down
+only when that set empties, so one window hiding a seat cannot detach another
+window watching it. Both edges where a renderer stops existing drop the
+window's wants — `did-start-navigation` (reload) and the window's `closed`
+handler — because the renderer's own release edge runs off renderer state and
+cannot survive either. Those drops tear down locally and send no close POST:
+the owner sheds on the socket close, and a POST in flight would drop every
+watcher of the seat, including a re-opened one.
+
 `PeerManager.sync` reconciles from settings: URL or label change =
 stop+restart that connection; removal emits `peer-removed`. **`peer-removed`
 fires even on URL/label edits** (attachments died with the old connection —
@@ -202,6 +216,9 @@ create/kill/restart now ride the `create` cap over the wire.
 - Disabled ≠ removed: syncs exclude, prune keeps, sheds are soft.
 - Restore sweep is one-shot per name.
 - Control auto-releases on last-detach; re-take rides replay, not a loop.
+- A wterm want is owned by a window and dies with it (both edges: navigation
+  and window close); an unresolvable sender is refused on open AND close, never
+  defaulted — the dying window's wants go with its `closed` hook instead.
 - `resolveDeployFolder` precedence: live srcDir > persisted > default.
 - The wire is one-directional; box→consumer traffic is outbox+claim only.
 - Hub-relay (messaging.md §4a): spokes never dial each other; a spoke→spoke DM

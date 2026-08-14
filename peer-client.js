@@ -50,6 +50,20 @@ function webHostKey(w) {
   return w ? `${w.port}:${w.tokenGated ? 1 : 0}` : '';
 }
 
+// A wterm owner is a WINDOW, addressed by its workspace id. Normalized to a
+// string because the Set is compared against ids arriving from two unrelated
+// callers — an IPC sender's workspace and main.js's window hooks — and a Set
+// keyed by mixed types would silently hold two entries for one window, leaving
+// a want nothing drops.
+//
+// There is deliberately no sentinel for an absent owner: an unresolvable sender
+// is REFUSED at the open (ipc-handlers), because a want filed under a key no
+// dropper ever passes is exactly the undroppable want this ownership exists to
+// prevent.
+function ownerKey(owner) {
+  return String(owner);
+}
+
 // The scheme half of a dial, in ONE place, exported so it can be tested without
 // a socket. Every request this module makes — control requests and the SSE
 // streams alike — carries `Authorization: Bearer <token>`, so the module used to
@@ -130,11 +144,20 @@ class PeerConnection {
     this._eventsReq = null;
     this._eventsBackoff = RECONNECT_MIN_MS;
     this._attachments = new Map();    // name -> { req, token, wanted, backoff, timer }
-    // seat -> { req, wanted, backoff, timer, opening } for peer TERMINAL feeds.
+    // seat -> { req, wanted, backoff, timer, opening, owners } for peer TERMINAL
+    // feeds.
     // Deliberately separate from _attachments: an attachment is a view of a
     // remote AGENT and carries the control token; a wterm is a shell on the same
     // box with no token at all, and merging the two maps would let a control
     // release tear down a terminal that never held control.
+    //
+    // `owners` is the set of WINDOWS that asked for this seat, and it is what
+    // makes the want survivable. The renderer's release edge runs off its own
+    // `held`, which dies with the renderer: a reload leaves `wanted` true here
+    // with nobody left who could ever close it — a stream and a shell stranded
+    // on someone else's machine. A window that navigates away drops its own
+    // entry (dropWtermsForWindow), and the stream goes only when the set
+    // empties, so one window's close cannot tear down another window's view.
     this._wterms = new Map();
     this._stopped = false;
   }
@@ -427,15 +450,49 @@ class PeerConnection {
     return null;
   }
 
-  wtermOpen(seat, cb) {
+  wtermOpen(seat, owner, cb) {
     const refusal = this._shellRefusal();
     if (refusal) return cb({ ok: false, error: refusal });
     let w = this._wterms.get(seat);
-    if (w && w.wanted) return cb({ ok: true });
-    if (!w) { w = { req: null, opening: false, wanted: true, backoff: RECONNECT_MIN_MS, timer: null }; this._wterms.set(seat, w); }
+    // The owner is recorded on the DEDUPE path too, not just the fresh one.
+    // A second window showing a seat the first already opened gets the early
+    // return, and if that did not count it the first window's close would take
+    // the second's stream down with it.
+    if (w && w.wanted) { w.owners.add(ownerKey(owner)); return cb({ ok: true }); }
+    if (!w) { w = { req: null, opening: false, wanted: true, backoff: RECONNECT_MIN_MS, timer: null, owners: new Set() }; this._wterms.set(seat, w); }
+    w.owners.add(ownerKey(owner));
     w.wanted = true;
     this._openWterm(seat, w);
     return cb({ ok: true });
+  }
+
+  // Every want this window holds, released. Cannot fire against a seat merely
+  // slow to re-attach: the drop happens at navigation START, strictly after the
+  // old document's last IPC and strictly before the new document exists, so it
+  // can only ever remove a want belonging to a renderer that no longer exists.
+  // A fresh renderer's later open is ordered after this, finds no entry, and
+  // opens for real — which is also what gets it a `replay` frame, since the
+  // serving side writes one only at stream-open.
+  //
+  // Local teardown only — no wterm-close POST, the same ruling as `stop()` and
+  // for a sharper reason. The serving side sheds its stream on the socket close
+  // that `_teardownWterm` causes, so the POST buys nothing; but its close route
+  // drops EVERY watcher of the seat, so one still in flight when the fresh
+  // renderer re-opens would kill the stream it just got. Dropping the POST is
+  // what makes the re-show race-free rather than merely usually-fast-enough.
+  //
+  // The visible cost, since it is invisible to the box's operator: no POST
+  // means no `wtermClose` callback there, so a reload or a window close
+  // produces no "a peer closed its view" chip in their ops log, where an
+  // ordinary hide does. The stream and its mark still go — only the sentence is
+  // missing.
+  dropWtermsForWindow(owner) {
+    const key = ownerKey(owner);
+    for (const [seat, w] of [...this._wterms]) {
+      if (!w.owners.delete(key)) continue;
+      if (w.owners.size > 0) continue;
+      this._teardownWterm(seat);
+    }
   }
 
   _openWterm(seat, w) {
@@ -464,7 +521,30 @@ class PeerConnection {
             peerShellRefusal(String((data && data.reason) || 'closed'), this.label));
         }
       },
-      onOpen: (req) => { w.opening = false; w.req = req; },
+      // A drop can land in the interval between the GET going out and its 200
+      // arriving. `_teardownWterm` can only destroy `w.req`, and `w.req` does
+      // not exist yet — so it deletes the map entry and destroys NOTHING, while
+      // the far side has already spawned the shell, added the response to its
+      // `_wterm` and written `replay`. That is this ticket's own orphan, one
+      // interval over, and it is the permanent variant at the window-close edge
+      // where no later navigation can ever fire a second drop. Re-showing the
+      // seat then opens a SECOND concurrent stream and every byte prints twice.
+      //
+      // So the socket is reaped HERE, where it first exists, against the same
+      // three conditions teardown uses. The map-identity check is what makes it
+      // safe: a fresh entry under this seat means this closure belongs to a
+      // stream nobody wants, and assigning `req` onto a stale `w` would hand
+      // the live entry's key to a dead one. `stop()` covers the same interval
+      // with `_sseAgent.destroy()`; the two per-window droppers have no pool to
+      // destroy, so they need this.
+      onOpen: (req) => {
+        if (!w.wanted || this._stopped || this._wterms.get(seat) !== w) {
+          try { req.destroy(); } catch {}
+          return;
+        }
+        w.opening = false;
+        w.req = req;
+      },
       onStable: () => { w.backoff = RECONNECT_MIN_MS; },
       // The serving side said no. Clear `wanted` BEFORE the close door runs, the
       // same as a `closed` frame and for the same reason: a refusal is a
@@ -479,7 +559,17 @@ class PeerConnection {
       onClose: () => {
         w.opening = false;
         w.req = null;
-        if (!w.wanted || this._stopped) { this._wterms.delete(seat); return; }
+        // Delete only if the map still holds THIS entry. A socket closes
+        // asynchronously, so a seat torn down and immediately re-opened — a
+        // reload, which drops the window's want and then re-shows the seat —
+        // has a fresh entry under the same key by the time the old stream's
+        // close lands. Deleting by key alone would drop the live entry and
+        // leave a stream nothing tracks: a pane with a feed the map says is
+        // not there, and no closer for it.
+        if (!w.wanted || this._stopped) {
+          if (this._wterms.get(seat) === w) this._wterms.delete(seat);
+          return;
+        }
         const delay = w.backoff;
         w.backoff = Math.min(w.backoff * 2, RECONNECT_MAX_MS);
         w.timer = setTimeout(() => { if (this.online) this._openWterm(seat, w); }, delay);
@@ -518,8 +608,26 @@ class PeerConnection {
 // shell with two viewers, and the operator of that box has it in their own tab.
 // Turning this into a kill would let a remote party take a local terminal away;
 // drawer-pty's write() carries the rest of that reasoning.
-  wtermClose(seat, cb) {
+  wtermClose(seat, owner, cb) {
     const w = this._wterms.get(seat);
+    // Refcounted by window. The serving side's close route drops EVERY watcher
+    // of the seat, so closing while a second window is still showing it would
+    // kill that window's pane — the same hazard term-tab's `held` bookkeeping
+    // guards on the renderer side, one layer down.
+    //
+    // A close whose owner does not resolve never gets here: the seam refuses
+    // it, symmetrically with the open, so this method always has a name to
+    // decrement. Both of the shapes that DO handle it here are wrong, which is
+    // why the rule lives at the seam instead. Swallowing turns the sole path
+    // that exists to close things into a no-op. Shedding on it takes a live
+    // window's pane down whenever the dying window was not the only owner —
+    // W1 and W2 on a seat, W2 hides then dies with a second close in flight.
+    // The dead window's wants are shed by main's `closed` hook, which drops by
+    // workspace id and so knows exactly who left.
+    if (w) {
+      w.owners.delete(ownerKey(owner));
+      if (w.owners.size > 0) return cb({ ok: true });
+    }
     this._teardownWterm(seat);
     if (!w) return cb({ ok: true });
     if (!this.online) return cb({ ok: true });
@@ -809,6 +917,13 @@ class PeerManager {
   stopAll() {
     for (const conn of this._peers.values()) conn.stop();
     this._peers.clear();
+  }
+
+  // A window went away or reloaded: every peer it was watching a shell on must
+  // lose that want. Across ALL connections — the window could have had seats
+  // open on several boxes, and a per-connection call would leave the rest.
+  dropWtermsForWindow(owner) {
+    for (const conn of this._peers.values()) conn.dropWtermsForWindow(owner);
   }
 
   statuses() { return [...this._peers.values()].map((c) => c.status()); }
