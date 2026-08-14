@@ -198,7 +198,14 @@ function classifyReviewSeat(prev, cur, { stallMs = 30 * 60 * 1000 } = {}) {
   if (!prev || !cur) return { verdict: 'unknown', cpuRead: !!(cur && cur.cpuMs != null) };
   const gap = cur.at - prev.at;
   if (!(gap >= MIN_GAP_MS)) return { verdict: 'unknown', cpuRead: cur.cpuMs != null };
-  const grew = typeof cur.size === 'number' && typeof prev.size === 'number' && cur.size > prev.size;
+  // A NEGATIVE size is the probe's "could not read", not a byte count, and both
+  // ends must be real for a comparison to mean anything. Without the `>= 0`
+  // terms an unreadable baseline (-1) followed by a readable but EMPTY
+  // transcript (0) satisfies `0 > -1` and reads as growth — phantom evidence
+  // that a seat wrote something, suppressing the alarm on a seat that has
+  // produced nothing at all.
+  const grew = typeof cur.size === 'number' && typeof prev.size === 'number'
+    && prev.size >= 0 && cur.size >= 0 && cur.size > prev.size;
   const cpuRead = cur.cpuMs != null && prev.cpuMs != null;
   const cpuAccrued = cpuRead
     && (cur.cpuMs - prev.cpuMs) >= ((gap / 60000) * CPU_RATE_MS_PER_MIN);

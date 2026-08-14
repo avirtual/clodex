@@ -16,7 +16,24 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 
-const { readTail, lastToolFrom, formatStallBody, formatOrphanBody } = require('../stall-evidence');
+const {
+  readTail, lastToolFrom, formatStallBody, formatOrphanBody,
+  parseCpuTime, classifyReviewSeat, formatReviewSeatClause,
+} = require('../stall-evidence');
+
+// t384 — the two-signal reviewer liveness test.
+//
+// Every fixture below is one of the two LIVE observations of
+// clodex-reviewer-377-r1 on 2026-08-14, because the ticket's whole claim is
+// about which of them a probe can tell apart:
+//   03:08Z  transcript +135KB/8min, CPU rising  -> HEALTHY (working)
+//   03:11Z  transcript FLAT 3 minutes, CPU 0:52.00 -> 0:53.13 in 40s -> HEALTHY
+//           (composing a long turn: it burns CPU and writes nothing until flush)
+// A growth-only probe calls the second one wedged. That is the false alarm this
+// ticket exists to remove, so it gets its own test rather than a branch of one.
+const MIN = 60 * 1000;
+const STALL = 30 * MIN;
+const sample = (at, size, cpuMs, lastGrowthAt = null) => ({ at, size, cpuMs, lastGrowthAt });
 
 function jsonl(...entries) {
   return entries.map((e) => JSON.stringify(e)).join('\n') + '\n';
@@ -215,4 +232,169 @@ test('t377: the orphan alarm carries git evidence but never a tool outcome', () 
 test('t377: the orphan body stays one line, like every alarm in the prompt stream', () => {
   const b = formatOrphanBody({ ticketId: 't376', who: 'clodex-hand-376', age: '2h', commits: 3, dirty: true });
   assert.ok(!b.includes('\n'), 'no newlines');
+});
+
+// ── t384: parsing the CPU sample ───────────────────────────────────────────
+
+test('t384: ps time is parsed at CENTISECOND resolution, both of its formats', () => {
+  // The centiseconds ARE the signal. The composing seat accrued 0.57s over 40
+  // seconds; truncated to whole seconds that is 0 -> 0, which is the wedge
+  // verdict, and the healthy seat is alarmed about.
+  assert.strictEqual(parseCpuTime('0:52.00'), 52000);
+  assert.strictEqual(parseCpuTime('0:52.57'), 52570, 'the fractional part survives');
+  assert.strictEqual(parseCpuTime('0:53.13'), 53130);
+  assert.strictEqual(parseCpuTime(' 1:02:03.50 '), 3723500, 'HH:MM:SS.cc, past the hour');
+  assert.strictEqual(parseCpuTime('711:00.21'), 42660210, 'a big MM value is minutes, not an hour field');
+});
+
+test('t384: an unparseable sample is null, NEVER zero', () => {
+  // Zero means "no CPU accrued", which is half the wedge verdict. A parse
+  // failure that returned 0 would alarm about a healthy seat with a fabricated
+  // number behind it — the confidently-wrong field this module refuses.
+  for (const bad of ['', null, undefined, 'no such process', '  ', 'PID TIME']) {
+    assert.strictEqual(parseCpuTime(bad), null, `${JSON.stringify(bad)} reads as unknown`);
+  }
+});
+
+// ── t384: the two-signal classifier ────────────────────────────────────────
+
+test('t384: a transcript that GREW is alive — the 03:08Z observation', () => {
+  const prev = sample(0, 1_135_000, 50_000);
+  const cur = sample(8 * MIN, 1_270_000, 52_000, 8 * MIN);
+  const r = classifyReviewSeat(prev, cur, { stallMs: STALL });
+  assert.strictEqual(r.verdict, 'moving', '+135KB in 8 minutes is a seat working');
+});
+
+test('t384: growth alone is sufficient — a seat that WROTE is alive with no CPU reading', () => {
+  // The converse of the composing test, and it exists because a mutant SURVIVED
+  // without it: every other growth fixture had CPU rising too, so the CPU signal
+  // was silently covering for the growth signal and a CPU-only implementation
+  // passed the whole suite. Growth is the STRONGER evidence — bytes on disk are
+  // proof of a turn, where CPU is only proof of a process burning cycles — so a
+  // box where `ps` is unavailable must still suppress on a writing seat.
+  const prev = sample(0, 1_000_000, null, 0);
+  const cur = sample(2 * MIN, 1_100_000, null, 2 * MIN);
+  const r = classifyReviewSeat(prev, cur, { stallMs: STALL });
+  assert.strictEqual(r.cpuRead, false, 'ENTER: there really is no CPU signal here');
+  assert.strictEqual(r.verdict, 'moving', '+100KB is a seat working, whatever ps could not say');
+});
+
+test('t384: THE COMPOSING CASE — flat transcript, rising CPU, is ALIVE', () => {
+  // The load-bearing test, and the one that dies to a growth-only probe: this is
+  // the 03:11Z observation, byte for byte. The transcript had not moved for 3
+  // minutes while CPU went 0:52.00 -> 0:53.13 across 40 seconds. A probe keying
+  // on growth alone calls this a wedge and fires the alarm the ticket exists to
+  // remove.
+  const prev = sample(0, 1_270_000, parseCpuTime('0:52.00'), -3 * MIN);
+  const cur = sample(40 * 1000, 1_270_000, parseCpuTime('0:53.13'), -3 * MIN);
+  const r = classifyReviewSeat(prev, cur, { stallMs: STALL });
+  assert.strictEqual(cur.size, prev.size, 'ENTER: the transcript really is flat — the growth signal says WEDGE here');
+  assert.strictEqual(r.verdict, 'moving', 'the CPU signal is what saves it');
+  assert.strictEqual(r.cpuRead, true);
+});
+
+test('t384: BOTH flat is the wedge — and it is the only shape that is', () => {
+  const prev = sample(0, 1_270_000, 52_000, 0);
+  const cur = sample(2 * MIN, 1_270_000, 52_000, 0);
+  const r = classifyReviewSeat(prev, cur, { stallMs: STALL });
+  assert.strictEqual(r.verdict, 'wedged');
+  assert.strictEqual(r.cpuRead, true, 'and it says it had both signals');
+});
+
+test('t384: the CPU threshold clears the measured composing rate by a wide margin', () => {
+  // Defended against the numbers, not chosen by taste. Composing ran at ~2.5%
+  // (0.57s/40s); the threshold is 200ms per 60s = 0.33%, so a composing seat is
+  // 7.5x clear of it. A seat accruing a hair under the line is still a wedge.
+  const rate = (ms, gapMs) => classifyReviewSeat(
+    sample(0, 100, 0, 0), sample(gapMs, 100, ms, 0), { stallMs: STALL },
+  ).verdict;
+  assert.strictEqual(rate(570, 40 * 1000), 'moving', 'the measured composing rate is alive');
+  assert.strictEqual(rate(199, 60 * 1000), 'wedged', 'just under the rate is not');
+  assert.strictEqual(rate(201, 60 * 1000), 'moving', 'just over it is');
+  assert.strictEqual(rate(400, 120 * 1000), 'moving',
+    'the threshold is a RATE: a late sweep must not change the verdict');
+  assert.strictEqual(rate(399, 120 * 1000), 'wedged', 'and the rate holds in both directions');
+});
+
+test('t384: no baseline and too-short a gap both read as UNKNOWN, not as wedged', () => {
+  // The first sweep after a seat appears has nothing to compare against, and a
+  // few-second gap is noise. Guessing "wedged" from either is the false alarm
+  // arriving from a third direction.
+  assert.strictEqual(classifyReviewSeat(null, sample(MIN, 100, 1000)).verdict, 'unknown');
+  assert.strictEqual(
+    classifyReviewSeat(sample(0, 100, 1000, 0), sample(5000, 100, 1000, 0)).verdict, 'unknown',
+    'a 5s gap cannot separate a wedge from a pause between writes',
+  );
+});
+
+test('t384: CPU accruing with a transcript flat PAST the stall window is reported, not suppressed', () => {
+  // The spec keeps this reportable: a seat burning CPU for half an hour without
+  // writing is worth a look. Composing cannot reach here — that stretch was 3
+  // minutes against a 30m window — so the WINDOW is what separates them.
+  const prev = sample(0, 100, 0, -STALL);
+  const cur = sample(MIN, 100, 1000, -STALL);
+  const r = classifyReviewSeat(prev, cur, { stallMs: STALL });
+  assert.strictEqual(r.verdict, 'idle-alive');
+  const composing = classifyReviewSeat(
+    sample(0, 100, 0, -3 * MIN), sample(MIN, 100, 1000, -3 * MIN), { stallMs: STALL },
+  );
+  assert.strictEqual(composing.verdict, 'moving', 'ENTER: the same CPU shape inside the window is just composing');
+});
+
+test('t384: an unreadable CPU sample degrades to growth-only and SAYS SO', () => {
+  // Not silence (that deletes the alarm) and not a confident wedge (that is the
+  // growth-only misfire). It alarms, and it states which signal it lacked.
+  const prev = sample(0, 100, null, 0);
+  const cur = sample(2 * MIN, 100, null, 0);
+  const r = classifyReviewSeat(prev, cur, { stallMs: STALL });
+  assert.strictEqual(r.verdict, 'wedged', 'a flat transcript still alarms');
+  assert.strictEqual(r.cpuRead, false, 'but the reading is marked one-signal');
+  const clause = formatReviewSeatClause({ seat: 'rv', verdict: 'wedged', cpuRead: false });
+  assert.match(clause, /could not be sampled/, 'and the body admits it');
+  assert.match(clause, /composing turn cannot be ruled out/, 'naming the case it cannot exclude');
+  assert.ok(!/WEDGED/.test(clause), 'so it must not claim the two-signal verdict');
+});
+
+// ── t384: the clause the alarm carries ─────────────────────────────────────
+
+test('t384: a live verdict adds NOTHING to the alarm body', () => {
+  // 'moving' suppresses the alarm entirely at the call site, so a clause for it
+  // would be dead text; 'unknown' means the probe had no reading, and an alarm
+  // that narrates its own lack of data is noise.
+  assert.strictEqual(formatReviewSeatClause({ seat: 'rv', verdict: 'moving' }), '');
+  assert.strictEqual(formatReviewSeatClause({ seat: 'rv', verdict: 'unknown' }), '');
+  assert.strictEqual(formatReviewSeatClause({ seat: null, verdict: 'wedged' }), '',
+    'and with no seat there is nothing true to say about one');
+});
+
+test('t384: the wedge clause names the seat and both signals, on one line', () => {
+  const c = formatReviewSeatClause({ seat: 'clodex-reviewer-377-r1', verdict: 'wedged' });
+  assert.match(c, /clodex-reviewer-377-r1/, 'the seat the lead must go look at');
+  assert.match(c, /WEDGED/);
+  assert.match(c, /no transcript growth and no CPU/, 'both signals, since one alone proves nothing');
+  assert.ok(!c.includes('\n'), 'one line, like every alarm in the prompt stream');
+});
+
+test('t384: the idle-alive clause does not call a running seat wedged', () => {
+  const c = formatReviewSeatClause({ seat: 'rv', verdict: 'idle-alive', flatFor: STALL, age: '31m' });
+  assert.match(c, /is running/);
+  assert.match(c, /written nothing for 31m/);
+  assert.ok(!/WEDGED/.test(c), 'a seat with CPU accruing is not wedged, and the wording must not blur that');
+});
+
+test('t384: an UNREADABLE transcript never counts as growth against a readable one', () => {
+  // The probe returns -1 for "could not read" and 0 for "read it, it is empty" —
+  // and the distinction is load-bearing here, not bookkeeping. Collapsing the two
+  // to 0 was a mutant that SURVIVED the first draft of this file: a -1 baseline
+  // followed by a 0 satisfies `0 > -1`, so an fs error healing into an empty file
+  // reads as a seat that wrote something, and the alarm is suppressed on a seat
+  // that has produced nothing at all.
+  const r = classifyReviewSeat(
+    sample(0, -1, 0, 0), sample(2 * MIN, 0, 0, 0), { stallMs: STALL },
+  );
+  assert.strictEqual(r.verdict, 'wedged', 'a phantom -1 -> 0 step is not evidence of a turn');
+  const back = classifyReviewSeat(
+    sample(0, 500, 0, 0), sample(2 * MIN, -1, 0, 0), { stallMs: STALL },
+  );
+  assert.strictEqual(back.verdict, 'wedged', 'and neither is losing the file mid-review');
 });

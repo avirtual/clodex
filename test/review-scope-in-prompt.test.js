@@ -633,3 +633,45 @@ test('t381: a reviewer on a permission dialog is re-armed, never re-nudged', asy
     assert.ok(s._reviewStartTimer, 're-armed, so a dialog answered later is still checked');
   } finally { app.stop(); }
 });
+
+test('t384: an EMPTY transcript file is still "no transcript" — the boundary is > 0', () => {
+  // t384 re-expressed `_seatHasTranscript` on top of a size probe, which makes
+  // this boundary newly mutable: `>= 0` passes every test t377 wrote, because
+  // those fixtures have NO FILE AT ALL (the probe throws) rather than an empty
+  // one. The hook creates the link at spawn and its target only when the CLI
+  // first writes, so an existing-but-empty transcript is exactly the
+  // never-started seat the detector is for — and under `>= 0` it reads as
+  // started and is never escalated.
+  const app = boot();
+  try {
+    const link = pathFor(app.root, 'crew-reviewer-1', 'transcript');
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    const target = path.join(app.root, 'empty-transcript.jsonl');
+    fs.writeFileSync(target, '');
+    try { fs.unlinkSync(link); } catch {}
+    fs.symlinkSync(target, link);
+
+    assert.strictEqual(fs.statSync(target).size, 0, 'ENTER: the file really exists and is empty');
+    assert.strictEqual(app.m._seatTranscriptSize('crew-reviewer-1'), 0,
+      'ENTER: the probe READ it — this is not the throwing path t377 pinned');
+    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+      'zero bytes is a seat that has taken no turn');
+  } finally { app.stop(); }
+});
+
+test('t384: an UNREADABLE transcript probes to -1, which is not a byte count', () => {
+  // The sentinel is load-bearing and its only defence is this assertion: 0 is a
+  // REAL size (a seat that has written nothing), so a probe that returned 0 on
+  // an fs error makes the two indistinguishable. Downstream that is phantom
+  // growth — an unreadable baseline healing into a readable file reads as
+  // `size > prevSize`, i.e. as a turn that never happened, and the stall alarm
+  // is suppressed on a seat nobody has evidence about. Caught by a mutant that
+  // survived every other test in this file.
+  const app = boot();
+  try {
+    assert.strictEqual(app.m._seatTranscriptSize('crew-reviewer-1'), -1,
+      'no link at all is unreadable, and says so distinctly from "empty"');
+    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+      'and it still answers the t377 question the same way');
+  } finally { app.stop(); }
+});

@@ -30,6 +30,10 @@ const { intentEnabled } = require('../intent-catalog');
 // than to pattern-match it: a copy of the grammar in this file would agree with
 // itself after a rename and let the advice go stale silently.
 const { parseWithRegistry } = require('../intent-registry');
+// The REAL parser for the t384 subjects below, for the same reason: these
+// fixtures feed `ps` output verbatim off a live observation, and a hand-computed
+// millisecond value here would agree with a wrong parser forever.
+const { parseCpuTime } = require('../stall-evidence');
 
 const SHIPPED_REVIEWER_TEMPLATE = {
   name: 'clodex-team-reviewer',
@@ -264,6 +268,14 @@ function mkLoop({
     validIntentNames: require('../intent-registry').validIntentNames,
     fs: wrapFs(fsReal),
     path: pathReal,
+    // The REAL path grammar, not a stub. It was missing entirely until t384
+    // needed it, and the gap was SILENT in the way CLAUDE.md's fixture rule
+    // names: an un-injected dep arrives as `undefined`, every `pathFor(...)`
+    // call throws, and `_seatTranscriptSize`'s catch turns that into "no
+    // transcript" — a fixture in which no seat can ever be measured, asserting
+    // nothing while passing.
+    pathFor: require('../clodex-paths').pathFor,
+    runDirFor: require('../clodex-paths').runDirFor,
     os: osReal,
     ensureDir: require('../fs-util').ensureDir,
     // The REAL module, deliberately: see the header. A stub here would assert
@@ -2735,4 +2747,191 @@ test('t375: a SUCCESSFUL write leaves the dump and no scratch file beside it', a
     'the published dump is the ONLY suite-failure file on disk');
   assert.match(fsReal.readFileSync(r.path, 'utf8'), /probe alpha/,
     'and it is whole, not the scratch copy under another name');
+});
+
+// ── t384: the review step's stall alarm probes the reviewer seat ───────────
+//
+// The measured false alarm: on t377 the watchdog fired `stalled: the ticket loop
+// is stuck at "review"` while clodex-reviewer-377-r1 was demonstrably working —
+// 1.27MB of transcript, +135KB in the preceding 8 minutes, a Read call in
+// flight. A 39KB diff simply takes longer than the window.
+//
+// These go through the REAL `_sweepTeamTickets` rather than calling the
+// classifier, because the claim under test is that the sweep CONSULTS it. A
+// pure-classifier test passes just as well against a sweep that never asks.
+//
+// Every subject below carries an ENTER assertion that the alarm WOULD have
+// fired at that instant — a suppression test whose fixture never reached the
+// stall condition passes trivially and asserts nothing at all (t377's journal
+// records exactly that mistake being made here).
+
+// A live reviewer seat for `ticketId`, with a transcript of `size` bytes.
+// The record fields are the ones `_liveReviewSeatFor` resolves on, which are the
+// same ones review-done routes a verdict on.
+function reviewerSeat(f, ticketId, size, name = 'team-reviewer-1-r1') {
+  f.persistence.upsert({ name, ephemeral: true, reviewFor: 'lead', reviewTicket: ticketId });
+  f.m.sessions.set(name, {
+    name, type: 'claude', agentType: 'claude', cwd: f.team.root,
+    pty: { pid: 4242 }, activityState: 'idle',
+  });
+  const dir = pathReal.join(f.home, 'run', name);
+  fsReal.mkdirSync(dir, { recursive: true });
+  const file = pathReal.join(dir, 'transcript.jsonl');
+  fsReal.writeFileSync(file, 'x'.repeat(size));
+  return {
+    session: f.m.sessions.get(name),
+    name,
+    grow: (by) => fsReal.appendFileSync(file, 'y'.repeat(by)),
+  };
+}
+
+// The sweep at `t`, with the reviewer's CPU reading whatever the caller says.
+// `_sampleCpuMs` is stubbed rather than `childProcess`: what is under test is
+// the classification, and a real `ps` would report THIS process's CPU, which is
+// a number nobody can make flat on demand.
+function sweepAt(f, t, cpuMs) {
+  f.m._sampleCpuMs = async () => cpuMs;
+  return f.m._sweepTeamTickets(f.team, t);
+}
+
+const nudgesOf = (f) => f.gated.filter((g) => g.sender === 'ticket-watchdog');
+
+// A ticket parked at `review`, quiet for an hour — i.e. well past the stall
+// window, so the alarm is due on the very next sweep.
+function heldAtReview(f, quietFor = 60 * 60 * 1000, at = Date.now()) {
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'review', lastActivityAt: at - quietFor, nudgedAt: null,
+  }]);
+}
+
+test('t384: a reviewer whose transcript is GROWING suppresses the stall alarm', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const t0 = Date.now();
+  heldAtReview(f, 60 * 60 * 1000, t0);
+  const rv = reviewerSeat(f, 't1', 1_135_000);
+
+  // Sweep 1 takes the baseline. No previous sample exists, so this one cannot
+  // classify anything — and it must not alarm on that ignorance either.
+  await sweepAt(f, t0, 50_000);
+  assert.strictEqual(nudgesOf(f).length, 0, 'the baseline sweep does not alarm on a seat it has not measured yet');
+  assert.ok(rv.session._reviewLiveSample, 'ENTER: the baseline really was taken');
+
+  // The 03:08Z observation: +135KB across 8 minutes. CPU is held FLAT on
+  // purpose — every other growth fixture let CPU rise too, and a CPU-only
+  // implementation then survived the whole suite because the second signal was
+  // covering for the first. Growth must suppress on its own.
+  rv.grow(135_000);
+  await sweepAt(f, t0 + (8 * 60 * 1000), 50_000);
+
+  assert.strictEqual(nudgesOf(f).length, 0, 'a seat writing 135KB in 8 minutes is not stalled');
+  // ENTER — the trap this file's t377 sibling fell into. Without it, a fixture
+  // that never reached the alarm would pass this test with the probe deleted.
+  const t = f.one();
+  assert.strictEqual(t.loopStep, 'review', 'ENTER: the ticket is still held at review');
+  assert.strictEqual(ticketInFlight(t), true, 'ENTER: and still in flight, so the sweep considered it');
+  assert.strictEqual(t.nudgedAt || null, null,
+    'ENTER: no alarm was stamped either — the suppression is real, not a missed pass');
+});
+
+test('t384: THE COMPOSING CASE — flat transcript with rising CPU must not alarm', async () => {
+  // The mutant-killer. A probe keying on transcript GROWTH alone classifies this
+  // as a wedge and fires, which is precisely the false alarm this ticket removes.
+  // The numbers are the 03:11Z observation: the file did not move for minutes
+  // while CPU went 0:52.00 -> 0:53.13.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const t0 = Date.now();
+  heldAtReview(f, 60 * 60 * 1000, t0);
+  const rv = reviewerSeat(f, 't1', 1_270_000);
+
+  await sweepAt(f, t0, parseCpuTime('0:52.00'));
+  const sizeAtBaseline = rv.session._reviewLiveSample.size;
+
+  // Deliberately NOT grown: the seat is composing a long message.
+  await sweepAt(f, t0 + 40_000, parseCpuTime('0:53.13'));
+
+  assert.strictEqual(rv.session._reviewLiveSample.size, sizeAtBaseline,
+    'ENTER: the transcript really did not grow — this is the shape a growth-only probe calls wedged');
+  assert.strictEqual(nudgesOf(f).length, 0, 'CPU is accruing, so the seat is composing, not wedged');
+  assert.strictEqual(f.one().nudgedAt || null, null, 'ENTER: and nothing was stamped');
+});
+
+test('t384: both signals flat DOES alarm, and names the seat', async () => {
+  // The alarm is not removed, only made honest. A reviewer that genuinely wedges
+  // must still reach the lead — t377's whole point.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const t0 = Date.now();
+  heldAtReview(f, 60 * 60 * 1000, t0);
+  const rv = reviewerSeat(f, 't1', 1_270_000);
+
+  await sweepAt(f, t0, 52_000);
+  await sweepAt(f, t0 + (2 * 60 * 1000), 52_000);   // no growth, no CPU
+
+  const n = nudgesOf(f);
+  assert.strictEqual(n.length, 1, 'a wedged reviewer is still reported');
+  assert.match(n[0].body, /loop is stuck at "review"/, 'the step wording survives');
+  assert.match(n[0].body, new RegExp(rv.name), 'and now it names the seat to go look at');
+  assert.match(n[0].body, /WEDGED/);
+  assert.match(n[0].body, /no transcript growth and no CPU/, 'stating both signals, since one alone proves nothing');
+});
+
+test('t384: the probe runs ONLY at the review step — other steps are unqualified', async () => {
+  // `verify` has no seat behind it. A probe consulted there returns null, and
+  // reading null as a verdict would either silence the step or decorate its
+  // alarm with a claim about a seat that does not exist.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const t0 = Date.now();
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'verify', lastActivityAt: t0 - (60 * 60 * 1000), nudgedAt: null,
+  }]);
+  let sampled = 0;
+  f.m._sampleCpuMs = async () => { sampled += 1; return 52_000; };
+
+  await f.m._sweepTeamTickets(f.team, t0);
+
+  const n = nudgesOf(f);
+  assert.strictEqual(n.length, 1, 'ENTER: the verify step still alarms exactly as before');
+  assert.match(n[0].body, /loop is stuck at "verify"/);
+  assert.strictEqual(sampled, 0, 'and no seat was probed, because none is behind this step');
+  assert.ok(!/reviewer|WEDGED/.test(n[0].body), 'so the body claims nothing about one');
+});
+
+test('t384: a review step with NO live reviewer alarms as before, mentioning no seat', async () => {
+  // The seat retired, or never spawned. There is nothing to probe, and the
+  // pre-t384 alarm is the right one — silence here would delete the alarm for
+  // exactly the case t377 built the loop-held wording for.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const t0 = Date.now();
+  heldAtReview(f, 60 * 60 * 1000, t0);
+
+  await sweepAt(f, t0, 52_000);
+
+  const n = nudgesOf(f);
+  assert.strictEqual(n.length, 1, 'ENTER: the alarm fires on the FIRST sweep, with no baseline needed');
+  assert.match(n[0].body, /loop is stuck at "review"/);
+  assert.ok(!/WEDGED|reviewer team-/.test(n[0].body), 'and invents no seat to blame');
+});
+
+test('t384: a reviewer that wedges AFTER a healthy stretch is still caught', async () => {
+  // Suppression is per-sweep, not a latch. A `continue` that also stamped the
+  // ticket, or a probe consulted once, would buy a wedged seat permanent silence
+  // — the failure mode t377's orphan arm documents, arrived at from this side.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const t0 = Date.now();
+  heldAtReview(f, 60 * 60 * 1000, t0);
+  const rv = reviewerSeat(f, 't1', 1_000_000);
+
+  await sweepAt(f, t0, 50_000);
+  rv.grow(100_000);
+  await sweepAt(f, t0 + (2 * 60 * 1000), 52_000);
+  assert.strictEqual(nudgesOf(f).length, 0, 'ENTER: the healthy stretch really was suppressed');
+
+  // Now it wedges: nothing written, no CPU.
+  await sweepAt(f, t0 + (4 * 60 * 1000), 52_000);
+  assert.strictEqual(nudgesOf(f).length, 1, 'the next sweep catches it — suppression is not a latch');
 });
