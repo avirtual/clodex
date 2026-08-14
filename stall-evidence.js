@@ -192,6 +192,11 @@ function parseCpuTime(text) {
 // process blocked in a syscall accrues. Rate-normalized, so a sweep that runs
 // late does not silently tighten the threshold.
 const CPU_RATE_MS_PER_MIN = 200;
+// MUST stay BELOW the ticket watchdog's sweep interval (`startTicketWatchdog`,
+// 60s by default and parameterized). Samples come from consecutive sweeps, so a
+// sweep interval under this returns 'unknown' for every probe forever — and the
+// caller defers the alarm on 'unknown', so the review-step alarm disappears
+// silently, with no error and no log line.
 const MIN_GAP_MS = 30 * 1000;
 
 function classifyReviewSeat(prev, cur, { stallMs = 30 * 60 * 1000 } = {}) {
