@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — tickets that run themselves
+## Unreleased
+
+## 5.7.0 — 2026-08-14 — tickets that run themselves
 
 Most of this release is one story: a ticket now goes from a written spec to a
 merged branch without anyone driving it. You file it, you start it, and Clodex
