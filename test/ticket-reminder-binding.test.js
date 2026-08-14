@@ -590,6 +590,28 @@ test('binding to an ACCEPTED-AND-MERGED ticket bounces and names the state', asy
   } finally { f.cleanup(); }
 });
 
+test('a REJECT after a closed-out accept makes the ticket bindable again', async () => {
+  const f = mkFixture();
+  try {
+    f.setState('t1', { state: 'done', report: 'did it', worktree: { branch: 'landed' } });
+    await f.m._taskAccept(f.lead, f.team, { id: 't1' }, f.reply);
+    assert.strictEqual(f.one('t1').closedOut, true, 'ENTER: the accept genuinely closed t1 out');
+
+    f.setState('t1', { state: 'done', report: 'did it again' });
+    f.m._taskReject(f.lead, f.team, { id: 't1', body: 'one more pass' }, f.reply);
+    assert.strictEqual(f.one('t1').state, 'open', 'ENTER: the reject reopened it');
+
+    const mine = f.arm('for t1 in 40m', 'check the rework');
+
+    // The failure this pins is an over-REFUSAL, so asserting no-throw would pass
+    // against the defect. The binding has to actually land.
+    assert.strictEqual(mine.length, 1, 'the reopened ticket is bindable again');
+    assert.strictEqual(mine[0].ticket, 't1', 'and the reminder is bound to it');
+    assert.doesNotMatch(f.injected.join('\n'), /nothing left to bind to/,
+      'no stale terminal marker refuses the rework round');
+  } finally { f.cleanup(); }
+});
+
 test('binding to a DONE-but-not-yet-accepted ticket SUCCEEDS — it is still live', () => {
   const f = mkFixture();
   try {

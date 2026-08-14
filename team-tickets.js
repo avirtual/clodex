@@ -3844,6 +3844,7 @@ function createTicketMethods(deps, shared) {
         ticket.state = 'open';
         ticket.closedAt = null;
         ticket.closedBy = null;
+        delete ticket.closedOut;       // same reason as _taskReject's reopen
         ticket.lastActivityAt = Date.now();
         ticket.nudgedAt = null;
         // Written here for the reason the header gives: _taskReject's guard reads
@@ -4474,6 +4475,10 @@ function createTicketMethods(deps, shared) {
       ticket.state = 'open';
       ticket.closedAt = null;
       ticket.closedBy = null;          // cleared alongside closedAt — it is open again
+      // A reopened ticket is not terminal. Left set, `ticketTerminalReason` keeps
+      // reading it as closed out and refuses a `for <id>` reminder binding on the
+      // rework round, which is a round the reminder is wanted for.
+      delete ticket.closedOut;
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;
       // The marker that makes the guard above decidable. Nothing else on the
