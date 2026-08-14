@@ -377,6 +377,14 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
   // by the still-registered workspace, so the next navigation or the close hook
   // sheds it. It is NOT an orphan, which is what this ticket is about.
   //
+  // The blank pane is fixed for the SOLE-OWNER case only, which is the common
+  // one. When a second window still holds the seat, the drop decrements rather
+  // than tearing down, so the reloading window's re-open takes the dedupe path,
+  // and the serving side writes `replay` only at stream-open — no snapshot, so
+  // that pane stays blank until the operator hides and re-shows it. Tearing the
+  // shared stream down instead would blank the OTHER window's live pane, which
+  // is worse; this is the deliberate trade, not an oversight.
+  //
   // Main frame and cross-document only: an in-page navigation keeps the
   // document, so the renderer that placed the wants is still there holding them.
   // No first-load discriminator is needed — the initial loadFile fires this too,

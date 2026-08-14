@@ -38,7 +38,11 @@ function handlerBody(src, head) {
   throw new Error(`unbalanced braces in ${head}`);
 }
 
-test('BOTH edges where a renderer stops existing drop that window\'s peer terminal wants', () => {
+// "Both edges that END the window" is the precise phrasing. `render-process-gone`
+// is a third edge where a renderer stops existing, and it is deliberately not
+// wired: the window survives it, so its wants are shed by the reload that
+// follows or by its eventual close. Self-healing, unlike either of these two.
+test('BOTH edges that end the window drop that window\'s peer terminal wants', () => {
   const closed = handlerBody(SRC, "win.on('closed', () => {");
   // ENTER: the slice must reach the handler's last statement, or an assertion
   // that something is PRESENT could fail for the wrong reason and one that it is

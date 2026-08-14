@@ -91,7 +91,10 @@ applying and re-replay (never resume) on reconnect.
 
 **A wterm want is owned by a WINDOW and dies with it.** Each `_wterms` entry
 carries an `owners` set of workspace ids (recorded from the IPC sender, strict —
-an unresolvable sender is refused, never defaulted); the stream is torn down
+an unresolvable sender is refused on BOTH doors, never defaulted: an open filed
+under a placeholder could never be dropped, and an anonymous close can neither
+be swallowed nor honoured without harming one case or the other); the stream is
+torn down
 only when that set empties, so one window hiding a seat cannot detach another
 window watching it. Both edges where a renderer stops existing drop the
 window's wants — `did-start-navigation` (reload) and the window's `closed`
@@ -214,7 +217,8 @@ create/kill/restart now ride the `create` cap over the wire.
 - Restore sweep is one-shot per name.
 - Control auto-releases on last-detach; re-take rides replay, not a loop.
 - A wterm want is owned by a window and dies with it (both edges: navigation
-  and window close); an unresolvable sender is refused, never defaulted.
+  and window close); an unresolvable sender is refused on open AND close, never
+  defaulted — the dying window's wants go with its `closed` hook instead.
 - `resolveDeployFolder` precedence: live srcDir > persisted > default.
 - The wire is one-directional; box→consumer traffic is outbox+claim only.
 - Hub-relay (messaging.md §4a): spokes never dial each other; a spoke→spoke DM

@@ -1302,13 +1302,13 @@ function registerIpcHandlers(deps) {
     // handlers register only under `enableDrawerServices`, which the web host
     // turns off — so the desktop host is the only registrar.
     //
-    // STRICT resolution, and unresolved is a REFUSAL — the same ruling the
-    // local `wterm:*` family makes on the same input, for a reason that is
-    // sharper here. The shared helper falls back to the default workspace, and
-    // an owner nothing will ever drop is precisely the undroppable want this
-    // ticket exists to eliminate: every dropper (the navigation listener, the
-    // close handler) passes a REAL workspace id, so a fallback or a sentinel
-    // bucket could never be matched by any of them.
+    // STRICT resolution, and unresolved is a REFUSAL on BOTH doors — the same
+    // ruling the local `wterm:*` family makes on the same input, for a reason
+    // that is sharper here. The shared helper falls back to the default
+    // workspace, and an owner nothing will ever drop is precisely the
+    // undroppable want this ticket exists to eliminate: every dropper (the
+    // navigation listener, the close handler) passes a REAL workspace id, so a
+    // fallback or a sentinel bucket could never be matched by any of them.
     const wtermOwner = (e) => (workspaceOfSenderStrict ? workspaceOfSenderStrict(e) : workspaceOfSender(e));
     handle('peer:wtermOpen', (e, key) => new Promise((resolve) => {
       const t = peerSeat(key);
@@ -1322,10 +1322,19 @@ function registerIpcHandlers(deps) {
       if (!t) return resolve({ ok: false, error: 'no such peer session' });
       t.conn.wtermResize(t.seat, cols, rows, resolve);
     }));
+    // The close is refused on the same input as the open, and the symmetry is
+    // the point: one rule, at one seam, for a sender that cannot be named.
+    // There is no correct thing to do further down with an anonymous close —
+    // swallowing it makes the only closing path a no-op, shedding on it takes
+    // down a pane another window is still watching. The dying window's wants
+    // are shed by main's `closed` hook, which drops by workspace id and knows
+    // exactly whose they were, so nothing is leaked by declining here.
     handle('peer:wtermClose', (e, key) => new Promise((resolve) => {
       const t = peerSeat(key);
       if (!t) return resolve({ ok: false, error: 'no such peer session' });
-      t.conn.wtermClose(t.seat, wtermOwner(e), resolve);
+      const owner = wtermOwner(e);
+      if (!owner) return resolve({ ok: false, error: 'no workspace for this window' });
+      t.conn.wtermClose(t.seat, owner, resolve);
     }));
     // Fire-and-forget, same shape as peer:input and for the same reason: a
     // keystroke that waits for a reply makes typing feel like the network.

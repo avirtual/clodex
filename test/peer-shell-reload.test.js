@@ -228,23 +228,24 @@ test('a reload costs exactly one re-open on the wire, never a second concurrent 
       'ENTER: the first open really did reach the wire, so every later one shows here too');
 
     reloadRenderer(conn);
+    // WAIT for the shed before re-opening, rather than sampling and hoping.
+    // The drop destroys the socket synchronously, but the server learns of it
+    // on its own `close` event, which is async — so firing the re-open
+    // immediately makes the sample below a race with the serving box's event
+    // loop. A flake there reads as a duplicate-stream regression, the most
+    // expensive misdiagnosis available on this file, since a second concurrent
+    // stream is the very thing t224 disproved. Waiting makes the sample
+    // deterministic and still measures the real property: what must never
+    // happen is a GET arriving on top of a stream that is still live.
+    await waitFor('the old stream to be shed', () => watched(server).length === 0);
     await new Promise((r) => conn.wtermOpen('alice', W1, r));
     await waitFor('the re-open to reach the wire', () => gets.length >= 2);
     await new Promise((r) => setTimeout(r, 250));
 
     assert.deepStrictEqual(gets, ['/api/wterm/alice', '/api/wterm/alice'],
       'one re-open, and only one — the fresh renderer opened for real and nothing opened a third time');
-    // Asserted as a universal rather than as the exact array `[0, 0]`: that
-    // shape depends on the serving box processing the old socket's close before
-    // the re-open's GET is routed, which holds over loopback but is not
-    // guaranteed on a loaded box. A flake there would read as a duplicate-
-    // stream regression — the most expensive possible misdiagnosis on this
-    // file, since that is the very thing t224 disproved. The property that
-    // actually matters is that no open ever arrives on top of a live stream.
-    assert.ok(concurrent.every((n) => n === 0),
-      `every open arrived with NO stream already held for the seat, so the reload closed before it re-opened and the two never overlap (saw ${JSON.stringify(concurrent)})`);
-    assert.strictEqual(concurrent.length, 2,
-      'ENTER: and both opens really were sampled, so the universal above is over two observations and not vacuously true of an empty list');
+    assert.deepStrictEqual(concurrent, [0, 0],
+      'every open arrived with NO stream already held for the seat, so the reload closed before it re-opened and the two never overlap');
   } finally {
     conn.stop();
     server.stop();
@@ -365,6 +366,57 @@ test('repeated reloads of the same seat leave exactly one stream and one shell',
   }
 });
 
+// A drop landing while the SSE is MID-OPEN — the GET has gone out, the 200 has
+// not come back. Every other test in this file awaits `watched(server).length
+// === 1` before dropping, so all of them measure a stream that is fully open
+// and the entire opening interval is unmeasured by construction. That is where
+// the r2 defect lived: teardown can only destroy `w.req`, `onOpen` had not
+// assigned it yet, so the drop deleted the map entry and destroyed nothing
+// while the far side had already spawned the shell, added its response and
+// written `replay`. A stream nothing local can ever close — this ticket's own
+// orphan, one interval over — and it is permanent at the window-close edge,
+// where no later navigation can fire a second drop.
+//
+// So: open and drop back-to-back, without awaiting the stream. What must be
+// true afterwards is that the far side ends up watching NOTHING.
+test('a drop that lands while the stream is still opening reaps it anyway', async () => {
+  const { server, spawns } = servingBox();
+  await server.start();
+  const conn = consumer(server.port);
+  conn.start();
+  try {
+    await waitFor('the peer to come online', () => conn.online);
+
+    // Back-to-back and deliberately un-awaited: `wtermOpen`'s callback fires
+    // synchronously (the request is only dispatched), so the drop runs with the
+    // entry in `opening: true, req: null` — the state no teardown could reap.
+    conn.wtermOpen('alice', W1, () => {});
+    closeWindow(conn, W1);
+
+    // The far box must have SEEN the open, or this test would pass against a
+    // request that never left and prove nothing about reaping.
+    await waitFor('the mid-open GET to reach the far box', () => spawns.length >= 1);
+    assert.deepStrictEqual(spawns, ['alice'],
+      'ENTER: the far side really did spawn and attach for this seat, so there was a live stream to orphan');
+
+    await waitFor('the mid-open stream to be reaped', () => watched(server).length === 0);
+    assert.deepStrictEqual(watched(server), [],
+      'the socket was destroyed when it first existed, so nothing is left watching — an unreaped mid-open stream has no local closer at all');
+    assert.ok(!conn._wterms.has('alice'), 'and no want survives on this side either');
+
+    // The second harm, which is worse than the leak: a re-show against a stale
+    // entry opens a SECOND concurrent stream and every byte prints twice.
+    await new Promise((r) => conn.wtermOpen('alice', W1, r));
+    await waitFor('the re-open to reach the far box', () => watched(server).length === 1);
+    await new Promise((r) => setTimeout(r, 250));
+    assert.strictEqual(server._wterm.get('alice').size, 1,
+      'exactly ONE response is held for the seat — a surviving mid-open stream would make the re-show a duplicate and double-print every byte');
+  } finally {
+    conn.stop();
+    server.stop();
+  }
+});
+
 // --- 3. window attribution, which is what makes the drop safe ---------------
 // The reviewer's objection to the original spec: `_wterms` is keyed by seat per
 // connection, so a per-window drop would tear down a stream ANOTHER window is
@@ -470,14 +522,19 @@ test('closing a window sheds its seats and leaves the surviving window alone', a
   }
 });
 
-// --- 5. an unresolvable sender ----------------------------------------------
-// A window that dies with an `invoke` in flight resolves to no workspace. The
-// open is REFUSED rather than filed under a placeholder, because a want no
-// dropper can ever name is precisely the undroppable want this ownership
-// exists to prevent — the ticket's own defect, re-created by its own fix.
-// Refusal is also the ruling the local `wterm:*` family already makes.
+// --- 5. the ordinary release edge -------------------------------------------
+// term-tab's own close, with its window named. The drop tests above all shed
+// through `dropWtermsForWindow`, which tears down LOCALLY and sends no POST;
+// this is the other closer, and the POST is the half only it exercises.
+//
+// A close whose sender resolves to no workspace never reaches here at all: the
+// seam refuses it, symmetrically with the open (pinned in
+// test/drawer-services-seam.test.js). Both of the alternatives are wrong below
+// this line — swallowing makes the sole closing path a no-op, shedding takes
+// down a pane another window still holds — which is why the rule sits at the
+// one door that has the sender rather than here, where it does not.
 
-test('a close whose window is gone still sheds, rather than being swallowed by the refcount', async () => {
+test('the last window closing a seat sheds the stream and tells the far box', async () => {
   const { server, closes } = servingBox();
   await server.start();
   const conn = consumer(server.port);
@@ -486,44 +543,17 @@ test('a close whose window is gone still sheds, rather than being swallowed by t
     await waitFor('the peer to come online', () => conn.online);
     await new Promise((r) => conn.wtermOpen('alice', W1, r));
     await waitFor('alice to be watched', () => watched(server).includes('alice'));
+    assert.deepStrictEqual(watched(server), ['alice'],
+      'ENTER: a stream really was open, so the shed below is measured against a live one');
 
-    // The sole viewer's window died as it called close, so no owner resolves.
-    // Pre-refcount this shed the stream; a refcount that only ever deletes a
-    // named owner would return ok and shed NOTHING, turning the one path whose
-    // job is closing into a no-op.
-    await new Promise((r) => conn.wtermClose('alice', null, r));
+    await new Promise((r) => conn.wtermClose('alice', W1, r));
     await waitFor('the close to reach the far box', () => closes.length >= 1);
 
     assert.deepStrictEqual(watched(server), [],
-      'the stream is gone — an unowned close is the "nobody is watching" case and must still shed');
-    assert.deepStrictEqual(closes, ['alice'], 'and the far box was told, so its watcher mark clears');
+      'the stream is gone — the owners set emptied, so the seat is genuinely unwatched');
+    assert.deepStrictEqual(closes, ['alice'],
+      'and the far box was TOLD, which is what clears its watcher mark; this closer POSTs where the window drops deliberately do not');
     assert.ok(!conn._wterms.has('alice'), 'and no want is left behind on this side');
-  } finally {
-    conn.stop();
-    server.stop();
-  }
-});
-
-test('an unowned close does NOT tear down a seat another window is still watching', async () => {
-  const { server, closes } = servingBox();
-  await server.start();
-  const conn = consumer(server.port);
-  conn.start();
-  try {
-    await waitFor('the peer to come online', () => conn.online);
-    await new Promise((r) => conn.wtermOpen('alice', W1, r));
-    await new Promise((r) => conn.wtermOpen('alice', W2, r));
-    await waitFor('alice to be watched', () => watched(server).includes('alice'));
-    assert.strictEqual(conn._wterms.get('alice').owners.size, 2,
-      'ENTER: two windows hold the seat, so the shed below would be visible if it happened');
-
-    await new Promise((r) => conn.wtermClose('alice', null, r));
-    await new Promise((r) => setTimeout(r, 250));
-
-    assert.deepStrictEqual(watched(server), ['alice'],
-      'live windows still hold it, so an unowned close must not take their pane down');
-    assert.deepStrictEqual(closes, [],
-      'and nothing reached the far box, whose close route would have dropped every watcher');
   } finally {
     conn.stop();
     server.stop();

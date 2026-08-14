@@ -538,7 +538,12 @@ after(() => { setImmediate(() => process.exit(0)); });
 // box's watcher mark and a spawned shell on someone else's machine with nothing
 // left that could ever close them, which is the exact defect the ownership was
 // introduced to eliminate. Refusing is what keeps the fix from re-creating it.
-test('peer:wtermOpen refuses when the sender resolves to no workspace', async () => {
+// BOTH doors, in one test, because the rule is the symmetry: the seam is the
+// only place that has the sender, so it is the only place where "no name" can
+// be answered. Below it there is nothing correct to do with an anonymous close
+// — swallow it and the sole closing path becomes a no-op, honour it and it
+// tears down a seat another window is still watching.
+test('peer:wtermOpen and peer:wtermClose both refuse when the sender resolves to no workspace', async () => {
   const calls = [];
   const conn = {
     wtermOpen: (seat, owner, cb) => { calls.push(['open', seat, owner]); cb({ ok: true }); },
@@ -549,14 +554,19 @@ test('peer:wtermOpen refuses when the sender resolves to no workspace', async ()
   const handlers = registerPeerDesktop({ 'peer-1': conn }, {
     workspaceOfSenderStrict: () => null,
     // What the shared fallback WOULD have said. Present so this test fails if
-    // the handler is switched to the loose resolver, which is the regression
+    // either handler is switched to the loose resolver, which is the regression
     // that re-creates the undroppable want.
     workspaceOfSender: () => 'default',
   });
 
-  assert.ok(handlers['peer:wtermOpen'], 'ENTER: the peer terminal handlers registered');
+  assert.ok(handlers['peer:wtermOpen'] && handlers['peer:wtermClose'],
+    'ENTER: both peer terminal doors registered, so a refusal below is a refusal and not an absent handler');
 
-  const res = await handlers['peer:wtermOpen']({}, 'bob@peer-1');
-  assert.strictEqual(res.ok, false, 'the open is refused rather than filed under a placeholder owner');
-  assert.deepStrictEqual(calls, [], 'and nothing reached the connection at all');
+  const opened = await handlers['peer:wtermOpen']({}, 'bob@peer-1');
+  assert.strictEqual(opened.ok, false, 'the open is refused rather than filed under a placeholder owner');
+
+  const closed = await handlers['peer:wtermClose']({}, 'bob@peer-1');
+  assert.strictEqual(closed.ok, false, 'and the close is refused too — an anonymous caller can be neither credited nor ignored safely');
+
+  assert.deepStrictEqual(calls, [], 'nothing reached the connection through either door');
 });

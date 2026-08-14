@@ -521,7 +521,30 @@ class PeerConnection {
             peerShellRefusal(String((data && data.reason) || 'closed'), this.label));
         }
       },
-      onOpen: (req) => { w.opening = false; w.req = req; },
+      // A drop can land in the interval between the GET going out and its 200
+      // arriving. `_teardownWterm` can only destroy `w.req`, and `w.req` does
+      // not exist yet — so it deletes the map entry and destroys NOTHING, while
+      // the far side has already spawned the shell, added the response to its
+      // `_wterm` and written `replay`. That is this ticket's own orphan, one
+      // interval over, and it is the permanent variant at the window-close edge
+      // where no later navigation can ever fire a second drop. Re-showing the
+      // seat then opens a SECOND concurrent stream and every byte prints twice.
+      //
+      // So the socket is reaped HERE, where it first exists, against the same
+      // three conditions teardown uses. The map-identity check is what makes it
+      // safe: a fresh entry under this seat means this closure belongs to a
+      // stream nobody wants, and assigning `req` onto a stale `w` would hand
+      // the live entry's key to a dead one. `stop()` covers the same interval
+      // with `_sseAgent.destroy()`; the two per-window droppers have no pool to
+      // destroy, so they need this.
+      onOpen: (req) => {
+        if (!w.wanted || this._stopped || this._wterms.get(seat) !== w) {
+          try { req.destroy(); } catch {}
+          return;
+        }
+        w.opening = false;
+        w.req = req;
+      },
       onStable: () => { w.backoff = RECONNECT_MIN_MS; },
       // The serving side said no. Clear `wanted` BEFORE the close door runs, the
       // same as a `closed` frame and for the same reason: a refusal is a
@@ -592,24 +615,18 @@ class PeerConnection {
     // kill that window's pane — the same hazard term-tab's `held` bookkeeping
     // guards on the renderer side, one layer down.
     //
-    // A close whose owner did not resolve (the window died with the call in
-    // flight) must still SHED, or the refcount would have quietly turned the
-    // one path whose job is closing into a no-op — which is what it did before
-    // t379's rework, a regression on the sole path that exists to close things.
-    //
-    // It cannot decrement, because it does not know WHICH window is leaving. So
-    // it keys on ambiguity: with a single owner the caller must be that owner,
-    // so shed. With several, the seat is genuinely still wanted by somebody and
-    // tearing down would kill a live window's pane over a caller we cannot
-    // identify; the dead window's want is shed by main's `closed` hook instead,
-    // which drops by workspace id and knows exactly who left.
+    // A close whose owner does not resolve never gets here: the seam refuses
+    // it, symmetrically with the open, so this method always has a name to
+    // decrement. Both of the shapes that DO handle it here are wrong, which is
+    // why the rule lives at the seam instead. Swallowing turns the sole path
+    // that exists to close things into a no-op. Shedding on it takes a live
+    // window's pane down whenever the dying window was not the only owner —
+    // W1 and W2 on a seat, W2 hides then dies with a second close in flight.
+    // The dead window's wants are shed by main's `closed` hook, which drops by
+    // workspace id and so knows exactly who left.
     if (w) {
-      if (owner === null || owner === undefined) {
-        if (w.owners.size > 1) return cb({ ok: true });
-      } else {
-        w.owners.delete(ownerKey(owner));
-        if (w.owners.size > 0) return cb({ ok: true });
-      }
+      w.owners.delete(ownerKey(owner));
+      if (w.owners.size > 0) return cb({ ok: true });
     }
     this._teardownWterm(seat);
     if (!w) return cb({ ok: true });
