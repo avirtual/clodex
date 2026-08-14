@@ -426,16 +426,13 @@ test('t377: a retired reviewer is not reported — the check outlives the seat',
 // How many start-nudges are parked for the seat right now. The park is the real
 // channel (_deliverParkedActive), so counting parked bodies is what proves a
 // redelivery was actually handed to the seat rather than merely decided on.
+// The store's own counter, nothing else. An earlier version looped on
+// `peekPending` and OR-ed the result in, which counted nothing: peek returns an
+// ARRAY, `[]` is truthy, so the loop always yielded 1 and the `|| n` fallback
+// reported 1 parked delivery when none existed — making the `before >= 1` ENTER
+// guard below true regardless of whether the spawn parked anything.
 function nudgeCount(app, name) {
-  const dir = path.join(app.root, 'pending');
-  let n = 0;
-  for (let i = 0; i < 64; i++) {
-    const one = pendingStore.peekPending(dir, name);
-    if (!one) break;
-    n++;
-    break;   // peek does not consume; count via the store's own counter instead
-  }
-  return pendingStore.countPending(dir, name) || n;
+  return pendingStore.countPending(path.join(app.root, 'pending'), name);
 }
 
 test('t381: a silent reviewer gets its start nudge RE-SENT before the lead is ever woken', async () => {
@@ -504,6 +501,13 @@ test('t381: the re-sent nudge carries no scope — it is the same contentless st
     const resent = pendingStore.drainPending(dir, 'crew-reviewer-1', 'test-2', app.m._bornFor('crew-reviewer-1'));
     assert.strictEqual(resent.length, 1, 'ENTER: exactly one redelivery to inspect');
     assert.ok(/Begin/.test(resent[0]), 'it is still a start signal');
+    // The residual race this clause exists for: a nudge submitted just before the
+    // window leaves the seat idle-with-no-transcript when the check fires, so the
+    // retry drains AFTER the seat's first turn and reaches a reviewer mid-review.
+    // Nothing outside the seat can close that, so the duplicate has to be harmless.
+    assert.match(resent[0], /ignore this if you have already started/,
+      'and it tells a seat that already started to drop it — a late-draining retry '
+      + 'must not talk a mid-review reviewer into a second report');
     assert.ok(!resent[0].includes(SCOPE),
       'and it does NOT restate the scope — the prompt is the single source, on the channel that cannot be lost');
   } finally { app.stop(); }
@@ -559,6 +563,13 @@ test('t381: a reviewer still silent after the re-send IS escalated, and the pros
     await settled(app, 'crew-reviewer-1');
     const s = reviewerSeat(app, { transcript: null });
 
+    // The SPAWN stamped this; backdate it so the elapsed figure has a value that
+    // could only come from the stamp. Asserting it is a number first is the point:
+    // without that, backdating a field nothing sets would still read as a pass.
+    assert.ok(Number.isFinite(s._reviewStartArmedAt),
+      'ENTER: the arm stamped a start time — the elapsed figure below is derived from it');
+    s._reviewStartArmedAt = Date.now() - 180000;
+
     app.alarms.length = 0;
     app.m._checkReviewStarted(s, 'lead');
     assert.deepStrictEqual(app.alarms, [], 'ENTER: window 1 redelivered rather than alarming');
@@ -569,6 +580,13 @@ test('t381: a reviewer still silent after the re-send IS escalated, and the pros
 
     assert.strictEqual(app.alarms.length, 1, 'the lead is told exactly once, at the second window');
     const body = app.alarms[0].body;
+    // The VALUE, not "contains a number". The stale constant survived a whole
+    // round underneath an assertion on the neighbouring clause of this sentence,
+    // so a predicate that any figure satisfies would repeat that exactly.
+    assert.match(body, /spawned 180s ago/,
+      'the elapsed figure is measured from the arm, not the constant window length — '
+      + 'the escalation fires at the SECOND window, and the dialog branch re-arms uncapped, '
+      + 'so a constant here understates by however many windows have run');
     assert.match(body, /re-sent/, 'the prose says the nudge was already re-sent');
     assert.match(body, /STILL taken no turn/,
       'and that it did not help — the old wording claimed no redelivery was attempted, which is now false');

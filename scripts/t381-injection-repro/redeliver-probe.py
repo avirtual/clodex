@@ -54,6 +54,13 @@ if pid == 0:
 set_size(fd, 40, 100)
 drain(fd, 12, [])
 
+# The answer is only counted where PINEAPPLE occurs APART from the echoed prompt,
+# and the removal must survive the redraw: cursor moves land between glyphs (see
+# echo-probe.py), so a plain `.replace` can remove nothing and the leftover echo
+# reads as an answer. Collapse whitespace on both sides.
+def answered(out, text, marker='PINEAPPLE'):
+    return marker in re.sub(r'\s+', '', out).replace(re.sub(r'\s+', '', text), '')
+
 NUDGE = 'say the single word PINEAPPLE and nothing else'
 
 # delivery 1 -- expected to be swallowed by the startup modal
@@ -61,14 +68,14 @@ sink1 = []
 inject(fd, NUDGE, 0.050)
 out1 = strip_ansi(drain(fd, 4, sink1).decode('utf-8', 'replace'))
 print('delivery 1 -- text echoed:', NUDGE[:20] in out1)
-print('delivery 1 -- answered PINEAPPLE:', 'PINEAPPLE' in out1.replace(NUDGE, ''))
+print('delivery 1 -- answered PINEAPPLE:', answered(out1, NUDGE))
 
 # delivery 2 -- the redelivery
 sink2 = []
 inject(fd, NUDGE, 0.050)
 out2 = strip_ansi(drain(fd, 12, sink2).decode('utf-8', 'replace'))
 print('delivery 2 -- text echoed:', NUDGE[:20] in out2)
-print('delivery 2 -- answered PINEAPPLE:', 'PINEAPPLE' in out2.replace(NUDGE, ''))
+print('delivery 2 -- answered PINEAPPLE:', answered(out2, NUDGE))
 print('--- tail after redelivery ---')
 print(out2[-700:])
 try:

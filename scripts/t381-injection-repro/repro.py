@@ -56,9 +56,11 @@ def run(mode, argv, text, settle_ms):
     pid, fd = pty.fork()
     if pid == 0:
         os.environ['TERM'] = 'xterm-256color'
-        # Popped in EVERY arm and every probe in this directory: inheriting it
-        # from the parent CLI turns transcript saving off, which changes what the
-        # child does on its own initiative. Arms must be comparable across files.
+        # Popped in both of THIS probe's arms: inheriting it from the parent CLI
+        # turns transcript saving off, which changes what the child does on its own
+        # initiative. The other probes here drop the whole CLAUDE_* set (exempting
+        # CLAUDE_CONFIG_DIR); this one does not, and its two arms are identical to
+        # each other, which is all its conclusion rests on.
         os.environ.pop('CLAUDE_CODE_ENTRYPOINT', None)
         os.environ.pop('CLAUDE_CODE_CHILD_SESSION', None)
         os.execvp(argv[0], argv)
@@ -108,9 +110,12 @@ if __name__ == '__main__':
     argv = sys.argv[3:] or ['claude']
     m, tail, redraw_bytes = run(mode, argv, text, settle)
     clean = strip_ansi(tail.decode('utf-8', 'replace'))
-    # The derived verdict. 'PINEAPPLE' appears in the echo of the prompt itself,
-    # so the answer is only counted where it occurs APART from the echoed text.
-    answered = 'PINEAPPLE' in clean.replace(text, '')
+    # The derived verdict. 'PINEAPPLE' appears in the echo of the prompt itself, so
+    # the answer is only counted where it occurs APART from the echoed text — and
+    # the removal must survive the redraw: cursor moves land between glyphs (see
+    # echo-probe.py), so a plain `.replace` can remove nothing and let the leftover
+    # echo read as an answer. Collapse whitespace on both sides.
+    answered = 'PINEAPPLE' in re.sub(r'\s+', '', clean).replace(re.sub(r'\s+', '', text), '')
     print('=== MODE %s ===' % m)
     if mode == 'repaint':
         # Control's window is the text echo alone (~131 bytes measured); a real

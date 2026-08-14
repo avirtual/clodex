@@ -7,9 +7,11 @@ can). Run them by hand when revisiting injection loss.
 
 Every probe mirrors `inject-queue.js` `_drain` byte-for-byte:
 `\x15` → 30ms → text → `settleMsFor(text)` → `\r`, with the Enter at exactly
-`settleMsFor` and not a millisecond later. Each drops the inherited `CLAUDE_*`
-environment (these run from inside a seat) while exempting `CLAUDE_CONFIG_DIR`,
-which is how the modal arms select a fresh config. Each prints a derived
+`settleMsFor` and not a millisecond later. All except `repro.py` drop the
+inherited `CLAUDE_*` environment (these run from inside a seat) while exempting
+`CLAUDE_CONFIG_DIR`, which is how the modal arms select a fresh config;
+`repro.py` pops only the two entrypoint vars, and its conclusion rests on its two
+arms being identical to each other rather than on a clean environment. Each prints a derived
 `FINDING`/`PASS` line — a conclusion that needs a human to re-read a 4000-char
 tail is not re-runnable.
 
