@@ -168,21 +168,33 @@ migrations live in `db/`, that the integration suite needs a running Postgres,
 or that one directory is generated and must never be hand-edited. That is your
 project's knowledge, and it belongs in an **append prompt**.
 
-The shipped hand template names the stem `team-project`, which resolves to:
+The shipped hand template names the stem `team-project`. Append prompts resolve
+against the shared prompt library, so **today that stem means exactly one file**:
 
 ```
-~/.clodex/teams/<your-team>/prompts/append/team-project.md
+~/.clodex/library/prompts/append/team-project.md
 ```
 
-Clodex ships no such file and `Create Team…` writes no skeleton — deliberately.
-An empty placeholder would let every status surface report the file as
-"resolved" while the seat booted with nothing useful, which is worse than a
-visibly missing file. **The missing file is the message**: it is a named,
-checked-for path, not a convention buried in a document.
+Write it there and it rides into every seat whose template names the stem. Note
+the consequence of it being the *library*: the file is shared by every team on
+this machine. If you run teams on two projects, either keep the content generic,
+or give each team's template its own stem (`acme-project`, `beta-project`) and
+write one file per stem.
+
+Clodex ships no `team-project.md` and `Create Team…` writes no skeleton —
+deliberately. An empty placeholder would report as "resolved" while the seat
+booted with nothing useful, which is worse than a visibly missing file. **The
+missing file is the message**: a named, checked-for path rather than a
+convention buried in a document.
 
 Write it in your own words. What the project is, what the layout means, how to
-run things, what breaks in non-obvious ways. It rides into every hand seat's
-prompt.
+run things, what breaks in non-obvious ways.
+
+> **Designed, not built:** per-team prompt directories
+> (`~/.clodex/teams/<name>/prompts/append/<stem>.md`, shadowing the library so
+> each team can carry its own copy of a stem) are designed but **not
+> implemented**. Nothing reads that path today — a file placed there is silently
+> ignored. Use the library path above until this ships.
 
 ## How a role finds its prompt
 
@@ -202,8 +214,9 @@ touching anything you wrote.
 
 ## Scaling the team
 
-Roles are cheap. Add one in the roles popover (or with `team:setRole`), give it
-a `template` and a `brief`, and the lead can dispatch tickets to it by name.
+Roles are cheap. Add one in the roles popover — click your team in the sidebar —
+give it a `template` and a `brief`, and the lead can dispatch tickets to it by
+name.
 Two seats can hold the same role; a ticket assigned to a role that has a
 worktree `dispatch` mints a fresh branch and a fresh seat per ticket, which is
 what keeps parallel work from colliding in one checkout.
@@ -214,7 +227,7 @@ so you do not have to teach it the vocabulary.
 ## Checklist for a new project
 
 1. `Create Team…`, pointed at your project root.
-2. Write `~/.clodex/teams/<name>/prompts/append/team-project.md`.
+2. Write `~/.clodex/library/prompts/append/team-project.md`.
 3. Decide about tests: add `scripts/run-tests.js` emitting TAP, or accept
    per-ticket escalation.
 4. Optional: add exec defs for the commands your agents will reach for most,

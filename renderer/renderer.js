@@ -2025,8 +2025,14 @@ inputTemplate.addEventListener('change', async () => {
   const list = await window.api.listTemplates();
   const t = list.find(x => x.id === id);
   if (!t) return;
+  // Resolve the cwd BEFORE writing any field: it may await an IPC round-trip,
+  // and a second template picked during that window would otherwise interleave
+  // — this handler's fields half-applied, then the older one's cwd landing on
+  // top of the newer one's. Nothing after this point awaits.
+  const resolvedCwd = await cwdFromTemplate(t);
+  if (inputTemplate.value !== id) return; // a newer template won the race
   inputType.value = t.type;
-  inputCwd.value = await cwdFromTemplate(t);
+  inputCwd.value = resolvedCwd;
   {
     const { model, rest } = splitModelArg(t.extraArgs || []);
     inputModel.value = model;
@@ -2144,6 +2150,17 @@ async function doCreate() {
   if (!name) return;
   if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
     inputName.style.borderColor = '#e94560';
+    return;
+  }
+  // An unexpanded ${TEAM_ROOT} reaching here means the dropdown could not
+  // resolve it and left the literal in the field. It would still fail — as a
+  // directory named "${TEAM_ROOT}" on the sandbox path, or at spawn on the host
+  // — but refusing at the dialog keeps the correction where the operator can
+  // make it, with the field still populated.
+  if (usesTeamRoot(cwd)) {
+    inputCwd.style.borderColor = '#e94560';
+    showToast('This template\'s ${TEAM_ROOT} could not be resolved — type the project directory, '
+      + 'or open the dialog from a session inside the team.', { kind: 'warn', duration: 12000 });
     return;
   }
 
