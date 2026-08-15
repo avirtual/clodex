@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- A command an agent ran in a seat's terminal could lose its first character on
+  a loaded machine, and the truncated remainder still ran — `echo a; echo b`
+  arriving as `cho a; echo b`. Before typing, Clodex interrupts whatever is on
+  the line and waited for the shell to answer; on a busy box, output from the
+  *previous* command could be mistaken for that answer, so the command went out
+  before the interrupt had landed and the shell discarded its opening byte.
+  Clodex now waits for the shell's own prompt marker, which cannot be produced
+  by earlier output. Rare, but it could silently turn one command into a
+  different valid one.
 - The drawer bar's plan-usage readout is calmer and no longer misreports whose
   budget it is. It was red on a blue bar — hard to read, and an alarm about
   something you cannot act on faster by being startled; severity now reads from
