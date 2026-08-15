@@ -1642,7 +1642,13 @@ function createTicketMethods(deps, shared) {
     // seat cannot tell a replay from a fresh assignment (that indistinguishability
     // is the whole finding in this ticket's notes), so the marker has to be in the
     // text, not in the caller's head.
-    _deliverTicketSpec(team, ticket, specText, fromName, urgent = false, replay = false, respec = false) {
+    // `onWrite(disposition)` fires when the bytes become DURABLE — released by the
+    // queue ('injected') or parked to disk ('parked') — never on the enqueue. A
+    // caller that PERSISTS "this seat has been told" must use it rather than the
+    // return: `{queued:true}` says only that the text is in the ready loop, so a
+    // stamp taken from it survives a write the boot re-render wiped, and the record
+    // then suppresses every later redelivery on the strength of it.
+    _deliverTicketSpec(team, ticket, specText, fromName, urgent = false, replay = false, respec = false, onWrite = null) {
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (!seat) return { undelivered: true };
       if (seat === team.lead) return { self: true }; // self-assign — the lead just wrote it
@@ -1705,7 +1711,13 @@ function createTicketMethods(deps, shared) {
         // out-of-process hook mid-loop and a seat already `thinking` emits no fresh
         // activity edge for it. Arming over a park would therefore redeliver into a
         // seat that HAS the spec and is working on it.
-        (disposition) => this._armSpecConfirm(seat, ticket.id, disposition));
+        // Both hooks ride ONE onWrite, and the arm goes first: it is the mechanism
+        // that catches a write which never reaches a turn, so a throw out of a
+        // caller's stamp must not be able to skip it.
+        (disposition) => {
+          this._armSpecConfirm(seat, ticket.id, disposition);
+          if (onWrite) { try { onWrite(disposition, seat); } catch {} }
+        });
       if (!r || r.error) return { undelivered: true };
       if (r.parked) return { parked: r.parked, reason: r.reason || null };
       if (r.held) return { held: true, reason: r.held };
@@ -1797,9 +1809,25 @@ function createTicketMethods(deps, shared) {
       const prior = s._specUnconfirmed;
       const retried = !!(prior && prior.ticketId === ticketId && prior.kind === kind && prior.retried);
       clearTimeout(s._specConfirmTimer);
+      // Where this seat's transcript ended when the write went out — the anchor the
+      // attribution probe searches FROM. Taken here and not at the deadline because
+      // here is write time (this runs inside `produce`), which is the only instant
+      // that separates "already in the transcript" from "consumed because of this
+      // write". A respawned seat's transcript already holds THIS ticket's marker
+      // from the incarnation that died; without the anchor every later turn matches
+      // it and the latch clears over a spec the seat never re-received.
+      // A seat with NO transcript yet anchors at 0, not at -1. That is the whole
+      // t408 shape — a freshly minted seat has written nothing when its spec goes
+      // out — and treating "no file" as an unknown baseline would answer "cannot
+      // say" for every fresh dispatch, which is precisely the population this
+      // mechanism exists to protect. Anchoring at 0 is also exactly right there:
+      // with no prior transcript there is no stale marker to false-match, so the
+      // unanchored search is the correct one.
+      const size = this._seatTranscriptSize(seatName);
+      const since = size < 0 ? 0 : size;
       s._specUnconfirmed = redirect
-        ? { ticketId, kind, at: Date.now(), retried, ...redirect }
-        : { ticketId, kind, at: Date.now(), retried };
+        ? { ticketId, kind, at: Date.now(), retried, since, ...redirect }
+        : { ticketId, kind, at: Date.now(), retried, since };
       this._armSpecConfirmTimer(s);
     },
 
@@ -1993,12 +2021,72 @@ function createTicketMethods(deps, shared) {
       } catch { return -1; }
     },
 
-    // Cleared by ANY non-idle activity (see _emitActivity): reaching a turn at all
-    // means the seat submitted, and submitting is exactly what a lost write
-    // prevents. The three shapes that must NOT alarm are silent for structural
-    // reasons rather than tuned ones:
-    //   - a seat thinking for minutes on its first turn went non-idle to think,
-    //     so the latch was gone seconds after the write;
+    // Has the dispatch for `ticketId` reached this seat's INPUT since byte `from`?
+    // The transcript records what the CLI actually consumed, so a spec that was
+    // written and wiped is absent from it while one the seat read — injected, or
+    // drained from a park by the out-of-process hook — is present. That is what
+    // makes a turn attributable to a particular write.
+    //
+    // `from` is NOT an optimisation, it is the correctness of the whole probe on a
+    // respawn. A `--resume` seat's transcript ALREADY contains this ticket's marker
+    // from the previous incarnation — that is how it got the spec the first time —
+    // so an unanchored search attributes every later turn to the stale copy, and
+    // the replay path (the one this ticket's stamp fix touches) is exactly where
+    // that bites: t156's whole case is a respawned seat. Callers pass the size
+    // captured when the latch armed, which _armSpecConfirm takes at WRITE time —
+    // after any resume content exists and before this write can be consumed.
+    //
+    // Matched on the dispatch MARKER, never the bare id: ids are monotonic, so
+    // every low id is a prefix of ~10 live higher ones and `includes('t40')` is
+    // true of a transcript that merely mentions t408 — a cross-reference in another
+    // spec, a lead dm, a review scope. Discriminating between those is the one job
+    // this function has. Two forms because a dispatch pointer line carries either:
+    // `[ticket tN]` plain, or `[ticket tN ` followed by REPLAY / RESPEC / a
+    // redirect label.
+    //
+    // Reads a bounded tail, so a seat with a hundred-megabyte transcript does not
+    // cost that on a 90s timer. Clamped to `from`, never behind it.
+    //
+    // Three-valued, and the split carries weight. `false` is a POSITIVE finding —
+    // the transcript is readable and this write is not in it — which is what keeps
+    // the latch armed. `null` is reserved for a probe that cannot answer at all (no
+    // transcript, unreadable link), where the caller must fall back to trusting the
+    // turn rather than manufacture a redelivery out of a blind spot. Collapsing the
+    // two surrenders both shapes this exists for: a fresh seat (anchored at 0, empty
+    // transcript) and a wire-routed edge that beat the CLI's append.
+    _seatTranscriptHas(name, ticketId, from = 0, tailBytes = 1 << 20) {
+      let fd;
+      try {
+        const link = pathFor(REGISTRY_DIR, name, 'transcript');
+        const target = fs.realpathSync(link);
+        const size = fs.statSync(target).size;
+        // Readable, and nothing appended since the write: that is a definite NO,
+        // not an unknown. The seat cannot have consumed a write that produced no
+        // transcript bytes, and answering "cannot say" here would surrender the
+        // two shapes this mechanism is for — a fresh seat (anchored at 0, empty
+        // transcript) and a wire-routed edge that beat the CLI's append.
+        if (size <= from) return false;
+        const start = Math.max(from, size - tailBytes);
+        const len = size - start;
+        const buf = Buffer.alloc(len);
+        fd = fs.openSync(target, 'r');
+        fs.readSync(fd, buf, 0, len, start);
+        const tail = buf.toString('utf8');
+        return tail.includes(`[ticket ${ticketId}]`) || tail.includes(`[ticket ${ticketId} `);
+      } catch { return null; }
+      finally { if (fd !== undefined) { try { fs.closeSync(fd); } catch {} } }
+    },
+
+    // Cleared by a non-idle edge that is ATTRIBUTABLE to this write (see
+    // _emitActivity): reaching a turn over the delivered text means the seat
+    // submitted, and submitting is exactly what a lost write prevents. A turn the
+    // transcript cannot attribute leaves the latch armed, so this still fires for a
+    // seat that turned for something else — t408's shape.
+    //
+    // The three shapes that must NOT alarm are silent for structural reasons rather
+    // than tuned ones:
+    //   - a seat thinking for minutes on its first turn went non-idle to think over
+    //     text its transcript holds, so the latch was gone seconds after the write;
     //   - a seat that finished and is idle reached idle THROUGH thinking, which
     //     cleared it — a terminal idle with the latch still set is unreachable;
     //   - a seat blocked on a permission dialog re-arms below instead of firing,
@@ -2013,6 +2101,16 @@ function createTicketMethods(deps, shared) {
       // leak: the timer is unref'd and _cleanup clears it when the session dies.
       if (session.needsAttention && session.needsAttention.kind === 'permission') {
         this._armSpecConfirmTimer(session);
+        return;
+      }
+      // Second look at the transcript before spending a redelivery. The activity
+      // edge that would have cleared this latch can RACE the CLI's append on a
+      // wire-routed seat (see _emitActivity), so a spec that really was consumed
+      // can still be sitting here armed; by the deadline the write is long since on
+      // disk, which makes this the reliable read and the edge the eager one.
+      // Anchored identically, so a respawn's stale copy cannot answer for it.
+      if (this._seatTranscriptHas(session.name, u.ticketId, u.since) === true) {
+        session._specUnconfirmed = null;
         return;
       }
       let team; try { team = resolveTeam(session.cwd); } catch { return; }
@@ -2256,18 +2354,47 @@ function createTicketMethods(deps, shared) {
         // with seat #2, which received nothing.
         if (this._ticketAssigneeSeat(team, t) !== session.name) continue;
         if (!t.spec) continue;   // hand-edited record — delivering it injects literal "undefined"
-        const r = this._deliverTicketSpec(team, t, t.spec, 'clodex-team', true, true);
-        // Stamp only what reached the seat, or is durably on its way. `parked`
-        // counts — the text is in the seat's pending store and drains on its next
-        // turn — but `held` and `undelivered` do NOT: stamping those would record a
-        // delivery that never happened and suppress the next replay, which is this
-        // bug with extra steps.
-        // `queued` is WEAKER than `parked` and knowingly so: the bytes are in the
-        // inject queue, written within a poll of the seat's readiness latch, so a
-        // write wiped by a boot re-render still stamps. t156's latch is what keeps
-        // that window shut in practice; at _armReplayFallback's ceiling it reopens.
-        // Closing it properly means stamping from a write-time hook here too — a
-        // change to the replay, which t156 already latched and t168 does not touch.
+        // The stamp rides the WRITE, not this return, which is what
+        // _deliverMessage's own contract requires of any caller that PERSISTS
+        // "this seat has been told". `queued` only means the bytes entered the
+        // inject queue: they sit in the ready loop behind the boot-readiness gate
+        // (INJECT_BOOT_MAXWAIT) and the quiet gate (INJECT_QUIET_MAXWAIT, 5min), and
+        // a seat that dies in those gates is never written to at all — yet the
+        // record said delivered, and a stamped ticket is never replayed again.
+        //
+        // This does NOT by itself rescue a write the CLI's boot re-render wipes:
+        // those bytes really were written, so the hook fires and the stamp is taken.
+        // The defence there is the confirmation latch, which no longer stands down
+        // for a turn the transcript cannot attribute to this spec — see
+        // _checkSpecConfirm. Two mechanisms, two different losses.
+        //
+        // Deferring the stamp cannot lose one: 'injected' and 'parked' are both
+        // durable, and every non-durable outcome (`held`, `undelivered`) never
+        // fires the hook at all — which is exactly the set that must NOT stamp.
+        //
+        // Loaded INSIDE the hook, not out here, and for the reason the old inline
+        // load already gave: the hook runs later than this loop (the queue writes
+        // past its gates), so a snapshot taken now would be stale by the time it
+        // saved and would clobber a concurrent clodex-team write.
+        const stamp = () => {
+          const tickets = ticketsStore.load(team.root);
+          const rec = tickets.find((x) => x.id === t.id);
+          if (!rec) return;
+          rec.deliveredTo = { seat: session.name, incarnation: session.incarnation, at: Date.now() };
+          // Replay is the OTHER hand-off, so it re-pins for the same reason advance
+          // does: handing a queued ticket to a seat IS its dispatch. Without this a
+          // ticket inherited from a dead seat keeps naming that seat, and its cost
+          // lands on a ledger belonging to something that never did the work.
+          // Rides this save, which is already the post-delivery reload. A DEGRADED
+          // worktree ticket never reaches here — the resolver's `!worktree` gate
+          // keeps it off this path. One pinned to its own live seat does reach it
+          // (the ordinary ticket-seat respawn, resolved above that gate), and the
+          // re-pin is a no-op on it: `_repinTicketToSeat` bails on pinned-and-live.
+          this._repinTicketToSeat(team, rec);
+          ticketsStore.save(team.root, tickets);
+          log.info('intent', `replayed ${t.id} to ${session.name} (respawn)`);
+        };
+        const r = this._deliverTicketSpec(team, t, t.spec, 'clodex-team', true, true, false, stamp);
         // `held` is the one non-delivery worth retrying: it is a property of the seat
         // at this instant, not of the ticket. `self` and `undelivered` are structural
         // and would be identical on every later pass.
@@ -2278,24 +2405,6 @@ function createTicketMethods(deps, shared) {
         // swallowed → stranded draft (_flushParkedNow documents the same race being
         // fixed once already). Head-only rather than joining, because the seat's next
         // ticket already arrives on close via _advanceSeat — a proven path.
-        // Loaded HERE, after the delivery decided: an early load would be a wider
-        // window for a concurrent clodex-team write to be clobbered by the save.
-        const tickets = ticketsStore.load(team.root);
-        const rec = tickets.find((x) => x.id === t.id);
-        if (!rec) return true;
-        rec.deliveredTo = { seat: session.name, incarnation: session.incarnation, at: Date.now() };
-        // Replay is the OTHER hand-off, so it re-pins for the same reason advance
-        // does: handing a queued ticket to a seat IS its dispatch. Without this a
-        // ticket inherited from a dead seat keeps naming that seat, and its cost
-        // lands on a ledger belonging to something that never did the work.
-        // Rides this save, which is already the post-delivery reload. A DEGRADED
-        // worktree ticket never reaches here — the resolver's `!worktree` gate
-        // keeps it off this path. One pinned to its own live seat does reach it
-        // (the ordinary ticket-seat respawn, resolved above that gate), and the
-        // re-pin is a no-op on it: `_repinTicketToSeat` bails on pinned-and-live.
-        this._repinTicketToSeat(team, rec);
-        ticketsStore.save(team.root, tickets);
-        log.info('intent', `replayed ${t.id} to ${session.name} (respawn)`);
         return true;
       }
       return !held;

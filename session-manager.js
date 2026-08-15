@@ -2818,11 +2818,48 @@ function createSessionManager(deps) {
         if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       }
       if (s && state !== 'idle') s.lastMainStop = null;
-      // A turn started, so the last spec write reached a composer that submitted it.
+      // A turn started — but a turn confirms THIS write only if this write caused
+      // it, and on a fresh seat it frequently did not. Measured on t408: the spec
+      // was injected at spawn+1s and wiped by the boot re-render, an unrelated
+      // roster park drained 12s later, and the turn the seat took to READ THE
+      // ROSTER cleared the spec latch. The record said delivered, the seat held
+      // nothing, and the one mechanism built to notice had already stood down.
+      //
+      // So the turn is ATTRIBUTED before it clears anything: the transcript records
+      // what the CLI actually consumed, and the dispatch names its ticket id on the
+      // pointer line. Absent ⇒ the seat turned for something else and is still
+      // owed its spec, so the latch stays armed and its deadline redelivers.
+      //
+      // This edge can RACE the transcript rather than following it. For a
+      // jsonl-routed seat the edge is derived from the transcript, so a consumed
+      // spec is already on disk; but a WIRE-routed seat gets its activity from wire
+      // `turn.started` alone (its sentinel's JsonlWatcher has a no-op activity
+      // callback), which can arrive before the CLI has appended the user message.
+      // The race is one-sided and lands on the safe side: it leaves the latch armed
+      // over a delivered spec, and _checkSpecConfirm re-probes at the deadline —
+      // by which point the write is long since on disk — so the worst case is a
+      // check, not a spurious redelivery.
+      //
+      // Bounded fs work despite sitting in the hot path: gated on a latch that is
+      // set only inside the 90s window after a dispatch. An ATTRIBUTED edge clears
+      // the latch and ends the reads; an unattributed one re-reads on each later
+      // edge in that window, which is the case worth paying for.
       if (s && state !== 'idle' && s._specUnconfirmed) {
-        s._specUnconfirmed = null;
-        clearTimeout(s._specConfirmTimer);
-        s._specConfirmTimer = null;
+        const u = s._specUnconfirmed;
+        // Anchored at the byte the transcript had reached when this write went out:
+        // a respawned seat's transcript already holds this ticket's marker from the
+        // incarnation that died, and an unanchored match would attribute every turn
+        // to it. null (no transcript, unreadable link, nothing new) trusts the turn,
+        // as before: the probe must never manufacture a redelivery out of its own
+        // blind spot.
+        const has = this._seatTranscriptHas(s.name, u.ticketId, u.since);
+        if (has === false) {
+          log.warn('inject', `${s.name} started a turn but ${u.ticketId} is absent from its transcript — not clearing the latch, the turn was something else`);
+        } else {
+          s._specUnconfirmed = null;
+          clearTimeout(s._specConfirmTimer);
+          s._specConfirmTimer = null;
+        }
       }
       // Same edge, same meaning, for the plain-dm latch — and it is a SEPARATE
       // field, so unlike t387's redirect kind it inherits nothing from the spec

@@ -26,6 +26,22 @@ blocks a release.
   over the message body too. The scrollbar tick is unchanged, so finding an
   intent without scrolling still works exactly as before.
 
+- A task that starts a seat but loses its spec now says so. Starting a ticket
+  could mint the worktree, the branch and the seat, record the ticket as
+  assigned with its spec attached, and leave the seat holding nothing — it
+  would see the team roster, correctly conclude it had no task, and stand by.
+  Nothing looked wrong from outside: a live seat, idle, a healthy record, and
+  the first sign was a person noticing the silence. Two things kept it quiet.
+  A ticket was marked delivered once its spec entered the write queue rather
+  than once the seat was actually written to, and a ticket marked delivered is
+  never sent again. And the 90-second check built to catch a spec that never
+  landed stood down for any turn the seat took — including a turn spent
+  reading something else entirely, which is what happens seconds after a seat
+  starts. Clodex now marks a spec delivered only once it has really gone out,
+  and only counts a turn as proof when the seat's own transcript shows it read
+  that spec; anything else leaves the check armed, so the spec is re-sent and
+  then escalated to the lead rather than lost in silence.
+
 - Review seats now read a large file in one pass instead of paginating
   through it. A reviewer's whole job is reading the diff it was handed, and
   it was being handed one in 25000-token slices — so it spent turns on
