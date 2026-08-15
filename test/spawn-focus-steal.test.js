@@ -20,7 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  shouldFocusNewSession, decideNewSessionFocus,
+  shouldFocusNewSession, decideNewSessionFocus, planNewSession,
 } = require('../renderer/lib/focus-policy');
 const { isDraftOpen } = require('../proxy-util');
 
@@ -147,6 +147,70 @@ test('the full decision surface, so a silently dropped input is visible', () => 
     'agent=true,draft=false': false,   // background work stays background
     'agent=true,draft=true': false,
   });
+});
+
+// ── fitted is not focused (r1 nit 2) ────────────────────────────────────────
+//
+// The regression t412 itself introduced: `fitAddon.fit()` rode along inside
+// switchSession, so withholding focus silently withheld the MEASUREMENT too. A
+// background seat then sat at xterm's 80x24 default against a 120x30 PTY and
+// wrapped every line wrong until the operator first clicked it.
+//
+// Each assertion below names ONE of the two outputs. Asserting them together —
+// the shape that reads naturally — is precisely what cannot catch a re-coupling,
+// because a fit that only happens when focus does satisfies any test that only
+// ever checks them in the same breath.
+
+test('a background-created seat is FITTED even though it is not focused', async () => {
+  const plan = await planNewSession({
+    name: 'clodex-hand-411', focused: 'clodex', agentInitiated: true,
+    queryDraftOpen: draftQuery(false),
+  });
+  assert.strictEqual(plan.focus, false, 'still no focus theft');
+  assert.strictEqual(plan.fit, true, 'but it must be measured against the 120x30 PTY');
+});
+
+test('the draft veto withholds focus without withholding the fit', async () => {
+  const plan = await planNewSession({
+    name: 'clodex-hand-411', focused: 'clodex', agentInitiated: true,
+    queryDraftOpen: draftQuery(true),
+  });
+  assert.strictEqual(plan.focus, false);
+  assert.strictEqual(plan.fit, true, 'an operator mid-line still gets a correctly wrapped seat');
+});
+
+test('fit is unconditional across the whole decision surface', async () => {
+  // The property is "no input can turn the fit off", so it is asserted over the
+  // same matrix the focus rules use rather than at one convenient point.
+  const seen = new Set();
+  for (const agentInitiated of [false, true]) {
+    for (const open of [false, true]) {
+      for (const focused of ['clodex', null]) {
+        const plan = await planNewSession({
+          name: 'seat', focused, agentInitiated, queryDraftOpen: draftQuery(open),
+        });
+        seen.add(plan.fit);
+      }
+    }
+  }
+  assert.deepStrictEqual([...seen], [true], 'every path fits; none of the eight may skip it');
+});
+
+test('the renderer measures the non-focus path instead of returning early', () => {
+  // The leaf can only ask for the fit; this is the half that performs it, and
+  // an early `return false` before it is the exact shape of the regression.
+  const src = read('renderer/renderer.js');
+  const fn = src.match(/async function switchToNewSession[\s\S]*?\n\}/);
+  assert.ok(fn, 'ENTER: switchToNewSession is still the create-time activation step');
+  assert.match(fn[0], /fitSessionInBackground\(name\)/,
+    'the non-focus branch must still measure the terminal');
+
+  // And the measurement must not quietly focus, which would restore the theft.
+  const fit = src.match(/function fitSessionInBackground[\s\S]*?\n\}/);
+  assert.ok(fit, 'ENTER: the background fit helper is still there to check');
+  assert.doesNotMatch(fit[0], /\.focus\(\)/, 'measuring must not take the keyboard');
+  assert.match(fit[0], /fitAddon\.fit\(\)/);
+  assert.match(fit[0], /resizeSession\(name/, 'the PTY has to be told the new size');
 });
 
 // ── the wiring: the flag has to reach the decision ──────────────────────────
