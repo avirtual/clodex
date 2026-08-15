@@ -25,6 +25,7 @@ const { matchGutterRow, findGutterFile } = require('./lib/gutter-scan');
 // on a pathological run, not the usual cost.
 const GUTTER_HEADER_SCAN = 400;
 const { splitModelArg, withModelArg } = require('./lib/args-model');
+const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
@@ -1993,6 +1994,31 @@ inputProxyMode.addEventListener('change', () => {
   if (inputProxyMode.value === 'custom') inputProxyUrl.focus();
 });
 
+// A template's cwd may be "${TEAM_ROOT}" — that is what makes a shipped team
+// template portable. Resolve it against the team owning the cwd the dialog is
+// ALREADY on (the operator's context: the project they were last in, or the
+// prefill), which is the GUI's analogue of the spawn intent's spawner team.
+//
+// On an unresolved root the literal token STAYS in the field, next to a toast.
+// Substituting homeDir (or anything else) here would boot the seat in a tree
+// that is not the team's and look entirely successful; the visible token
+// refuses to spawn instead. Only the dropdown expands — openTemplateEditor must
+// keep the literal so authoring round-trips.
+async function cwdFromTemplate(t) {
+  const raw = (t && t.cwd) || '';
+  if (!raw) return homeDir;
+  if (!usesTeamRoot(raw)) return raw;
+  const here = expandPath(inputCwd.value.trim()) || homeDir;
+  let root = '';
+  try { root = (await window.api.teamForCwd(here))?.root || ''; } catch { root = ''; }
+  const r = expandTeamRoot(raw, root);
+  if (!r.ok) {
+    showToast(`Template "${t.name || ''}": ${r.reason}`, { kind: 'warn', duration: 12000 });
+    return raw;
+  }
+  return r.value;
+}
+
 inputTemplate.addEventListener('change', async () => {
   const id = inputTemplate.value;
   if (!id) return;
@@ -2000,7 +2026,7 @@ inputTemplate.addEventListener('change', async () => {
   const t = list.find(x => x.id === id);
   if (!t) return;
   inputType.value = t.type;
-  inputCwd.value = t.cwd || homeDir;
+  inputCwd.value = await cwdFromTemplate(t);
   {
     const { model, rest } = splitModelArg(t.extraArgs || []);
     inputModel.value = model;
