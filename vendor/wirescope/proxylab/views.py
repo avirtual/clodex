@@ -102,6 +102,38 @@ code{color:#9aa3b2}
 """
 
 
+def _render_quota_line(q, now):
+    """Account plan quota (5h/7d windows) as one kv line. Colour tracks the
+    API's OWN status word (`allowed` / `allowed_warning` / …) rather than a
+    threshold we invent — the server decides what counts as close to the edge,
+    and it publishes `surpassed_threshold` when it wants one. Every reading
+    shows its age: this moves only when a turn is forwarded, so on an idle
+    proxy a bare percentage would imply a freshness it doesn't have."""
+    if not q:
+        return ""
+    e = html.escape
+    parts = []
+    for key in sorted((q.get("windows") or {})):
+        w = q["windows"][key]
+        used = w.get("used_pct")
+        if used is None:
+            continue
+        cls = {"allowed": "warm"}.get(w.get("status") or "", "warn")
+        if (w.get("status") or "").startswith(("rejected", "blocked")):
+            cls = "bad"
+        star = "*" if key == q.get("representative_window") else ""
+        left = (f' <span class="dim">&rarr; {e(_fmt_dur(w["resets_in_s"]))}</span>'
+                if w.get("resets_in_s") is not None else "")
+        parts.append(f'<span>{e(key)}{star} <b class="{cls}">{used:g}%</b>{left}</span>')
+    if not parts:
+        return ""
+    age = q.get("age_s")
+    stale = ' <span class="warn">(stale)</span>' if (age or 0) > 900 else ""
+    return (f'<p class="kv"><span class="dim">plan quota used</span>'
+            + "".join(parts)
+            + f'<span class="dim">as of {e(_fmt_dur(age))} ago{stale}</span></p>')
+
+
 def _render_admin_html(snap, host="", show=60):
     e = html.escape
     p = snap["proxy"]
@@ -132,7 +164,8 @@ def _render_admin_html(snap, host="", show=60):
         f'{f" <span class=warn>(+{unp} unpriced)</span>" if unp else ""}</span>'
         f'<span class="{"bad" if ref else "dim"}">refusals <b>{ref}</b></span>'
         f'<span class="dim">since restart: {s0.get("requests", 0):g} req / '
-        f'${s0.get("est_usd", 0):.4f}</span></p>')
+        f'${s0.get("est_usd", 0):.4f}</span></p>'
+        + _render_quota_line(snap.get("quota"), now))
     def _row(s):
         w = s["warmth"]
         segs = w.get("segments") or {}

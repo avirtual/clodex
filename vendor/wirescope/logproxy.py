@@ -19,7 +19,7 @@ owning module instead, e.g. `lp.warmth.WARMTH_LEDGER = False`.
 """
 from proxylab.server import app  # noqa: F401  (eager: uvicorn logproxy:app)
 from proxylab import (core, store, codex, transforms, canary, writer, warmth,  # noqa: F401
-                      subs, meta, pinger, hold, billing, receipts, report,
+                      subs, meta, pinger, hold, billing, quota, receipts, report,
                       prune, restore, status, views, server,
                       fold, hints, hints_native, tokest, bake_session)
 
@@ -34,7 +34,7 @@ from proxylab import (core, store, codex, transforms, canary, writer, warmth,  #
 # test_registry.py asserts the SET against the directory listing; per-name checks
 # are what let this drift in the first place.
 _SUBMODULES = (core, store, codex, transforms, canary, writer, warmth, subs,
-               meta, pinger, hold, billing, receipts, report, prune,
+               meta, pinger, hold, billing, quota, receipts, report, prune,
                restore, status, views, server,
                fold, hints, hints_native, tokest, bake_session)
 

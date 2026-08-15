@@ -239,6 +239,9 @@ def _restore_state():
     # be lying about live state (see hints.py module docstring).
     from proxylab import hints as hints_mod
     _RESTORED["agent_hints"] = hints_mod.load_agent_hints()
+    # Account quota: stale-but-stamped beats blank (age_s makes it legible).
+    from proxylab import quota as quota_mod
+    _RESTORED["quota_accounts"] = quota_mod.restore()
     print(f"[restore] holds={_RESTORED['holds']} "
           f"last_requests={_RESTORED['last_requests']} (auth-less until live "
           f"traffic) totals={'reloaded' if _RESTORED['totals'] else 'fresh'} "

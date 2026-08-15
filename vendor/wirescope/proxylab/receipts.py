@@ -26,6 +26,7 @@ from proxylab import core as core_mod
 from proxylab import hints as hints_mod
 from proxylab import hints_native as hints_native_mod
 from proxylab import meta as meta_mod
+from proxylab import quota as quota_mod
 from proxylab import subs as subs_mod
 from proxylab import warmth as warmth_mod
 from proxylab import writer as writer_mod
@@ -63,6 +64,10 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
     # Feed the upstream-health hint provider: every forwarded outcome, so the
     # "upstream is shedding" fact is measured from real traffic, not a probe.
     hints_native_mod.note_outcome(status_code)
+    # Account-scoped plan quota rides the response headers of every successful
+    # turn (and is ABSENT on 429s — see quota.py). Off the per-session path:
+    # every agent on the box spends the same plan.
+    quota_mod.note(resp_headers, status_code=status_code)
     # ONE-SHOT POP: commit on a 200, roll back on anything else. THIS is the
     # confirmation point — 5.9% of forwarded requests never reach a 200 and
     # failures come in runs up to 38, so a pop at injection would silently

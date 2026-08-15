@@ -26,7 +26,7 @@ import importlib
 # EVERY module in the package must be listed (test_registry.py asserts the SET
 # against the directory listing — a new module fails the gate the day it lands).
 _MODULES = ("bake_session", "core", "store", "codex", "transforms", "canary", "writer",
-            "warmth", "subs", "meta", "pinger", "hold", "billing",
+            "warmth", "subs", "meta", "pinger", "hold", "billing", "quota",
             "receipts", "report", "prune", "restore", "status", "views",
             "server", "fold", "hints", "hints_native", "tokest")
 

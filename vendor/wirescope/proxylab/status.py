@@ -11,6 +11,7 @@ from proxylab import hints_native as hints_native_mod
 from proxylab import hold as hold_mod
 from proxylab import meta as meta_mod
 from proxylab import pinger as pinger_mod
+from proxylab import quota as quota_mod
 from proxylab import restore as restore_mod
 from proxylab import subs as subs_mod
 from proxylab import store as store_mod
@@ -86,6 +87,11 @@ def _identity():
                                           # + POST two-tier prune; see INTEGRATION.md)
             "cost_by_line": True,         # per-agent-line cost split: cost.main_est_usd
                                           # + sub_agents[].est_usd (+ /_report scope.agents)
+            # ACCOUNT plan quota (5h/7d rolling-window utilization) on
+            # /_status `quota`, parsed from the API's own response headers.
+            # Account-scoped, not per-session; only as fresh as the last
+            # forwarded turn (every reading carries `age_s`).
+            "quota": quota_mod.QUOTA_TRACK,
             "since_compact": True,        # /_status session.since_compact rollup
                                           # {turns,requests,est_usd,boundary_ts,compacted}
                                           # from the last /compact boundary (or start)
@@ -381,6 +387,12 @@ def _status_snapshot(session=None, all_sessions=False, limit=None):
                      "restored_at_start": dict(restore_mod._RESTORED),
                      "totals": dict(billing_mod._TOTALS),
                      "totals_since_start": billing_mod._since_start()},
+           # ACCOUNT-scoped plan quota (5h / 7d rolling windows), read off the
+           # response headers of the last forwarded turn. Top-level, NOT
+           # per-session: every agent on this box spends the same plan, so a
+           # consumer renders it once (a statusbar chip) rather than per row.
+           # Carries its own `age_s` — it moves only when a turn is forwarded.
+           "quota": quota_mod.snapshot(now),
            "sessions": sessions}
     if meta_err:
         res["proxy"]["session_meta_error"] = meta_err

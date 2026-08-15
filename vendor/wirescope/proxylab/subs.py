@@ -11,6 +11,7 @@ import httpx
 from starlette.responses import Response
 
 from proxylab import codex as codex_mod
+from proxylab import quota as quota_mod
 from proxylab import store as store_mod
 from proxylab import warmth as warmth_mod
 
@@ -433,7 +434,12 @@ def emit_turn_completed_anthropic(agent, session_id, request_id, *, meta, bill,
             # is a correctness property: a hint that changes behavior with no
             # record of firing makes the change unattributable. None when the
             # registry was empty (the resting case).
-            "hints": _hints_receipt(session_id)}
+            "hints": _hints_receipt(session_id),
+            # ACCOUNT plan quota as of this turn (the API reports it on the
+            # response headers we just consumed). Account-scoped, so it's the
+            # same for every agent — a consumer keeps ONE copy, not one per
+            # session. None when the deployment isn't tracking it.
+            "quota": quota_mod.receipt_view()}
     return dispatch("turn.completed", agent, session_id, request_id, data,
                     subs=subs)
 
