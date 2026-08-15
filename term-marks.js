@@ -39,7 +39,7 @@ const MARK_RE = /\x1b\]133;([^\x07]*)\x07/g;
 // output and then fail to frame anything.
 const PARTIAL_RE = /\x1b(?:\](?:1(?:3(?:3(?:;[^\x07]*)?)?)?)?)?$/;
 
-function createMarkParser({ onCommand, onAbandon, maxOutput } = {}) {
+function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
   const MAX_OUT = maxOutput || 64 * 1024;
   let carry = '';
   let capturing = false;
@@ -90,6 +90,15 @@ function createMarkParser({ onCommand, onAbandon, maxOutput } = {}) {
             out = '';
             if (onAbandon) onAbandon(rec);
           }
+          // Announced on EVERY A, including the ones above that report nothing:
+          // this says "a prompt was drawn", which is a fact about the shell and
+          // not about any command. drawer-pty's exec() uses it as the positive
+          // acknowledgement that its ^C was PROCESSED — the one thing a
+          // byte-counting timer cannot establish, since bytes already in flight
+          // when the signal was written look identical to a reply to it.
+          // Fired after the abandon so a consumer settling a record sees it
+          // settled before it is told the prompt is back.
+          if (onPrompt) { try { onPrompt(); } catch {} }
         } else if (body === 'C' || body.startsWith('C;')) {
           let cmd = '';
           try { cmd = Buffer.from(body.slice(2), 'base64').toString('utf8'); } catch { cmd = ''; }

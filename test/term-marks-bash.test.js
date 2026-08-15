@@ -171,8 +171,28 @@ test('a non-zero exit arrives as that exact code', opts, async () => {
 // fires per SIMPLE command, so `a; b` would mark twice and the second mark
 // would open a command the agent never sent.
 test('a compound command reports ONCE, not once per simple command', opts, async () => {
-  await withShell(async ({ exec, results, passive }) => {
+  await withShell(async ({ exec, results, passive, raw }) => {
     const res = await exec('echo a; echo b');
+    // A swallowed first byte reports `cho a; echo b` here — a real command that
+    // RAN, so the count assertions below are all satisfied and only the text
+    // gives it away. Named separately from the reporting property this test
+    // exists for: the two failures have different causes and different owners,
+    // and reading a corrupted write as "the shim reported the wrong line" is
+    // what cost t418 a false rejection.
+    // SHORTER-THAN, not endsWith. `endsWith('')` is true of every string, so an
+    // UNNAMED record — the HISTCONTROL/HISTIGNORE family this file documents
+    // below, where the payload is deliberately empty — would have been reported
+    // as a corrupted write. It also catches a loss from the MIDDLE of the
+    // command (`echo a; eho b`), which endsWith misses entirely and which is the
+    // other shape drawer-pty's quiet window exists for. Empty is falsy, so an
+    // unnamed record falls through to the strictEqual below and is judged there.
+    const typed = 'echo a; echo b';
+    if (res.record.command && res.record.command.length < typed.length) {
+      assert.fail(`the write was CORRUPTED in transit — the shell received `
+        + `${JSON.stringify(res.record.command)}, shorter than what was typed. `
+        + `That is the swallowed-byte race in exec(), not a reporting defect`
+        + `\n--- raw ---\n${raw()}`);
+    }
     assert.strictEqual(res.record.command, 'echo a; echo b', 'ENTER: the whole line was reported');
     assert.strictEqual(res.record.exitCode, 0);
     // Give a second, spurious mark time to arrive before declaring there wasn't

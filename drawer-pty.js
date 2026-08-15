@@ -78,9 +78,15 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // it. Typing then loses characters from the MIDDLE of the command and the
   // truncation still RUNS — measured against real bash at 6 failures in 280
   // under concurrency, producing `bash: et: command not found` from `echo`, and
-  // `rm -rf ./buil` is a valid command rather than an error. Waiting for output
-  // to go quiet spans the whole flush and the prompt redraw, which arming on the
-  // first byte cannot do at any deadline.
+  // `rm -rf ./buil` is a valid command rather than an error.
+  //
+  // What this window CANNOT do is tell whether the flush has started at all. Its
+  // input is "bytes arrived", and bytes that predate our ^C are indistinguishable
+  // from a reply to it — so under load the window can elapse over pre-^C output
+  // while the signal is still queued, type, and have SIGINT eat the head of the
+  // command afterwards. That is the swallowed FIRST byte (`cho a; echo b`), as
+  // opposed to the middle-of-command loss above. The prompt mark below is the
+  // signal that closes it; this window remains for shells that never send one.
   const ABANDON_QUIET_MS = 60;
   // The ceiling on the whole abandon handshake. It cannot reopen the flush race
   // the quiet window closes: the SIGINT discard is milliseconds, and the loss
@@ -88,6 +94,32 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // — a shell that never goes quiet, where waiting for silence is waiting
   // forever.
   const ABANDON_MAX_MS = 1000;
+  // THE PRIMARY SIGNAL: an OSC 133 A seen after the ^C went out. A prompt mark
+  // is drawn by the shell's own precmd, so unlike "some bytes arrived" it is
+  // evidence about the SHELL's state — the line editor is ready — rather than
+  // about the wire. That is what the three clocks above can only estimate.
+  //
+  // It NARROWS the race rather than closing it, and the difference matters to
+  // anyone tempted to delete the clocks: an A already in flight when the ^C was
+  // written is indistinguishable from one caused by it, so a prompt redraw from
+  // the previous command can still ack a signal the shell has not processed.
+  // What it removes is the far larger window where ANY byte — an OSC 7 cwd
+  // report, a partial echo — counted as the answer. A sound proof needs a token
+  // that cannot predate the signal: the tty driver's own ECHOCTL echo of the ^C
+  // is one, already in the stream and unread here.
+  //
+  // It is not a new requirement on the shell: exec() already refuses unless
+  // `rec.shimmed && rec.marks`. THE CLOCKS ARE STILL THE BACKSTOP, and the
+  // shells that need them are the operator's, not a fixture's: a profile that
+  // aborts before the hooks install (`set -u` against an unset expansion), and a
+  // profile that clobbers `precmd_functions` / `PROMPT_COMMAND` after ours is
+  // prepended. Either leaves a shell that was born `shimmed` and emits no A;
+  // mark-only, every exec on one of those hangs to EXEC_TIMEOUT.
+  //
+  // `shopt -u promptvars` is NOT one of them, though it looks like it should be:
+  // it suppresses PS0 expansion, and PS0 carries the C mark — A comes from
+  // PROMPT_COMMAND, which promptvars does not touch. It costs the command TEXT,
+  // not the readiness signal.
 
   function shellFor() {
     return shell || (env && env.SHELL) || process.env.SHELL || '/bin/zsh';
@@ -192,6 +224,10 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         // Abandonment has no passive consumer — a command the operator Ctrl-C'd
         // is not news to report, it is only news to whoever was waiting on it.
         onAbandon: (c) => { settle(rec, { status: 'abandoned', record: c }); },
+        // The prompt is back, so a pending exec's ^C has been PROCESSED and its
+        // command is safe to type. Distinct from the raw-byte arm below, which
+        // cannot tell our signal's reply from output that predates it.
+        onPrompt: () => { if (rec.execPromptAck) rec.execPromptAck(); },
       })
       : null;
     ptys.set(key, rec);
@@ -454,6 +490,11 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         // every byte, so an arm left in place would schedule a timer per byte
         // for the life of the shell.
         if (rec.execArm === arm) rec.execArm = null;
+        // Hygiene, not a correctness guard — `armed` above already makes a
+        // stale ack a no-op, so do not read this as what prevents a double
+        // type. It drops the finished exec's closure instead of leaving it
+        // wired to a shell that redraws its prompt for the rest of its life.
+        if (rec.execPromptAck === promptAck) rec.execPromptAck = null;
         // The command belongs to the exec that STARTED it. By now `pending` may
         // hold a later one (a window kill settled ours and a new command came
         // in), and typing then would put our bytes on a line the current waiter
@@ -494,6 +535,13 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         const mine = ++gen;
         later(() => { if (gen === mine) typeCommand(); }, ABANDON_QUIET_MS);
       };
+      // The fast, correct path: a prompt mark after the ^C means the interrupt
+      // is processed and nothing is left to discard, so the command goes out
+      // immediately instead of waiting out a window that is only estimating
+      // this. Whichever fires first — mark or clock — wins, and typeCommand is
+      // idempotent, so the losers are no-ops.
+      const promptAck = () => { typeCommand(); };
+      rec.execPromptAck = promptAck;
       later(() => { if (!spoke) typeCommand(); }, ABANDON_ACK_MS);
       // The command is typed EVENTUALLY, whatever the shell does. The quiet
       // window restarts on every byte, so a shell emitting at gaps under it

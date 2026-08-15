@@ -18,8 +18,12 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const { createDrawerPtys } = require('../drawer-pty');
+const { buildTermShim } = require('../term-shim');
+const { createMarkParser } = require('../term-marks');
 // A real shell's output carries bracketed-paste toggles and OSC 7 cwd reports
 // around the text, so a raw line never equals the marker. The app's own
 // stripper, not a local regex — a private one here could drift into passing
@@ -28,10 +32,27 @@ const { stripAnsi } = require('../cli/src/output');
 
 // A shell missing from a machine is not a failure of this property. Nothing is
 // skipped for being slow or flaky — a keymap answer does not vary run to run.
+// Shimmable, not merely present. These rows drive the REAL mark parser (see
+// runCase), so a shell the shim declines — a bash below the PS0 floor, most
+// obviously /bin/bash on macOS — would spawn unshimmed and have every exec
+// refused with `no-marks`, turning the whole file into a red that says nothing
+// about keymaps. Resolved through buildTermShim itself rather than a version
+// parse of our own, the way term-marks-bash.test.js resolves BASH: a second
+// copy of the floor is how a supported shell starts being told it is not.
 const SHELLS = [
   ['zsh', '/bin/zsh', { emacs: 'bindkey -e', vi: 'bindkey -v' }],
   ['bash', '/opt/homebrew/bin/bash', { emacs: 'set -o emacs', vi: 'set -o vi' }],
-].filter(([, p]) => { try { return fs.statSync(p).isFile(); } catch { return false; } });
+].filter(([, p]) => {
+  try {
+    if (!fs.statSync(p).isFile()) return false;
+  } catch { return false; }
+  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-keymap-probe-'));
+  try {
+    return !!buildTermShim({ dir: probe, shell: p });
+  } catch { return false; } finally {
+    try { fs.rmSync(probe, { recursive: true, force: true }); } catch {}
+  }
+});
 
 let pty = null;
 try { pty = require('node-pty'); } catch {}
@@ -75,6 +96,7 @@ const KEYMAP_MARK = ['KEYMAP', 'SET'].join('_');
 async function runCase({ shellPath, keymapCmd, prefill }) {
   const out = { s: '' };
   let proc = null;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-keymap-'));
   const ptys = createDrawerPtys({
     spawn: (file, args, opts) => {
       proc = pty.spawn(file, args, opts);
@@ -84,18 +106,30 @@ async function runCase({ shellPath, keymapCmd, prefill }) {
     send: () => {},
     shell: shellPath,
     cwdFor: () => process.env.HOME || '/',
-    // No shim: this test is about the bytes reaching the line editor, and the
-    // OSC 133 marks are a separate mechanism with their own tests. exec()
-    // refuses without marks, so the parser is stubbed busy-free below.
-    shimEnv: () => ({ env: { TERM_EXEC_KEYMAP_TEST: '1' }, args: ['-l'] }),
-    makeMarkParser: () => ({ feed() {}, isBusy: () => false, _state: () => ({}) }),
+    // THE REAL SHIM AND THE REAL PARSER, as engine.js wires them. This file
+    // once stubbed both (`feed(){}`) on the grounds that its question is about
+    // bytes reaching the line editor rather than about marks — but the readiness
+    // signal exec() waits on before typing IS a mark, so stubbing it meant these
+    // rows measured a handshake the product does not use. Eight of the nine
+    // recorded flakes were rows in this file, and none of them could reach the
+    // mark-based ack while it was stubbed out.
+    shimEnv: () => buildTermShim({ dir, shell: shellPath }),
+    makeMarkParser: createMarkParser,
     onCommand: () => {},
     log: { info() {}, warn() {}, error() {} },
   });
 
   try {
-    ptys.spawn('w', 'seat', { cols: 80, rows: 24 });
+    // Wide enough that the echoed command line cannot WRAP. A wrap injects
+    // `\r` or ` \r` mid-line, and the intact-write assertion below reads the
+    // echo — this ticket exists because of a false rejection, so the harness
+    // must not manufacture one of its own.
+    ptys.spawn('w', 'seat', { cols: 200, rows: 24 });
     assert.ok(proc, 'node-pty spawned');
+    // ENTER: an unshimmed shell refuses every exec with `no-marks`, and every
+    // assertion below would then be measuring that refusal rather than a keymap.
+    assert.strictEqual(ptys._execState('w', 'seat').shimmed, true,
+      'ENTER: the shell was born shimmed');
     // Put the shell in the keymap under test and prove it got there before
     // measuring anything — an rc file that had not run yet would silently make
     // this an emacs case wearing a vi label, and every vi row would pass.
@@ -139,6 +173,7 @@ async function runCase({ shellPath, keymapCmd, prefill }) {
   } finally {
     try { ptys.dispose(); } catch {}
     try { if (proc) proc.kill(); } catch {}
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 }
 
@@ -149,6 +184,27 @@ for (const [name, shellPath, keymaps] of SHELLS) {
       test(`${name} in ${km} mode runs exactly the command, ${label}`,
         { skip: !pty ? 'node-pty unavailable' : false, timeout: 90000 }, async () => {
           const { ran, out } = await runCase({ shellPath, keymapCmd, prefill });
+          // Two DIFFERENT failures, separated. A swallowed first byte and a
+          // shell that never received the line both leave `ran` false, and
+          // before this they were indistinguishable in the output — every
+          // occurrence of the t419 race read as "the shell ran nothing", which
+          // is what sent four agents looking in the wrong place.
+          //
+          // The echo of the command line is the evidence that the WRITE landed
+          // intact, independently of whether it then ran: a shell that got
+          // `cho ...` echoes `cho ...`, so a truncated echo names the race
+          // directly. Checked before `ran` so it is the message that surfaces.
+          // Whitespace collapsed on BOTH sides before comparing. cols:200 above
+          // should already prevent a wrap; this is the second belt, because a
+          // wrap would inject `\r` or ` \r` into the echo and fail an assertion
+          // whose whole message says "corrupted write" — manufacturing exactly
+          // the false rejection this ticket exists to stop.
+          const flat = (s) => s.replace(/\s+/g, ' ');
+          const typed = `echo ${MARK}`;
+          assert.ok(flat(stripAnsi(out)).includes(flat(typed)),
+            `the write was CORRUPTED in transit — the shell echoed something other than `
+            + `\`${typed}\`, which is the swallowed-byte race, not a shell that ignored us`
+            + `\n--- output ---\n${out}`);
           // ENTER: the marker means the shell EXECUTED it. Without this the
           // negative checks below are all true of a shell that ran nothing.
           assert.ok(ran, `ENTER: the shell ran the command\n--- output ---\n${out}`);
