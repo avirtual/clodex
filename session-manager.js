@@ -2830,19 +2830,29 @@ function createSessionManager(deps) {
       // pointer line. Absent ⇒ the seat turned for something else and is still
       // owed its spec, so the latch stays armed and its deadline redelivers.
       //
-      // Ordering is what makes this sound rather than racy: the activity edge is
-      // derived FROM the transcript (JsonlWatcher), and the CLI writes the user
-      // message before the turn it triggers — so a spec that was consumed is
-      // already on disk whenever this runs.
+      // This edge can RACE the transcript rather than following it. For a
+      // jsonl-routed seat the edge is derived from the transcript, so a consumed
+      // spec is already on disk; but a WIRE-routed seat gets its activity from wire
+      // `turn.started` alone (its sentinel's JsonlWatcher has a no-op activity
+      // callback), which can arrive before the CLI has appended the user message.
+      // The race is one-sided and lands on the safe side: it leaves the latch armed
+      // over a delivered spec, and _checkSpecConfirm re-probes at the deadline —
+      // by which point the write is long since on disk — so the worst case is a
+      // check, not a spurious redelivery.
       //
       // Bounded fs work despite sitting in the hot path: gated on a latch that is
-      // set only inside the 90s window after a dispatch, and cleared by the first
-      // attributable edge — at most one tail-read per dispatch, not per edge.
+      // set only inside the 90s window after a dispatch. An ATTRIBUTED edge clears
+      // the latch and ends the reads; an unattributed one re-reads on each later
+      // edge in that window, which is the case worth paying for.
       if (s && state !== 'idle' && s._specUnconfirmed) {
         const u = s._specUnconfirmed;
-        // null (no transcript, unreadable link) trusts the turn, as before: the
-        // probe must never manufacture a redelivery out of its own blind spot.
-        const has = this._seatTranscriptHas(s.name, u.ticketId);
+        // Anchored at the byte the transcript had reached when this write went out:
+        // a respawned seat's transcript already holds this ticket's marker from the
+        // incarnation that died, and an unanchored match would attribute every turn
+        // to it. null (no transcript, unreadable link, nothing new) trusts the turn,
+        // as before: the probe must never manufacture a redelivery out of its own
+        // blind spot.
+        const has = this._seatTranscriptHas(s.name, u.ticketId, u.since);
         if (has === false) {
           log.warn('inject', `${s.name} started a turn but ${u.ticketId} is absent from its transcript — not clearing the latch, the turn was something else`);
         } else {

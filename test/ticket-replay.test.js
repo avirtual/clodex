@@ -1355,6 +1355,123 @@ test('t409: a turn over the spec ITSELF still clears the latch, and no redeliver
   } finally { app.stop(); }
 });
 
+// r1 must-fix 1. Ids are monotonic, so every low id is a PREFIX of ~10 live higher
+// ones — `includes('t1')` is true of a transcript that merely mentions t156 in a
+// cross-reference, a lead dm, or a review scope. Discriminating a turn caused by
+// THIS dispatch from a turn that merely name-drops the ticket is the one job this
+// probe has, so a bare-id match hands back the silent loss under a new name.
+test('t409: a turn mentioning a SUPERSTRING ticket id does not attribute', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    // The seat is owed t1 and never got it. Its turn is about t1000 — a different
+    // ticket entirely, whose id merely starts with this one's.
+    app.transcript('team-hand', '{"role":"user","content":"[ticket t1000] close with [agent:task done t1000]"}\n');
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+
+    assert.ok(s._specUnconfirmed,
+      'a turn over t1000 must not confirm t1 — a bare `includes(id)` matches every superstring id, so a seat '
+      + 'owed a low-numbered ticket is falsely confirmed by any mention of a higher one, and the spec is lost '
+      + 'silently exactly as before');
+
+    const first = app.seen('team-hand');
+    fireConfirm(app, s);
+    const after = await settled(app, 'team-hand', /REPLAY/);
+    assert.match(after, /REPLAY/, 'so the real spec is still redelivered');
+    assert.ok(after.length > first.length, 'ENTER: a SECOND write, not a re-read of the first');
+  } finally { app.stop(); }
+});
+
+// r1 must-fix 2, and the one that matters most: the replay path IS the respawn
+// path, so this is t156's whole population. A `--resume` seat's transcript already
+// carries this ticket's marker from the incarnation that died — that is how it got
+// the spec the first time — so an unanchored probe attributes ANY later turn (a
+// parked-mail drain on respawn is the norm, and is t408's own +12s shape) to that
+// stale copy and reverts to pre-fix silence.
+test('t409: a respawned seat is not confirmed by its PREVIOUS incarnation transcript', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    // The dead incarnation's delivery, already on disk before this write went out.
+    // Written BEFORE the dispatch below so it sits behind the latch's anchor —
+    // which is the whole discrimination under test.
+    app.transcript('team-hand', '{"role":"user","content":"[ticket t1] close with [agent:task done t1]"}\n');
+    assert.ok(s._specUnconfirmed, 'ENTER: the latch must be armed, or there is nothing to false-clear');
+    // Re-arm so the anchor is taken AFTER the stale copy exists — production takes
+    // it inside `produce`, i.e. at write time on the respawn, which is exactly
+    // after any resumed transcript content.
+    app.m._armSpecConfirm('team-hand', 't1', 'injected');
+    assert.ok(s._specUnconfirmed.since > 0,
+      'ENTER: the anchor must be past the stale marker — at 0 this test cannot tell an anchored probe from an '
+      + 'unanchored one and would pass against both');
+
+    // Now an unrelated turn: parked mail draining on respawn, mentioning no ticket.
+    app.transcript('team-hand', '{"role":"user","content":"[agent:from team] roster: lead clodex"}\n');
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+
+    assert.ok(s._specUnconfirmed,
+      'the stale marker from the dead incarnation must NOT confirm this write: the replay path is the respawn '
+      + 'path, so an unanchored search leaves every respawned seat exactly as unprotected as before the fix');
+
+    const first = app.seen('team-hand');
+    fireConfirm(app, s);
+    const after = await settled(app, 'team-hand', /REPLAY/);
+    assert.match(after, /REPLAY/, 'so the respawned seat is redelivered to');
+    assert.ok(after.length > first.length, 'ENTER: a SECOND write, not a re-read of the first');
+  } finally { app.stop(); }
+});
+
+// The mutation guard for the anchor: a marker written AFTER the anchor is the
+// genuine article and must still confirm. Without this, "never attribute anything
+// past a respawn" would pass the test above and redeliver into every working seat.
+test('t409: a marker written after the anchor still confirms, respawn or not', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    app.transcript('team-hand', '{"role":"user","content":"[ticket t1] stale copy from the dead incarnation"}\n');
+    app.m._armSpecConfirm('team-hand', 't1', 'injected');
+    // This one lands past the anchor: the seat really did consume the redelivery.
+    app.transcript('team-hand', '{"role":"user","content":"[ticket t1 REPLAY] close with [agent:task done t1]"}\n');
+    app.m._emitActivity('team-hand', 'thinking');
+
+    assert.strictEqual(s._specUnconfirmed, null,
+      'a marker past the anchor is this write being consumed, and must clear the latch — the REPLAY form '
+      + 'proves the boundary match covers the marked variants, not just the plain pointer line');
+  } finally { app.stop(); }
+});
+
+// The nit's cheap close. A wire-routed seat's activity edge comes from wire
+// `turn.started`, not from the transcript, so it can arrive before the CLI has
+// appended the user message and leave the latch armed over a spec that WAS
+// consumed. By the deadline the write is on disk, so the check re-probes rather
+// than spending a redelivery on the race.
+test('t409: the deadline re-probes, so an edge that raced the transcript costs no redelivery', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    // The seat has a transcript (so the probe can answer at all) but this write is
+    // not in it yet, and the wire edge fires anyway. The latch survives, correctly:
+    // at this instant the seat is indistinguishable from one that lost the write.
+    app.transcript('team-hand', '{"role":"user","content":"an earlier turn"}\n');
+    app.m._armSpecConfirm('team-hand', 't1', 'injected');
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+    assert.ok(s._specUnconfirmed, 'ENTER: the raced edge must leave the latch armed, or there is no race to close');
+
+    // The CLI catches up before the 90s deadline.
+    app.transcript('team-hand', '{"role":"user","content":"[ticket t1] close with [agent:task done t1]"}\n');
+    const first = app.seen('team-hand');
+    fireConfirm(app, s);
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.strictEqual(s._specUnconfirmed, null, 'the deadline re-probe confirms it');
+    assert.strictEqual(app.seen('team-hand'), first,
+      'and nothing is redelivered — a transport race must not cost a spurious second copy of the spec');
+  } finally { app.stop(); }
+});
+
 test('t409: an unreadable transcript trusts the turn rather than manufacturing a redelivery', async () => {
   const world = mkWorld();
   const { app, s } = await dispatched(world);

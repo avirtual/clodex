@@ -1809,9 +1809,25 @@ function createTicketMethods(deps, shared) {
       const prior = s._specUnconfirmed;
       const retried = !!(prior && prior.ticketId === ticketId && prior.kind === kind && prior.retried);
       clearTimeout(s._specConfirmTimer);
+      // Where this seat's transcript ended when the write went out — the anchor the
+      // attribution probe searches FROM. Taken here and not at the deadline because
+      // here is write time (this runs inside `produce`), which is the only instant
+      // that separates "already in the transcript" from "consumed because of this
+      // write". A respawned seat's transcript already holds THIS ticket's marker
+      // from the incarnation that died; without the anchor every later turn matches
+      // it and the latch clears over a spec the seat never re-received.
+      // A seat with NO transcript yet anchors at 0, not at -1. That is the whole
+      // t408 shape — a freshly minted seat has written nothing when its spec goes
+      // out — and treating "no file" as an unknown baseline would answer "cannot
+      // say" for every fresh dispatch, which is precisely the population this
+      // mechanism exists to protect. Anchoring at 0 is also exactly right there:
+      // with no prior transcript there is no stale marker to false-match, so the
+      // unanchored search is the correct one.
+      const size = this._seatTranscriptSize(seatName);
+      const since = size < 0 ? 0 : size;
       s._specUnconfirmed = redirect
-        ? { ticketId, kind, at: Date.now(), retried, ...redirect }
-        : { ticketId, kind, at: Date.now(), retried };
+        ? { ticketId, kind, at: Date.now(), retried, since, ...redirect }
+        : { ticketId, kind, at: Date.now(), retried, since };
       this._armSpecConfirmTimer(s);
     },
 
@@ -2005,32 +2021,58 @@ function createTicketMethods(deps, shared) {
       } catch { return -1; }
     },
 
-    // Did `needle` ever reach this seat's INPUT? The transcript records what the CLI
-    // actually consumed, so a spec that was written and wiped is absent from it while
-    // one the seat read — injected, or drained from a park by the out-of-process hook
-    // — is present. That is what makes a turn attributable to a particular write.
+    // Has the dispatch for `ticketId` reached this seat's INPUT since byte `from`?
+    // The transcript records what the CLI actually consumed, so a spec that was
+    // written and wiped is absent from it while one the seat read — injected, or
+    // drained from a park by the out-of-process hook — is present. That is what
+    // makes a turn attributable to a particular write.
     //
-    // Reads the TAIL, not the file: the caller only ever asks about a write it made
-    // itself moments ago, so anything relevant is at the end, and a seat with a
-    // hundred-megabyte transcript must not cost that on a 90s timer.
+    // `from` is NOT an optimisation, it is the correctness of the whole probe on a
+    // respawn. A `--resume` seat's transcript ALREADY contains this ticket's marker
+    // from the previous incarnation — that is how it got the spec the first time —
+    // so an unanchored search attributes every later turn to the stale copy, and
+    // the replay path (the one this ticket's stamp fix touches) is exactly where
+    // that bites: t156's whole case is a respawned seat. Callers pass the size
+    // captured when the latch armed, which _armSpecConfirm takes at WRITE time —
+    // after any resume content exists and before this write can be consumed.
     //
-    // null, never false, when the probe cannot answer (no transcript, unreadable
-    // link). The caller must be able to tell "the seat did not get it" from "this
-    // cannot say", because those two justify opposite actions — the first a
-    // redelivery, the second never.
-    _seatTranscriptHas(name, needle, tailBytes = 1 << 20) {
+    // Matched on the dispatch MARKER, never the bare id: ids are monotonic, so
+    // every low id is a prefix of ~10 live higher ones and `includes('t40')` is
+    // true of a transcript that merely mentions t408 — a cross-reference in another
+    // spec, a lead dm, a review scope. Discriminating between those is the one job
+    // this function has. Two forms because a dispatch pointer line carries either:
+    // `[ticket tN]` plain, or `[ticket tN ` followed by REPLAY / RESPEC / a
+    // redirect label.
+    //
+    // Reads a bounded tail, so a seat with a hundred-megabyte transcript does not
+    // cost that on a 90s timer. Clamped to `from`, never behind it.
+    //
+    // Three-valued, and the split carries weight. `false` is a POSITIVE finding —
+    // the transcript is readable and this write is not in it — which is what keeps
+    // the latch armed. `null` is reserved for a probe that cannot answer at all (no
+    // transcript, unreadable link), where the caller must fall back to trusting the
+    // turn rather than manufacture a redelivery out of a blind spot. Collapsing the
+    // two surrenders both shapes this exists for: a fresh seat (anchored at 0, empty
+    // transcript) and a wire-routed edge that beat the CLI's append.
+    _seatTranscriptHas(name, ticketId, from = 0, tailBytes = 1 << 20) {
       let fd;
       try {
         const link = pathFor(REGISTRY_DIR, name, 'transcript');
         const target = fs.realpathSync(link);
         const size = fs.statSync(target).size;
-        if (!size) return null;                       // link exists, no turn written yet
-        const start = Math.max(0, size - tailBytes);
+        // Readable, and nothing appended since the write: that is a definite NO,
+        // not an unknown. The seat cannot have consumed a write that produced no
+        // transcript bytes, and answering "cannot say" here would surrender the
+        // two shapes this mechanism is for — a fresh seat (anchored at 0, empty
+        // transcript) and a wire-routed edge that beat the CLI's append.
+        if (size <= from) return false;
+        const start = Math.max(from, size - tailBytes);
         const len = size - start;
         const buf = Buffer.alloc(len);
         fd = fs.openSync(target, 'r');
         fs.readSync(fd, buf, 0, len, start);
-        return buf.toString('utf8').includes(needle);
+        const tail = buf.toString('utf8');
+        return tail.includes(`[ticket ${ticketId}]`) || tail.includes(`[ticket ${ticketId} `);
       } catch { return null; }
       finally { if (fd !== undefined) { try { fs.closeSync(fd); } catch {} } }
     },
@@ -2059,6 +2101,16 @@ function createTicketMethods(deps, shared) {
       // leak: the timer is unref'd and _cleanup clears it when the session dies.
       if (session.needsAttention && session.needsAttention.kind === 'permission') {
         this._armSpecConfirmTimer(session);
+        return;
+      }
+      // Second look at the transcript before spending a redelivery. The activity
+      // edge that would have cleared this latch can RACE the CLI's append on a
+      // wire-routed seat (see _emitActivity), so a spec that really was consumed
+      // can still be sitting here armed; by the deadline the write is long since on
+      // disk, which makes this the reliable read and the edge the eager one.
+      // Anchored identically, so a respawn's stale copy cannot answer for it.
+      if (this._seatTranscriptHas(session.name, u.ticketId, u.since) === true) {
+        session._specUnconfirmed = null;
         return;
       }
       let team; try { team = resolveTeam(session.cwd); } catch { return; }
