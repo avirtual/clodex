@@ -3423,19 +3423,34 @@ html, body {
   padding: 3px 6px;
 }
 
-/* Account plan quota. Conditional by construction: empty text = no chip, and
-   the :empty rule drops its padding so the header gap does not reserve space
-   for a readout that is absent for most of a cycle.
-   Colour is the escalation the SERVER published, not a threshold invented here. */
+/* Account plan quota. Colour is the escalation the SERVER published, not a
+   threshold invented here.
+   Bounded like #drawer-status and for the same reason: #drawer-tabs is the
+   designated shrinker and #drawer is overflow:hidden, so an unbounded chip
+   pushes the tabs and their unread badges off screen at exactly the moment the
+   loud one fires. The cap is measured, not guessed: the longest string the
+   feature emits is "rate limited · 95% of 7d · resets in 2d 22h" (43ch, ~238px
+   at this size), so a tighter bound would ellipsise the reset time off the
+   message that matters most. flex-shrink:1 lets it give up width anyway under
+   genuine pressure, ellipsising instead of shoving. Full text is in the
+   tooltip either way. */
 #drawer-quota {
   font-size: 10px;
   white-space: nowrap;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  max-width: 245px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 2px 7px;
   border-radius: 999px;
   cursor: default;
 }
-#drawer-quota:empty { padding: 0; }
+/* display:none, not padding:0 — #drawer-header is a flex row with gap:10px, so
+   an empty-but-present span still costs a gap on both sides and the header
+   would permanently carry width the chip is absent for most of a cycle. Host
+   rule 1 binds nodes that can contain an xterm; this span holds text, and the
+   availableFor tab-button exception already establishes the boundary. */
+#drawer-quota:empty { display: none; }
 #drawer-quota[data-level="warn"] {
   color: var(--warn, #d19a66);
   background: color-mix(in srgb, var(--warn, #d19a66) 14%, transparent);

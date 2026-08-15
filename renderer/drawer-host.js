@@ -703,11 +703,8 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   // `quotaChip`) — null means render NOTHING, which is the normal state for most
   // of a cycle and the reason the chip appearing is itself the signal.
   //
-  // Emptied rather than hidden: #drawer-header is a flex row with a gap, so an
-  // empty-but-present span would still cost 10px of the width Export/Clear were
-  // shrunk to free. Its ancestor is never display:none'd (host rule 1 is about
-  // the drawer's SUBTREE and the xterm inside it — this span holds text and sits
-  // in the header, so emptying it is safe where hiding a pane would not be).
+  // Emptying it is what hides it: the `:empty` rule in styles.css takes it out
+  // of the flex row entirely, gap included.
   function setQuota(chip) {
     if (!quotaEl) return;
     if (!chip) {

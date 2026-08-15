@@ -381,7 +381,13 @@ function fmtQuotaReset(s) {
 // all" — the element appearing IS the signal, so a comfortable reading must
 // produce no element rather than a quiet one. A permanent readout showing a
 // comfortable number is furniture that stops being read.
-function quotaChip(q) {
+//
+// `clientAgeS` is how long since WE received the payload, and it is not
+// redundant with the server's age_s: age_s stops advancing the moment the
+// poller stops delivering (proxy down, machine asleep, every base idle), so a
+// reading frozen at age_s 3.4 would render at full confidence forever. Both
+// ages must be young for the chip to read as live.
+function quotaChip(q, clientAgeS = 0) {
   if (!q) return null;
   const hot429 = q.last429AgeS != null && q.last429AgeS <= QUOTA_429_RECENT_S;
   let level = null;
@@ -401,12 +407,16 @@ function quotaChip(q) {
   if (reset) parts.push(`resets in ${reset}`);
   if (!parts.length) return null;
 
-  const stale = q.ageS != null && q.ageS > QUOTA_STALE_S;
+  const serverAge = q.ageS != null ? q.ageS : 0;
+  const stale = Math.max(serverAge, clientAgeS || 0) > QUOTA_STALE_S;
   const tip = [
     'Account plan quota, not this session.',
     q.remainingPct != null ? `${Math.round(q.remainingPct)}% of the ${q.window || 'window'} left.` : null,
     hot429 ? 'A request was rate-limited recently; a 429 carries no quota headers, so the figure beside it can lag.' : null,
     stale ? 'Stale — nothing polls this, it updates only on a forwarded turn.' : null,
+    // Distinct from the line above: that one is "the API has not spoken", this
+    // one is "we are not receiving". The remedy differs, so the wording must.
+    (clientAgeS || 0) > QUOTA_STALE_S ? 'The proxy has not reported in — this figure may be far older than it looks.' : null,
   ].filter(Boolean).join(' ');
 
   return { level, text: parts.join(' · '), tip, stale };

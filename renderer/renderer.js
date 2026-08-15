@@ -2973,7 +2973,12 @@ function refreshQuotaChip() {
     if (!st || !st.payload || !st.payload.quota) continue;
     if ((st.at || 0) > bestAt) { bestAt = st.at || 0; best = st.payload.quota; }
   }
-  drawerHost.setQuota(quotaChip(best));
+  // Client-side age, not just the server's age_s: if the poller stops
+  // delivering, age_s freezes at whatever it last said and the chip would keep
+  // claiming freshness it does not have. Re-run every second from the interval
+  // below so a dead poller visibly dims instead of lying quietly.
+  const clientAgeS = bestAt > 0 ? (Date.now() - bestAt) / 1000 : 0;
+  drawerHost.setQuota(quotaChip(best, clientAgeS));
 }
 
 window.api.onSessionProxy((name, payload) => {
@@ -3147,6 +3152,10 @@ setInterval(() => {
   for (const name of proxyState.keys()) { applyWarmBadge(name); checkWarmthCooldown(name); }
   for (const el of sessionList.querySelectorAll('.session-item[data-thinking-since]')) applyThinkBadge(el);
   tickProxyBar();
+  // Staleness is time-based, so it has to be re-evaluated on the clock rather
+  // than only when a payload arrives — the case it exists for is payloads
+  // NOT arriving.
+  refreshQuotaChip();
 }, 1000);
 
 (() => {

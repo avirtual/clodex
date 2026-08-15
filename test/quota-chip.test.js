@@ -151,6 +151,32 @@ test('quotaChip: a stale reading is marked, since nothing polls the API', () => 
   assert.match(old.tip, /Stale/);
 });
 
+test('quotaChip: a dead POLLER dims the chip even while the server age stays young', () => {
+  // The failure the age_s rule exists to prevent, reached by the other route:
+  // if delivery stops (proxy down, machine asleep, every base idle) age_s
+  // freezes at whatever it last said, and a chip trusting it alone would render
+  // "resets in 2d 22h" at full confidence forever.
+  const q = shapeQuota({ ...LIVE, age_s: 0.5 }, CAPS);
+  assert.strictEqual(quotaChip(q, 0).stale, false, 'ENTER: fresh on both clocks must be non-stale, or the assertion below proves nothing');
+  const dead = quotaChip(q, 3600);
+  assert.strictEqual(dead.stale, true);
+  assert.match(dead.tip, /has not reported in/);
+});
+
+test('quotaChip: the two staleness causes read differently in the tip', () => {
+  // "The API has not spoken" and "we are not receiving" have different
+  // remedies, so one wording for both would misdirect.
+  const serverStale = quotaChip(shapeQuota({ ...LIVE, age_s: 3600 }, CAPS), 0);
+  assert.match(serverStale.tip, /updates only on a forwarded turn/);
+  assert.doesNotMatch(serverStale.tip, /has not reported in/);
+});
+
+test('quotaChip: client age defaults to fresh when the caller omits it', () => {
+  // The shaping tests and any other caller pass one argument; that must not
+  // silently mean "infinitely stale".
+  assert.strictEqual(quotaChip(shapeQuota(LIVE, CAPS)).stale, false);
+});
+
 test('quotaChip: the tip says the figure is the account, not the session', () => {
   // The bottom bar's neighbouring numbers are all per-SESSION; an unlabelled
   // account percentage beside them invites a category error.

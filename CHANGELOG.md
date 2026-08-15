@@ -13,18 +13,18 @@ blocks a release.
 
 ## Unreleased
 
-- Your Claude plan's usage now shows up in the bottom panel's bar before it
-  bites — the percentage used, which window it is (5h or weekly), and how long
-  until it resets. It appears only when the API itself starts warning, so a
-  comfortable week looks exactly as it does today and the readout showing up at
-  all is the signal. A refused request or a recent rate limit reads louder. The
-  figure updates when your agents talk to the API rather than on a timer, so a
-  reading that has gone quiet is dimmed rather than shown as if it were live.
-  It stays put as you switch between IPC Traffic, Activity and the other tabs,
-  and needs a wirescope proxy new enough to report it — on an older one the bar
-  looks unchanged.
-- The bottom panel's **Export** and **Clear** buttons are now icons, matching
-  the ones already next to them. Same actions, hover for the label.
+- Your Claude plan's usage now shows up in the drawer bar — the strip carrying
+  the IPC Traffic and Activity tabs — before it bites: the percentage used,
+  which window it is (`5h` or `7d`), and how long until it resets. It appears
+  only when the API itself starts warning, so a comfortable week looks exactly
+  as it does today and the readout showing up at all is the signal. A refused
+  request or a recent rate limit reads louder. The figure updates when your
+  agents talk to the API rather than on a timer, so a reading that has gone
+  quiet is dimmed rather than shown as if it were live. It stays put as you
+  switch between IPC Traffic, Activity and the other tabs, and needs a wirescope
+  proxy new enough to report it — on an older one the bar looks unchanged.
+- The drawer bar's **Export** and **Clear** buttons are now icons, matching the
+  ones already next to them. Same actions, hover for the label.
 - A team role that names a prompt, template, exec command or append file which
   isn't installed now says so, instead of the seat quietly booting without it.
   A missing role prompt used to be swallowed: the seat came up unbriefed, behaved
