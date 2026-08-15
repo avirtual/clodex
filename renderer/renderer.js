@@ -31,7 +31,7 @@ const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatme
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { prefsGate } = require('./lib/prefs-gate');
-const { decideNewSessionFocus } = require('./lib/focus-policy');
+const { planNewSession } = require('./lib/focus-policy');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
@@ -1293,16 +1293,45 @@ function switchSession(name) {
 // Not focusing still leaves the sidebar row, so a background seat is visible
 // and one click away; the only thing withheld is the keyboard.
 async function switchToNewSession(name, { agentInitiated = false } = {}) {
-  const target = await decideNewSessionFocus({
+  const { focus } = await planNewSession({
     name, focused: activeSession, agentInitiated,
     queryDraftOpen: window.api.draftOpen ? (n) => window.api.draftOpen(n) : null,
   });
-  if (!target) return false;
-  // Re-checked because the query above yields: the new session may have died,
+  // Re-checked because the query above yields: the new session may have died
   // between the decision and here.
-  if (!sessions.has(target)) return false;
-  switchSession(target);
-  return true;
+  if (!sessions.has(name)) return false;
+  if (focus) { switchSession(name); return true; }
+  // Measured but not focused. switchSession does this as part of activating,
+  // so a background seat would otherwise sit at xterm's 80x24 default against
+  // a 120x30 PTY and wrap every line wrong until first clicked.
+  fitSessionInBackground(name);
+  return false;
+}
+
+// The measurement half of switchSession's rAF, without the activation. Safe on
+// a hidden wrapper: `.terminal-wrapper` hides with `visibility`, which keeps
+// its layout box, and that is exactly why `display:none` must never be used.
+function fitSessionInBackground(name) {
+  const entry = sessions.get(name);
+  if (!entry) return;
+  const { fitAddon, terminal } = entry;
+  requestAnimationFrame(() => {
+    // The session can die inside the frame; a disposed terminal throws here.
+    if (!sessions.has(name)) return;
+    try {
+      if (entry.peer) {
+        if (entry.peer.controlled) {
+          fitAddon.fit();
+          window.api.peerResize(entry.peer.id, entry.peer.name, terminal.cols, terminal.rows);
+        } else {
+          remeasureReadonlyPeer(entry);
+        }
+        return;
+      }
+      fitAddon.fit();
+      window.api.resizeSession(name, terminal.cols, terminal.rows);
+    } catch {}
+  });
 }
 
 function removeSession(name, { keepPersisted = false } = {}) {

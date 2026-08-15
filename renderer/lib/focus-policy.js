@@ -51,4 +51,19 @@ async function decideNewSessionFocus({
   return focus ? name : null;
 }
 
-module.exports = { shouldFocusNewSession, decideNewSessionFocus };
+// What to DO with a session that has just been created — two independent
+// outputs, deliberately not one.
+//
+// `fit` is unconditional. The PTY spawns at 120x30 (session-manager) while a
+// fresh xterm is 80x24, so a seat that is never measured accumulates
+// mis-wrapped output until the first click pays a reflow. Focusing used to
+// perform that measurement as a SIDE EFFECT, which is why withholding focus
+// silently withheld the fit too — the regression this shape exists to prevent.
+// A hidden wrapper is measurable by design (the sidebar hides with
+// `visibility`, never `display:none`), so there is nothing to defer.
+async function planNewSession(opts = {}) {
+  const target = await decideNewSessionFocus(opts);
+  return { focus: target !== null, fit: true };
+}
+
+module.exports = { shouldFocusNewSession, decideNewSessionFocus, planNewSession };
