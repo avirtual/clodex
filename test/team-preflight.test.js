@@ -223,16 +223,17 @@ test('an exec command with no def installed is a warn — an unreadable def is n
   }]);
 });
 
-// execLibrary.list() `continue`s past a file whose JSON fails to parse, so a
-// garbled def and an absent one both leave the list — and the operator was told
-// to install a file already on disk. The probe separates them with a sentinel;
-// this pins that the leaf gives that state its own recovery.
-test('a def file that exists but does not parse says REPAIR, not install', () => {
+// execLibrary.list() drops a file that does not decode to a def object — bad
+// JSON, or valid JSON that is not an object — so such a def and an absent one
+// both leave the list, and the operator was told to install a file already on
+// disk. The probe separates them with a sentinel; this pins that the leaf gives
+// that state its own recovery.
+test('a def file that exists but does not decode says REPAIR, not install', () => {
   const findings = teamPreflight(TEAM, probes({
     prompts: ['clodex-team-lead', 'clodex-team-hand'],
     templates: [{ name: 'hand-seat', execCommands: ['garbled'] }],
     // What the bound probe returns when list() dropped the file but raw() finds
-    // bytes on disk: present, unparseable, nothing decoded from it.
+    // bytes on disk: present, undecodable, nothing usable out of it.
     execs: { garbled: { name: 'garbled', unreadable: true } },
   }));
   assert.deepStrictEqual(findings, [{
@@ -242,7 +243,7 @@ test('a def file that exists but does not parse says REPAIR, not install', () =>
     ref: 'garbled',
     // null, not 'library': the file is there but nothing RESOLVED out of it.
     resolvedFrom: null,
-    message: 'role "hand": exec command "garbled" has a def file under library/exec that could not be parsed — the runner cannot read it, so every call fails; repair the JSON',
+    message: 'role "hand": exec command "garbled" has a def file under library/exec that could not be read as a def object — the runner cannot read it, so every call fails; repair the file',
   }]);
 });
 
@@ -264,8 +265,8 @@ test('the unreadable and no-def arms stay distinguishable — same level, differ
   // The deliverable: the two messages must not be the same sentence. One says
   // install, the other says repair.
   assert.match(findings[0].message, /has no def installed under library\/exec/);
-  assert.match(findings[1].message, /could not be parsed/);
-  assert.ok(!/could not be parsed/.test(findings[0].message), 'the absent def must not claim a parse failure');
+  assert.match(findings[1].message, /could not be read as a def object/);
+  assert.ok(!/could not be read as a def object/.test(findings[0].message), 'the absent def must not claim a decode failure');
   assert.ok(!/has no def installed/.test(findings[1].message), 'a file on disk must never be reported as missing');
 });
 

@@ -141,16 +141,20 @@ function teamPreflight(team, probes) {
         continue;
       }
       if (entry.unreadable) {
-        // A def that EXISTS but does not parse. The probe has to hand this over
-        // as its own condition, because the lister it reads through drops a
-        // garbled file exactly like an absent one — and telling the operator to
+        // A def that EXISTS but yields nothing usable. The probe has to hand this
+        // over as its own condition, because the lister it reads through drops
+        // such a file exactly like an absent one — and telling the operator to
         // install a file already sitting on disk sends them at the wrong repair
-        // while every call keeps failing on a parse error. `resolvedFrom` stays
-        // null: nothing resolved. Ends this def's line — there are no parsed
-        // argv/cwd to check below.
+        // while every call keeps failing. `resolvedFrom` stays null: nothing
+        // resolved. Ends this def's line — there are no parsed argv/cwd below.
+        //
+        // "read as a def object" rather than "parsed": execLibrary.list() drops
+        // BOTH unparseable bytes and valid JSON that is not an object ("x", 42,
+        // null). Naming the JSON would be a wrong instruction for the second —
+        // its JSON is fine, its shape is not — and the repair is the same.
         findings.push({
           level: 'warn', kind: 'exec', role, ref: raw, resolvedFrom: null,
-          message: `role "${role}": exec command "${raw}" has a def file under library/exec that could not be parsed — the runner cannot read it, so every call fails; repair the JSON`,
+          message: `role "${role}": exec command "${raw}" has a def file under library/exec that could not be read as a def object — the runner cannot read it, so every call fails; repair the file`,
         });
         continue;
       }
