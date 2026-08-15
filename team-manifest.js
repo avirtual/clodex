@@ -86,7 +86,12 @@ const WATCHDOG_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 const STOCK_ROLE_DEFS = {
   lead: { prompt: 'clodex-team-lead', brief: 'team lead; holds durable context, dispatches specs, verifies and integrates the work.' },
-  hand: { prompt: 'clodex-team-hand', brief: 'implementer; executes a spec to done, one distilled report per task.' },
+  // The hand is the only stock role that names a TEMPLATE, because it is the only
+  // one whose seat needs a working directory: the shipped clodex-team-hand.json
+  // writes "${TEAM_ROOT}" there, so a new team's hand boots in ITS root rather
+  // than in whatever project the template was authored against. Seed-only — an
+  // existing team.json names its own template and is unaffected.
+  hand: { prompt: 'clodex-team-hand', brief: 'implementer; executes a spec to done, one distilled report per task.', template: 'clodex-team-hand' },
   reviewer: { prompt: 'clodex-team-reviewer', brief: 'reviewer; an independent verification pass, invoked on demand.' },
 };
 

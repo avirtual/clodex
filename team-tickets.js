@@ -47,6 +47,7 @@ const { isDraftOpen } = require('./proxy-util');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { matchSeatRole } = require('./team-manifest');
+const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
 
 // How long a queued ticket waits for another run to release the shared lock.
@@ -397,7 +398,19 @@ function createTicketMethods(deps, shared) {
           : 'error: usage [agent:spawn name:X cwd:Y [template:Z]]');
         return;
       }
-      const cwd = path.resolve(rawCwd.replace(/^~(?=$|\/)/, os.homedir()));
+      // Resolved from the SPAWNER's team, so one shipped template serves every
+      // team; a portable template writes "${TEAM_ROOT}" where ours hardcodes an
+      // absolute path. Refusing on an unresolved root is the point — see
+      // team-root-expand.js.
+      const spawnerRoot = (() => {
+        try { return resolveTeam(spawner.cwd)?.root || ''; } catch { return ''; }
+      })();
+      const expandedCwd = expandTeamRoot(rawCwd, spawnerRoot);
+      if (!expandedCwd.ok) {
+        reply(`error: ${tpl ? `template "${tplLabel}" cwd: ` : ''}${expandedCwd.reason}`);
+        return;
+      }
+      const cwd = path.resolve(expandedCwd.value.replace(/^~(?=$|\/)/, os.homedir()));
       // `worktree:<branch>` spawns the seat in its own `git worktree` on that
       // branch, off the repo containing cwd. The branch name is validated inside
       // createWorktree (it reaches git argv), so this only rejects the empty form

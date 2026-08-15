@@ -30,6 +30,23 @@ blocks a release.
   even well-formed enough to run at all — so a command that would fail on every
   call can't show a tick.
 
+- Teams work on your own projects, and there is now a guide for it —
+  `docs/teams.md`, written for someone standing a team up on a codebase that
+  isn't Clodex. It covers what `Create Team…` gives you and the handful of
+  things only your project can supply: the project-knowledge prompt file, exec
+  grants that point at your own scripts, and what happens to the ticket loop
+  when a project's tests live somewhere else or don't exist at all (it
+  escalates to the lead rather than failing anyone's work).
+
+- A seat template can now write `"cwd": "${TEAM_ROOT}"` and boot in whichever
+  team spawns it, instead of hardcoding one project's path. The shipped hand
+  template does this, so a new team's seats start in their own repository. The
+  old behaviour was a quiet one: copying a working template to a second project
+  booted its seats in the FIRST project, while their tickets lived in the
+  second — everything looked fine and the work landed in the wrong tree. If the
+  token can't be resolved, the spawn is now refused with an explanation rather
+  than guessing a directory.
+
 - "Keep warm — Always (until stopped)" now survives an app restart. It used to
   come back only when the agent took its next turn, which on an unattended seat
   meant never: one measured restart left a seat with keep-warm switched on for

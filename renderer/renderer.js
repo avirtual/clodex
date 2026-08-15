@@ -25,6 +25,7 @@ const { matchGutterRow, findGutterFile } = require('./lib/gutter-scan');
 // on a pathological run, not the usual cost.
 const GUTTER_HEADER_SCAN = 400;
 const { splitModelArg, withModelArg } = require('./lib/args-model');
+const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
@@ -1993,14 +1994,53 @@ inputProxyMode.addEventListener('change', () => {
   if (inputProxyMode.value === 'custom') inputProxyUrl.focus();
 });
 
+// A template's cwd may be "${TEAM_ROOT}" — that is what makes a shipped team
+// template portable. Resolve it against the team owning the cwd the dialog is
+// ALREADY on (the operator's context: the project they were last in, or the
+// prefill), which is the GUI's analogue of the spawn intent's spawner team.
+//
+// On an unresolved root the literal token STAYS in the field, next to a toast.
+// Substituting homeDir (or anything else) here would boot the seat in a tree
+// that is not the team's and look entirely successful; the visible token
+// refuses to spawn instead. Only the dropdown expands — openTemplateEditor must
+// keep the literal so authoring round-trips.
+//
+// Returns the refusal as `warn` rather than toasting it: this function awaits,
+// so by the time it returns the operator may have selected another template,
+// and a toast fired here would name one they have already moved off. The caller
+// shows it after its staleness guard.
+async function cwdFromTemplate(t) {
+  const raw = (t && t.cwd) || '';
+  if (!raw) return { cwd: homeDir };
+  if (!usesTeamRoot(raw)) return { cwd: raw };
+  const here = expandPath(inputCwd.value.trim()) || homeDir;
+  let root = '';
+  try { root = (await window.api.teamForCwd(here))?.root || ''; } catch { root = ''; }
+  const r = expandTeamRoot(raw, root);
+  if (!r.ok) return { cwd: raw, warn: `Template "${t.name || ''}": ${r.reason}` };
+  return { cwd: r.value };
+}
+
 inputTemplate.addEventListener('change', async () => {
   const id = inputTemplate.value;
   if (!id) return;
   const list = await window.api.listTemplates();
   const t = list.find(x => x.id === id);
   if (!t) return;
+  // Resolve the cwd BEFORE writing any field: it may await an IPC round-trip,
+  // and a second template picked during that window would otherwise interleave
+  // — this handler's fields half-applied, then the older one's cwd landing on
+  // top of the newer one's.
+  //
+  // The guard below only covers the cwd round-trip. The checklist refreshes
+  // further down await too, so a superseded selection can still land its
+  // checklist state after a newer one's; closing that needs a generation token
+  // threaded through every refresh, not another re-check here.
+  const resolved = await cwdFromTemplate(t);
+  if (inputTemplate.value !== id) return; // a newer template won the race
+  if (resolved.warn) showToast(resolved.warn, { kind: 'warn', duration: 12000 });
   inputType.value = t.type;
-  inputCwd.value = t.cwd || homeDir;
+  inputCwd.value = resolved.cwd;
   {
     const { model, rest } = splitModelArg(t.extraArgs || []);
     inputModel.value = model;
@@ -2118,6 +2158,17 @@ async function doCreate() {
   if (!name) return;
   if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
     inputName.style.borderColor = '#e94560';
+    return;
+  }
+  // An unexpanded ${TEAM_ROOT} reaching here means the dropdown could not
+  // resolve it and left the literal in the field. It would still fail — as a
+  // directory named "${TEAM_ROOT}" on the sandbox path, or at spawn on the host
+  // — but refusing at the dialog keeps the correction where the operator can
+  // make it, with the field still populated.
+  if (usesTeamRoot(cwd)) {
+    inputCwd.style.borderColor = '#e94560';
+    showToast('This template\'s ${TEAM_ROOT} could not be resolved — type the project directory, '
+      + 'or open the dialog from a session inside the team.', { kind: 'warn', duration: 12000 });
     return;
   }
 

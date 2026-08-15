@@ -147,10 +147,21 @@ function registerIpcHandlers(deps) {
   handle('team:join', async (e, spec) => {
     try {
       const { team, role, prompt, ...p } = spec || {};
-      const def = role === 'hand'
-        ? { ...STOCK_ROLE_DEFS.hand }
-        : { prompt: prompt || null };
-      addRole(team, role, def);
+      // Joining an EXISTING role adopts it as the team defines it; only an
+      // absent role is minted. addRole is exact-match-or-throw, so re-riding a
+      // stock def only stayed a no-op while STOCK_ROLE_DEFS and the def on disk
+      // matched byte-for-byte — a team seeded by an older build (or whose role
+      // an operator has since edited) then made "join as hand" fail outright
+      // with "already exists with a different definition". The team's own
+      // definition is the authority here; a join must not rewrite it.
+      let exists = false;
+      try { exists = !!loadManifest(team).roles[role]; } catch { exists = false; }
+      if (!exists) {
+        const def = role === 'hand'
+          ? { ...STOCK_ROLE_DEFS.hand }
+          : { prompt: prompt || null };
+        addRole(team, role, def);
+      }
       return await spawnFromParams(e, p);
     } catch (err) {
       return { ok: false, error: err.message };
