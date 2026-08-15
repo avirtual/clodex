@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.10.0 — 2026-08-15
+
 - Your Claude plan's usage now shows up in the drawer bar — the strip carrying
   the IPC Traffic and Activity tabs — before it bites: the percentage used,
   which window it is (`5h` or `7d`), and how long until it resets. It appears
