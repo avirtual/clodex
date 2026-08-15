@@ -329,6 +329,89 @@ function shouldHoldDm({ urgent, state, idleMs, payload, attention = null, now = 
   };
 }
 
+// Account plan quota, off the top level of /_status (NOT per-session — it is
+// the whole account's, and the same block rides every session's poll).
+//
+// Gated on capabilities.quota rather than on the block being present: a proxy
+// too old to compute it answers /_status without the key, and an absent key
+// must degrade to showing nothing rather than to a confidently empty chip.
+//
+// `status` is the SERVER's escalation, published per-window against its own
+// `surpassed_threshold` — never re-derive it from a percentage here, or the
+// chip disagrees with the CLI's own warnings.
+function shapeQuota(q, capabilities) {
+  if (!capabilities || !capabilities.quota) return null;
+  if (!q || typeof q !== 'object') return null;
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const p = (q.primary && typeof q.primary === 'object') ? q.primary : {};
+  return {
+    status: typeof q.status === 'string' ? q.status : null,
+    window: typeof p.window === 'string' ? p.window
+      : (typeof q.representative_window === 'string' ? q.representative_window : null),
+    usedPct: num(p.used_pct),
+    remainingPct: num(p.remaining_pct),
+    resetsInS: num(p.resets_in_s) ?? num(q.resets_in_s),
+    // Nothing polls the API — every reading is only as fresh as the last
+    // forwarded turn, so the renderer needs this to mark it stale.
+    ageS: num(q.age_s),
+    // A 429 carries NO ratelimit headers at all, so the response that proves
+    // the wall was hit cannot raise the percentage. A recent last_429 beside a
+    // sub-100% figure is the EXPECTED shape, not a contradiction.
+    last429AgeS: num(q.last_429_age_s),
+  };
+}
+
+// Past this the reading predates the last few polls of turn traffic and is
+// rendered dimmed — see shapeQuota's age note.
+const QUOTA_STALE_S = 120;
+// A 429 this recent outranks whatever `status` says, for the header reason above.
+const QUOTA_429_RECENT_S = 300;
+
+function fmtQuotaReset(s) {
+  if (typeof s !== 'number' || !Number.isFinite(s) || s <= 0) return null;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${Math.max(m, 1)}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d}d ${h % 24}h` : `${d}d`;
+}
+
+// The whole render decision, DOM-free. Returns null for "render nothing at
+// all" — the element appearing IS the signal, so a comfortable reading must
+// produce no element rather than a quiet one. A permanent readout showing a
+// comfortable number is furniture that stops being read.
+function quotaChip(q) {
+  if (!q) return null;
+  const hot429 = q.last429AgeS != null && q.last429AgeS <= QUOTA_429_RECENT_S;
+  let level = null;
+  if (q.status === 'rejected' || hot429) level = 'loud';
+  else if (q.status === 'allowed_warning') level = 'warn';
+  // 'allowed', an unknown status, or no status at all → nothing. Degrading an
+  // unrecognized value to silence keeps a vocabulary change from inventing a
+  // permanent chip nobody can dismiss.
+  if (!level) return null;
+
+  const pct = q.usedPct != null ? `${Math.round(q.usedPct)}%` : null;
+  const reset = fmtQuotaReset(q.resetsInS);
+  const parts = [];
+  if (hot429) parts.push('rate limited');
+  if (pct) parts.push(q.window ? `${pct} of ${q.window}` : pct);
+  else if (q.window) parts.push(q.window);
+  if (reset) parts.push(`resets in ${reset}`);
+  if (!parts.length) return null;
+
+  const stale = q.ageS != null && q.ageS > QUOTA_STALE_S;
+  const tip = [
+    'Account plan quota, not this session.',
+    q.remainingPct != null ? `${Math.round(q.remainingPct)}% of the ${q.window || 'window'} left.` : null,
+    hot429 ? 'A request was rate-limited recently; a 429 carries no quota headers, so the figure beside it can lag.' : null,
+    stale ? 'Stale — nothing polls this, it updates only on a forwarded turn.' : null,
+  ].filter(Boolean).join(' ');
+
+  return { level, text: parts.join(' · '), tip, stale };
+}
+
 function shapeProxyRecord(r, probe, now = Date.now()) {
   const base = { ts: now, version: probe.version, capabilities: probe.capabilities };
   if (!r) return { ...base, linked: false };
@@ -381,6 +464,7 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
 
 module.exports = {
   PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shapeSubagent,
+  shapeQuota, quotaChip, fmtQuotaReset, QUOTA_STALE_S, QUOTA_429_RECENT_S,
   boxWirescopeView, strictMcpReason, STRICT_MCP_EXPLANATION,
   AUTO_COMPACT, headroomBand, shouldAutoCompact, autoCompactDecision, isHumanPtyInput,
   draftChunkSignal, isDraftOpen, pasteModeSignal, PASTE_START, PASTE_END,

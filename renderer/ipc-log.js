@@ -55,16 +55,22 @@ function createIpcLog({ host }) {
     ipcLogBody = pane.querySelector('#ipc-log-body');
     ipcEmpty = pane.querySelector('#ipc-empty');
 
+    // Glyphs, not words, matching the icons already beside them in the header
+    // (clipboard, ⇕, ▲). The title is the whole affordance, so it must say what
+    // the glyph cannot — aria-label carries the same text for screen readers,
+    // which get nothing usable from the glyph itself.
     const exportBtn = document.createElement('button');
     exportBtn.type = 'button';
     exportBtn.id = 'ipc-export';
     exportBtn.title = 'Save log as a text file';
-    exportBtn.textContent = 'Export';
+    exportBtn.setAttribute('aria-label', 'Save log as a text file');
+    exportBtn.textContent = '⤓';
     const clearBtn = document.createElement('button');
     clearBtn.type = 'button';
     clearBtn.id = 'ipc-clear';
     clearBtn.title = 'Clear log';
-    clearBtn.textContent = 'Clear';
+    clearBtn.setAttribute('aria-label', 'Clear log');
+    clearBtn.textContent = '⌫';
     exportBtn.addEventListener('click', (e) => { e.stopPropagation(); exportIpcLog(); });
     clearBtn.addEventListener('click', (e) => { e.stopPropagation(); clearIpcLog(); });
     actions.appendChild(exportBtn);
