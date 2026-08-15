@@ -104,16 +104,22 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // written is indistinguishable from one caused by it, so a prompt redraw from
   // the previous command can still ack a signal the shell has not processed.
   // What it removes is the far larger window where ANY byte — an OSC 7 cwd
-  // report, a partial echo — counted as the answer. A sound proof would need a
-  // sentinel written after the ^C and read back; this is not that.
+  // report, a partial echo — counted as the answer. A sound proof needs a token
+  // that cannot predate the signal: the tty driver's own ECHOCTL echo of the ^C
+  // is one, already in the stream and unread here.
   //
   // It is not a new requirement on the shell: exec() already refuses unless
-  // `rec.shimmed && rec.marks`, so every shell that can reach this line emits
-  // these marks. The clocks stay anyway, as the backstop for a shell whose marks
-  // never arrive — a mark-only wait would hang forever on one, and that is a
-  // reachable state, not a theoretical one (term-exec-keymap.test.js drives real
-  // shells with the parser stubbed out precisely because its question is about
-  // bytes rather than marks).
+  // `rec.shimmed && rec.marks`. THE CLOCKS ARE STILL THE BACKSTOP, and the
+  // shells that need them are the operator's, not a fixture's: a profile that
+  // aborts before the hooks install (`set -u` against an unset expansion), and a
+  // profile that clobbers `precmd_functions` / `PROMPT_COMMAND` after ours is
+  // prepended. Either leaves a shell that was born `shimmed` and emits no A;
+  // mark-only, every exec on one of those hangs to EXEC_TIMEOUT.
+  //
+  // `shopt -u promptvars` is NOT one of them, though it looks like it should be:
+  // it suppresses PS0 expansion, and PS0 carries the C mark — A comes from
+  // PROMPT_COMMAND, which promptvars does not touch. It costs the command TEXT,
+  // not the readiness signal.
 
   function shellFor() {
     return shell || (env && env.SHELL) || process.env.SHELL || '/bin/zsh';

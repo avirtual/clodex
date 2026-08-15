@@ -63,6 +63,11 @@ const constFromSource = (name) => {
 };
 const QUIET_MS = constFromSource('ABANDON_QUIET_MS');
 const MAX_MS = constFromSource('ABANDON_MAX_MS');
+// Read for the same reason as the other two, and it was the one left hand-copied
+// as a bare `250` in eight places: `execTimers` EXCLUDES this value, so a drift
+// between source and test silently readmits the ack timer to the deadline list
+// and surfaces as an unrelated wrong-timer failure downstream.
+const ACK_MS = constFromSource('ABANDON_ACK_MS');
 // The LAST quiet timer, not the first: every byte re-arms the window, and only
 // the newest one still types.
 const quietElapse = (timers) => {
@@ -173,7 +178,7 @@ function mk(over = {}) {
 // firing an arm instead. Every caller below indexes into this, so a pattern that
 // admits an extra row does not fail here; it fails somewhere downstream that
 // looks unrelated.
-const execTimers = (timers) => timers.filter((t) => t.ms !== 5000 && t.ms !== 250 && t.ms !== QUIET_MS && t.ms !== MAX_MS);
+const execTimers = (timers) => timers.filter((t) => t.ms !== 5000 && t.ms !== ACK_MS && t.ms !== QUIET_MS && t.ms !== MAX_MS);
 
 // ── refusals ────────────────────────────────────────────────────────────────
 // Every one is checked INSIDE exec() rather than by a caller reading a status
@@ -383,7 +388,7 @@ test('the command is typed exactly once when the mark AND the clocks both fire',
   assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`], 'ENTER: the mark typed it');
 
   quietElapse(timers);
-  timers.filter((t) => t.ms === 250)[0].fn();
+  timers.filter((t) => t.ms === ACK_MS)[0].fn();
   timers.filter((t) => t.ms === MAX_MS)[0].fn();
   assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
     'every later clock is a no-op — the command went out once');
@@ -404,6 +409,41 @@ test('a shell that sends no marks still gets its command, on the clocks', () => 
   quietElapse(timers);
   assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
     'the quiet window still delivers for a shell that never marks its prompt');
+});
+
+// One A does two things — it abandons an open command and it acks a pending
+// exec's ^C — and term-marks.js runs them in that order. Nothing pinned it, and
+// swapping the two blocks kills no other test. Reversed, the ack types the
+// command onto a shell whose waiter is about to be told `abandoned`: the command
+// RUNS, owned by nobody, and its D comes back `mismatch`. A silent wrong answer,
+// which is the worst shape available here.
+// The interleaving that reaches it: our ^C is out and the ack is still ARMED
+// (the command has not been typed yet), and in that window the operator's own
+// command opens with a C. The A that follows is their interrupt. Correct order
+// settles ours as abandoned FIRST, so the ack's `rec.pending !== p` guard finds
+// the record already cleared and types nothing.
+//
+// A command already typed cannot show this: typeCommand releases the ack on its
+// way out, so there is nothing left to misfire and the two orders agree. That
+// is why this test waits before letting the command go — an earlier version of
+// it acked first and passed against BOTH orderings, pinning nothing.
+test('an A that abandons an open command does not also type the pending one', () => {
+  const { w, spawn, results } = mk();
+  w.spawn('ws-1', 'alice', {});
+  assert.strictEqual(w.exec('ws-1', 'alice', 'sleep 900').ok, true, 'ENTER: accepted');
+  const proc = spawn.spawned[0];
+  assert.deepStrictEqual(proc.written, [CTRL_C],
+    'ENTER: only the abandon is out — the ack is still armed, which is what makes the order matter');
+
+  // The operator's own command, racing our handshake: it opens the parser, so
+  // the A below is an abandon and not merely a prompt.
+  proc.emit(C('vim notes.txt'));
+  proc.emit(A);
+
+  assert.deepStrictEqual(results.map(([, r]) => r.status), ['abandoned'],
+    'our pending exec is settled abandoned, exactly once');
+  assert.deepStrictEqual(proc.written, [CTRL_C],
+    'and the command is NOT typed — acking first would run it unowned, and its D would come back mismatched');
 });
 
 test('a prompt mark types the SECOND command once, not the first one again', () => {
@@ -472,7 +512,7 @@ test('the silence deadline is inert once the shell has spoken', () => {
   w.exec('ws-1', 'alice', 'ls');
 
   spawn.spawned[0].emit(`${CR}${LF}$ `);
-  const silence = timers.filter((t) => t.ms === 250);
+  const silence = timers.filter((t) => t.ms === ACK_MS);
   assert.strictEqual(silence.length, 1, 'ENTER: the silence deadline was armed');
   silence[0].fn();
   assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C],
@@ -488,7 +528,7 @@ test('a shell that answers nothing still gets its command, on the fallback', () 
   w.exec('ws-1', 'alice', 'ls');
   assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C], 'ENTER: still held back');
 
-  const arm = timers.filter((t) => t.ms === 250);
+  const arm = timers.filter((t) => t.ms === ACK_MS);
   assert.strictEqual(arm.length, 1, 'ENTER: a fallback was armed');
   arm[0].fn();
   assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`]);
@@ -501,7 +541,7 @@ test('the command is typed exactly once when the shell answers AND the fallback 
   ackAbandon(spawn.spawned[0]);
   assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`], 'ENTER: the ack typed it');
 
-  timers.filter((t) => t.ms === 250)[0].fn();
+  timers.filter((t) => t.ms === ACK_MS)[0].fn();
   assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`],
     'the late fallback is a no-op — a second copy would run the command twice');
 
@@ -538,7 +578,7 @@ test('a stale fallback cannot type its command onto a LATER command line', () =>
   const { w, spawn, results, timers } = mk();
   w.spawn('ws-1', 'alice', {});
   w.exec('ws-1', 'alice', 'one');
-  const staleArm = timers.filter((t) => t.ms === 250)[0];
+  const staleArm = timers.filter((t) => t.ms === ACK_MS)[0];
   assert.ok(staleArm, 'ENTER: the first command armed a fallback');
 
   ackAbandon(spawn.spawned[0]);
