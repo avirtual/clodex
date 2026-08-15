@@ -1501,6 +1501,30 @@ body {
   font-size: 11px;
   color: var(--text-dim);
 }
+.team-role-preflight {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.team-role-preflight-line {
+  font-size: 11px;
+  line-height: 1.35;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.team-role-preflight-line.warn {
+  color: var(--warn);
+}
+.team-role-preflight-line.note {
+  color: var(--text-dim);
+}
+.team-role-preflight-kind {
+  flex: 0 0 auto;
+  font-weight: 600;
+  opacity: 0.85;
+}
 .team-role-field {
   display: flex;
   align-items: center;
@@ -4583,6 +4607,38 @@ body {
 #drawer-clipboard {
   flex-shrink: 0;
 }
+#ipc-export,
+#ipc-clear {
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 6px;
+}
+#drawer-quota {
+  font-size: 10px;
+  white-space: nowrap;
+  flex-shrink: 1;
+  max-width: 245px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 7px;
+  border-radius: 999px;
+  cursor: default;
+}
+#drawer-quota:empty {
+  display: none;
+}
+#drawer-quota[data-level=warn] {
+  color: var(--warn, #d19a66);
+  background: color-mix(in srgb, var(--warn, #d19a66) 14%, transparent);
+}
+#drawer-quota[data-level=loud] {
+  color: var(--danger, #e06c75);
+  background: color-mix(in srgb, var(--danger, #e06c75) 18%, transparent);
+  font-weight: 600;
+}
+#drawer-quota[data-stale] {
+  opacity: 0.5;
+}
 #drawer-clipboard {
   opacity: 0.4;
   font-size: 12px;
@@ -6053,6 +6109,10 @@ body {
       <div id="drawer-header">
         <div id="drawer-tabs"></div>
         <div id="drawer-actions"></div>
+        <!-- Account-scoped, so it is the BAR's and not a tenant's: #drawer-actions
+             is detached and re-appended per tab (drawer-host.js `select`), and
+             anything parked inside it vanishes on a tab switch. -->
+        <span id="drawer-quota"></span>
         <span id="drawer-status"></span>
         <button id="drawer-clipboard" title="What is riding your next message" type="button" aria-label="What is riding your next message">📋<span id="drawer-clipboard-count"></span></button>
         <button id="drawer-copy" title="Copy the selected text" type="button">Copy</button>
@@ -6761,6 +6821,12 @@ body {
         { name: "teamRemoveRole", kind: "invoke", channel: "team:removeRole" },
         { name: "teamRenameRole", kind: "invoke", channel: "team:renameRole" },
         { name: "teamSetWatchdog", kind: "invoke", channel: "team:setWatchdog" },
+        // What this team's manifest names that resolves to nothing (missing role
+        // prompts, templates, exec scripts, append stems), as findings the roles
+        // popover renders per role. Read-only and OFF the hot path — it stats files
+        // and parses template/exec JSON, so it belongs to a popover open or a team
+        // create, never to a roster render.
+        { name: "teamPreflight", kind: "invoke", channel: "team:preflight" },
         // Opt-in git worktree at spawn + working-dir suggestions for the New Session
         // dialog. createWorktree/worktreeInfo/markSessionWorktree drive the worktree
         // row; cwdSuggestions/noteCwd feed the working-directory MRU datalist.
@@ -6824,6 +6890,11 @@ body {
         { name: "invalidateToolCache", kind: "invoke", channel: "tools:invalidate" },
         { name: "onUpdateAvailable", kind: "on", channel: "update-available" },
         { name: "onSessionContextAction", kind: "on", channel: "session:context-action" },
+        // Is the operator mid-line in this session? Asked before a newly created
+        // session is allowed to take the keyboard (renderer/lib/focus-policy.js).
+        // The answer comes from the same main-side draft state the inject queue gates
+        // on, so focus and delivery cannot disagree about who is typing.
+        { name: "draftOpen", kind: "invoke", channel: "session:draftOpen" },
         { name: "writeToSession", kind: "send", channel: "pty-input" },
         { name: "selectDirectory", kind: "invoke", channel: "dialog:selectDirectory" },
         { name: "confirmKill", kind: "invoke", channel: "dialog:confirmKill" },
@@ -19505,6 +19576,65 @@ ${i3.join("\n")}
           reason: `idle ${fmtIdle(idleMs)}${w === "cold" ? " with a cold cache" : ""} \u2014 waking it re-bills its full context`
         };
       }
+      function shapeQuota(q, capabilities) {
+        if (!capabilities || !capabilities.quota) return null;
+        if (!q || typeof q !== "object") return null;
+        const num = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
+        const p = q.primary && typeof q.primary === "object" ? q.primary : {};
+        return {
+          status: typeof q.status === "string" ? q.status : null,
+          window: typeof p.window === "string" ? p.window : typeof q.representative_window === "string" ? q.representative_window : null,
+          usedPct: num(p.used_pct),
+          remainingPct: num(p.remaining_pct),
+          resetsInS: num(p.resets_in_s) ?? num(q.resets_in_s),
+          // Nothing polls the API — every reading is only as fresh as the last
+          // forwarded turn, so the renderer needs this to mark it stale.
+          ageS: num(q.age_s),
+          // A 429 carries NO ratelimit headers at all, so the response that proves
+          // the wall was hit cannot raise the percentage. A recent last_429 beside a
+          // sub-100% figure is the EXPECTED shape, not a contradiction.
+          last429AgeS: num(q.last_429_age_s)
+        };
+      }
+      var QUOTA_STALE_S = 120;
+      var QUOTA_429_RECENT_S = 300;
+      function fmtQuotaReset(s) {
+        if (typeof s !== "number" || !Number.isFinite(s) || s <= 0) return null;
+        const m = Math.floor(s / 60);
+        if (m < 60) return `${Math.max(m, 1)}m`;
+        const h = Math.floor(m / 60);
+        if (h < 24) return m % 60 ? `${h}h ${m % 60}m` : `${h}h`;
+        const d = Math.floor(h / 24);
+        return h % 24 ? `${d}d ${h % 24}h` : `${d}d`;
+      }
+      function quotaChip(q, clientAgeS = 0) {
+        if (!q) return null;
+        const hot429 = q.last429AgeS != null && q.last429AgeS <= QUOTA_429_RECENT_S;
+        let level = null;
+        if (q.status === "rejected" || hot429) level = "loud";
+        else if (q.status === "allowed_warning") level = "warn";
+        if (!level) return null;
+        const pct = q.usedPct != null ? `${Math.round(q.usedPct)}%` : null;
+        const reset = fmtQuotaReset(q.resetsInS);
+        const parts = [];
+        if (hot429) parts.push("rate limited");
+        if (pct) parts.push(q.window ? `${pct} of ${q.window}` : pct);
+        else if (q.window) parts.push(q.window);
+        if (reset) parts.push(`resets in ${reset}`);
+        if (!parts.length) return null;
+        const serverAge = q.ageS != null ? q.ageS : 0;
+        const stale = Math.max(serverAge, clientAgeS || 0) > QUOTA_STALE_S;
+        const tip = [
+          "Account plan quota, not this session.",
+          q.remainingPct != null ? `${Math.round(q.remainingPct)}% of the ${q.window || "window"} left.` : null,
+          hot429 ? "A request was rate-limited recently; a 429 carries no quota headers, so the figure beside it can lag." : null,
+          stale ? "Stale \u2014 nothing polls this, it updates only on a forwarded turn." : null,
+          // Distinct from the line above: that one is "the API has not spoken", this
+          // one is "we are not receiving". The remedy differs, so the wording must.
+          (clientAgeS || 0) > QUOTA_STALE_S ? "The proxy has not reported in \u2014 this figure may be far older than it looks." : null
+        ].filter(Boolean).join(" ");
+        return { level, text: parts.join(" \xB7 "), tip, stale };
+      }
       function shapeProxyRecord(r, probe, now = Date.now()) {
         const base = { ts: now, version: probe.version, capabilities: probe.capabilities };
         if (!r) return { ...base, linked: false };
@@ -19559,6 +19689,11 @@ ${i3.join("\n")}
         pickProxyRecord,
         shapeProxyRecord,
         shapeSubagent,
+        shapeQuota,
+        quotaChip,
+        fmtQuotaReset,
+        QUOTA_STALE_S,
+        QUOTA_429_RECENT_S,
         boxWirescopeView,
         strictMcpReason,
         STRICT_MCP_EXPLANATION,
@@ -20165,6 +20300,29 @@ ${i3.join("\n")}
     }
   });
 
+  // team-root-expand.js
+  var require_team_root_expand = __commonJS({
+    "team-root-expand.js"(exports, module) {
+      var TEAM_ROOT_TOKEN = "${TEAM_ROOT}";
+      function usesTeamRoot(value) {
+        return typeof value === "string" && value.includes(TEAM_ROOT_TOKEN);
+      }
+      function expandTeamRoot(value, teamRoot) {
+        const s = value == null ? "" : String(value);
+        if (!usesTeamRoot(s)) return { ok: true, value: s, expanded: false };
+        const root = typeof teamRoot === "string" ? teamRoot.trim() : "";
+        if (!root) {
+          return {
+            ok: false,
+            reason: "${TEAM_ROOT} does not resolve here \u2014 this session is not inside a team's root. Spawn with an explicit cwd:, or run from the team root."
+          };
+        }
+        return { ok: true, value: s.split(TEAM_ROOT_TOKEN).join(root), expanded: true };
+      }
+      module.exports = { TEAM_ROOT_TOKEN, usesTeamRoot, expandTeamRoot };
+    }
+  });
+
   // renderer/lib/web-shortcuts.js
   var require_web_shortcuts = __commonJS({
     "renderer/lib/web-shortcuts.js"(exports, module) {
@@ -20545,6 +20703,48 @@ ${i3.join("\n")}
         return out;
       }
       module.exports = { prefsGate, PROXY_DEPENDENT };
+    }
+  });
+
+  // renderer/lib/focus-policy.js
+  var require_focus_policy = __commonJS({
+    "renderer/lib/focus-policy.js"(exports, module) {
+      "use strict";
+      function shouldFocusNewSession({
+        agentInitiated = false,
+        focusedDraftOpen = false,
+        hasFocusedSession = true
+      } = {}) {
+        if (!hasFocusedSession) return true;
+        if (focusedDraftOpen) return false;
+        return !agentInitiated;
+      }
+      async function decideNewSessionFocus({
+        name,
+        focused = null,
+        agentInitiated = false,
+        queryDraftOpen = null
+      } = {}) {
+        let focusedDraftOpen = false;
+        if (focused && focused !== name && typeof queryDraftOpen === "function") {
+          try {
+            const r = await queryDraftOpen(focused);
+            focusedDraftOpen = !!(r && r.open);
+          } catch {
+          }
+        }
+        const focus = shouldFocusNewSession({
+          agentInitiated,
+          focusedDraftOpen,
+          hasFocusedSession: !!focused
+        });
+        return focus ? name : null;
+      }
+      async function planNewSession(opts = {}) {
+        const target = await decideNewSessionFocus(opts);
+        return { focus: target !== null, fit: true };
+      }
+      module.exports = { shouldFocusNewSession, decideNewSessionFocus, planNewSession };
     }
   });
 
@@ -21271,6 +21471,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const tallBtn = document.getElementById("drawer-tall");
         const copyBtn = document.getElementById("drawer-copy");
         const statusEl = document.getElementById("drawer-status");
+        const quotaEl = document.getElementById("drawer-quota");
         const panesEl = document.getElementById("drawer-panes");
         const tenants = /* @__PURE__ */ new Map();
         let activeId = null;
@@ -21675,6 +21876,21 @@ ${m[2].replace(/^\r?\n/, "")}`;
           refreshStatus();
           armChanged();
         }
+        function setQuota(chip) {
+          if (!quotaEl) return;
+          if (!chip) {
+            quotaEl.textContent = "";
+            quotaEl.removeAttribute("data-level");
+            quotaEl.removeAttribute("title");
+            quotaEl.removeAttribute("data-stale");
+            return;
+          }
+          quotaEl.textContent = chip.text;
+          quotaEl.dataset.level = chip.level;
+          quotaEl.title = chip.tip;
+          if (chip.stale) quotaEl.dataset.stale = "1";
+          else quotaEl.removeAttribute("data-stale");
+        }
         return {
           register,
           open,
@@ -21684,6 +21900,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           onSessionChanged,
           forgetSession,
           onSelectionSent,
+          setQuota,
           // Separate from onSessionChanged because that one is deliberately skipped on
           // the FIRST activation (nothing was armed yet, so there is no peek to
           // release) — while tab availability must be right for the first seat the
@@ -21763,12 +21980,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
           exportBtn.type = "button";
           exportBtn.id = "ipc-export";
           exportBtn.title = "Save log as a text file";
-          exportBtn.textContent = "Export";
+          exportBtn.setAttribute("aria-label", "Save log as a text file");
+          exportBtn.textContent = "\u2913";
           const clearBtn = document.createElement("button");
           clearBtn.type = "button";
           clearBtn.id = "ipc-clear";
           clearBtn.title = "Clear log";
-          clearBtn.textContent = "Clear";
+          clearBtn.setAttribute("aria-label", "Clear log");
+          clearBtn.textContent = "\u232B";
           exportBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             exportIpcLog();
@@ -26303,11 +26522,23 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         }
         return parts.join("; ");
       }
+      function preflightByRole(findings) {
+        const out = /* @__PURE__ */ new Map();
+        for (const f of Array.isArray(findings) ? findings : []) {
+          if (!f || typeof f !== "object") continue;
+          const role = typeof f.role === "string" ? f.role : "";
+          if (!role) continue;
+          if (!out.has(role)) out.set(role, []);
+          out.get(role).push(f);
+        }
+        return out;
+      }
       module.exports = {
         teamRoleRows,
         validateAddRole,
         buildSavePatch,
         reservedRoleNote,
+        preflightByRole,
         parseDuration,
         formatDuration,
         formatBlockedBy,
@@ -26330,7 +26561,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         DEFAULT_DISPATCH,
         parseDuration,
         formatDuration,
-        formatBlockedBy
+        formatBlockedBy,
+        preflightByRole
       } = require_team_roles();
       var { anchorRect, makeDraggable, resetDrag } = require_popover_drag();
       function initTeamRolesPopover({ promptText } = {}) {
@@ -26356,6 +26588,16 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         function closeTeamRolesPopover() {
           popover.classList.add("hidden");
           popover.dataset.name = "";
+        }
+        let preflight = /* @__PURE__ */ new Map();
+        async function loadPreflight(name) {
+          let res;
+          try {
+            res = await window.api.teamPreflight(name);
+          } catch {
+            res = null;
+          }
+          preflight = preflightByRole(res && res.ok ? res.findings : []);
         }
         function renderRows(manifest) {
           listEl.innerHTML = "";
@@ -26402,6 +26644,24 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               const disp = el.querySelector('select[data-f="dispatch"]');
               disp.value = DISPATCH_VALUES.includes(row.dispatch) ? row.dispatch : DEFAULT_DISPATCH;
             }
+            const owed = preflight.get(row.key) || [];
+            if (owed.length) {
+              const box = document.createElement("div");
+              box.className = "team-role-preflight";
+              for (const f of owed) {
+                const line = document.createElement("div");
+                line.className = `team-role-preflight-line ${f.level === "warn" ? "warn" : "note"}`;
+                const tag = document.createElement("span");
+                tag.className = "team-role-preflight-kind";
+                tag.textContent = `${f.level === "warn" ? "!" : "\xB7"} ${f.kind}`;
+                const txt = document.createElement("span");
+                txt.textContent = f.message;
+                line.appendChild(tag);
+                line.appendChild(txt);
+                box.appendChild(line);
+              }
+              el.appendChild(box);
+            }
             listEl.appendChild(el);
           }
         }
@@ -26412,6 +26672,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             return false;
           }
           nameEl.textContent = res.team.name;
+          await loadPreflight(res.team.name);
           renderRows(res.team);
           watchdogInput.value = res.team.watchdogMs != null ? formatDuration(res.team.watchdogMs) : "";
           return true;
@@ -29659,7 +29920,7 @@ ${detail}` });
       var { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require_sidebar_width();
       var { mergeMeta } = require_meta_tiers();
       var { PendingInput } = require_peer_input_queue();
-      var { versionSeverity, updateApplies, releaseAgeInfo } = require_proxy_util();
+      var { versionSeverity, updateApplies, releaseAgeInfo, quotaChip } = require_proxy_util();
       var { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require_constants();
       var { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require_format();
       var { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require_render_html();
@@ -29667,12 +29928,14 @@ ${detail}` });
       var { matchGutterRow, findGutterFile } = require_gutter_scan();
       var GUTTER_HEADER_SCAN = 400;
       var { splitModelArg, withModelArg } = require_args_model();
+      var { expandTeamRoot, usesTeamRoot } = require_team_root_expand();
       var { altChordAction } = require_web_shortcuts();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
       var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
       var { bumpDefaultName, teamNamePrefill } = require_name_suggest();
       var { prefsGate } = require_prefs_gate();
+      var { planNewSession } = require_focus_policy();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { isToolInstallSession } = require_tool_doctor();
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
@@ -30218,7 +30481,7 @@ ${detail}` });
           }
         });
       }
-      window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition }) => {
+      window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition, background }) => {
         switch (action) {
           case "editArgs":
             openArgsDialog(name);
@@ -30230,7 +30493,7 @@ ${detail}` });
             if (type) {
               createTerminal(name);
               addSessionToSidebar(name, type, cwd, null, backend || null, null, noWire === true);
-              switchSession(name);
+              switchToNewSession(name, { agentInitiated: background === true });
             }
             break;
           case "promptsChanged":
@@ -30820,6 +31083,43 @@ ${detail}` });
           terminal.focus();
         });
       }
+      async function switchToNewSession(name, { agentInitiated = false } = {}) {
+        const { focus } = await planNewSession({
+          name,
+          focused: activeSession,
+          agentInitiated,
+          queryDraftOpen: window.api.draftOpen ? (n) => window.api.draftOpen(n) : null
+        });
+        if (!sessions.has(name)) return false;
+        if (focus) {
+          switchSession(name);
+          return true;
+        }
+        fitSessionInBackground(name);
+        return false;
+      }
+      function fitSessionInBackground(name) {
+        const entry = sessions.get(name);
+        if (!entry) return;
+        const { fitAddon, terminal } = entry;
+        requestAnimationFrame(() => {
+          if (!sessions.has(name)) return;
+          try {
+            if (entry.peer) {
+              if (entry.peer.controlled) {
+                fitAddon.fit();
+                window.api.peerResize(entry.peer.id, entry.peer.name, terminal.cols, terminal.rows);
+              } else {
+                remeasureReadonlyPeer(entry);
+              }
+              return;
+            }
+            fitAddon.fit();
+            window.api.resizeSession(name, terminal.cols, terminal.rows);
+          } catch {
+          }
+        });
+      }
       function removeSession(name, { keepPersisted = false } = {}) {
         const s = sessions.get(name);
         if (s) {
@@ -30836,6 +31136,7 @@ ${detail}` });
         removeSessionFromSidebar(name);
         updateWindowTitle();
         proxyState.delete(name);
+        refreshQuotaChip();
         ctxPct.delete(name);
         ctxTokens.delete(name);
         filesState.delete(name);
@@ -31006,7 +31307,7 @@ ${detail}` });
           result.session && result.session.backend || null,
           null
         );
-        switchSession(params.name);
+        await switchToNewSession(params.name, { agentInitiated: false });
         window.api.injectPrompt(params.name, params.command);
       }
       async function refreshNewSessionToolGate() {
@@ -31479,14 +31780,32 @@ ${detail}` });
         inputProxyUrl.style.display = inputProxyMode.value === "custom" ? "" : "none";
         if (inputProxyMode.value === "custom") inputProxyUrl.focus();
       });
+      async function cwdFromTemplate(t) {
+        const raw = t && t.cwd || "";
+        if (!raw) return { cwd: homeDir };
+        if (!usesTeamRoot(raw)) return { cwd: raw };
+        const here = expandPath(inputCwd.value.trim()) || homeDir;
+        let root = "";
+        try {
+          root = (await window.api.teamForCwd(here))?.root || "";
+        } catch {
+          root = "";
+        }
+        const r = expandTeamRoot(raw, root);
+        if (!r.ok) return { cwd: raw, warn: `Template "${t.name || ""}": ${r.reason}` };
+        return { cwd: r.value };
+      }
       inputTemplate.addEventListener("change", async () => {
         const id = inputTemplate.value;
         if (!id) return;
         const list = await window.api.listTemplates();
         const t = list.find((x) => x.id === id);
         if (!t) return;
+        const resolved = await cwdFromTemplate(t);
+        if (inputTemplate.value !== id) return;
+        if (resolved.warn) showToast(resolved.warn, { kind: "warn", duration: 12e3 });
         inputType.value = t.type;
-        inputCwd.value = t.cwd || homeDir;
+        inputCwd.value = resolved.cwd;
         {
           const { model, rest } = splitModelArg(t.extraArgs || []);
           inputModel.value = model;
@@ -31605,6 +31924,11 @@ ${detail}` });
           inputName.style.borderColor = "#e94560";
           return;
         }
+        if (usesTeamRoot(cwd)) {
+          inputCwd.style.borderColor = "#e94560";
+          showToast("This template's ${TEAM_ROOT} could not be resolved \u2014 type the project directory, or open the dialog from a session inside the team.", { kind: "warn", duration: 12e3 });
+          return;
+        }
         const resumeId = supportsPrompts ? inputResume.value.trim() || null : null;
         const fork = supportsPrompts ? inputFork.checked : false;
         const placement = currentPlacement();
@@ -31688,7 +32012,7 @@ ${detail}` });
         if (worktree) window.api.markSessionWorktree(name, worktree);
         createTerminal(name);
         addSessionToSidebar(name, type, spawnCwd, null, result.session && result.session.backend || null, result.session && result.session.team || null, (result.session && result.session.noWire) === true);
-        switchSession(name);
+        await switchToNewSession(name, { agentInitiated: false });
         const warnings = result.session && result.session.warnings || [];
         for (const w of warnings) showToast(w, { kind: "warn", duration: 15e3, name });
       }
@@ -32278,10 +32602,24 @@ ${detail}` });
         }
         el.dataset.refusal = p && p.linked && p.refusals > 0 ? "1" : "";
       }
+      function refreshQuotaChip() {
+        let best = null;
+        let bestAt = -1;
+        for (const st of proxyState.values()) {
+          if (!st || !st.payload || !st.payload.quota) continue;
+          if ((st.at || 0) > bestAt) {
+            bestAt = st.at || 0;
+            best = st.payload.quota;
+          }
+        }
+        const clientAgeS = bestAt > 0 ? (Date.now() - bestAt) / 1e3 : 0;
+        drawerHost.setQuota(quotaChip(best, clientAgeS));
+      }
       window.api.onSessionProxy((name, payload) => {
         proxyState.set(name, { payload, at: Date.now() });
         applyWarmBadge(name);
         applySubagents(name);
+        refreshQuotaChip();
         refreshActivityChips();
         if (name === activeSession) renderProxyBar();
       });
@@ -32441,6 +32779,7 @@ Click for live activity`;
         }
         for (const el of sessionList.querySelectorAll(".session-item[data-thinking-since]")) applyThinkBadge(el);
         tickProxyBar();
+        refreshQuotaChip();
       }, 1e3);
       (() => {
         const bar = document.getElementById("proxy-bar");
