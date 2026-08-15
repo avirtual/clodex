@@ -39,7 +39,10 @@
 // ~/.clodex is shared) are copied onto the tmp file as raw bytes and the size is
 // re-checked until stable, so a concurrent writer is not silently truncated. A
 // crash at any point before the rename leaves the ORIGINAL untouched: the
-// rotation is lost, never the data. The residual window is an append landing
+// rotation is lost, never the data. The same rule governs the diagnostics spill
+// (see _compact): a spill write that fails puts its lines back in the kept set
+// rather than letting the rename drop them, so the only cost of a retry is a
+// duplicated record in a kept-forever lane. The residual window is an append landing
 // between the last stable-size check and the rename itself — sub-millisecond,
 // against a ~0.06 records/second arrival rate. Closing it fully would need a
 // lock file across instances, which is a lot of machinery for a forensic log.
@@ -173,7 +176,12 @@ class ShadowLog {
     if (!oversize && !(await this._hasExpiredHead(file, cutoff))) return null;
 
     const target = Math.floor(maxBytes * TRIM_TARGET_RATIO);
-    const tmp = file + '.rot';
+    // PID-scoped: ~/.clodex is shared, so two instances can compact the same
+    // lane at once. A single shared tmp name lets them interleave writes and
+    // rename a torn file into place — distinct from (and worse than) the
+    // append-vs-rename window in the header, since it corrupts rather than
+    // drops. Per-process names make the two compactions independent.
+    const tmp = `${file}.rot.${process.pid}`;
     let kept;
     let report;
 
@@ -186,12 +194,30 @@ class ShadowLog {
       const raw = await fsp.readFile(file);
       size = raw.length; // what we actually consumed, not what stat guessed
       const res = this._filter(raw, cutoff, !!spill);
+      let spilled = res.spilled.length;
       if (spill && res.spilled.length) {
-        try { await fsp.appendFile(spill, res.spilled.join('')); } catch { /* keep going */ }
+        try {
+          await fsp.appendFile(spill, res.spilled.join(''));
+        } catch {
+          // FAIL TOWARD KEEPING. The spilled lines are diagnostics on their way
+          // out of the bulk lane; if the write that was to receive them failed,
+          // they are in neither file, and the rename below would delete them
+          // permanently. That is the one loss this design must not have: the
+          // FIRST rotation after an upgrade carries the entire pre-split history
+          // of rare records in this array, so a single EACCES here would erase
+          // the forensic history the split exists to preserve.
+          //
+          // So put them back in the kept set instead. They stay in the bulk
+          // lane and re-spill on the next pass; the cost of a spill that
+          // succeeds after a failure is a duplicate in a kept-forever lane,
+          // which is the cheap direction.
+          res.kept.unshift(...res.spilled);
+          spilled = 0;
+        }
       }
       kept = Buffer.from(res.kept.join(''), 'utf8');
       if (kept.length > maxBytes) kept = trimFront(kept, target);
-      report = { runaway: false, kept: res.keptCount, dropped: res.droppedCount, spilled: res.spilled.length };
+      report = { runaway: false, kept: res.kept.length, dropped: res.droppedCount, spilled };
     }
 
     try {
@@ -269,7 +295,10 @@ class ShadowLog {
       kept.push(line + '\n');
     }
     if (tail) kept.push(tail);
-    return { kept, spilled, keptCount: kept.length, droppedCount };
+    // No keptCount: the caller may fold spilled lines back into `kept` after a
+    // failed spill write, so any count taken here would be stale by the time it
+    // is reported.
+    return { kept, spilled, droppedCount };
   }
 }
 

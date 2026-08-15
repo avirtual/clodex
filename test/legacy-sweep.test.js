@@ -25,6 +25,7 @@ test('runLegacySweep: deletes a known session\'s flat artifacts, spares shared f
   touch(path.join(root, 'stocks.jsonl'));
   // Shared files that STRUCTURALLY match per-agent suffixes — must survive.
   touch(path.join(root, 'wire-shadow.jsonl'));       // matches .jsonl
+  touch(path.join(root, 'wire-shadow-diag.jsonl'));  // matches .jsonl (t187 diag lane)
   touch(path.join(root, 'codex-session-hook.sh'));   // matches -hook.sh
   touch(path.join(root, 'clodex.log'));              // matches nothing
   // Shared dirs with per-agent subdirs — must survive untouched.
@@ -44,6 +45,7 @@ test('runLegacySweep: deletes a known session\'s flat artifacts, spares shared f
   assert.ok(!exists(path.join(root, 'stocks.jsonl')));
   // Shared files survive.
   assert.ok(exists(path.join(root, 'wire-shadow.jsonl')), 'shared wire log spared');
+  assert.ok(exists(path.join(root, 'wire-shadow-diag.jsonl')), 'shared wire diag lane spared');
   assert.ok(exists(path.join(root, 'codex-session-hook.sh')), 'shared codex hook spared');
   assert.ok(exists(path.join(root, 'clodex.log')));
   // Shared dirs survive.
@@ -87,6 +89,7 @@ test('findOrphans: flags dead run dirs + stray root files, excludes shared + can
     'ghost-hook.sh',           // stray, non-candidate → flagged
     'trader.jsonl',            // candidate leftover → NOT flagged (belongs to a known name)
     'wire-shadow.jsonl',       // shared → excluded
+    'wire-shadow-diag.jsonl',  // shared → excluded (t187 diag lane)
     'codex-session-hook.sh',   // shared → excluded
     'messages', 'pending', 'clodex.log', // no per-agent suffix → ignored
   ];

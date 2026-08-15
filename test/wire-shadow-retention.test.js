@@ -267,6 +267,77 @@ test('t187: records appended DURING a compaction survive the rename', async () =
     'the record written by the other instance rode onto the new file; only the stale one was dropped');
 });
 
+test('t187 r1: a FAILED spill write must not let the rename delete the diagnostics', async () => {
+  // The dangerous interleaving is the one-shot migration: the first rotation
+  // after an upgrade carries the entire pre-split history of rare records in
+  // the spill array. If that append fails but the tmp write and rename succeed,
+  // the records are in neither file and are gone permanently — a rotation that
+  // SUCCEEDS while losing data, which is the one outcome this design forbids.
+  const r = rig();
+  const t0 = r.now();
+  const bulkPath = r.log.bulkPath();
+  fs.writeFileSync(bulkPath, [
+    JSON.stringify({ ts: t0 - 40 * DAY, type: 'wire-error', id: 'ancient-diag' }),
+    JSON.stringify({ ts: t0 - 40 * DAY, type: 'wire-turn', id: 'ancient-bulk' }),
+    JSON.stringify({ ts: t0 - 2 * DAY, type: 'intent-drop', id: 'recent-diag' }),
+    JSON.stringify({ ts: t0, type: 'wire-turn', id: 'fresh-bulk' }),
+  ].join('\n') + '\n');
+
+  let spillAttempted = false;
+  const log = new ShadowLog({
+    fs: { ...fs, promises: { ...fs.promises,
+      appendFile: async (target, ...rest) => {
+        if (String(target).endsWith('wire-shadow-diag.jsonl')) {
+          spillAttempted = true;
+          throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+        }
+        return fs.promises.appendFile(target, ...rest);
+      },
+    } },
+    path, dir: r.dir, now: () => t0,
+  });
+
+  const report = await log.rotate();
+
+  assert.ok(spillAttempted, 'ENTER: the spill append really was attempted and really did fail, so this test exercised the loss path it names');
+  // The property that matters is "still exists SOMEWHERE" — which lane is an
+  // implementation choice, losing them is not.
+  const everywhere = [...r.bulk(), ...r.diag()];
+  assert.ok(ids(everywhere).includes('ancient-diag'),
+    'the 40-day-old diagnostic survived a failed spill — the migration did not erase the history it was moving');
+  assert.ok(ids(everywhere).includes('recent-diag'), 'and so did the recent one');
+  assert.ok(!ids(everywhere).includes('ancient-bulk'), 'while the aged BULK record was still correctly dropped');
+  assert.ok(ids(everywhere).includes('fresh-bulk'), 'and the in-window bulk record is untouched');
+  assert.strictEqual(report.bulk.spilled, 0, 'the report does not claim a spill that did not happen');
+
+  // Once the diag lane is writable again the retry completes the migration.
+  await r.log.rotate();
+  assert.deepStrictEqual(ids(r.diag()).sort(), ['ancient-diag', 'recent-diag'],
+    'the next pass re-spills them into the diag lane, so the failure only deferred the move');
+});
+
+test('t187 r1: concurrent compactions do not share a tmp path', () => {
+  // A single shared tmp name lets two instances interleave writes into it and
+  // rename a TORN file into place — corruption, not just a dropped rotation.
+  const r = rig();
+  const tmpNames = new Set();
+  const realWriteFile = fs.promises.writeFile;
+  const log = new ShadowLog({
+    fs: { ...fs, promises: { ...fs.promises,
+      writeFile: (p, ...rest) => { tmpNames.add(String(p)); return realWriteFile.call(fs.promises, p, ...rest); },
+    } },
+    path, dir: r.dir, now: r.now.bind(r),
+  });
+  r.write({ type: 'wire-turn', id: 'stale' }, r.now() - 30 * DAY);
+
+  return log.rotate().then(() => {
+    assert.strictEqual(tmpNames.size, 1, 'ENTER: exactly one tmp file was written, so the name below is the one under test');
+    const name = [...tmpNames][0];
+    assert.ok(name.includes(String(process.pid)),
+      `the tmp path is scoped to this process (${name}) — two instances cannot interleave on it`);
+  });
+});
+
 test('t187: a failed compaction leaves the original intact and drops no records', async () => {
   const r = rig();
   const t0 = r.now();
