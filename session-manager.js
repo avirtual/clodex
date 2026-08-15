@@ -586,10 +586,20 @@ function createSessionManager(deps) {
       if (warmth) {
         try {
           const { HoldKeeper } = require('./wire/hold');
-          hold = new HoldKeeper({ warmth });
+          const { HoldEntryStore } = require('./wire/hold-store');
+          // userData, NOT ~/.clodex/run/<name>/ — that is rm -rf'd on every exit
+          // path, and surviving exactly that is the point of this file.
+          const entryStore = new HoldEntryStore({
+            path: path.join(getUserDataPath(), 'wire-hold-entries.json'),
+            // MESSAGE only. The records carry request bytes and a bearer token;
+            // the shadow log must never gain a line holding either.
+            onError: (message) => this._shadowLog({ type: 'wire-hold-store-error', error: message }),
+          });
+          hold = new HoldKeeper({ warmth, entryStore });
           hold.on('hold', (ev) => this._shadowLog({ type: 'wire-hold', ...ev }));
           hold.on('hold', (ev) => this._onHoldLifecycle(ev)); // operator-facing subset → clodex.log
           hold.start();
+          this._restorePerpetualHolds(hold);
         } catch (e) {
           this._shadowLog({ type: 'wire-hold-unavailable', error: e.message });
           hold = null;
@@ -853,6 +863,42 @@ function createSessionManager(deps) {
       s._holdRearmed = false;
       getPersistence().setSessionId(agent, newSessionId);
       this._noteConversationForDigest(s, newSessionId);
+    }
+
+    // STARTUP re-arm for PERPETUAL holds — the one mode whose purpose is a seat
+    // nobody is sitting at. _maybeRearmHold below restores the intent on the
+    // seat's next main-line turn, which an idle seat never takes: measured, an
+    // armed `always` hold sat 5.5 hours across a restart without a single ping
+    // while keepWarmAlways was on its record the whole time. This runs off
+    // _ensureWire instead, so no turn is required.
+    //
+    // Only the keeper's own persisted entries can arm here — a hold needs
+    // replayable last-request bytes, which is exactly what a restart loses and
+    // what wire/hold-store.js keeps for perpetual seats alone. The persistence
+    // record is the AUTHORITY on whether a given conversation may still be
+    // pinged, not the source of what to ping.
+    _restorePerpetualHolds(hold) {
+      try {
+        // A conversation id is pingable iff some seat still claims it
+        // perpetually. sessionIds (the /clear history), not just sessionId: the
+        // persisted entry can predate a rotation, and the record's current id
+        // is not necessarily the one whose bytes we hold.
+        const perpetual = new Set();
+        for (const rec of getPersistence().list()) {
+          if (!rec || !rec.keepWarmAlways || rec.archived || rec.archivedAt) continue;
+          if (rec.sessionId) perpetual.add(rec.sessionId);
+          for (const id of Array.isArray(rec.sessionIds) ? rec.sessionIds : []) perpetual.add(id);
+        }
+        const r = hold.restorePerpetual({ accept: (sid) => perpetual.has(sid) });
+        if (r.restored || r.declined || r.dropped) {
+          // Counts only — a name or an id here would be the first step toward a
+          // log line that carries what was replayed.
+          log.info('keepwarm', `restored ${r.restored} perpetual hold(s) at startup ` +
+            `(${r.declined} declined cold, ${r.dropped} no longer armed)`);
+        }
+      } catch (e) {
+        this._shadowLog({ type: 'wire-hold-restore-error', error: e.message });
+      }
     }
 
     // Restore a persisted keep-warm intent onto the session's CURRENT wire id.

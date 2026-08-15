@@ -21,11 +21,18 @@
 //
 // Deliberate differences from the Python (all consequences of running
 // IN-PROCESS instead of as a standalone proxy):
-//   - NO persistence, NO restart-amnesia machinery: the CLIs are the app's
-//     own PTY children, so the wire and its sessions share process fate —
-//     after an app restart every session respawns and its first live turn
-//     repopulates the cache. There is no window where a hold outlives its
-//     session's credentials.
+//   - Persistence is NARROW, not absent. The original reasoning — the CLIs
+//     are the app's own PTY children, so a restart respawns every session
+//     and its first live turn repopulates the cache — holds for a TIMED
+//     hold on an attended seat and is false for a PERPETUAL one, whose
+//     whole purpose is a seat nobody is sitting at: no turn arrives, so
+//     nothing repopulates, and a measured 5.5-hour restart left an armed
+//     `always` hold silently not pinging. So the entries of ARMED-PERPETUAL
+//     seats only (never the 2000-entry map) are spilled through
+//     wire/hold-store.js and re-armed at startup via restorePerpetual().
+//     The warm-only gate is unchanged on that path — restoring is not a
+//     reason to pay for a cache write — and a restored credential may well
+//     be stale, which the 2-strike disarm already bounds.
 //   - NO auth bootstrap / account registry: headers live in-process; an
 //     entry always carries the exact headers of the session's own last
 //     request. A 401 on a replay means the CLI's OAuth expired mid-idle —
@@ -166,6 +173,10 @@ class HoldKeeper extends EventEmitter {
   //             and the TTL-slide restamp both live there)
   //   now       clock override, seconds (tests)
   //   request   postJson override (tests)
+  //   entryStore  optional wire/hold-store HoldEntryStore. Absent (the
+  //             default) the keeper is exactly as in-memory as it was: no
+  //             file is written and no restart survival exists. Only a host
+  //             that has a durable userData dir supplies one.
   //   maxEntries/maxHours/marginSeconds/intervalSeconds/maxPings/maxFailures
   //             cap overrides, defaults above
   constructor(opts = {}) {
@@ -174,11 +185,74 @@ class HoldKeeper extends EventEmitter {
     this.warmth = opts.warmth;
     this._now = opts.now || (() => Date.now() / 1000);
     this._request = opts.request || postJson;
+    this._entryStore = opts.entryStore || null;
     for (const k of Object.keys(DEFAULTS)) this[k] = opts[k] ?? DEFAULTS[k];
     this._entries = new Map(); // sessionId → { obj, headers, url, ts }
     this._holds = new Map(); // sessionId → { until, armedAt, hours, pings, failures, lastPingTs, lastResult }
     this._timer = null;
     this._inTick = false;
+  }
+
+  // Spill the entries of ARMED-PERPETUAL seats, and only those. Called on
+  // every mutation of what that set contains (arm/disarm/endSession) and on
+  // each noteRequest for an already-perpetual seat, so the persisted bytes
+  // track the live ones rather than a snapshot from arming time — a replay of
+  // a stale prefix is a cold write, exactly what the warm-only gate exists to
+  // avoid.
+  //
+  // Writing the EMPTY set matters as much as writing a full one: it is what
+  // takes a token off the disk when the last perpetual hold goes away.
+  _flushPerpetual() {
+    if (!this._entryStore) return;
+    const records = [];
+    for (const [sid, hold] of this._holds) {
+      if (!hold.always) continue; // constraint 1: perpetual only, never the map
+      const e = this._entries.get(sid);
+      if (!e) continue; // nothing replayable yet — a record with no obj buys nothing
+      records.push({ sessionId: sid, obj: e.obj, headers: e.headers, url: e.url, ts: e.ts });
+    }
+    this._entryStore.save(records);
+  }
+
+  // Startup re-arm: seed the entry map from disk and arm the seats that were
+  // perpetual, WITHOUT waiting for a turn. That wait is the whole bug — an
+  // idle seat never takes one.
+  //
+  // `accept(sessionId)` is supplied by the caller and is the authority on
+  // whether a persisted session is still one this host should be pinging (the
+  // seat still exists, still carries keepWarmAlways, is not archived). It is
+  // passed IN rather than read here so this stays offline-testable, the same
+  // reason rearmPlan takes its inputs.
+  //
+  // arm() is the NORMAL arm: it is cold-gated, so a prefix that went cold
+  // during the downtime declines here exactly as it would anywhere else. A
+  // restart is not a reason to force a cache write. Declining drops the
+  // record — the seat's keepWarmAlways flag survives in persistence and
+  // _maybeRearmHold still restores it on the next turn, so nothing is lost
+  // beyond the unattended case, which a cold prefix has already lost anyway.
+  //
+  // Returns { restored, declined, dropped } for logging — counts only, never
+  // the records: nothing here may put request bytes or headers in a log.
+  restorePerpetual({ accept } = {}) {
+    const out = { restored: 0, declined: 0, dropped: 0 };
+    if (!this._entryStore) return out;
+    const ok = typeof accept === 'function' ? accept : () => true;
+    for (const r of this._entryStore.load()) {
+      let allowed = false;
+      try { allowed = !!ok(r.sessionId); } catch { allowed = false; }
+      if (!allowed) { out.dropped += 1; continue; }
+      // Seeded directly rather than through noteRequest: that method re-anchors
+      // holds and is the main-line-turn seam. This is a restore, not a turn.
+      this._entries.set(r.sessionId, { obj: r.obj, headers: { ...(r.headers || {}) }, url: r.url, ts: r.ts ?? this._now() });
+      const res = this.arm(r.sessionId, 0, { always: true });
+      if (res && res.armed) out.restored += 1;
+      else { out.declined += 1; this._entries.delete(r.sessionId); }
+    }
+    // Rewrite the file down to what actually re-armed. A seat that was dropped
+    // or declined stops carrying a token on disk within one launch instead of
+    // waiting for some future write to notice.
+    this._flushPerpetual();
+    return out;
   }
 
   // Stash the just-forwarded main-line messages request so a later ping can
@@ -211,6 +285,10 @@ class HoldKeeper extends EventEmitter {
       hold.pings = 0;
       hold.failures = 0;
       this.emit('hold', { session: sessionId, event: 're-anchored', until: hold.until });
+      // Only a perpetual seat has anything on disk to refresh; _flushPerpetual
+      // filters anyway, but the guard keeps an organic turn on any of the other
+      // (up to 2000) tracked sessions off the write path entirely.
+      if (hold.always) this._flushPerpetual();
     }
   }
 
@@ -325,6 +403,9 @@ class HoldKeeper extends EventEmitter {
     const hold = { until: always ? null : now + hours * 3600, always, armedAt: now, hours,
       pings: 0, failures: 0, lastPingTs: null, lastResult: null };
     this._holds.set(sessionId, hold);
+    // Before the emit: the emit is observed by session-manager, and a listener
+    // that inspected the store must not see it lagging the hold it just heard about.
+    this._flushPerpetual();
     this.emit('hold', { session: sessionId, event: 'armed', hours, always, until: hold.until });
     return { armed: true, session: sessionId, hours, always, until: hold.until,
       warmth: wq, pingable: !!entry };
@@ -333,6 +414,7 @@ class HoldKeeper extends EventEmitter {
   disarm(sessionId) {
     const prev = this._holds.get(sessionId);
     this._holds.delete(sessionId);
+    if (prev && prev.always) this._flushPerpetual(); // takes the token off disk
     if (prev) this.emit('hold', { session: sessionId, event: 'disarmed', reason: 'off', cause: 'off', pings: prev.pings });
     return { armed: false, disarmed: !!prev, session: sessionId, pings: prev ? prev.pings : 0 };
   }
@@ -343,6 +425,7 @@ class HoldKeeper extends EventEmitter {
   endSession(sessionId) {
     const prev = this._holds.get(sessionId);
     this._holds.delete(sessionId);
+    if (prev && prev.always) this._flushPerpetual();
     if (prev) this.emit('hold', { session: sessionId, event: 'disarmed', reason: 'session ended', cause: 'session-ended', pings: prev.pings });
     return { session: sessionId, holdDisarmed: !!prev };
   }
@@ -386,6 +469,11 @@ class HoldKeeper extends EventEmitter {
         const [action, reason, cause] = holdDecision(hold, !!entry, wq, now, this);
         if (action === 'disarm') {
           this._holds.delete(sid);
+          // This path deletes from _holds directly rather than via disarm(), so
+          // it needs its own flush — a perpetual hold reaching the failure stop
+          // (the only branch that can disarm one) would otherwise leave its
+          // credential on disk until some unrelated write cleared it.
+          if (hold.always) this._flushPerpetual();
           this.emit('hold', { session: sid, event: 'disarmed', reason, cause, pings: hold.pings, lastResult: hold.lastResult ?? null });
         } else if (action === 'ping') {
           const res = await this.ping(sid);
