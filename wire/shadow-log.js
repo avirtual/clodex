@@ -85,6 +85,11 @@ function isBulkType(type) {
 // ts absent or unparseable ⇒ UNDATABLE ⇒ keep. _shadowLog always stamps ts, so
 // a missing one means corruption or a hand edit, and nothing can say whether an
 // undatable record is inside the window. The size cap still bounds them.
+//
+// A line that will not parse AT ALL has no type either, so it takes the same
+// route every unknown type takes and lands in the diag lane — kept forever
+// rather than aged out on a guess. That is the safe direction: a torn line is
+// evidence of the kind of failure this log exists to record.
 function tsOf(line) {
   try {
     const rec = JSON.parse(line);
@@ -211,7 +216,16 @@ class ShadowLog {
   }
 
   // Cheap age probe: reads only the first record, so the common "nothing has
-  // expired" answer costs one small read rather than a full parse of the file.
+  // expired" answer costs one small read rather than a full parse of a 26MB
+  // file every 15 minutes.
+  //
+  // ASSUMES THE FILE IS APPEND-ORDERED BY ts, which it is by construction —
+  // append() stamps ts at write time and only ever appends. If a clock jump
+  // ever put a fresh record at the head of an otherwise-stale file, the effect
+  // is a DELAYED compaction, not a wrong one: the filter still judges every
+  // record on its own ts, and the next check after the head expires does the
+  // work. The size backstop is unaffected either way, since it is checked
+  // before this probe.
   async _hasExpiredHead(file, cutoff) {
     if (cutoff == null) return false;
     let head;

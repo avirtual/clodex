@@ -13,6 +13,20 @@ blocks a release.
 
 ## Unreleased
 
+- The internal wire log stops growing forever. `~/.clodex/wire-shadow.jsonl` is
+  a forensic record nothing reads back automatically, and with no retention at
+  all it had reached 61MB on one machine — around 1.9MB a day. It now keeps
+  high-volume traffic for 14 days and prunes what is older, so it settles at a
+  steady size instead of climbing. Existing oversized logs start shrinking on
+  the next launch; no action needed.
+
+- The rare records in that log — errors, dropped intents, wire failures — are
+  now kept indefinitely, in a separate `wire-shadow-diag.jsonl`. Those are the
+  entries anyone actually goes looking for after something breaks, and they
+  amount to a few megabytes a *year*, so there is no reason to ever age them
+  out. Splitting them off is what makes pruning the bulk safe: diagnostics
+  already in your existing log are moved across rather than deleted.
+
 - The terminal intent marks no longer light up every sentence that merely
   *mentions* an intent. Agents discuss intents constantly, and a mark on each
   of those lines turned the screen into a mosaic that hid the handful of real
