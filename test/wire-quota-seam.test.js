@@ -37,6 +37,13 @@ const CLAUDE_HEADERS = {
 // What a codex 429 actually looks like: no ratelimit headers, no org id.
 const CODEX_429_HEADERS = { 'content-type': 'application/json' };
 
+// The subscriber defers its work to setImmediate so the store's disk sync stays
+// off time-to-first-token. Every assertion about it therefore has to cross one
+// macrotask boundary — asserting synchronously after emit() reads the state
+// before the subscriber has run at all, which would pass every "nothing
+// happened" case vacuously.
+const tick = () => new Promise((r) => setImmediate(r));
+
 function mkManager() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-t418-seam-'));
   const SessionManager = createSessionManager({
@@ -59,7 +66,7 @@ function mkManager() {
 // Drives the REAL subscriber by emitting on the REAL wire, then tears the port
 // down. `fn` receives the wire so each test emits the responses it cares about.
 async function onWire(fn) {
-  const { m, broadcasts } = mkManager();
+  const { m, broadcasts, root } = mkManager();
   const wire = await m._ensureWire();
   try {
     await fn({ wire, m, broadcasts });
@@ -68,6 +75,10 @@ async function onWire(fn) {
     if (m._holdKeeper) m._holdKeeper.stop();
     const store = m._quotaStore;
     if (store) store.close();
+    // _ensureWire opens a real WarmthStore too; both are sqlite handles this
+    // test has no use for after the emit.
+    if (wire.warmth) wire.warmth.close();
+    fs.rmSync(root, { recursive: true, force: true });
   }
 }
 
@@ -76,6 +87,7 @@ test('seam: an anthropic response with quota headers reaches the store and broad
     wire.emit('response', {
       agent: 'a', provider: 'anthropic', reqId: 'r1', status: 200, headers: CLAUDE_HEADERS,
     });
+    await tick();
     // ENTER: without this the codex assertions below are vacuous — they would
     // read "no broadcast" off a subscriber that never fires for anything.
     assert.strictEqual(broadcasts.length, 1, 'ENTER: the subscriber is wired and fired for a Claude turn');
@@ -94,6 +106,7 @@ test('seam: a codex 429 does NOT touch the Claude reading and does not broadcast
     wire.emit('response', {
       agent: 'a', provider: 'anthropic', reqId: 'r1', status: 200, headers: CLAUDE_HEADERS,
     });
+    await tick();
     assert.strictEqual(broadcasts.length, 1, 'ENTER: a Claude reading exists to be corrupted');
     const before = m.quotaStore().snapshot();
     assert.strictEqual(before.last_429, undefined, 'ENTER: and it carries no refusal yet');
@@ -101,6 +114,7 @@ test('seam: a codex 429 does NOT touch the Claude reading and does not broadcast
     wire.emit('response', {
       agent: 'codex-1', provider: 'openai', reqId: 'r2', status: 429, headers: CODEX_429_HEADERS,
     });
+    await tick();
 
     const after = m.quotaStore().snapshot();
     assert.strictEqual(after.last_429, undefined, 'the codex refusal was not filed against the Claude org');
@@ -120,6 +134,7 @@ test('seam: an ANTHROPIC 429 still files, so the gate is on the provider and not
     wire.emit('response', {
       agent: 'a', provider: 'anthropic', reqId: 'r2', status: 429, headers: { 'content-type': 'application/json' },
     });
+    await tick();
     const snap = m.quotaStore().snapshot();
     assert.strictEqual(typeof snap.last_429, 'number', 'the Claude refusal was recorded');
     assert.strictEqual(broadcasts.length, 2, 'and the chip was told — a refusal is when it matters most');
@@ -131,6 +146,7 @@ test('seam: a codex turn with a 200 contributes nothing either', async () => {
     wire.emit('response', {
       agent: 'codex-1', provider: 'openai', reqId: 'r1', status: 200, headers: { 'content-type': 'text/event-stream' },
     });
+    await tick();
     assert.strictEqual(broadcasts.length, 0);
     assert.strictEqual(m.quotaStore().snapshot(), null);
   });
@@ -141,7 +157,7 @@ test('wire:quota serves the stored reading, so a window opened before any turn i
   // returns anything. The lazy store is the other half: it must build without a
   // wire, or the restored reading is unreachable at exactly the cold launch
   // persistence exists for.
-  const { m } = mkManager();
+  const { m, root } = mkManager();
   const handlers = new Map();
   registerIpcHandlers({
     handle: (channel, fn) => handlers.set(channel, fn),
@@ -161,5 +177,6 @@ test('wire:quota serves the stored reading, so a window opened before any turn i
     assert.strictEqual(snap.representative_window, '7d');
   } finally {
     if (m._quotaStore) m._quotaStore.close();
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

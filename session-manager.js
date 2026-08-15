@@ -623,11 +623,20 @@ function createSessionManager(deps) {
         if (ev.provider !== 'anthropic') return;
         const store = this.quotaStore();
         if (!store) return;
-        try {
-          if (store.note(ev.headers, { status: ev.status })) this._broadcastQuota();
-        } catch (e) {
-          this._shadowLog({ type: 'wire-quota-error', error: e.message });
-        }
+        // Client bytes first: this event fires before the response head is
+        // written downstream, and the store's write is a synchronous disk sync.
+        // Doing it inline puts that sync on time-to-first-token for every
+        // Claude turn. Nothing here is ordering-sensitive — the store is keyed
+        // by org and note() stamps its own timestamp — so deferring costs no
+        // accuracy.
+        setImmediate(() => {
+          try {
+            const snap = store.note(ev.headers, { status: ev.status });
+            if (snap) this._broadcast('wire-quota', snap);
+          } catch (e) {
+            this._shadowLog({ type: 'wire-quota-error', error: e.message });
+          }
+        });
       });
       await wire.listen();
       this._shadow = new ShadowDiff((rec) => this._shadowLog(rec));
