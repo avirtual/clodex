@@ -229,6 +229,14 @@ function registerIpcHandlers(deps) {
           // reads bytes rather than re-parsing, so it cannot disagree with the
           // parse above. The sentinel keeps the leaf pure: it names this one
           // condition, and must not grow into a general "list() had a problem".
+          //
+          // It means exactly READABLE BYTES THAT DO NOT DECODE TO A DEF OBJECT —
+          // not every "the file is there but broken" state. raw() swallows
+          // EACCES/EISDIR and returns null, so a def we lack permission to read
+          // still reports as "no def installed": the same wrong-repair class,
+          // one notch out. Fixing that means probing existence rather than
+          // bytes, which costs a second disk touch and a reach past the store's
+          // public surface; deliberately not taken here.
           // Not redundant with raw()'s own catch: that one covers the READ,
           // while _file() resolves outside it and throws on a name confineOrThrow
           // refuses. Uncaught, one bad name in one template collapses the whole
