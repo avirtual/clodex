@@ -766,13 +766,17 @@ function createSessionManager(deps) {
       return wire;
     }
 
+    // Observer-grade sink for every wire record. Retention (the type split, the
+    // 14-day bulk window, the size backstop) lives in wire/shadow-log.js; this
+    // stays a one-line hand-off so the hot-path guarantee is visible at the
+    // call site. Lazily built because REGISTRY_DIR resolves post-whenReady.
     _shadowLog(rec) {
       try {
-        fs.appendFile(
-          path.join(REGISTRY_DIR, 'wire-shadow.jsonl'),
-          JSON.stringify({ ts: Date.now(), ...rec }) + '\n',
-          () => {},
-        );
+        if (!this._shadowSink) {
+          const { ShadowLog } = require('./wire/shadow-log');
+          this._shadowSink = new ShadowLog({ fs, path, dir: REGISTRY_DIR });
+        }
+        this._shadowSink.append(rec);
       } catch { /* shadow only — never surfaces */ }
     }
 

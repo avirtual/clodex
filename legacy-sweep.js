@@ -5,9 +5,10 @@
 //
 // NAME-DRIVEN, never filename-parsed. The sweep only ever deletes exactly
 // `{knownName}{knownSuffix}` for a name drawn from sessions.json ∪ live
-// sessions. It never reverse-parses a filename to discover an owner, so the two
-// shared files that structurally look per-agent — wire-shadow.jsonl (the global
-// wire log, matches `.jsonl`) and codex-session-hook.sh (the one shared Codex
+// sessions. It never reverse-parses a filename to discover an owner, so the
+// shared files that structurally look per-agent — wire-shadow.jsonl and
+// wire-shadow-diag.jsonl (the two global wire log lanes, both matching
+// `.jsonl`) and codex-session-hook.sh (the one shared Codex
 // hook, matches `-hook.sh`) — can never be misattributed to an agent and
 // deleted. messages/, pending/, agents/, skills/, library/, skill-plugins/ and
 // every other shared dir are likewise untouched (they aren't `{name}{suffix}`).
@@ -25,7 +26,7 @@ const MARKER = '.migrated';
 
 // Root-level files that structurally match a per-agent suffix but are SHARED —
 // excluded from the orphan pass so they don't log as false orphans.
-const SHARED_FILES = new Set(['wire-shadow.jsonl', 'codex-session-hook.sh']);
+const SHARED_FILES = new Set(['wire-shadow.jsonl', 'wire-shadow-diag.jsonl', 'codex-session-hook.sh']);
 
 // Reverse-map a root filename to the name that WOULD own it, longest suffix
 // first so `foo-hook-output.json` resolves to `foo`, not a bare `.json` match.

@@ -49,8 +49,10 @@
 // plugins/ (the BYO plugin root — plugins/plugin-sources.md §3; deliberately NOT a
 // KIND, since it is shared rather than per-agent, and constructed at the engine
 // bootstrap like every other entry in this list), clodex.log,
-// wire-shadow.jsonl (global wire log), codex-session-hook.sh (the one shared
-// Codex hook, routed by $WB_WRAP_NAME).
+// wire-shadow.jsonl + wire-shadow-diag.jsonl (the global wire log, split into a
+// 14-day bulk lane and a kept-forever diagnostics lane — wire/shadow-log.js is
+// the authority on which records go where and why),
+// codex-session-hook.sh (the one shared Codex hook, routed by $WB_WRAP_NAME).
 //
 // BASH-MIRRORED GRAMMAR. Two generated scripts resolve the agent name at
 // RUNTIME ($WB_WRAP_NAME / $NAME) and so must rebuild these paths in bash — the
@@ -118,8 +120,8 @@ const KINDS = {
 // The OLD flat-grammar suffixes, per kind — what the one-time legacy sweep
 // deletes as `{name}{suffix}` at the ~/.clodex root. Name-DRIVEN: the sweep
 // only ever builds `{knownName}{suffix}`, never parses arbitrary filenames, so
-// the shared collisions (wire-shadow.jsonl, codex-session-hook.sh) can never be
-// misattributed to an agent.
+// the shared collisions (wire-shadow.jsonl, wire-shadow-diag.jsonl,
+// codex-session-hook.sh) can never be misattributed to an agent.
 const LEGACY_SUFFIXES = {
   transcript: '.jsonl',
   registry: '.json',
