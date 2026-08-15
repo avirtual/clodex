@@ -202,14 +202,23 @@ class HoldKeeper extends EventEmitter {
   //
   // Writing the EMPTY set matters as much as writing a full one: it is what
   // takes a token off the disk when the last perpetual hold goes away.
-  _flushPerpetual() {
+  // `keep` carries records that must survive the rewrite even though they are
+  // not armed — the startup restore uses it for a seat it could not JUDGE (see
+  // restorePerpetual). Dropping those would convert a transient failure into a
+  // permanent one.
+  _flushPerpetual(keep = []) {
     if (!this._entryStore) return;
     const records = [];
+    const seen = new Set();
     for (const [sid, hold] of this._holds) {
       if (!hold.always) continue; // constraint 1: perpetual only, never the map
       const e = this._entries.get(sid);
       if (!e) continue; // nothing replayable yet — a record with no obj buys nothing
+      seen.add(sid);
       records.push({ sessionId: sid, obj: e.obj, headers: e.headers, url: e.url, ts: e.ts });
+    }
+    for (const r of keep) {
+      if (r && r.sessionId && !seen.has(r.sessionId)) records.push(r);
     }
     this._entryStore.save(records);
   }
@@ -231,12 +240,23 @@ class HoldKeeper extends EventEmitter {
   // _maybeRearmHold still restores it on the next turn, so nothing is lost
   // beyond the unattended case, which a cold prefix has already lost anyway.
   //
+  // ONE EXCEPTION, and it is the difference between a recoverable loss and a
+  // permanent one: a warmth-store ERROR is not a cold prefix. warmth.js's gate
+  // philosophy is that ABSENCE is evidence and a BROKEN STORE is not, and that
+  // distinction has to reach the rewrite below — a store that failed to answer
+  // at startup told us nothing about this seat, so erasing its record on the
+  // strength of that non-answer leaves the NEXT launch with nothing to retry.
+  // An attended seat would recover via _maybeRearmHold on its next turn; the
+  // unattended seat this whole feature exists for would not. So an errored
+  // decline keeps its record on disk and is retried next launch.
+  //
   // Returns { restored, declined, dropped } for logging — counts only, never
   // the records: nothing here may put request bytes or headers in a log.
   restorePerpetual({ accept } = {}) {
     const out = { restored: 0, declined: 0, dropped: 0 };
     if (!this._entryStore) return out;
     const ok = typeof accept === 'function' ? accept : () => true;
+    const keep = []; // records to preserve unjudged (see the store-error note above)
     for (const r of this._entryStore.load()) {
       let allowed = false;
       try { allowed = !!ok(r.sessionId); } catch { allowed = false; }
@@ -244,14 +264,19 @@ class HoldKeeper extends EventEmitter {
       // Seeded directly rather than through noteRequest: that method re-anchors
       // holds and is the main-line-turn seam. This is a restore, not a turn.
       this._entries.set(r.sessionId, { obj: r.obj, headers: { ...(r.headers || {}) }, url: r.url, ts: r.ts ?? this._now() });
-      const res = this.arm(r.sessionId, 0, { always: true });
-      if (res && res.armed) out.restored += 1;
-      else { out.declined += 1; this._entries.delete(r.sessionId); }
+      let res = null;
+      let threw = false;
+      try { res = this.arm(r.sessionId, 0, { always: true }); } catch { threw = true; }
+      if (res && res.armed) { out.restored += 1; continue; }
+      out.declined += 1;
+      this._entries.delete(r.sessionId);
+      // A throw is the same class of non-answer as an explicit wq.error.
+      if (threw || (res && res.warmth && res.warmth.error)) keep.push(r);
     }
-    // Rewrite the file down to what actually re-armed. A seat that was dropped
-    // or declined stops carrying a token on disk within one launch instead of
-    // waiting for some future write to notice.
-    this._flushPerpetual();
+    // Rewrite the file down to what actually re-armed, PLUS anything we could
+    // not judge. A seat that was dropped or genuinely declined stops carrying a
+    // token on disk within one launch instead of waiting for some future write.
+    this._flushPerpetual(keep);
     return out;
   }
 
@@ -269,6 +294,16 @@ class HoldKeeper extends EventEmitter {
     if (this._entries.size > this.maxEntries) {
       let oldest = null;
       for (const [sid, e] of this._entries) {
+        // An armed-PERPETUAL seat is exempt, and it is the one that would
+        // otherwise always lose: `ts` is stamped by noteRequest only — a ping
+        // never refreshes it — so an idle perpetual seat holds the OLDEST
+        // timestamp by construction and is the FIRST thing churn evicts. Losing
+        // it is not a cache miss: _flushPerpetual then finds no entry, and the
+        // seat's disk record goes with it, silently ending the hold. The cap
+        // still holds; the exemption is bounded by the number of armed holds,
+        // which is small by construction.
+        const h = this._holds.get(sid);
+        if (h && h.always) continue;
         if (!oldest || e.ts < oldest[1].ts) oldest = [sid, e];
       }
       if (oldest) this._entries.delete(oldest[0]);

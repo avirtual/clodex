@@ -65,7 +65,7 @@ function machine(t) {
     warmth, now, request,
     entryStore: new HoldEntryStore({ path: file, onError: (m) => errors.push(m) }),
   });
-  return { dir, file, clock, warmth, sent, errors, responder, boot,
+  return { dir, file, clock, warmth, sent, errors, responder, boot, request,
     stampWarm: (obj) => warmth.record(obj, { cache_creation_input_tokens: 100, cache_read_input_tokens: 0 }, SID),
     read: () => JSON.parse(fs.readFileSync(file, 'utf8')) };
 }
@@ -240,6 +240,99 @@ test('mode 0600, and a broken store degrades the hold instead of breaking the ke
     { restored: 0, declined: 0, dropped: 0 });
   assert.deepStrictEqual(after.holds(), {});
   after.stop();
+});
+
+// --- r1 must-fixes. Both are the SAME failure class as the original bug: a
+// loss that is recoverable on an attended seat (the next turn re-arms it)
+// becomes PERMANENT on the unattended seat this feature exists for, because the
+// disk record — the only thing that survives to the next launch — is erased.
+// Each asserts the PERSISTENCE consequence and then the next launch actually
+// restoring, not merely the live keeper's state: the permanence is on disk, and
+// a test that stopped at the in-memory result would pass on the broken code.
+
+test('a warmth-store ERROR at startup leaves the record on disk for the next launch', async (t) => {
+  const m = machine(t);
+  const obj = makeObj();
+
+  const before = m.boot();
+  before.noteRequest(SID, obj, { authorization: 'Bearer tok' }, 'http://up/v1/messages');
+  m.stampWarm(obj);
+  assert.strictEqual(before.arm(SID, 0, { always: true }).armed, true,
+    'ENTER: armed and persisted while the store was healthy');
+  before.stop();
+  assert.strictEqual(m.read().records.length, 1, 'ENTER: there IS a record for the broken launch to lose');
+
+  // Launch 2 comes up with a BROKEN warmth store. warmth.js's own gate
+  // philosophy: absence is evidence, a broken store is not — so this must not
+  // be treated as "the prefix went cold".
+  m.warmth.db.close();
+  assert.ok(m.warmth.query({ session: SID }).error,
+    'ENTER: the store really errors now — a merely-cold one would test the wrong branch');
+
+  const broken = m.boot();
+  const r = broken.restorePerpetual({ accept: () => true });
+  assert.deepStrictEqual(r, { restored: 0, declined: 1, dropped: 0 });
+  assert.deepStrictEqual(broken.holds(), {}, 'nothing armed — correct, we know nothing');
+  await broken.tick();
+  assert.strictEqual(m.sent.length, 0, 'and nothing forced on a store we cannot read');
+
+  // THE FIX: the record survives the failed launch. Under the merged code the
+  // trailing rewrite erased it here and the hold was gone forever.
+  assert.strictEqual(fs.existsSync(m.file), true, 'the record survives a store error');
+  assert.deepStrictEqual(m.read().records.map((x) => x.sessionId), [SID]);
+  assert.strictEqual(m.read().records[0].headers.authorization, 'Bearer tok');
+  broken.stop();
+
+  // Launch 3, store healthy again: the retry lands with no turn taken.
+  const healed = machine(t);
+  fs.copyFileSync(m.file, healed.file);
+  healed.stampWarm(obj);
+  const after = healed.boot();
+  assert.deepStrictEqual(after.restorePerpetual({ accept: () => true }),
+    { restored: 1, declined: 0, dropped: 0 });
+  assert.strictEqual(after.holds()[SID].always, true, 'the hold came back on the next launch');
+  after.stop();
+});
+
+test('an armed-perpetual entry is exempt from the entry-cap eviction', async (t) => {
+  const m = machine(t);
+  const obj = makeObj();
+  // maxEntries 2: the same shape as 2000-session churn, minus the zeros.
+  const k = new HoldKeeper({
+    warmth: m.warmth, now: () => m.clock.t, request: m.request, maxEntries: 2,
+    entryStore: new HoldEntryStore({ path: m.file, onError: (e) => m.errors.push(e) }),
+  });
+
+  k.noteRequest(SID, obj, { authorization: 'Bearer tok' }, 'http://up/v1/messages');
+  m.stampWarm(obj);
+  assert.strictEqual(k.arm(SID, 0, { always: true }).armed, true,
+    'ENTER: the perpetual seat is armed and is the OLDEST entry from here on');
+
+  // It stays oldest by construction: ts is stamped by noteRequest only, and a
+  // ping never refreshes it — so an idle perpetual seat is the first candidate
+  // every eviction scan finds. Churn two other sessions past the cap.
+  m.clock.t += 10;
+  k.noteRequest('churn-1', makeObj({ messages: [{ role: 'user', content: 'a' }] }), {}, 'http://up/v1/messages');
+  m.clock.t += 10;
+  k.noteRequest('churn-2', makeObj({ messages: [{ role: 'user', content: 'b' }] }), {}, 'http://up/v1/messages');
+  m.clock.t += 10;
+  k.noteRequest('churn-3', makeObj({ messages: [{ role: 'user', content: 'c' }] }), {}, 'http://up/v1/messages');
+
+  // THE FIX: the armed seat is still replayable. Under the merged code it was
+  // evicted first, _flushPerpetual then found no entry, and the disk record
+  // went with it — the hold ended silently.
+  assert.ok(k.entry(SID), 'the armed-perpetual entry survived the churn');
+  assert.strictEqual(k.entry('churn-1'), null, 'ENTER: eviction really did run — a non-exempt entry went');
+  assert.strictEqual(fs.existsSync(m.file), true);
+  assert.deepStrictEqual(m.read().records.map((x) => x.sessionId), [SID],
+    'and its disk record was not dropped by a flush that found nothing');
+
+  // It still pings, which is the point of not evicting it.
+  m.clock.t += 300 - 60 - 30;
+  await k.tick();
+  assert.strictEqual(m.sent.length, 1, 'the surviving entry is still replayable');
+  assert.strictEqual(m.sent[0].headers.authorization, 'Bearer tok');
+  k.stop();
 });
 
 test('a keeper with no entryStore is exactly as in-memory as before', (t) => {
