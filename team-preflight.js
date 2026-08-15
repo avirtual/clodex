@@ -28,13 +28,22 @@
 //
 // THE RULE THIS MODULE MUST HOLD AGAINST THE RUNNER: preflight checks
 // everything the runner expands, and accepts nothing the runner would refuse.
-// Both r2 must-fixes were one violation of it — the exec scan read `argv` but
-// not the def's `cwd`, which the runner expands identically, and an empty
-// `argv` (what execLibrary.list normalizes a malformed def to) read as
-// "resolved, nothing to check" while the runner refuses that def on every
-// call. A tick over a command that bounces every time is the exact failure
-// this module exists to kill, so when the runner grows a new expansion or a
-// new refusal, it grows here in the same change.
+// Three sightings so far: the exec scan read `argv` but not the def's `cwd`,
+// which the runner expands identically; an empty `argv` read as "resolved,
+// nothing to check"; a garbled def file read as no def at all. A tick over a
+// command that bounces every time is the exact failure this module exists to
+// kill, so when the runner grows a new expansion or a new refusal, it grows
+// here in the same change.
+//
+// WHERE THE DISAGREEMENT KEEPS COMING FROM: the last two both arrived through
+// execLibrary.list(), which NORMALIZES what the runner treats as fatal — a
+// non-array `argv` becomes [], an unparseable file becomes absence. A
+// normalizing lister is a LOSSY probe, so a falsy or empty result from one
+// carries two different states at once and cannot be trusted as it stands.
+// When a check here reads through such a loader, establish what the
+// normalization erased (the raw bytes, the pre-default value) before choosing a
+// message — the operator recovery differs per state even where the level does
+// not. Stage 3's `verify` reads through the same class of loader.
 
 'use strict';
 
@@ -128,6 +137,20 @@ function teamPreflight(team, probes) {
         findings.push({
           level: 'warn', kind: 'exec', role, ref: raw, resolvedFrom: null,
           message: `role "${role}": template "${def.template}" grants exec command "${raw}", which has no def installed under library/exec`,
+        });
+        continue;
+      }
+      if (entry.unreadable) {
+        // A def that EXISTS but does not parse. The probe has to hand this over
+        // as its own condition, because the lister it reads through drops a
+        // garbled file exactly like an absent one — and telling the operator to
+        // install a file already sitting on disk sends them at the wrong repair
+        // while every call keeps failing on a parse error. `resolvedFrom` stays
+        // null: nothing resolved. Ends this def's line — there are no parsed
+        // argv/cwd to check below.
+        findings.push({
+          level: 'warn', kind: 'exec', role, ref: raw, resolvedFrom: null,
+          message: `role "${role}": exec command "${raw}" has a def file under library/exec that could not be parsed — the runner cannot read it, so every call fails; repair the JSON`,
         });
         continue;
       }

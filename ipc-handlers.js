@@ -209,7 +209,18 @@ function registerIpcHandlers(deps) {
         // of the same bytes that can disagree with the first.
         readExecDef: (id) => {
           if (!execDefs) execDefs = execLibrary.list();
-          return execDefs.find((d) => d && d.name === id) || null;
+          const hit = execDefs.find((d) => d && d.name === id);
+          if (hit) return hit;
+          // list() `continue`s past a file whose JSON fails to parse, so absence
+          // from it means "no file" OR "garbled file" — two different operator
+          // recoveries (write one vs. repair the one on disk), and two different
+          // runner failures. raw() is the only thing that separates them, and it
+          // reads bytes rather than re-parsing, so it cannot disagree with the
+          // parse above. The sentinel keeps the leaf pure: it names this one
+          // condition, and must not grow into a general "list() had a problem".
+          let bytes = null;
+          try { bytes = execLibrary.raw(id); } catch { bytes = null; }
+          return bytes == null ? null : { name: id, unreadable: true };
         },
         resolvePrompt: (kind, stem) => (promptLibrary.raw(kind, stem) == null ? null : 'library'),
       });
