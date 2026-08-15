@@ -2380,6 +2380,25 @@ function createTicketMethods(deps, shared) {
           const tickets = ticketsStore.load(team.root);
           const rec = tickets.find((x) => x.id === t.id);
           if (!rec) return;
+          // Re-checked HERE, not at the decision above: this hook fires at WRITE
+          // time, which the queue's gates put up to INJECT_QUIET_MAXWAIT (5min)
+          // later, and reassignment is the documented recovery for a silent seat —
+          // so a hand-off landing inside that window is reachable, not theoretical.
+          // Stamping anyway writes `deliveredTo = this seat` against a pin naming
+          // another, and nothing self-heals it: `_repinTicketToSeat` bails on
+          // pinned-and-live. Dropping the stamp is the safe direction — the stamp
+          // only SUPPRESSES redelivery, so losing it costs one REPLAY-marked
+          // re-send, while a wrong one suppresses the replay of a seat that no
+          // longer holds the ticket and hands the cost falsifier a disagreement
+          // that unknowns-out an attribution which was in fact clean. The same
+          // holder check _checkSpecConfirm uses to drop a latch on a reassigned
+          // ticket. Returning before the re-pin too: whatever made the other seat
+          // the holder re-pinned already, and this replay delivered to nobody it
+          // should record.
+          if (this._ticketAssigneeSeat(team, rec) !== session.name) {
+            log.info('intent', `replay stamp for ${t.id} dropped at ${session.name}: the ticket now resolves elsewhere`);
+            return;
+          }
           rec.deliveredTo = { seat: session.name, incarnation: session.incarnation, at: Date.now() };
           // Replay is the OTHER hand-off, so it re-pins for the same reason advance
           // does: handing a queued ticket to a seat IS its dispatch. Without this a

@@ -1902,4 +1902,78 @@ test('t387: a redirect latch and its timer are dropped when the seat dies', asyn
   } finally { app.stop(); }
 });
 
+// t410 — the stamp rides the WRITE, and the queue's gates put that up to
+// INJECT_QUIET_MAXWAIT (5min) after the replay decided. Reassignment is the
+// documented recovery for a silent seat, so a hand-off landing inside that window
+// is the reachable case, not a theoretical one — and a stamp taken at the far end
+// of it names seat A against a pin that now names B. Nothing self-heals it:
+// _repinTicketToSeat bails on pinned-and-live.
+//
+// The deferral is REAL here, not simulated by calling the hook late: the claude
+// queue's ready gate blocks on _bootReadySeen, this seat never announces until the
+// emit below, and the reassignment happens while the write is still sitting in that
+// loop. A test that merely invoked the stamp after a reassignment would pass
+// against a guard placed anywhere, including one the queue can never reach.
+test('a reassignment inside the deferral window is not overwritten by the late stamp', async () => {
+  const world = mkWorld();
+  // Dispatched to the ROLE with no hand live, so it goes out UNDELIVERED and
+  // unstamped — the ordinary way a ticket reaches a later process with a bare
+  // record, and the only setup where "no stamp for A" is a statement about this
+  // process rather than about an earlier one's leftovers.
+  const app1 = boot(world);
+  const lead1 = await app1.spawn('lead');
+  app1.m._handleTask(lead1, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+  app1.m._handleTask(lead1, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  const filed = world.tickets().find((t) => t.id === 't1');
+  assert.strictEqual(filed.state, 'open', 'ENTER: minted open');
+  assert.ok(filed.startedAt, 'ENTER: and STARTED — an unstarted ticket is not replayed at all, so the '
+    + 'interleaving below would never begin');
+  assert.strictEqual(filed.deliveredTo == null, true,
+    'ENTER: and carries no stamp, or the absence asserted at the end would be inherited rather than proven');
+  app1.stop();
+
+  // Both caps far away: the fallback and the boot drain must not fire during this
+  // test, so the ONLY thing that releases the queued write is the emit below —
+  // which is what makes the reassignment land strictly inside the window.
+  const app2 = boot(world, { deps: { INJECT_BOOT_MAXWAIT: 60_000, bootDrainSettleMs: 60_000 } });
+  try {
+    const lead2 = await app2.spawn('lead');
+    const a = await app2.spawn('team-hand-1');
+    await app2.spawn('team-hand-2');
+    app2.m._replayTicketsOnce(a);
+
+    // The write is committed to the queue and STUCK in its ready loop. Asserted
+    // positively in both directions: something is pending, and nothing has been
+    // written or stamped — an assertion about a reassignment racing a write says
+    // nothing if there is no write in flight to race.
+    assert.ok(a._injectPtyQueue && a._injectPtyQueue.length > 0,
+      'ENTER: the replay must have enqueued a delivery, or there is no deferred write to interleave with');
+    assert.doesNotMatch(app2.seen('team-hand-1'), /BUILD THE WIDGET/,
+      'ENTER: and it must not have reached the PTY yet — the ready gate is what holds it');
+    assert.strictEqual(world.tickets().find((t) => t.id === 't1').deliveredTo == null, true,
+      'ENTER: nor stamped yet, since the stamp rides that write');
+
+    // The operator reassigns while the bytes are still in the loop.
+    app2.m._handleTask(lead2, { type: 'task', sub: 'assign', who: 'team-hand-2', id: 't1', body: '' });
+    assert.strictEqual(world.tickets().find((t) => t.id === 't1').assignee, 'team-hand-2',
+      'ENTER: the reassignment must have landed, or the guard under test is never reached');
+
+    // Release the gate: A's queued write now goes out, and its stamp hook fires
+    // against a record naming B.
+    app2.emit('team-hand-1', '\x1b[?2004h');
+    const got = await settled(app2, 'team-hand-1', /BUILD THE WIDGET/);
+    assert.match(got, /BUILD THE WIDGET/,
+      'ENTER: the deferred write must actually land at A — if the delivery were dropped instead, the missing '
+      + 'stamp below would be proving nothing about the guard');
+
+    const t = world.tickets().find((x) => x.id === 't1');
+    assert.strictEqual(t.assignee, 'team-hand-2',
+      'the record still names the seat the operator moved it to');
+    assert.strictEqual(t.deliveredTo == null, true,
+      'and carries NO stamp: a write-time stamp taken after the reassignment records a delivery to a seat the '
+      + 'ticket is no longer assigned to, and nothing later reconciles the two — the unstamped record simply '
+      + 'replays again, which is the safe failure');
+  } finally { app2.stop(); }
+});
+
 after(() => { setImmediate(() => process.exit(0)); });
