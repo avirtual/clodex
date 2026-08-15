@@ -401,7 +401,9 @@ function quotaChip(q, clientAgeS = 0) {
   const pct = q.usedPct != null ? `${Math.round(q.usedPct)}%` : null;
   const reset = fmtQuotaReset(q.resetsInS);
   const parts = [];
-  if (hot429) parts.push('rate limited');
+  // "rate limited" named a past event without saying what it means now; the
+  // operator's actual question is whether requests are landing.
+  if (hot429) parts.push('requests being refused');
   if (pct) parts.push(q.window ? `${pct} of ${q.window}` : pct);
   else if (q.window) parts.push(q.window);
   if (reset) parts.push(`resets in ${reset}`);

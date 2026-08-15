@@ -3451,14 +3451,18 @@ html, body {
    rule 1 binds nodes that can contain an xterm; this span holds text, and the
    availableFor tab-button exception already establishes the boundary. */
 #drawer-quota:empty { display: none; }
+/* Informative, not an alarm: the operator cannot act on this faster by being
+   startled, and the chip only appears at all once there is something to say.
+   So severity is carried by the WORDS, and the two levels differ by emphasis
+   within one calm palette — never by a red that competes with the terminal
+   behind it. */
 #drawer-quota[data-level="warn"] {
-  color: var(--warn, #d19a66);
-  background: color-mix(in srgb, var(--warn, #d19a66) 14%, transparent);
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text-dim) 10%, transparent);
 }
 #drawer-quota[data-level="loud"] {
-  color: var(--danger, #e06c75);
-  background: color-mix(in srgb, var(--danger, #e06c75) 18%, transparent);
-  font-weight: 600;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
 /* Nothing polls the API — a reading is only as fresh as the last forwarded
    turn, and rendering a stale number at full strength implies a liveness it

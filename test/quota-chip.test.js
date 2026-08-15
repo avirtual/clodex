@@ -125,7 +125,7 @@ test('quotaChip: a recent last_429 is loud even while status still says allowed'
   const q = shapeQuota({ ...LIVE, status: 'allowed', last_429_age_s: 30 }, CAPS);
   const chip = quotaChip(q);
   assert.strictEqual(chip.level, 'loud');
-  assert.match(chip.text, /rate limited/);
+  assert.match(chip.text, /requests being refused/);
 });
 
 test('quotaChip: an OLD last_429 does not keep the chip up on its own', () => {

@@ -2969,8 +2969,16 @@ function applyWarmBadge(name) {
 function refreshQuotaChip() {
   let best = null;
   let bestAt = -1;
-  for (const st of proxyState.values()) {
-    if (!st || !st.payload || !st.payload.quota) continue;
+  for (const [name, st] of proxyState) {
+    if (!st || !st.payload) continue;
+    // Claude seats only. The figure is a CLAUDE plan's, so attributing it to a
+    // codex seat misreports whose budget it is; and because a payload without
+    // quota used to win the freshest-wins race on its timestamp alone, a codex
+    // poll would blank the chip until the next Claude poll — the flicker and
+    // the misattribution are the same bug.
+    const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+    if (!el || el.dataset.type !== 'claude') continue;
+    if (!st.payload.quota) continue;
     if ((st.at || 0) > bestAt) { bestAt = st.at || 0; best = st.payload.quota; }
   }
   // Client-side age, not just the server's age_s: if the poller stops

@@ -4628,13 +4628,12 @@ body {
   display: none;
 }
 #drawer-quota[data-level=warn] {
-  color: var(--warn, #d19a66);
-  background: color-mix(in srgb, var(--warn, #d19a66) 14%, transparent);
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--text-dim) 10%, transparent);
 }
 #drawer-quota[data-level=loud] {
-  color: var(--danger, #e06c75);
-  background: color-mix(in srgb, var(--danger, #e06c75) 18%, transparent);
-  font-weight: 600;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
 #drawer-quota[data-stale] {
   opacity: 0.5;
@@ -19617,7 +19616,7 @@ ${i3.join("\n")}
         const pct = q.usedPct != null ? `${Math.round(q.usedPct)}%` : null;
         const reset = fmtQuotaReset(q.resetsInS);
         const parts = [];
-        if (hot429) parts.push("rate limited");
+        if (hot429) parts.push("requests being refused");
         if (pct) parts.push(q.window ? `${pct} of ${q.window}` : pct);
         else if (q.window) parts.push(q.window);
         if (reset) parts.push(`resets in ${reset}`);
@@ -32605,8 +32604,11 @@ ${detail}` });
       function refreshQuotaChip() {
         let best = null;
         let bestAt = -1;
-        for (const st of proxyState.values()) {
-          if (!st || !st.payload || !st.payload.quota) continue;
+        for (const [name, st] of proxyState) {
+          if (!st || !st.payload) continue;
+          const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+          if (!el || el.dataset.type !== "claude") continue;
+          if (!st.payload.quota) continue;
           if ((st.at || 0) > bestAt) {
             bestAt = st.at || 0;
             best = st.payload.quota;

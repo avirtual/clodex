@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- The drawer bar's plan-usage readout is calmer and no longer misreports whose
+  budget it is. It was red on a blue bar — hard to read, and an alarm about
+  something you cannot act on faster by being startled; severity now reads from
+  the words, in the same palette as the rest of the bar. "rate limited" named a
+  past event without saying what it meant, and is now "requests being refused".
+  It also appeared on Codex seats, where a Claude plan's figure does not belong,
+  and a Codex session's poll could blank it for everyone until the next Claude
+  poll — the flicker and the misattribution were one bug.
+
 ## 5.10.0 — 2026-08-15
 
 - Your Claude plan's usage now shows up in the drawer bar — the strip carrying
