@@ -322,6 +322,90 @@ test('team:preflight surfaces an unreadable manifest as an error with an EMPTY f
 // names appear comma-separated on ONE line only in the return literal (the deps
 // block lists them one-per-line), so this regex fails loudly if the export is
 // dropped again without matching the deps block by accident.
+// The garbled-def split lives in the HANDLER's probe, not in the leaf: only the
+// binding can tell "list() dropped it" from "there is no file", because only it
+// holds raw(). A leaf-only test would pin half the fix and pass while the probe
+// still returned null — the shape that made t415's first join test a false pass.
+// So this drives the REGISTERED handler against a REAL execLibrary over a REAL
+// temp registry with genuinely unparseable bytes on it.
+test('team:preflight: a def file that exists but is garbled reports REPAIR, end to end', () => {
+  const fsReal = require('fs');
+  const osReal = require('os');
+  const pathReal = require('path');
+  const { initStores } = require('../stores');
+
+  const registryDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t416-'));
+  const userData = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t416-ud-'));
+  const execDir = pathReal.join(registryDir, 'library', 'exec');
+  fsReal.mkdirSync(execDir, { recursive: true });
+  // Real bytes that real JSON.parse really rejects — not a stub pretending to
+  // fail. This is the file list() silently `continue`s past.
+  fsReal.writeFileSync(pathReal.join(execDir, 'garbled.json'), '{ "argv": ["bash",  <<< truncated');
+  const stores = initStores(userData, { log: console, registryDir });
+
+  // ENTER: the fixture must actually reach the state it names — the file is on
+  // disk AND absent from the listing. If a future list() started surfacing it,
+  // the assertion below would be about a case that no longer exists.
+  assert.strictEqual(stores.execLibrary.list().some((d) => d.name === 'garbled'), false,
+    'ENTER: list() must drop the garbled file — that is the lossiness under test');
+  assert.ok(stores.execLibrary.raw('garbled') != null,
+    'ENTER: the file must still be on disk — otherwise this is the no-def case');
+
+  const handlers = registerWith({
+    loadManifest: () => ({ name: 'shop', root: registryDir, roles: { hand: { prompt: 'p', template: 'hand-seat' } } }),
+    templates: { list: () => [{ name: 'hand-seat', execCommands: ['garbled'] }] },
+    execLibrary: stores.execLibrary, // the real store, over the real garbled file
+    promptLibrary: { raw: () => 'body' },
+    fs: fsReal,
+  });
+  const res = handlers['team:preflight']({}, 'shop');
+  assert.strictEqual(res.ok, true);
+  assert.deepStrictEqual(res.findings, [{
+    level: 'warn', kind: 'exec', role: 'hand', ref: 'garbled', resolvedFrom: null,
+    message: 'role "hand": exec command "garbled" has a def file under library/exec that could not be parsed — the runner cannot read it, so every call fails; repair the JSON',
+  }]);
+  // The regression this exists to catch: revert the probe's raw() consult and
+  // this message becomes "has no def installed under library/exec", sending the
+  // operator to write a file that is already sitting there.
+  assert.ok(!/has no def installed/.test(res.findings[0].message),
+    'a def file ON DISK must never be reported as one that was never installed');
+
+  fsReal.rmSync(registryDir, { recursive: true, force: true });
+  fsReal.rmSync(userData, { recursive: true, force: true });
+});
+
+test('team:preflight: a command with NO def file still reports install, through the same probe', () => {
+  // The other side of the split, driven through the same real store: with an
+  // empty exec dir, raw() returns null and the probe must fall through to the
+  // original message. A sentinel that leaked into this case would turn every
+  // missing def into a phantom parse error.
+  const fsReal = require('fs');
+  const osReal = require('os');
+  const pathReal = require('path');
+  const { initStores } = require('../stores');
+
+  const registryDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t416b-'));
+  const userData = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t416b-ud-'));
+  fsReal.mkdirSync(pathReal.join(registryDir, 'library', 'exec'), { recursive: true });
+  const stores = initStores(userData, { log: console, registryDir });
+
+  const handlers = registerWith({
+    loadManifest: () => ({ name: 'shop', root: registryDir, roles: { hand: { prompt: 'p', template: 'hand-seat' } } }),
+    templates: { list: () => [{ name: 'hand-seat', execCommands: ['ghost'] }] },
+    execLibrary: stores.execLibrary,
+    promptLibrary: { raw: () => 'body' },
+    fs: fsReal,
+  });
+  const res = handlers['team:preflight']({}, 'shop');
+  assert.deepStrictEqual(res.findings, [{
+    level: 'warn', kind: 'exec', role: 'hand', ref: 'ghost', resolvedFrom: null,
+    message: 'role "hand": template "hand-seat" grants exec command "ghost", which has no def installed under library/exec',
+  }], 'the no-def message must survive byte for byte — nothing already asserted may move');
+
+  fsReal.rmSync(registryDir, { recursive: true, force: true });
+  fsReal.rmSync(userData, { recursive: true, force: true });
+});
+
 test('createEngine returns the front-door writers on the seam ipc-handlers spreads', () => {
   const src = require('fs').readFileSync(require.resolve('../engine.js'), 'utf-8');
   assert.match(src, /createTeam, addRole, resolveTeam, listTeams,/,

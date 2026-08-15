@@ -223,6 +223,52 @@ test('an exec command with no def installed is a warn — an unreadable def is n
   }]);
 });
 
+// execLibrary.list() `continue`s past a file whose JSON fails to parse, so a
+// garbled def and an absent one both leave the list — and the operator was told
+// to install a file already on disk. The probe separates them with a sentinel;
+// this pins that the leaf gives that state its own recovery.
+test('a def file that exists but does not parse says REPAIR, not install', () => {
+  const findings = teamPreflight(TEAM, probes({
+    prompts: ['clodex-team-lead', 'clodex-team-hand'],
+    templates: [{ name: 'hand-seat', execCommands: ['garbled'] }],
+    // What the bound probe returns when list() dropped the file but raw() finds
+    // bytes on disk: present, unparseable, nothing decoded from it.
+    execs: { garbled: { name: 'garbled', unreadable: true } },
+  }));
+  assert.deepStrictEqual(findings, [{
+    level: 'warn',
+    kind: 'exec',
+    role: 'hand',
+    ref: 'garbled',
+    // null, not 'library': the file is there but nothing RESOLVED out of it.
+    resolvedFrom: null,
+    message: 'role "hand": exec command "garbled" has a def file under library/exec that could not be parsed — the runner cannot read it, so every call fails; repair the JSON',
+  }]);
+});
+
+test('the unreadable and no-def arms stay distinguishable — same level, different recovery', () => {
+  const findings = teamPreflight(
+    { name: 'shop', root: '/repo/shop', roles: { hand: { prompt: 'p', template: 'hand-seat' } } },
+    probes({
+      prompts: ['p'],
+      templates: [{ name: 'hand-seat', execCommands: ['ghost', 'garbled'] }],
+      execs: { garbled: { name: 'garbled', unreadable: true } }, // `ghost` has no def at all
+    }),
+  );
+  // ENTER: both rows must exist before the difference between them means
+  // anything — a probe change that collapsed one into the other would otherwise
+  // be read around by an assertion over the survivor alone.
+  assert.strictEqual(findings.length, 2, 'ENTER: both exec findings must have been emitted');
+  assert.deepStrictEqual(findings.map((f) => f.level), ['warn', 'warn'], 'same level: both are broken grants');
+  assert.deepStrictEqual(findings.map((f) => f.kind), ['exec', 'exec'], 'no new finding kind');
+  // The deliverable: the two messages must not be the same sentence. One says
+  // install, the other says repair.
+  assert.match(findings[0].message, /has no def installed under library\/exec/);
+  assert.match(findings[1].message, /could not be parsed/);
+  assert.ok(!/could not be parsed/.test(findings[0].message), 'the absent def must not claim a parse failure');
+  assert.ok(!/has no def installed/.test(findings[1].message), 'a file on disk must never be reported as missing');
+});
+
 test('an argv without ${TEAM_ROOT}, or with a token this module cannot expand, is NOT accused', () => {
   const findings = teamPreflight(TEAM, probes({
     prompts: ['clodex-team-lead', 'clodex-team-hand'],
