@@ -9,6 +9,7 @@ const { nameConflict } = require('./session-manager');
 // from a second one would drift from the delivery it is supposed to agree with.
 const { isDraftOpen } = require('./proxy-util');
 const { STOCK_ROLE_DEFS } = require('./team-manifest');
+const { teamPreflight } = require('./team-preflight');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
 const sessionDiscovery = require('./session-discovery');
@@ -184,6 +185,35 @@ function registerIpcHandlers(deps) {
   handle('team:setWatchdog', (_e, team, ms) => {
     try { return { ok: true, team: setTeamWatchdog(team, ms) }; }
     catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  // The probes are bound HERE rather than inside team-preflight.js so the module
+  // stays a pure leaf: every disk touch it makes is one of these four, which is
+  // what lets the whole findings table be asserted from a fixture with no library
+  // installed. `exists` is deliberately not confined — it checks absolute paths
+  // built from the team's own root, not caller-supplied name segments.
+  handle('team:preflight', (_e, name) => {
+    try {
+      const team = loadManifest(name);
+      // Listed once per CALL and never cached across calls: a preflight run after
+      // the operator installs the missing file must see it. The leaf calls this
+      // probe once per granted command, and re-listing the whole exec directory
+      // per command is the cost this local memo removes.
+      let execDefs = null;
+      const findings = teamPreflight(team, {
+        exists: (abs) => { try { return fs.existsSync(abs); } catch { return false; } },
+        listTemplates: () => templates.list(),
+        // execLibrary.list() already parses every def and keeps `argv`; reading
+        // the one file again by name would be a second parse of the same bytes
+        // that can disagree with the first.
+        readExecDef: (id) => {
+          if (!execDefs) execDefs = execLibrary.list();
+          return execDefs.find((d) => d && d.name === id) || null;
+        },
+        resolvePrompt: (kind, stem) => (promptLibrary.raw(kind, stem) == null ? null : 'library'),
+      });
+      return { ok: true, findings };
+    } catch (err) { return { ok: false, error: err.message, findings: [] }; }
   });
 
   handle('team:names', () => {

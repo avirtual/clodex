@@ -133,8 +133,28 @@ function formatBlockedBy(blockedBy) {
   return parts.join('; ');
 }
 
+// teamPreflight findings (a flat array over the whole team) → the per-role
+// buckets renderRows needs, in the order the resolver emitted them. A role with
+// nothing unresolved is ABSENT from the map rather than present-and-empty: the
+// findings array carries problems only, so "no key" is the resolved state and a
+// caller that iterates the map gets exactly the rows that owe something.
+//
+// Pure, and split out for that reason — the popover's DOM wiring is untestable,
+// this fold is where a badge could quietly attach to the wrong role.
+function preflightByRole(findings) {
+  const out = new Map();
+  for (const f of Array.isArray(findings) ? findings : []) {
+    if (!f || typeof f !== 'object') continue;
+    const role = typeof f.role === 'string' ? f.role : '';
+    if (!role) continue;
+    if (!out.has(role)) out.set(role, []);
+    out.get(role).push(f);
+  }
+  return out;
+}
+
 module.exports = {
-  teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote,
+  teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, preflightByRole,
   parseDuration, formatDuration, formatBlockedBy,
   DISPATCH_VALUES, DEFAULT_DISPATCH,
 };
