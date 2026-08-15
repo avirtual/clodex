@@ -25,7 +25,10 @@ blocks a release.
   breaks); an append file the template names but nobody has written yet reads as a
   note, since that's the normal state of a team someone just created. Create
   Team… lands on that popover, so a new team's first screen is the list of files
-  it still owes.
+  it still owes. The exec check covers everything the command actually needs —
+  the script it runs, the directory it runs in, and whether the command is
+  even well-formed enough to run at all — so a command that would fail on every
+  call can't show a tick.
 
 - "Keep warm — Always (until stopped)" now survives an app restart. It used to
   come back only when the agent took its next turn, which on an unattended seat

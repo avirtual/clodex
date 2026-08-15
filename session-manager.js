@@ -2326,6 +2326,15 @@ function createSessionManager(deps) {
         // reply channel at a clear, so it rides the ipc-message the refresh
         // already broadcasts rather than gaining one — only ever emitted when
         // resolution actually failed, so this is not per-reset noise.
+        //
+        // In practice this covers the APPEND arm only. On the rides-as-system
+        // arm the missing prompt never entered teamBlock in the first place, so
+        // the bytes are unchanged, the `already current` guard below returns
+        // early, and the broadcast never fires. Nothing is lost — that arm is
+        // reported at spawn — but do not restructure the refresh to force a
+        // broadcast: the guard is what keeps a clear/compact from re-baking
+        // identical bytes under a live CLI, which is a real property traded for
+        // a rare case.
         const { teamBlock, missingPrompt } = this._teamBlockFor(name, entry.cwd, session.agentType, entry.systemPromptFile || null);
         const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock);
         if (realIpc === readCache(REGISTRY_DIR, name, 'session')) return false; // already current

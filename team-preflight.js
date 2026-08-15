@@ -25,6 +25,16 @@
 // NOT A HOT PATH. It stats files and parses template/exec JSON per role — fine
 // for a popover open or a team create, wrong for resolveTeam, which runs on
 // every roster render.
+//
+// THE RULE THIS MODULE MUST HOLD AGAINST THE RUNNER: preflight checks
+// everything the runner expands, and accepts nothing the runner would refuse.
+// Both r2 must-fixes were one violation of it — the exec scan read `argv` but
+// not the def's `cwd`, which the runner expands identically, and an empty
+// `argv` (what execLibrary.list normalizes a malformed def to) read as
+// "resolved, nothing to check" while the runner refuses that def on every
+// call. A tick over a command that bounces every time is the exact failure
+// this module exists to kill, so when the runner grows a new expansion or a
+// new refusal, it grows here in the same change.
 
 'use strict';
 
@@ -122,10 +132,31 @@ function teamPreflight(team, probes) {
         continue;
       }
       const argv = Array.isArray(entry.argv) ? entry.argv : [];
-      for (const arg of argv) {
-        if (typeof arg !== 'string' || !arg.includes(TEAM_ROOT_TOKEN)) continue;
+      if (!argv.length) {
+        // execLibrary.list() normalizes a missing or non-array argv to [], so
+        // without this a malformed def reads as "resolved, nothing to check"
+        // while the runner refuses it outright ("malformed registry entry
+        // (needs a non-empty argv)") on every single call. Ends this def's
+        // line: the runner never reaches the cwd expansion below, so checking
+        // its paths would report a consequence of a def that cannot run at all.
+        findings.push({
+          level: 'warn', kind: 'exec', role, ref: raw, resolvedFrom: 'library',
+          message: `role "${role}": exec command "${raw}" has a def under library/exec but no argv to run — the runner refuses it as malformed, so every call bounces`,
+        });
+        continue;
+      }
+
+      // The runner expands the def's `cwd` with the SAME substitution it applies
+      // to argv, so a cwd carrying ${TEAM_ROOT} is as much a path this team must
+      // own — our own shipped clodex-run-tests.json is exactly that shape, and
+      // scanning argv alone gave it a tick over a directory that may not exist.
+      const scan = argv.map((value) => ({ value, verb: 'needs' }));
+      if (isNonEmptyString(entry.cwd)) scan.push({ value: entry.cwd, verb: 'runs in' });
+
+      for (const { value, verb } of scan) {
+        if (typeof value !== 'string' || !value.includes(TEAM_ROOT_TOKEN)) continue;
         if (!root) continue; // no root to substitute — see the header on false accusations
-        const abs = arg.split(TEAM_ROOT_TOKEN).join(root);
+        const abs = value.split(TEAM_ROOT_TOKEN).join(root);
         if (abs.includes('${')) continue; // another token we cannot resolve here
         let ok = false;
         try { ok = !!exists(abs); } catch { ok = false; }
@@ -136,7 +167,7 @@ function teamPreflight(team, probes) {
           // ${TEAM_ROOT} token — a def that hardcodes an absolute project path
           // runs the wrong project's script for every other team, silently.
           level: 'warn', kind: 'exec', role, ref: raw, resolvedFrom: 'library',
-          message: `role "${role}": exec command "${raw}" needs ${abs}, which does not exist under this team's root`,
+          message: `role "${role}": exec command "${raw}" ${verb} ${abs}, which does not exist under this team's root`,
         });
       }
     }
