@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- "Keep warm — Always (until stopped)" now survives an app restart. It used to
+  come back only when the agent took its next turn, which on an unattended seat
+  meant never: one measured restart left a seat with keep-warm switched on for
+  5.5 hours without a single ping, the cache going cold the whole time — the one
+  mode that exists for when nobody is watching was the one that quietly stopped.
+  Clodex now re-arms those holds at startup on its own. Unchanged: it still only
+  pings a cache that is still warm, so a seat whose cache lapsed during a long
+  shutdown stays quiet rather than paying to rebuild it, and timed holds (2h,
+  4h…) behave exactly as before.
+
 ## 5.9.0 — 2026-08-15
 
 - The internal wire log stops growing forever. `~/.clodex/wire-shadow.jsonl` is
