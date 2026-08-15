@@ -27,6 +27,10 @@ const SHAPED = {
   usedPct: 95.0,
   remainingPct: 5.0,
   resetsInS: 252486,
+  // This fixture publishes no absolute reset, which is the wirescope-fallback
+  // case: pickQuota keeps the relative countdown rather than voiding a reading
+  // for a field the poller's source never carried.
+  reset: null,
   ageS: 3.4,
   last429AgeS: null,
 };
