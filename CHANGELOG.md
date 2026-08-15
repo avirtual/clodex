@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.9.0 — 2026-08-15
+
 - The internal wire log stops growing forever. `~/.clodex/wire-shadow.jsonl` is
   a forensic record nothing reads back automatically, and with no retention at
   all it had reached 61MB on one machine — around 1.9MB a day. It now keeps
