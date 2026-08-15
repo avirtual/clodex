@@ -110,6 +110,11 @@ const API_CONTRACT = [
   { name: 'invalidateToolCache', kind: 'invoke', channel: 'tools:invalidate' },
   { name: 'onUpdateAvailable', kind: 'on', channel: 'update-available' },
   { name: 'onSessionContextAction', kind: 'on', channel: 'session:context-action' },
+  // Is the operator mid-line in this session? Asked before a newly created
+  // session is allowed to take the keyboard (renderer/lib/focus-policy.js).
+  // The answer comes from the same main-side draft state the inject queue gates
+  // on, so focus and delivery cannot disagree about who is typing.
+  { name: 'draftOpen', kind: 'invoke', channel: 'session:draftOpen' },
   { name: 'writeToSession', kind: 'send', channel: 'pty-input' },
   { name: 'selectDirectory', kind: 'invoke', channel: 'dialog:selectDirectory' },
   { name: 'confirmKill', kind: 'invoke', channel: 'dialog:confirmKill' },

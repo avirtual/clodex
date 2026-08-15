@@ -485,6 +485,11 @@ function createTicketMethods(deps, shared) {
           this._applyTemplatePersistence(name, tpl);
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd: spawnCwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
+            // Agent-initiated: appears while the operator is working somewhere
+            // else, so it may not take the keyboard. The reload respawn in
+            // session-manager omits this flag on purpose — that one is the
+            // operator's own seat coming back and keeps its focus.
+            background: true,
           });
           const where = wt ? `${spawnCwd} (worktree, branch ${wt.branch})` : spawnCwd;
           this._broadcast('ipc-message', {
@@ -749,6 +754,7 @@ function createTicketMethods(deps, shared) {
           this._applyTemplatePersistence(name, shape.tpl);
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
+            background: true,
           });
           // Kept, and deliberately CONTENTLESS: the prompt above carries the scope,
           // but a prompt alone never makes the CLI take a turn. This is the nudge
@@ -2993,6 +2999,7 @@ function createTicketMethods(deps, shared) {
             action: 'reattach', name: seat.name, type: (this.sessions.get(seat.name) || {}).agentType || null,
             cwd: team.root, backend: (this.sessions.get(seat.name) || {}).backend || null,
             noWire: !!(this.sessions.get(seat.name) || {}).noWire,
+            background: true,
           });
           const d = this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true);
           this._broadcast('ipc-message', {

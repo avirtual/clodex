@@ -23,6 +23,14 @@ blocks a release.
   shutdown stays quiet rather than paying to rebuild it, and timed holds (2h,
   4h…) behave exactly as before.
 
+- A seat spawned by an agent no longer steals the keyboard while you are
+  typing. Previously a ticket seat or an `[agent:spawn]` appearing mid-sentence
+  would jump focus to itself, and the rest of the line you were writing went to
+  the new session instead of the one you meant. Agent-spawned sessions now
+  appear in the sidebar without taking focus, and a session you create yourself
+  still opens focused as before — except while you have a half-typed line open,
+  which nothing interrupts.
+
 ## 5.9.0 — 2026-08-15
 
 - The internal wire log stops growing forever. `~/.clodex/wire-shadow.jsonl` is

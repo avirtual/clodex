@@ -731,6 +731,13 @@ which is why the judgement worth testing is pushed down here.
   inline notice, and the missing-CLI overlay plan), **placement.js** (the "Run
   in" selector: `'host'` or a sandbox BOX ID), **prefs-gate.js** (which
   Preferences controls are inert given dialog state, plus the reason line).
+- **focus-policy.js** — whether a session that was just CREATED may take the
+  keyboard. An open draft in the focused session vetoes it whatever spawned the
+  new one; otherwise provenance decides, so agent-spawned seats stay in the
+  background and manual creates focus as before. The draft answer arrives by
+  injection from main (`session:draftOpen` → proxy-util's `isDraftOpen`) — the
+  predicate the inject queue already gates on, never a renderer-local guess at
+  who is typing.
 - **intent-marks.js** — classify rendered terminal rows as a `fire` intent, an
   `inert` one (intent-shaped, will not fire), or unmarked (escaped/fenced).
   Uses intent-scanner's own grammar, never a private regex: a mark is believed,

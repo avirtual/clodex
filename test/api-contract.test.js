@@ -32,6 +32,8 @@ const PINNED_NAMES = [
   'markNotificationRead', 'markAllNotificationsRead', 'removeNotification', 'notificationUnreadCount',
   'checkForUpdate', 'getUpdateInfo', 'getReleases', 'openUpdate',
   'getVersion', 'getDiagnostics', 'toolsCheck', 'invalidateToolCache', 'onUpdateAvailable', 'onSessionContextAction',
+  // t412: the focus decision's read of main-side draft state.
+  'draftOpen',
   'writeToSession', 'selectDirectory', 'confirmKill', 'restoreSessions',
   'onPtyData', 'onSessionExit', 'onIpcMessage', 'onSessionActivity',
   // Retires the drawer status line's claim about a delivery that had not
@@ -172,8 +174,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 255-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 255, 'pinned list is the full 255-method surface');
+test('contract covers exactly the pinned 256-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 256, 'pinned list is the full 256-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -197,7 +199,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 255, 'window.api has exactly 255 methods');
+    assert.equal(generated.length, 256, 'window.api has exactly 256 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);
