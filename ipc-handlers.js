@@ -203,9 +203,10 @@ function registerIpcHandlers(deps) {
       const findings = teamPreflight(team, {
         exists: (abs) => { try { return fs.existsSync(abs); } catch { return false; } },
         listTemplates: () => templates.list(),
-        // execLibrary.list() already parses every def and keeps `argv`; reading
-        // the one file again by name would be a second parse of the same bytes
-        // that can disagree with the first.
+        // execLibrary.list() already parses every def and keeps both `argv` and
+        // `cwd` — the two strings the runner expands, so both must survive to
+        // the leaf. Reading the one file again by name would be a second parse
+        // of the same bytes that can disagree with the first.
         readExecDef: (id) => {
           if (!execDefs) execDefs = execLibrary.list();
           return execDefs.find((d) => d && d.name === id) || null;

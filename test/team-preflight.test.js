@@ -136,6 +136,77 @@ test('a ${TEAM_ROOT} exec script missing under THIS team root is a warn naming t
   }]);
 });
 
+// The runner expands `cwd` with the same substitution it applies to argv
+// (session-manager, _handleExecIntent: `runCwd = entry.cwd ? expandVars(entry.cwd) : …`),
+// and our own shipped clodex-run-tests.json carries `"cwd": "${TEAM_ROOT}"` —
+// so scanning argv alone gave a tick to a def that ENOENTs at run time.
+test('a ${TEAM_ROOT} cwd missing under THIS team root is a warn, even when every argv resolves', () => {
+  const findings = teamPreflight(TEAM, probes({
+    prompts: ['clodex-team-lead', 'clodex-team-hand'],
+    templates: [{ name: 'hand-seat', execCommands: ['run-tests'] }],
+    execs: { 'run-tests': { argv: ['/bin/sh', '${TEAM_ROOT}/scripts/t.sh'], cwd: '${TEAM_ROOT}/scripts' } },
+    // The SCRIPT is installed; only the working directory is not. Without the
+    // cwd scan this fixture produces [] and reads as a healthy team.
+    files: ['/repo/shop/scripts/t.sh'],
+  }));
+  assert.deepStrictEqual(findings, [{
+    level: 'warn',
+    kind: 'exec',
+    role: 'hand',
+    ref: 'run-tests',
+    resolvedFrom: 'library',
+    message: 'role "hand": exec command "run-tests" runs in /repo/shop/scripts, which does not exist under this team\'s root',
+  }]);
+});
+
+test('a resolving ${TEAM_ROOT} cwd is silent — the check is a resolution, not a blanket accusation', () => {
+  const findings = teamPreflight(TEAM, probes({
+    prompts: ['clodex-team-lead', 'clodex-team-hand'],
+    templates: [{ name: 'hand-seat', execCommands: ['run-tests'] }],
+    // The exact shape of the shipped def: script under the root, cwd AT the root.
+    execs: { 'run-tests': { argv: ['/bin/sh', '${TEAM_ROOT}/scripts/test-digest.sh'], cwd: '${TEAM_ROOT}' } },
+    files: ['/repo/shop/scripts/test-digest.sh', '/repo/shop'],
+  }));
+  assert.deepStrictEqual(findings, []);
+});
+
+// execLibrary.list() normalizes a missing or non-array argv to [], so the
+// malformed def arrives here looking like "resolved, nothing to check" — while
+// the runner refuses it on every call ("malformed registry entry (needs a
+// non-empty argv)"). A command that bounces every time was preflight-clean.
+test('a def with an empty argv is a warn — preflight accepts nothing the runner would refuse', () => {
+  const findings = teamPreflight(TEAM, probes({
+    prompts: ['clodex-team-lead', 'clodex-team-hand'],
+    templates: [{ name: 'hand-seat', execCommands: ['broken'] }],
+    execs: { broken: { argv: [], cwd: '${TEAM_ROOT}' } },
+    files: ['/repo/shop'],
+  }));
+  assert.deepStrictEqual(findings, [{
+    level: 'warn',
+    kind: 'exec',
+    role: 'hand',
+    ref: 'broken',
+    // The def itself IS installed and readable — that is what distinguishes
+    // this from the no-def-at-all case, which carries resolvedFrom: null.
+    resolvedFrom: 'library',
+    message: 'role "hand": exec command "broken" has a def under library/exec but no argv to run — the runner refuses it as malformed, so every call bounces',
+  }]);
+});
+
+test('the empty-argv warn ENDS that def — a def that cannot run is not also accused of its paths', () => {
+  const findings = teamPreflight(TEAM, probes({
+    prompts: ['clodex-team-lead', 'clodex-team-hand'],
+    templates: [{ name: 'hand-seat', execCommands: ['broken'] }],
+    // cwd points at a directory that does NOT exist. The runner never reaches
+    // the cwd expansion for this def, so reporting it would name a consequence
+    // of a command that cannot run at all.
+    execs: { broken: { cwd: '${TEAM_ROOT}/nowhere' } },
+    files: [],
+  }));
+  assert.strictEqual(findings.length, 1, 'ENTER: the malformed-def warn must have been emitted at all');
+  assert.deepStrictEqual(findings.map((f) => f.message.includes('no argv to run')), [true]);
+});
+
 test('an exec command with no def installed is a warn — an unreadable def is not a skipped check', () => {
   const findings = teamPreflight(TEAM, probes({
     prompts: ['clodex-team-lead', 'clodex-team-hand'],
