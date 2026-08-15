@@ -894,7 +894,9 @@ function createSessionManager(deps) {
           // Counts only — a name or an id here would be the first step toward a
           // log line that carries what was replayed.
           log.info('keepwarm', `restored ${r.restored} perpetual hold(s) at startup ` +
-            `(${r.declined} declined cold, ${r.dropped} no longer armed)`);
+            // "declined" without a cause: the count also covers warmth-store
+            // errors, which are deliberately NOT treated as a cold prefix.
+            `(${r.declined} declined, ${r.dropped} no longer armed)`);
         }
       } catch (e) {
         this._shadowLog({ type: 'wire-hold-restore-error', error: e.message });
