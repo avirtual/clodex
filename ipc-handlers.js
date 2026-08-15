@@ -218,6 +218,11 @@ function registerIpcHandlers(deps) {
           // reads bytes rather than re-parsing, so it cannot disagree with the
           // parse above. The sentinel keeps the leaf pure: it names this one
           // condition, and must not grow into a general "list() had a problem".
+          // Not redundant with raw()'s own catch: that one covers the READ,
+          // while _file() resolves outside it and throws on a name confineOrThrow
+          // refuses. Uncaught, one bad name in one template collapses the whole
+          // team's preflight to {ok:false} — reporting nothing because a single
+          // name was bad is the swallow this module exists to kill.
           let bytes = null;
           try { bytes = execLibrary.raw(id); } catch { bytes = null; }
           return bytes == null ? null : { name: id, unreadable: true };
