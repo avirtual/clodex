@@ -204,6 +204,10 @@ class QuotaStore {
     // once so the org lookup and the parse agree.
     const lower = {};
     for (const [k, v] of Object.entries(headers || {})) lower[String(k).toLowerCase()] = v;
+    // A response that omits the org header files under the literal 'default'
+    // and persists as its own row, so one real org that intermittently omits it
+    // reads as two accounts. Faithful to the reference and nothing surfaces the
+    // account count today — for whoever does.
     const acct = lower['anthropic-organization-id'] || 'default';
     const parsed = parseQuotaHeaders(lower);
     if (!parsed) {
