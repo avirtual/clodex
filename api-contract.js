@@ -139,6 +139,13 @@ const API_CONTRACT = [
   { name: 'onSessionAttention', kind: 'on', channel: 'session-attention' },
   { name: 'onSessionCtx', kind: 'on', channel: 'session-ctx' },
   { name: 'onSessionProxy', kind: 'on', channel: 'session-proxy' },
+  // Account plan quota off our own wire's response headers. Window-wide and
+  // session-less by nature — the figure is the whole account's, and it arrives
+  // on a forwarded turn rather than on a poll.
+  { name: 'onWireQuota', kind: 'on', channel: 'wire-quota' },
+  // The startup read of the same figure: the broadcast above only fires on a
+  // forwarded turn, so a restored reading needs a pull to reach a new window.
+  { name: 'getWireQuota', kind: 'invoke', channel: 'wire:quota' },
   { name: 'onSessionFiles', kind: 'on', channel: 'session-files' },
   { name: 'sessionFiles', kind: 'invoke', channel: 'session:files' },
   { name: 'filePeek', kind: 'invoke', channel: 'file:peek' },

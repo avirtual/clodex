@@ -56,8 +56,14 @@ test('shapeQuota: the live payload maps to the whole shaped object', () => {
     usedPct: 95.0,
     remainingPct: 5.0,
     resetsInS: 252486,
+    // Absolute epoch (t418): pickQuota derives the live remainder from this, so
+    // an idle reading's countdown keeps ticking and a rolled window goes void.
+    reset: 1787043600,
     ageS: 3.4,
     last429AgeS: null,
+    // Absolute epoch of the last refusal, for the same reason: pickQuota
+    // derives the live age from it, so the loud chip decays with no traffic.
+    last429At: null,
   });
 });
 
@@ -84,8 +90,13 @@ test('shapeQuota: a missing primary falls back to the top-level window/reset', (
     usedPct: null,
     remainingPct: null,
     resetsInS: 900,
+    // A payload from a proxy that publishes no absolute reset: the relative
+    // countdown is all there is, and pickQuota keeps it rather than voiding a
+    // reading for a field it never carried.
+    reset: null,
     ageS: 1,
     last429AgeS: null,
+    last429At: null,
   });
 });
 

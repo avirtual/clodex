@@ -337,7 +337,14 @@ class WireProxy extends EventEmitter {
         if (!HOP_BY_HOP.has(k.toLowerCase())) respHeaders[k] = v;
       }
       const sse = detectSse(upRes.headers['content-type'], chatgptMode, req.method, ctx.upstreamPath);
-      this.emit('response', { agent, reqId, status: upRes.statusCode, sse });
+      // `headers` carries the whole hop-by-hop-filtered response map, which is
+      // where the `anthropic-ratelimit-unified-*` plan quota rides (wire/quota.js
+      // is the reader). Emitted before the tee is built so a tee failure cannot
+      // cost us the reading.
+      // `provider` is load-bearing, not decoration: this wire forwards codex
+      // too, and a subscriber that reads a 429 off an openai response has no
+      // header to tell the providers apart — see the quota subscriber's gate.
+      this.emit('response', { agent, provider, reqId, status: upRes.statusCode, sse, headers: respHeaders });
 
       // On the first tee throw the tee is dropped for this stream; stream-end
       // must still pair with stream-start so activity state can't wedge.

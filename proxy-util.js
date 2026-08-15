@@ -351,6 +351,12 @@ function shapeQuota(q, capabilities) {
     usedPct: num(p.used_pct),
     remainingPct: num(p.remaining_pct),
     resetsInS: num(p.resets_in_s) ?? num(q.resets_in_s),
+    // ABSOLUTE epoch seconds, preferred over resetsInS by pickQuota. A stored
+    // countdown is a snapshot: it freezes the moment traffic stops, and once
+    // the window rolls the reading describes a window that already reset. The
+    // wire source always carries this; a wirescope payload may not, which is
+    // why resetsInS stays as the fallback rather than being replaced.
+    reset: num(p.reset) ?? num(q.reset),
     // Nothing polls the API — every reading is only as fresh as the last
     // forwarded turn, so the renderer needs this to mark it stale.
     ageS: num(q.age_s),
@@ -358,6 +364,81 @@ function shapeQuota(q, capabilities) {
     // the wall was hit cannot raise the percentage. A recent last_429 beside a
     // sub-100% figure is the EXPECTED shape, not a contradiction.
     last429AgeS: num(q.last_429_age_s),
+    // ABSOLUTE epoch, for the same reason as `reset` above and preferred over
+    // the relative age by pickQuota. The relative one is computed when the
+    // reading is BUILT: under a poll it was recomputed every few seconds, but
+    // the wire stamps it once per forwarded turn, so a fleet that stops driving
+    // after a refusal burst — the natural reaction — would hold the chip loud
+    // forever. Both sources publish the epoch.
+    last429At: num(q.last_429),
+  };
+}
+
+// The whole selection rule for "which of the readings we hold do we render",
+// pure and testable. It lives here rather than in the renderer's DOM loop
+// because its ABSENCE is what let a real bug ship: a codex seat's poll won the
+// freshest-wins race on its timestamp alone and blanked the chip, and the
+// workaround was a sidebar-DOM session-type filter no test could reach.
+//
+// `entries` are `{ quota, at, source }` — `quota` already through shapeQuota,
+// `at` the ms epoch WE received it, `source` 'wire' or 'wirescope'.
+// Returns `{ quota, clientAgeS }` (quota carrying a freshly derived
+// resetsInS), or null for "render nothing".
+//
+// Four rules, in order:
+//  1. A reading whose window has ALREADY ROLLED is void, not stale — its
+//     percentage describes a window that no longer exists, and showing it is
+//     worse than showing nothing. Only an absolute `reset` can detect this.
+//  2. A reading with NOTHING to display (no percentage and no window) ranks
+//     below one that has both, whatever its source. quotaChip renders null for
+//     such an entry, so letting it win by source rank blanks a chip a complete
+//     reading could have filled — a milder cousin of the bug that shipped.
+//  3. 'wire' outranks 'wirescope' regardless of age: the wire reading comes off
+//     our own forwarded turn, so it cannot be older than the poll of a cache
+//     that the same turn updated.
+//  4. Freshest wins within a rank.
+// Note there is no session-type filter and no need for one: a codex turn
+// carries no ratelimit headers, so a codex seat contributes no entry at all.
+function pickQuota(entries, nowMs = Date.now()) {
+  if (!Array.isArray(entries)) return null;
+  const nowS = nowMs / 1000;
+  let best = null;
+  let bestRank = -1;
+  let bestAt = -Infinity;
+  for (const e of entries) {
+    if (!e || !e.quota) continue;
+    const q = e.quota;
+    // Rule 1. Applied only when we have an absolute reset — a wirescope
+    // payload without one keeps its relative countdown rather than being
+    // discarded for a field it never carried.
+    if (typeof q.reset === 'number' && Number.isFinite(q.reset) && nowS > q.reset) continue;
+    // Rule 2 dominates rule 3: completeness is worth more than provenance,
+    // because an incomplete winner renders nothing at all.
+    const complete = q.usedPct != null || q.window != null;
+    const rank = (complete ? 2 : 0) + (e.source === 'wire' ? 1 : 0);
+    const at = typeof e.at === 'number' ? e.at : 0;
+    if (rank > bestRank || (rank === bestRank && at > bestAt)) {
+      bestRank = rank; bestAt = at; best = e;
+    }
+  }
+  if (!best) return null;
+  const q = best.quota;
+  // Derive the remainder at render time from the absolute reset, so an idle
+  // fleet's countdown keeps ticking with no traffic at all. Falls back to the
+  // stored relative value only when no absolute reset was published.
+  const resetsInS = (typeof q.reset === 'number' && Number.isFinite(q.reset))
+    ? Math.max(0, Math.round(q.reset - nowS))
+    : q.resetsInS;
+  // Same derivation for the refusal age: whatever QUOTA_429_RECENT_S is, its
+  // clock has to RUN, and a value stamped at broadcast time stops running the
+  // moment traffic does.
+  const last429AgeS = (typeof q.last429At === 'number' && Number.isFinite(q.last429At))
+    ? Math.max(0, Math.round(nowS - q.last429At))
+    : q.last429AgeS;
+  const at = typeof best.at === 'number' ? best.at : 0;
+  return {
+    quota: { ...q, resetsInS, last429AgeS },
+    clientAgeS: at > 0 ? (nowMs - at) / 1000 : 0,
   };
 }
 
@@ -476,7 +557,7 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
 
 module.exports = {
   PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shapeSubagent,
-  shapeQuota, quotaChip, fmtQuotaReset, QUOTA_STALE_S, QUOTA_429_RECENT_S,
+  shapeQuota, quotaChip, pickQuota, fmtQuotaReset, QUOTA_STALE_S, QUOTA_429_RECENT_S,
   boxWirescopeView, strictMcpReason, STRICT_MCP_EXPLANATION,
   AUTO_COMPACT, headroomBand, shouldAutoCompact, autoCompactDecision, isHumanPtyInput,
   draftChunkSignal, isDraftOpen, pasteModeSignal, PASTE_START, PASTE_END,

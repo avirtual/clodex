@@ -13,7 +13,7 @@ const { pluginReaches } = require('../plugin-api');
 const { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
 const { mergeMeta } = require('../meta-tiers');
 const { PendingInput } = require('../peer-input-queue');
-const { versionSeverity, updateApplies, releaseAgeInfo, quotaChip } = require('../proxy-util');
+const { versionSeverity, updateApplies, releaseAgeInfo, quotaChip, shapeQuota, pickQuota } = require('../proxy-util');
 const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('./lib/constants');
 const { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require('./lib/format');
 const { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require('./lib/render-html');
@@ -2961,32 +2961,30 @@ function applyWarmBadge(name) {
   el.dataset.refusal = (p && p.linked && p.refusals > 0) ? '1' : '';
 }
 
-// The plan quota is the ACCOUNT's, so it is the same block on every session's
-// payload and the drawer bar shows one readout for the window, not one per
-// session. Freshest wins rather than active-session-wins: the active session may
-// be a peer or a seat whose proxy has not polled since launch, and picking by
-// recency keeps the readout up to date without depending on which tab is open.
+// The plan quota is the ACCOUNT's, so the drawer bar shows one readout for the
+// window, not one per session. Two sources feed it: our own wire's response
+// headers (`wire-quota`, turn-frequency, preferred) and the wirescope poller's
+// `/_status` block, kept as the fallback for sessions not routed through our
+// wire. `pickQuota` holds the whole selection rule — including the void-on-roll
+// check that needs the absolute reset — so it can be unit-tested; this function
+// only gathers the candidates.
+//
+// No session-type filter here, and none is needed: a codex turn carries no
+// ratelimit headers, so a codex seat contributes no reading by construction.
+let wireQuota = null; // { quota, at } — window-wide, not per session
 function refreshQuotaChip() {
-  let best = null;
-  let bestAt = -1;
-  for (const [name, st] of proxyState) {
-    if (!st || !st.payload) continue;
-    // Claude seats only. The figure is a CLAUDE plan's, so attributing it to a
-    // codex seat misreports whose budget it is; and because a payload without
-    // quota used to win the freshest-wins race on its timestamp alone, a codex
-    // poll would blank the chip until the next Claude poll — the flicker and
-    // the misattribution are the same bug.
-    const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-    if (!el || el.dataset.type !== 'claude') continue;
-    if (!st.payload.quota) continue;
-    if ((st.at || 0) > bestAt) { bestAt = st.at || 0; best = st.payload.quota; }
+  const entries = [];
+  if (wireQuota) entries.push({ ...wireQuota, source: 'wire' });
+  for (const [, st] of proxyState) {
+    if (!st || !st.payload || !st.payload.quota) continue;
+    entries.push({ quota: st.payload.quota, at: st.at || 0, source: 'wirescope' });
   }
-  // Client-side age, not just the server's age_s: if the poller stops
+  // Client-side age, not just the server's age_s: if the source stops
   // delivering, age_s freezes at whatever it last said and the chip would keep
   // claiming freshness it does not have. Re-run every second from the interval
-  // below so a dead poller visibly dims instead of lying quietly.
-  const clientAgeS = bestAt > 0 ? (Date.now() - bestAt) / 1000 : 0;
-  drawerHost.setQuota(quotaChip(best, clientAgeS));
+  // below so a dead source visibly dims instead of lying quietly.
+  const picked = pickQuota(entries);
+  drawerHost.setQuota(picked ? quotaChip(picked.quota, picked.clientAgeS) : null);
 }
 
 window.api.onSessionProxy((name, payload) => {
@@ -2999,6 +2997,36 @@ window.api.onSessionProxy((name, payload) => {
   refreshActivityChips();
   if (name === activeSession) renderProxyBar();
 });
+
+// Account plan quota off our own wire. The capability gate `shapeQuota` applies
+// to a wirescope payload is about a proxy too old to compute the block; our own
+// wire computes it or sends nothing at all, so the capability is satisfied by
+// the message existing.
+window.api.onWireQuota((snapshot) => {
+  const shaped = shapeQuota(snapshot, { quota: true });
+  if (shaped) wireQuota = { quota: shaped, at: Date.now() };
+  refreshQuotaChip();
+});
+
+// The broadcast above fires only on a forwarded turn, so a reading restored
+// from disk needs this pull to reach a window opened before the first turn —
+// which is the blank-at-launch case the persistence exists to fix. `at` is the
+// reading's OWN age, not now: stamping it now would render a reading from last
+// week at full confidence.
+if (window.api.getWireQuota) {
+  window.api.getWireQuota().then((snapshot) => {
+    const shaped = shapeQuota(snapshot, { quota: true });
+    if (!shaped) return;
+    const ageMs = (shaped.ageS || 0) * 1000;
+    const at = Date.now() - ageMs;
+    // A turn can complete inside this round trip — plausible on a restart with
+    // active seats — and the broadcast it fires is fresher than what we asked
+    // for. Assigning unconditionally would put the restored reading back until
+    // the next turn.
+    if (!wireQuota || wireQuota.at < at) wireQuota = { quota: shaped, at };
+    refreshQuotaChip();
+  }).catch(() => { /* no wire, no reading — the chip's normal empty state */ });
+}
 
 const THINK_BADGE_MS = 2 * 60 * 1000;
 const THINK_LONG_MS = 10 * 60 * 1000;

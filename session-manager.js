@@ -607,6 +607,28 @@ function createSessionManager(deps) {
       }
       this._holdKeeper = hold;
       const wire = new WireProxy({ requireTokens: true, warmth, hold });
+      // Account plan quota rides the `anthropic-ratelimit-unified-*` response
+      // headers of every forwarded Claude turn. Header presence IS the gate for
+      // a READING: a codex turn carries none, so a codex seat yields no quota
+      // without anyone filtering by session type.
+      //
+      // The provider check is the second gate, and it covers what the first
+      // cannot: a 429 carries no ratelimit headers from ANY provider, so the
+      // store's 429 branch is reached on status alone and would file a codex
+      // refusal against the Claude org — turning the chip loud for a plan that
+      // was never refused. This wire is multi-provider; the Python reference
+      // called note() only from the anthropic receipt path.
+      wire.on('response', (ev) => {
+        if (!ev || !ev.headers) return;
+        if (ev.provider !== 'anthropic') return;
+        const store = this.quotaStore();
+        if (!store) return;
+        try {
+          if (store.note(ev.headers, { status: ev.status })) this._broadcastQuota();
+        } catch (e) {
+          this._shadowLog({ type: 'wire-quota-error', error: e.message });
+        }
+      });
       await wire.listen();
       this._shadow = new ShadowDiff((rec) => this._shadowLog(rec));
       wire.on('turn.completed', (t) => {
@@ -1033,6 +1055,48 @@ function createSessionManager(deps) {
         if (w && !w.isDestroyed()) out.push(w);
       }
       return out;
+    }
+
+    // Account plan quota read off our own wire's response headers.
+    //
+    // Built on FIRST USE rather than in `_ensureWire`, and that is load-bearing
+    // for the restored reading: `_ensureWire` runs when the first wire-routed
+    // session spawns, which on a cold launch is AFTER the window asks for the
+    // quota it should already be able to show. Constructing here lets the
+    // startup read restore from disk with no wire and no session.
+    quotaStore() {
+      if (this._quotaStore !== undefined) return this._quotaStore;
+      try {
+        const { QuotaStore } = require('./wire/quota');
+        this._quotaStore = new QuotaStore({
+          // userData, NOT ~/.clodex/run/<name>/ — that is rm -rf'd on every exit
+          // path, and surviving exactly that is the point of this file.
+          path: path.join(getUserDataPath(), 'wire-quota.sqlite'),
+          // MESSAGE only: these headers arrive on the same response as an
+          // authorization header, so nothing here hands the log an object.
+          onError: (message) => this._shadowLog({ type: 'wire-quota-store-error', error: message }),
+        });
+      } catch (e) {
+        this._shadowLog({ type: 'wire-quota-unavailable', error: e.message });
+        this._quotaStore = null;
+      }
+      return this._quotaStore;
+    }
+
+    // The plan quota is the ACCOUNT's, so it goes out window-wide on its own
+    // channel rather than riding a per-session payload. Deliberately NOT folded
+    // into the wirescope poller's `session-proxy`: that poller returns early
+    // when no session has a wirescope base, which would make the wire source —
+    // the one that needs no external service — depend on one existing.
+    _broadcastQuota() {
+      const store = this.quotaStore();
+      if (!store) return;
+      try {
+        const snap = store.snapshot();
+        if (snap) this._broadcast('wire-quota', snap);
+      } catch (e) {
+        this._shadowLog({ type: 'wire-quota-error', error: e.message });
+      }
     }
 
     _sendToSession(name, channel, ...args) {
