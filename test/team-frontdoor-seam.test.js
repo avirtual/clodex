@@ -251,6 +251,68 @@ test('team:addRole forwards to addRole, succeeds on an ordinary role, surfaces t
   assert.match(badTpl.error, /library-template name/);
 });
 
+// t414: the preflight handler is the popover's only source of findings, and it
+// is where the pure leaf's four probes get bound to real stores. Driven through
+// the REGISTERED handler with stubbed stores, for the same reason as everything
+// above it: a handler that reaches an undefined store returns {ok:false} with a
+// swallowed message, which is indistinguishable from a team that owes nothing.
+test('team:preflight binds the probes to the real stores and returns the leaf findings', () => {
+  const handlers = registerWith({
+    loadManifest: (name) => {
+      if (name !== 'shop') throw new Error(`no team manifest at ${name}`);
+      return { name: 'shop', root: '/repo/shop', roles: { hand: { prompt: 'gone', template: 'hand-seat' } } };
+    },
+    templates: { list: () => [{ name: 'hand-seat', execCommands: ['run-tests'], appendPromptFiles: ['owed'] }] },
+    execLibrary: { list: () => [{ name: 'run-tests', argv: ['bash', '${TEAM_ROOT}/scripts/t.sh'] }] },
+    promptLibrary: { raw: () => null }, // nothing installed, either rail
+    fs: { existsSync: () => false },
+  });
+  const res = handlers['team:preflight']({}, 'shop');
+  assert.strictEqual(res.ok, true);
+  // The WHOLE findings array. Each of the four probes must have been reached for
+  // this to be the answer: a probe left unbound returns undefined, the leaf takes
+  // its unresolved arm anyway, and a partial assertion would read right past it.
+  assert.deepStrictEqual(res.findings, [
+    {
+      level: 'warn', kind: 'prompt', role: 'hand', ref: 'gone', resolvedFrom: null,
+      message: 'role "hand": prompt "gone" is not installed under library/prompts/system — a seat spawned for this role boots unbriefed',
+    },
+    {
+      level: 'warn', kind: 'exec', role: 'hand', ref: 'run-tests', resolvedFrom: 'library',
+      message: 'role "hand": exec command "run-tests" needs /repo/shop/scripts/t.sh, which does not exist under this team\'s root',
+    },
+    {
+      level: 'note', kind: 'append', role: 'hand', ref: 'owed', resolvedFrom: null,
+      message: 'role "hand": template "hand-seat" composes append prompt "owed", which is not installed under library/prompts/append — write it, or drop it from the template',
+    },
+  ]);
+});
+
+test('team:preflight resolves against the stores rather than reporting everything missing', () => {
+  // The other direction, and the one that catches a probe wired to a constant:
+  // the SAME team with everything installed must come back clean.
+  const handlers = registerWith({
+    loadManifest: () => ({ name: 'shop', root: '/repo/shop', roles: { hand: { prompt: 'p', template: 'hand-seat' } } }),
+    templates: { list: () => [{ name: 'hand-seat', execCommands: ['run-tests'], appendPromptFiles: ['owed'] }] },
+    execLibrary: { list: () => [{ name: 'run-tests', argv: ['bash', '${TEAM_ROOT}/scripts/t.sh'] }] },
+    promptLibrary: { raw: () => 'body' },
+    fs: { existsSync: (p) => p === '/repo/shop/scripts/t.sh' },
+  });
+  assert.deepStrictEqual(handlers['team:preflight']({}, 'shop'), { ok: true, findings: [] });
+});
+
+test('team:preflight surfaces an unreadable manifest as an error with an EMPTY findings array', () => {
+  const handlers = registerWith({
+    loadManifest: () => { throw new Error('no team manifest at ghost'); },
+  });
+  const res = handlers['team:preflight']({}, 'ghost');
+  assert.strictEqual(res.ok, false);
+  assert.match(res.error, /no team manifest/);
+  // `findings: []` rather than absent: the popover reads `res.findings` and an
+  // undefined here would be an unrendered checklist that looks like a clean team.
+  assert.deepStrictEqual(res.findings, []);
+});
+
 // The regression guard proper. The handler tests above inject the writer as a
 // dep directly, so they prove the handler FORWARDS to it — but not that engine
 // actually populates that dep. The original bug lived in engine's RETURN

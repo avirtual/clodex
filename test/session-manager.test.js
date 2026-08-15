@@ -5324,6 +5324,52 @@ test('team-review: an installed role-prompt file yields NO unbriefed warning', a
   assert.ok(!injected.some((t) => /UNBRIEFED/.test(t)), 'no warning when the prompt is installed');
 });
 
+// t414 nit 3, a lead ruling: the rule is "reported ONCE". A reviewer whose prompt
+// rides as --system-prompt-file now fails BOTH the promptWarn above and create()'s
+// own missingPrompt finding, both landing in this one reply to this one lead. The
+// pre-existing warn wins; the relay stands down. Accepting the double-report is
+// how a rule stops being one.
+test('team-review (t414): a missing prompt reports ONCE — the spawn relay defers to the existing promptWarn', async () => {
+  const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-review-'));
+  const { m, injected, created } = mkReview({ REGISTRY_DIR, fs: fsReal, path: pathReal });
+  // create() would have found it too — this is the double-report shape, made
+  // real rather than assumed: without the dedupe both texts land in one reply.
+  m.create = async (...args) => {
+    created.push(args);
+    return { name: args[0], missingPrompt: 'role "reviewer" names system prompt "clodex-team-reviewer", which is not installed under library/prompts/system — team-reviewer-1 boots with NO system prompt' };
+  };
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  const confirm = injected.find((t) => /spawned team-reviewer-1/.test(t));
+  assert.ok(confirm, 'ENTER: the confirm line must exist — every assertion below reduces to it');
+  // ONE mention of the missing prompt, not two. Counted rather than matched:
+  // the two texts are worded differently on purpose, so a `.match` on either
+  // one alone passes while the other is also present.
+  assert.strictEqual((confirm.match(/clodex-team-reviewer/g) || []).length, 1,
+    'the missing prompt is named exactly once in the reply');
+  assert.match(confirm, /boots UNBRIEFED/, 'and the surviving one is the pre-existing warn, which names the recovery');
+  assert.ok(!/NO system prompt/.test(confirm), 'the new relay stood down rather than appending a second copy');
+});
+
+test('team-review (t414): with no promptWarn to defer to, the spawn finding DOES ride the reply', async () => {
+  const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-review-'));
+  const dir = pathReal.join(REGISTRY_DIR, 'library', 'prompts', 'system');
+  fsReal.mkdirSync(dir, { recursive: true });
+  // Installed, so the pre-existing promptWarn stays empty and the dedupe above
+  // does not fire — the arm that proves the relay is wired at all rather than
+  // merely always suppressed.
+  fsReal.writeFileSync(pathReal.join(dir, 'clodex-team-reviewer.md'), 'you are the reviewer');
+  const { m, injected, created } = mkReview({ REGISTRY_DIR, fs: fsReal, path: pathReal });
+  m.create = async (...args) => { created.push(args); return { name: args[0], missingPrompt: 'SOMETHING ELSE DID NOT RESOLVE' }; };
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  const confirm = injected.find((t) => /spawned team-reviewer-1/.test(t));
+  assert.ok(confirm, 'ENTER: the confirm line must exist');
+  assert.match(confirm, /WARNING: SOMETHING ELSE DID NOT RESOLVE/);
+});
+
 // NIT 5: a team with no `reviewer` role bounces the lead, nothing spawned.
 test('team-review: a team with no reviewer role bounces the lead', async () => {
   const { m, injected, created } = mkReview({
