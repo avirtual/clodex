@@ -96,6 +96,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   const tallBtn = document.getElementById('drawer-tall');
   const copyBtn = document.getElementById('drawer-copy');
   const statusEl = document.getElementById('drawer-status');
+  const quotaEl = document.getElementById('drawer-quota');
   const panesEl = document.getElementById('drawer-panes');
 
   const tenants = new Map(); // id -> { id, def, pane, actions, tabEl, badgeEl, unread, mounted }
@@ -698,9 +699,34 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
     armChanged();
   }
 
+  // The account plan quota readout. Takes an already-decided chip (proxy-util's
+  // `quotaChip`) — null means render NOTHING, which is the normal state for most
+  // of a cycle and the reason the chip appearing is itself the signal.
+  //
+  // Emptied rather than hidden: #drawer-header is a flex row with a gap, so an
+  // empty-but-present span would still cost 10px of the width Export/Clear were
+  // shrunk to free. Its ancestor is never display:none'd (host rule 1 is about
+  // the drawer's SUBTREE and the xterm inside it — this span holds text and sits
+  // in the header, so emptying it is safe where hiding a pane would not be).
+  function setQuota(chip) {
+    if (!quotaEl) return;
+    if (!chip) {
+      quotaEl.textContent = '';
+      quotaEl.removeAttribute('data-level');
+      quotaEl.removeAttribute('title');
+      quotaEl.removeAttribute('data-stale');
+      return;
+    }
+    quotaEl.textContent = chip.text;
+    quotaEl.dataset.level = chip.level;
+    quotaEl.title = chip.tip;
+    if (chip.stale) quotaEl.dataset.stale = '1';
+    else quotaEl.removeAttribute('data-stale');
+  }
+
   return {
     register, open, toggle, hasFocus, domSelection,
-    onSessionChanged, forgetSession, onSelectionSent,
+    onSessionChanged, forgetSession, onSelectionSent, setQuota,
     // Separate from onSessionChanged because that one is deliberately skipped on
     // the FIRST activation (nothing was armed yet, so there is no peek to
     // release) — while tab availability must be right for the first seat the

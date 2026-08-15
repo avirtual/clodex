@@ -13,7 +13,7 @@ const { pluginReaches } = require('../plugin-api');
 const { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
 const { mergeMeta } = require('../meta-tiers');
 const { PendingInput } = require('../peer-input-queue');
-const { versionSeverity, updateApplies, releaseAgeInfo } = require('../proxy-util');
+const { versionSeverity, updateApplies, releaseAgeInfo, quotaChip } = require('../proxy-util');
 const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('./lib/constants');
 const { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require('./lib/format');
 const { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require('./lib/render-html');
@@ -1353,6 +1353,9 @@ function removeSession(name, { keepPersisted = false } = {}) {
   removeSessionFromSidebar(name);
   updateWindowTitle();
   proxyState.delete(name);
+  // The removed session may have been the freshest quota carrier — without this
+  // the readout keeps showing a figure sourced from a payload nothing holds.
+  refreshQuotaChip();
   ctxPct.delete(name);
   ctxTokens.delete(name);
   filesState.delete(name);
@@ -2958,10 +2961,26 @@ function applyWarmBadge(name) {
   el.dataset.refusal = (p && p.linked && p.refusals > 0) ? '1' : '';
 }
 
+// The plan quota is the ACCOUNT's, so it is the same block on every session's
+// payload and the drawer bar shows one readout for the window, not one per
+// session. Freshest wins rather than active-session-wins: the active session may
+// be a peer or a seat whose proxy has not polled since launch, and picking by
+// recency keeps the readout up to date without depending on which tab is open.
+function refreshQuotaChip() {
+  let best = null;
+  let bestAt = -1;
+  for (const st of proxyState.values()) {
+    if (!st || !st.payload || !st.payload.quota) continue;
+    if ((st.at || 0) > bestAt) { bestAt = st.at || 0; best = st.payload.quota; }
+  }
+  drawerHost.setQuota(quotaChip(best));
+}
+
 window.api.onSessionProxy((name, payload) => {
   proxyState.set(name, { payload, at: Date.now() });
   applyWarmBadge(name);
   applySubagents(name);
+  refreshQuotaChip();
   // The drawer's chip strip is window-wide, so it re-reads all of proxyState
   // rather than this one payload — no argument to pass.
   refreshActivityChips();

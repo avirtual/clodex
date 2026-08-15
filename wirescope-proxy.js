@@ -1,7 +1,7 @@
 
 const http = require('http');
 const https = require('https');
-const { PROXY_AGENT_PREFIX, pickProxyRecord, shapeProxyRecord, shouldAutoCompact, autoCompactDecision, AUTO_COMPACT } = require('./proxy-util');
+const { PROXY_AGENT_PREFIX, pickProxyRecord, shapeProxyRecord, shapeQuota, shouldAutoCompact, autoCompactDecision, AUTO_COMPACT } = require('./proxy-util');
 const { isInjectInFlight } = require('./inject-queue');
 
 const PROXY_POLL_INTERVAL = 5000; // ms
@@ -166,12 +166,17 @@ const ProxyClient = {
     return null;
   },
 
+  // Returns the WHOLE shape, not just the session array: `quota` is a
+  // top-level block on the same payload and was being discarded here. Always an
+  // object with a `sessions` array, so callers destructure rather than branch —
+  // an unreachable or malformed /_status degrades to zero sessions and no quota,
+  // exactly as the bare `[]` did.
   async status(base) {
     const st = await this._getJson(base, '/_status');
     if (st.status === 200 && st.json && Array.isArray(st.json.sessions)) {
-      return st.json.sessions;
+      return { sessions: st.json.sessions, quota: st.json.quota || null };
     }
-    return [];
+    return { sessions: [], quota: null };
   },
 
   async subagentDetail(base, sessionId, child, maxlen) {
@@ -274,8 +279,13 @@ function createProxyPoller({
           } else if (this.stripCapBases.has(base) && !probeStripCap) {
             probe.capabilities = { ...probe.capabilities, strip_thinking: this.stripCapBases.get(base) };
           }
-          let records;
-          try { records = await ProxyClient.status(base); } catch { continue; }
+          let records, quotaRaw;
+          try {
+            ({ sessions: records, quota: quotaRaw } = await ProxyClient.status(base));
+          } catch { continue; }
+          // Account-scoped, so it is the SAME block for every session on this
+          // base — shaped once per base, not once per session.
+          const quota = shapeQuota(quotaRaw, probe.capabilities);
           const byAgent = new Map();
           for (const r of records) {
             // Prefilter to our namespace. One agent id can map to MANY records:
@@ -294,6 +304,10 @@ function createProxyPoller({
           for (const s of sess) {
             const payload = shapeProxyRecord(pickProxyRecord(byAgent.get(s.proxyAgent), s.sessionId), probe);
             payload.base = base; // poller context, not record shape — for the session-page link
+            // Rides every payload, linked or not: the drawer chip is about the
+            // ACCOUNT, so it must still appear for a session the proxy has no
+            // live record for.
+            payload.quota = quota;
             const entry = getPersistence().get(s.name);
             const level = stripLevelOf(entry);
             payload.stripLevel = level;

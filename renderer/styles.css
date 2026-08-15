@@ -3414,6 +3414,42 @@ html, body {
 }
 #drawer-copy, #drawer-tall, #drawer-toggle, #drawer-clipboard { flex-shrink: 0; }
 
+/* Export/Clear as glyphs rather than words — the reclaimed width is what hosts
+   the quota readout beside them. Sized up because ⤓ and ⌫ render smaller than
+   the 11px word they replaced. */
+#ipc-export, #ipc-clear {
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 6px;
+}
+
+/* Account plan quota. Conditional by construction: empty text = no chip, and
+   the :empty rule drops its padding so the header gap does not reserve space
+   for a readout that is absent for most of a cycle.
+   Colour is the escalation the SERVER published, not a threshold invented here. */
+#drawer-quota {
+  font-size: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  cursor: default;
+}
+#drawer-quota:empty { padding: 0; }
+#drawer-quota[data-level="warn"] {
+  color: var(--warn, #d19a66);
+  background: color-mix(in srgb, var(--warn, #d19a66) 14%, transparent);
+}
+#drawer-quota[data-level="loud"] {
+  color: var(--danger, #e06c75);
+  background: color-mix(in srgb, var(--danger, #e06c75) 18%, transparent);
+  font-weight: 600;
+}
+/* Nothing polls the API — a reading is only as fresh as the last forwarded
+   turn, and rendering a stale number at full strength implies a liveness it
+   does not have. */
+#drawer-quota[data-stale] { opacity: 0.5; }
+
 /* The inspector button. Dimmed to near-invisible when nothing is riding: this
    is an instrument the operator reaches for when they doubt what was sent, and
    a permanently lit icon in the header is one more thing to stop seeing. */
