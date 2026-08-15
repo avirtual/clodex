@@ -21,6 +21,12 @@ blocks a release.
   It also appeared on Codex seats, where a Claude plan's figure does not belong,
   and a Codex session's poll could blank it for everyone until the next Claude
   poll — the flicker and the misattribution were one bug.
+- The plan-usage readout now comes off Clodex's own wire, updating on each
+  forwarded turn instead of on a 5s poll of a separate service. It survives a
+  restart, so the figure is there at launch rather than blank until the first
+  turn, and its countdown keeps ticking while the fleet is idle. Once a window
+  has actually reset the readout disappears instead of showing a number for a
+  window that no longer exists.
 
 ## 5.10.0 — 2026-08-15
 

@@ -536,6 +536,15 @@ function registerIpcHandlers(deps) {
 
   handle('proxy:snapshot', (_e, name) => proxyPoller.snapshot(name));
 
+  // The account plan quota a window can show before any turn is forwarded.
+  // Without this read a restored reading would sit on disk until the next
+  // forwarded turn — the blank-at-launch case persistence exists to fix, since
+  // the broadcast that carries it fires only when a turn arrives.
+  handle('wire:quota', () => {
+    const store = manager.quotaStore();
+    return store ? store.snapshot() : null;
+  });
+
   handle('proxy:context', (_e, name, opts) => fetchProxyContext(name, opts));
 
   handle('proxy:report', (_e, name, opts) => fetchProxyReport(name, opts));

@@ -43,6 +43,9 @@ const PINNED_NAMES = [
   // observe it directly.
   'onSelectionSent',
   'onPendingCount', 'onSessionTicket', 'onSessionAttention', 'onSessionCtx', 'onSessionProxy',
+  // t418: account plan quota read off our own wire's response headers, window-wide,
+  // plus the startup pull that surfaces a restored reading before the first turn.
+  'onWireQuota', 'getWireQuota',
   'onSessionFiles', 'sessionFiles', 'filePeek', 'fileDiff', 'fileWrite', 'fileResolve',
   // fileReveal added by t22 — reveal-in-file-manager for Manage Plugins' "Open
   // Plugins Folder", distinct from fileOpen (which opens the file itself).

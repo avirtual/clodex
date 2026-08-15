@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Clodex</title>
   <style>
-/* node_modules/@xterm/xterm/css/xterm.css */
+/* ../wb-wrap-ui/node_modules/@xterm/xterm/css/xterm.css */
 .xterm {
   cursor: text;
   position: relative;
@@ -6912,6 +6912,13 @@ body {
         { name: "onSessionAttention", kind: "on", channel: "session-attention" },
         { name: "onSessionCtx", kind: "on", channel: "session-ctx" },
         { name: "onSessionProxy", kind: "on", channel: "session-proxy" },
+        // Account plan quota off our own wire's response headers. Window-wide and
+        // session-less by nature — the figure is the whole account's, and it arrives
+        // on a forwarded turn rather than on a poll.
+        { name: "onWireQuota", kind: "on", channel: "wire-quota" },
+        // The startup read of the same figure: the broadcast above only fires on a
+        // forwarded turn, so a restored reading needs a pull to reach a new window.
+        { name: "getWireQuota", kind: "invoke", channel: "wire:quota" },
         { name: "onSessionFiles", kind: "on", channel: "session-files" },
         { name: "sessionFiles", kind: "invoke", channel: "session:files" },
         { name: "filePeek", kind: "invoke", channel: "file:peek" },
@@ -9885,9 +9892,9 @@ ${p.root}` : p.key;
     }
   });
 
-  // node_modules/@xterm/xterm/lib/xterm.js
+  // ../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js
   var require_xterm = __commonJS({
-    "node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
       !(function(e, t) {
         if ("object" == typeof exports && "object" == typeof module) module.exports = t();
         else if ("function" == typeof define && define.amd) define([], t);
@@ -15944,9 +15951,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-fit/lib/addon-fit.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js
   var require_addon_fit = __commonJS({
-    "node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.FitAddon = t() : e.FitAddon = t();
       })(self, (() => (() => {
@@ -15980,9 +15987,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-search/lib/addon-search.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js
   var require_addon_search = __commonJS({
-    "node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.SearchAddon = t() : e.SearchAddon = t();
       })(globalThis, (() => (() => {
@@ -18941,9 +18948,9 @@ ${i3.join("\n")}
     }
   });
 
-  // node_modules/@xterm/addon-web-links/lib/addon-web-links.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js
   var require_addon_web_links = __commonJS({
-    "node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.WebLinksAddon = t() : e.WebLinksAddon = t();
       })(self, (() => (() => {
@@ -19586,6 +19593,12 @@ ${i3.join("\n")}
           usedPct: num(p.used_pct),
           remainingPct: num(p.remaining_pct),
           resetsInS: num(p.resets_in_s) ?? num(q.resets_in_s),
+          // ABSOLUTE epoch seconds, preferred over resetsInS by pickQuota. A stored
+          // countdown is a snapshot: it freezes the moment traffic stops, and once
+          // the window rolls the reading describes a window that already reset. The
+          // wire source always carries this; a wirescope payload may not, which is
+          // why resetsInS stays as the fallback rather than being replaced.
+          reset: num(p.reset) ?? num(q.reset),
           // Nothing polls the API — every reading is only as fresh as the last
           // forwarded turn, so the renderer needs this to mark it stale.
           ageS: num(q.age_s),
@@ -19593,6 +19606,33 @@ ${i3.join("\n")}
           // the wall was hit cannot raise the percentage. A recent last_429 beside a
           // sub-100% figure is the EXPECTED shape, not a contradiction.
           last429AgeS: num(q.last_429_age_s)
+        };
+      }
+      function pickQuota(entries, nowMs = Date.now()) {
+        if (!Array.isArray(entries)) return null;
+        const nowS = nowMs / 1e3;
+        let best = null;
+        let bestRank = -1;
+        let bestAt = -Infinity;
+        for (const e of entries) {
+          if (!e || !e.quota) continue;
+          const q2 = e.quota;
+          if (typeof q2.reset === "number" && Number.isFinite(q2.reset) && nowS > q2.reset) continue;
+          const rank = e.source === "wire" ? 1 : 0;
+          const at2 = typeof e.at === "number" ? e.at : 0;
+          if (rank > bestRank || rank === bestRank && at2 > bestAt) {
+            bestRank = rank;
+            bestAt = at2;
+            best = e;
+          }
+        }
+        if (!best) return null;
+        const q = best.quota;
+        const resetsInS = typeof q.reset === "number" && Number.isFinite(q.reset) ? Math.max(0, Math.round(q.reset - nowS)) : q.resetsInS;
+        const at = typeof best.at === "number" ? best.at : 0;
+        return {
+          quota: { ...q, resetsInS },
+          clientAgeS: at > 0 ? (nowMs - at) / 1e3 : 0
         };
       }
       var QUOTA_STALE_S = 120;
@@ -19690,6 +19730,7 @@ ${i3.join("\n")}
         shapeSubagent,
         shapeQuota,
         quotaChip,
+        pickQuota,
         fmtQuotaReset,
         QUOTA_STALE_S,
         QUOTA_429_RECENT_S,
@@ -29919,7 +29960,7 @@ ${detail}` });
       var { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require_sidebar_width();
       var { mergeMeta } = require_meta_tiers();
       var { PendingInput } = require_peer_input_queue();
-      var { versionSeverity, updateApplies, releaseAgeInfo, quotaChip } = require_proxy_util();
+      var { versionSeverity, updateApplies, releaseAgeInfo, quotaChip, shapeQuota, pickQuota } = require_proxy_util();
       var { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require_constants();
       var { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require_format();
       var { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require_render_html();
@@ -32601,21 +32642,16 @@ ${detail}` });
         }
         el.dataset.refusal = p && p.linked && p.refusals > 0 ? "1" : "";
       }
+      var wireQuota = null;
       function refreshQuotaChip() {
-        let best = null;
-        let bestAt = -1;
-        for (const [name, st] of proxyState) {
-          if (!st || !st.payload) continue;
-          const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-          if (!el || el.dataset.type !== "claude") continue;
-          if (!st.payload.quota) continue;
-          if ((st.at || 0) > bestAt) {
-            bestAt = st.at || 0;
-            best = st.payload.quota;
-          }
+        const entries = [];
+        if (wireQuota) entries.push({ ...wireQuota, source: "wire" });
+        for (const [, st] of proxyState) {
+          if (!st || !st.payload || !st.payload.quota) continue;
+          entries.push({ quota: st.payload.quota, at: st.at || 0, source: "wirescope" });
         }
-        const clientAgeS = bestAt > 0 ? (Date.now() - bestAt) / 1e3 : 0;
-        drawerHost.setQuota(quotaChip(best, clientAgeS));
+        const picked = pickQuota(entries);
+        drawerHost.setQuota(picked ? quotaChip(picked.quota, picked.clientAgeS) : null);
       }
       window.api.onSessionProxy((name, payload) => {
         proxyState.set(name, { payload, at: Date.now() });
@@ -32625,6 +32661,21 @@ ${detail}` });
         refreshActivityChips();
         if (name === activeSession) renderProxyBar();
       });
+      window.api.onWireQuota((snapshot) => {
+        const shaped = shapeQuota(snapshot, { quota: true });
+        if (shaped) wireQuota = { quota: shaped, at: Date.now() };
+        refreshQuotaChip();
+      });
+      if (window.api.getWireQuota) {
+        window.api.getWireQuota().then((snapshot) => {
+          const shaped = shapeQuota(snapshot, { quota: true });
+          if (!shaped) return;
+          const ageMs = (shaped.ageS || 0) * 1e3;
+          wireQuota = { quota: shaped, at: Date.now() - ageMs };
+          refreshQuotaChip();
+        }).catch(() => {
+        });
+      }
       var THINK_BADGE_MS = 2 * 60 * 1e3;
       var THINK_LONG_MS = 10 * 60 * 1e3;
       function applyThinkBadge(el) {
