@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.10.1 — 2026-08-15
+
 - A command an agent ran in a seat's terminal could lose its first character on
   a loaded machine, and the truncated remainder still ran — `echo a; echo b`
   arriving as `cho a; echo b`. Before typing, Clodex interrupts whatever is on
