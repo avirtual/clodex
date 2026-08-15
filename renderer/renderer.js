@@ -2004,19 +2004,21 @@ inputProxyMode.addEventListener('change', () => {
 // that is not the team's and look entirely successful; the visible token
 // refuses to spawn instead. Only the dropdown expands — openTemplateEditor must
 // keep the literal so authoring round-trips.
+//
+// Returns the refusal as `warn` rather than toasting it: this function awaits,
+// so by the time it returns the operator may have selected another template,
+// and a toast fired here would name one they have already moved off. The caller
+// shows it after its staleness guard.
 async function cwdFromTemplate(t) {
   const raw = (t && t.cwd) || '';
-  if (!raw) return homeDir;
-  if (!usesTeamRoot(raw)) return raw;
+  if (!raw) return { cwd: homeDir };
+  if (!usesTeamRoot(raw)) return { cwd: raw };
   const here = expandPath(inputCwd.value.trim()) || homeDir;
   let root = '';
   try { root = (await window.api.teamForCwd(here))?.root || ''; } catch { root = ''; }
   const r = expandTeamRoot(raw, root);
-  if (!r.ok) {
-    showToast(`Template "${t.name || ''}": ${r.reason}`, { kind: 'warn', duration: 12000 });
-    return raw;
-  }
-  return r.value;
+  if (!r.ok) return { cwd: raw, warn: `Template "${t.name || ''}": ${r.reason}` };
+  return { cwd: r.value };
 }
 
 inputTemplate.addEventListener('change', async () => {
@@ -2028,11 +2030,17 @@ inputTemplate.addEventListener('change', async () => {
   // Resolve the cwd BEFORE writing any field: it may await an IPC round-trip,
   // and a second template picked during that window would otherwise interleave
   // — this handler's fields half-applied, then the older one's cwd landing on
-  // top of the newer one's. Nothing after this point awaits.
-  const resolvedCwd = await cwdFromTemplate(t);
+  // top of the newer one's.
+  //
+  // The guard below only covers the cwd round-trip. The checklist refreshes
+  // further down await too, so a superseded selection can still land its
+  // checklist state after a newer one's; closing that needs a generation token
+  // threaded through every refresh, not another re-check here.
+  const resolved = await cwdFromTemplate(t);
   if (inputTemplate.value !== id) return; // a newer template won the race
+  if (resolved.warn) showToast(resolved.warn, { kind: 'warn', duration: 12000 });
   inputType.value = t.type;
-  inputCwd.value = resolvedCwd;
+  inputCwd.value = resolved.cwd;
   {
     const { model, rest } = splitModelArg(t.extraArgs || []);
     inputModel.value = model;
