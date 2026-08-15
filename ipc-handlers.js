@@ -4,6 +4,10 @@
 
 const { pathFor } = require('./clodex-paths');
 const { nameConflict } = require('./session-manager');
+// The SAME predicate the inject queue gates deliveries on. Required directly
+// rather than injected so there is one draft notion: a focus decision computed
+// from a second one would drift from the delivery it is supposed to agree with.
+const { isDraftOpen } = require('./proxy-util');
 const { STOCK_ROLE_DEFS } = require('./team-manifest');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
@@ -454,6 +458,14 @@ function registerIpcHandlers(deps) {
     if (!s) return { ok: false, error: 'Session not found' };
     manager._injectText(s, body);
     return { ok: true };
+  });
+
+  // A session the window no longer has, or never had, is not typing — an
+  // unknown name answers false rather than erroring, because the one caller
+  // (the focus decision) must not turn a lookup miss into a refusal to focus.
+  handle('session:draftOpen', (_e, name) => {
+    const s = manager.sessions.get(name);
+    return { ok: true, open: !!s && !s._dead && isDraftOpen(s) };
   });
 
   handle('proxy:snapshot', (_e, name) => proxyPoller.snapshot(name));

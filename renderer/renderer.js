@@ -31,6 +31,7 @@ const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatme
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { prefsGate } = require('./lib/prefs-gate');
+const { decideNewSessionFocus } = require('./lib/focus-policy');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
@@ -604,7 +605,7 @@ function restartSessionWithReattach(name) {
   });
 }
 
-window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition }) => {
+window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition, background }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
@@ -616,7 +617,9 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, d
       if (type) {
         createTerminal(name);
         addSessionToSidebar(name, type, cwd, null, backend || null, null, noWire === true);
-        switchSession(name);
+        // `background` marks the agent-initiated emitters (ticket seat, spawn
+        // intent, reviewer). The reload respawn sends no flag and keeps focus.
+        switchToNewSession(name, { agentInitiated: background === true });
       }
       break;
     case 'promptsChanged':
@@ -1284,6 +1287,24 @@ function switchSession(name) {
   });
 }
 
+// The activation step for a session that has just been CREATED — never for a
+// switch the operator asked for, which is always honoured.
+//
+// Not focusing still leaves the sidebar row, so a background seat is visible
+// and one click away; the only thing withheld is the keyboard.
+async function switchToNewSession(name, { agentInitiated = false } = {}) {
+  const target = await decideNewSessionFocus({
+    name, focused: activeSession, agentInitiated,
+    queryDraftOpen: window.api.draftOpen ? (n) => window.api.draftOpen(n) : null,
+  });
+  if (!target) return false;
+  // Re-checked because the query above yields: the new session may have died,
+  // between the decision and here.
+  if (!sessions.has(target)) return false;
+  switchSession(target);
+  return true;
+}
+
 function removeSession(name, { keepPersisted = false } = {}) {
   const s = sessions.get(name);
   if (s) {
@@ -1457,7 +1478,9 @@ async function openInstallSession(install) {
   createTerminal(params.name);
   addSessionToSidebar(params.name, params.type, params.cwd, null,
     (result.session && result.session.backend) || null, null);
-  switchSession(params.name);
+  // Manual like the dialog's create, and subject to the same draft veto — the
+  // rule is about what the operator is typing, not about who spawned what.
+  await switchToNewSession(params.name, { agentInitiated: false });
   // Run the install line via the inject-queue (quiet-gate + atomic Ctrl-U/Enter),
   // the same path operator app-panel messages take — a bash PTY is ready almost
   // immediately, but going through the queue keeps the write atomic and gated.
@@ -2155,7 +2178,9 @@ async function doCreate() {
 
   createTerminal(name);
   addSessionToSidebar(name, type, spawnCwd, null, (result.session && result.session.backend) || null, (result.session && result.session.team) || null, (result.session && result.session.noWire) === true);
-  switchSession(name);
+  // Manual, so it focuses as it always has — unless the operator has a line
+  // open in the session they were on, which vetoes regardless of provenance.
+  await switchToNewSession(name, { agentInitiated: false });
 
   const warnings = (result.session && result.session.warnings) || [];
   for (const w of warnings) showToast(w, { kind: 'warn', duration: 15000, name });

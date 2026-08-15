@@ -275,6 +275,12 @@ const RENDERER_SCANNED_MODULES = [
   // Same shape as path-scan: a pure leaf feeding the DOM-bound link provider,
   // where the buffer walking that calls it has no unit tests of its own.
   'renderer/lib/gutter-scan.js',
+  // Whether a newly created session may take the keyboard (t412). The names it
+  // must NOT reach for are exactly the ones in scope at its call sites —
+  // `activeSession` and `sessions` — and reading either directly would let the
+  // policy answer from renderer state instead of the main-side draft it is
+  // required to agree with.
+  'renderer/lib/focus-policy.js',
   // The bottom drawer's tab host (t201) and its first tenant. The host took
   // the toggle/layout/refit mechanics OUT of ipc-log.js, so the reverse scan
   // matters as much as the forward one here: ipc-log.js keeping a name that
