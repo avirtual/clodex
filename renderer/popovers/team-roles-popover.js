@@ -21,7 +21,7 @@
 const { esc } = require('../lib/format');
 const {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, DISPATCH_VALUES, DEFAULT_DISPATCH,
-  parseDuration, formatDuration, formatBlockedBy,
+  parseDuration, formatDuration, formatBlockedBy, preflightByRole,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
 
@@ -59,6 +59,16 @@ function initTeamRolesPopover({ promptText } = {}) {
   // prompt, a "managed by Clodex" badge, and a one-line why); ordinary rows read
   // as editable — an "Edit this role" caption + three hinted inputs +
   // Save/Rename/Remove (delegated below).
+  // What this team's manifest names that resolves to nothing, per role. A
+  // failed/absent preflight leaves this empty and the rows render exactly as they
+  // did before it existed — the checklist is additive, never a gate on the editor.
+  let preflight = new Map();
+  async function loadPreflight(name) {
+    let res;
+    try { res = await window.api.teamPreflight(name); } catch { res = null; }
+    preflight = preflightByRole(res && res.ok ? res.findings : []);
+  }
+
   function renderRows(manifest) {
     listEl.innerHTML = '';
     for (const row of teamRoleRows(manifest)) {
@@ -149,6 +159,35 @@ function initTeamRolesPopover({ promptText } = {}) {
         const disp = el.querySelector('select[data-f="dispatch"]');
         disp.value = DISPATCH_VALUES.includes(row.dispatch) ? row.dispatch : DEFAULT_DISPATCH;
       }
+      // The preflight checklist, on BOTH arms: lead and reviewer are read-only
+      // topology but they name prompts and templates like any other role, and a
+      // reviewer with no prompt installed is the exact failure the spawn-time
+      // warn already reports — the operator must be able to see it here too.
+      //
+      // Appended after the row's own markup rather than folded into either
+      // innerHTML: `message` and `ref` come from an agent-writable team.json and
+      // from template JSON, and this keeps every one of them a TEXT assignment
+      // that cannot reach an attribute context in this nodeIntegration renderer.
+      const owed = preflight.get(row.key) || [];
+      if (owed.length) {
+        const box = document.createElement('div');
+        box.className = 'team-role-preflight';
+        for (const f of owed) {
+          const line = document.createElement('div');
+          line.className = `team-role-preflight-line ${f.level === 'warn' ? 'warn' : 'note'}`;
+          const tag = document.createElement('span');
+          tag.className = 'team-role-preflight-kind';
+          // The kind, not the level: "prompt"/"exec" is what the operator acts
+          // on. Level is carried by the colour and by the leading mark.
+          tag.textContent = `${f.level === 'warn' ? '!' : '·'} ${f.kind}`;
+          const txt = document.createElement('span');
+          txt.textContent = f.message;
+          line.appendChild(tag);
+          line.appendChild(txt);
+          box.appendChild(line);
+        }
+        el.appendChild(box);
+      }
       listEl.appendChild(el);
     }
   }
@@ -157,6 +196,10 @@ function initTeamRolesPopover({ promptText } = {}) {
     const res = await window.api.teamGet(teamName);
     if (!res || !res.ok) { setStatus(res && res.error ? res.error : 'team not found', true); return false; }
     nameEl.textContent = res.team.name;
+    // BEFORE renderRows, and on every refresh rather than only on open: a role
+    // whose prompt was just re-pointed by a Save must re-badge against the new
+    // name, and a stale checklist accusing the previous value is worse than none.
+    await loadPreflight(res.team.name);
     renderRows(res.team);
     // Show the stored (read-clamped) watchdog back in friendly units, not raw ms.
     watchdogInput.value = res.team.watchdogMs != null ? formatDuration(res.team.watchdogMs) : '';

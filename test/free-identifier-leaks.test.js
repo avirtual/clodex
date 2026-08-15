@@ -65,6 +65,10 @@ const SCANNED_MODULES = [
   'intent-registry.js',
   'prompt-rails.js',
   'exec-schema.js',
+  // The team-manifest preflight resolver (t414). Every disk touch is an injected
+  // probe, which is the whole reason its findings table is assertable without a
+  // library on disk — a reach for `fs` or `REGISTRY_DIR` would quietly undo that.
+  'team-preflight.js',
   'remind-schedule.js',
   'remind-scheduler.js',
   'argv-merge.js',

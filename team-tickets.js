@@ -456,7 +456,7 @@ function createTicketMethods(deps, shared) {
           } else {
             ensureDir(cwd); // self-contained: mkdir the cwd if absent — no external tool
           }
-          await this.create(
+          const spawned = await this.create(
             name, type, spawnCwd, childArgs, null, workspaceId,
             null, false, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles,
             Array.isArray(tpl && tpl.execCommands) ? tpl.execCommands : [],
@@ -496,7 +496,12 @@ function createTicketMethods(deps, shared) {
             type: 'spawn', from: spawner.name, to: name, body: `spawn → ${name} @ ${where}` + (tpl ? ` (template ${tplLabel})` : ''),
           });
           log.info('intent', `spawn by ${spawner.name} → ${name} (${type}) @ ${where}` + (tpl ? ` via template "${tplLabel}"` : ''));
+          // The spawning lead is the party who can act on an unresolved role
+          // prompt — it named the seat, and the seat itself cannot see that it
+          // booted unbriefed. Never blocks: the seat is already up by here.
+          const promptWarn = (spawned && spawned.missingPrompt) ? ` — WARNING: ${spawned.missingPrompt}` : '';
           reply(`ok: spawned "${name}" (${type}) @ ${where}` + (tpl ? ` via template "${tplLabel}"` : '')
+            + promptWarn
             + (envDropped.length ? ` — env keys not allowed, dropped: ${envDropped.join(', ')}` : '')
             + (envBadType.length ? ` — env keys [${envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)` : ''));
         } catch (err) {
@@ -741,12 +746,21 @@ function createTicketMethods(deps, shared) {
 
       setImmediate(async () => {
         try {
-          await this.create(
+          const spawned = await this.create(
             name, type, cwd, shape.extraArgs, null, shape.workspaceId,
             reviewBrief, false, session.proxy ?? null, shape.agents, shape.denyBuiltins, shape.disabledTools,
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
           );
+          // The rule is "reported ONCE", and this is the one caller that can
+          // report twice: a reviewer whose prompt rides as system fails the
+          // promptWarn check above AND create()'s finding, both to the same lead
+          // in the same reply. The pre-existing warn wins — it is the precedent
+          // every other relay was brought up to, and it names the recovery.
+          // Suppression is on the WARN being carried, not on the two texts
+          // matching: they are worded differently on purpose.
+          const spawnPromptWarn = (!promptWarn && spawned && spawned.missingPrompt)
+            ? ` — WARNING: ${spawned.missingPrompt}` : '';
           // AFTER create(), not before: the setters resolve the entry by name and
           // silently no-op if it isn't there yet. A reviewer that skipped this ran
           // unstripped no matter what the template said, which is invisible from
@@ -773,7 +787,7 @@ function createTicketMethods(deps, shared) {
             type: 'team-review', from: session.name, to: name, body: `review → ${name} @ ${cwd}`,
           });
           log.info('intent', `team-review by ${session.name} → ${name} (${type}) @ ${cwd}`);
-          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${envWarn}${argsWarn}${promptWarn}${promptEscapeWarn}${tplWarn}`);
+          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${envWarn}${argsWarn}${promptWarn}${spawnPromptWarn}${promptEscapeWarn}${tplWarn}`);
         } catch (err) {
           if (!this.sessions.has(name)) getPersistence().remove(name);
           log.error('intent', `team-review by ${session.name} → ${name} failed: ${err.message}`);
@@ -2970,7 +2984,7 @@ function createTicketMethods(deps, shared) {
             ticket.worktree = wt;
           } catch { /* best-effort — the spec below still carries it from `ticket` */ }
           const shape = this.resolveSeatShape(team, roleKey, 'ticket', opener);
-          await this.create(
+          const spawned = await this.create(
             seat.name, shape.type, shape.cwd,
             shape.extraArgs, null,
             shape.workspaceId, null, false, opener.proxy ?? null,
@@ -3015,7 +3029,12 @@ function createTicketMethods(deps, shared) {
             + (shape.envBadType.length
               ? ` — template env keys [${shape.envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)`
               : '');
-          reply(`ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name)}${envWarn}`);
+          // Same rule, the dispatch channel: the lead dispatched this ticket and
+          // is the only party who can install the missing prompt. The seat is
+          // already working on the spec by the time this lands — a warn, not a
+          // block, exactly like the env drops beside it.
+          const promptWarn = (spawned && spawned.missingPrompt) ? ` — WARNING: ${spawned.missingPrompt}` : '';
+          reply(`ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name)}${envWarn}${promptWarn}`);
         } catch (err) {
           const live = this.sessions.has(seat.name);
           if (!live) getPersistence().remove(seat.name);

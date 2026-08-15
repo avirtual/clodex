@@ -13,6 +13,20 @@ blocks a release.
 
 ## Unreleased
 
+- A team role that names a prompt, template, exec command or append file which
+  isn't installed now says so, instead of the seat quietly booting without it.
+  A missing role prompt used to be swallowed: the seat came up unbriefed, behaved
+  oddly, and nothing anywhere mentioned the file. Now the team's roles popover
+  (right-click a team's sidebar header) shows a per-role checklist of what the
+  manifest names and the box doesn't have, and every spawn path — `[agent:spawn]`,
+  ticket dispatch, the reviewer, a GUI create — reports it once on its own
+  channel. Nothing is blocked: the seat still spawns and the warning rides
+  alongside. Missing prompts and templates read as warnings (the seat's behaviour
+  breaks); an append file the template names but nobody has written yet reads as a
+  note, since that's the normal state of a team someone just created. Create
+  Team… lands on that popover, so a new team's first screen is the list of files
+  it still owes.
+
 - "Keep warm — Always (until stopped)" now survives an app restart. It used to
   come back only when the agent took its next turn, which on an unattended seat
   meant never: one measured restart left a seat with keep-warm switched on for

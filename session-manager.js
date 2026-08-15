@@ -1193,7 +1193,13 @@ function createSessionManager(deps) {
       const existingEntry = getPersistence().get(name);
       const createdAt = (existingEntry && existingEntry.createdAt) || Date.now();
 
-      const { teamBlock, teamName, resolvedTeam } = this._teamBlockFor(name, cwd, agentType, systemPromptFile);
+      const { teamBlock, teamName, resolvedTeam, missingPrompt } = this._teamBlockFor(name, cwd, agentType, systemPromptFile);
+      // The GUI's relay of the one rule. `warnings` already rides the create()
+      // return into a renderer toast, so the operator who spawned this seat is
+      // told on the channel they are looking at. The intent callers read
+      // `missingPrompt` off the return instead and append it to their own reply —
+      // a toast is not visible to the agent that asked for the spawn.
+      if (missingPrompt) warnings.push(missingPrompt);
 
       switch (type) {
         case 'claude': {
@@ -1943,7 +1949,11 @@ function createSessionManager(deps) {
         }
       }
       try { getPluginHooks && getPluginHooks() && getPluginHooks().fireCreate(name); } catch {}
-      return { name, type, pid: ptyProc.pid, backend, noWire: wireOff, ...(teamName ? { team: teamName } : {}), ...(warnings.length ? { warnings } : {}) };
+      // `missingPrompt` rides the return SEPARATELY from `warnings`, which it is
+      // also in: the intent spawn paths relay this one finding on their own reply
+      // channel and must be able to pick it out, not string-match the warnings
+      // array for it.
+      return { name, type, pid: ptyProc.pid, backend, noWire: wireOff, ...(teamName ? { team: teamName } : {}), ...(missingPrompt ? { missingPrompt } : {}), ...(warnings.length ? { warnings } : {}) };
     }
 
     write(name, data) {
@@ -2195,6 +2205,12 @@ function createSessionManager(deps) {
       let teamBlock = '';
       let teamName = null;
       let resolvedTeam = null;
+      // The one visibility rule's spawn-path half: a role prompt that resolves to
+      // nothing is REPORTED to the caller and the spawn proceeds. Returned rather
+      // than warned here, because each caller has a different party who can act on
+      // it (the spawning lead, the ticket dispatcher, the operator's toast) and a
+      // main-process log is where a real error goes to hide.
+      let missingPrompt = null;
       if (agentType) {
         try {
           const team = resolveTeam(cwd);
@@ -2205,17 +2221,32 @@ function createSessionManager(deps) {
             const role = matchSeatRole(team, name);
             const def = role ? team.roles[role] : null;
             const promptRidesAsSystem = def && def.prompt && systemPromptFile === def.prompt;
-            if (def && def.prompt && !promptRidesAsSystem) {
-              try {
-                const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${def.prompt}.md`);
-                const rolePrompt = fs.readFileSync(promptFile, 'utf-8');
-                if (rolePrompt) teamBlock = `${teamBlock}\n\n${rolePrompt}`;
-              } catch { /* missing/unreadable role prompt — skip, team block still stands */ }
+            if (def && def.prompt) {
+              // Resolved on BOTH arms, and that is the subtle part. When the prompt
+              // rides as --system-prompt-file this method appends nothing and the
+              // stem is resolved instead by resolveSystemPromptFile at prompt-build
+              // time — where a miss returns null and the seat boots with NO system
+              // prompt at all, strictly worse than unbriefed and reported by nobody.
+              // Checking only the arm that reads the file here is how that case
+              // stayed invisible. Same path both resolvers use, so one read answers
+              // for both; a present-but-empty file is NOT a miss (accessSync
+              // succeeds on it, so resolveSystemPromptFile hands it over).
+              const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${def.prompt}.md`);
+              let rolePrompt = null;
+              try { rolePrompt = fs.readFileSync(promptFile, 'utf-8'); }
+              catch { rolePrompt = null; }
+              if (rolePrompt == null) {
+                missingPrompt = promptRidesAsSystem
+                  ? `role "${role}" names system prompt "${def.prompt}", which is not installed under library/prompts/system — ${name} boots with NO system prompt`
+                  : `role "${role}" names prompt "${def.prompt}", which is not installed under library/prompts/system — ${name} boots unbriefed`;
+              } else if (!promptRidesAsSystem && rolePrompt) {
+                teamBlock = `${teamBlock}\n\n${rolePrompt}`;
+              }
             }
           }
         } catch { /* resolution is best-effort — never block a spawn on it */ }
       }
-      return { teamBlock, teamName, resolvedTeam };
+      return { teamBlock, teamName, resolvedTeam, missingPrompt };
     }
 
     // The bytes that BECOME run/<name>/append-prompt.md, from ONE recipe.
@@ -2288,7 +2319,14 @@ function createSessionManager(deps) {
           this._shadowLog({ type: 'prompt-refresh-skipped', agent: name, reason: 'no-prompt-file' });
           return false;
         }
-        const { teamBlock } = this._teamBlockFor(name, entry.cwd, session.agentType, entry.systemPromptFile || null);
+        // This path takes the finding too. Refresh RE-RESOLVES on every
+        // clear/compact, so a prompt file deleted after the seat booted first
+        // bites here: the rebake drops the role prompt and the seat comes out of
+        // its reset unbriefed, having been briefed a moment earlier. There is no
+        // reply channel at a clear, so it rides the ipc-message the refresh
+        // already broadcasts rather than gaining one — only ever emitted when
+        // resolution actually failed, so this is not per-reset noise.
+        const { teamBlock, missingPrompt } = this._teamBlockFor(name, entry.cwd, session.agentType, entry.systemPromptFile || null);
         const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock);
         if (realIpc === readCache(REGISTRY_DIR, name, 'session')) return false; // already current
         const baked = bakePrompt(REGISTRY_DIR, name, realIpc, false);
@@ -2306,7 +2344,8 @@ function createSessionManager(deps) {
         }
         log.info('prompt', `refreshed ${name} (${why}) — ${baked.length} bytes`);
         this._broadcast('ipc-message', {
-          type: 'context', from: name, to: name, body: `prompt refreshed (${why})`,
+          type: 'context', from: name, to: name,
+          body: `prompt refreshed (${why})${missingPrompt ? ` — ${missingPrompt}` : ''}`,
         });
         return true;
       } catch (e) {

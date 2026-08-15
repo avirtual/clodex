@@ -47,6 +47,12 @@ const API_CONTRACT = [
   { name: 'teamRemoveRole', kind: 'invoke', channel: 'team:removeRole' },
   { name: 'teamRenameRole', kind: 'invoke', channel: 'team:renameRole' },
   { name: 'teamSetWatchdog', kind: 'invoke', channel: 'team:setWatchdog' },
+  // What this team's manifest names that resolves to nothing (missing role
+  // prompts, templates, exec scripts, append stems), as findings the roles
+  // popover renders per role. Read-only and OFF the hot path — it stats files
+  // and parses template/exec JSON, so it belongs to a popover open or a team
+  // create, never to a roster render.
+  { name: 'teamPreflight', kind: 'invoke', channel: 'team:preflight' },
   // Opt-in git worktree at spawn + working-dir suggestions for the New Session
   // dialog. createWorktree/worktreeInfo/markSessionWorktree drive the worktree
   // row; cwdSuggestions/noteCwd feed the working-directory MRU datalist.
