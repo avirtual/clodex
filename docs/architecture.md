@@ -17,6 +17,8 @@ OWNS. The subsystem docs answer "how does it work and what must I not break":
   autocompact, statusline, ctx reminders, updates, ops log.
 - [exec-tools.md](exec-tools.md) — the `[agent:exec]` registry and its
   payload validation.
+- [teams.md](teams.md) — operator guide: standing a team up on a project that
+  is not this one, and the four things such a project must supply.
 - [renderer-events.md](renderer-events.md) — the renderer's event surface.
 
 `test/architecture-map-complete.test.js` is the ratchet: every module in the
@@ -311,6 +313,14 @@ not by size:
   rather than shelling out to git — `resolveTeam` runs on every roster render and
   ticket resolution, and a subprocess there would make membership a latency
   problem.
+- **team-root-expand.js** — the `${TEAM_ROOT}` token for a TEMPLATE's `cwd`,
+  read by the spawn intent (team-tickets.js) and the New Session dialog's
+  template dropdown (renderer.js). Pure leaf. An unresolved root REFUSES rather
+  than expanding to empty — a seat booted in the wrong project reports success,
+  so a missing spawn is the cheaper failure. The exec registry keeps its own
+  substitution (session-manager.js `expandVars`): it spans three tokens over
+  argv and cwd against a live session, and merging the two token sets would
+  couple the spawn path to the exec path's vocabulary.
 - **prompt-rails.js** — rail classification for library system prompts: the
   prompt library mixes a full replace-class system prompt with an APPEND delta
   that composes onto the append rail, and the team join path must not confuse
