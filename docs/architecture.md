@@ -311,6 +311,15 @@ not by size:
   rather than shelling out to git — `resolveTeam` runs on every roster render and
   ticket resolution, and a subprocess there would make membership a latency
   problem.
+- **team-preflight.js** — "does this team's manifest name anything that resolves
+  to nothing?", as findings rather than as N scattered warns. One resolver, and
+  every surface (roles popover, Create Team…, the spawn/dispatch replies) is a
+  caller relaying the same findings on its own channel. Pure leaf over injected
+  probes — no fs, no requires — which is what makes the whole findings table
+  assertable with no library installed. Findings are PROBLEMS ONLY: absence of a
+  finding for a role is resolution. Not a hot path (it stats files and parses
+  template/exec JSON), so it belongs to a popover open or a team create, never to
+  `resolveTeam`.
 - **prompt-rails.js** — rail classification for library system prompts: the
   prompt library mixes a full replace-class system prompt with an APPEND delta
   that composes onto the append rail, and the team join path must not confuse
