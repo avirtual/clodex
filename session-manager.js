@@ -608,11 +608,19 @@ function createSessionManager(deps) {
       this._holdKeeper = hold;
       const wire = new WireProxy({ requireTokens: true, warmth, hold });
       // Account plan quota rides the `anthropic-ratelimit-unified-*` response
-      // headers of every forwarded Claude turn. Header presence IS the gate: a
-      // codex turn carries none, so a codex seat yields no quota without anyone
-      // filtering by session type.
+      // headers of every forwarded Claude turn. Header presence IS the gate for
+      // a READING: a codex turn carries none, so a codex seat yields no quota
+      // without anyone filtering by session type.
+      //
+      // The provider check is the second gate, and it covers what the first
+      // cannot: a 429 carries no ratelimit headers from ANY provider, so the
+      // store's 429 branch is reached on status alone and would file a codex
+      // refusal against the Claude org — turning the chip loud for a plan that
+      // was never refused. This wire is multi-provider; the Python reference
+      // called note() only from the anthropic receipt path.
       wire.on('response', (ev) => {
         if (!ev || !ev.headers) return;
+        if (ev.provider !== 'anthropic') return;
         const store = this.quotaStore();
         if (!store) return;
         try {

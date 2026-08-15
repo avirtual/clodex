@@ -26,7 +26,9 @@ blocks a release.
   restart, so the figure is there at launch rather than blank until the first
   turn, and its countdown keeps ticking while the fleet is idle. Once a window
   has actually reset the readout disappears instead of showing a number for a
-  window that no longer exists.
+  window that no longer exists, and a "requests being refused" warning fades on
+  its own — it no longer stays up until the next turn, which after a refusal
+  burst may be a long time coming. Codex seats cannot make it appear at all.
 
 ## 5.10.0 — 2026-08-15
 

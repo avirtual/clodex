@@ -341,7 +341,10 @@ class WireProxy extends EventEmitter {
       // where the `anthropic-ratelimit-unified-*` plan quota rides (wire/quota.js
       // is the reader). Emitted before the tee is built so a tee failure cannot
       // cost us the reading.
-      this.emit('response', { agent, reqId, status: upRes.statusCode, sse, headers: respHeaders });
+      // `provider` is load-bearing, not decoration: this wire forwards codex
+      // too, and a subscriber that reads a 429 off an openai response has no
+      // header to tell the providers apart — see the quota subscriber's gate.
+      this.emit('response', { agent, provider, reqId, status: upRes.statusCode, sse, headers: respHeaders });
 
       // On the first tee throw the tee is dropped for this stream; stream-end
       // must still pair with stream-start so activity state can't wedge.

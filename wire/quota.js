@@ -171,14 +171,21 @@ class QuotaStore {
     this._lastAccount = null;
     this._onError = typeof onError === 'function' ? onError : null;
     this._db = null;
+    this._put = null;
     if (dbPath) {
       try {
         const { DatabaseSync } = require('node:sqlite');
         this._db = new DatabaseSync(dbPath);
         this._db.exec(SCHEMA);
+        // Prepared ONCE, as WarmthStore does: _persist runs on the response
+        // path several times per turn per seat, and re-preparing there puts a
+        // statement compile between the upstream response and the client.
+        this._put = this._db.prepare(
+          'INSERT OR REPLACE INTO quota_state (account, as_of, payload) VALUES (?,?,?)');
         this._restore();
       } catch (e) {
         this._db = null;
+        this._put = null;
         this._fail(`open: ${e.message}`);
       }
     }
@@ -257,11 +264,9 @@ class QuotaStore {
   }
 
   _persist(acct, entry) {
-    if (!this._db) return;
+    if (!this._put) return;
     try {
-      this._db.prepare(
-        'INSERT OR REPLACE INTO quota_state (account, as_of, payload) VALUES (?,?,?)',
-      ).run(acct, entry.as_of, JSON.stringify(entry));
+      this._put.run(acct, entry.as_of, JSON.stringify(entry));
     } catch (e) {
       this._fail(`persist: ${e.message}`);
     }
@@ -296,6 +301,7 @@ class QuotaStore {
     if (!this._db) return;
     try { this._db.close(); } catch { /* closing a broken handle is not news */ }
     this._db = null;
+    this._put = null;
   }
 }
 

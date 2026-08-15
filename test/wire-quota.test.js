@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { QuotaStore, parseQuotaHeaders, snapshotFrom } = require('../wire/quota');
-const { shapeQuota, quotaChip, pickQuota } = require('../proxy-util');
+const { shapeQuota, quotaChip, pickQuota, QUOTA_429_RECENT_S } = require('../proxy-util');
 
 // Measured verbatim off a forwarded turn on this box, 2026-08-15. Kept whole
 // (unused headers included) so a parse that starts reading a new field is
@@ -271,6 +271,23 @@ test('pickQuota: a quota-less entry cannot win the race and blank the chip', () 
   assert.strictEqual(picked.quota.usedPct, 95);
 });
 
+test('pickQuota: an entry with NOTHING to display ranks below a complete one, whatever its source', () => {
+  // The milder cousin of the bug above: the entry is not quota-less, so it is a
+  // candidate, but it carries neither a percentage nor a window — quotaChip
+  // renders null for it. Letting it win on source rank blanks a chip the
+  // complete wirescope reading could have filled.
+  const nowMs = NOW * 1000;
+  const hollow = shapeQuota({ status: 'allowed_warning', age_s: 1 }, { quota: true });
+  assert.strictEqual(hollow.usedPct, null, 'ENTER: the hollow entry really has no percentage');
+  assert.strictEqual(hollow.window, null, 'ENTER: and no window — this is the case under test');
+  const picked = pickQuota([
+    { quota: hollow, at: nowMs, source: 'wire' },
+    { quota: wireQ(), at: nowMs - 5000, source: 'wirescope' },
+  ], nowMs);
+  assert.strictEqual(picked.quota.usedPct, 95, 'the complete reading won despite the lower-ranked source');
+  assert.ok(quotaChip(picked.quota, 0), 'and the chip renders — the point of the rule');
+});
+
 test('pickQuota: the wire source outranks wirescope even when wirescope polled later', () => {
   // The wire reading comes off our own forwarded turn; the poll is of a cache
   // that the same turn updated, so the wire cannot be the staler of the two.
@@ -310,6 +327,43 @@ test('pickQuota: the countdown is derived at render time, so it ticks with no tr
   // Same stored reading, an hour of silence later: the remainder MOVED.
   const later = pickQuota([{ quota: q, at: nowMs, source: 'wire' }], nowMs + 1800 * 1000);
   assert.strictEqual(later.quota.resetsInS, 1800);
+});
+
+test("pickQuota: a 429's loudness decays with no traffic at all", () => {
+  // The same hazard as the countdown above, on the other clock. `last_429_age_s`
+  // is computed when the reading is BUILT — under the old 5s poll it was
+  // recomputed 12x/min, but the wire stamps it once per forwarded turn. A
+  // refusal burst is followed by the operator STOPPING the fleet, so without
+  // this derivation the chip stays loud for hours after recovery.
+  const nowMs = NOW * 1000;
+  const q = shapeQuota({
+    status: 'allowed_warning', age_s: 1,
+    primary: { window: '7d', used_pct: 95, reset: NOW + 100000 },
+    last_429: NOW, last_429_age_s: 0,
+  }, { quota: true });
+  assert.strictEqual(q.last429At, NOW, 'ENTER: the absolute refusal epoch survived shaping');
+
+  const now = pickQuota([{ quota: q, at: nowMs, source: 'wire' }], nowMs);
+  assert.strictEqual(now.quota.last429AgeS, 0);
+  assert.strictEqual(quotaChip(now.quota, 0).level, 'loud', 'ENTER: it starts loud, so the decay below is a real change');
+
+  // The SAME stored object, past the recency window, with no new reading.
+  const later = pickQuota([{ quota: q, at: nowMs, source: 'wire' }], nowMs + (QUOTA_429_RECENT_S + 60) * 1000);
+  assert.strictEqual(later.quota.last429AgeS, QUOTA_429_RECENT_S + 60);
+  assert.notStrictEqual(quotaChip(later.quota, 0).level, 'loud', 'the refusal aged out without another turn');
+});
+
+test('pickQuota: a reading with no absolute 429 epoch keeps its relative age', () => {
+  // Symmetric with the reset fallback: a source that publishes only the
+  // relative age must not lose its refusal to a field it never carried.
+  const nowMs = NOW * 1000;
+  const q = shapeQuota({
+    status: 'allowed_warning', age_s: 1,
+    primary: { window: '7d', used_pct: 95, reset: NOW + 100000 },
+    last_429_age_s: 30,
+  }, { quota: true });
+  assert.strictEqual(q.last429At, null, 'ENTER: this fixture has no absolute refusal epoch');
+  assert.strictEqual(pickQuota([{ quota: q, at: nowMs, source: 'wirescope' }], nowMs).quota.last429AgeS, 30);
 });
 
 test('pickQuota: a reading with no absolute reset keeps its relative countdown', () => {

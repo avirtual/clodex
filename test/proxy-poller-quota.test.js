@@ -33,6 +33,7 @@ const SHAPED = {
   reset: null,
   ageS: 3.4,
   last429AgeS: null,
+  last429At: null,
 };
 
 function serveProxy({ quota, capabilities, sessions }) {

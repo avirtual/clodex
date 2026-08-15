@@ -61,6 +61,9 @@ test('shapeQuota: the live payload maps to the whole shaped object', () => {
     reset: 1787043600,
     ageS: 3.4,
     last429AgeS: null,
+    // Absolute epoch of the last refusal, for the same reason: pickQuota
+    // derives the live age from it, so the loud chip decays with no traffic.
+    last429At: null,
   });
 });
 
@@ -93,6 +96,7 @@ test('shapeQuota: a missing primary falls back to the top-level window/reset', (
     reset: null,
     ageS: 1,
     last429AgeS: null,
+    last429At: null,
   });
 });
 

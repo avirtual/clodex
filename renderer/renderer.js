@@ -3018,7 +3018,12 @@ if (window.api.getWireQuota) {
     const shaped = shapeQuota(snapshot, { quota: true });
     if (!shaped) return;
     const ageMs = (shaped.ageS || 0) * 1000;
-    wireQuota = { quota: shaped, at: Date.now() - ageMs };
+    const at = Date.now() - ageMs;
+    // A turn can complete inside this round trip — plausible on a restart with
+    // active seats — and the broadcast it fires is fresher than what we asked
+    // for. Assigning unconditionally would put the restored reading back until
+    // the next turn.
+    if (!wireQuota || wireQuota.at < at) wireQuota = { quota: shaped, at };
     refreshQuotaChip();
   }).catch(() => { /* no wire, no reading — the chip's normal empty state */ });
 }
