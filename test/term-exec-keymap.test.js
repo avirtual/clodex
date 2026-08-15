@@ -149,6 +149,21 @@ for (const [name, shellPath, keymaps] of SHELLS) {
       test(`${name} in ${km} mode runs exactly the command, ${label}`,
         { skip: !pty ? 'node-pty unavailable' : false, timeout: 90000 }, async () => {
           const { ran, out } = await runCase({ shellPath, keymapCmd, prefill });
+          // Two DIFFERENT failures, separated. A swallowed first byte and a
+          // shell that never received the line both leave `ran` false, and
+          // before this they were indistinguishable in the output — every
+          // occurrence of the t419 race read as "the shell ran nothing", which
+          // is what sent four agents looking in the wrong place.
+          //
+          // The echo of the command line is the evidence that the WRITE landed
+          // intact, independently of whether it then ran: a shell that got
+          // `cho ...` echoes `cho ...`, so a truncated echo names the race
+          // directly. Checked before `ran` so it is the message that surfaces.
+          const typed = `echo ${MARK}`;
+          assert.ok(stripAnsi(out).includes(typed),
+            `the write was CORRUPTED in transit — the shell echoed something other than `
+            + `\`${typed}\`, which is the swallowed-byte race, not a shell that ignored us`
+            + `\n--- output ---\n${out}`);
           // ENTER: the marker means the shell EXECUTED it. Without this the
           // negative checks below are all true of a shell that ran nothing.
           assert.ok(ran, `ENTER: the shell ran the command\n--- output ---\n${out}`);
