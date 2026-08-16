@@ -1224,11 +1224,14 @@ html, body {
 }
 .team-role-row.read-only { opacity: 0.72; }
 /* An absent removable reserved role (t421): a placeholder for something the team
-   does NOT have, so it must not read as a role that exists. Dashed + dimmer than
-   read-only; its Add-it-back button stays full-strength, since it is the only
-   live control on the row. */
-.team-role-row.absent { border-style: dashed; opacity: 0.6; }
-.team-role-row.absent button { opacity: 1; }
+   does NOT have, so it must not read as a role that exists. Dashed, with the
+   TEXT dimmed rather than the row: `opacity` on the row composites it as a
+   group, and a child cannot then render more opaque than its ancestor — so the
+   Add-it-back button, the one live control here, would be dimmed with it and no
+   child rule can undo that. Dim what should look absent, not the container. */
+.team-role-row.absent { border-style: dashed; }
+.team-role-row.absent .team-role-key,
+.team-role-row.absent .team-role-lock-note { color: var(--text-dim); }
 .team-role-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .team-role-key { font-weight: 600; }
 .team-role-badge {

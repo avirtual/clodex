@@ -549,10 +549,24 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
       const res = await window.api.teamRemoveRole(name, role);
       await afterMutation(res, `role "${role}" removed`);
     } else if (act === 'readd') {
+      // Latched before the await: a second click while the first is in flight
+      // finds the role already minted, falls past the re-mint branch (gated on
+      // absence) into the already-exists arm, and compares `{}` against the stock
+      // def — surfacing "already exists with a different definition" for an
+      // action that in fact succeeded.
+      if (btn.disabled) return;
+      btn.disabled = true;
       // `{}` because the backend IGNORES the def when re-minting a reserved key
       // and writes the stock one — sending a def here would suggest this surface
       // authors it, which is exactly the belief that makes the guard rot.
-      const res = await window.api.teamAddRole(name, role, {});
+      let res;
+      try {
+        res = await window.api.teamAddRole(name, role, {});
+      } finally {
+        // The row is rebuilt by afterMutation on success; on a failure the button
+        // survives, and a stuck-disabled control would strand the only way back.
+        btn.disabled = false;
+      }
       await afterMutation(res, `role "${role}" added back`);
     }
   });

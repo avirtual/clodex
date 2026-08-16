@@ -610,6 +610,11 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       const rawMint = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
       rawMint.roles = rawMint.roles || {};
       rawMint.roles[roleName] = pickRoleKeys({ ...stock });
+      // Inert while the stock defs carry only prompt/brief — but this is a WRITE
+      // path, and it is the only one that would not refuse a reserved role paired
+      // with `dispatch: "worktree"`. A stock def that ever grew one would land it
+      // here alone, through the door added to make reserved roles recoverable.
+      assertDispatchAllowed(roleName, rawMint.roles[roleName], team.file);
       atomicWrite(team.file, JSON.stringify(migrateRoles(rawMint), null, 2));
       return loadManifest(teamName);
     }

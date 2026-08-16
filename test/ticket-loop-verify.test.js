@@ -885,14 +885,20 @@ test('a STANDING ticket on a reviewer-less team never reaches the review step at
   const repo = mkRepo();
   const f = mkLoop({ repo, noReviewerRole: true, ticketOver: { worktree: null } });
   assert.strictEqual(f.one().worktree, null, 'ENTER: the ticket really is standing-dispatch, with no worktree block');
-  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', report: 'r', reportedBy: 'team-hand' }]);
 
-  await f.m._runTicketLoop(f.team, 't1');
+  // Driven through `done`, NOT by calling _runTicketLoop directly: the loop
+  // returns at its first line for any ticket whose loopStep is not `verify`, so
+  // a direct call would satisfy every assertion below without ever consulting
+  // `loopEligible` — the gate this test exists to pin. The stamp happens inside
+  // _taskDone, so that is the door the test has to come through.
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'r' });
   await new Promise((r) => setImmediate(r));
 
+  const t = f.one();
+  assert.strictEqual(t.state, 'done', 'ENTER: the close actually landed — every assertion below is true of a ticket nothing closed');
   assert.deepStrictEqual(f.esc(), [], 'nothing escalates — done is simply terminal here');
   assert.strictEqual(f.created.length, 0, 'and no reviewer is sought');
-  assert.strictEqual(f.one().loopStep, undefined, 'the ticket was never stamped into the loop');
+  assert.ok(!('loopStep' in t), 'the ticket was never stamped into the loop');
 });
 
 test('a throw AFTER the record advanced escalates as "review", not as "verify"', async () => {
