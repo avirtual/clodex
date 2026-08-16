@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — teams stop being fixed
+## Unreleased
+
+## 5.11.0 — 2026-08-17 — teams stop being fixed
 
 - A team's lead seat can now be chosen from the team popover instead of only by
   hand-editing `team.json`. The lead row shows which seat currently holds the
