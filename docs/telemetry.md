@@ -161,10 +161,20 @@ fields on the session's sessions.json record:
 Neither field is ever cleared by a **ping failure**. A failure-strike disarm is
 provisional — it stops the LIVE hold and reopens the re-arm gate, so the
 surviving intent is restored on the seat's next main-line turn. The 401 is why:
-the CLI owns its OAuth file and refreshes it on the next real turn, so an
-overnight rejection is transient, and erasing an explicit operator setting on it
-was permanent and silent. Only the operator (`wire:hold`, Settings) withdraws an
-intent.
+an overnight rejection is transient, and erasing an explicit operator setting on
+it was permanent and silent. Only the operator (`wire:hold`, Settings) withdraws
+an intent.
+
+A ping no longer replays the captured `authorization` bearer. An OAuth token
+lives ~8h and the CLI refreshes it only on a turn, so the header snapshot taken
+at the last forwarded turn goes stale on exactly the idle seat a perpetual hold
+exists for — measured, that struck out a hold overnight and left it dead for ten
+hours. `wire/claude-auth.js` re-reads the CLI's current token at ping time
+(credentials file, else the login keychain), gated on the `sk-ant-oat` prefix so
+an API key or a codex entry keeps the header it came with. A token that cannot
+be read or is already past expiry DECLINES the ping, which spends no strike; the
+prefix stays due (a non-200 never restamps the ledger) and the next tick retries
+until the window closes on its own.
 
 The strike budget therefore bounds waste per TURN, not per launch — and NOT
 because a turn proves the credential works: a 401'd main-line turn emits

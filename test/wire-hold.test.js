@@ -633,3 +633,90 @@ test('proxy caches the main line for replay; count_tokens path does not', async 
   await proxy.close();
   server.close();
 });
+
+// ---------------------------------------------------------------------------
+// The bearer is re-read at ping time (wire/claude-auth.js).
+//
+// The bug: `entry.headers` is captured at the last forwarded turn and nothing
+// restamps it, so on the idle seat a perpetual hold exists for, the OAuth
+// bearer ages out mid-hold. Measured on 2026-08-15 — two 401s a minute apart
+// struck out the hold, which then sat dead for ten hours.
+
+const OAT = 'Bearer sk-ant-oat01-captured-at-the-last-turn';
+
+test('ping: an OAuth bearer is replaced with the credential store\'s current one', async () => {
+  const auth = () => ({ accessToken: 'sk-ant-oat01-fresh', expiresAt: Date.now() + 3600_000 });
+  const { store, keeper, sent } = rig({ auth });
+  const obj = makeObj();
+  keeper.noteRequest(SID, obj, { authorization: OAT }, 'http://up/v1/messages');
+  stampWarm(store, obj);
+
+  const res = await keeper.ping(SID);
+  assert.equal(res.warmed, true, 'ENTER: the ping reached the wire — a decline asserts nothing about headers');
+  assert.equal(sent[0].headers.authorization, 'Bearer sk-ant-oat01-fresh');
+});
+
+test('ping: a bearer that is not an expiring OAuth token is left exactly as captured', async () => {
+  // The differential arm. Without it, "the header changed" is satisfied by
+  // rewriting every authorization header — including a codex entry's, whose
+  // token this store knows nothing about, and a long-lived sk-ant-api key.
+  const auth = () => ({ accessToken: 'sk-ant-oat01-fresh', expiresAt: Date.now() + 3600_000 });
+  const { store, keeper, sent } = rig({ auth });
+  const obj = makeObj();
+  keeper.noteRequest(SID, obj, { authorization: 'Bearer sk-ant-api03-a-real-api-key' }, 'http://up/v1/messages');
+  stampWarm(store, obj);
+
+  const res = await keeper.ping(SID);
+  assert.equal(res.warmed, true, 'ENTER: the ping reached the wire');
+  assert.equal(sent[0].headers.authorization, 'Bearer sk-ant-api03-a-real-api-key');
+});
+
+test('ping: an unreadable or expired credential DECLINES instead of replaying a stale bearer', async () => {
+  const obj = makeObj();
+
+  for (const [label, auth, skipped] of [
+    ['unreadable', () => ({ accessToken: null, expiresAt: null }), 'no-credential'],
+    ['expired', () => ({ accessToken: 'sk-ant-oat01-old', expiresAt: Date.now() - 1000 }), 'credential-expired'],
+  ]) {
+    const { store, keeper, sent } = rig({ auth });
+    keeper.noteRequest(SID, obj, { authorization: OAT }, 'http://up/v1/messages');
+    stampWarm(store, obj);
+
+    const res = await keeper.ping(SID);
+    assert.equal(res.skipped, skipped, `${label}: declined with its own reason`);
+    assert.equal(sent.length, 0, `${label}: nothing reached the wire`);
+    // The strike budget is the whole point: a decline must not be evidence
+    // about the credential, or a mid-refresh gap disarms a perpetual hold.
+    assert.deepEqual(pingOutcome(res), ['decline', `declined:${skipped}`],
+      `${label}: spends no failure strike`);
+  }
+});
+
+test('a perpetual hold survives an idle-seat token refresh gap and pings again after it', async () => {
+  // End-to-end over the real tick loop, driven through the failure budget that
+  // the shipped bug blew: two ticks inside one margin window used to be enough
+  // to disarm, because both replayed the same expired bearer.
+  const cred = { accessToken: 'sk-ant-oat01-old', expiresAt: Date.now() - 1000 };
+  const { store, keeper, clock, sent } = rig({ auth: () => ({ ...cred }) });
+  const obj = makeObj();
+  const disarms = [];
+  keeper.on('hold', (e) => { if (e.event === 'disarmed') disarms.push(e.cause); });
+  keeper.noteRequest(SID, obj, { authorization: OAT }, 'http://up/v1/messages');
+  stampWarm(store, obj);
+  keeper.arm(SID, 0, { always: true });
+
+  clock.t += 250; // inside the 300s margin: due every tick from here
+  for (let i = 0; i < 5; i++) await keeper.tick();
+  assert.equal(sent.length, 0, 'ENTER: every tick declined at the credential gate');
+  assert.deepStrictEqual(disarms, [], 'five ticks past a two-strike budget and it is still armed');
+  assert.equal(keeper.holds()[SID].failures, 0, 'and no strike was spent');
+
+  // The CLI takes a turn of its own and refreshes. The very next tick pings —
+  // the prefix is still due because a declined ping never restamps the ledger.
+  cred.accessToken = 'sk-ant-oat01-refreshed';
+  cred.expiresAt = Date.now() + 8 * 3600_000;
+  await keeper.tick();
+  assert.equal(sent.length, 1, 'the tick after the refresh replays');
+  assert.equal(sent[0].headers.authorization, 'Bearer sk-ant-oat01-refreshed');
+  assert.equal(keeper.holds()[SID].lastResult, 'warmed');
+});

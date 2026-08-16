@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- "Keep cache warm — always" stopped keeping the cache warm after roughly eight
+  hours of an idle seat, and stayed stopped until the seat took a turn. The
+  keep-warm ping replayed the login token captured at the seat's last turn;
+  those expire, and the CLI refreshes them only when it takes a turn — so on an
+  idle seat, the one case the setting exists for, the token went stale and two
+  rejected pings a minute apart switched the hold off for the night. The setting
+  itself was never lost, which is why it still read "held always". Clodex now
+  reads the current token when it pings, and waits quietly instead of pinging
+  when there is no valid one to use.
+
 ## 5.10.1 — 2026-08-15
 
 - A command an agent ran in a seat's terminal could lose its first character on

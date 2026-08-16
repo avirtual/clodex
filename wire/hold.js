@@ -32,14 +32,15 @@
 //     wire/hold-store.js and re-armed at startup via restorePerpetual().
 //     The warm-only gate is unchanged on that path — restoring is not a
 //     reason to pay for a cache write — and a restored credential may well
-//     be stale, which the 2-strike disarm already bounds.
-//   - NO auth bootstrap / account registry: headers live in-process; an
-//     entry always carries the exact headers of the session's own last
-//     request. A 401 on a replay means the CLI's OAuth expired mid-idle —
-//     nothing in-process can refresh it (the CLI owns the credential
-//     file), so it counts as a failure strike and the 2-strike disarm
-//     bounds the waste. The session's next organic turn re-caches fresh
-//     headers anyway.
+//     be stale everywhere except the bearer, which ping() re-reads.
+//   - NO account registry: headers live in-process, and an entry carries the
+//     exact headers of the session's own last request — with ONE exception.
+//     The `authorization` bearer is re-read from the CLI's own credential
+//     store at ping time (wire/claude-auth.js), because an OAuth token lives
+//     ~8h and the CLI refreshes it only on a turn: replaying the captured one
+//     401s on precisely the idle seat this feature exists for. A 401 that
+//     survives that re-read is a dead credential, not a stale one, and still
+//     spends a failure strike.
 //   - Arming is PROGRAMMATIC only (app-side call), the twin of proxylab's
 //     POST /_hold: cold-gated like a ping, because with no forwarded turn
 //     there is nothing that would re-establish a cold cache. The
@@ -55,6 +56,7 @@ const { EventEmitter } = require('events');
 const { URL } = require('url');
 
 const { prefixHash } = require('./warmth');
+const { readClaudeAuth } = require('./claude-auth');
 
 const DEFAULTS = {
   maxEntries: 2000, // last-request cap (WARMTH_PINGER_MAX)
@@ -83,9 +85,10 @@ function holdDecision(hold, hasEntry, warmthQ, now, caps = {}) {
   //     ANCHOR and every organic turn resets it (noteRequest), so on an active
   //     session it is never reached — which is why an infinite hold looks fine
   //     in testing and dies after ~a day on the IDLE session it exists for.
-  //   - failures: KEPT. Nothing in-process can refresh an expired OAuth (see
-  //     header), so this is the only thing bounding a perpetual retry loop
-  //     against a dead credential. Do not add `always` to this branch.
+  //   - failures: KEPT. ping() re-reads the CLI's current bearer, so a 401 that
+  //     reaches this branch is a credential that is dead rather than stale, and
+  //     this is the only thing bounding a perpetual retry loop against one. Do
+  //     not add `always` to this branch.
   // Third element is a stable machine-readable `cause` (the disarm emits carry
   // it so persistence-clearing keys on it, never on the human `reason` text —
   // rewording a message must not silently break holdUntil-clearing).
@@ -105,9 +108,10 @@ function holdDecision(hold, hasEntry, warmthQ, now, caps = {}) {
 // (offline-testable). Returns [kind, label]; only 'failure' spends a strike,
 // and only 'warmed' clears the count.
 //
-// The 2-strike disarm exists for exactly ONE condition: an OAuth credential the
-// CLI owns and nothing in-process can refresh (see header). Only a
-// credential-shaped rejection may spend it. Everything transient must decline
+// The 2-strike disarm exists for exactly ONE condition: a credential that is
+// genuinely dead — revoked, or a logout. Staleness is no longer in that set:
+// ping() re-reads the CLI's current bearer and declines outright when it cannot
+// get a live one. Only a credential-shaped rejection may spend it. Everything transient must decline
 // instead — a transport error or a retryable upstream status is not evidence of
 // a dead credential, and on a perpetual hold it is fatal to treat it as one:
 // `failures` resets only on a warmed ping or an organic turn, so on an idle seat
@@ -185,6 +189,7 @@ class HoldKeeper extends EventEmitter {
     this.warmth = opts.warmth;
     this._now = opts.now || (() => Date.now() / 1000);
     this._request = opts.request || postJson;
+    this._auth = opts.auth || readClaudeAuth;
     this._entryStore = opts.entryStore || null;
     for (const k of Object.keys(DEFAULTS)) this[k] = opts[k] ?? DEFAULTS[k];
     this._entries = new Map(); // sessionId → { obj, headers, url, ts }
@@ -375,6 +380,34 @@ class HoldKeeper extends EventEmitter {
     }
     headers['content-type'] = 'application/json';
     headers['accept-encoding'] = 'identity';
+    // Re-read the bearer instead of replaying the captured one. `entry.headers`
+    // is a snapshot from the last forwarded turn and nothing restamps it, so on
+    // the idle seat this whole feature exists for it is stale by construction —
+    // an OAuth access token lives ~8h and the CLI refreshes it only on a turn.
+    //
+    // Gated on the token SHAPE, not the provider: `sk-ant-oat` is the OAuth
+    // token that expires. An `sk-ant-api` key does not, and a codex entry's
+    // bearer is neither — both keep the header they came with.
+    //
+    // Both failure branches DECLINE rather than send. A decline spends no
+    // failure strike (pingOutcome), which is the point: the 2-strike disarm has
+    // to keep meaning "this credential is dead", and a token we could not read
+    // or one that is merely mid-refresh is not evidence of that. The retry is
+    // the next tick — a failed ping never restamps the ledger, so the prefix
+    // stays due for the rest of its margin window and then goes cold on its own.
+    const authKey = Object.keys(headers).find((k) => k.toLowerCase() === 'authorization');
+    if (authKey && /^Bearer\s+sk-ant-oat/i.test(headers[authKey] || '')) {
+      const { accessToken, expiresAt } = this._auth();
+      if (!accessToken) {
+        return { ok: true, warmed: false, skipped: 'no-credential', session: sessionId,
+          hash: hFull, note: 'could not read the current Claude OAuth token; declined rather than replaying a stale bearer' };
+      }
+      if (typeof expiresAt === 'number' && expiresAt <= Date.now()) {
+        return { ok: true, warmed: false, skipped: 'credential-expired', session: sessionId,
+          hash: hFull, note: 'the stored OAuth token is past expiry; declined until the CLI refreshes it' };
+      }
+      headers[authKey] = `Bearer ${accessToken}`;
+    }
     let r;
     try {
       r = await this._request(entry.url, headers, body);
