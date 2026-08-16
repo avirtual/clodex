@@ -56,7 +56,7 @@ function initTeamRolesPopover({ promptText } = {}) {
   }
 
   // Render one row per role. Reserved rows TEACH their lock (read-only brief +
-  // prompt, a "managed by the Clodex app" badge, and a one-line why); ordinary rows read
+  // prompt, a "built-in role" badge, and a one-line why); ordinary rows read
   // as editable — an "Edit this role" caption + three hinted inputs +
   // Save/Rename/Remove (delegated below).
   // What this team's manifest names that resolves to nothing, per role. A
@@ -83,7 +83,7 @@ function initTeamRolesPopover({ promptText } = {}) {
         el.classList.add('read-only');
         el.innerHTML =
           `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span>` +
-          `<span class="team-role-badge" title="The Clodex app defines this role — not an agent named clodex. You don't need to change anything here.">managed by the Clodex app</span></div>` +
+          `<span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div>` +
           `<div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div>` +
           `<div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || '—')}</span></div>` +
           `<div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || '—')}</span></div>`;
