@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.10.2 — 2026-08-16
+
 - "Keep cache warm — always" stopped keeping the cache warm after roughly eight
   hours of an idle seat, and stayed stopped until the seat took a turn. The
   keep-warm ping replayed the login token captured at the seat's last turn;
