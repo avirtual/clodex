@@ -147,8 +147,18 @@ test('re-pointing the stock hand template is SEED-ONLY — every consumer, repo-
   assert.ok(hits.some(([f]) => f === 'ipc-handlers.js'),
     'the walk must reach ipc-handlers.js — the join site that this pin was widened to cover');
   assert.deepStrictEqual(Object.fromEntries(hits.sort()), {
-    // declaration + export + the three createTeam role defaults
-    'team-manifest.js': 5,
+    // declaration + export + the three createTeam role defaults, and (t421)
+    // addRole's operator re-mint of a REMOVED reserved role.
+    //
+    // That sixth site was checked against the question this message asks, and it
+    // is still seed-only: the branch is gated on `!team.roles[roleName]`, so it
+    // is reachable ONLY when the key is absent. A live team's role never enters
+    // it — an existing key falls through to the ordinary already-exists arm
+    // (exact-match no-op, else throw), exactly as before. Pinned in
+    // team-manifest.test.js, 'the operator opt-in does NOT let a reserved def be
+    // rewritten when the key exists'. So re-pointing a stock def still cannot
+    // rewrite or refuse a role any live team already has.
+    'team-manifest.js': 6,
     // import + team:join's mint-if-absent branch
     'ipc-handlers.js': 2,
   }, 'a NEW read site means the stock def stopped being seed-only — verify it cannot rewrite '
