@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- A team's lead seat can now be chosen from the team popover instead of only by
+  hand-editing `team.json`. The lead row shows which seat currently holds the
+  role and whether it resolves to anything — a team created from the Teams menu
+  names a `<team>-lead` seat that does not exist yet, and that used to read as
+  if it were fine. Pick a running seat from the list, type the name of a stopped
+  one, or create the seat from the row. Bash sessions are deliberately not
+  offered: they have no messaging registry, so a lead pointed at one could never
+  be reached. The lead ROLE itself stays built-in and locked, as before.
+
 ## 5.10.2 — 2026-08-16
 
 - "Keep cache warm — always" stopped keeping the cache warm after roughly eight
