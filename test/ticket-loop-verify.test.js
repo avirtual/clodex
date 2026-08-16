@@ -202,6 +202,11 @@ function commitOnBranch(dir, branch, file, body) {
 // silently become an assertion about that escalation instead.
 function mkLoop({
   repo, ticketOver = {}, noLeadSession = false, noReviewerPrompt = false, suite = 'green',
+  // t421: the team has NO `reviewer` ROLE at all — the state an operator reaches
+  // by removing it. Distinct from noReviewerPrompt, which is a role whose prompt
+  // file is missing: that one SPAWNS a seat and escalates as UNBRIEFED, this one
+  // never reaches a spawn.
+  noReviewerRole = false,
   suiteTimeoutMs = null,
   // Wraps the REAL git-worktree rather than replacing it, so a caller can count
   // which git operations the loop reached without giving up the real ones the
@@ -230,10 +235,12 @@ function mkLoop({
     roles: {
       lead: { instantiate: 'session', brief: 'the lead' },
       hand: { instantiate: 'session', brief: 'the hand' },
-      reviewer: {
-        instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
-        tools: ['Read', 'Grep', 'Glob'], type: null, template: null, standing: null, ephemeral: false,
-      },
+      ...(noReviewerRole ? {} : {
+        reviewer: {
+          instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
+          tools: ['Read', 'Grep', 'Glob'], type: null, template: null, standing: null, ephemeral: false,
+        },
+      }),
     },
   };
   const store = [];
@@ -808,6 +815,84 @@ test('an unbriefed reviewer escalates rather than reviewing nothing', async () =
   const esc = f.esc();
   assert.strictEqual(esc.length, 1, 'the lead is told the review will not happen');
   assert.match(esc[0].body, /boots UNBRIEFED/);
+});
+
+// ── a team with NO reviewer role (t421) ────────────────────────────────────
+//
+// t421 lets an operator REMOVE the `reviewer` role, and this is the property
+// that makes a reviewer-less team coherent rather than broken: the loop must
+// escalate to the lead at the review step, not hang holding the ticket. The code
+// path already existed (the spawn handler replies `error: … has no "reviewer"
+// role to spawn`, and onReply turns an `error:` reply into an escalation) — but
+// nothing asserted it, so nothing stopped a future edit from turning that reply
+// into a throw, a silence, or a log line. Removal is only safe to OFFER while
+// these hold.
+
+test('a team with NO reviewer role escalates at the review step instead of hanging', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, noReviewerRole: true });
+  assert.ok(!f.team.roles.reviewer,
+    'ENTER: the fixture team genuinely has no reviewer role — with one present this measures the ordinary green path and asserts nothing about absence');
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'I did the work. Suite green at 4999.', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  // Same setImmediate drain as the green path, and for the same reason: the
+  // spawn refusal is raised inside _handleTeamReview's setImmediate, so an early
+  // assertion would see zero escalations and pass by being early.
+  await new Promise((r) => setImmediate(r));
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'exactly one escalation reaches the lead');
+  assert.strictEqual(esc[0].target, 'lead', 'and it goes to the lead, who is now the reviewer');
+  assert.match(esc[0].body, /stopped at: review: spawn/, 'the escalation names the review step');
+  assert.match(esc[0].body, /has no "reviewer" role to spawn/,
+    'and carries the actual reason, so the lead is not left guessing why no review happened');
+  assert.strictEqual(f.created.length, 0, 'no seat is spawned');
+  assert.strictEqual(f.persistence.list().filter((e) => e.reviewTicket).length, 0,
+    'and none is reserved — nothing is left holding a review that cannot happen');
+});
+
+test('the reviewer-less escalation RELEASES the hold — no seat can ever answer it', async () => {
+  // The counterpart of the UNBRIEFED arm below, which keeps the hold BECAUSE a
+  // seat spawned and may still emit a verdict. Here nothing spawned, so holding
+  // the ticket in-flight would leave the stall watchdog nudging the lead forever
+  // about a review that is never coming. This is the assertion that distinguishes
+  // "escalates" from "escalates AND stops".
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, noReviewerRole: true });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.esc().length, 1, 'ENTER: the reviewer-less arm escalated');
+  const t = f.one();
+  // The key is DELETED, not nulled (_setLoopStep's `else delete`), so match on
+  // absence rather than on null — an assertion against null here would fail on
+  // correct behaviour.
+  assert.ok(!('loopStep' in t), 'the hold is released');
+  assert.strictEqual(ticketInFlight(t), false, 'the ticket is no longer in flight');
+  assert.strictEqual(t.state, 'done', 'and it stays done — the work is not reopened by the missing reviewer');
+});
+
+test('a STANDING ticket on a reviewer-less team never reaches the review step at all', async () => {
+  // The loop is gated on `ticket.worktree.branch`, so a standing-dispatch ticket
+  // terminates at `done` and never asks for a reviewer. Removing the role must
+  // not change that — a standing team that suddenly started escalating every
+  // closed ticket to its lead would be the loud failure of this ticket.
+  const repo = mkRepo();
+  const f = mkLoop({ repo, noReviewerRole: true, ticketOver: { worktree: null } });
+  assert.strictEqual(f.one().worktree, null, 'ENTER: the ticket really is standing-dispatch, with no worktree block');
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.deepStrictEqual(f.esc(), [], 'nothing escalates — done is simply terminal here');
+  assert.strictEqual(f.created.length, 0, 'and no reviewer is sought');
+  assert.strictEqual(f.one().loopStep, undefined, 'the ticket was never stamped into the loop');
 });
 
 test('a throw AFTER the record advanced escalates as "review", not as "verify"', async () => {

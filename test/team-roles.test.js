@@ -11,6 +11,8 @@ const {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote,
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,
+  absentReservedRoles, reservedRemovalWarning, absentReservedNote,
+  REMOVABLE_RESERVED_ROLE_KEYS,
 } = require('../renderer/lib/team-roles');
 
 test('teamRoleRows: one row per role in key order, reserved keys marked read-only', () => {
@@ -108,6 +110,50 @@ test('reservedRoleNote: newcomer-facing lock reason for lead/reviewer, safe gene
   assert.match(reservedRoleNote('reviewer'), /Independently checks the lead's work/);
   // Any other (no other reserved key today) → a safe generic, never empty.
   assert.match(reservedRoleNote('whatever'), /Managed by Clodex/);
+});
+
+// t421. `reviewer` is removable BY THE OPERATOR and `lead` is not, and these
+// helpers are how the popover renders that split. The membership assertion is the
+// point: a `lead` that leaked into the removable set would put a Remove button on
+// a role whose absence makes the whole team fail to load.
+test('REMOVABLE_RESERVED_ROLE_KEYS is exactly {reviewer} — never `lead`', () => {
+  assert.deepStrictEqual([...REMOVABLE_RESERVED_ROLE_KEYS], ['reviewer']);
+  assert.strictEqual(REMOVABLE_RESERVED_ROLE_KEYS.has('lead'), false,
+    'loadManifest hard-requires `lead`; offering to remove it would produce a team.json that cannot load');
+});
+
+test('absentReservedRoles: names a removed reviewer, and nothing when the team has one', () => {
+  // The add-it-back affordance's whole input. A team with no reviewer row at all
+  // is how this orphan state stayed invisible.
+  assert.deepStrictEqual(absentReservedRoles({ roles: { lead: {}, hand: {} } }), ['reviewer']);
+  assert.deepStrictEqual(absentReservedRoles({ roles: { lead: {}, reviewer: {} } }), [],
+    'a team WITH a reviewer gets no synthetic row — it already has a real one');
+  // A lead-less manifest never reaches the popover (loadManifest throws first),
+  // but the helper must not invent a `lead` row for one: it is not removable, so
+  // it can never be re-added from here either.
+  assert.deepStrictEqual(absentReservedRoles({ roles: {} }), ['reviewer']);
+  assert.deepStrictEqual(absentReservedRoles(null), ['reviewer'], 'no manifest → no throw');
+});
+
+test('absentReservedRoles rows are NOT in teamRoleRows — the schema-pinned model stays manifest-only', () => {
+  // The legibility test reads teamRoleRows' keys as the schema fields a row can
+  // display, and every caller relies on "one row per role in the manifest". A
+  // synthetic absent-role row folded in there would break both at once, silently.
+  const manifest = { roles: { lead: {}, hand: {} } };
+  assert.deepStrictEqual(teamRoleRows(manifest).map((r) => r.key), ['lead', 'hand'],
+    'the row model still describes exactly what is on disk');
+  assert.deepStrictEqual(absentReservedRoles(manifest), ['reviewer'],
+    'and the absent one is reported separately');
+});
+
+test('reservedRemovalWarning / absentReservedNote say what is LOST, not merely what changed', () => {
+  // Removal is destructive, one click away, and its only other symptom arrives a
+  // ticket later at the review step — so the confirm has to carry the consequence.
+  assert.match(reservedRemovalWarning('reviewer'), /escalate to you at the review step/);
+  assert.match(absentReservedNote('reviewer'), /escalate to the lead at the review step/);
+  // An unknown key still gets a safe, non-empty line rather than undefined text.
+  assert.ok(reservedRemovalWarning('mystery').length > 0);
+  assert.ok(absentReservedNote('mystery').length > 0);
 });
 
 test('parseDuration: friendly units → ms; bare number = minutes; rejects junk/zero/blank', () => {

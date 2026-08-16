@@ -1223,6 +1223,12 @@ html, body {
   padding: 8px;
 }
 .team-role-row.read-only { opacity: 0.72; }
+/* An absent removable reserved role (t421): a placeholder for something the team
+   does NOT have, so it must not read as a role that exists. Dashed + dimmer than
+   read-only; its Add-it-back button stays full-strength, since it is the only
+   live control on the row. */
+.team-role-row.absent { border-style: dashed; opacity: 0.6; }
+.team-role-row.absent button { opacity: 1; }
 .team-role-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .team-role-key { font-weight: 600; }
 .team-role-badge {

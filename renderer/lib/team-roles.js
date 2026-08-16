@@ -13,6 +13,12 @@
 // edit/rename/remove controls (the mutators would bounce them anyway). Kept in
 // lockstep with team-manifest.js RESERVED_ROLE_KEYS; the backend is the real gate.
 const RESERVED_ROLE_KEYS = new Set(['lead', 'reviewer']);
+// The reserved keys the OPERATOR may remove and re-add (t421). `lead` is absent
+// on purpose and not an oversight: loadManifest hard-requires it, so a team
+// without one fails to load and reads as no team at all. Mirrors the backend
+// split — removeRole refuses `lead` for everyone, reserved-otherwise only
+// without the operator opt-in.
+const REMOVABLE_RESERVED_ROLE_KEYS = new Set(['reviewer']);
 // Mirror of team-manifest's ROLE_RE (role key) and NAME_RE (template name). These
 // are for EARLY client-side feedback only — the backend re-validates via the real
 // regexes on every write regardless.
@@ -41,6 +47,42 @@ function teamRoleRows(manifest) {
     template: (def && def.template) || '',
     readOnly: RESERVED_ROLE_KEYS.has(key),
   }));
+}
+
+// The removable reserved keys this manifest does NOT have — today, `reviewer`
+// after an operator removed it. The popover renders one add-it-back row per
+// entry, BELOW the manifest's own rows.
+//
+// Deliberately NOT a row inside teamRoleRows: that model's keys are pinned
+// against the manifest schema by the legibility test (any key on a row that is
+// not `key`/`readOnly` is read as a schema field), and a synthetic row would
+// also make "one row per role in the manifest" false — which is the property
+// every caller of it relies on. A team with no reviewer row at all is how this
+// orphan state stayed invisible, so the affordance has to exist somewhere; it
+// just must not be smuggled into the schema-pinned model.
+function absentReservedRoles(manifest) {
+  const roles = (manifest && manifest.roles) || {};
+  return [...REMOVABLE_RESERVED_ROLE_KEYS].filter((k) => !roles[k]);
+}
+
+// What the operator loses by removing a reserved role, shown IN the confirm.
+// Removal is destructive, one click away, and the consequence is invisible from
+// the popover — it only shows up a ticket later, at the review step.
+function reservedRemovalWarning(key) {
+  if (key === 'reviewer') {
+    return 'Tickets on this team will escalate to you at the review step instead of getting a cold reviewer.';
+  }
+  return 'This role will no longer exist on the team.';
+}
+
+// The one-liner on an ABSENT reviewer's add-it-back row. Says what is happening
+// NOW (not merely what the role would do), because the state is easy to reach by
+// accident and gives no other symptom until a ticket is already in flight.
+function absentReservedNote(key) {
+  if (key === 'reviewer') {
+    return 'Not on this team. Tickets escalate to the lead at the review step. Add it back to get an independent review pass.';
+  }
+  return 'Not on this team.';
 }
 
 // Client-side pre-check of the add-role form. Returns {ok:true, name, template}
@@ -231,7 +273,8 @@ function preflightByRole(findings) {
 
 module.exports = {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, preflightByRole,
+  absentReservedRoles, reservedRemovalWarning, absentReservedNote,
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,
-  DISPATCH_VALUES, DEFAULT_DISPATCH,
+  DISPATCH_VALUES, DEFAULT_DISPATCH, REMOVABLE_RESERVED_ROLE_KEYS,
 };

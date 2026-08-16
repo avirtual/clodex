@@ -5,9 +5,13 @@
 // bypassing popoverApi (the local-vs-peer data seam — a team manifest is
 // host-local, never peer-fetched).
 //
-// lead + reviewer rows are READ-ONLY (operator-owned topology, C1): shown with a
-// badge, no controls — the mutators bounce them anyway, so we don't offer a
-// control that only errors. Ordinary roles get inline brief/prompt/template edit
+// lead + reviewer rows are READ-ONLY (operator-owned topology, C1): their
+// DEFINITIONS can't be edited or renamed here — the mutators bounce that anyway,
+// so we don't offer a control that only errors. What each one does grow is the
+// decision that IS the operator's: which seat fills `lead` (t420), and whether
+// the team has a `reviewer` at all (t421 — Remove, plus an add-it-back row when
+// it is absent, which re-mints Clodex's own def, never a caller-supplied one).
+// Ordinary roles get inline brief/prompt/template edit
 // (→ teamSetRole), Rename (→ teamRenameRole), Remove (→ teamRemoveRole). A
 // remove/rename the backend FAIL-CLOSES (C5: a live/persisted seat or an open
 // ticket still encodes the role) surfaces the blocking names INLINE — no
@@ -23,6 +27,7 @@ const {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, DISPATCH_VALUES, DEFAULT_DISPATCH,
   parseDuration, formatDuration, formatBlockedBy, preflightByRole,
   leadSeatCandidates, leadResolution,
+  absentReservedRoles, reservedRemovalWarning, absentReservedNote, REMOVABLE_RESERVED_ROLE_KEYS,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
 
@@ -230,10 +235,25 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           `<div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div>` +
           `<div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || '—')}</span></div>` +
           `<div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || '—')}</span></div>`;
-        // The lead ROLE stays locked; which SEAT fills it does not (t420). Only
-        // this one reserved row grows a control — `reviewer` has no manifest
-        // pointer to re-aim, so it stays purely read-only.
+        // The lead ROLE stays locked; which SEAT fills it does not (t420).
         if (row.key === 'lead') el.appendChild(buildLeadSeatBlock(manifest));
+        // A reserved role's DEFINITION stays locked, but whether the team has one
+        // at all is the operator's call (t421) — `reviewer` only, and only from
+        // here: the backend takes an operator opt-in this channel passes and the
+        // `[agent:team role-rm]` intent does not. `lead` has no such row, because
+        // a team.json without it fails to load outright.
+        if (REMOVABLE_RESERVED_ROLE_KEYS.has(row.key)) {
+          const actions = document.createElement('div');
+          actions.className = 'team-role-actions';
+          const rm = document.createElement('button');
+          rm.type = 'button';
+          rm.className = 'secondary';
+          rm.dataset.act = 'remove';
+          rm.textContent = 'Remove';
+          rm.title = 'Take this built-in role off the team. You can add it back here.';
+          actions.appendChild(rm);
+          el.appendChild(actions);
+        }
       } else {
         // SECURITY: brief/prompt/template are agent-writable unconstrained strings
         // (only role KEYS are charset-gated). NEVER interpolate them into a
@@ -335,6 +355,44 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
         }
         el.appendChild(box);
       }
+      listEl.appendChild(el);
+    }
+    // A removable reserved role the team does NOT have still gets a row — the
+    // orphan state has no other symptom until a ticket reaches the review step
+    // and escalates, and a row that simply vanished is how it stayed invisible.
+    // Built as nodes with fixed strings only: nothing here is agent-writable
+    // (the key comes from a module constant, not from team.json).
+    for (const key of absentReservedRoles(manifest)) {
+      const el = document.createElement('div');
+      el.className = 'team-role-row read-only absent';
+      el.dataset.role = key;
+      const head = document.createElement('div');
+      head.className = 'team-role-head';
+      const k = document.createElement('span');
+      k.className = 'team-role-key';
+      k.textContent = key;
+      const badge = document.createElement('span');
+      badge.className = 'team-role-badge';
+      badge.textContent = 'not on this team';
+      head.appendChild(k);
+      head.appendChild(badge);
+      el.appendChild(head);
+      const note = document.createElement('div');
+      note.className = 'team-role-lock-note';
+      note.textContent = absentReservedNote(key);
+      el.appendChild(note);
+      const actions = document.createElement('div');
+      actions.className = 'team-role-actions';
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.dataset.act = 'readd';
+      add.textContent = 'Add it back';
+      // Says what it writes. The def is Clodex's, not the operator's, and not
+      // whatever a previous team.json held — that is the property that makes
+      // remove-then-re-add safe to offer.
+      add.title = "Adds Clodex's built-in definition of this role back to the team.";
+      actions.appendChild(add);
+      el.appendChild(actions);
       listEl.appendChild(el);
     }
   }
@@ -481,9 +539,21 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
       const res = await window.api.teamRenameRole(name, role, to);
       await afterMutation(res, `role "${role}" renamed to "${to}"`);
     } else if (act === 'remove') {
-      if (!window.confirm(`Remove role "${role}" from team "${name}"?`)) return;
+      // A reserved role's removal names what is LOST, not just what is removed:
+      // it is one click, it is destructive, and its only other symptom arrives a
+      // ticket later at the review step. Ordinary roles keep the short confirm.
+      const warn = REMOVABLE_RESERVED_ROLE_KEYS.has(role)
+        ? `\n\n${reservedRemovalWarning(role)}\n\nYou can add it back from this popover.`
+        : '';
+      if (!window.confirm(`Remove role "${role}" from team "${name}"?${warn}`)) return;
       const res = await window.api.teamRemoveRole(name, role);
       await afterMutation(res, `role "${role}" removed`);
+    } else if (act === 'readd') {
+      // `{}` because the backend IGNORES the def when re-minting a reserved key
+      // and writes the stock one — sending a def here would suggest this surface
+      // authors it, which is exactly the belief that makes the guard rot.
+      const res = await window.api.teamAddRole(name, role, {});
+      await afterMutation(res, `role "${role}" added back`);
     }
   });
 

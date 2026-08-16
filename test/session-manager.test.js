@@ -8837,9 +8837,13 @@ function mkTeamMut(extra = {}) {
     REGISTRY_DIR: home,
     resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj' : null),
-    addRole: (t, r, def) => { calls.push(['addRole', t, r, def]); return team; },
-    setRole: (t, r, patch) => { calls.push(['setRole', t, r, patch]); return team; },
-    removeRole: (t, r) => { calls.push(['removeRole', t, r]); return team; },
+    // VARIADIC, not (t, r, def): the mutators grew a trailing operator opt-in
+    // (t421) that the intent path must never pass, and a fixed arity would drop
+    // it silently — the deepStrictEqual pins below would keep passing while an
+    // agent quietly gained the operator's reach.
+    addRole: (...args) => { calls.push(['addRole', ...args]); return team; },
+    setRole: (...args) => { calls.push(['setRole', ...args]); return team; },
+    removeRole: (...args) => { calls.push(['removeRole', ...args]); return team; },
     renameRole: (t, f, to) => { calls.push(['renameRole', t, f, to]); return team; },
     setTeamWatchdog: (t, ms) => {
       calls.push(['setTeamWatchdog', t, ms]);
@@ -8914,6 +8918,25 @@ test('team: role-rename of a free role calls renameRole', () => {
   f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-rename', name: 'runner', to: 'builder' });
   assert.deepStrictEqual(f.calls[0], ['renameRole', 'team', 'runner', 'builder']);
   assert.ok(f.injected.some((t) => /renamed to "builder"/.test(t)));
+});
+
+// t421 made removal of `reviewer` possible — for the OPERATOR. The intent path
+// is the half that must not move, and the pins above are `deepStrictEqual` on the
+// whole call so a fourth argument appearing here fails rather than passing
+// unnoticed. Asserted on its own so the reason is stated where a future edit to
+// _handleTeam will read it.
+test('team: the role-rm/role-add intents pass NO operator opt-in to the mutators (t421)', () => {
+  const f = mkTeamMut();
+  f.seat('lead');
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-rm', name: 'runner' });
+  assert.deepStrictEqual(f.calls[0], ['removeRole', 'team', 'runner'],
+    'removeRole reached with exactly (team, role) — an opt-in here would hand an agent the operator door');
+  assert.strictEqual(f.calls[0].length, 3, 'no trailing argument at all, truthy or not');
+  f.calls.length = 0;
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-add', name: 'builder', body: 'b' });
+  assert.deepStrictEqual(f.calls[0], ['addRole', 'team', 'builder',
+    { prompt: null, template: null, brief: 'b' }], 'addRole reached with exactly (team, role, def)');
+  assert.strictEqual(f.calls[0].length, 4, 'no trailing opt-in on the mint path either');
 });
 
 test('team: role-rm reviewer surfaces the mutator operator-owned error verbatim (C1)', () => {

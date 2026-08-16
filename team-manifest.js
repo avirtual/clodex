@@ -587,10 +587,31 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return loadManifest(name);
   }
 
-  function addRole(teamName, roleName, def) {
+  function addRole(teamName, roleName, def, opts) {
     const team = loadManifest(teamName); // throws if the team is missing
+    const operator = !!(opts && opts.operator === true);
     if (!ROLE_RE.test(roleName)) {
       throw new Error(`role name "${roleName}" must match ${ROLE_RE} (${team.file})`);
+    }
+    // Re-minting a reserved key the operator removed, and the reason the removal
+    // above is safe to offer at all. `def` is IGNORED, not merged and not
+    // validated: the only reachable definition of a reserved role is then the one
+    // Clodex ships, so remove-then-re-add gains an attacker nothing — which is
+    // exactly what the mint refusal further down was protecting. Do NOT "fix"
+    // this into honouring the caller's def; that hands back the bypass.
+    //
+    // Ahead of the def validation below because a def nobody reads must not be
+    // able to refuse the write.
+    if (operator && RESERVED_ROLE_KEYS.has(roleName) && !team.roles[roleName]) {
+      const stock = STOCK_ROLE_DEFS[roleName];
+      if (!stock) {
+        throw new Error(`no stock definition ships for the "${roleName}" role (${team.file})`);
+      }
+      const rawMint = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
+      rawMint.roles = rawMint.roles || {};
+      rawMint.roles[roleName] = pickRoleKeys({ ...stock });
+      atomicWrite(team.file, JSON.stringify(migrateRoles(rawMint), null, 2));
+      return loadManifest(teamName);
     }
     // The legacy key is READ on the load path (a v2 file on disk must keep
     // working), but it must never enter through a WRITE: pickRoleKeys drops it
@@ -607,9 +628,12 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`role "${roleName}" template must be a library-template name matching ${NAME_RE} (${team.file})`);
     }
     const existing = team.roles[roleName];
-    // Never MINT an absent reserved key: loadManifest only REQUIRES `lead`, so a
-    // hand-deleted `reviewer` could otherwise be re-added with an attacker-authored
-    // def. The `!existing` carve-out keeps join's no-op re-ride of a stock def.
+    // Never MINT an absent reserved key from a def: loadManifest only REQUIRES
+    // `lead`, so a hand-deleted `reviewer` could otherwise be re-added with an
+    // attacker-authored def. The `!existing` carve-out keeps join's no-op re-ride
+    // of a stock def. team:join reaches this WITHOUT the operator opt-in, so it
+    // keeps refusing; the operator's re-mint took the stock-def branch above and
+    // never arrives here.
     if (RESERVED_ROLE_KEYS.has(roleName) && !existing) {
       throw new Error(`the "${roleName}" role is operator-owned topology; add it via the app, not an intent/mutator (${team.file})`);
     }
@@ -673,9 +697,22 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return loadManifest(teamName);
   }
 
-  function removeRole(teamName, roleName) {
+  // `opts.operator` is the RENDERER's opt-in (team:removeRole — Bogdan clicking),
+  // and nothing else passes it: the `[agent:team role-rm]` intent calls this with
+  // two args, so an agent still gets the refusal below verbatim, which is what
+  // makes its "remove it via the app" literally true rather than aspirational.
+  function removeRole(teamName, roleName, opts) {
     const team = loadManifest(teamName);
-    if (RESERVED_ROLE_KEYS.has(roleName)) {
+    const operator = !!(opts && opts.operator === true);
+    // `lead` is non-removable for EVERYONE, operator included, and needs its own
+    // reason: loadManifest hard-requires the key and throws without it, while
+    // every caller resolves teams in a best-effort catch — so a team that lost
+    // its lead would not report a missing role, it would read as "no team at
+    // all" everywhere at once, with no surface left that could add it back.
+    if (roleName === 'lead') {
+      throw new Error(`the "lead" role cannot be removed: a team.json without it fails to load, and the team would read as missing everywhere (${team.file})`);
+    }
+    if (RESERVED_ROLE_KEYS.has(roleName) && !operator) {
       throw new Error(`the "${roleName}" role is operator-owned topology; remove it via the app, not an intent/mutator (${team.file})`);
     }
     if (!team.roles[roleName]) {

@@ -177,13 +177,18 @@ function registerIpcHandlers(deps) {
     catch (err) { return { ok: false, error: err.message }; }
   });
 
+  // `{operator: true}`: this channel IS the operator (the renderer), so it may
+  // remove a reserved role — `reviewer` in practice, `lead` is refused for
+  // everyone. The `[agent:team role-rm]` intent calls the same mutator without
+  // the opt-in and keeps today's refusal. The C5 in-use guard runs first,
+  // unchanged: a reviewer with a live seat or an open ticket is not removable.
   handle('team:removeRole', (_e, team, role) => {
     try {
       const blocked = manager._roleInUse(loadManifest(team), role);
       if (blocked.seats.length || blocked.tickets.length) {
         return { ok: false, error: `role "${role}" is in use`, blockedBy: blocked };
       }
-      return { ok: true, team: removeRole(team, role) };
+      return { ok: true, team: removeRole(team, role, { operator: true }) };
     } catch (err) { return { ok: false, error: err.message }; }
   });
 
@@ -280,8 +285,12 @@ function registerIpcHandlers(deps) {
     catch (err) { return { ok: false, error: err.message }; }
   });
 
+  // Same opt-in as team:removeRole, and it only changes one case: re-minting a
+  // reserved key the operator had removed. addRole then writes the STOCK def and
+  // ignores `def` entirely, so this channel cannot author a reviewer either.
+  // team:join above deliberately does NOT pass it — a join must never mint one.
   handle('team:addRole', (_e, team, role, def) => {
-    try { return { ok: true, team: addRole(team, role, def) }; }
+    try { return { ok: true, team: addRole(team, role, def, { operator: true }) }; }
     catch (err) { return { ok: false, error: err.message }; }
   });
 
