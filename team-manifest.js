@@ -709,6 +709,31 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return loadManifest(teamName);
   }
 
+  // The team's lead SEAT — a top-level pointer, NOT the `lead` role. The role is
+  // reserved (RESERVED_ROLE_KEYS) and stays locked; this only re-points which
+  // seat fills it, so the two must not be conflated: setRole('lead') still
+  // throws, and this never touches raw.roles.
+  //
+  // Reassignment is a POINTER change and nothing more — tickets and roster lines
+  // follow it immediately, and the new seat inherits none of the old one's
+  // context. Any "hand over the lead's state" semantics would have to live
+  // somewhere else; this cannot lose anything precisely because it moves nothing.
+  //
+  // A seat that is not running is ACCEPTED on purpose: every team is in that
+  // state whenever its lead is stopped, and the record restarts by name. Only
+  // the charset is gated (NAME_RE, the same regex createTeam validates `lead`
+  // with) — an existence check here would refuse the legitimate stopped case.
+  function setLead(teamName, seatName) {
+    const team = loadManifest(teamName); // throws if the team is missing
+    if (typeof seatName !== 'string' || !NAME_RE.test(seatName)) {
+      throw new Error(`team "${teamName}" lead must be a seat name matching ${NAME_RE} (${team.file})`);
+    }
+    const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
+    raw.lead = seatName;
+    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    return loadManifest(teamName);
+  }
+
   function setTeamWatchdog(teamName, ms) {
     const team = loadManifest(teamName); // throws if the team is missing
     if (ms != null && (typeof ms !== 'number' || !Number.isFinite(ms))) {
@@ -723,7 +748,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
 
   return {
     resolveTeam, findProjectRoot, loadManifest, listTeams, cwdInProject,
-    createTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog,
+    createTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setLead,
     teamsDir, TEAM_FILE,
   };
 }

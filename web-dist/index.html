@@ -1641,6 +1641,46 @@ body {
   color: var(--text-dim);
   word-break: break-word;
 }
+.team-lead-seat {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  opacity: 1;
+}
+.team-lead-status {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+.team-lead-who {
+  font-weight: 600;
+}
+.team-lead-note {
+  color: var(--text-dim);
+}
+.team-lead-status.missing .team-lead-note,
+.team-lead-status.ineligible .team-lead-note,
+.team-lead-status.unset .team-lead-note {
+  color: var(--warn);
+}
+.team-lead-status.ineligible .team-lead-who {
+  color: var(--warn);
+}
+.team-lead-status.live .team-lead-who {
+  color: var(--accent);
+}
+.team-lead-empty {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 4px 0;
+}
+.team-lead-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 6px;
+}
 .team-role-editcap {
   font-size: 10px;
   text-transform: uppercase;
@@ -6820,6 +6860,10 @@ body {
         { name: "teamRemoveRole", kind: "invoke", channel: "team:removeRole" },
         { name: "teamRenameRole", kind: "invoke", channel: "team:renameRole" },
         { name: "teamSetWatchdog", kind: "invoke", channel: "team:setWatchdog" },
+        // Which SEAT is the team's lead (t420) — the manifest's top-level pointer, not
+        // the reserved `lead` ROLE (that stays locked). The only door to a team whose
+        // lead names a seat that was never created.
+        { name: "teamSetLead", kind: "invoke", channel: "team:setLead" },
         // What this team's manifest names that resolves to nothing (missing role
         // prompts, templates, exec scripts, append stems), as findings the roles
         // popover renders per role. Read-only and OFF the hot path — it stats files
@@ -26571,6 +26615,37 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         }
         return parts.join("; ");
       }
+      function isAgentSeat(s) {
+        return !!s && (s.type === "claude" || s.type === "codex");
+      }
+      function leadSeatCandidates(sessions, teamName) {
+        const team = String(teamName == null ? "" : teamName).trim();
+        if (!team) return [];
+        return (Array.isArray(sessions) ? sessions : []).filter((s) => s && typeof s.name === "string" && s.name).filter(isAgentSeat).filter((s) => !s.archivedAt).filter((s) => s.team === team).map((s) => s.name);
+      }
+      function leadResolution(lead, { sessions, known } = {}) {
+        const name = String(lead == null ? "" : lead).trim();
+        if (!name) return { state: "unset", name: "", note: "No lead seat is set for this team." };
+        const rows = Array.isArray(sessions) ? sessions : [];
+        const knownNames = Array.isArray(known) ? known : [];
+        const row = rows.find((s) => s && s.name === name);
+        if (row) {
+          if (isAgentSeat(row)) return { state: "live", name, note: "running now" };
+          return {
+            state: "ineligible",
+            name,
+            note: "this is a bash session \u2014 it has no messaging registry, so nothing can reach it; pick or create an agent seat"
+          };
+        }
+        if (knownNames.includes(name)) {
+          return { state: "stopped", name, note: "not running in this window \u2014 it restarts under this name" };
+        }
+        return {
+          state: "missing",
+          name,
+          note: "no session by this name exists \u2014 this team has no lead until you pick or create one"
+        };
+      }
       function preflightByRole(findings) {
         const out = /* @__PURE__ */ new Map();
         for (const f of Array.isArray(findings) ? findings : []) {
@@ -26591,6 +26666,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         parseDuration,
         formatDuration,
         formatBlockedBy,
+        leadSeatCandidates,
+        leadResolution,
         DISPATCH_VALUES,
         DEFAULT_DISPATCH
       };
@@ -26611,10 +26688,12 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         parseDuration,
         formatDuration,
         formatBlockedBy,
-        preflightByRole
+        preflightByRole,
+        leadSeatCandidates,
+        leadResolution
       } = require_team_roles();
       var { anchorRect, makeDraggable, resetDrag } = require_popover_drag();
-      function initTeamRolesPopover({ promptText } = {}) {
+      function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
         const popover = document.getElementById("team-roles-popover");
         const nameEl = document.getElementById("team-roles-popover-name");
         const listEl = document.getElementById("team-roles-list");
@@ -26648,6 +26727,103 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           preflight = preflightByRole(res && res.ok ? res.findings : []);
         }
+        let leadSessions = [];
+        let leadKnown = [];
+        let currentRoot = "";
+        async function loadLeadSeats() {
+          let live;
+          try {
+            live = await window.api.listSessions();
+          } catch {
+            live = null;
+          }
+          leadSessions = Array.isArray(live) ? live : [];
+          let known;
+          try {
+            known = await window.api.reservedSessionNames();
+          } catch {
+            known = null;
+          }
+          leadKnown = known && known.ok && Array.isArray(known.names) ? known.names : [];
+        }
+        function buildLeadSeatBlock(manifest) {
+          const box = document.createElement("div");
+          box.className = "team-lead-seat";
+          const teamName2 = manifest && manifest.name || "";
+          const candidates = leadSeatCandidates(leadSessions, teamName2);
+          const res = leadResolution(manifest && manifest.lead, { sessions: leadSessions, known: leadKnown });
+          const status = document.createElement("div");
+          status.className = `team-lead-status ${res.state}`;
+          const who = document.createElement("span");
+          who.className = "team-lead-who";
+          who.textContent = res.name ? `seat: ${res.name}` : "seat: (none)";
+          const note = document.createElement("span");
+          note.className = "team-lead-note";
+          note.textContent = res.note;
+          status.appendChild(who);
+          status.appendChild(note);
+          box.appendChild(status);
+          const field = document.createElement("label");
+          field.className = "team-role-field";
+          const label = document.createElement("span");
+          label.textContent = "seat";
+          const input = document.createElement("input");
+          input.type = "text";
+          input.dataset.f = "lead-seat";
+          input.placeholder = "seat name";
+          input.value = res.name;
+          field.appendChild(label);
+          field.appendChild(input);
+          box.appendChild(field);
+          if (candidates.length) {
+            const pick = document.createElement("label");
+            pick.className = "team-role-field";
+            const pickLabel = document.createElement("span");
+            pickLabel.textContent = "pick";
+            const sel = document.createElement("select");
+            sel.dataset.f = "lead-pick";
+            const none = document.createElement("option");
+            none.value = "";
+            none.textContent = "(choose a running seat)";
+            sel.appendChild(none);
+            for (const n of candidates) {
+              const opt = document.createElement("option");
+              opt.value = n;
+              opt.textContent = n;
+              sel.appendChild(opt);
+            }
+            sel.addEventListener("change", () => {
+              if (sel.value) input.value = sel.value;
+            });
+            pick.appendChild(pickLabel);
+            pick.appendChild(sel);
+            box.appendChild(pick);
+          } else {
+            const empty = document.createElement("div");
+            empty.className = "team-lead-empty";
+            empty.textContent = "No agent session of this team is running in this window. Bash sessions can\u2019t be a lead \u2014 they have no messaging registry, so nothing could reach them. Create a lead seat, or type the name of a stopped one.";
+            box.appendChild(empty);
+          }
+          const actions = document.createElement("div");
+          actions.className = "team-role-actions";
+          const setBtn = document.createElement("button");
+          setBtn.type = "button";
+          setBtn.dataset.act = "set-lead";
+          setBtn.textContent = "Set lead";
+          const createBtn = document.createElement("button");
+          createBtn.type = "button";
+          createBtn.className = "secondary";
+          createBtn.dataset.act = "create-lead";
+          createBtn.textContent = "Create lead seat\u2026";
+          actions.appendChild(setBtn);
+          actions.appendChild(createBtn);
+          box.appendChild(actions);
+          const hint = document.createElement("div");
+          hint.className = "team-lead-hint";
+          hint.textContent = "Changing this re-points the team at another seat. Nothing is handed over \u2014 the new lead starts fresh, and you can point it back at any time.";
+          box.appendChild(hint);
+          return box;
+        }
         function renderRows(manifest) {
           listEl.innerHTML = "";
           for (const row of teamRoleRows(manifest)) {
@@ -26656,7 +26832,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             el.dataset.role = row.key;
             if (row.readOnly) {
               el.classList.add("read-only");
-              el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-badge" title="Managed by Clodex \u2014 you don't need to change anything here">managed by Clodex</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div>`;
+              el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div>`;
+              if (row.key === "lead") el.appendChild(buildLeadSeatBlock(manifest));
             } else {
               el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label><label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span><select data-f="dispatch"><option value="standing">standing \u2014 the live seat gets the spec</option><option value="worktree">worktree \u2014 one-shot seat, own branch + checkout</option></select></label><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
               el.querySelector('input[data-f="brief"]').value = row.brief;
@@ -26721,7 +26898,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             return false;
           }
           nameEl.textContent = res.team.name;
+          currentRoot = res.team.root || "";
           await loadPreflight(res.team.name);
+          await loadLeadSeats();
           renderRows(res.team);
           watchdogInput.value = res.team.watchdogMs != null ? formatDuration(res.team.watchdogMs) : "";
           return true;
@@ -26791,6 +26970,30 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const name = teamName();
           if (!name || !role) return;
           const act = btn.dataset.act;
+          if (act === "set-lead") {
+            const inp = rowEl.querySelector('input[data-f="lead-seat"]');
+            const seat = (inp && inp.value || "").trim();
+            if (!seat) {
+              setStatus("enter or pick a seat name for the lead", true);
+              return;
+            }
+            const res = await window.api.teamSetLead(name, seat);
+            await afterMutation(res, `lead seat set to "${seat}"`);
+            return;
+          }
+          if (act === "create-lead") {
+            const inp = rowEl.querySelector('input[data-f="lead-seat"]');
+            const seat = (inp && inp.value || "").trim();
+            if (!openSessionDialog) {
+              setStatus("the new-session dialog is unavailable here", true);
+              return;
+            }
+            const teamRoot = currentRoot;
+            closeTeamRolesPopover();
+            Promise.resolve(openSessionDialog({ name: seat || `${name}-lead`, type: "claude", cwd: teamRoot || void 0 })).catch(() => {
+            });
+            return;
+          }
           if (act === "save") {
             const val = (f) => {
               const inp = rowEl.querySelector(`[data-f="${f}"]`);
@@ -26881,10 +27084,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const inp = e.target.closest("input[data-f]");
           if (!inp) return;
           const rowEl = inp.closest(".team-role-row");
-          const saveBtn = rowEl && rowEl.querySelector('button[data-act="save"]');
-          if (!saveBtn) return;
+          const act = inp.dataset.f === "lead-seat" ? "set-lead" : "save";
+          const btn = rowEl && rowEl.querySelector(`button[data-act="${act}"]`);
+          if (!btn) return;
           e.preventDefault();
-          saveBtn.click();
+          btn.click();
         });
         helpBtn.addEventListener("click", () => helpPanel.classList.toggle("hidden"));
         makeDraggable(popover);
@@ -32942,7 +33146,7 @@ Click for live activity`;
         addSessionToSidebar,
         switchSession
       });
-      var { openTeamRolesPopover } = initTeamRolesPopover({ promptText });
+      var { openTeamRolesPopover } = initTeamRolesPopover({ promptText, openSessionDialog: openDialog });
       function openCreateTeamDialog() {
         const live = document.querySelector(".team-create-overlay");
         if (live) {

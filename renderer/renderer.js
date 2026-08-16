@@ -3275,7 +3275,7 @@ const { openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopov
   sessionList, createTerminal, addSessionToSidebar, switchSession,
 });
 
-const { openTeamRolesPopover } = initTeamRolesPopover({ promptText });
+const { openTeamRolesPopover } = initTeamRolesPopover({ promptText, openSessionDialog: openDialog });
 
 // Create Team… (t288) — a team with NO seat behind it, which is why it goes
 // through teamCreateBare rather than the new-session dialog's teamCreate (that

@@ -41,7 +41,7 @@ function registerIpcHandlers(deps) {
     pty, readEffectiveSkillState, readEffectiveToolState, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
-    setRole, removeRole, renameRole, setTeamWatchdog,
+    setRole, removeRole, renameRole, setTeamWatchdog, setLead,
     resolveDeployFolder, restartSession, restoreSessionsForWorkspace,
     readSessionArgs, applySessionArgs, sessionMeta, sessionInfo,
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
@@ -113,11 +113,15 @@ function registerIpcHandlers(deps) {
 
   // The manifest write with NO spawn (t288): the Teams menu creates a team before
   // any seat exists, so there is nothing to adopt as lead. `lead` is a seat NAME
-  // the manifest records; defaulting it to `<team>-lead` names a seat that is not
-  // running, which is the state EVERY team is in whenever its lead is stopped —
-  // not a new one. `root` is forwarded verbatim so createTeam's absolute-path
-  // refusal is the single gate; resolving it here would silently accept a
-  // relative root against whatever cwd the main process happens to have.
+  // the manifest records, and the default `<team>-lead` names a seat that has
+  // never existed — which is NOT the state a team is in when its lead is merely
+  // stopped: a stopped lead has a persisted record and restarts by name, while
+  // this one resolves to nothing until something creates it. The team popover's
+  // lead row (team:setLead) is that something; without a front door this default
+  // is an orphan pointer the operator can only fix by hand-editing team.json.
+  // `root` is forwarded verbatim so createTeam's absolute-path refusal is the
+  // single gate; resolving it here would silently accept a relative root against
+  // whatever cwd the main process happens to have.
   handle('team:createBare', (_e, spec) => {
     const { name, root, lead } = spec || {};
     let team;
@@ -195,6 +199,15 @@ function registerIpcHandlers(deps) {
 
   handle('team:setWatchdog', (_e, team, ms) => {
     try { return { ok: true, team: setTeamWatchdog(team, ms) }; }
+    catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  // Re-point the lead SEAT. Not a role edit: setRole('lead') still refuses, and
+  // this writes only the manifest's top-level `lead` pointer. A seat name with no
+  // record is accepted by the writer on purpose (a stopped lead is the same
+  // string); the popover is what tells the operator whether it resolves.
+  handle('team:setLead', (_e, team, seat) => {
+    try { return { ok: true, team: setLead(team, seat) }; }
     catch (err) { return { ok: false, error: err.message }; }
   });
 

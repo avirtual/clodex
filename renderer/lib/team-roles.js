@@ -133,6 +133,82 @@ function formatBlockedBy(blockedBy) {
   return parts.join('; ');
 }
 
+// Can this session row hold a role at all? AGENT types only, as a whitelist so a
+// future non-agent type is ineligible by default rather than by being remembered.
+// A bash session has no registry entry and no socket, is invisible to
+// `[agent:who]` and cannot be DM'd, so a team pointed at one looks configured and
+// silently delivers nothing — the exact failure this row exists to expose.
+function isAgentSeat(s) {
+  return !!s && (s.type === 'claude' || s.type === 'codex');
+}
+
+// Which seats may be offered as a team's LEAD (t420). Takes the session rows the
+// renderer already holds and the team NAME, returning eligible names in order.
+//
+// Membership is the row's own `team` field, not a path comparison: session-manager
+// computes it as `teamFor(s.cwd)` through resolveTeam → cwdInProject, so this
+// inherits BOTH git-worktree widening (a seat in a linked worktree of the root is
+// a member) and deepest-root-wins (a nested team's seats belong to the nested
+// team, not to this one). Re-deriving it here from `root` would need a `.git` read
+// a renderer leaf must not do, and would silently disagree with the engine on
+// both counts.
+function leadSeatCandidates(sessions, teamName) {
+  const team = String(teamName == null ? '' : teamName).trim();
+  if (!team) return [];
+  return (Array.isArray(sessions) ? sessions : [])
+    .filter((s) => s && typeof s.name === 'string' && s.name)
+    .filter(isAgentSeat)
+    .filter((s) => !s.archivedAt)
+    .filter((s) => s.team === team)
+    .map((s) => s.name);
+}
+
+// How the CURRENT lead pointer resolves, for the row's status line. Five states,
+// because they have five different fixes and collapsing any two hides one:
+//   'live'       — an AGENT session by that name is running now.
+//   'ineligible' — a session by that name is running, but it cannot be a lead
+//                  (bash: no registry, no socket, unreachable). This must NOT read
+//                  as 'live': the pointer is already on disk and already broken,
+//                  and "running now" is the single most misleading thing the row
+//                  could say about it. setLead accepts the name (NAME_RE only, and
+//                  correctly — the writer does not know session types), so the
+//                  status line is the only place this can surface.
+//   'stopped'    — no live session in THIS window, but a record exists: it restarts
+//                  by name, so this is FINE and must not read as broken.
+//   'missing'    — nothing by that name, live or persisted. The crypto-app case:
+//                  resolves to nothing, and will forever, until it is changed.
+// `unset` covers a manifest with no lead string at all.
+//
+// Takes session ROWS rather than names: the type is what separates the first two
+// states, and a name list cannot carry it.
+function leadResolution(lead, { sessions, known } = {}) {
+  const name = String(lead == null ? '' : lead).trim();
+  if (!name) return { state: 'unset', name: '', note: 'No lead seat is set for this team.' };
+  const rows = Array.isArray(sessions) ? sessions : [];
+  const knownNames = Array.isArray(known) ? known : [];
+  const row = rows.find((s) => s && s.name === name);
+  if (row) {
+    if (isAgentSeat(row)) return { state: 'live', name, note: 'running now' };
+    return {
+      state: 'ineligible',
+      name,
+      note: 'this is a bash session — it has no messaging registry, so nothing can reach it; pick or create an agent seat',
+    };
+  }
+  if (knownNames.includes(name)) {
+    // "in this window" is load-bearing: the live rows are workspace-scoped while
+    // the known names are global, so a lead running in ANOTHER workspace lands
+    // here. Without the qualifier this line states a falsehood on the one row
+    // whose whole job is to be accurate about what resolves.
+    return { state: 'stopped', name, note: 'not running in this window — it restarts under this name' };
+  }
+  return {
+    state: 'missing',
+    name,
+    note: 'no session by this name exists — this team has no lead until you pick or create one',
+  };
+}
+
 // teamPreflight findings (a flat array over the whole team) → the per-role
 // buckets renderRows needs, in the order the resolver emitted them. A role with
 // nothing unresolved is ABSENT from the map rather than present-and-empty: the
@@ -156,5 +232,6 @@ function preflightByRole(findings) {
 module.exports = {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, preflightByRole,
   parseDuration, formatDuration, formatBlockedBy,
+  leadSeatCandidates, leadResolution,
   DISPATCH_VALUES, DEFAULT_DISPATCH,
 };

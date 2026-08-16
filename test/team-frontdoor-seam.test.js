@@ -161,6 +161,29 @@ test('team:setRole / team:setWatchdog forward to their mutators and return the r
   assert.strictEqual(r2.ok, true);
 });
 
+test('team:setLead forwards the SEAT name to setLead and returns the reloaded team', () => {
+  const writes = [];
+  const handlers = registerWith({
+    setLead: (t, seat) => { writes.push(['setLead', t, seat]); return { name: t, lead: seat }; },
+    // Wired alongside so a handler that reached the ROLE mutator instead of the
+    // seat one fails loudly here rather than silently editing reserved topology.
+    setRole: (t, r, patch) => { writes.push(['setRole', t, r, patch]); return { name: t, roles: {} }; },
+  });
+  const res = handlers['team:setLead']({}, 'shop', 'shop-lead-2');
+  assert.deepStrictEqual(writes, [['setLead', 'shop', 'shop-lead-2']], 'setLead reached, and setRole was NOT');
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.team.lead, 'shop-lead-2', 'the reloaded manifest carries the new pointer');
+});
+
+test('team:setLead surfaces a writer refusal as {ok:false} rather than throwing', () => {
+  const handlers = registerWith({
+    setLead: () => { throw new Error('team "shop" lead must be a seat name matching /re/'); },
+  });
+  const res = handlers['team:setLead']({}, 'shop', 'bad name!');
+  assert.strictEqual(res.ok, false);
+  assert.match(res.error, /must be a seat name matching/);
+});
+
 test('team:removeRole runs the C5 guard: free role removes, a referenced role returns {ok:false, blockedBy}', () => {
   const writes = [];
   let inUse = { seats: [], tickets: [] };
@@ -327,6 +350,17 @@ test('createEngine returns the front-door writers on the seam ipc-handlers sprea
   const src = require('fs').readFileSync(require.resolve('../engine.js'), 'utf-8');
   assert.match(src, /createTeam, addRole, resolveTeam, listTeams,/,
     'engine.js return object must list the four front-door writers on the ipc-handlers seam');
+  // setLead (t420) rides the same seam and would fail the same silent way — the
+  // handler destructures it, so an unexported name is `undefined` and every
+  // team:setLead returns {ok:false, error:"setLead is not a function"}.
+  //
+  // Anchored to the RETURN literal by matching the PAIR of lines: the require
+  // destructure at the top of engine.js also carries `setLead` on a line of
+  // mutators, and matching that one would pass while the return surface stayed
+  // broken — precisely the false green this whole file exists to prevent. Only
+  // the return literal has `loadManifest,` ending the preceding line.
+  assert.match(src, /createTeam, addRole, resolveTeam, listTeams, loadManifest,\n\s*setRole, removeRole, renameRole, setTeamWatchdog, setLead,/,
+    'engine.js return object must export setLead on the ipc-handlers seam');
 });
 
 // The garbled-def split lives in the HANDLER's probe, not in the leaf: only the

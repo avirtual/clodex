@@ -47,6 +47,10 @@ const API_CONTRACT = [
   { name: 'teamRemoveRole', kind: 'invoke', channel: 'team:removeRole' },
   { name: 'teamRenameRole', kind: 'invoke', channel: 'team:renameRole' },
   { name: 'teamSetWatchdog', kind: 'invoke', channel: 'team:setWatchdog' },
+  // Which SEAT is the team's lead (t420) — the manifest's top-level pointer, not
+  // the reserved `lead` ROLE (that stays locked). The only door to a team whose
+  // lead names a seat that was never created.
+  { name: 'teamSetLead', kind: 'invoke', channel: 'team:setLead' },
   // What this team's manifest names that resolves to nothing (missing role
   // prompts, templates, exec scripts, append stems), as findings the roles
   // popover renders per role. Read-only and OFF the hot path — it stats files
