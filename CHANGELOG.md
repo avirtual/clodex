@@ -22,6 +22,9 @@ blocks a release.
   itself was never lost, which is why it still read "held always". Clodex now
   reads the current token when it pings, and waits quietly instead of pinging
   when there is no valid one to use.
+- Bundled wirescope updated to v0.6.54, which fixes its own version of the same
+  failure: a keep-warm hold whose credential-refresh attempts had run out would
+  stop pinging while still reporting itself as armed.
 
 ## 5.10.1 — 2026-08-15
 

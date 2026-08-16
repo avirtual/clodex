@@ -378,6 +378,9 @@ def _status_snapshot(session=None, all_sessions=False, limit=None):
                                      "interval_s": hold_mod.WARMTH_HOLD_INTERVAL,
                                      "max_hours": hold_mod.WARMTH_HOLD_MAX_HOURS,
                                      "max_pings": hold_mod.WARMTH_HOLD_MAX_PINGS},
+                     # a hold can read `armed:true` while the bootstrap that
+                     # would revive its stale auth is spent — surface that
+                     "auth_bootstrap": hold_mod._bootstrap_snapshot(now),
                      "tracked_last_requests": len(last_real),
                      "holds_armed": len(holds),
                      "sessions_total": sessions_total,

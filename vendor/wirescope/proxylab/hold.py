@@ -57,26 +57,66 @@ WARMTH_AUTH_BOOTSTRAP_MODEL = os.environ.get(
     "WARMTH_AUTH_BOOTSTRAP_MODEL", "claude-haiku-4-5-20251001")
 _AUTH_BOOTSTRAP_MAX = int(os.environ.get("WARMTH_AUTH_BOOTSTRAP_MAX", "2"))
 _AUTH_BOOTSTRAP_COOLDOWN = int(os.environ.get("WARMTH_AUTH_BOOTSTRAP_COOLDOWN", "600"))
-_AUTH_BOOTSTRAP = {"attempts": 0, "last_ts": 0.0, "inflight": False}
+# How long since the last spawn before the budget is considered a NEW outage.
+# Must exceed the cooldown (else the cooldown, being the more conservative gate,
+# simply wins — safe either way). See _bootstrap_decision for why this exists.
+_AUTH_BOOTSTRAP_RESET = int(os.environ.get("WARMTH_AUTH_BOOTSTRAP_RESET", "3600"))
+_AUTH_BOOTSTRAP = {"attempts": 0, "last_ts": 0.0, "inflight": False,
+                   "last_reason": None, "spawns": 0}
 
 
 def _bootstrap_decision(account, now=None, state=None):
-    """May the proxy spend a bootstrap turn right now? PURE-ish (offline-
-    testable via `state`). Returns (go, reason)."""
+    """May the proxy spend a bootstrap turn right now? PURE (offline-testable
+    via `state`; mutation of the budget lives in _auth_bootstrap). Returns
+    (go, reason).
+
+    THE BUDGET IS PER OUTAGE, NOT PER PROCESS — and until 2026-08-16 the code
+    only delivered that when a spawn SUCCEEDED. `attempts` is reset in
+    pinger._cache_last_request, i.e. when fresh credentials actually arrive, so
+    a run of FAILED spawns (no `claude` on PATH, a network blip, the 120s
+    timeout) exhausted the budget for the whole process lifetime. Precisely the
+    case the budget exists to bound was the one it bounded permanently: the hold
+    then never disarms (a stale-auth skip is not a failure strike, by design) and
+    never recovers, while /_status keeps reporting `armed:true`. Silent, and
+    worse to diagnose than a hold that dies loudly.
+
+    So a burst older than _AUTH_BOOTSTRAP_RESET is treated as a finished outage
+    and the budget is fresh. The autonomous spend stays bounded because the HOLD
+    is bounded: worst case ~MAX spawns per RESET window for at most
+    WARMTH_HOLD_MAX_HOURS (default 2/h for 12h = ~24 haiku "Reply with exactly:
+    ok" turns) before the hold self-disarms at `until`. That is the ceiling being
+    traded for recoverability, and it is the whole argument for the change."""
     st = state if state is not None else _AUTH_BOOTSTRAP
     now = now or time.time()
     if not WARMTH_AUTH_BOOTSTRAP:
         return False, "disabled (WARMTH_AUTH_BOOTSTRAP=0)"
     if st["inflight"]:
         return False, "bootstrap already in flight"
-    if st["attempts"] >= _AUTH_BOOTSTRAP_MAX:
-        return False, f"max attempts ({_AUTH_BOOTSTRAP_MAX}) spent"
-    if now - st["last_ts"] < _AUTH_BOOTSTRAP_COOLDOWN:
-        return False, "cooldown"
     with pinger_mod._LAST_REQUEST_LOCK:
         if account and account in pinger_mod._ACCOUNT_AUTH:
             return False, "auth already present (resolve instead)"
+    stale = bool(st["attempts"]) and (now - st["last_ts"]) >= _AUTH_BOOTSTRAP_RESET
+    if st["attempts"] >= _AUTH_BOOTSTRAP_MAX and not stale:
+        return False, f"max attempts ({_AUTH_BOOTSTRAP_MAX}) spent"
+    if now - st["last_ts"] < _AUTH_BOOTSTRAP_COOLDOWN:
+        return False, "cooldown"
     return True, "go"
+
+
+def _bootstrap_snapshot(now=None):
+    """Observability for the half of the defect that made it hard to see: a hold
+    reporting `armed:true` while the bootstrap that would revive it is spent.
+    `budget_spent` answers 'is anything still going to happen here?'."""
+    now = now or time.time()
+    st = dict(_AUTH_BOOTSTRAP)
+    stale = bool(st["attempts"]) and (now - st["last_ts"]) >= _AUTH_BOOTSTRAP_RESET
+    return {"enabled": WARMTH_AUTH_BOOTSTRAP,
+            "attempts": st["attempts"], "spawns": st["spawns"],
+            "inflight": st["inflight"], "last_reason": st["last_reason"],
+            "last_ts": st["last_ts"] or None,
+            "age_s": round(now - st["last_ts"], 1) if st["last_ts"] else None,
+            "budget_spent": st["attempts"] >= _AUTH_BOOTSTRAP_MAX and not stale,
+            "max": _AUTH_BOOTSTRAP_MAX, "reset_s": _AUTH_BOOTSTRAP_RESET}
 
 
 async def _auth_bootstrap(account=None):
@@ -84,11 +124,18 @@ async def _auth_bootstrap(account=None):
     pointed at THIS proxy, so its request flows through the normal handler and
     populates _ACCOUNT_AUTH as a side effect — nothing here touches secrets."""
     go, why = _bootstrap_decision(account)
+    _AUTH_BOOTSTRAP["last_reason"] = why
     if not go:
         return
+    now = time.time()
+    if (_AUTH_BOOTSTRAP["attempts"]
+            and now - _AUTH_BOOTSTRAP["last_ts"] >= _AUTH_BOOTSTRAP_RESET):
+        # the earlier burst belongs to a finished outage — see _bootstrap_decision
+        _AUTH_BOOTSTRAP["attempts"] = 0
     _AUTH_BOOTSTRAP["inflight"] = True
     _AUTH_BOOTSTRAP["attempts"] += 1
-    _AUTH_BOOTSTRAP["last_ts"] = time.time()
+    _AUTH_BOOTSTRAP["spawns"] += 1
+    _AUTH_BOOTSTRAP["last_ts"] = now
     port = os.environ.get("PORT", "7800")
     # Pre-chosen session id, tagged kind=bootstrap BEFORE the spawn: every
     # request of this session (incl. the title side-call) arrives already
