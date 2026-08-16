@@ -1483,10 +1483,10 @@ body {
 }
 .team-role-row.absent {
   border-style: dashed;
-  opacity: 0.6;
 }
-.team-role-row.absent button {
-  opacity: 1;
+.team-role-row.absent .team-role-key,
+.team-role-row.absent .team-role-lock-note {
+  color: var(--text-dim);
 }
 .team-role-head {
   display: flex;
@@ -27096,7 +27096,14 @@ You can add it back from this popover.` : "";
             const res = await window.api.teamRemoveRole(name, role);
             await afterMutation(res, `role "${role}" removed`);
           } else if (act === "readd") {
-            const res = await window.api.teamAddRole(name, role, {});
+            if (btn.disabled) return;
+            btn.disabled = true;
+            let res;
+            try {
+              res = await window.api.teamAddRole(name, role, {});
+            } finally {
+              btn.disabled = false;
+            }
             await afterMutation(res, `role "${role}" added back`);
           }
         });
