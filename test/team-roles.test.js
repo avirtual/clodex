@@ -149,57 +149,87 @@ test('formatDuration: friendliest exact unit; round-trips parseDuration; empty f
 
 // --- the lead SEAT front door (t420) ---------------------------------------
 
-test('leadSeatCandidates: agent seats under the team root, in order; a BASH seat is never eligible', () => {
+test('leadSeatCandidates: agent seats OF THIS TEAM, in order; a BASH seat is never eligible', () => {
+  // `team` is the row's own membership answer from session-manager (teamFor →
+  // resolveTeam → cwdInProject), so this fixture carries the two cases a path
+  // comparison in the renderer would get wrong: a seat in a linked WORKTREE of
+  // the root (member of `shop`, path nowhere near it) and a seat under a NESTED
+  // team's root (path inside `/proj/shop`, member of `shop-api`).
   const sessions = [
-    { name: 'shop-lead', type: 'claude', cwd: '/proj/shop' },
-    { name: 'shop-shell', type: 'bash', cwd: '/proj/shop' },       // private: no registry, no socket
-    { name: 'shop-codex', type: 'codex', cwd: '/proj/shop/api' },  // containment, not equality
-    { name: 'other', type: 'claude', cwd: '/proj/shop-other' },    // sibling, NOT a descendant
-    { name: 'elsewhere', type: 'claude', cwd: '/tmp' },
-    { name: 'gone', type: 'claude', cwd: '/proj/shop', archivedAt: 123 },
+    { name: 'shop-lead', type: 'claude', cwd: '/proj/shop', team: 'shop' },
+    { name: 'shop-shell', type: 'bash', cwd: '/proj/shop', team: 'shop' },        // private: no registry, no socket
+    { name: 'shop-wt', type: 'codex', cwd: '/elsewhere/shop-t9', team: 'shop' },  // linked worktree, still `shop`
+    { name: 'api-hand', type: 'claude', cwd: '/proj/shop/api', team: 'shop-api' },// nested team owns it
+    { name: 'elsewhere', type: 'claude', cwd: '/tmp', team: null },
+    { name: 'gone', type: 'claude', cwd: '/proj/shop', team: 'shop', archivedAt: 123 },
   ];
-  // ENTER: the two rows this filter is FOR must be in the input, or the
-  // assertions below are true of a set that never contained them — the bash
-  // exclusion in particular would "pass" against a list with no bash row at all.
-  assert.ok(sessions.some((s) => s.type === 'bash' && s.cwd === '/proj/shop'),
-    'ENTER: a bash session inside the team root must be in the input');
+  // ENTER: the rows this filter is FOR must be in the input, or the assertions
+  // below are true of a set that never contained them — the bash exclusion in
+  // particular would "pass" against a list with no bash row at all.
+  assert.ok(sessions.some((s) => s.type === 'bash' && s.team === 'shop'),
+    'ENTER: a bash session belonging to the team must be in the input');
   assert.ok(sessions.some((s) => s.archivedAt), 'ENTER: an archived seat must be in the input');
+  assert.ok(sessions.some((s) => s.team === 'shop' && !s.cwd.startsWith('/proj/shop')),
+    'ENTER: a worktree seat whose PATH is outside the root must be in the input');
+  assert.ok(sessions.some((s) => s.cwd.startsWith('/proj/shop/') && s.team !== 'shop'),
+    'ENTER: a nested-team seat whose PATH is inside the root must be in the input');
 
-  assert.deepStrictEqual(leadSeatCandidates(sessions, '/proj/shop'), ['shop-lead', 'shop-codex'],
-    'agent types under the root only, input order preserved');
-  // The sibling-path case gets its own assertion: `/proj/shop-other` starts with
-  // the root as a STRING, and a prefix test without the separator boundary would
-  // hand another project's seat to this team.
-  assert.strictEqual(leadSeatCandidates(sessions, '/proj/shop').includes('other'), false,
-    'a sibling directory sharing the root as a string prefix is not inside it');
-  // A trailing slash on the root must not change the answer.
-  assert.deepStrictEqual(leadSeatCandidates(sessions, '/proj/shop/'), ['shop-lead', 'shop-codex']);
-  // The bash-only root: empty, which is what makes the popover's empty state the
+  assert.deepStrictEqual(leadSeatCandidates(sessions, 'shop'), ['shop-lead', 'shop-wt'],
+    'agent seats of this team only, input order preserved');
+  // Both path-vs-membership cases get their own assertion, because they fail in
+  // OPPOSITE directions and one filter could fix either alone.
+  assert.strictEqual(leadSeatCandidates(sessions, 'shop').includes('api-hand'), false,
+    'a seat inside the root but owned by a NESTED team is not this team’s to offer');
+  assert.strictEqual(leadSeatCandidates(sessions, 'shop').includes('shop-wt') , true,
+    'a seat in a linked worktree IS a member, though its path is outside the root');
+  // The bash-only team: empty, which is what makes the popover's empty state the
   // thing the operator reads (the crypto-app case).
-  assert.deepStrictEqual(leadSeatCandidates([{ name: 'crypto-bash', type: 'bash', cwd: '/proj/crypto' }], '/proj/crypto'), []);
+  assert.deepStrictEqual(leadSeatCandidates([{ name: 'crypto-bash', type: 'bash', cwd: '/p', team: 'crypto-app' }], 'crypto-app'), []);
   // Degenerate inputs never throw.
-  assert.deepStrictEqual(leadSeatCandidates(null, '/proj/shop'), []);
-  assert.deepStrictEqual(leadSeatCandidates(sessions, ''), [], 'no root → nothing is knowably inside it');
-  assert.deepStrictEqual(leadSeatCandidates([{ type: 'claude', cwd: '/proj/shop' }], '/proj/shop'), [], 'a nameless row is not a seat');
+  assert.deepStrictEqual(leadSeatCandidates(null, 'shop'), []);
+  assert.deepStrictEqual(leadSeatCandidates(sessions, ''), [], 'no team name → nothing to match against');
+  assert.deepStrictEqual(leadSeatCandidates([{ type: 'claude', team: 'shop' }], 'shop'), [], 'a nameless row is not a seat');
 });
 
-test('leadResolution: live / stopped / missing are three distinct states', () => {
-  const live = ['shop-lead'];
-  const known = ['shop-lead', 'shop-old-lead'];
-  assert.deepStrictEqual(leadResolution('shop-lead', { live, known }),
+test('leadResolution: a LIVE BASH seat reads as ineligible, never as "running now"', () => {
+  // The measured crypto-app path end to end: the root holds one session, it is
+  // bash, the picker is therefore empty, the empty state invites typing a name,
+  // and the only name the operator can see is the bash one. setLead accepts it
+  // (NAME_RE only — correct, the writer cannot know session types), so THIS is
+  // the only place the trap can be sprung.
+  const sessions = [{ name: 'crypto-bash', type: 'bash', cwd: '/proj/crypto', team: 'crypto-app' }];
+  assert.ok(sessions.some((s) => s.type === 'bash'), 'ENTER: the live bash row must be in the input');
+  const res = leadResolution('crypto-bash', { sessions, known: ['crypto-bash'] });
+  assert.strictEqual(res.state, 'ineligible', 'a live bash lead is NOT the healthy state');
+  assert.notStrictEqual(res.state, 'live', 'and specifically never reads as running');
+  assert.match(res.note, /no messaging registry/);
+  // It is also NOT 'stopped', even though the name is in the known list — the
+  // seat is running, it just cannot ever be reached.
+  assert.notStrictEqual(res.state, 'stopped');
+});
+
+test('leadResolution: live / stopped / missing / unset are otherwise distinct states', () => {
+  const sessions = [
+    { name: 'shop-lead', type: 'claude', cwd: '/proj/shop', team: 'shop' },
+    { name: 'shop-shell', type: 'bash', cwd: '/proj/shop', team: 'shop' },
+  ];
+  const known = ['shop-lead', 'shop-shell', 'shop-old-lead'];
+  assert.deepStrictEqual(leadResolution('shop-lead', { sessions, known }),
     { state: 'live', name: 'shop-lead', note: 'running now' });
   // STOPPED IS NOT BROKEN: it has a record and restarts by name. The whole point
   // of splitting this from `missing` is that the popover must not cry wolf here.
-  assert.deepStrictEqual(leadResolution('shop-old-lead', { live, known }),
-    { state: 'stopped', name: 'shop-old-lead', note: 'not running — it restarts under this name' });
-  // MISSING: the crypto-app orphan — no session, live or persisted, ever.
-  const missing = leadResolution('crypto-app-lead', { live, known });
+  // "in this window" because the live rows are workspace-scoped and the known
+  // names are not — a lead running in another workspace lands in this arm.
+  assert.deepStrictEqual(leadResolution('shop-old-lead', { sessions, known }),
+    { state: 'stopped', name: 'shop-old-lead', note: 'not running in this window — it restarts under this name' });
+  // MISSING: the orphan pointer — no session, live or persisted, ever.
+  const missing = leadResolution('crypto-app-lead', { sessions, known });
   assert.strictEqual(missing.state, 'missing');
   assert.strictEqual(missing.name, 'crypto-app-lead');
   assert.match(missing.note, /no session by this name exists/);
   // No pointer at all.
-  assert.strictEqual(leadResolution('', { live, known }).state, 'unset');
-  assert.strictEqual(leadResolution(null, { live, known }).state, 'unset');
+  assert.strictEqual(leadResolution('', { sessions, known }).state, 'unset');
+  assert.strictEqual(leadResolution(null, { sessions, known }).state, 'unset');
   // Absent listings must not turn a real pointer into a claim it is live.
   assert.strictEqual(leadResolution('shop-lead', {}).state, 'missing');
   assert.strictEqual(leadResolution('shop-lead').state, 'missing');

@@ -78,11 +78,16 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   // after it exited is the one thing this row exists to stop being wrong about.
   //
   // Two DIFFERENT listings on purpose. `leadSessions` is the workspace's LIVE
-  // rows (name/type/cwd — the eligibility filter needs all three). `leadKnown` is
-  // every reserved name, live or persisted, across workspaces: it is what
-  // separates a stopped lead (restarts by name — fine) from one that was never
-  // created (resolves to nothing forever). Folding them into one listing would
-  // make those two states indistinguishable, which is the bug this row fixes.
+  // rows, passed WHOLE to both helpers: `type` is what separates an eligible seat
+  // from a live bash session, and `team` carries the engine's own membership
+  // answer (worktree widening + deepest-root-wins). `leadKnown` is every reserved
+  // name, live or persisted, across workspaces: it is what separates a stopped
+  // lead (restarts by name — fine) from one that was never created (resolves to
+  // nothing forever). Folding them into one listing would make those two states
+  // indistinguishable, which is the bug this row fixes.
+  //
+  // Note the scopes differ — live rows are workspace-scoped, known names are
+  // global — which is why the `stopped` note says "in this window".
   let leadSessions = [];
   let leadKnown = [];
   // The open team's root, kept for the "Create lead seat…" prefill — the dialog
@@ -106,10 +111,14 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     const box = document.createElement('div');
     box.className = 'team-lead-seat';
 
-    const root = (manifest && manifest.root) || '';
-    const candidates = leadSeatCandidates(leadSessions, root);
-    const live = leadSessions.map((s) => s && s.name).filter(Boolean);
-    const res = leadResolution(manifest && manifest.lead, { live, known: leadKnown });
+    // Eligibility keys off the team NAME on each row (session-manager already
+    // resolved it through cwdInProject), not off the root path.
+    const teamName = (manifest && manifest.name) || '';
+    const candidates = leadSeatCandidates(leadSessions, teamName);
+    // The ROWS, not a name list: leadResolution needs the type to tell a live
+    // agent from a live bash session, and passing names is what let a bash lead
+    // render as "running now".
+    const res = leadResolution(manifest && manifest.lead, { sessions: leadSessions, known: leadKnown });
 
     // Current state FIRST, in words: the crypto-app team must read as broken here
     // rather than as configured. `state` drives the colour; the note is the fix.
@@ -170,7 +179,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
       // explanation it is.
       const empty = document.createElement('div');
       empty.className = 'team-lead-empty';
-      empty.textContent = 'No agent session is running in this team’s folder. '
+      empty.textContent = 'No agent session of this team is running in this window. '
         + 'Bash sessions can’t be a lead — they have no messaging registry, so nothing could reach them. '
         + 'Create a lead seat, or type the name of a stopped one.';
       box.appendChild(empty);
@@ -445,7 +454,12 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
       // state this row exists to fix. Set the pointer after the seat exists.
       const teamRoot = currentRoot;
       closeTeamRolesPopover();
-      openSessionDialog({ name: seat || `${name}-lead`, type: 'claude', cwd: teamRoot || undefined });
+      // Un-awaited on purpose (the popover is already closed and has no status
+      // line left to report into), so the rejection has to be absorbed here:
+      // openDialog makes several awaited IPC calls, and one rejecting would
+      // otherwise be an unhandled rejection with nothing left to catch it.
+      Promise.resolve(openSessionDialog({ name: seat || `${name}-lead`, type: 'claude', cwd: teamRoot || undefined }))
+        .catch(() => {});
       return;
     }
     if (act === 'save') {

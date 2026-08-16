@@ -1301,8 +1301,13 @@ html, body {
 .team-lead-status { display: flex; gap: 8px; align-items: baseline; font-size: 11px; flex-wrap: wrap; }
 .team-lead-who { font-weight: 600; }
 .team-lead-note { color: var(--text-dim); }
-/* A pointer that resolves to nothing must not read the same as a stopped seat. */
-.team-lead-status.missing .team-lead-note, .team-lead-status.unset .team-lead-note { color: var(--warn); }
+/* A pointer that resolves to nothing — or to a seat nothing can reach — must not
+   read the same as a stopped seat. `ineligible` is a LIVE bash session: it is the
+   most dangerous of the four, because the seat visibly exists. */
+.team-lead-status.missing .team-lead-note,
+.team-lead-status.ineligible .team-lead-note,
+.team-lead-status.unset .team-lead-note { color: var(--warn); }
+.team-lead-status.ineligible .team-lead-who { color: var(--warn); }
 .team-lead-status.live .team-lead-who { color: var(--accent); }
 .team-lead-empty { font-size: 11px; color: var(--text-dim); margin: 4px 0; }
 .team-lead-hint { font-size: 10px; color: var(--text-dim); margin-top: 6px; }
