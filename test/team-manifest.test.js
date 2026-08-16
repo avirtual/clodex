@@ -1398,6 +1398,34 @@ test('watchdogMs is CLAMPED at consume (C3): below min → min, above max → ma
   assert.strictEqual(tm.loadManifest('g').watchdogMs, null, 'absent → null');
 });
 
+test('setLead re-points the lead SEAT, accepts a seat that is not running, validates the name', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  let team = tm.setLead('shop', 'shop-lead-2');
+  assert.strictEqual(team.lead, 'shop-lead-2', 'the top-level lead pointer moved');
+  const onDisk = JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf-8'));
+  assert.strictEqual(onDisk.lead, 'shop-lead-2', 'written to disk, not just returned');
+  // THE ROLE IS UNTOUCHED. This is the whole point of the two-`lead` split: the
+  // reserved role must survive a seat re-point byte-for-byte, and setRole('lead')
+  // must still refuse. A setLead that "helpfully" wrote into roles.lead would
+  // pass a pointer-only assertion and silently unlock reserved topology.
+  assert.deepStrictEqual(onDisk.roles.lead, JSON.parse(JSON.stringify(STOCK_ROLE_DEFS.lead)), 'roles.lead unchanged by a seat re-point');
+  assert.throws(() => tm.setRole('shop', 'lead', { brief: 'x' }), /operator-owned topology/, 'the lead ROLE is still locked');
+  // A seat with no session anywhere is ACCEPTED: that is a stopped lead, and it
+  // is also the state the front door exists to let an operator repair.
+  team = tm.setLead('shop', 'never-existed');
+  assert.strictEqual(team.lead, 'never-existed', 'a not-running seat name is a legal pointer');
+  // Charset gated by the same NAME_RE createTeam uses for `lead`.
+  assert.throws(() => tm.setLead('shop', 'bad name!'), /must be a seat name matching/);
+  assert.throws(() => tm.setLead('shop', ''), /must be a seat name matching/);
+  assert.throws(() => tm.setLead('shop', '..'), /must be a seat name matching/);
+  assert.throws(() => tm.setLead('shop', 42), /must be a seat name matching/);
+  // A missing team throws from loadManifest, like every other mutator.
+  assert.throws(() => tm.setLead('ghost', 'x'), /no team manifest at/);
+});
+
 test('setTeamWatchdog writes a finite ms, clears on null, rejects non-finite, round-trips clamped', () => {
   const home = mkHome();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));

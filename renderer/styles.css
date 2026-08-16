@@ -1293,6 +1293,19 @@ html, body {
 .team-role-ro-field { display: flex; gap: 6px; font-size: 11px; margin: 2px 0; }
 .team-role-ro-field span:first-child { flex: 0 0 56px; color: var(--text-dim); text-align: right; }
 .team-role-ro-field .ro-val { flex: 1; min-width: 0; color: var(--text-dim); word-break: break-word; }
+/* The lead row's seat control (t420). The ROLE stays locked and dimmed with the
+   other reserved rows; this block is full-opacity because it IS actionable —
+   inheriting .read-only's dim would make the one control on the row look
+   disabled. */
+.team-lead-seat { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); opacity: 1; }
+.team-lead-status { display: flex; gap: 8px; align-items: baseline; font-size: 11px; flex-wrap: wrap; }
+.team-lead-who { font-weight: 600; }
+.team-lead-note { color: var(--text-dim); }
+/* A pointer that resolves to nothing must not read the same as a stopped seat. */
+.team-lead-status.missing .team-lead-note, .team-lead-status.unset .team-lead-note { color: var(--warn); }
+.team-lead-status.live .team-lead-who { color: var(--accent); }
+.team-lead-empty { font-size: 11px; color: var(--text-dim); margin: 4px 0; }
+.team-lead-hint { font-size: 10px; color: var(--text-dim); margin-top: 6px; }
 /* Editable rows announce themselves. */
 .team-role-editcap {
   font-size: 10px;

@@ -22,13 +22,16 @@ const { esc } = require('../lib/format');
 const {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, DISPATCH_VALUES, DEFAULT_DISPATCH,
   parseDuration, formatDuration, formatBlockedBy, preflightByRole,
+  leadSeatCandidates, leadResolution,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
 
 // `promptText` is the in-app text-input modal from renderer.js — window.prompt()
 // is a no-op in Electron, so rename MUST route through it (threaded in as a dep,
-// not reached as a global).
-function initTeamRolesPopover({ promptText } = {}) {
+// not reached as a global). `openSessionDialog` is renderer.js's openDialog: the
+// "Create lead seat…" affordance routes to the EXISTING spawn path with the name
+// and the team root prefilled rather than growing a second way to make a session.
+function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   const popover = document.getElementById('team-roles-popover');
   const nameEl = document.getElementById('team-roles-popover-name');
   const listEl = document.getElementById('team-roles-list');
@@ -69,6 +72,137 @@ function initTeamRolesPopover({ promptText } = {}) {
     preflight = preflightByRole(res && res.ok ? res.findings : []);
   }
 
+  // Who could be this team's lead, and does the current pointer resolve (t420).
+  // Refreshed alongside the manifest, never cached across opens: a seat started
+  // since the last open must appear, and a status line claiming a seat is live
+  // after it exited is the one thing this row exists to stop being wrong about.
+  //
+  // Two DIFFERENT listings on purpose. `leadSessions` is the workspace's LIVE
+  // rows (name/type/cwd — the eligibility filter needs all three). `leadKnown` is
+  // every reserved name, live or persisted, across workspaces: it is what
+  // separates a stopped lead (restarts by name — fine) from one that was never
+  // created (resolves to nothing forever). Folding them into one listing would
+  // make those two states indistinguishable, which is the bug this row fixes.
+  let leadSessions = [];
+  let leadKnown = [];
+  // The open team's root, kept for the "Create lead seat…" prefill — the dialog
+  // wants a cwd, and the manifest is the only place that knows it.
+  let currentRoot = '';
+  async function loadLeadSeats() {
+    let live;
+    try { live = await window.api.listSessions(); } catch { live = null; }
+    leadSessions = Array.isArray(live) ? live : [];
+    let known;
+    try { known = await window.api.reservedSessionNames(); } catch { known = null; }
+    leadKnown = known && known.ok && Array.isArray(known.names) ? known.names : [];
+  }
+
+  // The lead ROLE is locked; the SEAT filling it is not. Built as DOM nodes, not
+  // innerHTML: `lead` and the session names come from an agent-writable team.json
+  // and from live session records, and every one of them lands here as a TEXT or
+  // .value PROPERTY assignment. NEVER give this input a value="…" attribute — the
+  // file header's rule, and the reason this whole block is imperative.
+  function buildLeadSeatBlock(manifest) {
+    const box = document.createElement('div');
+    box.className = 'team-lead-seat';
+
+    const root = (manifest && manifest.root) || '';
+    const candidates = leadSeatCandidates(leadSessions, root);
+    const live = leadSessions.map((s) => s && s.name).filter(Boolean);
+    const res = leadResolution(manifest && manifest.lead, { live, known: leadKnown });
+
+    // Current state FIRST, in words: the crypto-app team must read as broken here
+    // rather than as configured. `state` drives the colour; the note is the fix.
+    const status = document.createElement('div');
+    status.className = `team-lead-status ${res.state}`;
+    const who = document.createElement('span');
+    who.className = 'team-lead-who';
+    who.textContent = res.name ? `seat: ${res.name}` : 'seat: (none)';
+    const note = document.createElement('span');
+    note.className = 'team-lead-note';
+    note.textContent = res.note;
+    status.appendChild(who);
+    status.appendChild(note);
+    box.appendChild(status);
+
+    const field = document.createElement('label');
+    field.className = 'team-role-field';
+    const label = document.createElement('span');
+    label.textContent = 'seat';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.dataset.f = 'lead-seat';
+    input.placeholder = 'seat name';
+    input.value = res.name; // PROPERTY, never an attribute (agent-writable).
+    field.appendChild(label);
+    field.appendChild(input);
+    box.appendChild(field);
+
+    if (candidates.length) {
+      const pick = document.createElement('label');
+      pick.className = 'team-role-field';
+      const pickLabel = document.createElement('span');
+      pickLabel.textContent = 'pick';
+      const sel = document.createElement('select');
+      sel.dataset.f = 'lead-pick';
+      const none = document.createElement('option');
+      none.value = ''; none.textContent = '(choose a running seat)';
+      sel.appendChild(none);
+      for (const n of candidates) {
+        const opt = document.createElement('option');
+        opt.value = n; opt.textContent = n; // both by property
+        sel.appendChild(opt);
+      }
+      // The picker fills the FIELD rather than writing straight through: the
+      // field is the thing Set reads, and it must stay the single value the
+      // operator confirms — a picker that wrote on change would also have to be
+      // undoable, and there is nothing to undo a silent write with.
+      sel.addEventListener('change', () => {
+        if (sel.value) input.value = sel.value;
+      });
+      pick.appendChild(pickLabel);
+      pick.appendChild(sel);
+      box.appendChild(pick);
+    } else {
+      // WHY there is nothing to pick, not merely that there is nothing. A team
+      // root holding only bash sessions is the measured case (crypto-app), and
+      // an empty picker there reads as a broken popover instead of as the
+      // explanation it is.
+      const empty = document.createElement('div');
+      empty.className = 'team-lead-empty';
+      empty.textContent = 'No agent session is running in this team’s folder. '
+        + 'Bash sessions can’t be a lead — they have no messaging registry, so nothing could reach them. '
+        + 'Create a lead seat, or type the name of a stopped one.';
+      box.appendChild(empty);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'team-role-actions';
+    const setBtn = document.createElement('button');
+    setBtn.type = 'button';
+    setBtn.dataset.act = 'set-lead';
+    setBtn.textContent = 'Set lead';
+    const createBtn = document.createElement('button');
+    createBtn.type = 'button';
+    createBtn.className = 'secondary';
+    createBtn.dataset.act = 'create-lead';
+    createBtn.textContent = 'Create lead seat…';
+    actions.appendChild(setBtn);
+    actions.appendChild(createBtn);
+    box.appendChild(actions);
+
+    const hint = document.createElement('div');
+    hint.className = 'team-lead-hint';
+    // Says the thing the UI would otherwise imply wrongly: this moves a POINTER.
+    // The new seat starts with none of the old lead's context, and no state is
+    // transferred — which is also why it is safe and reversible.
+    hint.textContent = 'Changing this re-points the team at another seat. '
+      + 'Nothing is handed over — the new lead starts fresh, and you can point it back at any time.';
+    box.appendChild(hint);
+
+    return box;
+  }
+
   function renderRows(manifest) {
     listEl.innerHTML = '';
     for (const row of teamRoleRows(manifest)) {
@@ -87,6 +221,10 @@ function initTeamRolesPopover({ promptText } = {}) {
           `<div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div>` +
           `<div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || '—')}</span></div>` +
           `<div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || '—')}</span></div>`;
+        // The lead ROLE stays locked; which SEAT fills it does not (t420). Only
+        // this one reserved row grows a control — `reviewer` has no manifest
+        // pointer to re-aim, so it stays purely read-only.
+        if (row.key === 'lead') el.appendChild(buildLeadSeatBlock(manifest));
       } else {
         // SECURITY: brief/prompt/template are agent-writable unconstrained strings
         // (only role KEYS are charset-gated). NEVER interpolate them into a
@@ -196,10 +334,15 @@ function initTeamRolesPopover({ promptText } = {}) {
     const res = await window.api.teamGet(teamName);
     if (!res || !res.ok) { setStatus(res && res.error ? res.error : 'team not found', true); return false; }
     nameEl.textContent = res.team.name;
+    currentRoot = res.team.root || '';
     // BEFORE renderRows, and on every refresh rather than only on open: a role
     // whose prompt was just re-pointed by a Save must re-badge against the new
     // name, and a stale checklist accusing the previous value is worse than none.
     await loadPreflight(res.team.name);
+    // Before renderRows, same reason as the preflight above: the lead row's
+    // status line is rendered FROM these listings, so a stale one would state a
+    // resolution the manifest no longer has.
+    await loadLeadSeats();
     renderRows(res.team);
     // Show the stored (read-clamped) watchdog back in friendly units, not raw ms.
     watchdogInput.value = res.team.watchdogMs != null ? formatDuration(res.team.watchdogMs) : '';
@@ -281,6 +424,30 @@ function initTeamRolesPopover({ promptText } = {}) {
     const name = teamName();
     if (!name || !role) return;
     const act = btn.dataset.act;
+    if (act === 'set-lead') {
+      const inp = rowEl.querySelector('input[data-f="lead-seat"]');
+      const seat = ((inp && inp.value) || '').trim();
+      if (!seat) { setStatus('enter or pick a seat name for the lead', true); return; }
+      // NOT gated on the seat existing: a stopped lead is a legitimate value and
+      // the backend accepts it. The status line on the re-rendered row is what
+      // reports whether it resolves — a refusal here would block the case the
+      // field is explicitly meant to accept.
+      const res = await window.api.teamSetLead(name, seat);
+      await afterMutation(res, `lead seat set to "${seat}"`);
+      return;
+    }
+    if (act === 'create-lead') {
+      const inp = rowEl.querySelector('input[data-f="lead-seat"]');
+      const seat = ((inp && inp.value) || '').trim();
+      if (!openSessionDialog) { setStatus('the new-session dialog is unavailable here', true); return; }
+      // The manifest is NOT written here: the dialog can be cancelled, and a
+      // pointer written for a seat that was never created is exactly the orphan
+      // state this row exists to fix. Set the pointer after the seat exists.
+      const teamRoot = currentRoot;
+      closeTeamRolesPopover();
+      openSessionDialog({ name: seat || `${name}-lead`, type: 'claude', cwd: teamRoot || undefined });
+      return;
+    }
     if (act === 'save') {
       const val = (f) => {
         // prompt is a <select>, the rest are <input>s — match on data-f alone.
@@ -385,10 +552,14 @@ function initTeamRolesPopover({ promptText } = {}) {
     const inp = e.target.closest('input[data-f]');
     if (!inp) return;
     const rowEl = inp.closest('.team-role-row');
-    const saveBtn = rowEl && rowEl.querySelector('button[data-act="save"]');
-    if (!saveBtn) return;
+    // The lead row has no Save — its input pairs with Set lead. Matched on the
+    // field rather than on the row's role so a row that grows both buttons later
+    // still fires the one belonging to the focused input.
+    const act = inp.dataset.f === 'lead-seat' ? 'set-lead' : 'save';
+    const btn = rowEl && rowEl.querySelector(`button[data-act="${act}"]`);
+    if (!btn) return;
     e.preventDefault();
-    saveBtn.click();
+    btn.click();
   });
 
   // "?" help toggle. The reusable pattern: a `data-help` panel in the popover +

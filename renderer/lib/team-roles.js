@@ -133,6 +133,70 @@ function formatBlockedBy(blockedBy) {
   return parts.join('; ');
 }
 
+// Which seats may be offered as a team's LEAD (t420). Takes the session rows the
+// renderer already holds ({name, type, cwd, archivedAt?}) plus the team root, and
+// returns the eligible names in the order given.
+//
+// A BASH SESSION IS NEVER ELIGIBLE, and that is the load-bearing filter here: a
+// bash session has no registry entry and no socket, is invisible to `[agent:who]`
+// and cannot be DM'd — so a team whose lead pointed at one would look configured
+// and silently deliver nothing. The crypto-app team root holds exactly one
+// session and it is bash, which is why the empty state must SAY this rather than
+// render an empty picker.
+//
+// Membership is CONTAINMENT under the team root, matching team-manifest's
+// containsPath. The worktree widening (cwdInProject) is deliberately NOT mirrored:
+// it needs a `.git` file read, which a renderer leaf must not do — a seat in a
+// linked worktree is therefore missing from the picker rather than wrongly
+// offered, and the free-text field remains the way to name it.
+function leadSeatCandidates(sessions, teamRoot) {
+  const root = String(teamRoot == null ? '' : teamRoot).trim();
+  if (!root) return [];
+  const under = (cwd) => {
+    const c = String(cwd == null ? '' : cwd);
+    if (!c) return false;
+    // String containment on path segments (no `path` module in a renderer leaf):
+    // equal, or a descendant with a separator at the boundary. The boundary check
+    // is what keeps `/proj-other` out of `/proj`.
+    const base = root.replace(/\/+$/, '');
+    return c === base || c.startsWith(`${base}/`);
+  };
+  return (Array.isArray(sessions) ? sessions : [])
+    .filter((s) => s && typeof s.name === 'string' && s.name)
+    // AGENT types only — `bash` is excluded by this whitelist rather than by a
+    // blacklist, so a future non-agent type is ineligible by default.
+    .filter((s) => s.type === 'claude' || s.type === 'codex')
+    .filter((s) => !s.archivedAt)
+    .filter((s) => under(s.cwd))
+    .map((s) => s.name);
+}
+
+// How the CURRENT lead pointer resolves, for the row's status line. Three states
+// the operator must be able to tell apart, because they have three fixes:
+//   'live'    — a session by that name is running now.
+//   'stopped' — no live session, but a persisted record exists: it restarts by
+//               name, so this is FINE and must not read as broken.
+//   'missing' — nothing by that name, live or persisted. The crypto-app case: the
+//               pointer resolves to nothing and will forever, until it is changed.
+// `unset` covers a manifest with no lead string at all.
+function leadResolution(lead, { live, known } = {}) {
+  const name = String(lead == null ? '' : lead).trim();
+  if (!name) return { state: 'unset', name: '', note: 'No lead seat is set for this team.' };
+  const liveNames = Array.isArray(live) ? live : [];
+  const knownNames = Array.isArray(known) ? known : [];
+  if (liveNames.includes(name)) {
+    return { state: 'live', name, note: 'running now' };
+  }
+  if (knownNames.includes(name)) {
+    return { state: 'stopped', name, note: 'not running — it restarts under this name' };
+  }
+  return {
+    state: 'missing',
+    name,
+    note: 'no session by this name exists — this team has no lead until you pick or create one',
+  };
+}
+
 // teamPreflight findings (a flat array over the whole team) → the per-role
 // buckets renderRows needs, in the order the resolver emitted them. A role with
 // nothing unresolved is ABSENT from the map rather than present-and-empty: the
@@ -156,5 +220,6 @@ function preflightByRole(findings) {
 module.exports = {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, preflightByRole,
   parseDuration, formatDuration, formatBlockedBy,
+  leadSeatCandidates, leadResolution,
   DISPATCH_VALUES, DEFAULT_DISPATCH,
 };

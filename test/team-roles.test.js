@@ -10,6 +10,7 @@ const assert = require('node:assert');
 const {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote,
   parseDuration, formatDuration, formatBlockedBy,
+  leadSeatCandidates, leadResolution,
 } = require('../renderer/lib/team-roles');
 
 test('teamRoleRows: one row per role in key order, reserved keys marked read-only', () => {
@@ -144,6 +145,64 @@ test('formatDuration: friendliest exact unit; round-trips parseDuration; empty f
     assert.deepStrictEqual(parseDuration(formatDuration(ms)), { ok: true, ms });
   }
   assert.strictEqual(formatDuration(300500), '300500ms', 'fallback stays parseable');
+});
+
+// --- the lead SEAT front door (t420) ---------------------------------------
+
+test('leadSeatCandidates: agent seats under the team root, in order; a BASH seat is never eligible', () => {
+  const sessions = [
+    { name: 'shop-lead', type: 'claude', cwd: '/proj/shop' },
+    { name: 'shop-shell', type: 'bash', cwd: '/proj/shop' },       // private: no registry, no socket
+    { name: 'shop-codex', type: 'codex', cwd: '/proj/shop/api' },  // containment, not equality
+    { name: 'other', type: 'claude', cwd: '/proj/shop-other' },    // sibling, NOT a descendant
+    { name: 'elsewhere', type: 'claude', cwd: '/tmp' },
+    { name: 'gone', type: 'claude', cwd: '/proj/shop', archivedAt: 123 },
+  ];
+  // ENTER: the two rows this filter is FOR must be in the input, or the
+  // assertions below are true of a set that never contained them — the bash
+  // exclusion in particular would "pass" against a list with no bash row at all.
+  assert.ok(sessions.some((s) => s.type === 'bash' && s.cwd === '/proj/shop'),
+    'ENTER: a bash session inside the team root must be in the input');
+  assert.ok(sessions.some((s) => s.archivedAt), 'ENTER: an archived seat must be in the input');
+
+  assert.deepStrictEqual(leadSeatCandidates(sessions, '/proj/shop'), ['shop-lead', 'shop-codex'],
+    'agent types under the root only, input order preserved');
+  // The sibling-path case gets its own assertion: `/proj/shop-other` starts with
+  // the root as a STRING, and a prefix test without the separator boundary would
+  // hand another project's seat to this team.
+  assert.strictEqual(leadSeatCandidates(sessions, '/proj/shop').includes('other'), false,
+    'a sibling directory sharing the root as a string prefix is not inside it');
+  // A trailing slash on the root must not change the answer.
+  assert.deepStrictEqual(leadSeatCandidates(sessions, '/proj/shop/'), ['shop-lead', 'shop-codex']);
+  // The bash-only root: empty, which is what makes the popover's empty state the
+  // thing the operator reads (the crypto-app case).
+  assert.deepStrictEqual(leadSeatCandidates([{ name: 'crypto-bash', type: 'bash', cwd: '/proj/crypto' }], '/proj/crypto'), []);
+  // Degenerate inputs never throw.
+  assert.deepStrictEqual(leadSeatCandidates(null, '/proj/shop'), []);
+  assert.deepStrictEqual(leadSeatCandidates(sessions, ''), [], 'no root → nothing is knowably inside it');
+  assert.deepStrictEqual(leadSeatCandidates([{ type: 'claude', cwd: '/proj/shop' }], '/proj/shop'), [], 'a nameless row is not a seat');
+});
+
+test('leadResolution: live / stopped / missing are three distinct states', () => {
+  const live = ['shop-lead'];
+  const known = ['shop-lead', 'shop-old-lead'];
+  assert.deepStrictEqual(leadResolution('shop-lead', { live, known }),
+    { state: 'live', name: 'shop-lead', note: 'running now' });
+  // STOPPED IS NOT BROKEN: it has a record and restarts by name. The whole point
+  // of splitting this from `missing` is that the popover must not cry wolf here.
+  assert.deepStrictEqual(leadResolution('shop-old-lead', { live, known }),
+    { state: 'stopped', name: 'shop-old-lead', note: 'not running — it restarts under this name' });
+  // MISSING: the crypto-app orphan — no session, live or persisted, ever.
+  const missing = leadResolution('crypto-app-lead', { live, known });
+  assert.strictEqual(missing.state, 'missing');
+  assert.strictEqual(missing.name, 'crypto-app-lead');
+  assert.match(missing.note, /no session by this name exists/);
+  // No pointer at all.
+  assert.strictEqual(leadResolution('', { live, known }).state, 'unset');
+  assert.strictEqual(leadResolution(null, { live, known }).state, 'unset');
+  // Absent listings must not turn a real pointer into a claim it is live.
+  assert.strictEqual(leadResolution('shop-lead', {}).state, 'missing');
+  assert.strictEqual(leadResolution('shop-lead').state, 'missing');
 });
 
 test('formatBlockedBy: names blocking seats + open tickets, empty when nothing blocks', () => {
