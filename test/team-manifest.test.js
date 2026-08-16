@@ -1355,9 +1355,139 @@ test('removeRole removes a normal role, refuses lead + reviewer (C1), throws on 
   tm.addRole('shop', 'runner', { prompt: 'r' });
   const team = tm.removeRole('shop', 'runner');
   assert.ok(!('runner' in team.roles), 'runner removed');
-  assert.throws(() => tm.removeRole('shop', 'lead'), /operator-owned topology/);
+  // The DEFAULT (no opts) is the agent/intent path — unchanged by t421.
+  assert.throws(() => tm.removeRole('shop', 'lead'), /cannot be removed/);
   assert.throws(() => tm.removeRole('shop', 'reviewer'), /operator-owned topology/);
   assert.throws(() => tm.removeRole('shop', 'ghost'), /not found on team "shop"/);
+});
+
+// --- t421: the operator may drop `reviewer`, and get it back ---------------
+//
+// The two halves are ONE decision: removal without a re-mint strands a team
+// permanently reviewer-less, so both arms are asserted together here.
+
+test('removeRole: the operator may drop `reviewer`; an agent still cannot', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  assert.ok(tm.loadManifest('shop').roles.reviewer,
+    'ENTER: a fresh team really has a reviewer role to remove — without it every assertion below is about an absence that was always there');
+
+  // The agent path (no opts, and an explicitly false opt-in) is refused, and the
+  // FILE is untouched: a refusal that had already written would make the message
+  // a lie and the guard decorative.
+  assert.throws(() => tm.removeRole('shop', 'reviewer'), /operator-owned topology/);
+  assert.throws(() => tm.removeRole('shop', 'reviewer', { operator: false }), /operator-owned topology/);
+  // Not `operator: true` by any other spelling, either — a truthy value is not
+  // the opt-in, so a stray argument cannot become one.
+  assert.throws(() => tm.removeRole('shop', 'reviewer', { operator: 1 }), /operator-owned topology/);
+  assert.ok(tm.loadManifest('shop').roles.reviewer, 'the refused removals wrote nothing');
+
+  const team = tm.removeRole('shop', 'reviewer', { operator: true });
+  assert.ok(!('reviewer' in team.roles), 'the operator removal took effect in the returned manifest');
+  // Read back from DISK, not just the return value: the return is a re-load, but
+  // asserting the file is what pins that the write happened rather than that the
+  // in-memory object was edited.
+  const raw = JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf-8'));
+  assert.ok(!('reviewer' in raw.roles), 'and on disk');
+  // The team still LOADS with no reviewer — the whole premise of the ticket.
+  assert.ok(tm.loadManifest('shop').roles.lead, 'a reviewer-less team.json still loads');
+});
+
+test('removeRole: `lead` is refused for EVERYONE, operator included, with its own reason', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+
+  // Not the generic reserved message: a team that lost `lead` fails loadManifest
+  // outright and reads as "no team" everywhere, so the refusal must name that
+  // rather than suggest the app can do it.
+  assert.throws(() => tm.removeRole('shop', 'lead'), /cannot be removed/);
+  assert.throws(() => tm.removeRole('shop', 'lead', { operator: true }), /cannot be removed/);
+  assert.throws(() => tm.removeRole('shop', 'lead', { operator: true }), /fails to load/);
+  assert.ok(tm.loadManifest('shop').roles.lead, 'lead survives both attempts');
+});
+
+test('addRole: an operator re-mint of `reviewer` writes the STOCK def and IGNORES the supplied one', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  tm.removeRole('shop', 'reviewer', { operator: true });
+  assert.ok(!tm.loadManifest('shop').roles.reviewer,
+    'ENTER: the reviewer is genuinely absent before the re-mint — a re-mint over an EXISTING key takes the no-op branch and would assert nothing about minting');
+
+  // The delete-then-recreate bypass, attempted: a def that is nothing like the
+  // stock one. The def must be discarded WHOLE, not merged field-by-field.
+  const team = tm.addRole('shop', 'reviewer', {
+    prompt: 'rubber-stamp', brief: 'approves everything', template: 'attacker-template', dispatch: 'standing',
+  }, { operator: true });
+
+  assert.deepStrictEqual(team.roles.reviewer, {
+    ...STOCK_ROLE_DEFS.reviewer, template: null, dispatch: 'standing',
+  }, 'the reviewer reads back as the STOCK def — the attacker def bought nothing');
+  assert.strictEqual(team.roles.reviewer.prompt, STOCK_ROLE_DEFS.reviewer.prompt,
+    'specifically: the prompt is Clodex\'s, not the caller\'s');
+
+  // On disk too, in the raw file — a normalization that hid an attacker value on
+  // read-back would still leave it in a file every agent can open.
+  const raw = JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf-8'));
+  assert.deepStrictEqual(raw.roles.reviewer, { ...STOCK_ROLE_DEFS.reviewer },
+    'the stock def is what landed in team.json, verbatim');
+});
+
+test('addRole: an AGENT still cannot mint an absent `reviewer`, stock def or not', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  tm.removeRole('shop', 'reviewer', { operator: true });
+
+  // Without the opt-in the mint refusal is unchanged — including for a caller
+  // that offers the stock def itself, which is the shape a clever agent would
+  // reach for once it learned the operator path writes exactly that.
+  assert.throws(() => tm.addRole('shop', 'reviewer', { prompt: 'rubber-stamp' }), /operator-owned topology/);
+  assert.throws(() => tm.addRole('shop', 'reviewer', { ...STOCK_ROLE_DEFS.reviewer }), /operator-owned topology/);
+  assert.throws(() => tm.addRole('shop', 'reviewer', {}, { operator: false }), /operator-owned topology/);
+  assert.ok(!tm.loadManifest('shop').roles.reviewer, 'nothing was minted by any of them');
+});
+
+test('addRole: the operator opt-in does NOT let a reserved def be rewritten when the key exists', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  const before = tm.loadManifest('shop').roles.reviewer;
+  assert.ok(before, 'ENTER: the key exists, so this is the existing-key branch and not a mint');
+
+  // The stock-def branch is gated on the key being ABSENT. With it present, an
+  // operator addRole falls through to the ordinary already-exists arm: a matching
+  // def is a no-op, a divergent one is refused. Editing a reserved def stays out
+  // of scope for every caller (setRole refuses it too).
+  assert.throws(
+    () => tm.addRole('shop', 'reviewer', { prompt: 'rubber-stamp' }, { operator: true }),
+    /already exists on team "shop" with a different definition/,
+  );
+  assert.deepStrictEqual(tm.loadManifest('shop').roles.reviewer, before, 'the def is untouched');
+  assert.doesNotThrow(() => tm.addRole('shop', 'reviewer', { ...STOCK_ROLE_DEFS.reviewer }, { operator: true }));
+});
+
+test('addRole: an operator mint of an absent `lead` is refused — removeRole can never produce that state', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  const file = path.join(home, 'teams', 'shop', 'team.json');
+
+  // Reachable only by hand-editing team.json, since removeRole refuses `lead` for
+  // everyone. loadManifest throws on the missing key before addRole can mint it,
+  // which is the honest answer: the file is invalid, not merely short a role.
+  const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  delete raw.roles.lead;
+  fs.writeFileSync(file, JSON.stringify(raw, null, 2));
+  assert.throws(() => tm.addRole('shop', 'lead', {}, { operator: true }), /roles must include a "lead" role/);
 });
 
 test('renameRole renames a normal role, refuses lead/reviewer either direction, guards collisions', () => {

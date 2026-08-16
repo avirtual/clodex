@@ -21,6 +21,20 @@ blocks a release.
   one, or create the seat from the row. Bash sessions are deliberately not
   offered: they have no messaging registry, so a lead pointed at one could never
   be reached. The lead ROLE itself stays built-in and locked, as before.
+- A team no longer has to keep its reviewer. The `reviewer` row in the team
+  popover gained a Remove button, and a team without one shows an "Add it back"
+  row in its place rather than nothing at all. Removing it is not free and the
+  confirm says so: tickets on that team escalate to you at the review step
+  instead of getting a cold reviewer, which is the working arrangement if you
+  would rather review the work yourself. Removal is blocked while a reviewer
+  seat is live or a reviewer ticket is open, exactly like any other role.
+  Two things stay fixed. Only you can do this — from the app; the
+  `[agent:team role-rm]` intent still refuses, so a lead cannot remove its own
+  reviewer. And adding it back writes Clodex's own definition of the role, never
+  one from a `team.json`, so removing and re-adding cannot be used to swap in a
+  more agreeable reviewer. The `lead` role remains non-removable for everyone,
+  including you: a team without one fails to load and would read as no team at
+  all.
 
 ## 5.10.2 — 2026-08-16
 

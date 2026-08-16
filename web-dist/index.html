@@ -1481,6 +1481,13 @@ body {
 .team-role-row.read-only {
   opacity: 0.72;
 }
+.team-role-row.absent {
+  border-style: dashed;
+  opacity: 0.6;
+}
+.team-role-row.absent button {
+  opacity: 1;
+}
 .team-role-head {
   display: flex;
   align-items: center;
@@ -26549,6 +26556,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
     "renderer/lib/team-roles.js"(exports, module) {
       "use strict";
       var RESERVED_ROLE_KEYS = /* @__PURE__ */ new Set(["lead", "reviewer"]);
+      var REMOVABLE_RESERVED_ROLE_KEYS = /* @__PURE__ */ new Set(["reviewer"]);
       var ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
       var NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
       var DISPATCH_VALUES = ["standing", "worktree"];
@@ -26563,6 +26571,22 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           template: def && def.template || "",
           readOnly: RESERVED_ROLE_KEYS.has(key)
         }));
+      }
+      function absentReservedRoles(manifest) {
+        const roles = manifest && manifest.roles || {};
+        return [...REMOVABLE_RESERVED_ROLE_KEYS].filter((k) => !roles[k]);
+      }
+      function reservedRemovalWarning(key) {
+        if (key === "reviewer") {
+          return "Tickets on this team will escalate to you at the review step instead of getting a cold reviewer.";
+        }
+        return "This role will no longer exist on the team.";
+      }
+      function absentReservedNote(key) {
+        if (key === "reviewer") {
+          return "Not on this team. Tickets escalate to the lead at the review step. Add it back to get an independent review pass.";
+        }
+        return "Not on this team.";
       }
       function validateAddRole({ name, template } = {}) {
         const n = String(name == null ? "" : name).trim();
@@ -26663,13 +26687,17 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         buildSavePatch,
         reservedRoleNote,
         preflightByRole,
+        absentReservedRoles,
+        reservedRemovalWarning,
+        absentReservedNote,
         parseDuration,
         formatDuration,
         formatBlockedBy,
         leadSeatCandidates,
         leadResolution,
         DISPATCH_VALUES,
-        DEFAULT_DISPATCH
+        DEFAULT_DISPATCH,
+        REMOVABLE_RESERVED_ROLE_KEYS
       };
     }
   });
@@ -26690,7 +26718,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         formatBlockedBy,
         preflightByRole,
         leadSeatCandidates,
-        leadResolution
+        leadResolution,
+        absentReservedRoles,
+        reservedRemovalWarning,
+        absentReservedNote,
+        REMOVABLE_RESERVED_ROLE_KEYS
       } = require_team_roles();
       var { anchorRect, makeDraggable, resetDrag } = require_popover_drag();
       function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
@@ -26834,6 +26866,18 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               el.classList.add("read-only");
               el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div>`;
               if (row.key === "lead") el.appendChild(buildLeadSeatBlock(manifest));
+              if (REMOVABLE_RESERVED_ROLE_KEYS.has(row.key)) {
+                const actions = document.createElement("div");
+                actions.className = "team-role-actions";
+                const rm = document.createElement("button");
+                rm.type = "button";
+                rm.className = "secondary";
+                rm.dataset.act = "remove";
+                rm.textContent = "Remove";
+                rm.title = "Take this built-in role off the team. You can add it back here.";
+                actions.appendChild(rm);
+                el.appendChild(actions);
+              }
             } else {
               el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label><label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span><select data-f="dispatch"><option value="standing">standing \u2014 the live seat gets the spec</option><option value="worktree">worktree \u2014 one-shot seat, own branch + checkout</option></select></label><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
               el.querySelector('input[data-f="brief"]').value = row.brief;
@@ -26888,6 +26932,36 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               }
               el.appendChild(box);
             }
+            listEl.appendChild(el);
+          }
+          for (const key of absentReservedRoles(manifest)) {
+            const el = document.createElement("div");
+            el.className = "team-role-row read-only absent";
+            el.dataset.role = key;
+            const head = document.createElement("div");
+            head.className = "team-role-head";
+            const k = document.createElement("span");
+            k.className = "team-role-key";
+            k.textContent = key;
+            const badge = document.createElement("span");
+            badge.className = "team-role-badge";
+            badge.textContent = "not on this team";
+            head.appendChild(k);
+            head.appendChild(badge);
+            el.appendChild(head);
+            const note = document.createElement("div");
+            note.className = "team-role-lock-note";
+            note.textContent = absentReservedNote(key);
+            el.appendChild(note);
+            const actions = document.createElement("div");
+            actions.className = "team-role-actions";
+            const add = document.createElement("button");
+            add.type = "button";
+            add.dataset.act = "readd";
+            add.textContent = "Add it back";
+            add.title = "Adds Clodex's built-in definition of this role back to the team.";
+            actions.appendChild(add);
+            el.appendChild(actions);
             listEl.appendChild(el);
           }
         }
@@ -27013,9 +27087,17 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             const res = await window.api.teamRenameRole(name, role, to);
             await afterMutation(res, `role "${role}" renamed to "${to}"`);
           } else if (act === "remove") {
-            if (!window.confirm(`Remove role "${role}" from team "${name}"?`)) return;
+            const warn = REMOVABLE_RESERVED_ROLE_KEYS.has(role) ? `
+
+${reservedRemovalWarning(role)}
+
+You can add it back from this popover.` : "";
+            if (!window.confirm(`Remove role "${role}" from team "${name}"?${warn}`)) return;
             const res = await window.api.teamRemoveRole(name, role);
             await afterMutation(res, `role "${role}" removed`);
+          } else if (act === "readd") {
+            const res = await window.api.teamAddRole(name, role, {});
+            await afterMutation(res, `role "${role}" added back`);
           }
         });
         addBtn.addEventListener("click", async () => {

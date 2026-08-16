@@ -190,11 +190,12 @@ test('team:removeRole runs the C5 guard: free role removes, a referenced role re
   const handlers = registerWith({
     loadManifest: (t) => ({ name: t, roles: {} }),
     manager: { _roleInUse: () => inUse },
-    removeRole: (t, r) => { writes.push(['removeRole', t, r]); return { name: t, roles: {} }; },
+    removeRole: (...args) => { writes.push(['removeRole', ...args]); return { name: 'shop', roles: {} }; },
   });
-  // Free role → removeRole reached, ok.
+  // Free role → removeRole reached, ok. The trailing `{operator:true}` is t421's
+  // opt-in and is asserted here as part of the whole call.
   const ok = handlers['team:removeRole']({}, 'shop', 'runner');
-  assert.deepStrictEqual(writes, [['removeRole', 'shop', 'runner']]);
+  assert.deepStrictEqual(writes, [['removeRole', 'shop', 'runner', { operator: true }]]);
   assert.strictEqual(ok.ok, true);
   // Referenced role → blocked, mutator NOT called, blockedBy carried.
   writes.length = 0;
@@ -252,26 +253,59 @@ test('team:get returns the loaded manifest (full role map) or {ok:false} on a ba
 test('team:addRole forwards to addRole, succeeds on an ordinary role, surfaces the guard errors', () => {
   const writes = [];
   const handlers = registerWith({
-    addRole: (team, role, def) => {
-      writes.push([team, role, def]);
-      if (role === 'reviewer') throw new Error('the "reviewer" role is operator-owned topology');
+    // Variadic for the same reason as team:removeRole above: the opt-in is a
+    // trailing argument, and a three-parameter stub would drop it silently.
+    addRole: (...args) => {
+      const [team, role, def] = args;
+      writes.push(args);
       if (def && def.template === '/tmp/evil.json') throw new Error('template must be a library-template name matching');
       return { name: team, roles: { [role]: def } };
     },
   });
   // Ordinary role → reaches addRole, ok, reloaded manifest returned.
   const ok = handlers['team:addRole']({}, 'shop', 'runner', { instantiate: 'session', brief: 'r' });
-  assert.deepStrictEqual(writes[0], ['shop', 'runner', { instantiate: 'session', brief: 'r' }]);
+  assert.deepStrictEqual(writes[0], ['shop', 'runner', { instantiate: 'session', brief: 'r' }, { operator: true }]);
   assert.strictEqual(ok.ok, true);
   assert.ok(ok.team.roles.runner, 'reloaded manifest carries the new role');
-  // C1 mint refusal surfaced verbatim.
-  const reserved = handlers['team:addRole']({}, 'shop', 'reviewer', { instantiate: 'session' });
-  assert.strictEqual(reserved.ok, false);
-  assert.match(reserved.error, /operator-owned topology/);
   // C4 template refusal surfaced verbatim.
   const badTpl = handlers['team:addRole']({}, 'shop', 'runner', { template: '/tmp/evil.json' });
   assert.strictEqual(badTpl.ok, false);
   assert.match(badTpl.error, /library-template name/);
+});
+
+// t421. The opt-in is what makes an operator re-mint of a removed `reviewer`
+// possible at all, and this channel is the ONLY caller that passes it — the
+// `[agent:team role-add|role-rm]` intents call the same mutators without it
+// (pinned in session-manager.test.js). Asserting the argument, not merely that
+// the mutator was reached: the whole security property is in that fourth value.
+test('team:addRole / team:removeRole pass the operator opt-in; team:join does NOT', async () => {
+  const writes = [];
+  const handlers = registerWith({
+    manager: { _roleInUse: () => ({ seats: [], tickets: [] }), create: async () => ({}), sessions: new Map(), list: () => [] },
+    // A manifest with NO `hand` role, so team:join takes its mint arm. It must
+    // still LOAD: team:removeRole's C5 guard reads it first, and a throwing stub
+    // would fail that handler before it ever reached its mutator.
+    loadManifest: (t) => ({ name: t, roles: { lead: {} } }),
+    addRole: (...args) => { writes.push(['addRole', ...args]); return { name: 'shop', roles: {} }; },
+    removeRole: (...args) => { writes.push(['removeRole', ...args]); return { name: 'shop', roles: {} }; },
+    agentDefaults: { getDefaultDeny: () => [], getStrip: () => 0 },
+    persistence: { setStripLevel: () => {}, get: () => null },
+    workspaceOfSender: () => 'ws1',
+  });
+
+  handlers['team:addRole']({}, 'shop', 'reviewer', {});
+  handlers['team:removeRole']({}, 'shop', 'reviewer');
+  await handlers['team:join']({}, { team: 'shop', role: 'hand', name: 'shop-hand', type: 'claude', cwd: '/proj' });
+
+  assert.strictEqual(writes.length, 3, 'ENTER: all three handlers reached their mutator — a swallowed {ok:false} would leave the assertions below true of an empty list');
+  assert.deepStrictEqual(writes[0].at(-1), { operator: true }, 'team:addRole opts in');
+  assert.deepStrictEqual(writes[1].at(-1), { operator: true }, 'team:removeRole opts in');
+  // join is the case this MUST stay false for: it mints an absent role from a
+  // stock def, and an opt-in here would let any join re-mint a reserved key.
+  const join = writes[2];
+  assert.strictEqual(join[0], 'addRole');
+  assert.strictEqual(join.length, 4, 'team:join calls addRole with (team, role, def) and nothing more');
+  assert.notDeepStrictEqual(join.at(-1), { operator: true }, 'team:join must never carry the operator opt-in');
 });
 
 // t414: the preflight handler is the popover's only source of findings, and it
