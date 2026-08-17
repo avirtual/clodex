@@ -1626,7 +1626,12 @@ function createTicketMethods(deps, shared) {
     // deliberate: there is no tree to misroute into, so the reason for the
     // worktree refusal does not apply. The cost is that a one-shot TICKET can be
     // picked up by a second one-shot seat after the first dies — accepted, since
-    // the alternative is a ticket nothing can answer for.
+    // the alternative is a ticket nothing can answer for. Second consequence of
+    // the same choice, equally intended: _advanceSeat hands a CLOSING spawn seat
+    // the next ticket degrading to its role, so accepting the first ticket can
+    // archive a seat that is mid-work on a second — recoverable, since unarchiving
+    // resumes it.
+    //
     // `liveNames` lets a caller in a LOOP walk the live seats once instead of once
     // per ticket. Both reads here are filesystem work, and `_touchTicketActivity`
     // runs on every non-idle activity edge — much hotter than the listers.
@@ -1757,7 +1762,19 @@ function createTicketMethods(deps, shared) {
       // `<wt>/etc`. Both are the "hand copies a path into a command that runs in
       // the wrong place" hazard this whole line exists to prevent.
       const roleCwdRel = this._roleCwdRel(roleDef).rel;
-      const areaLine = (roleCwdRel && ticket && ticket.worktree && ticket.worktree.path)
+      // The lexical helper is NOT the whole gate: the resolver refuses three more
+      // things it cannot see (the directory missing, a symlink realpathing out of
+      // the root, a nested team.json owning it), and a seat whose cwd was refused
+      // boots at the tree root. Naming an area it was not spawned in is the same
+      // hazard as the raw-read one above, so the line rides only on a value the
+      // SPAWN accepted. Not covered, deliberately: the resolver's existence and
+      // symlink checks run against team.root while this line joins onto the
+      // worktree, so a symlink that exists only INSIDE the worktree is unseen —
+      // closing that would need a second resolver on the worktree base, which is
+      // more than the line is worth.
+      const roleCwdHonored = !!roleCwdRel && !!(team && team.root)
+        && this._resolveRoleCwd(team, roleDef).fallback === null;
+      const areaLine = (roleCwdHonored && ticket && ticket.worktree && ticket.worktree.path)
         ? `YOUR AREA in that tree: ${path.join(ticket.worktree.path, roleCwdRel)} — your role works in "${roleCwdRel}". `
           + `The tree ROOT above stays the path for git commands and for the suite; this is where your files live.\n`
         : '';
@@ -1772,7 +1789,17 @@ function createTicketMethods(deps, shared) {
       // seat also has no tree, and it is the operator's own long-lived session
       // that already knows where it lives. Same `role || assignee` idiom as above,
       // and hasOwnProperty-gated for the same reason.
-      const sharedLine = (roleDef && roleDef.dispatch === 'spawn')
+      //
+      // The tree check is a SECOND condition, not a replacement: the role's mode
+      // and the ticket's pointer can disagree (the operator edits a role from
+      // `worktree` to `spawn` mid-flight; _taskAssign's mint-failure falls through
+      // to the generic delivery with the inherited tree still on the record), and
+      // this line would then tell a seat it has no branch three lines under a
+      // `WORK IN: … commit to <branch>`. The tree is REAL on those paths — the
+      // loop and the accept teardown act on it — so the text yields to the
+      // pointer, never the other way round.
+      const sharedLine = (roleDef && roleDef.dispatch === 'spawn'
+        && !(ticket && ticket.worktree && ticket.worktree.path))
         ? `You are working in the SHARED checkout alongside other seats — you have no worktree and no branch of your own, `
           + `so do tree work only and leave committing to the lead.\n`
         : '';
