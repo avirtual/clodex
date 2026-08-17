@@ -574,7 +574,7 @@ test('loadManifest: role dispatch normalizes to the enum, default standing', () 
     const h = mkHome();
     mkTeam(h, 'shop', { root, lead: 'lead', roles: { lead: {}, hand: { dispatch: bad } } });
     assert.throws(() => createTeamManifest({ fs, clodexHome: h }).loadManifest('shop'),
-      /dispatch must be one of standing, worktree/, `dispatch: ${JSON.stringify(bad)} must throw`);
+      /dispatch must be one of standing, spawn, worktree/, `dispatch: ${JSON.stringify(bad)} must throw`);
   }
 });
 
@@ -751,6 +751,53 @@ test('addRole/setRole/createTeam refuse a worktree dispatch on a reserved role',
   assert.strictEqual(m.roles.runner.dispatch, 'worktree', 'an ordinary role takes the value');
 });
 
+// t423 D3: the same refusal, stated as an INVERSION. `spawn` is the value the
+// old `=== 'worktree'` check would have admitted — a one-shot ticket seat for
+// lead or reviewer is inert-but-believed, which is the `type`/`tools` failure
+// shape. The fourth-value case is the point of the inversion and is asserted
+// with a value the enum does not know: the guard must refuse it BEFORE the enum
+// gets a chance to, or a future widening of ROLE_DISPATCH_VALUES silently opens
+// reserved roles to whatever was added.
+test('a reserved role refuses a `spawn` dispatch too, and refuses by inversion', () => {
+  const home = mkHome();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'lead' });
+
+  assert.throws(() => tm.addRole('shop', 'reviewer', { dispatch: 'spawn', prompt: 'clodex-team-reviewer' }),
+    /operator-owned|standing/, 'reviewer cannot be defined as a spawn role');
+
+  const home2 = mkHome();
+  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj2-'));
+  assert.throws(() => createTeamManifest({ fs, clodexHome: home2 }).createTeam({
+    name: 'shop2', root: root2, lead: 'lead', roles: { lead: { dispatch: 'spawn' } },
+  }), /one-shot spawn seat|cannot dispatch/, 'a brand-new file cannot be BORN naming lead a spawn role');
+
+  // The inversion itself: a value NO enum member matches must be refused by
+  // assertDispatchAllowed on its own terms. createTeam's pickRoleKeys keeps
+  // `dispatch`, and assertDispatchAllowed runs before any enum validation on
+  // this path — so reaching the enum error instead would mean the guard let it by.
+  const home3 = mkHome();
+  const root3 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj3-'));
+  assert.throws(() => createTeamManifest({ fs, clodexHome: home3 }).createTeam({
+    name: 'shop3', root: root3, lead: 'lead', roles: { lead: { dispatch: 'some-future-value' } },
+  }), /one-shot spawn seat|cannot dispatch/,
+  'an unknown value on a reserved role is refused by the guard, not merely by the enum');
+
+  // Controls, both directions: an ordinary role takes `spawn`, and a reserved
+  // role still takes an EXPLICIT `standing` — a guard that refused everything
+  // would satisfy all three throws above.
+  assert.strictEqual(tm.addRole('shop', 'runner', { dispatch: 'spawn' }).roles.runner.dispatch, 'spawn',
+    'an ordinary role takes spawn');
+  const home4 = mkHome();
+  const root4 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj4-'));
+  const born = createTeamManifest({ fs, clodexHome: home4 }).createTeam({
+    name: 'shop4', root: root4, lead: 'lead', roles: { lead: { dispatch: 'standing' } },
+  });
+  assert.strictEqual(born.roles.lead.dispatch, 'standing',
+    'an explicit standing on a reserved role is still allowed — the refusal is about non-standing values');
+});
+
 // The legacy key is readable on the LOAD path but must never enter through a
 // WRITE. pickRoleKeys drops it and emits no `dispatch`, so without this throw the
 // call stores a STANDING role and answers {ok:true} — the caller's opt-in
@@ -785,7 +832,7 @@ test('setRole refuses an off-enum dispatch, naming the field', () => {
   tm.createTeam({ name: 'shop', root, lead: 'lead' });
   tm.addRole('shop', 'runner', {});
   assert.throws(() => tm.setRole('shop', 'runner', { dispatch: 'sometimes' }),
-    /dispatch must be one of standing, worktree/);
+    /dispatch must be one of standing, spawn, worktree/);
   // And the legitimate values land, both directions — a refusal that also
   // refused the good values would satisfy the throw above.
   assert.strictEqual(tm.setRole('shop', 'runner', { dispatch: 'worktree' }).roles.runner.dispatch, 'worktree');
@@ -809,7 +856,7 @@ test('loadManifest rejects bad shapes with pointed errors', () => {
     [{ root: '/p', lead: 'lead', roles: { lead: { template: 42 } } }, /template must be a string/],
     [{ root: '/p', lead: 'lead', roles: { lead: { prompt: 42 } } }, /prompt must be a string/],
     [{ root: '/p', lead: 'lead', roles: { lead: { brief: 42 } } }, /brief must be a string/],
-    [{ root: '/p', lead: 'lead', roles: { lead: { dispatch: 'yes' } } }, /dispatch must be one of standing, worktree/],
+    [{ root: '/p', lead: 'lead', roles: { lead: { dispatch: 'yes' } } }, /dispatch must be one of standing, spawn, worktree/],
     // NOTE: the five cut fields are NOT here. A bad value on a key the schema no
     // longer models is dropped with a warning, not thrown — see the version-1
     // compatibility tests above. Adding a throw back here would take the team

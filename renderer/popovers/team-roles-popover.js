@@ -269,10 +269,11 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label>` +
           `<label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label>` +
           `<label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label>` +
-          `<label class="team-role-field" title="Relative to the team root — where seats holding this role start. Blank = the team root. Applies to worktree-dispatch roles and the reviewer; a standing role's seat is operator-created, so this does nothing for it."><span>cwd</span><input type="text" data-f="cwd" placeholder="optional: subdirectory (e.g. api)"></label>` +
+          `<label class="team-role-field" title="Relative to the team root — where seats holding this role start. Blank = the team root. Applies to spawn- and worktree-dispatch roles and the reviewer; a standing role's seat is operator-created, so this does nothing for it."><span>cwd</span><input type="text" data-f="cwd" placeholder="optional: subdirectory (e.g. api)"></label>` +
           `<label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span>` +
           `<select data-f="dispatch">` +
           `<option value="standing">standing — the live seat gets the spec</option>` +
+          `<option value="spawn">spawn — one-shot seat, shared checkout, no branch</option>` +
           `<option value="worktree">worktree — one-shot seat, own branch + checkout</option>` +
           `</select></label>` +
           `<div class="team-role-actions">` +
@@ -598,7 +599,15 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     // Only the non-default is written: absent already reads as `standing`, so an
     // explicit one would put a value on disk that means exactly what its absence
     // does (the same rule migrateRoles follows).
-    if (addDispatch.value === 'worktree') def.dispatch = 'worktree';
+    //
+    // Gated on the shared value list, not on one hardcoded value. A per-value
+    // test silently DROPS every other option the picker offers — which is what
+    // this did to `spawn` — so the failure is a role saved as `standing` with no
+    // error anywhere. Fail-closed on top: an option this build does not know is
+    // not written, so a stale bundle cannot post an unrecognized dispatch.
+    if (addDispatch.value !== DEFAULT_DISPATCH && DISPATCH_VALUES.includes(addDispatch.value)) {
+      def.dispatch = addDispatch.value;
+    }
     const res = await window.api.teamAddRole(name, v.name, def);
     if (res && res.ok) {
       addName.value = ''; addBrief.value = ''; addTemplate.value = ''; addPrompt.value = ''; addCwd.value = '';

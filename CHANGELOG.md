@@ -13,6 +13,23 @@ blocks a release.
 
 ## Unreleased
 
+- A role can now dispatch a one-shot seat that works in the shared checkout.
+  The `dispatch` picker in the team popover gained a third option, `spawn`:
+  Clodex mints a fresh seat for the ticket, hands it the spec, and that seat is
+  done when the ticket is — but without minting a branch or a git worktree for
+  it. Until now the only way to get a one-shot hand was `worktree`, which also
+  gave it its own branch and checkout, so a team whose project is not a git
+  repository could not have ephemeral hands at all. Now it can: dispatching a
+  `spawn` ticket makes no git calls at all. The seat is told, in its
+  dispatch, that it shares the checkout with everyone else and that committing
+  is the lead's call — it has no branch of its own to commit to. Because there
+  is no branch, a `spawn` ticket closes when the hand reports: the verify-and-
+  review loop that runs on a worktree ticket asks questions about a branch, and
+  there is no diff for it to check. Accepting one archives its seat rather than
+  deleting it, so its transcript and anything it left uncommitted stay
+  recoverable. `lead` and `reviewer` still cannot be given either one-shot
+  dispatch.
+
 - A team's roles can now live in different directories. Each role in the team
   popover gained a `cwd` field — a path relative to the team root — so a
   component team can put its lead at the project root while its hands start in

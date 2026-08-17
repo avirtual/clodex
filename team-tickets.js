@@ -1621,6 +1621,12 @@ function createTicketMethods(deps, shared) {
     // ticket to a sibling would drop it in another branch's checkout. A dead
     // worktree seat has its own explicit recovery, which names the two real exits
     // rather than guessing a new holder.
+    //
+    // A `spawn` ticket therefore degrades like a standing one, and that is
+    // deliberate: there is no tree to misroute into, so the reason for the
+    // worktree refusal does not apply. The cost is that a one-shot TICKET can be
+    // picked up by a second one-shot seat after the first dies — accepted, since
+    // the alternative is a ticket nothing can answer for.
     // `liveNames` lets a caller in a LOOP walk the live seats once instead of once
     // per ticket. Both reads here are filesystem work, and `_touchTicketActivity`
     // runs on every non-idle activity edge — much hotter than the listers.
@@ -1755,6 +1761,21 @@ function createTicketMethods(deps, shared) {
         ? `YOUR AREA in that tree: ${path.join(ticket.worktree.path, roleCwdRel)} — your role works in "${roleCwdRel}". `
           + `The tree ROOT above stays the path for git commands and for the suite; this is where your files live.\n`
         : '';
+      // A `spawn` seat works in the SHARED checkout, which is the one thing its
+      // dispatch cannot leave unsaid: it has no tree of its own, so the isolation
+      // every other one-shot seat is handed silently does not exist here, and a
+      // hand that assumes it would commit onto whatever branch the operator has
+      // checked out. ONE line — the head is already ~420 chars and every dispatch
+      // spills, so each added line costs the seat a Read turn.
+      //
+      // Gated on the ROLE's dispatch, not on the absence of a worktree: a standing
+      // seat also has no tree, and it is the operator's own long-lived session
+      // that already knows where it lives. Same `role || assignee` idiom as above,
+      // and hasOwnProperty-gated for the same reason.
+      const sharedLine = (roleDef && roleDef.dispatch === 'spawn')
+        ? `You are working in the SHARED checkout alongside other seats — you have no worktree and no branch of your own, `
+          + `so do tree work only and leave committing to the lead.\n`
+        : '';
       // Rides EVERY dispatch, replays included: a respawned seat has no memory of
       // the verb, exactly as it has none of its worktree. See ticketCloseLine.
       const closeLine = ticketCloseLine(ticket.id);
@@ -1765,7 +1786,7 @@ function createTicketMethods(deps, shared) {
       // attached", which would put the close verb behind the very turn this line
       // exists to save. The verb is safe here for the same reason as in the body:
       // `[agent:from <sender>] ` precedes the tag, so it is never at column 1.
-      const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${areaLine}${closeLine}${specText}`, urgent,
+      const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${areaLine}${sharedLine}${closeLine}${specText}`, urgent,
         replay
           ? `[ticket ${ticket.id} REPLAY] close with ${ticketCloseVerb(ticket.id)}`
           : respec
@@ -2535,20 +2556,34 @@ function createTicketMethods(deps, shared) {
       if (done) session._replayTicketsPending = false;
     },
 
-    // The role def for a ticket that should get its OWN branch + seat, or null.
-    // Deliberately narrow: only a ROLE-addressed ticket qualifies. A ticket the
-    // lead addressed to a SEAT names a session that already exists and already
-    // has a cwd — a session's cwd is fixed at PTY spawn, so there is no
-    // expressible "move that seat into a worktree".
-    _ticketWorktreeRole(team, assignee) {
-      if (!team || !assignee || !team.roles) return null;
-      if (!Object.prototype.hasOwnProperty.call(team.roles, assignee)) return null;
+    // What dispatching this ticket DOES: `{ mode, def }`, mode being
+    // 'standing' | 'spawn' | 'worktree'. ONE resolver answers the whole question
+    // — a second one beside it (`_ticketSpawnRole`) would be two sources that must
+    // agree forever, which is the shape the role-field bar refuses.
+    //
+    // Deliberately narrow: only a ROLE-addressed ticket qualifies for a one-shot
+    // mode. A ticket the lead addressed to a SEAT names a session that already
+    // exists and already has a cwd — a session's cwd is fixed at PTY spawn, so
+    // there is no expressible "move that seat into a worktree", and equally none
+    // for "make that standing seat one-shot".
+    //
+    // FAIL-CLOSED on the value: anything not recognized resolves to `standing`,
+    // never to `spawn`. A spawn seat is a full agent in the operator's own working
+    // tree, so a malformed or hand-edited `dispatch` must degrade to the seat that
+    // touches nothing, not to the one that edits the checkout.
+    _ticketDispatchMode(team, assignee) {
+      const standing = { mode: 'standing', def: null };
+      if (!team || !assignee || !team.roles) return standing;
+      if (!Object.prototype.hasOwnProperty.call(team.roles, assignee)) return standing;
       const def = team.roles[assignee];
-      if (!def || def.dispatch !== 'worktree') return null;
-      // The manifest refuses to WRITE this pair, but team.json is hand-editable
-      // and files predating that check exist: the resolver holds the line too.
-      if (assignee === 'lead' || assignee === 'reviewer') return null;
-      return def;
+      if (!def) return standing;
+      if (def.dispatch !== 'spawn' && def.dispatch !== 'worktree') return standing;
+      // The manifest refuses to WRITE a non-standing dispatch on these, but
+      // team.json is hand-editable and files predating that check exist: the
+      // resolver holds the same line, and holds it as an inversion (mirroring
+      // assertDispatchAllowed) so a future fourth value is refused by default.
+      if (assignee === 'lead' || assignee === 'reviewer') return standing;
+      return { mode: def.dispatch, def };
     },
 
     // `<team>-<role>-<n>` from the ticket id, which is what keeps matchSeatRole
@@ -2565,6 +2600,20 @@ function createTicketMethods(deps, shared) {
       if (this.sessions.has(name) || getPersistence().get(name)) return { ok: false, taken: true, name, error: `seat name "${name}" is taken` };
       const slug = branchSlug(ticket.title);
       return { ok: true, name, branch: slug ? `${ticket.id}-${slug}` : String(ticket.id) };
+    },
+
+    // What Delete Session… costs, for the two refusals that offer it as the way
+    // out. The two dispositions are opposites and the wrong one is worse than no
+    // advice: a worktree seat's tree goes with the session and its uncommitted
+    // work with it, while a spawn seat has no tree at all — its work is in the
+    // shared checkout and SURVIVES the delete. A ticket with no `worktree` is the
+    // spawn case (and the never-started one, where there is equally nothing on
+    // disk to lose), so the pointer is the discriminator.
+    _ticketDeleteCost(ticket) {
+      const p = ticket && ticket.worktree && ticket.worktree.path;
+      return p
+        ? `that also deletes its worktree, so anything the seat left UNCOMMITTED in ${p} is lost (committed work survives on the branch).`
+        : `it had no worktree of its own, so nothing on disk is removed — anything it left in the shared checkout survives.`;
     },
 
     // The live seat working in `treePath`, or null. Read off the PERSISTED record
@@ -3008,7 +3057,18 @@ function createTicketMethods(deps, shared) {
     // No `def` parameter: the resolver derives the role def from (team, roleKey)
     // itself, and passing a second copy in would be exactly the duplicate source
     // this seam removes — a caller could hand in a def for a different role.
-    _spawnTicketSeat(opener, team, ticket, roleKey, seat) {
+    //
+    // `mode` is the dispatch mode from `_ticketDispatchMode` — 'worktree' or
+    // 'spawn'. It defaults to 'worktree' because that is the shape every caller
+    // had before spawn existed, and a defaulted-to-spawn would put a seat in the
+    // operator's checkout on a path that never asked for one. On 'spawn' the tree
+    // acquisition below is SKIPPED ENTIRELY rather than made to fail softly: a
+    // team whose root is not a git repo is the case this mode exists for, so no
+    // git call may sit on the DISPATCH path. Elsewhere in the ticket's life some
+    // still run and degrade cleanly — `_writeTicketCost`'s orphan sweep is one —
+    // so the claim is about this path, not about the mode as a whole.
+    _spawnTicketSeat(opener, team, ticket, roleKey, seat, mode = 'worktree') {
+      const isSpawn = mode === 'spawn';
       const reply = (msg) => this._injectText(opener, `[agent:task] ${msg}`, { parkable: true });
       // Reserved SYNCHRONOUSLY, before any await: two tickets opened in one lead
       // turn both run their taken-name check above before either create() lands,
@@ -3095,8 +3155,29 @@ function createTicketMethods(deps, shared) {
         // it. Only a tree this spawn created is rolled back below.
         let reused = false;
         try {
-          const existing = await this._existingTicketTree(team, ticket);
-          if (existing) { wt = existing; reused = true; }
+          // A spawn seat has no tree by construction, so the whole acquisition
+          // below is skipped — including `_existingTicketTree`, which shells out
+          // to `git worktree list`. Skipped rather than allowed to fail: this mode
+          // exists so a team whose root is not a repo can have ephemeral hands,
+          // and a git call that merely tolerates failure still runs a subprocess
+          // on every dispatch and would leave the non-repo case working by
+          // accident rather than by construction.
+          const existing = isSpawn ? null : await this._existingTicketTree(team, ticket);
+          // Not just "don't write one" — CLEAR one already on the record. A ticket
+          // reaches here carrying a tree whenever it was dispatched to a worktree
+          // role first and re-assigned to a spawn role after that seat died, which
+          // takes only lead verbs. Left in place, the pointer outvotes the mode in
+          // every reader that tests for it: the spec says both WORK IN: <another
+          // ticket's tree> and "you have no worktree", `loopEligible` goes true so
+          // the ticket re-enters the git loop this mode exists to avoid, and
+          // _taskAccept resolves a branch and takes the DESTROY arm on the one-shot
+          // seat instead of the archive D5 requires. Clearing it makes all four
+          // agree by construction rather than by the accident of a fresh ticket.
+          // The on-disk git worktree is left alone, still named by the previous
+          // seat's persistence record — the same state every other un-pin path here
+          // leaves behind.
+          if (isSpawn) { clearTicketTree(); }
+          else if (existing) { wt = existing; reused = true; }
           else {
             // base HEAD, not the default branch: a ticket is written against the
             // tree the lead is looking at, which routinely has unpushed commits.
@@ -3134,12 +3215,20 @@ function createTicketMethods(deps, shared) {
           // the seat where to work. On the ticket rather than only on the session
           // because the spec is redelivered on a replay, and a seat that comes back
           // after a respawn needs the location as much as the first one did.
-          try {
-            const all = ticketsStore.load(team.root);
-            const rec = all.find((x) => x.id === ticket.id);
-            if (rec) { rec.worktree = wt; ticketsStore.save(team.root, all); }
-            ticket.worktree = wt;
-          } catch { /* best-effort — the spec below still carries it from `ticket` */ }
+          //
+          // Skipped for a spawn seat rather than writing `worktree: null`: ABSENT
+          // is the state every reader already tests for (`ticket.worktree &&
+          // ticket.worktree.path`), and a stored null would be a second spelling of
+          // it for the loop gate, the accept arms and the WORK IN: line to get
+          // wrong independently.
+          if (!isSpawn) {
+            try {
+              const all = ticketsStore.load(team.root);
+              const rec = all.find((x) => x.id === ticket.id);
+              if (rec) { rec.worktree = wt; ticketsStore.save(team.root, all); }
+              ticket.worktree = wt;
+            } catch { /* best-effort — the spec below still carries it from `ticket` */ }
+          }
           const shape = this.resolveSeatShape(team, roleKey, 'ticket', opener);
           const spawned = await this.create(
             seat.name, shape.type, shape.cwd,
@@ -3180,9 +3269,11 @@ function createTicketMethods(deps, shared) {
           });
           const d = this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true);
           this._broadcast('ipc-message', {
-            type: 'task', from: opener.name, to: seat.name, body: `ticket ${ticket.id} → ${seat.name} @ ${wt.path}`,
+            type: 'task', from: opener.name, to: seat.name, body: `ticket ${ticket.id} → ${seat.name} @ ${wt ? wt.path : shape.cwd}`,
           });
-          log.info('intent', `ticket ${ticket.id} ${reused ? 'respawned' : 'spawned'} ${seat.name} (${roleKey}) on branch ${wt.branch} @ ${wt.path}`);
+          log.info('intent', isSpawn
+            ? `ticket ${ticket.id} spawned ${seat.name} (${roleKey}) in the shared checkout @ ${shape.cwd}`
+            : `ticket ${ticket.id} ${reused ? 'respawned' : 'spawned'} ${seat.name} (${roleKey}) on branch ${wt.branch} @ ${wt.path}`);
           // The env drops ride the reply here too. A silently ignored env key is
           // the bug the allowlist's own comment names, and this path dropped one
           // without a word while the review and spawn paths both announced it.
@@ -3202,7 +3293,9 @@ function createTicketMethods(deps, shared) {
           // role def. A seat silently booted somewhere other than where its role
           // says is the failure this line exists to make visible.
           const cwdWarn = shape.cwdFallback ? ` — NOTE: ${shape.cwdFallback}` : '';
-          reply(`ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name)}${envWarn}${cwdWarn}${promptWarn}`);
+          reply(isSpawn
+            ? `ticket ${ticket.id} → ${seat.name} in the shared checkout ${shape.cwd} (no branch, no worktree)${this._ticketDeliverySuffix(d, seat.name)}${envWarn}${cwdWarn}${promptWarn}`
+            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name)}${envWarn}${cwdWarn}${promptWarn}`);
         } catch (err) {
           const live = this.sessions.has(seat.name);
           if (!live) getPersistence().remove(seat.name);
@@ -3255,9 +3348,14 @@ function createTicketMethods(deps, shared) {
           // it is now skipped in more states than it used to be, and the commonest
           // failure (create() seats, a later step throws) keeps the pin while this
           // line used to say the ticket had gone back to the role.
+          // "whose tree is kept" is only true when there IS one. A spawn seat's
+          // pin is kept for the same reason (the record outlives the failure and
+          // must not be minted over), but naming a tree it never had tells the
+          // lead to go looking for a checkout that does not exist.
+          const keptTree = !!(ticket.worktree && ticket.worktree.path);
           reply(unpinned
             ? `ticket ${ticket.id}: seat ${seat.name} failed to spawn (${err.message}) — ticket left assigned to "${roleKey}"`
-            : `ticket ${ticket.id}: seat ${seat.name} failed to spawn (${err.message}) — the ticket stays pinned to "${seat.name}", whose tree is kept; re-assign it to retry`);
+            : `ticket ${ticket.id}: seat ${seat.name} failed to spawn (${err.message}) — the ticket stays pinned to "${seat.name}"${keptTree ? ', whose tree is kept' : ' (no worktree — it was working in the shared checkout)'}; re-assign it to retry`);
         }
       });
     },
@@ -3333,8 +3431,13 @@ function createTicketMethods(deps, shared) {
       // resolves the worktree opt-in. On an unstarted ticket `assignee` still holds
       // it; `role` is only written once a dispatch path has re-pinned.
       const roleKey = ticket.role || assignee;
-      const wtDef = this._ticketWorktreeRole(team, roleKey);
-      const minted = wtDef ? this._mintTicketSeat(team, roleKey, ticket) : null;
+      const { mode: dispatchMode } = this._ticketDispatchMode(team, roleKey);
+      // Both one-shot modes mint a seat; only `worktree` uses the branch the mint
+      // also derives. Left unused rather than conditionally derived: the name is
+      // the half both modes need, and splitting the mint would put a second
+      // name-derivation rule beside the one `matchSeatRole` depends on.
+      const oneShot = dispatchMode !== 'standing';
+      const minted = oneShot ? this._mintTicketSeat(team, roleKey, ticket) : null;
       // ORDER: the two specific diagnoses below run BEFORE the general
       // already-started refusal, and that is not a style choice. Both of them
       // describe states that only a DISPATCHED ticket can be in — its seat name
@@ -3357,7 +3460,7 @@ function createTicketMethods(deps, shared) {
         log.info('intent', `task start by ${session.name}: ${ticket.id} held — seat ${assignee} exists but is not live`);
         reply(`ticket ${ticket.id} is pinned to ${assignee}, whose session exists but is archived or dead — nothing was started. `
           + `Unarchive it from the sidebar (its spec replays on resume), or Delete Session… to release the name and start again — `
-          + `that also deletes its worktree, so anything the seat left UNCOMMITTED in ${ticket.worktree && ticket.worktree.path ? ticket.worktree.path : 'that tree'} is lost (committed work survives on the branch).`);
+          + this._ticketDeleteCost(ticket));
         return;
       }
       // Same occupancy refusal `assign` makes, and above every write below it for
@@ -3397,7 +3500,7 @@ function createTicketMethods(deps, shared) {
       // is startable a second time, which is the tree collision this fixes.
       ticket.startedAt = ticket.lastActivityAt;
       const unparked = wasParked ? ' (unparked)' : '';
-      if (wtDef && minted.ok) {
+      if (oneShot && minted.ok) {
         // Re-pinned from the role to the seat BEFORE the save, because
         // _ticketAssigneeSeat resolves a role to the FIRST live seat holding it —
         // leaving it role-assigned would route the NEXT ticket to this one's seat,
@@ -3405,11 +3508,15 @@ function createTicketMethods(deps, shared) {
         ticket.role = roleKey;
         ticket.assignee = minted.name;
         ticketsStore.save(team.root, tickets);
-        this._spawnTicketSeat(session, team, ticket, roleKey, minted);
+        this._spawnTicketSeat(session, team, ticket, roleKey, minted, dispatchMode);
         this._reconcileTickets(team);
         this._broadcast('ipc-message', { type: 'task', from: session.name, to: minted.name, body: `ticket ${ticket.id} started` });
-        log.info('intent', `task start by ${session.name}: ${ticket.id} → seat ${minted.name}, branch ${minted.branch}`);
-        reply(`ticket ${ticket.id}${unparked} → spawning ${minted.name} in a worktree on branch ${minted.branch}`);
+        log.info('intent', dispatchMode === 'spawn'
+          ? `task start by ${session.name}: ${ticket.id} → seat ${minted.name}, shared checkout`
+          : `task start by ${session.name}: ${ticket.id} → seat ${minted.name}, branch ${minted.branch}`);
+        reply(dispatchMode === 'spawn'
+          ? `ticket ${ticket.id}${unparked} → spawning ${minted.name} in the shared checkout (no branch)`
+          : `ticket ${ticket.id}${unparked} → spawning ${minted.name} in a worktree on branch ${minted.branch}`);
         return;
       }
       // A mint failure is NOT fatal: the ticket stays role-assigned and takes the
@@ -3443,8 +3550,9 @@ function createTicketMethods(deps, shared) {
       // parked ticket for an opted-in role must still get its own branch, or the
       // documented park-then-release flow silently opts the role out and the hand
       // works in the shared checkout holding a spec written for an isolated tree.
-      const wtDef = this._ticketWorktreeRole(team, assignee);
-      const minted = wtDef ? this._mintTicketSeat(team, assignee, ticket) : null;
+      const { mode: dispatchMode } = this._ticketDispatchMode(team, assignee);
+      const oneShot = dispatchMode !== 'standing';
+      const minted = oneShot ? this._mintTicketSeat(team, assignee, ticket) : null;
       // The seat name is derived from the ticket id, so "taken" by the ticket's
       // current assignee means the ticket already has its own seat. Whether that
       // seat can be TALKED to is a second question: a record outlives an archive,
@@ -3485,7 +3593,7 @@ function createTicketMethods(deps, shared) {
         log.info('intent', `task assign by ${session.name}: ${ticket.id} held — seat ${prev} exists but is not live`);
         reply(`ticket ${ticket.id} is still pinned to ${prev}, whose session exists but is archived or dead — nothing was delivered. `
           + `Unarchive it from the sidebar (its spec replays on resume), or Delete Session… to release the name and re-assign — `
-          + `that also deletes its worktree, so anything the seat left UNCOMMITTED in ${ticket.worktree && ticket.worktree.path ? ticket.worktree.path : 'that tree'} is lost (committed work survives on the branch).`);
+          + this._ticketDeleteCost(ticket));
         return;
       }
       // Resolved above the notice below, which would otherwise tell the hand its
@@ -3524,15 +3632,19 @@ function createTicketMethods(deps, shared) {
         reply(`ticket ${ticket.id} → ${ownSeat}${wasParked ? ' (unparked)' : ''} (its own seat, spec re-sent)${this._ticketDeliverySuffix(d2, ownSeat)}`);
         return;
       }
-      if (wtDef) {
+      if (oneShot) {
         if (minted.ok) {
           ticket.role = assignee;
           ticket.assignee = minted.name;
           ticketsStore.save(team.root, tickets);
-          this._spawnTicketSeat(session, team, ticket, assignee, minted);
+          this._spawnTicketSeat(session, team, ticket, assignee, minted, dispatchMode);
           this._reconcileTickets(team);
-          log.info('intent', `task assign by ${session.name}: ${ticket.id} → seat ${minted.name}, branch ${minted.branch}`);
-          reply(`ticket ${ticket.id} → spawning ${minted.name} in a worktree on branch ${minted.branch}`);
+          log.info('intent', dispatchMode === 'spawn'
+            ? `task assign by ${session.name}: ${ticket.id} → seat ${minted.name}, shared checkout`
+            : `task assign by ${session.name}: ${ticket.id} → seat ${minted.name}, branch ${minted.branch}`);
+          reply(dispatchMode === 'spawn'
+            ? `ticket ${ticket.id} → spawning ${minted.name} in the shared checkout (no branch)`
+            : `ticket ${ticket.id} → spawning ${minted.name} in a worktree on branch ${minted.branch}`);
           return;
         }
       }
@@ -5137,13 +5249,39 @@ function createTicketMethods(deps, shared) {
 
       // No branch to reason about (a ticket worked in the main checkout): there
       // is no tree to remove and no ref to delete, so acceptance is the stamp
-      // alone. Retiring the seat here would be a teardown the merge fact never
-      // licensed.
+      // alone — for a STANDING seat. Retiring the operator's persistent seat here
+      // would be a teardown the merge fact never licensed.
+      //
+      // A `spawn` seat is the opposite case and splits this arm: it is one-shot by
+      // construction, nothing will ever dispatch to it again, and no cleanup verb
+      // reaches it — so left live it accumulates dead rows in the sidebar. Told
+      // apart by the RECORD's `ephemeral` (stamped by _spawnTicketSeat), not by
+      // re-resolving the role: the role def is agent-writable and may have been
+      // edited between dispatch and accept, and the record is the fact about what
+      // was actually spawned.
+      //
+      // ARCHIVED, never destroyed. There is no worktree, so destroying reclaims
+      // nothing, while the seat's transcript is the only record of what it did and
+      // its work may be UNCOMMITTED in the shared checkout. Archiving is
+      // recoverable; destroy is not. Same treatment the `!m.merged` arm gives a
+      // worktree seat, for the same reason.
       if (!branch) {
+        const ephemeralSeat = !!(rec && rec.ephemeral);
         if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
-        // Terminal: there is no branch to merge and no second accept to invite,
-        // so acceptance is the whole story for this ticket.
-        finish(`ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was torn down${seatName ? ` (${seatName} left as it is)` : ''}`, true);
+        let archived = false;
+        if (ephemeralSeat && seatName && this.sessions.has(seatName)) {
+          await this.archive(seatName);
+          archived = true;
+        }
+        // The reply must say which of the two happened. "Nothing was torn down"
+        // after an archive is exactly the class of lie this codebase fixes on
+        // sight — the lead reads this line and nothing else.
+        //
+        // Terminal either way: there is no branch to merge and no second accept to
+        // invite, so acceptance is the whole story for this ticket.
+        finish(archived
+          ? `ticket ${ticket.id} accepted — no ticket branch recorded (it worked in the shared checkout), so nothing was removed; ${seatName} was a one-shot seat and was ARCHIVED (resumable from the sidebar; anything it left uncommitted is still in the checkout)`
+          : `ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was torn down${seatName ? ` (${seatName} left as it is)` : ''}`, true);
         return;
       }
 

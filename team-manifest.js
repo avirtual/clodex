@@ -31,7 +31,16 @@ const ROLE_KEYS = new Set(['template', 'prompt', 'brief', 'dispatch', 'cwd']);
 // `worktree`, after one artifact of the behaviour rather than the behaviour, and
 // that is what let it read as an implementation detail nobody needed a front
 // door for. Absent reads as `standing`.
-const ROLE_DISPATCH_VALUES = new Set(['standing', 'worktree']);
+//
+// Three values, not two axes. Lifecycle (persistent vs one-shot) and isolation
+// (shared checkout vs own worktree) are independent, but `worktree` fused them:
+// the only route to a one-shot seat also minted a branch, so a team whose root
+// is not a git repo could not have an ephemeral hand at all. `spawn` is the
+// missing cell — one-shot seat, no branch, no tree, works in the shared
+// checkout. It is a VALUE and not a second field for the reason the header
+// below `normalizeRoleDef` gives: `ephemeral` was already cut as a field, and
+// two fields that must agree forever is how all five cut fields died.
+const ROLE_DISPATCH_VALUES = new Set(['standing', 'spawn', 'worktree']);
 const DEFAULT_ROLE_DISPATCH = 'standing';
 
 // Schema fields NO front door sets, each with the reason it is exempt. The
@@ -131,9 +140,11 @@ function normalizeRoleDef(roleName, def, file) {
     prompt: def.prompt ?? null,
     brief: def.brief ?? null,
     // What a ticket dispatched to this role does. `standing` delivers the spec to
-    // the live seat holding the role; `worktree` mints its own branch, spawns a
-    // one-shot seat in a git worktree on it, and re-pins the ticket from the ROLE
-    // to that seat. Enforced — session-manager reads it on the dispatch path.
+    // the live seat holding the role; `spawn` mints a one-shot seat in the SHARED
+    // checkout (no branch, no tree — no git call on the DISPATCH path, so it works
+    // on a team whose root is not a repo); `worktree` does the same but on its own
+    // branch in its own git worktree. Both one-shot values re-pin the ticket from
+    // the ROLE to the seat. Enforced — session-manager reads it on the dispatch path.
     //
     // The v2 `worktree: true` boolean is READ here, not merely migrated. Migration
     // runs on mutator WRITES, so a file nobody edits would otherwise keep opting a
@@ -174,10 +185,17 @@ function normalizeRoleDef(roleName, def, file) {
 // rather than only at dispatch time — but the dispatch-time resolver still holds
 // the same line, because team.json is hand-editable and a file that predates
 // this check must not start minting trees for them.
+// Refuses anything that is NOT `standing`, rather than naming the values it
+// knows to be wrong. A reserved role must not get a `spawn` dispatch either —
+// lead's seat is operator-created and reviewer is reached only through
+// [agent:team-review], so a one-shot ticket seat for either is inert-but-believed,
+// which is the exact failure shape `type` and `tools` were cut for. Stated as an
+// inversion so a FUTURE fourth value is refused by default: a check that lists
+// the bad values admits every value nobody thought to list.
 function assertDispatchAllowed(roleName, def, file) {
   if (!def || typeof def !== 'object') return;
-  if (RESERVED_ROLE_KEYS.has(roleName) && def.dispatch === 'worktree') {
-    throw new Error(`the "${roleName}" role is standing — it cannot dispatch to a worktree (${file})`);
+  if (RESERVED_ROLE_KEYS.has(roleName) && def.dispatch != null && def.dispatch !== DEFAULT_ROLE_DISPATCH) {
+    throw new Error(`the "${roleName}" role is standing — it cannot dispatch to a worktree or a one-shot spawn seat (got "${def.dispatch}") (${file})`);
   }
 }
 
