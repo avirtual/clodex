@@ -22,13 +22,22 @@ blocks a release.
   empty directory looks exactly like a seat working correctly. Absolute paths
   and anything escaping the team root are refused when you set them — including
   a symlink that points out of the tree — since `team.json` is agent-writable
-  and this field decides where a seat's shell opens. Two cases fall back to the team root and say so in the spawn reply
+  and this field decides where a seat's shell opens. Two cases fall back to the
+  team root and say so in the spawn reply
   rather than failing the ticket: the directory has since been deleted, or it
   belongs to a nested team of its own (a seat booted there would silently join
   THAT team's board). Worktree tickets are unaffected in how they name their
   tree — the `WORK IN:` line still points at the tree root, with the role's area
   named on a line of its own. The `lead` role does not take a `cwd`: its seat is
   not spawned by the team, so its directory is set when you create the seat.
+
+- The cache-bust panel no longer buries the busts that cost something. An idle
+  cache lapse is recorded as a bust like any other, but it rewrote nothing and
+  has nothing to show — a `FULL-REWRITE` heading over `0 tok rewritten · 0%` —
+  and on a session left idle for a day those rows outnumbered the real ones
+  hundreds to one. They now collapse to a single counted line, so the panel's
+  headline number means what this session actually paid. A zero-token bust that
+  still says WHAT changed is kept: free is not the same as uninformative.
 
 ## 5.11.0 — 2026-08-17 — teams stop being fixed
 
