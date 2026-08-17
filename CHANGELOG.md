@@ -13,6 +13,23 @@ blocks a release.
 
 ## Unreleased
 
+- A team's roles can now live in different directories. Each role in the team
+  popover gained a `cwd` field — a path relative to the team root — so a
+  component team can put its lead at the project root while its hands start in
+  `api/` and `web/`. Leave it blank and nothing changes: the seat boots at the
+  team root as it always has. The path has to name a directory that already
+  exists, and Clodex will not create one for you: a seat working in an invented
+  empty directory looks exactly like a seat working correctly. Absolute paths
+  and anything escaping the team root are refused when you set them, since
+  `team.json` is agent-writable and this field decides where a seat's shell
+  opens. Two cases fall back to the team root and say so in the spawn reply
+  rather than failing the ticket: the directory has since been deleted, or it
+  belongs to a nested team of its own (a seat booted there would silently join
+  THAT team's board). Worktree tickets are unaffected in how they name their
+  tree — the `WORK IN:` line still points at the tree root, with the role's area
+  named on a line of its own. The `lead` role does not take a `cwd`: its seat is
+  not spawned by the team, so its directory is set when you create the seat.
+
 ## 5.11.0 — 2026-08-17 — teams stop being fixed
 
 - A team's lead seat can now be chosen from the team popover instead of only by
