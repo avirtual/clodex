@@ -2465,7 +2465,7 @@ function createSessionManager(deps) {
     // `lead` is the sender: solo has exactly one actor, so every lead-only gate
     // becomes a no-op rather than a refusal. `roles` is null, which makes the
     // role machinery inert by construction — `matchSeatRole` and
-    // `_ticketWorktreeRole` both bail on a falsy `roles`, so `_resolveAssignee`
+    // `_ticketDispatchMode` both bail on a falsy `roles`, so `_resolveAssignee`
     // is left with its live-seat branch, and a solo assign names a live session.
     // `solo` marks the context for the three dispatch helpers that must NOT run
     // here (see `_reconcileTickets`).

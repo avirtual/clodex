@@ -27,7 +27,7 @@ const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 // Mirror of team-manifest's ROLE_DISPATCH_VALUES / DEFAULT_ROLE_DISPATCH. An
 // absent value on disk IS `standing`, so the row model normalizes to it rather
 // than showing a blank the operator would have to interpret.
-const DISPATCH_VALUES = ['standing', 'worktree'];
+const DISPATCH_VALUES = ['standing', 'spawn', 'worktree'];
 const DEFAULT_DISPATCH = 'standing';
 
 // One display row-model per role in a loaded manifest, in the manifest's key
