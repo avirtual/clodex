@@ -788,7 +788,20 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // the caller must be told about the value THEY sent. setRole cannot reach
     // `lead` at all (RESERVED_ROLE_KEYS refuses above), so D3's refusal is
     // structural here rather than restated.
-    if ('cwd' in clean) assertRoleCwd(roleName, clean, team.root, team.file);
+    //
+    // Gated on CHANGE, not on presence: the popover's save patch always carries
+    // `cwd`, so re-validating an unchanged value makes an unrelated edit (the
+    // brief) fail once that directory is deleted — and the operator then cannot
+    // fix the brief without also clearing a cwd they never touched. A value
+    // already on disk is not a new grant (dropping the key from the patch would
+    // preserve it regardless), and it is still refused the moment it CHANGES; a
+    // bad one already stored is neutralized at spawn time with a reported
+    // fallback, which is the same treatment a hand-edited manifest gets.
+    const storedCwd = typeof team.roles[roleName].cwd === 'string' ? team.roles[roleName].cwd : '';
+    const patchCwd = typeof clean.cwd === 'string' ? clean.cwd.trim() : null;
+    if ('cwd' in clean && !(patchCwd !== null && patchCwd === storedCwd)) {
+      assertRoleCwd(roleName, clean, team.root, team.file);
+    }
     // Trimmed AFTER the gate, for the same reason pickRoleKeys trims: this write
     // does not go through pickRoleKeys, so without this the merge below lands the
     // untrimmed bytes that assertRoleCwd never saw.

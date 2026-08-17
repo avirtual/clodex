@@ -1924,6 +1924,42 @@ test('role cwd: setRole validates the patch, and a refusal leaves the stored val
     'ENTER: the previously-stored cwd is still there — a partial write would have cleared it');
 });
 
+test('role cwd: an UNCHANGED cwd is not re-validated, so a stale one cannot block an unrelated edit', () => {
+  // The popover's save patch always carries `cwd`, so gating on presence made
+  // editing the BRIEF re-validate a path nobody touched — and once that
+  // directory is deleted the operator cannot fix the brief without also
+  // clearing a cwd they never meant to change. Dropping the key from the patch
+  // would have preserved the same value, so re-sending it is not a new grant.
+  const { tm, root, file } = teamForCwd();
+  tm.addRole('shop', 'api-hand', { brief: 'old', cwd: 'api' });
+  fs.rmSync(path.join(root, 'api'), { recursive: true });
+  assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf-8')).roles['api-hand'].cwd, 'api',
+    'ENTER: a cwd is stored whose directory is now gone — the state the gate used to refuse');
+  tm.setRole('shop', 'api-hand', { brief: 'new', cwd: 'api' });
+  const m = tm.loadManifest('shop');
+  assert.strictEqual(m.roles['api-hand'].brief, 'new', 'the unrelated field saved');
+  assert.strictEqual(m.roles['api-hand'].cwd, 'api', 'and the stale cwd rode through untouched');
+});
+
+test('role cwd: a CHANGED cwd is still refused even when the stored one is already stale', () => {
+  // The narrowing above must not become "once a role has a cwd, any cwd goes":
+  // the exemption is keyed on the value being IDENTICAL to what is on disk.
+  const { tm, root, file } = teamForCwd();
+  tm.addRole('shop', 'api-hand', { cwd: 'api' });
+  fs.rmSync(path.join(root, 'api'), { recursive: true });
+  const before = fs.readFileSync(file, 'utf-8');
+  assert.throws(() => tm.setRole('shop', 'api-hand', { cwd: '/etc' }), /absolute/);
+  assert.throws(() => tm.setRole('shop', 'api-hand', { cwd: '../outside' }), /outside the team root/);
+  assert.strictEqual(fs.readFileSync(file, 'utf-8'), before,
+    'ENTER: both refusals left the file byte-identical');
+  // Whitespace around an identical value is still identical (the stored form is
+  // trimmed), but a DIFFERENT relative path is a fresh grant and gets the gate.
+  tm.setRole('shop', 'api-hand', { cwd: ' api ' });
+  assert.strictEqual(tm.loadManifest('shop').roles['api-hand'].cwd, 'api');
+  assert.throws(() => tm.setRole('shop', 'api-hand', { cwd: 'other' }),
+    /not an existing directory/, 'a new relative path is validated as usual');
+});
+
 test('role cwd: setRole with a BLANK cwd clears the key rather than storing an empty string', () => {
   // path.resolve(root, '') IS root, so '' on disk would be a value meaning
   // exactly what its absence means. The popover's cleared text input sends ''.

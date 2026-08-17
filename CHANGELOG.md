@@ -23,8 +23,8 @@ blocks a release.
   and anything escaping the team root are refused when you set them — including
   a symlink that points out of the tree — since `team.json` is agent-writable
   and this field decides where a seat's shell opens. Two cases fall back to the
-  team root and say so in the spawn reply
-  rather than failing the ticket: the directory has since been deleted, or it
+  team root and say so in the spawn reply rather than failing the ticket: the
+  directory has since been deleted, or it
   belongs to a nested team of its own (a seat booted there would silently join
   THAT team's board). Worktree tickets are unaffected in how they name their
   tree — the `WORK IN:` line still points at the tree root, with the role's area
