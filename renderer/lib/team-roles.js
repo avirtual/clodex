@@ -51,22 +51,6 @@ function teamRoleRows(manifest) {
   }));
 }
 
-// The removable reserved keys this manifest does NOT have — today, `reviewer`
-// after an operator removed it. The popover renders one add-it-back row per
-// entry, BELOW the manifest's own rows.
-//
-// Deliberately NOT a row inside teamRoleRows: that model's keys are pinned
-// against the manifest schema by the legibility test (any key on a row that is
-// not `key`/`readOnly` is read as a schema field), and a synthetic row would
-// also make "one row per role in the manifest" false — which is the property
-// every caller of it relies on. A team with no reviewer row at all is how this
-// orphan state stayed invisible, so the affordance has to exist somewhere; it
-// just must not be smuggled into the schema-pinned model.
-function absentReservedRoles(manifest) {
-  const roles = (manifest && manifest.roles) || {};
-  return [...REMOVABLE_RESERVED_ROLE_KEYS].filter((k) => !roles[k]);
-}
-
 // What the operator loses by removing a reserved role, shown IN the confirm.
 // Removal is destructive, one click away, and the consequence is invisible from
 // the popover — it only shows up a ticket later, at the review step.
@@ -75,16 +59,6 @@ function reservedRemovalWarning(key) {
     return 'Tickets on this team will escalate to you at the review step instead of getting a cold reviewer.';
   }
   return 'This role will no longer exist on the team.';
-}
-
-// The one-liner on an ABSENT reviewer's add-it-back row. Says what is happening
-// NOW (not merely what the role would do), because the state is easy to reach by
-// accident and gives no other symptom until a ticket is already in flight.
-function absentReservedNote(key) {
-  if (key === 'reviewer') {
-    return 'Not on this team. Tickets escalate to the lead at the review step. Add it back to get an independent review pass.';
-  }
-  return 'Not on this team.';
 }
 
 // Client-side pre-check of the add-role form. Returns {ok:true, name, template}
@@ -259,6 +233,117 @@ function leadResolution(lead, { sessions, known } = {}) {
   };
 }
 
+// A lead RESOLUTION (not the raw lead string — the caller already holds one, and
+// computing it twice invites the two calls to disagree) → which of three layouts
+// the popover renders.
+//
+//   'setup'  — no lead at all: one decision, nothing else on screen.
+//   'repair' — the pointer names something that does not resolve.
+//   'normal' — the full editor.
+//
+// `stopped` is NORMAL, not repair: its own note says it restarts under this name,
+// so it is known-and-restartable and must not read as broken. An UNKNOWN state
+// falls to 'repair' rather than 'normal' — a state this function cannot reason
+// about must land in the mode that still shows everything, never in the one that
+// hides the lead decision.
+function teamStage(leadRes) {
+  const state = leadRes && typeof leadRes.state === 'string' ? leadRes.state : '';
+  if (state === 'unset') return 'setup';
+  if (state === 'stopped' || state === 'live') return 'normal';
+  return 'repair';
+}
+
+// One SUMMARY row per role, in manifest key order — the collapsed line the
+// popover leads with. Deliberately a separate function from teamRoleRows rather
+// than a widening of it: that model's keys are pinned against the manifest schema
+// by the legibility test, so any key added there is read as a new schema field.
+//
+// `seats` answers the question the popover was opened for and could not previously
+// answer — which seats are actually filling this role. The rows carry `role`
+// already (session-manager's list() resolves it through the same matchSeatRole the
+// backend uses); this leaf must NOT re-derive it, because that resolution strips an
+// `-r<N>` review tail then a numeric one and guards its lookup with hasOwnProperty,
+// and a second copy of that in a second process is the divergence this codebase
+// keeps paying for.
+//
+// The team filter is not decoration: session rows are workspace-scoped, not
+// team-scoped, so two teams open in one window both have a `hand` and matching on
+// the role key alone would count each other's seats.
+function roleSummaries(manifest, sessions, { lead } = {}) {
+  const roles = (manifest && manifest.roles) || {};
+  const teamName = (manifest && manifest.name) || '';
+  const rows = (Array.isArray(sessions) ? sessions : []).filter((s) => s && typeof s.name === 'string' && s.name);
+  const leadName = String(lead == null ? '' : lead).trim();
+  return Object.entries(roles).map(([key, def]) => {
+    // The lead SEAT comes from the pointer, not from role matching, because that
+    // is how the backend resolves it (matchSeatRole short-circuits on
+    // `seatName === team.lead`). A lead seat whose name does not follow the
+    // `<team>-<role>` convention is the normal case, not an edge one. With NO
+    // pointer set there is nothing to short-circuit on, so role matching is then
+    // the correct answer — the same order the backend takes.
+    const mine = key === 'lead' && leadName
+      ? rows.filter((s) => s.name === leadName)
+      : rows.filter((s) => s.role === key && s.team === teamName);
+    const names = mine.map((s) => s.name);
+    const working = mine.filter((s) => s.activity && s.activity !== 'idle').length;
+    const total = names.length;
+    let note;
+    if (total === 0) note = 'no seat';
+    else if (total === 1) note = names[0];
+    else note = `${total} seats · ${working} working`;
+    // Fail-closed on an unrecognized value, unlike teamRoleRows: this feeds a
+    // display CHIP with no picker behind it to correct it, so a hand-edited
+    // team.json must not get a made-up dispatch mode rendered as if the app
+    // honoured it. What it actually behaves as is the default.
+    const raw = (def && def.dispatch) || DEFAULT_DISPATCH;
+    return {
+      key,
+      dispatch: DISPATCH_VALUES.includes(raw) ? raw : DEFAULT_DISPATCH,
+      readOnly: RESERVED_ROLE_KEYS.has(key),
+      seats: { total, working, names },
+      note,
+    };
+  });
+}
+
+// The stock roles this team does NOT have, offered back as cards. `lead` is
+// absent on purpose: loadManifest hard-requires it, so a team without one never
+// loads and the lead decision has its own block. `reviewer` is the removable
+// reserved key; `hand` is not reserved at all and can simply be removed like any
+// other role — the team then silently has no implementer, with no symptom until
+// a dispatch has nowhere to go.
+const OFFERABLE_STOCK_ROLE_KEYS = ['hand', 'reviewer'];
+function absentStockRoles(manifest) {
+  const roles = (manifest && manifest.roles) || {};
+  return OFFERABLE_STOCK_ROLE_KEYS.filter((k) => !roles[k]);
+}
+
+// The one-liner on an absent stock role's offer card. Says what is happening NOW,
+// not merely what the role would do — these states are easy to reach by accident
+// and give no other symptom until a ticket is already in flight.
+//
+// A fixed renderer-side string, NOT a mirror of the backend's STOCK_ROLE_DEFS
+// brief: nothing here is written to disk (the def the Enable button mints comes
+// from the backend), so this cannot drift into a second source of truth for what
+// a role IS. It is display copy, like reservedRoleNote beside it.
+function absentStockNote(key) {
+  if (key === 'reviewer') {
+    return 'Not on this team. Tickets escalate to the lead at the review step. Add it back to get an independent review pass.';
+  }
+  if (key === 'hand') {
+    return 'Not on this team. Nothing implements the specs the lead writes — dispatched work has no seat to land on. Add it back to get an implementer.';
+  }
+  return 'Not on this team.';
+}
+
+// How tickets would reach a role this team does not have yet (R2: the dispatch
+// CONCEPT stays visible even where its field is not). A FIXED string, not a value
+// read off a def: no stock role ships a `dispatch`, so there is nothing to read —
+// inventing one here would put a mode on screen that the mint does not write.
+function offerDispatchLine() {
+  return 'Runs as: standing — the live seat holding this role gets the spec.';
+}
+
 // teamPreflight findings (a flat array over the whole team) → the per-role
 // buckets renderRows needs, in the order the resolver emitted them. A role with
 // nothing unresolved is ABSENT from the map rather than present-and-empty: the
@@ -281,8 +366,9 @@ function preflightByRole(findings) {
 
 module.exports = {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, preflightByRole,
-  absentReservedRoles, reservedRemovalWarning, absentReservedNote,
+  reservedRemovalWarning,
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,
-  DISPATCH_VALUES, DEFAULT_DISPATCH, REMOVABLE_RESERVED_ROLE_KEYS,
+  teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine,
+  DISPATCH_VALUES, DEFAULT_DISPATCH, REMOVABLE_RESERVED_ROLE_KEYS, OFFERABLE_STOCK_ROLE_KEYS,
 };

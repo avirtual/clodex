@@ -289,9 +289,28 @@ function registerIpcHandlers(deps) {
   // reserved key the operator had removed. addRole then writes the STOCK def and
   // ignores `def` entirely, so this channel cannot author a reviewer either.
   // team:join above deliberately does NOT pass it — a join must never mint one.
+  //
+  // The stock-def substitution below generalizes that recovery to `hand`, which is
+  // a stock role but NOT a reserved one — so addRole's reserved branch never sees
+  // it and an empty def would write a hand with no prompt: a role that exists,
+  // spawns, and boots unbriefed. Widening RESERVED_ROLE_KEYS instead would lock
+  // editing and renaming a role operators legitimately customize, so the fix
+  // belongs here, at the operator door, not in the manifest's lock set.
+  //
+  // SECURITY: the def written is Clodex's own or the caller's, never a blend. The
+  // substitution is gated on the caller's def being EMPTY, so nothing of the
+  // caller's survives it; a non-empty def is passed through untouched and takes
+  // addRole's ordinary validation. The reserved branch downstream still ignores
+  // `def` entirely — that is what keeps remove-then-re-add of a reviewer safe —
+  // and the intent path (`[agent:team role-add]`) never reaches here at all: it
+  // calls the mutator without the operator opt-in, which this handler is the only
+  // caller to pass.
+  const isEmptyDef = (d) => !d || typeof d !== 'object' || Array.isArray(d) || Object.keys(d).length === 0;
   handle('team:addRole', (_e, team, role, def) => {
-    try { return { ok: true, team: addRole(team, role, def, { operator: true }) }; }
-    catch (err) { return { ok: false, error: err.message }; }
+    try {
+      const d = isEmptyDef(def) && STOCK_ROLE_DEFS[role] ? { ...STOCK_ROLE_DEFS[role] } : def;
+      return { ok: true, team: addRole(team, role, d, { operator: true }) };
+    } catch (err) { return { ok: false, error: err.message }; }
   });
 
   // `prompts` is the picker's offering (append-rail only); `all` is every system

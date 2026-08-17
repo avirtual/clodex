@@ -1222,16 +1222,65 @@ html, body {
   border-radius: 5px;
   padding: 8px;
 }
-.team-role-row.read-only { opacity: 0.72; }
-/* An absent removable reserved role (t421): a placeholder for something the team
-   does NOT have, so it must not read as a role that exists. Dashed, with the
-   TEXT dimmed rather than the row: `opacity` on the row composites it as a
-   group, and a child cannot then render more opaque than its ancestor — so the
-   Add-it-back button, the one live control here, would be dimmed with it and no
-   child rule can undo that. Dim what should look absent, not the container. */
+/* A reserved row's LOCKED TEXT is what reads as inactive — never the row. An
+   `opacity` on the container composites it as a group, so a child cannot render
+   more opaque than its ancestor and the lead seat control, the one live thing on
+   that row, was dimmed with no child rule able to raise it back. Dim what should
+   look inactive, not the container: the same shape `.absent` uses below. */
+.team-role-row.read-only .team-role-lock-note,
+.team-role-row.read-only .team-role-ro-field .ro-val { color: var(--text-dim); }
+/* An absent stock role: a placeholder for something the team does NOT have, so
+   it must not read as a role that exists. Dashed, with the TEXT dimmed rather
+   than the row, for the reason above — the Enable button is the one live control
+   here. */
 .team-role-row.absent { border-style: dashed; }
 .team-role-row.absent .team-role-key,
+.team-role-row.absent .team-role-offer-dispatch,
 .team-role-row.absent .team-role-lock-note { color: var(--text-dim); }
+.team-role-offer-dispatch { font-size: 11px; margin-bottom: 6px; }
+/* The collapsed summary line: one row per role, everything else behind the
+   disclosure. `min-width: 0` on the note is what lets a long seat list ellipsize
+   instead of pushing the chip and the disclosure out of the popover. */
+.team-role-summary { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.team-role-summary .team-role-key { flex: 0 0 auto; }
+.team-role-note { flex: 1 1 auto; min-width: 0; color: var(--text-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-role-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); }
+.team-role-dot.ok { background: var(--accent); }
+.team-role-dot.idle { background: var(--text-dim); }
+.team-role-dot.warn { background: var(--warn); }
+.team-role-dot.none { background: transparent; border: 1px solid var(--border, #333); }
+.team-role-chip {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--text-dim);
+  border: 1px solid var(--border, #333);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+/* A collapsed row must still say it owes something — the checklist itself is in
+   the body, so without this marker an unresolved prompt is invisible until the
+   operator happens to expand that role. */
+.team-role-owed { flex: 0 0 auto; font-weight: 600; font-size: 11px; }
+.team-role-owed.warn { color: var(--warn); }
+.team-role-owed.note { color: var(--text-dim); }
+.team-role-disclose {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1;
+}
+.team-role-disclose:hover { color: var(--text); }
+.team-role-body { margin-top: 6px; }
+.team-role-body.hidden { display: none; }
+/* The lead decision hoisted out of the list in setup/repair. `repair` is a
+   problem to fix, so it carries the warn border; `setup` is a normal first step
+   and must not read as an error. */
+.team-role-row.team-lead-card.repair { border-color: var(--warn); }
+#team-roles-add-section.hidden, #team-roles-watchdog-section.hidden { display: none; }
 .team-role-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .team-role-key { font-weight: 600; }
 .team-role-badge {
@@ -1302,11 +1351,7 @@ html, body {
 .team-role-ro-field { display: flex; gap: 6px; font-size: 11px; margin: 2px 0; }
 .team-role-ro-field span:first-child { flex: 0 0 56px; color: var(--text-dim); text-align: right; }
 .team-role-ro-field .ro-val { flex: 1; min-width: 0; color: var(--text-dim); word-break: break-word; }
-/* The lead row's seat control (t420). The ROLE stays locked and dimmed with the
-   other reserved rows; this block is full-opacity because it IS actionable —
-   inheriting .read-only's dim would make the one control on the row look
-   disabled. */
-.team-lead-seat { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); opacity: 1; }
+.team-lead-seat { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .team-lead-status { display: flex; gap: 8px; align-items: baseline; font-size: 11px; flex-wrap: wrap; }
 .team-lead-who { font-weight: 600; }
 .team-lead-note { color: var(--text-dim); }
