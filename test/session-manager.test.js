@@ -4499,6 +4499,14 @@ test('team-review: an empty scope is bounced, nothing spawned', async () => {
 // directory and reports a verdict, and no other line in the run says so.
 test('team-review: a role cwd the resolver refuses is NAMED in the reply, and the reviewer spawns at the team root', async () => {
   const { m, injected, created } = mkReview({
+    // mkReview does not wire `path` (mk() wires only `fs`), and _roleCwdRel calls
+    // path.isAbsolute — so without this the handler's catch turns the whole review
+    // into "error: Cannot read properties of undefined". That silent hole is why
+    // this arm went untested: every cwd on this fixture crashed before reaching it.
+    // Wired HERE rather than in mkReview: the shared fixture also reaches a
+    // path.join in the prompt preflight, where a real `path` would start resolving
+    // a file that does not exist and change replies other tests assert on.
+    path: pathReal,
     // Absolute, so the refusal is lexical and needs no directory on disk — /proj
     // is a fixture path that does not exist.
     reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
@@ -4510,7 +4518,8 @@ test('team-review: a role cwd the resolver refuses is NAMED in the reply, and th
 
   // ENTER: the reviewer really spawned. Both assertions below are about a spawn
   // that happened — a refusal that BLOCKED the review would satisfy neither.
-  assert.strictEqual(created.length, 1, 'ENTER: exactly one reviewer seat spawned — the cwd is a warn, never a block');
+  assert.strictEqual(created.length, 1,
+    `ENTER: exactly one reviewer seat spawned — the cwd is a warn, never a block; replies: ${JSON.stringify(injected)}`);
   assert.strictEqual(created[0][2], '/proj',
     'the reviewer boots at the team root, not at the refused directory');
   const reply = injected.find((t) => /spawned team-reviewer-1/.test(t));
