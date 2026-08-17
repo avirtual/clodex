@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Clodex</title>
   <style>
-/* node_modules/@xterm/xterm/css/xterm.css */
+/* ../wb-wrap-ui/node_modules/@xterm/xterm/css/xterm.css */
 .xterm {
   cursor: text;
   position: relative;
@@ -9944,9 +9944,9 @@ ${p.root}` : p.key;
     }
   });
 
-  // node_modules/@xterm/xterm/lib/xterm.js
+  // ../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js
   var require_xterm = __commonJS({
-    "node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/xterm/lib/xterm.js"(exports, module) {
       !(function(e, t) {
         if ("object" == typeof exports && "object" == typeof module) module.exports = t();
         else if ("function" == typeof define && define.amd) define([], t);
@@ -16003,9 +16003,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-fit/lib/addon-fit.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js
   var require_addon_fit = __commonJS({
-    "node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-fit/lib/addon-fit.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.FitAddon = t() : e.FitAddon = t();
       })(self, (() => (() => {
@@ -16039,9 +16039,9 @@ WARNING: This link could potentially be dangerous`)) {
     }
   });
 
-  // node_modules/@xterm/addon-search/lib/addon-search.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js
   var require_addon_search = __commonJS({
-    "node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-search/lib/addon-search.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.SearchAddon = t() : e.SearchAddon = t();
       })(globalThis, (() => (() => {
@@ -19000,9 +19000,9 @@ ${i3.join("\n")}
     }
   });
 
-  // node_modules/@xterm/addon-web-links/lib/addon-web-links.js
+  // ../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js
   var require_addon_web_links = __commonJS({
-    "node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
+    "../wb-wrap-ui/node_modules/@xterm/addon-web-links/lib/addon-web-links.js"(exports, module) {
       !(function(e, t) {
         "object" == typeof exports && "object" == typeof module ? module.exports = t() : "function" == typeof define && define.amd ? define([], t) : "object" == typeof exports ? exports.WebLinksAddon = t() : e.WebLinksAddon = t();
       })(self, (() => (() => {
@@ -26569,7 +26569,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
       var REMOVABLE_RESERVED_ROLE_KEYS = /* @__PURE__ */ new Set(["reviewer"]);
       var ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
       var NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
-      var DISPATCH_VALUES = ["standing", "worktree"];
+      var DISPATCH_VALUES = ["standing", "spawn", "worktree"];
       var DEFAULT_DISPATCH = "standing";
       function teamRoleRows(manifest) {
         const roles = manifest && manifest.roles || {};
@@ -26893,7 +26893,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 el.appendChild(actions);
               }
             } else {
-              el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label><label class="team-role-field" title="Relative to the team root \u2014 where seats holding this role start. Blank = the team root. Applies to worktree-dispatch roles and the reviewer; a standing role's seat is operator-created, so this does nothing for it."><span>cwd</span><input type="text" data-f="cwd" placeholder="optional: subdirectory (e.g. api)"></label><label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span><select data-f="dispatch"><option value="standing">standing \u2014 the live seat gets the spec</option><option value="worktree">worktree \u2014 one-shot seat, own branch + checkout</option></select></label><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
+              el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label><label class="team-role-field" title="Relative to the team root \u2014 where seats holding this role start. Blank = the team root. Applies to spawn- and worktree-dispatch roles and the reviewer; a standing role's seat is operator-created, so this does nothing for it."><span>cwd</span><input type="text" data-f="cwd" placeholder="optional: subdirectory (e.g. api)"></label><label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span><select data-f="dispatch"><option value="standing">standing \u2014 the live seat gets the spec</option><option value="spawn">spawn \u2014 one-shot seat, shared checkout, no branch</option><option value="worktree">worktree \u2014 one-shot seat, own branch + checkout</option></select></label><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
               el.querySelector('input[data-f="brief"]').value = row.brief;
               const sel = el.querySelector('select[data-f="prompt"]');
               {

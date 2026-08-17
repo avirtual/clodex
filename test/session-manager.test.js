@@ -13660,3 +13660,282 @@ test('sweep: two teams on one project sweep the board ONCE but reconcile SEPARAT
     'and so does beta — deduping reconcile by root nulls this, because `scout` is not a role in alpha manifest');
   assert.ok(m._ticketWatch.has('beta-scout'), 'the second team keeps its watch entry');
 });
+
+// ---------------------------------------------------------------------------
+// t423 — `dispatch: "spawn"`: a one-shot seat in the SHARED checkout.
+//
+// The cell `standing`/`worktree` could not express: ephemeral lifecycle without
+// git isolation. The subjects below pull in different directions and are
+// asserted apart — the spawn itself, what the ticket must NOT grow (a tree, a
+// loop step, a WORK IN: line), the non-git root that is the whole ask, the
+// fail-closed resolver, and accept's archive.
+
+// The spawn itself. Asserts the WHOLE outcome set rather than "a seat appeared":
+// a spawn that also minted a tree, or recorded one on the ticket, is exactly the
+// fusion this value exists to break, and a probe on `sessions.has` reads around
+// both.
+test('task start: a `spawn` role gets a one-shot seat in the shared checkout, no branch, no tree', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.team.roles.hand = { instantiate: 'session', brief: 'the hand', dispatch: 'spawn' };
+  const cwds = {};
+  f.m.create = async (...args) => { cwds[args[0]] = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  const said = [];
+  f.m._injectText = (s, t) => { said.push(t); };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  for (let i = 0; i < 15; i++) await new Promise((r) => setImmediate(r));
+
+  // ENTER: the seat really spawned. Every absence asserted below is vacuously
+  // true of a dispatch that never happened.
+  assert.ok(f.m.sessions.has('team-hand-1'), 'ENTER: the one-shot seat spawned');
+  assert.strictEqual(cwds['team-hand-1'], repo,
+    'and it boots in the SHARED checkout — the whole point of the value');
+  const t = f.one('t1');
+  assert.strictEqual(t.assignee, 'team-hand-1', 'the ticket is re-pinned from the role to its seat');
+  assert.strictEqual(t.role, 'hand', 'and remembers the role it was filed under');
+  assert.strictEqual(t.worktree, undefined,
+    'no tree is recorded — ABSENT, not null: every downstream reader tests `ticket.worktree && .path`');
+  assert.deepStrictEqual(f.worktreeSet, [],
+    'and no worktree pointer is written to the seat record either');
+  // The record is what accept reads to tell a spawn seat from a standing one.
+  assert.ok(f.upserted.includes('team-hand-1'), 'the seat record exists');
+  // Not a bare name match: the worktree reply carries the name too.
+  const spawnReply = said.find((s) => /shared checkout/.test(s));
+  assert.ok(spawnReply, `a reply must name the shared checkout — got ${JSON.stringify(said)}`);
+  assert.ok(!said.some((s) => /on branch/.test(s)),
+    'and none of them may claim a branch — there is none');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// D6 + D7: the dispatch text. `WORK IN:` and `YOUR AREA` exist to send a seat
+// somewhere its cwd is NOT; a spawn seat's cwd IS where it works, so both would
+// name the directory the shell already opened in. The shared-checkout line is
+// the one thing that must be SAID, because the isolation every other one-shot
+// seat is handed silently does not exist here.
+test('task start: a spawn dispatch carries the shared-checkout line and NO WORK IN:/AREA line', async () => {
+  const { root, repo } = mkGitRepo();
+  // A role cwd is set deliberately: the AREA line is gated on the worktree path,
+  // so a role with no cwd could not tell "absent because no tree" from "absent
+  // because no cwd", and the pin would hold for the wrong reason.
+  const f = mkTicketWt(repo, { dispatch: 'spawn', cwd: 'api' });
+  fsReal.mkdirSync(pathReal.join(repo, 'api'), { recursive: true });
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.m._injectText = () => {};
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => f.gated.length > 0);
+
+  // ENTER: a spec really was delivered. Every "must not contain" below is true
+  // of an empty list.
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one spec delivery to assert on');
+  const body = f.gated[0].body;
+  assert.match(body, /SHARED checkout/, 'the seat is told it shares the checkout');
+  assert.match(body, /committing to the lead|leave committing/,
+    'and that committing is not its call');
+  assert.ok(!/WORK IN:/.test(body),
+    'no WORK IN: line — its cwd IS where it works, so the line would name the shell it is already in');
+  assert.ok(!/YOUR AREA/.test(body),
+    'and no AREA line either, for the same reason');
+  assert.match(body, /job one/, 'the spec text itself still rides');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// D4: the ticket loop is gated on the ticket having a BRANCH, and every check in
+// it (commits, ancestry, a diff) is a question about one. A spawn ticket has
+// none, so `done` must stay terminal. This is EXISTING behaviour of the gate;
+// nothing pinned it for a seat that is ephemeral WITHOUT a tree, which is the
+// state that reads most like a loop candidate.
+test('task done on a spawn ticket: no loop step, no reviewer, done stays terminal', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo, { dispatch: 'spawn' });
+  const created = [];
+  f.m.create = async (...args) => { created.push(args[0]); f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.m._injectText = () => {};
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+
+  created.length = 0;
+  f.m._handleTask(f.m.sessions.get('team-hand-1'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
+  for (let i = 0; i < 25; i++) await new Promise((r) => setImmediate(r));
+
+  const t = f.one('t1');
+  // ENTER: the close really landed. `loopStep === undefined` is true of a ticket
+  // that was never closed at all, which is the vacuous reading this guards.
+  assert.strictEqual(t.state, 'done', 'ENTER: the ticket is closed, so the gate was reached');
+  assert.strictEqual(t.report, 'shipped it', 'ENTER: and the report was recorded');
+  assert.strictEqual(t.loopStep, undefined,
+    'no loop step — every check in the loop is a question about a branch, and there is none');
+  assert.deepStrictEqual(created, [],
+    'and no reviewer is spawned: there is no diff to review');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// D10, the ask itself: a team whose root is NOT a git repo. `worktree` cannot
+// serve one at all (createWorktree fails and the path deliberately refuses to
+// fall back to team.root), so this is the case the third value exists for. The
+// assertion that matters is that NO git call sits on the path — a mode that
+// merely tolerates git failing would work here by accident.
+test('a non-git team root can dispatch, spawn and accept a spawn ticket end to end', async () => {
+  const plain = fsReal.realpathSync(fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'sm-nogit-')));
+  assert.ok(!fsReal.existsSync(pathReal.join(plain, '.git')),
+    'ENTER: the root must genuinely not be a repo, or this measures nothing');
+  // Every gitWorktree entry point throws: reaching ANY of them is the failure,
+  // and a counter would let the path call one and swallow the result.
+  const boom = (name) => async () => { throw new Error(`git reached: ${name}`); };
+  const f = mkTicketWt(plain, { dispatch: 'spawn' }, {
+    gitWorktree: {
+      createWorktree: boom('createWorktree'),
+      listWorktrees: boom('listWorktrees'),
+      removeWorktree: boom('removeWorktree'),
+      isMerged: boom('isMerged'),
+      deleteBranch: boom('deleteBranch'),
+    },
+  });
+  const cwds = {};
+  f.m.create = async (...args) => { cwds[args[0]] = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  const said = [];
+  f.m._injectText = (s, t) => { said.push(t); };
+  const archived = [];
+  f.m.archive = async (n) => { archived.push(n); f.m.sessions.delete(n); };
+  f.seat('lead');
+
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  for (let i = 0; i < 15; i++) await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(cwds['team-hand-1'], plain, 'ENTER: the seat spawned, in the non-repo root');
+  assert.ok(!said.some((s) => /git reached/.test(s)),
+    `no git entry point was called on the dispatch path — ${JSON.stringify(said.filter((s) => /git reached/.test(s)))}`);
+
+  f.m._handleTask(f.m.sessions.get('team-hand-1'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
+  for (let i = 0; i < 25; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.one('t1').state, 'done', 'the report closes the ticket');
+
+  said.length = 0;
+  await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
+    { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => said.push(msg));
+
+  assert.ok(f.one('t1').acceptedAt > 0, 'and accept closes it out — with no git anywhere on the path');
+  assert.ok(!said.some((s) => /git reached/.test(s)), 'accept reached no git entry point either');
+  fsReal.rmSync(plain, { recursive: true, force: true });
+});
+
+// The security bar: an unrecognized or malformed `dispatch` must resolve to
+// `standing`, NEVER to `spawn`. A spawn seat is a full agent in the operator's
+// own working tree, so the degradation has to be toward the seat that touches
+// nothing. Every value here is one a hand-edited team.json can carry.
+test('a malformed or unknown dispatch resolves to standing, never to spawn', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.seat('lead');
+  for (const bad of ['Spawn', 'SPAWN', 'spawn ', 'oneshot', '', null, undefined, true, 1, {}, ['spawn']]) {
+    f.team.roles.hand = { instantiate: 'session', brief: 'the hand', dispatch: bad };
+    const got = f.m._ticketDispatchMode(f.team, 'hand');
+    assert.strictEqual(got.mode, 'standing',
+      `dispatch ${JSON.stringify(bad)} must degrade to standing, not to a seat in the operator's checkout`);
+  }
+  // The controls: both real values still resolve, or a resolver that answered
+  // 'standing' unconditionally would satisfy every assertion above.
+  f.team.roles.hand = { instantiate: 'session', brief: 'the hand', dispatch: 'spawn' };
+  assert.strictEqual(f.m._ticketDispatchMode(f.team, 'hand').mode, 'spawn', 'the real value resolves');
+  f.team.roles.hand = { instantiate: 'session', brief: 'the hand', dispatch: 'worktree' };
+  assert.strictEqual(f.m._ticketDispatchMode(f.team, 'hand').mode, 'worktree', 'and so does worktree');
+
+  // Reserved roles hold the line at the RESOLVER too, because team.json is
+  // hand-editable and files predating assertDispatchAllowed exist.
+  for (const reserved of ['lead', 'reviewer']) {
+    f.team.roles[reserved] = { instantiate: 'session', brief: 'x', dispatch: 'spawn' };
+    assert.strictEqual(f.m._ticketDispatchMode(f.team, reserved).mode, 'standing',
+      `${reserved} cannot be dispatched a one-shot seat even by hand-edit`);
+  }
+  // A role that is not in the manifest at all, and a seat-addressed ticket: both
+  // are the narrowness the resolver inherited and must keep.
+  assert.strictEqual(f.m._ticketDispatchMode(f.team, 'team-hand-1').mode, 'standing',
+    'a SEAT name resolves to standing — a session cwd is fixed at PTY spawn');
+  assert.strictEqual(f.m._ticketDispatchMode(f.team, 'nosuchrole').mode, 'standing');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// D5, the one genuinely new semantic. The `!branch` arm was written for a
+// STANDING seat, where retiring the operator's persistent session would be a
+// teardown the merge fact never licensed. A spawn seat is the opposite: one-shot
+// by construction, and no cleanup verb reaches it. ARCHIVED, never destroyed —
+// there is no tree to reclaim and its work may be uncommitted in the shared
+// checkout.
+test('task accept: a spawn seat is ARCHIVED, and the reply says so', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo, { dispatch: 'spawn' });
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.m._injectText = () => {};
+  const archived = [];
+  const destroyed = [];
+  f.m.archive = async (n) => { archived.push(n); f.m.sessions.delete(n); };
+  f.m.destroy = async (n) => { destroyed.push(n); return { ok: true }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  f.m._handleTask(f.m.sessions.get('team-hand-1'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped' });
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.one('t1').state, 'done', 'ENTER: the ticket is done, so accept reaches its arms');
+  assert.ok(f.m.sessions.has('team-hand-1'), 'ENTER: and the seat is still LIVE, or the archive is vacuous');
+
+  const said = [];
+  await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
+    { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => said.push(msg));
+
+  assert.deepStrictEqual(archived, ['team-hand-1'],
+    'the one-shot seat is archived — nothing will ever dispatch to it again');
+  assert.deepStrictEqual(destroyed, [],
+    'and NOT destroyed: no tree is reclaimed, and its work may be uncommitted in the shared checkout');
+  assert.strictEqual(said.length, 1, 'ENTER: exactly one reply to assert on');
+  assert.match(said[0], /ARCHIVED/, 'the reply names what happened to the seat');
+  assert.ok(!/nothing was torn down/.test(said[0]),
+    'and must NOT claim nothing was torn down — a reply that lies about an archive is the class of bug this fixes');
+  assert.ok(f.one('t1').closedOut, 'terminal: there is no branch to merge and no second accept to invite');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The other half of D5's split, and the reason it is a split at all: a STANDING
+// seat reaching the same arm must still be left alone. Without this control the
+// test above is satisfied by an arm that archives everything, which would retire
+// the operator's own persistent session on every accept.
+test('task accept: a STANDING seat on the same arm is left exactly as it is', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo, { dispatch: 'standing' });
+  f.m._injectText = () => {};
+  const archived = [];
+  const destroyed = [];
+  f.m.archive = async (n) => { archived.push(n); f.m.sessions.delete(n); };
+  f.m.destroy = async (n) => { destroyed.push(n); return { ok: true }; };
+  f.seat('lead');
+  const hand = f.seat('hand');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+  f.m._handleTask(hand, { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped' });
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.one('t1').state, 'done', 'ENTER: the ticket is done');
+  assert.strictEqual(f.one('t1').worktree, undefined, 'ENTER: and it has no branch, so it takes the same arm');
+  assert.ok(f.m.sessions.has('hand'), 'ENTER: the standing seat is live');
+
+  const said = [];
+  await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
+    { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => said.push(msg));
+
+  assert.deepStrictEqual([archived, destroyed], [[], []],
+    'a standing seat is the operator\'s persistent session — the merge fact never licensed retiring it');
+  assert.ok(f.m.sessions.has('hand'), 'and it is still live');
+  assert.strictEqual(said.length, 1, 'ENTER: exactly one reply to assert on');
+  assert.match(said[0], /nothing was torn down/, 'and the reply still says so truthfully');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});

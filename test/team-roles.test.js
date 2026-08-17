@@ -12,7 +12,7 @@ const {
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,
   absentReservedRoles, reservedRemovalWarning, absentReservedNote,
-  REMOVABLE_RESERVED_ROLE_KEYS,
+  REMOVABLE_RESERVED_ROLE_KEYS, DISPATCH_VALUES,
 } = require('../renderer/lib/team-roles');
 
 test('teamRoleRows: one row per role in key order, reserved keys marked read-only', () => {
@@ -106,6 +106,24 @@ test('buildSavePatch: a blank `cwd` IS sent — unlike template, blank is a real
     { brief: 'b', prompt: 'p', cwd: 'api' },
     'trimmed like every other value',
   );
+});
+
+// t423: `spawn` is the value most likely to be missed here, because the mirror
+// is the SILENT half of the pair — a value present in the picker but absent from
+// DISPATCH_VALUES is dropped by the gate below, so the control appears to work
+// and saves nothing. Asserts the whole patch, not `'dispatch' in p`: a partial
+// match reads around a value that arrived mangled.
+test('buildSavePatch: `spawn` survives the mirror gate', () => {
+  assert.deepStrictEqual(
+    buildSavePatch({ brief: 'b', prompt: 'p', dispatch: 'spawn' }),
+    { brief: 'b', prompt: 'p', dispatch: 'spawn', cwd: '' },
+    'the third value is forwarded — a mirror missing it drops the operator\'s choice in silence',
+  );
+  // The mirror is a mirror: it must carry exactly what the manifest accepts, and
+  // nothing pins the two lists to each other (different processes). This at least
+  // holds the renderer side to the three values it is meant to have.
+  assert.deepStrictEqual([...DISPATCH_VALUES].sort(), ['spawn', 'standing', 'worktree'],
+    'the renderer mirror carries all three dispatch values');
 });
 
 test('buildSavePatch: sends `dispatch` for BOTH enum values, drops an off-enum one', () => {
