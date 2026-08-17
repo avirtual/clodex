@@ -19,8 +19,8 @@ blocks a release.
   done when the ticket is — but without minting a branch or a git worktree for
   it. Until now the only way to get a one-shot hand was `worktree`, which also
   gave it its own branch and checkout, so a team whose project is not a git
-  repository could not have ephemeral hands at all. Now it can: a `spawn`
-  dispatch makes no git calls anywhere on its path. The seat is told, in its
+  repository could not have ephemeral hands at all. Now it can: dispatching a
+  `spawn` ticket makes no git calls at all. The seat is told, in its
   dispatch, that it shares the checkout with everyone else and that committing
   is the lead's call — it has no branch of its own to commit to. Because there
   is no branch, a `spawn` ticket closes when the hand reports: the verify-and-

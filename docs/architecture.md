@@ -336,13 +336,21 @@ not by size:
   them. Pure leaf — the caller supplies `{ name, body }` rows.
 
 Branch per ticket: a role with `dispatch: "worktree"` in team.json gets a branch, a
-worktree and a fresh seat per ticket. BOTH dispatch paths mint — `_taskAdd`
+worktree and a fresh seat per ticket. `dispatch: "spawn"` is the same one-shot
+seat WITHOUT the branch and tree — it works in the shared checkout, so it is
+the mode a team whose root is not a git repo can use; `_ticketDispatchMode` is
+the single resolver both read, and it fails closed to `standing` on anything
+else. BOTH dispatch paths mint — `_taskAdd`
 and `_taskAssign` (releasing a parked ticket), each via `_spawnTicketSeat`;
 minting in only one silently opts the role out on the other. The
 ticket is re-pinned from the ROLE to that seat name, which is what keeps the
 seat one-shot — `_ticketAssigneeSeat` resolves a role to the first live seat
 holding it, so a role-pinned ticket would route the next one into the previous
-ticket's checkout.
+ticket's checkout. Everything below is the worktree mode's; a spawn ticket has
+no `worktree` key at all, and a dispatch to a spawn role CLEARS one it inherited
+(a worktree ticket reassigned to a spawn role) so the tree-reading paths —
+`WORK IN:`, the verify/review loop gate, the accept teardown — cannot disagree
+with the mode.
 A ticket that already HAS a tree never mints a second one: the seat name derives
 from the ticket id, so `_mintTicketSeat` returns `taken` with that name.
 `_taskAssign` splits three readings of taken, on LIVENESS not on the record —

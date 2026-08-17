@@ -599,7 +599,15 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     // Only the non-default is written: absent already reads as `standing`, so an
     // explicit one would put a value on disk that means exactly what its absence
     // does (the same rule migrateRoles follows).
-    if (addDispatch.value === 'worktree') def.dispatch = 'worktree';
+    //
+    // Gated on the shared value list, not on one hardcoded value. A per-value
+    // test silently DROPS every other option the picker offers — which is what
+    // this did to `spawn` — so the failure is a role saved as `standing` with no
+    // error anywhere. Fail-closed on top: an option this build does not know is
+    // not written, so a stale bundle cannot post an unrecognized dispatch.
+    if (addDispatch.value !== DEFAULT_DISPATCH && DISPATCH_VALUES.includes(addDispatch.value)) {
+      def.dispatch = addDispatch.value;
+    }
     const res = await window.api.teamAddRole(name, v.name, def);
     if (res && res.ok) {
       addName.value = ''; addBrief.value = ''; addTemplate.value = ''; addPrompt.value = ''; addCwd.value = '';

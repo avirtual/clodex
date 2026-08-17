@@ -141,7 +141,7 @@ function normalizeRoleDef(roleName, def, file) {
     brief: def.brief ?? null,
     // What a ticket dispatched to this role does. `standing` delivers the spec to
     // the live seat holding the role; `spawn` mints a one-shot seat in the SHARED
-    // checkout (no branch, no tree — no git call anywhere on the path, so it works
+    // checkout (no branch, no tree — no git call on the DISPATCH path, so it works
     // on a team whose root is not a repo); `worktree` does the same but on its own
     // branch in its own git worktree. Both one-shot values re-pin the ticket from
     // the ROLE to the seat. Enforced — session-manager reads it on the dispatch path.

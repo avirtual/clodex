@@ -37,8 +37,10 @@ That is the whole team. `root` must be absolute — a relative root would resolv
 against whatever directory the app happens to be in. A role carries at most
 `prompt` (which system prompt briefs the seat), `template` (which library
 template shapes the seat: model, tools, grants, cwd), `brief` (one line about
-the role, shown in the roster) and `dispatch` (whether a ticket for this role
-mints its own git worktree).
+the role, shown in the roster) and `dispatch` (what a ticket for this role
+does: `standing` delivers to the live seat, `spawn` mints a one-shot seat in
+the shared checkout, `worktree` mints a one-shot seat on its own branch in its
+own git worktree).
 
 With that file alone you have a working loop: the lead writes a ticket with
 `[agent:task add hand] <spec>`, `[agent:task start <id>]` mints a branch and a

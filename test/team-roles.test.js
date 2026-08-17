@@ -7,6 +7,8 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote,
   parseDuration, formatDuration, formatBlockedBy,
@@ -124,6 +126,44 @@ test('buildSavePatch: `spawn` survives the mirror gate', () => {
   // holds the renderer side to the three values it is meant to have.
   assert.deepStrictEqual([...DISPATCH_VALUES].sort(), ['spawn', 'standing', 'worktree'],
     'the renderer mirror carries all three dispatch values');
+});
+
+// The two dispatch pickers are SIBLINGS, and a value added to one and not the
+// other is invisible from the app: r1 shipped the row editor's `spawn` option
+// while the Add Role form still offered two, so the first door an operator
+// knocks on could not create the role at all. Read from the sources the operator
+// actually uses rather than from a list here, which could agree with nothing.
+test('both dispatch pickers offer exactly DISPATCH_VALUES', () => {
+  const optionsIn = (text, label) => {
+    const sel = /<select[^>]*>([\s\S]*?)<\/select>/.exec(text);
+    assert.ok(sel, `ENTER: found the ${label} <select> — a restructured control would reduce this to asserting nothing`);
+    const vals = [...sel[1].matchAll(/<option value="([a-z]+)"/g)].map((m) => m[1]);
+    assert.ok(vals.length > 1, `ENTER: the ${label} picker yielded options`);
+    return vals;
+  };
+  const rd = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf-8');
+
+  // The Add Role form. Sliced from its own id so a second <select> in the block
+  // (prompt) cannot be measured in its place.
+  const html = rd('renderer', 'index.html');
+  const addAt = html.indexOf('id="team-roles-add-dispatch"');
+  assert.ok(addAt > 0, 'ENTER: the Add Role dispatch picker is in index.html');
+  assert.deepStrictEqual(
+    optionsIn(html.slice(html.lastIndexOf('<select', addAt)), 'Add Role form').sort(),
+    [...DISPATCH_VALUES].sort(),
+    'the Add Role form must offer every dispatch value — a value only reachable by editing an '
+    + 'existing role is one an operator cannot create',
+  );
+
+  // The row editor, whose options live in a template literal.
+  const pop = rd('renderer', 'popovers', 'team-roles-popover.js');
+  const rowAt = pop.indexOf('<select data-f="dispatch">');
+  assert.ok(rowAt > 0, 'ENTER: the row editor dispatch picker is in the popover');
+  assert.deepStrictEqual(
+    optionsIn(pop.slice(rowAt), 'row editor').sort(),
+    [...DISPATCH_VALUES].sort(),
+    'and so must the row editor',
+  );
 });
 
 test('buildSavePatch: sends `dispatch` for BOTH enum values, drops an off-enum one', () => {

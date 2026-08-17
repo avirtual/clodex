@@ -13809,9 +13809,14 @@ test('a non-git team root can dispatch, spawn and accept a spawn ticket end to e
   const plain = fsReal.realpathSync(fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'sm-nogit-')));
   assert.ok(!fsReal.existsSync(pathReal.join(plain, '.git')),
     'ENTER: the root must genuinely not be a repo, or this measures nothing');
-  // Every gitWorktree entry point throws: reaching ANY of them is the failure,
-  // and a counter would let the path call one and swallow the result.
-  const boom = (name) => async () => { throw new Error(`git reached: ${name}`); };
+  // Every gitWorktree entry point RECORDS itself and then throws. The record is
+  // the assertion, not the throw: `_existingTicketTree` wraps `listWorktrees` in
+  // its own `try {} catch { return null; }`, so a call to the very entry point
+  // this change removes would be swallowed and never reach a reply. Asserting on
+  // the replies alone pins only `createWorktree` (whose throw does surface), and
+  // the test would pass over a path that still shells out to git.
+  const reached = [];
+  const boom = (name) => async () => { reached.push(name); throw new Error(`git reached: ${name}`); };
   const f = mkTicketWt(plain, { dispatch: 'spawn' }, {
     gitWorktree: {
       createWorktree: boom('createWorktree'),
@@ -13835,8 +13840,8 @@ test('a non-git team root can dispatch, spawn and accept a spawn ticket end to e
   for (let i = 0; i < 15; i++) await new Promise((r) => setImmediate(r));
 
   assert.strictEqual(cwds['team-hand-1'], plain, 'ENTER: the seat spawned, in the non-repo root');
-  assert.ok(!said.some((s) => /git reached/.test(s)),
-    `no git entry point was called on the dispatch path — ${JSON.stringify(said.filter((s) => /git reached/.test(s)))}`);
+  assert.deepStrictEqual(reached, [],
+    'no git entry point was called on the dispatch path — swallowed calls included');
 
   f.m._handleTask(f.m.sessions.get('team-hand-1'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
   for (let i = 0; i < 25; i++) await new Promise((r) => setImmediate(r));
@@ -13847,7 +13852,7 @@ test('a non-git team root can dispatch, spawn and accept a spawn ticket end to e
     { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => said.push(msg));
 
   assert.ok(f.one('t1').acceptedAt > 0, 'and accept closes it out — with no git anywhere on the path');
-  assert.ok(!said.some((s) => /git reached/.test(s)), 'accept reached no git entry point either');
+  assert.deepStrictEqual(reached, [], 'accept reached no git entry point either');
   fsReal.rmSync(plain, { recursive: true, force: true });
 });
 
@@ -13884,6 +13889,65 @@ test('a malformed or unknown dispatch resolves to standing, never to spawn', asy
   assert.strictEqual(f.m._ticketDispatchMode(f.team, 'team-hand-1').mode, 'standing',
     'a SEAT name resolves to standing — a session cwd is fixed at PTY spawn');
   assert.strictEqual(f.m._ticketDispatchMode(f.team, 'nosuchrole').mode, 'standing');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The cross-mode path (r1 MUST-FIX 1). A ticket can arrive at a spawn dispatch
+// already carrying a tree — dispatched to a worktree role, its seat dies, the
+// lead re-assigns to a spawn role. Nothing in the spawn path wrote a worktree,
+// but nothing CLEARED the inherited one either, and a stale pointer outvotes the
+// mode in every reader that tests for it: the spec says both `WORK IN: <another
+// ticket's tree>` and "you have no worktree", the loop gate goes true so the
+// ticket re-enters the git loop this mode exists to avoid, and accept resolves a
+// branch and takes the DESTROY arm on the one-shot seat instead of D5's archive.
+// All four are asserted together because they are one bug, not four.
+test('task assign to a spawn role CLEARS a worktree the ticket inherited', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.team.roles.helper = { instantiate: 'session', brief: 'the helper', dispatch: 'spawn' };
+  const created = [];
+  const cwds = {};
+  f.m.create = async (...args) => { created.push(args[0]); cwds[args[0]] = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.m._injectText = () => {};
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  for (let i = 0; i < 15; i++) await new Promise((r) => setImmediate(r));
+
+  // ENTER: the ticket really acquired a tree. Every "no tree" assertion below is
+  // vacuously true of a ticket that never had one — which is the fresh-spawn
+  // case the other tests already cover, and NOT what this one is about.
+  const before = f.one('t1');
+  assert.ok(before.worktree && before.worktree.path,
+    'ENTER: the worktree dispatch recorded a tree on the ticket');
+  assert.ok(before.worktree.branch, 'ENTER: and a branch, which is what accept resolves');
+
+  // Routine: accept on an unmerged branch archives the seat, and a natural exit
+  // does the same. `killSeat` releases the derived name so the re-assign mints.
+  f.killSeat('team-hand-1');
+  f.gated.length = 0;
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'helper', body: '' });
+  await until(() => f.m.sessions.has('team-helper-1'));
+  for (let i = 0; i < 15; i++) await new Promise((r) => setImmediate(r));
+
+  const t = f.one('t1');
+  assert.strictEqual(t.worktree, undefined,
+    'the inherited tree is cleared from the ticket — ABSENT, which is the state every downstream reader tests');
+  assert.strictEqual(cwds['team-helper-1'], repo, 'and the seat boots in the shared checkout');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one spec delivery to assert on');
+  assert.ok(!/WORK IN:/.test(f.gated[0].body),
+    'the spec carries no WORK IN: line — it would point the seat into the dead ticket\'s branch checkout');
+  assert.match(f.gated[0].body, /SHARED checkout/, 'and does carry the shared-checkout line');
+
+  created.length = 0;
+  f.m._handleTask(f.m.sessions.get('team-helper-1'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped' });
+  for (let i = 0; i < 25; i++) await new Promise((r) => setImmediate(r));
+  const after = f.one('t1');
+  assert.strictEqual(after.state, 'done', 'ENTER: the close landed, so the loop gate was reached');
+  assert.strictEqual(after.loopStep, undefined,
+    'and no loop step: the gate reads the tree the clear removed');
+  assert.deepStrictEqual(created, [], 'no reviewer either');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 

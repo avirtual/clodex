@@ -1621,6 +1621,12 @@ function createTicketMethods(deps, shared) {
     // ticket to a sibling would drop it in another branch's checkout. A dead
     // worktree seat has its own explicit recovery, which names the two real exits
     // rather than guessing a new holder.
+    //
+    // A `spawn` ticket therefore degrades like a standing one, and that is
+    // deliberate: there is no tree to misroute into, so the reason for the
+    // worktree refusal does not apply. The cost is that a one-shot TICKET can be
+    // picked up by a second one-shot seat after the first dies — accepted, since
+    // the alternative is a ticket nothing can answer for.
     // `liveNames` lets a caller in a LOOP walk the live seats once instead of once
     // per ticket. Both reads here are filesystem work, and `_touchTicketActivity`
     // runs on every non-idle activity edge — much hotter than the listers.
@@ -2596,6 +2602,20 @@ function createTicketMethods(deps, shared) {
       return { ok: true, name, branch: slug ? `${ticket.id}-${slug}` : String(ticket.id) };
     },
 
+    // What Delete Session… costs, for the two refusals that offer it as the way
+    // out. The two dispositions are opposites and the wrong one is worse than no
+    // advice: a worktree seat's tree goes with the session and its uncommitted
+    // work with it, while a spawn seat has no tree at all — its work is in the
+    // shared checkout and SURVIVES the delete. A ticket with no `worktree` is the
+    // spawn case (and the never-started one, where there is equally nothing on
+    // disk to lose), so the pointer is the discriminator.
+    _ticketDeleteCost(ticket) {
+      const p = ticket && ticket.worktree && ticket.worktree.path;
+      return p
+        ? `that also deletes its worktree, so anything the seat left UNCOMMITTED in ${p} is lost (committed work survives on the branch).`
+        : `it had no worktree of its own, so nothing on disk is removed — anything it left in the shared checkout survives.`;
+    },
+
     // The live seat working in `treePath`, or null. Read off the PERSISTED record
     // rather than the session: a seat's cwd is the shared repo (it is told its tree
     // rather than booted in it), so cwd cannot answer this.
@@ -3044,7 +3064,9 @@ function createTicketMethods(deps, shared) {
     // operator's checkout on a path that never asked for one. On 'spawn' the tree
     // acquisition below is SKIPPED ENTIRELY rather than made to fail softly: a
     // team whose root is not a git repo is the case this mode exists for, so no
-    // git call may sit on the path at all.
+    // git call may sit on the DISPATCH path. Elsewhere in the ticket's life some
+    // still run and degrade cleanly — `_writeTicketCost`'s orphan sweep is one —
+    // so the claim is about this path, not about the mode as a whole.
     _spawnTicketSeat(opener, team, ticket, roleKey, seat, mode = 'worktree') {
       const isSpawn = mode === 'spawn';
       const reply = (msg) => this._injectText(opener, `[agent:task] ${msg}`, { parkable: true });
@@ -3141,7 +3163,20 @@ function createTicketMethods(deps, shared) {
           // on every dispatch and would leave the non-repo case working by
           // accident rather than by construction.
           const existing = isSpawn ? null : await this._existingTicketTree(team, ticket);
-          if (isSpawn) { /* wt stays null; the seat works in shape.cwd */ }
+          // Not just "don't write one" — CLEAR one already on the record. A ticket
+          // reaches here carrying a tree whenever it was dispatched to a worktree
+          // role first and re-assigned to a spawn role after that seat died, which
+          // takes only lead verbs. Left in place, the pointer outvotes the mode in
+          // every reader that tests for it: the spec says both WORK IN: <another
+          // ticket's tree> and "you have no worktree", `loopEligible` goes true so
+          // the ticket re-enters the git loop this mode exists to avoid, and
+          // _taskAccept resolves a branch and takes the DESTROY arm on the one-shot
+          // seat instead of the archive D5 requires. Clearing it makes all four
+          // agree by construction rather than by the accident of a fresh ticket.
+          // The on-disk git worktree is left alone, still named by the previous
+          // seat's persistence record — the same state every other un-pin path here
+          // leaves behind.
+          if (isSpawn) { clearTicketTree(); }
           else if (existing) { wt = existing; reused = true; }
           else {
             // base HEAD, not the default branch: a ticket is written against the
@@ -3313,9 +3348,14 @@ function createTicketMethods(deps, shared) {
           // it is now skipped in more states than it used to be, and the commonest
           // failure (create() seats, a later step throws) keeps the pin while this
           // line used to say the ticket had gone back to the role.
+          // "whose tree is kept" is only true when there IS one. A spawn seat's
+          // pin is kept for the same reason (the record outlives the failure and
+          // must not be minted over), but naming a tree it never had tells the
+          // lead to go looking for a checkout that does not exist.
+          const keptTree = !!(ticket.worktree && ticket.worktree.path);
           reply(unpinned
             ? `ticket ${ticket.id}: seat ${seat.name} failed to spawn (${err.message}) — ticket left assigned to "${roleKey}"`
-            : `ticket ${ticket.id}: seat ${seat.name} failed to spawn (${err.message}) — the ticket stays pinned to "${seat.name}", whose tree is kept; re-assign it to retry`);
+            : `ticket ${ticket.id}: seat ${seat.name} failed to spawn (${err.message}) — the ticket stays pinned to "${seat.name}"${keptTree ? ', whose tree is kept' : ' (no worktree — it was working in the shared checkout)'}; re-assign it to retry`);
         }
       });
     },
@@ -3420,7 +3460,7 @@ function createTicketMethods(deps, shared) {
         log.info('intent', `task start by ${session.name}: ${ticket.id} held — seat ${assignee} exists but is not live`);
         reply(`ticket ${ticket.id} is pinned to ${assignee}, whose session exists but is archived or dead — nothing was started. `
           + `Unarchive it from the sidebar (its spec replays on resume), or Delete Session… to release the name and start again — `
-          + `that also deletes its worktree, so anything the seat left UNCOMMITTED in ${ticket.worktree && ticket.worktree.path ? ticket.worktree.path : 'that tree'} is lost (committed work survives on the branch).`);
+          + this._ticketDeleteCost(ticket));
         return;
       }
       // Same occupancy refusal `assign` makes, and above every write below it for
@@ -3553,7 +3593,7 @@ function createTicketMethods(deps, shared) {
         log.info('intent', `task assign by ${session.name}: ${ticket.id} held — seat ${prev} exists but is not live`);
         reply(`ticket ${ticket.id} is still pinned to ${prev}, whose session exists but is archived or dead — nothing was delivered. `
           + `Unarchive it from the sidebar (its spec replays on resume), or Delete Session… to release the name and re-assign — `
-          + `that also deletes its worktree, so anything the seat left UNCOMMITTED in ${ticket.worktree && ticket.worktree.path ? ticket.worktree.path : 'that tree'} is lost (committed work survives on the branch).`);
+          + this._ticketDeleteCost(ticket));
         return;
       }
       // Resolved above the notice below, which would otherwise tell the hand its
