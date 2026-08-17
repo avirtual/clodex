@@ -4493,6 +4493,32 @@ test('team-review: an empty scope is bounced, nothing spawned', async () => {
   assert.ok(injected.some((t) => /a review scope is required/.test(t)));
 });
 
+// The ticket path's twin is covered; this is the REVIEW path, where `cwdWarn` was
+// built and interpolated with nothing exercising it. A silent fallback here is the
+// worst-placed one in the system: the reviewer reads the right repo from the wrong
+// directory and reports a verdict, and no other line in the run says so.
+test('team-review: a role cwd the resolver refuses is NAMED in the reply, and the reviewer spawns at the team root', async () => {
+  const { m, injected, created } = mkReview({
+    // Absolute, so the refusal is lexical and needs no directory on disk — /proj
+    // is a fixture path that does not exist.
+    reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
+      tools: ['Read', 'Grep', 'Glob'], type: null, template: null, standing: null, ephemeral: false, cwd: '/etc' },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'check the thing');
+  await new Promise((r) => setImmediate(r));
+
+  // ENTER: the reviewer really spawned. Both assertions below are about a spawn
+  // that happened — a refusal that BLOCKED the review would satisfy neither.
+  assert.strictEqual(created.length, 1, 'ENTER: exactly one reviewer seat spawned — the cwd is a warn, never a block');
+  assert.strictEqual(created[0][2], '/proj',
+    'the reviewer boots at the team root, not at the refused directory');
+  const reply = injected.find((t) => /spawned team-reviewer-1/.test(t));
+  assert.ok(reply, `ENTER: the spawn reply must have landed, got: ${JSON.stringify(injected)}`);
+  assert.match(reply, /NOTE: role cwd "\/etc" is absolute/,
+    'and the lead is told the cwd was refused — the alternative is a reviewer working somewhere nobody knows');
+});
+
 test('team-review: a teamless sender is bounced', async () => {
   const { m, injected, created } = mkReview();
   m.sessions.set('solo', { name: 'solo', agentType: 'claude', cwd: '/elsewhere', workspaceId: 'default' });
@@ -6210,7 +6236,15 @@ function mkSpillTasks(extra = {}) {
     const m = /minutes and then swept: (\S+)/.exec(bounce(re) || '');
     return m ? fsReal.readFileSync(m[1], 'utf8') : null;
   };
-  return { ...f, spills, recovered, bounce };
+  // The bounce with the fixture's OWN temp directory masked out, for the
+  // "renders fully" assertion below. mkdtempSync's suffix is random and mixed
+  // case, so it can contain the literal `NaN` — a real run drew
+  // `clodex-t166-0ENaNL` and failed a test about unwired deps. Only the directory
+  // the FIXTURE chose is masked: the filename stays under the assertion, because
+  // that half is production-interpolated (an unwired recipient renders
+  // `msg-undefined-N.txt`) and is exactly what this is meant to catch.
+  const bounceRendered = (re) => (bounce(re) || '').split(spillDir).join('<spilldir>');
+  return { ...f, spills, spillDir, recovered, bounce, bounceRendered };
 }
 
 // THE priority case (spec's verification section): the longest payload in the
@@ -6328,7 +6362,12 @@ for (const [label, sender, intent, bounceRe, opts = {}] of T166_SITES) {
     // Every assertion above passes against "NaN minutes", because the deadline sits
     // before the path they read. An unrenderable number in an operator-facing string
     // means the fixture is not reaching the state it claims to model.
-    assert.doesNotMatch(f.bounce(bounceRe), /NaN|undefined/,
+    //
+    // Read through bounceRendered: the temp DIRECTORY is the fixture's own random
+    // string and can spell `NaN` by coincidence, which is a flake and not a dep.
+    // Everything the code renders — the deadline, the sender, the spill filename —
+    // is still in the string being matched.
+    assert.doesNotMatch(f.bounceRendered(bounceRe), /NaN|undefined/,
       'the bounce must render fully — an unset dep here yields a sentence no user sees');
   });
 }
@@ -12323,6 +12362,54 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   // own map because setWorktree/remove already maintain it there, and two
   // writers onto one key is how the two spellings drift.
   const fieldsByName = new Map();
+  const persistence = {
+    // Records, not names: the reuse path SCANS this to find another record
+    // naming the tree it is about to take over. An empty list makes that scan
+    // vacuous and the stale-pointer bug unreachable.
+    list: () => upserted.map((n) => ({ ...(fieldsByName.get(n) || {}), name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) })),
+    get: (n) => (upserted.includes(n)
+      ? { ...(fieldsByName.get(n) || {}), name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) }
+      : (n === 'lead' ? { extraArgs: [] } : null)),
+    // Dedupe: the real store keys by name, so a name pushed twice would appear
+    // twice in list() and be cleared twice by the pointer scan.
+    //
+    // The whole ENTRY is kept, not just the name. The real store persists every
+    // field it is handed, and `ephemeral: true` — stamped by _spawnTicketSeat
+    // and read by accept to tell a one-shot seat from a standing one — is
+    // invisible to a stub that records names alone. That gap is silent in the
+    // direction that matters: the missing key reads as `undefined`, which is
+    // exactly "not ephemeral", so the standing arm runs and the test sees a
+    // teardown that simply did not happen.
+    upsert: (e) => {
+      if (!upserted.includes(e.name)) upserted.push(e.name);
+      const { name, worktree, ...rest } = e;
+      fieldsByName.set(e.name, { ...(fieldsByName.get(e.name) || {}), ...rest });
+    },
+    // Splices `upserted` as well as clearing the tree, mirroring the real store:
+    // a get()/list() that keeps reporting a removed record makes the respawn path
+    // (which re-enters through _mintTicketSeat's taken check) unrepresentable.
+    remove: (n) => {
+      removed.push(n);
+      wtByName.delete(n);
+      fieldsByName.delete(n);
+      const i = upserted.indexOf(n);
+      if (i >= 0) upserted.splice(i, 1);
+    },
+    // Mirrors the real store, which DELETES the key for a null worktree rather
+    // than storing one — a stub that kept it would leave the cleared seat still
+    // looking like the tree's holder.
+    setWorktree: (name, wt) => {
+      worktreeSet.push({ name, wt });
+      if (wt && wt.path) wtByName.set(name, wt); else wtByName.delete(name);
+    },
+    // Recorders, not no-ops: the ticket path's only persistence-application
+    // assertion was create()'s argv, so deleting its _applyTemplatePersistence
+    // call left the suite green. Gated on `upserted` for the same reason the
+    // real setters resolve by name — an unconditional recorder cannot tell a
+    // call placed BEFORE create() from one placed after.
+    setStripLevel: (n, l) => { if (upserted.includes(n)) stripCalls.push([n, l]); },
+    setAutoCompact: (n, on) => { if (upserted.includes(n)) acCalls.push([n, on]); },
+  };
   const m = mkPark({
     fs: fsReal, path: pathReal, os: osReal, countPending: countPendingReal,
     REGISTRY_DIR: home,
@@ -12330,54 +12417,7 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
     resolveTeam: (cwd) => (cwd && cwd.startsWith(repo) ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(repo) ? repo : null),
     gitWorktree: require('../git-worktree'),
-    getPersistence: () => ({
-      // Records, not names: the reuse path SCANS this to find another record
-      // naming the tree it is about to take over. An empty list makes that scan
-      // vacuous and the stale-pointer bug unreachable.
-      list: () => upserted.map((n) => ({ ...(fieldsByName.get(n) || {}), name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) })),
-      get: (n) => (upserted.includes(n)
-        ? { ...(fieldsByName.get(n) || {}), name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) }
-        : (n === 'lead' ? { extraArgs: [] } : null)),
-      // Dedupe: the real store keys by name, so a name pushed twice would appear
-      // twice in list() and be cleared twice by the pointer scan.
-      //
-      // The whole ENTRY is kept, not just the name. The real store persists every
-      // field it is handed, and `ephemeral: true` — stamped by _spawnTicketSeat
-      // and read by accept to tell a one-shot seat from a standing one — is
-      // invisible to a stub that records names alone. That gap is silent in the
-      // direction that matters: the missing key reads as `undefined`, which is
-      // exactly "not ephemeral", so the standing arm runs and the test sees a
-      // teardown that simply did not happen.
-      upsert: (e) => {
-        if (!upserted.includes(e.name)) upserted.push(e.name);
-        const { name, worktree, ...rest } = e;
-        fieldsByName.set(e.name, { ...(fieldsByName.get(e.name) || {}), ...rest });
-      },
-      // Splices `upserted` as well as clearing the tree, mirroring the real store:
-      // a get()/list() that keeps reporting a removed record makes the respawn path
-      // (which re-enters through _mintTicketSeat's taken check) unrepresentable.
-      remove: (n) => {
-        removed.push(n);
-        wtByName.delete(n);
-        fieldsByName.delete(n);
-        const i = upserted.indexOf(n);
-        if (i >= 0) upserted.splice(i, 1);
-      },
-      // Mirrors the real store, which DELETES the key for a null worktree rather
-      // than storing one — a stub that kept it would leave the cleared seat still
-      // looking like the tree's holder.
-      setWorktree: (name, wt) => {
-        worktreeSet.push({ name, wt });
-        if (wt && wt.path) wtByName.set(name, wt); else wtByName.delete(name);
-      },
-      // Recorders, not no-ops: the ticket path's only persistence-application
-      // assertion was create()'s argv, so deleting its _applyTemplatePersistence
-      // call left the suite green. Gated on `upserted` for the same reason the
-      // real setters resolve by name — an unconditional recorder cannot tell a
-      // call placed BEFORE create() from one placed after.
-      setStripLevel: (n, l) => { if (upserted.includes(n)) stripCalls.push([n, l]); },
-      setAutoCompact: (n, on) => { if (upserted.includes(n)) acCalls.push([n, on]); },
-    }),
+    getPersistence: () => persistence,
     getTemplates: () => ({ list: () => [] }),
     ensureDir: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
@@ -12419,7 +12459,7 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   const record = (n) => (upserted.includes(n)
     ? { ...(fieldsByName.get(n) || {}), name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) }
     : null);
-  return { m, team, home, tstore, seat, seatWithTree, gated, upserted, removed, worktreeSet, stripCalls, acCalls, archiveSeat, killSeat, record,
+  return { m, team, home, tstore, seat, seatWithTree, gated, upserted, removed, worktreeSet, stripCalls, acCalls, archiveSeat, killSeat, record, persistence,
     load: () => tstore.load(team.root), one: (id) => tstore.load(team.root).find((t) => t.id === id) };
 }
 
@@ -12636,6 +12676,47 @@ test('task start: a hand-edited escaping cwd yields NO area line, and the lead i
     'the AREA line must be suppressed by the SAME neutralization the spawn applied');
   assert.doesNotMatch(f.gated[0].body, /elsewhere/, 'and the bad value must not reach the seat in any form');
   assert.match(reply, /resolves outside the team root/, 'the lead is told the cwd was refused');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The lexical helper is only HALF the refusals. The resolver adds three it cannot
+// make — the directory missing, a symlink realpathing out of the root, a nested
+// team.json owning it — and each ends with the seat booted at the tree root. The
+// AREA line read the lexical half alone, so a cwd refused for any of those three
+// still got a "YOUR AREA in that tree: <wt>/<rel>" naming a directory the seat was
+// never spawned in. A missing directory is the cheapest of the three to drive.
+test('task start: a cwd the RESOLVER refuses (not the lexical check) yields no AREA line either', async () => {
+  const { root, repo } = mkGitRepo();
+  // Lexically impeccable — relative, no escape, normalizes to itself — so the
+  // helper returns it as a `rel` and only the resolver's stat refuses it. A test
+  // using an absolute or escaping path would pass against the OLD gate too.
+  const f = mkTicketWt(repo, { cwd: 'api' });
+  const replies = [];
+  f.m._injectText = (_s, text) => { replies.push(text); };
+  let createdCwd = 'UNSET';
+  f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build it' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => createdCwd !== 'UNSET' || f.gated.length);
+
+  assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: create() must have been reached');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery to assert on');
+  assert.match(f.gated[0].body, /WORK IN: /, 'ENTER: the worktree dispatch shape is the one under test');
+  // ENTER: the value has to survive the LEXICAL half, or this test is a duplicate
+  // of the escaping-cwd one above and proves nothing about the resolver.
+  assert.strictEqual(f.m._roleCwdRel(f.team.roles.hand).rel, 'api',
+    'ENTER: the lexical helper must ACCEPT this cwd — the resolver is what refuses it');
+  assert.ok(!fsReal.existsSync(pathReal.join(repo, 'api')),
+    'ENTER: and the directory must be absent, which is the resolver-only refusal being driven');
+
+  assert.strictEqual(createdCwd, repo, 'the seat falls back to the team root, as the resolver decided');
+  assert.doesNotMatch(f.gated[0].body, /YOUR AREA/,
+    'and the AREA line is gone with it — a refused cwd names no honorable area, whatever refused it');
+  const reply = replies.find((r) => /ticket \S+ → \S+ on /.test(r));
+  assert.ok(reply, `ENTER: the spawn reply must have landed, got: ${JSON.stringify(replies)}`);
+  assert.match(reply, /does not exist under the team root/, 'the lead is still told why');
 
   fsReal.rmSync(root, { recursive: true, force: true });
 });
@@ -13768,6 +13849,81 @@ test('task start: a spawn dispatch carries the shared-checkout line and NO WORK 
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
+// The shared-checkout line and `WORK IN:` gate on DIFFERENT facts — the role's
+// dispatch mode versus the ticket's own pointer — and the two can disagree. When
+// they do, one dispatch tells a seat both "commit to <branch> as you go" and "you
+// have no branch of your own". The pointer is the half that is real (the loop and
+// the accept teardown both act on that tree), so the TEXT yields to it. Two
+// reachable ways in, one test each.
+test('task assign: a role flipped worktree→spawn mid-flight does NOT tell its seat it has no branch', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.m._injectText = () => {};
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+
+  // ENTER: the ticket must really hold a tree, or the contradiction under test
+  // cannot form and every assertion below passes on the spawn dispatch's own text.
+  assert.ok(f.one('t1').worktree && f.one('t1').worktree.path,
+    'ENTER: the ticket carries a worktree, minted while the role still said worktree');
+
+  // The operator edits the role while the ticket is in flight. The tree already
+  // exists and stays the seat's; only the mode changed.
+  f.team.roles.hand.dispatch = 'spawn';
+  f.gated.length = 0;
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
+  await until(() => f.gated.length > 0);
+
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one re-send to assert on');
+  const body = f.gated[0].body;
+  assert.match(body, /WORK IN: /, 'the tree pointer still rides — it is the half that is real');
+  assert.ok(!/SHARED checkout/.test(body),
+    'and the shared-checkout line must NOT, or one message says both "commit to your branch" and "you have none"');
+  assert.ok(!/no worktree and no branch of your own/.test(body),
+    'stated against the sentence itself, not just its heading');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The other way in: _taskAssign's mint-failure fall-through. The derived seat name
+// is TAKEN by a seat that is not this ticket's current assignee, so `minted.ok` is
+// false and the oneShot arm falls through to the generic delivery — with the tree
+// the ticket already carries still on the record and the spawn role still
+// resolving. Nothing between there and the delivery clears either.
+test('task assign: the mint-failure fall-through on a spawn role keeps the tree pointer un-contradicted', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo, { dispatch: 'spawn' });
+  f.m._injectText = () => {};
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+
+  // An inherited tree on a ticket that is still filed under its ROLE: the shape a
+  // record written by an earlier run (or by session:markWorktree) leaves behind.
+  const tickets = f.load();
+  const t = tickets.find((x) => x.id === 't1');
+  t.worktree = { path: pathReal.join(root, 'inherited-tree'), branch: 't1-inherited' };
+  f.tstore.save(f.team.root, tickets);
+  // Holds the DERIVED name without being the ticket's assignee — this is what
+  // makes the mint fail `taken` with `name !== prev`.
+  f.seat('team-hand-1');
+
+  assert.strictEqual(f.one('t1').assignee, 'hand', 'ENTER: still filed under the role, so prev !== the derived name');
+  assert.ok(f.one('t1').worktree.path, 'ENTER: and it carries a tree the fall-through will not clear');
+
+  f.gated.length = 0;
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
+  await until(() => f.gated.length > 0);
+
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery — the fall-through really delivered');
+  const body = f.gated[0].body;
+  assert.match(body, /WORK IN: /, 'ENTER: the inherited pointer reached the dispatch, which is the whole premise');
+  assert.ok(!/SHARED checkout/.test(body),
+    'so the shared-checkout line stands down here too — same contradiction, different way in');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
 // D4: the ticket loop is gated on the ticket having a BRANCH, and every check in
 // it (commits, ancestry, a diff) is a question about one. A spawn ticket has
 // none, so `done` must stay terminal. This is EXISTING behaviour of the gate;
@@ -14011,6 +14167,11 @@ test('task accept: a STANDING seat on the same arm is left exactly as it is', as
   f.m.destroy = async (n) => { destroyed.push(n); return { ok: true }; };
   f.seat('lead');
   const hand = f.seat('hand');
+  // A real operator seat HAS a persistence record; `f.seat()` only seats a
+  // session. Without this upsert the arm is reached with `rec === null`, so
+  // `ephemeral` is falsy because there is no record at all — and the control
+  // would pass against an arm that checked `!rec` and nothing more.
+  f.persistence.upsert({ name: 'hand' });
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
@@ -14020,6 +14181,12 @@ test('task accept: a STANDING seat on the same arm is left exactly as it is', as
   assert.strictEqual(f.one('t1').state, 'done', 'ENTER: the ticket is done');
   assert.strictEqual(f.one('t1').worktree, undefined, 'ENTER: and it has no branch, so it takes the same arm');
   assert.ok(f.m.sessions.has('hand'), 'ENTER: the standing seat is live');
+  // ENTER: the record EXISTS and merely lacks the key — the shape a real operator
+  // seat has. Reaching the arm with no record at all would satisfy an arm that
+  // only checked `!rec`, and the control would hold for the wrong reason.
+  assert.ok(f.record('hand'), 'ENTER: the standing seat has a persistence record, as a real one does');
+  assert.strictEqual(f.record('hand').ephemeral, undefined,
+    'ENTER: and it is non-ephemeral by ABSENCE of the key, which is what accept has to read past');
 
   const said = [];
   await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
