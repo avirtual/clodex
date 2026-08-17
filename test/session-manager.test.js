@@ -12511,6 +12511,111 @@ test('task add: an opted-in role mints a branch, a worktree and a seat, and the 
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
+// The role-cwd AREA line. It is ADDITIVE to `WORK IN:` and must never rewrite
+// it: wt.path is the tree identity claimTree, the suite runner and the merge all
+// use, so a WORK IN: naming a subdirectory would be copied straight into a git
+// command that then runs in the wrong place.
+test('task start: a role cwd adds an AREA line under an UNCHANGED WORK IN:, and boots the seat there', async () => {
+  const { root, repo } = mkGitRepo();
+  fsReal.mkdirSync(pathReal.join(repo, 'api'));
+  const f = mkTicketWt(repo, { cwd: 'api' });
+  let createdCwd = 'UNSET';
+  f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  // The reattach payload feeds the sidebar row's dataset.cwd, which is what
+  // "Reveal Working Directory in Finder" opens. It sent team.root while create()
+  // got the role cwd — and after a restart the row is rebuilt from the
+  // persistence record, so the app disagreed with itself across a restart.
+  const reattached = [];
+  f.m._sendToSession = (_n, ch, p) => { if (ch === 'session:context-action') reattached.push(p); };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build it' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => createdCwd !== 'UNSET' || f.gated.length);
+
+  // ENTER: a dispatch that never spawned delivers no body, and every assertion
+  // below would read as a vacuous absence — including the two that ARE absences.
+  assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: create() must have been reached');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery to assert on');
+  const wtPath = f.worktreeSet.length ? f.worktreeSet[0].wt.path : null;
+  assert.ok(wtPath, 'ENTER: a worktree must have been minted');
+
+  assert.strictEqual(createdCwd, pathReal.join(repo, 'api'),
+    'the seat boots in the role subdirectory of the SHARED repo, not in the worktree');
+  const body = f.gated[0].body;
+  assert.match(body, new RegExp(`WORK IN: ${wtPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(git worktree`),
+    'WORK IN: still names the tree ROOT — every git command in the spec is relative to it');
+  assert.strictEqual((body.match(/YOUR AREA in that tree:/g) || []).length, 1,
+    'exactly one AREA line');
+  assert.match(body, new RegExp(`YOUR AREA in that tree: ${pathReal.join(wtPath, 'api').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `),
+    'the AREA line joins the role cwd onto the WORKTREE path, not onto the repo');
+
+  // ENTER: a payload list that never got the reattach makes the cwd assertion
+  // below read off `undefined?.cwd`, which is not `repo` either.
+  const ra = reattached.find((p) => p && p.action === 'reattach');
+  assert.ok(ra, `ENTER: the reattach payload must have been sent, got: ${JSON.stringify(reattached)}`);
+  assert.strictEqual(ra.cwd, createdCwd,
+    'the sidebar row is told the directory the seat actually booted in, not the team root');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The control. Without it a line emitted UNCONDITIONALLY passes the test above,
+// since that one only asserts the line is present and well-formed.
+test('task start: a role with NO cwd gets no AREA line at all', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  let createdCwd = 'UNSET';
+  f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build it' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => createdCwd !== 'UNSET' || f.gated.length);
+
+  assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: create() must have been reached');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery to assert on');
+  assert.match(f.gated[0].body, /WORK IN: /, 'ENTER: the worktree dispatch shape is the one under test');
+
+  assert.strictEqual(createdCwd, repo, 'no cwd means the team root');
+  assert.doesNotMatch(f.gated[0].body, /YOUR AREA/, 'no role cwd, no AREA line');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The pin on the shared-helper fix. team.json is agent-writable and the LOAD path
+// is deliberately lenient, on the promise that a bad cwd is neutralized at spawn.
+// This line read the raw value, so it kept telling the seat its files lived
+// outside the worktree while the lead's reply said the seat was spawned at the
+// root — the two messages contradicting each other, and the one the HAND reads
+// pointing out of its tree.
+test('task start: a hand-edited escaping cwd yields NO area line, and the lead is told why', async () => {
+  const { root, repo } = mkGitRepo();
+  // Not `../x`: this collapses to an escape only after normalization, so a check
+  // that looks for a leading ".." on the raw string waves it through.
+  const f = mkTicketWt(repo, { cwd: 'api/../../elsewhere' });
+  const replies = [];
+  f.m._injectText = (_s, text) => { replies.push(text); };
+  let createdCwd = 'UNSET';
+  f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build it' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => createdCwd !== 'UNSET' || f.gated.length);
+
+  assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: create() must have been reached');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery to assert on');
+  assert.match(f.gated[0].body, /WORK IN: /, 'ENTER: the worktree dispatch shape is the one under test');
+  const reply = replies.find((r) => /ticket \S+ → \S+ on /.test(r));
+  assert.ok(reply, `ENTER: the spawn reply must have landed, got: ${JSON.stringify(replies)}`);
+
+  assert.strictEqual(createdCwd, repo, 'the seat falls back to the team root');
+  assert.doesNotMatch(f.gated[0].body, /YOUR AREA/,
+    'the AREA line must be suppressed by the SAME neutralization the spawn applied');
+  assert.doesNotMatch(f.gated[0].body, /elsewhere/, 'and the bad value must not reach the seat in any form');
+  assert.match(reply, /resolves outside the team root/, 'the lead is told the cwd was refused');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
 // Wiring, not slug rules — those are pinned in tickets-store.test.js. What this
 // asserts is that the branch git actually checks out went through branchSlug:
 // _mintTicketSeat carried its own inline slugger for three tickets, and the

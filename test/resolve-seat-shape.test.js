@@ -24,11 +24,17 @@ const { CLAUDE_TOOLS } = require('../catalogs');
 
 const REVIEWER_CAP = ['Read', 'Grep', 'Glob'];
 
-function managerWith(templatesList, { leadArgs = [] } = {}) {
+// `resolveTeam` is injected only by the role-cwd tests: it is what the
+// re-parenting guard consults, and the rest of this file never reaches it. The
+// default answers "this path belongs to no team", which is what the guard must
+// treat as "not re-parented" — a null owner is the ordinary case (no nested
+// team.json anywhere), not a reason to fall back.
+function managerWith(templatesList, { leadArgs = [], resolveTeam = () => null } = {}) {
   const SessionManager = createSessionManager({
     os,
     fs,
     path,
+    resolveTeam,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({
       get: (n) => (n === 'lead' ? { name: 'lead', extraArgs: leadArgs } : null),
@@ -60,6 +66,7 @@ test('ticket purpose: the whole shape, with no template', () => {
   assert.deepStrictEqual(m.resolveSeatShape(team, 'hand', 'ticket', LEAD), {
     type: 'claude',
     cwd: '/repo',
+    cwdFallback: null,
     tpl: null,
     extraArgs: [],
     agents: [],
@@ -94,6 +101,7 @@ test('review purpose: the whole shape, with no template', () => {
   assert.deepStrictEqual(m.resolveSeatShape(team, 'reviewer', 'review', LEAD), {
     type: 'claude',
     cwd: '/repo',
+    cwdFallback: null,
     tpl: null,
     extraArgs: [],
     agents: [],
@@ -148,6 +156,7 @@ test('review purpose: the whole shape, WITH a template (the production config)',
   assert.deepStrictEqual(shape, {
     type: 'claude',
     cwd: '/repo',
+    cwdFallback: null,
     tpl: shape.tpl,   // identity-compared below; the whole template is not the contract
     extraArgs: ['--dangerously-skip-permissions'],
     agents: [],
@@ -195,6 +204,7 @@ test('ticket purpose: the whole shape, WITH a template', () => {
   assert.deepStrictEqual(shape, {
     type: 'claude',
     cwd: '/repo',
+    cwdFallback: null,
     tpl: shape.tpl,
     extraArgs: ['--foo'],
     agents: ['a'],
@@ -691,4 +701,251 @@ test('t386: the TICKET path is untouched — it still takes template argv verbat
     ['--model', 'opus', '--dangerously-skip-permissions'],
     'ticket arm: verbatim, including args the review arm refuses',
   );
+});
+
+// ─── ROLE CWD (t422) ────────────────────────────────────────────────────────
+//
+// A role may name a subdirectory of the team root as its seats' working
+// directory. The resolver owns it for BOTH purposes, which is what keeps the
+// two spawn paths from growing a second, divergent copy — the defect this whole
+// file exists to pin.
+//
+// These tests use a REAL temp directory because the resolution stats the disk:
+// the field must name a directory that exists, and a stub fs would make the
+// D6 fallback untestable at exactly the point it matters.
+
+// A team root on disk, with `api/` inside it. Returned as a team object shaped
+// like a loaded manifest.
+function teamOnDisk(roles) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'rolecwd-')));
+  fs.mkdirSync(path.join(root, 'api'));
+  return { name: 'crew', lead: 'lead', root, roles };
+}
+
+test('role cwd: the ticket arm boots the seat in the role subdirectory — whole shape', () => {
+  const team = teamOnDisk({ hand: { dispatch: 'worktree', prompt: 'hand-brief', cwd: 'api' } });
+  const m = managerWith([]);
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+  // ENTER: the field under test actually moved the cwd. Every assertion below is
+  // about a whole object that would still deepEqual if `cwd` had been dropped and
+  // the expectation written to match — this states the interesting difference
+  // from team.root FIRST, so a resolver that ignored the field fails here.
+  assert.strictEqual(shape.cwd, path.join(team.root, 'api'),
+    'ENTER: the role cwd resolved to <root>/api — equal to team.root would mean the field was ignored');
+  assert.notStrictEqual(shape.cwd, team.root);
+  assert.deepStrictEqual(shape, {
+    type: 'claude',
+    cwd: path.join(team.root, 'api'),
+    cwdFallback: null,
+    tpl: null,
+    extraArgs: [],
+    agents: [],
+    denyBuiltins: [],
+    disabledTools: [],
+    disabledSkills: [],
+    injectSkills: [],
+    effectiveTools: null,
+    requestedTools: null,
+    toolsMalformed: false,
+    modelRefused: null,
+    systemPromptFile: 'hand-brief',
+    appendPromptFiles: [],
+    execCommands: [],
+    intents: null,
+    env: null,
+    envDropped: [],
+    envBadType: [],
+    beyondCap: [],
+    promptEscaped: null,
+    workspaceId: 'ws-7',
+    ephemeral: true,
+  });
+});
+
+test('role cwd: a role WITHOUT one still boots at the team root — whole shape', () => {
+  // The control for the pin above. Same team, same everything, one field absent:
+  // the difference between the two objects is the whole feature.
+  const team = teamOnDisk({ hand: { dispatch: 'worktree', prompt: 'hand-brief' } });
+  const m = managerWith([]);
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+  assert.deepStrictEqual(shape, {
+    type: 'claude',
+    cwd: team.root,
+    cwdFallback: null,
+    tpl: null,
+    extraArgs: [],
+    agents: [],
+    denyBuiltins: [],
+    disabledTools: [],
+    disabledSkills: [],
+    injectSkills: [],
+    effectiveTools: null,
+    requestedTools: null,
+    toolsMalformed: false,
+    modelRefused: null,
+    systemPromptFile: 'hand-brief',
+    appendPromptFiles: [],
+    execCommands: [],
+    intents: null,
+    env: null,
+    envDropped: [],
+    envBadType: [],
+    beyondCap: [],
+    promptEscaped: null,
+    workspaceId: 'ws-7',
+    ephemeral: true,
+  });
+});
+
+test('role cwd: the REVIEW arm honors it too (D4) — whole shape', () => {
+  // Shared resolver, so this costs nothing and special-casing the reviewer out
+  // would be a second rule to remember. The reviewer's CAP is unaffected: the
+  // tool ceiling and the forced claude type are code, not a directory.
+  const team = teamOnDisk({ reviewer: { cwd: 'api' } });
+  const m = managerWith([]);
+  const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.strictEqual(shape.cwd, path.join(team.root, 'api'),
+    'ENTER: the reviewer resolved into <root>/api — team.root would mean the review arm ignored the field');
+  assert.deepStrictEqual(shape, {
+    type: 'claude',
+    cwd: path.join(team.root, 'api'),
+    cwdFallback: null,
+    tpl: null,
+    extraArgs: [],
+    agents: [],
+    denyBuiltins: [],
+    disabledTools: CLAUDE_TOOLS.filter((t) => !REVIEWER_CAP.includes(t)),
+    disabledSkills: [],
+    injectSkills: [],
+    effectiveTools: REVIEWER_CAP,
+    requestedTools: null,
+    toolsMalformed: false,
+    modelRefused: null,
+    systemPromptFile: 'clodex-team-reviewer',
+    appendPromptFiles: [],
+    execCommands: [],
+    intents: [],
+    env: {
+      CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
+      FORCE_PROMPT_CACHING_5M: '1',
+      CLODEX_DISABLE_IPC_PROMPT: '1',
+      CLODEX_SPAWNER_HINT: 'off',
+      CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS: '60000',
+    },
+    envDropped: [],
+    envBadType: [],
+    beyondCap: [],
+    promptEscaped: null,
+    workspaceId: 'ws-7',
+    ephemeral: true,
+  });
+});
+
+test('role cwd: a directory that has GONE falls back to the team root AND says so (D6)', () => {
+  // Reachable without any hand-edit: a write-time-valid cwd, in a worktree cut
+  // from a base that predates the directory. The seat must still spawn.
+  const team = teamOnDisk({ hand: { cwd: 'gone' } });
+  const m = managerWith([]);
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+  // ENTER: `cwd === team.root` is ALSO true of a role that never named one, so
+  // the fallback CLAUSE is the only thing that distinguishes this state from the
+  // control test above. Asserting the cwd alone would pass over a resolver that
+  // silently dropped the field entirely.
+  assert.ok(shape.cwdFallback, 'ENTER: a fallback was reported — without it this asserts the same thing as "no cwd set"');
+  assert.match(shape.cwdFallback, /does not exist/);
+  assert.match(shape.cwdFallback, /gone/);
+  assert.strictEqual(shape.cwd, team.root);
+});
+
+test('role cwd: an ABSOLUTE cwd on disk cannot point a seat out of the project', () => {
+  // team.json is hand-editable, so a file predating the write-time refusal must
+  // not be able to boot a PTY at /etc. Re-checked at spawn for that reason.
+  const team = teamOnDisk({ hand: { cwd: '/etc' } });
+  const m = managerWith([]);
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+  assert.ok(shape.cwdFallback, 'ENTER: the absolute path was refused and reported');
+  assert.match(shape.cwdFallback, /absolute/);
+  assert.strictEqual(shape.cwd, team.root, 'the seat boots at the team root, never at the absolute path');
+});
+
+test('role cwd: a `..` escape on disk cannot point a seat out of the project', () => {
+  const team = teamOnDisk({ hand: { cwd: 'api/../../elsewhere' } });
+  const m = managerWith([]);
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+  // The interesting half: this string does NOT start with '..', so a prefix
+  // check on the raw input reads it as confined. Only resolving catches it.
+  assert.ok(shape.cwdFallback, 'ENTER: the escape was caught — a raw-prefix check would have passed this one');
+  assert.match(shape.cwdFallback, /outside the team root/);
+  assert.strictEqual(shape.cwd, team.root);
+});
+
+test('role cwd: a SYMLINK out of the root cannot point a seat at another project', () => {
+  // statSync follows the link, so the directory check passes, and a lexical
+  // confinement compares strings, so `link` reads as confined — while the PTY
+  // would boot in another project. Only realpath sees it.
+  const team = teamOnDisk({ hand: { cwd: 'link' } });
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'rolecwd-out-')));
+  fs.symlinkSync(outside, path.join(team.root, 'link'));
+  const m = managerWith([]);
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+  assert.ok(shape.cwdFallback, 'ENTER: the symlink escape was caught — a lexical check passes this one');
+  assert.match(shape.cwdFallback, /outside the team root/);
+  assert.strictEqual(shape.cwd, team.root);
+});
+
+test('role cwd: a symlink INSIDE the root is honored, and so is a symlinked root', () => {
+  // The other side, and why BOTH sides are realpath'd: a /tmp root is itself
+  // reached through a symlink on macOS, and a one-sided compare would fall back
+  // on every legitimate cwd there — turning the feature off exactly where the
+  // tests run.
+  const real = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'rolecwd-real-')));
+  fs.mkdirSync(path.join(real, 'api'));
+  fs.symlinkSync(path.join(real, 'api'), path.join(real, 'api-link'));
+  const linkRoot = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rolecwd-lnk-')), 'proj');
+  fs.symlinkSync(real, linkRoot);
+  assert.notStrictEqual(fs.realpathSync(linkRoot), linkRoot,
+    'ENTER: the root really is reached through a symlink, or this asserts nothing');
+  const team = { name: 'crew', lead: 'lead', root: linkRoot, roles: { hand: { cwd: 'api-link' } } };
+  const m = managerWith([]);
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+  assert.strictEqual(shape.cwdFallback, null, 'a link that stays inside the root is fine');
+  assert.strictEqual(shape.cwd, path.join(linkRoot, 'api-link'),
+    'and the seat gets the path as WRITTEN — the realpath is the check, not the value');
+});
+
+test('role cwd: "." is the team root spelled long, and emits no fallback', () => {
+  // Honoring it would resolve to exactly the directory the no-cwd path uses
+  // while adding an AREA line pointing at the tree root the WORK IN: line above
+  // it already names.
+  const team = teamOnDisk({ hand: { cwd: '.' } });
+  const m = managerWith([]);
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+  assert.strictEqual(shape.cwd, team.root);
+  assert.strictEqual(shape.cwdFallback, null, 'not an error — just nothing to say');
+});
+
+test('role cwd: a NESTED team.json re-parents the seat, so the resolver refuses it (D5)', () => {
+  // The silent one. resolveTeam is deepest-root-wins, so a team.json under api/
+  // OWNS that directory: a seat booted there joins the CHILD team's board, its
+  // roster and its lead, and every ticket verb it runs addresses the wrong team.
+  // Nothing else in the system reports this.
+  const team = teamOnDisk({ hand: { cwd: 'api' } });
+  const child = { name: 'api-crew', lead: 'api-lead', root: path.join(team.root, 'api'), roles: {} };
+  const m = managerWith([], { resolveTeam: (p) => (p === child.root ? child : team) });
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+  assert.ok(shape.cwdFallback, 'ENTER: the re-parenting was detected — this is the failure mode the guard exists for');
+  assert.match(shape.cwdFallback, /api-crew/);
+  assert.strictEqual(shape.cwd, team.root,
+    'the seat stays on ITS team\'s root rather than silently joining the nested team');
+});
+
+test('role cwd: a nested team resolving to the SAME root is not a re-parent', () => {
+  // The guard compares ROOTS, not identity: resolveTeam legitimately answers
+  // with this very team for a subdirectory of it, and reading that as a
+  // re-parent would make the whole feature fall back always.
+  const team = teamOnDisk({ hand: { cwd: 'api' } });
+  const m = managerWith([], { resolveTeam: () => ({ ...team }) });
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+  assert.strictEqual(shape.cwdFallback, null, 'the owning team IS this team — nothing to report');
+  assert.strictEqual(shape.cwd, path.join(team.root, 'api'));
 });

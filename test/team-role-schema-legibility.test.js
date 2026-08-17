@@ -70,11 +70,15 @@ function addRoleWritableFields() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'legib-home-'));
   fs.mkdirSync(path.join(home, 'teams'), { recursive: true });
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'legib-proj-'));
+  // A REAL directory: `cwd` is refused at write time unless it exists under the
+  // root (Clodex never creates it), so without this the addRole below throws and
+  // this helper measures nothing.
+  fs.mkdirSync(path.join(root, 'api'));
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'shop-lead' });
   tm.addRole('shop', 'runner', {
     // The full surviving schema...
-    template: 'fable-lead', prompt: 'p', brief: 'b', dispatch: 'worktree',
+    template: 'fable-lead', prompt: 'p', brief: 'b', dispatch: 'worktree', cwd: 'api',
     // ...every field a version bump cut EXCEPT `worktree`, which addRole now
     // refuses loudly rather than dropping (pinned in team-manifest.test.js):
     // pickRoleKeys would drop it without emitting a `dispatch`, so a def
@@ -146,10 +150,10 @@ test('legibility: the popover row model shows exactly the editable fields', () =
 // The union check above is true of any set that happens to add up. This pins the
 // membership itself, so a swap (drop `brief`, add `standing`) that keeps the
 // count cannot pass, and re-adding a cut field has to come through here.
-test('legibility: the schema is exactly the four surviving fields', () => {
-  assert.deepStrictEqual(sorted(ROLE_KEYS), ['brief', 'dispatch', 'prompt', 'template'],
-    'the role schema is four fields: the seat\'s shape source, its standing instructions, '
-    + 'the human label, and what dispatching a ticket to the role does');
+test('legibility: the schema is exactly the five surviving fields', () => {
+  assert.deepStrictEqual(sorted(ROLE_KEYS), ['brief', 'cwd', 'dispatch', 'prompt', 'template'],
+    'the role schema is five fields: the seat\'s shape source, its standing instructions, '
+    + 'the human label, what dispatching a ticket to the role does, and where in the team its seats work');
   // Membership pin FIRST, then the real constant: iterating CUT_ROLE_FIELDS
   // alone would silently stop checking a field someone removed from it, and the
   // literal alone stops checking a field someone adds. `worktree` is a cut field

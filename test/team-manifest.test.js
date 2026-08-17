@@ -180,7 +180,7 @@ test('loadManifest: a version-1 file carrying the cut keys loads clean, dropping
   // WHOLE object: a partial probe would read right past a key that survived the
   // cut in the returned shape while the schema claims it is gone.
   assert.deepStrictEqual(m.roles.reviewer, {
-    template: 'sonnet-review', prompt: null, brief: null, dispatch: 'standing',
+    template: 'sonnet-review', prompt: null, brief: null, dispatch: 'standing', cwd: null,
   }, 'the cut keys are absent from the normalized def, not carried as null');
   assert.strictEqual(m.version, 1, 'no version field → version 1');
   assert.strictEqual(m.watchdogMs, 600000, 'watchdogMs override still carried');
@@ -260,7 +260,7 @@ test('loadManifest: a retired role field warns even on a CURRENT-version file, a
   // Additive: the drop itself is unchanged. A warning that also started
   // preserving the field would hand a live restriction to code that ignores it.
   assert.deepStrictEqual(m.roles.reviewer, {
-    template: null, prompt: 'rev', brief: null, dispatch: 'standing',
+    template: null, prompt: 'rev', brief: null, dispatch: 'standing', cwd: null,
   }, 'the retired key is still dropped — the warning changed nothing about behaviour');
 });
 
@@ -295,8 +295,10 @@ test('loadManifest: every CUT_ROLE_FIELDS member warns on a current-version file
     // membership, which only gates whether the question is worth asking. The
     // baseline is what the role normalizes to carrying no cut key at all, so
     // "took effect" means exactly "the def came out different".
+    // Key ORDER matters here, not just membership: this is a stringify compare,
+    // and normalizeRoleDef returns a fixed-key-order literal (`cwd` last).
     const changed = JSON.stringify(m.roles.runner)
-      !== JSON.stringify({ template: null, prompt: null, brief: 'r', dispatch: 'standing' });
+      !== JSON.stringify({ template: null, prompt: null, brief: 'r', dispatch: 'standing', cwd: null });
     assert.strictEqual(changed, HONORED_CUT_FIELDS.has(field),
       `ENTER: seeded as \`true\` on a plain role, "${field}" ${HONORED_CUT_FIELDS.has(field) ? 'DID' : 'did not'} change the normalized def`);
     if (changed) {
@@ -560,10 +562,10 @@ test('loadManifest: role dispatch normalizes to the enum, default standing', () 
   const tm = createTeamManifest({ fs, clodexHome: home });
   const m = tm.loadManifest('shop');
   assert.deepStrictEqual(m.roles.hand, {
-    template: null, prompt: null, brief: null, dispatch: 'worktree',
+    template: null, prompt: null, brief: null, dispatch: 'worktree', cwd: null,
   }, 'opted-in role def in full');
   assert.deepStrictEqual(m.roles.helper, {
-    template: null, prompt: null, brief: null, dispatch: 'standing',
+    template: null, prompt: null, brief: null, dispatch: 'standing', cwd: null,
   }, 'absent dispatch is the STANDING string, not undefined — undefined reads as neither value at a consumer that compares');
   // An off-enum value is a loud manifest error, not a truthy opt-in:
   // `dispatch: "no"` must never enable the thing it plainly denies, and
@@ -1256,7 +1258,7 @@ test('a hand-authored role `tools` is dropped, never stored as a restriction', (
   // addRole no longer bounces it — the def normalizes without the key at all.
   const team = tm.addRole('shop', 'runner', { brief: 'a runner', tools: ['Read'] });
   assert.deepStrictEqual(team.roles.runner, {
-    template: null, prompt: null, brief: 'a runner', dispatch: 'standing',
+    template: null, prompt: null, brief: 'a runner', dispatch: 'standing', cwd: null,
   }, 'the normalized def carries no tools key in any form');
 
   // ON DISK, which is the claim in this test's title and the only one that
@@ -1320,7 +1322,7 @@ test('setRole edits the editable fields, ignores everything else, preserves unmo
   // `strictEqual(x, null)` on it would fail loudly but one on `undefined` reads
   // as an absence that was never asserted.
   assert.deepStrictEqual(team.roles.runner, {
-    template: null, prompt: 'new-runner', brief: 'new brief', dispatch: 'standing',
+    template: null, prompt: 'new-runner', brief: 'new brief', dispatch: 'standing', cwd: null,
   }, 'only the editable fields land; the cut ones are ignored');
   // Confirm on-disk raw took none of them, and kept the unmodeled one.
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
@@ -1426,7 +1428,7 @@ test('addRole: an operator re-mint of `reviewer` writes the STOCK def and IGNORE
   }, { operator: true });
 
   assert.deepStrictEqual(team.roles.reviewer, {
-    ...STOCK_ROLE_DEFS.reviewer, template: null, dispatch: 'standing',
+    ...STOCK_ROLE_DEFS.reviewer, template: null, dispatch: 'standing', cwd: null,
   }, 'the reviewer reads back as the STOCK def — the attacker def bought nothing');
   assert.strictEqual(team.roles.reviewer.prompt, STOCK_ROLE_DEFS.reviewer.prompt,
     'specifically: the prompt is Clodex\'s, not the caller\'s');
@@ -1774,4 +1776,183 @@ test('formatCompositionDelta renders seat and role-only events', () => {
     formatCompositionDelta('shop', 'added', { role: 'researcher' }),
     '[team shop] role researcher added (no seat)',
   );
+});
+
+// --- role cwd: the write-time gate (t422) ----------------------------------
+//
+// `cwd` flows to create() as a PTY working directory and team.json is
+// agent-writable, so its confinement is a security property. Each refusal below
+// asserts BOTH that the write throws and that nothing reached the disk: a
+// mutator that threw after writing would pass a throws-only test while leaving
+// exactly the state the refusal exists to prevent.
+
+// A team with a real root on disk and an `api/` inside it, plus the raw bytes of
+// its team.json for before/after comparison.
+function teamForCwd() {
+  const home = mkHome();
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdproj-')));
+  fs.mkdirSync(path.join(root, 'api'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'shop-lead' });
+  const file = path.join(home, 'teams', 'shop', 'team.json');
+  return { home, root, tm, file, before: fs.readFileSync(file, 'utf-8') };
+}
+
+test('role cwd: addRole stores a relative cwd naming a real directory', () => {
+  const { tm, file } = teamForCwd();
+  tm.addRole('shop', 'api-hand', { brief: 'b', cwd: 'api' });
+  const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.ok(raw.roles && raw.roles['api-hand'], 'ENTER: the role reached the file');
+  assert.strictEqual(raw.roles['api-hand'].cwd, 'api', 'stored RELATIVE, exactly as written');
+  assert.strictEqual(tm.loadManifest('shop').roles['api-hand'].cwd, 'api', 'and survives a load');
+});
+
+test('role cwd: an ABSOLUTE path is refused and nothing is written', () => {
+  const { tm, file, before } = teamForCwd();
+  assert.throws(() => tm.addRole('shop', 'api-hand', { cwd: '/etc' }), /absolute/);
+  assert.strictEqual(fs.readFileSync(file, 'utf-8'), before,
+    'the manifest is byte-identical — a refusal that wrote first would leave the very cwd it refused');
+});
+
+test('role cwd: a `..` escape is refused and nothing is written', () => {
+  const { tm, file, before } = teamForCwd();
+  // Does NOT start with '..', so only a RESOLVING check catches it — a raw
+  // string-prefix guard reads this as confined.
+  assert.throws(() => tm.addRole('shop', 'api-hand', { cwd: 'api/../../elsewhere' }),
+    /outside the team root/);
+  assert.strictEqual(fs.readFileSync(file, 'utf-8'), before);
+});
+
+test('role cwd: a directory that does not exist is refused and nothing is written', () => {
+  const { tm, file, before } = teamForCwd();
+  assert.throws(() => tm.addRole('shop', 'api-hand', { cwd: 'nope' }),
+    /not an existing directory/);
+  assert.strictEqual(fs.readFileSync(file, 'utf-8'), before,
+    'and it is NOT created — an invented empty directory looks like a seat working correctly');
+  assert.ok(!fs.existsSync(path.join(JSON.parse(before).root, 'nope')),
+    'ENTER: the directory really is absent, so the refusal above was about this case');
+});
+
+test('role cwd: a SYMLINK out of the root is refused and nothing is written', () => {
+  const { tm, root, file, before } = teamForCwd();
+  // statSync FOLLOWS the link, so the directory check passes, and the lexical
+  // confinement compares path strings, so `link` reads as confined — the value
+  // still points a PTY at another project. Only a realpath comparison sees it.
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdout-')));
+  fs.symlinkSync(outside, path.join(root, 'link'));
+  assert.ok(fs.statSync(path.join(root, 'link')).isDirectory(),
+    'ENTER: the link must resolve to a real directory, or this passes for the wrong reason');
+  assert.throws(() => tm.addRole('shop', 'api-hand', { cwd: 'link' }), /outside the team root/);
+  assert.strictEqual(fs.readFileSync(file, 'utf-8'), before);
+});
+
+test('role cwd: a symlink INSIDE the root is honored, and so is a symlinked root', () => {
+  // The other side of the check above, and the reason BOTH sides are realpath'd:
+  // on macOS a /tmp project root is itself a symlink (/tmp → /private/tmp), so a
+  // one-sided comparison would refuse every legitimate cwd under it.
+  const home = mkHome();
+  const realRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdreal-')));
+  fs.mkdirSync(path.join(realRoot, 'api'));
+  fs.symlinkSync(path.join(realRoot, 'api'), path.join(realRoot, 'api-link'));
+  // The team names the root through a symlinked PREFIX, the shape /tmp gives.
+  const linkRoot = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdlink-')), 'proj');
+  fs.symlinkSync(realRoot, linkRoot);
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root: linkRoot, lead: 'l' });
+  assert.notStrictEqual(fs.realpathSync(linkRoot), linkRoot,
+    'ENTER: the root really is reached through a symlink, or this asserts nothing');
+  tm.addRole('shop', 'api-hand', { brief: 'b', cwd: 'api-link' });
+  assert.strictEqual(tm.loadManifest('shop').roles['api-hand'].cwd, 'api-link',
+    'a link that stays inside the root is fine, and a symlinked root does not poison it');
+});
+
+test('role cwd: the stored bytes are TRIMMED, so what lands is what was validated', () => {
+  const { tm, file } = teamForCwd();
+  tm.addRole('shop', 'api-hand', { brief: 'b', cwd: '  api  ' });
+  const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.ok(raw.roles && raw.roles['api-hand'], 'ENTER: the role reached the file');
+  assert.strictEqual(raw.roles['api-hand'].cwd, 'api', 'addRole stores the trimmed form');
+  tm.setRole('shop', 'api-hand', { cwd: '\tapi ' });
+  assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf-8')).roles['api-hand'].cwd, 'api',
+    'and so does setRole, which does not go through pickRoleKeys');
+});
+
+test('role cwd: a FILE is not a directory and is refused', () => {
+  const { tm, root, file, before } = teamForCwd();
+  fs.writeFileSync(path.join(root, 'README.md'), 'x');
+  assert.throws(() => tm.addRole('shop', 'api-hand', { cwd: 'README.md' }),
+    /not an existing directory/);
+  assert.strictEqual(fs.readFileSync(file, 'utf-8'), before);
+});
+
+test('role cwd: the LEAD role refuses one, and the reason names the fix (D3)', () => {
+  // resolveSeatShape is never called with roleKey 'lead' — the lead's seat is
+  // operator-created and standing — so a cwd there would be inert-but-believed
+  // on exactly one role. That is the shape `type` and `tools` were cut for.
+  const { home, root } = teamForCwd();
+  const tm2 = createTeamManifest({ fs, clodexHome: home });
+  assert.throws(
+    () => tm2.createTeam({
+      name: 'shop2', root: fs.mkdtempSync(path.join(os.tmpdir(), 'cwdproj2-')),
+      lead: 'l', roles: { lead: { cwd: 'api' } },
+    }),
+    /lead[\s\S]*not spawned by the team/,
+    'the message must say WHY, because the operator CAN set that directory — just not here',
+  );
+  assert.ok(root, 'ENTER: the fixture built a real root');
+});
+
+test('role cwd: createTeam refuses an escaping cwd on a seeded role, and writes no team', () => {
+  const home = mkHome();
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdproj3-')));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  assert.throws(
+    () => tm.createTeam({ name: 'shop3', root, lead: 'l', roles: { hand: { cwd: '../outside' } } }),
+    /outside the team root/,
+  );
+  assert.ok(!fs.existsSync(path.join(home, 'teams', 'shop3', 'team.json')),
+    'a brand-new file must not be born carrying a cwd every other door refuses');
+});
+
+test('role cwd: setRole validates the patch, and a refusal leaves the stored value alone', () => {
+  const { tm, file } = teamForCwd();
+  tm.addRole('shop', 'api-hand', { cwd: 'api' });
+  const before = fs.readFileSync(file, 'utf-8');
+  assert.throws(() => tm.setRole('shop', 'api-hand', { cwd: '/etc' }), /absolute/);
+  assert.strictEqual(fs.readFileSync(file, 'utf-8'), before);
+  assert.strictEqual(tm.loadManifest('shop').roles['api-hand'].cwd, 'api',
+    'ENTER: the previously-stored cwd is still there — a partial write would have cleared it');
+});
+
+test('role cwd: setRole with a BLANK cwd clears the key rather than storing an empty string', () => {
+  // path.resolve(root, '') IS root, so '' on disk would be a value meaning
+  // exactly what its absence means. The popover's cleared text input sends ''.
+  const { tm, file } = teamForCwd();
+  tm.addRole('shop', 'api-hand', { cwd: 'api' });
+  assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf-8')).roles['api-hand'].cwd, 'api',
+    'ENTER: there was a cwd to clear');
+  tm.setRole('shop', 'api-hand', { cwd: '  ' });
+  const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.ok(!('cwd' in raw.roles['api-hand']), 'the key is GONE, not empty-stringed');
+  assert.strictEqual(tm.loadManifest('shop').roles['api-hand'].cwd, null);
+});
+
+test('role cwd: a non-string is refused by the schema', () => {
+  const { tm } = teamForCwd();
+  assert.throws(() => tm.addRole('shop', 'api-hand', { cwd: 42 }), /cwd must be a string/);
+});
+
+test('role cwd: a hand-edited bad cwd LOADS rather than breaking the whole team', () => {
+  // loadManifest runs inside every caller's best-effort catch, so a throw here
+  // would make a team with one bad role read as NO TEAM everywhere at once —
+  // no roster, no ticket resolution, no surface left to fix it from. The bad
+  // value is neutralized at SPAWN instead (resolve-seat-shape.test.js).
+  const home = mkHome();
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdproj4-')));
+  mkTeam(home, 'shop', { root, lead: 'l', roles: { lead: {}, hand: { cwd: '/etc' } } });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const m = tm.loadManifest('shop');
+  assert.strictEqual(m.roles.hand.cwd, '/etc', 'carried through the load as written');
+  assert.strictEqual(tm.resolveTeam(root).name, 'shop',
+    'ENTER: the team still resolves — this is the property the load-path leniency buys');
 });

@@ -6044,6 +6044,7 @@ body {
         <input type="text" id="team-roles-add-brief" placeholder="one line: what this role is for">
         <select id="team-roles-add-prompt" title="System-prompt name from the library — sets how this teammate behaves"></select>
         <input type="text" id="team-roles-add-template" placeholder="optional: spawn template name">
+        <input type="text" id="team-roles-add-cwd" placeholder="optional: subdirectory this role works in (e.g. api)" title="Relative to the team root — where seats holding this role start. Blank = the team root. Applies to worktree-dispatch roles and the reviewer; a standing role's seat is operator-created, so this does nothing for it.">
         <select id="team-roles-add-dispatch" title="What dispatching a ticket to this role does">
           <option value="standing">standing — the live seat holding this role gets the spec</option>
           <option value="worktree">worktree — a one-shot seat on its own branch, in its own checkout</option>
@@ -26575,6 +26576,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         return Object.entries(roles).map(([key, def]) => ({
           key,
           brief: def && def.brief || "",
+          // Relative to the team root; '' means the seat boots at the root itself.
+          cwd: def && def.cwd || "",
           dispatch: def && def.dispatch || DEFAULT_DISPATCH,
           prompt: def && def.prompt || "",
           template: def && def.template || "",
@@ -26613,6 +26616,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         if (template) patch.template = template;
         const dispatch = trim(formValues && formValues.dispatch);
         if (DISPATCH_VALUES.includes(dispatch)) patch.dispatch = dispatch;
+        patch.cwd = trim(formValues && formValues.cwd);
         return patch;
       }
       function reservedRoleNote(key) {
@@ -26742,6 +26746,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         const addBrief = document.getElementById("team-roles-add-brief");
         const addPrompt = document.getElementById("team-roles-add-prompt");
         const addTemplate = document.getElementById("team-roles-add-template");
+        const addCwd = document.getElementById("team-roles-add-cwd");
         const addDispatch = document.getElementById("team-roles-add-dispatch");
         const addBtn = document.getElementById("team-roles-add-btn");
         const watchdogInput = document.getElementById("team-roles-watchdog-ms");
@@ -26888,7 +26893,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 el.appendChild(actions);
               }
             } else {
-              el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label><label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span><select data-f="dispatch"><option value="standing">standing \u2014 the live seat gets the spec</option><option value="worktree">worktree \u2014 one-shot seat, own branch + checkout</option></select></label><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
+              el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label><label class="team-role-field" title="Relative to the team root \u2014 where seats holding this role start. Blank = the team root. Applies to worktree-dispatch roles and the reviewer; a standing role's seat is operator-created, so this does nothing for it."><span>cwd</span><input type="text" data-f="cwd" placeholder="optional: subdirectory (e.g. api)"></label><label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span><select data-f="dispatch"><option value="standing">standing \u2014 the live seat gets the spec</option><option value="worktree">worktree \u2014 one-shot seat, own branch + checkout</option></select></label><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
               el.querySelector('input[data-f="brief"]').value = row.brief;
               const sel = el.querySelector('select[data-f="prompt"]');
               {
@@ -26920,6 +26925,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 sel.value = row.prompt;
               }
               el.querySelector('input[data-f="template"]').value = row.template;
+              el.querySelector('input[data-f="cwd"]').value = row.cwd;
               const disp = el.querySelector('select[data-f="dispatch"]');
               disp.value = DISPATCH_VALUES.includes(row.dispatch) ? row.dispatch : DEFAULT_DISPATCH;
             }
@@ -27029,6 +27035,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           addBrief.value = "";
           addTemplate.value = "";
           addPrompt.value = "";
+          addCwd.value = "";
           popover.dataset.name = name;
           const ok = await refresh(name);
           if (!ok) {
@@ -27086,7 +27093,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               brief: val("brief"),
               prompt: val("prompt"),
               template: val("template"),
-              dispatch: val("dispatch")
+              dispatch: val("dispatch"),
+              cwd: val("cwd")
             });
             const res = await window.api.teamSetRole(name, role, patch);
             await afterMutation(res, `role "${role}" saved`);
@@ -27129,6 +27137,8 @@ You can add it back from this popover.` : "";
           if (v.template) def.template = v.template;
           const brief = addBrief.value.trim();
           if (brief) def.brief = brief;
+          const cwd = addCwd.value.trim();
+          if (cwd) def.cwd = cwd;
           if (addDispatch.value === "worktree") def.dispatch = "worktree";
           const res = await window.api.teamAddRole(name, v.name, def);
           if (res && res.ok) {
@@ -27136,6 +27146,7 @@ You can add it back from this popover.` : "";
             addBrief.value = "";
             addTemplate.value = "";
             addPrompt.value = "";
+            addCwd.value = "";
             addDispatch.value = DEFAULT_DISPATCH;
           }
           await afterMutation(res, `role "${v.name}" added`);
