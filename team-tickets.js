@@ -1742,7 +1742,15 @@ function createTicketMethods(deps, shared) {
       const roleName = (ticket && (ticket.role || ticket.assignee)) || '';
       const roleDef = (team && team.roles && roleName
         && Object.prototype.hasOwnProperty.call(team.roles, roleName)) ? team.roles[roleName] : null;
-      const roleCwdRel = (roleDef && typeof roleDef.cwd === 'string' && roleDef.cwd.trim()) ? roleDef.cwd.trim() : '';
+      // Through the SAME helper the spawn resolver uses, never off `roleDef.cwd`
+      // directly. The load path is deliberately lenient, on the promise that a bad
+      // value is neutralized at spawn — and this line is a consumer of that promise
+      // too. Read raw, a hand-edited `cwd: "../../elsewhere"` would tell the seat
+      // its files live OUTSIDE its worktree while the lead's reply simultaneously
+      // said the seat was spawned at the root, and `cwd: "/etc"` would degrade to
+      // `<wt>/etc`. Both are the "hand copies a path into a command that runs in
+      // the wrong place" hazard this whole line exists to prevent.
+      const roleCwdRel = this._roleCwdRel(roleDef).rel;
       const areaLine = (roleCwdRel && ticket && ticket.worktree && ticket.worktree.path)
         ? `YOUR AREA in that tree: ${path.join(ticket.worktree.path, roleCwdRel)} — your role works in "${roleCwdRel}". `
           + `The tree ROOT above stays the path for git commands and for the suite; this is where your files live.\n`
@@ -2658,6 +2666,35 @@ function createTicketMethods(deps, shared) {
       };
     },
 
+    // A role's `cwd` reduced to a USABLE relative path, or '' — the one place
+    // either consumer decides whether the field is honorable at all.
+    //
+    // Shared by _resolveRoleCwd (which joins it onto team.root) and
+    // _deliverTicketSpec's AREA line (which joins it onto the WORKTREE path).
+    // That is why the check here is lexical and takes no root: the two consumers
+    // resolve against DIFFERENT bases, so a root-taking helper could not serve
+    // both, and the second copy is exactly what let the AREA line hand a seat
+    // `<wt>/etc` for `cwd: "/etc"` while the resolver refused the same value.
+    //
+    // Returns the reason rather than a bare '' so the resolver can keep its
+    // distinct operator-facing clauses without re-deriving WHY it was rejected —
+    // a re-derivation is the divergence this helper exists to remove.
+    _roleCwdRel(def) {
+      const raw = def && typeof def.cwd === 'string' ? def.cwd.trim() : '';
+      if (!raw) return { rel: '', raw: '', reason: null };
+      if (path.isAbsolute(raw)) return { rel: '', raw, reason: 'absolute' };
+      // Normalized before the leading-`..` test: `api/../../elsewhere` does not
+      // START with `..` but collapses to one, and a raw check waves it through.
+      const norm = path.normalize(raw);
+      if (norm === '..' || norm.startsWith(`..${path.sep}`)) return { rel: '', raw, reason: 'escape' };
+      // "." is the team root spelled the long way. Treated as ABSENT rather than
+      // honored: it resolves to the same directory the no-cwd path already uses,
+      // and honoring it would emit an AREA line pointing at the tree root the
+      // WORK IN: line above it already names.
+      if (norm === '.') return { rel: '', raw, reason: null };
+      return { rel: norm, raw, reason: null };
+    },
+
     // A role's `cwd` → the absolute directory its seat boots in, plus the reason
     // it fell back when it did. Returns {cwd, fallback} where `fallback` is null
     // on the honored path and an operator-facing clause otherwise.
@@ -2676,23 +2713,39 @@ function createTicketMethods(deps, shared) {
     // wrong team. Nothing else in the system would report that.
     _resolveRoleCwd(team, def) {
       const root = team && team.root;
-      const rel = def && typeof def.cwd === 'string' ? def.cwd.trim() : '';
-      if (!root || !rel) return { cwd: root, fallback: null };
       // Re-checked at spawn even though every write path refuses these: team.json
       // is hand-editable, and a file that predates the write gate must not be able
       // to point a PTY outside the project.
-      if (path.isAbsolute(rel)) {
-        return { cwd: root, fallback: `role cwd "${rel}" is absolute (it must be relative to the team root) — the seat was spawned in ${root} instead` };
+      const { rel, raw, reason } = this._roleCwdRel(def);
+      if (!root) return { cwd: root, fallback: null };
+      if (reason === 'absolute') {
+        return { cwd: root, fallback: `role cwd "${raw}" is absolute (it must be relative to the team root) — the seat was spawned in ${root} instead` };
       }
+      if (reason === 'escape') {
+        return { cwd: root, fallback: `role cwd "${raw}" resolves outside the team root — the seat was spawned in ${root} instead` };
+      }
+      if (!rel) return { cwd: root, fallback: null };
       const resolved = path.resolve(root, rel);
-      const within = path.relative(root, resolved);
-      if (within.startsWith('..') || path.isAbsolute(within)) {
-        return { cwd: root, fallback: `role cwd "${rel}" resolves outside the team root — the seat was spawned in ${root} instead` };
-      }
       let isDir = false;
       try { isDir = fs.statSync(resolved).isDirectory(); } catch { isDir = false; }
       if (!isDir) {
         return { cwd: root, fallback: `role cwd "${rel}" does not exist under the team root (Clodex never creates it) — the seat was spawned in ${root} instead` };
+      }
+      // Confinement decided on the REAL paths: the lexical check above compares
+      // strings, and `cwd: "link"` where link → another project passes it while
+      // pointing a PTY out of the tree. BOTH sides are realpath'd — a project
+      // root under /tmp is itself a symlink on macOS (/tmp → /private/tmp), and
+      // realpathing only the candidate would reject every legitimate root there.
+      const real = (p) => { try { return fs.realpathSync(p); } catch { return null; } };
+      const realRoot = real(root);
+      const realCwd = real(resolved);
+      if (!realRoot || !realCwd) {
+        // Only reachable if the path vanished between the stat above and here.
+        return { cwd: root, fallback: `role cwd "${rel}" does not exist under the team root (Clodex never creates it) — the seat was spawned in ${root} instead` };
+      }
+      const within = path.relative(realRoot, realCwd);
+      if (within.startsWith('..') || path.isAbsolute(within)) {
+        return { cwd: root, fallback: `role cwd "${rel}" resolves outside the team root (it is a symlink to ${realCwd}) — the seat was spawned in ${root} instead` };
       }
       // Compared by ROOT, not by name: two manifests can name the same root only
       // by hand-edit, while the reparenting case is precisely a DIFFERENT root
@@ -3114,8 +3167,14 @@ function createTicketMethods(deps, shared) {
           // forever. A throw anywhere in that window used to leave exactly that state.
           claimTree(wt);
           this._sendToSession(seat.name, 'session:context-action', {
+            // shape.cwd, not team.root: this feeds the sidebar row's dataset.cwd,
+            // which is what "Reveal Working Directory in Finder" / "Open in
+            // Terminal" open. After a restart the row is rebuilt from the
+            // persistence record — which IS shape.cwd — so sending the root here
+            // makes the app disagree with itself across a restart, on exactly the
+            // seats a role cwd creates.
             action: 'reattach', name: seat.name, type: (this.sessions.get(seat.name) || {}).agentType || null,
-            cwd: team.root, backend: (this.sessions.get(seat.name) || {}).backend || null,
+            cwd: shape.cwd, backend: (this.sessions.get(seat.name) || {}).backend || null,
             noWire: !!(this.sessions.get(seat.name) || {}).noWire,
             background: true,
           });
@@ -5378,7 +5437,7 @@ function createTicketMethods(deps, shared) {
     // its alarm, which is silent alarm deletion on a board with no seat at all.
     // `_sweepTeamTickets` documents this same per-BOARD/per-PROJECT hazard for
     // `watchdogMs`; this is the same trap one resolver over. The reviewer's cwd
-    // IS `team.root` (resolveSeatShape sets it), so the test is exact.
+    // resolves to `team.root` via `_projectRootFor`, so the test is exact.
     //
     // Returns ALL matches, not the first. `keepHold` deliberately leaves a
     // round-1 seat alive still carrying `reviewTicket` while round 2 runs, so

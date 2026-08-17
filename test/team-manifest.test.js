@@ -1833,6 +1833,50 @@ test('role cwd: a directory that does not exist is refused and nothing is writte
     'ENTER: the directory really is absent, so the refusal above was about this case');
 });
 
+test('role cwd: a SYMLINK out of the root is refused and nothing is written', () => {
+  const { tm, root, file, before } = teamForCwd();
+  // statSync FOLLOWS the link, so the directory check passes, and the lexical
+  // confinement compares path strings, so `link` reads as confined — the value
+  // still points a PTY at another project. Only a realpath comparison sees it.
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdout-')));
+  fs.symlinkSync(outside, path.join(root, 'link'));
+  assert.ok(fs.statSync(path.join(root, 'link')).isDirectory(),
+    'ENTER: the link must resolve to a real directory, or this passes for the wrong reason');
+  assert.throws(() => tm.addRole('shop', 'api-hand', { cwd: 'link' }), /outside the team root/);
+  assert.strictEqual(fs.readFileSync(file, 'utf-8'), before);
+});
+
+test('role cwd: a symlink INSIDE the root is honored, and so is a symlinked root', () => {
+  // The other side of the check above, and the reason BOTH sides are realpath'd:
+  // on macOS a /tmp project root is itself a symlink (/tmp → /private/tmp), so a
+  // one-sided comparison would refuse every legitimate cwd under it.
+  const home = mkHome();
+  const realRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdreal-')));
+  fs.mkdirSync(path.join(realRoot, 'api'));
+  fs.symlinkSync(path.join(realRoot, 'api'), path.join(realRoot, 'api-link'));
+  // The team names the root through a symlinked PREFIX, the shape /tmp gives.
+  const linkRoot = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdlink-')), 'proj');
+  fs.symlinkSync(realRoot, linkRoot);
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root: linkRoot, lead: 'l' });
+  assert.notStrictEqual(fs.realpathSync(linkRoot), linkRoot,
+    'ENTER: the root really is reached through a symlink, or this asserts nothing');
+  tm.addRole('shop', 'api-hand', { brief: 'b', cwd: 'api-link' });
+  assert.strictEqual(tm.loadManifest('shop').roles['api-hand'].cwd, 'api-link',
+    'a link that stays inside the root is fine, and a symlinked root does not poison it');
+});
+
+test('role cwd: the stored bytes are TRIMMED, so what lands is what was validated', () => {
+  const { tm, file } = teamForCwd();
+  tm.addRole('shop', 'api-hand', { brief: 'b', cwd: '  api  ' });
+  const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  assert.ok(raw.roles && raw.roles['api-hand'], 'ENTER: the role reached the file');
+  assert.strictEqual(raw.roles['api-hand'].cwd, 'api', 'addRole stores the trimmed form');
+  tm.setRole('shop', 'api-hand', { cwd: '\tapi ' });
+  assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf-8')).roles['api-hand'].cwd, 'api',
+    'and so does setRole, which does not go through pickRoleKeys');
+});
+
 test('role cwd: a FILE is not a directory and is refused', () => {
   const { tm, root, file, before } = teamForCwd();
   fs.writeFileSync(path.join(root, 'README.md'), 'x');

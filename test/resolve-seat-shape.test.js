@@ -879,6 +879,51 @@ test('role cwd: a `..` escape on disk cannot point a seat out of the project', (
   assert.strictEqual(shape.cwd, team.root);
 });
 
+test('role cwd: a SYMLINK out of the root cannot point a seat at another project', () => {
+  // statSync follows the link, so the directory check passes, and a lexical
+  // confinement compares strings, so `link` reads as confined — while the PTY
+  // would boot in another project. Only realpath sees it.
+  const team = teamOnDisk({ hand: { cwd: 'link' } });
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'rolecwd-out-')));
+  fs.symlinkSync(outside, path.join(team.root, 'link'));
+  const m = managerWith([]);
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+  assert.ok(shape.cwdFallback, 'ENTER: the symlink escape was caught — a lexical check passes this one');
+  assert.match(shape.cwdFallback, /outside the team root/);
+  assert.strictEqual(shape.cwd, team.root);
+});
+
+test('role cwd: a symlink INSIDE the root is honored, and so is a symlinked root', () => {
+  // The other side, and why BOTH sides are realpath'd: a /tmp root is itself
+  // reached through a symlink on macOS, and a one-sided compare would fall back
+  // on every legitimate cwd there — turning the feature off exactly where the
+  // tests run.
+  const real = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'rolecwd-real-')));
+  fs.mkdirSync(path.join(real, 'api'));
+  fs.symlinkSync(path.join(real, 'api'), path.join(real, 'api-link'));
+  const linkRoot = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rolecwd-lnk-')), 'proj');
+  fs.symlinkSync(real, linkRoot);
+  assert.notStrictEqual(fs.realpathSync(linkRoot), linkRoot,
+    'ENTER: the root really is reached through a symlink, or this asserts nothing');
+  const team = { name: 'crew', lead: 'lead', root: linkRoot, roles: { hand: { cwd: 'api-link' } } };
+  const m = managerWith([]);
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+  assert.strictEqual(shape.cwdFallback, null, 'a link that stays inside the root is fine');
+  assert.strictEqual(shape.cwd, path.join(linkRoot, 'api-link'),
+    'and the seat gets the path as WRITTEN — the realpath is the check, not the value');
+});
+
+test('role cwd: "." is the team root spelled long, and emits no fallback', () => {
+  // Honoring it would resolve to exactly the directory the no-cwd path uses
+  // while adding an AREA line pointing at the tree root the WORK IN: line above
+  // it already names.
+  const team = teamOnDisk({ hand: { cwd: '.' } });
+  const m = managerWith([]);
+  const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+  assert.strictEqual(shape.cwd, team.root);
+  assert.strictEqual(shape.cwdFallback, null, 'not an error — just nothing to say');
+});
+
 test('role cwd: a NESTED team.json re-parents the seat, so the resolver refuses it (D5)', () => {
   // The silent one. resolveTeam is deepest-root-wins, so a team.json under api/
   // OWNS that directory: a seat booted there joins the CHILD team's board, its

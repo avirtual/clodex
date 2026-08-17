@@ -269,7 +269,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label>` +
           `<label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label>` +
           `<label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label>` +
-          `<label class="team-role-field" title="Relative to the team root — where seats holding this role start. Blank = the team root."><span>cwd</span><input type="text" data-f="cwd" placeholder="optional: subdirectory (e.g. api)"></label>` +
+          `<label class="team-role-field" title="Relative to the team root — where seats holding this role start. Blank = the team root. Applies to worktree-dispatch roles and the reviewer; a standing role's seat is operator-created, so this does nothing for it."><span>cwd</span><input type="text" data-f="cwd" placeholder="optional: subdirectory (e.g. api)"></label>` +
           `<label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span>` +
           `<select data-f="dispatch">` +
           `<option value="standing">standing — the live seat gets the spec</option>` +

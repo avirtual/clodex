@@ -214,7 +214,11 @@ function pickRoleKeys(def) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) return def;
   const out = {};
   for (const [k, v] of Object.entries(def)) {
-    if (ROLE_KEYS.has(k)) out[k] = v;
+    // `cwd` is stored TRIMMED so the bytes on disk are the ones assertRoleCwd
+    // validated — it checks the trimmed form, and a stored "  api  " would be a
+    // value no gate ever saw. Only this field: `brief`/`prompt` are prose whose
+    // surrounding whitespace is the author's.
+    if (ROLE_KEYS.has(k)) out[k] = (k === 'cwd' && typeof v === 'string') ? v.trim() : v;
   }
   return out;
 }
@@ -509,6 +513,23 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (!isDir) {
       throw new Error(`role "${roleName}" cwd "${rel}" is not an existing directory under the team root (${resolvedRoot}) — create it first; Clodex never makes it for you (${file})`);
     }
+    // Confinement re-decided on the REAL paths. containsPath compares strings, so
+    // `cwd: "link"` where link → another project satisfies it while pointing a PTY
+    // out of the tree (statSync follows the link, so the check above passes too).
+    // BOTH sides are realpath'd: a project root under /tmp is itself a symlink on
+    // macOS (/tmp → /private/tmp), and realpathing only the candidate would refuse
+    // every legitimate role cwd there. A throw from realpath is the missing-path
+    // refusal above, not a crash.
+    let realRoot = null;
+    let realCwd = null;
+    try { realRoot = fs.realpathSync(resolvedRoot); } catch { realRoot = null; }
+    try { realCwd = fs.realpathSync(resolved); } catch { realCwd = null; }
+    if (!realRoot || !realCwd) {
+      throw new Error(`role "${roleName}" cwd "${rel}" is not an existing directory under the team root (${resolvedRoot}) — create it first; Clodex never makes it for you (${file})`);
+    }
+    if (!containsPath(realRoot, realCwd)) {
+      throw new Error(`role "${roleName}" cwd "${rel}" resolves outside the team root ${resolvedRoot} — it is a symlink to ${realCwd} (${file})`);
+    }
   }
 
   // The checkout a linked git worktree belongs to, or null. A linked worktree's
@@ -768,6 +789,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // `lead` at all (RESERVED_ROLE_KEYS refuses above), so D3's refusal is
     // structural here rather than restated.
     if ('cwd' in clean) assertRoleCwd(roleName, clean, team.root, team.file);
+    // Trimmed AFTER the gate, for the same reason pickRoleKeys trims: this write
+    // does not go through pickRoleKeys, so without this the merge below lands the
+    // untrimmed bytes that assertRoleCwd never saw.
+    if (typeof clean.cwd === 'string') clean.cwd = clean.cwd.trim();
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
     // NOT picked down to the schema, unlike addRole's new role: this write

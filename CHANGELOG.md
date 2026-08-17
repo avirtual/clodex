@@ -20,9 +20,9 @@ blocks a release.
   team root as it always has. The path has to name a directory that already
   exists, and Clodex will not create one for you: a seat working in an invented
   empty directory looks exactly like a seat working correctly. Absolute paths
-  and anything escaping the team root are refused when you set them, since
-  `team.json` is agent-writable and this field decides where a seat's shell
-  opens. Two cases fall back to the team root and say so in the spawn reply
+  and anything escaping the team root are refused when you set them — including
+  a symlink that points out of the tree — since `team.json` is agent-writable
+  and this field decides where a seat's shell opens. Two cases fall back to the team root and say so in the spawn reply
   rather than failing the ticket: the directory has since been deleted, or it
   belongs to a nested team of its own (a seat booted there would silently join
   THAT team's board). Worktree tickets are unaffected in how they name their
