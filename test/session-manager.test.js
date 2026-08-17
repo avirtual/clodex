@@ -12319,6 +12319,10 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   // the stub has to carry it. A get() that returns a bare { name } makes every
   // live seat look like it is in no tree at all.
   const wtByName = new Map();
+  // Every non-worktree field an upsert carried, by name. `worktree` stays in its
+  // own map because setWorktree/remove already maintain it there, and two
+  // writers onto one key is how the two spellings drift.
+  const fieldsByName = new Map();
   const m = mkPark({
     fs: fsReal, path: pathReal, os: osReal, countPending: countPendingReal,
     REGISTRY_DIR: home,
@@ -12330,19 +12334,32 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
       // Records, not names: the reuse path SCANS this to find another record
       // naming the tree it is about to take over. An empty list makes that scan
       // vacuous and the stale-pointer bug unreachable.
-      list: () => upserted.map((n) => ({ name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) })),
+      list: () => upserted.map((n) => ({ ...(fieldsByName.get(n) || {}), name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) })),
       get: (n) => (upserted.includes(n)
-        ? { name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) }
+        ? { ...(fieldsByName.get(n) || {}), name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) }
         : (n === 'lead' ? { extraArgs: [] } : null)),
       // Dedupe: the real store keys by name, so a name pushed twice would appear
       // twice in list() and be cleared twice by the pointer scan.
-      upsert: (e) => { if (!upserted.includes(e.name)) upserted.push(e.name); },
+      //
+      // The whole ENTRY is kept, not just the name. The real store persists every
+      // field it is handed, and `ephemeral: true` — stamped by _spawnTicketSeat
+      // and read by accept to tell a one-shot seat from a standing one — is
+      // invisible to a stub that records names alone. That gap is silent in the
+      // direction that matters: the missing key reads as `undefined`, which is
+      // exactly "not ephemeral", so the standing arm runs and the test sees a
+      // teardown that simply did not happen.
+      upsert: (e) => {
+        if (!upserted.includes(e.name)) upserted.push(e.name);
+        const { name, worktree, ...rest } = e;
+        fieldsByName.set(e.name, { ...(fieldsByName.get(e.name) || {}), ...rest });
+      },
       // Splices `upserted` as well as clearing the tree, mirroring the real store:
       // a get()/list() that keeps reporting a removed record makes the respawn path
       // (which re-enters through _mintTicketSeat's taken check) unrepresentable.
       remove: (n) => {
         removed.push(n);
         wtByName.delete(n);
+        fieldsByName.delete(n);
         const i = upserted.indexOf(n);
         if (i >= 0) upserted.splice(i, 1);
       },
@@ -12394,8 +12411,15 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
     const i = upserted.indexOf(name);
     if (i >= 0) upserted.splice(i, 1);
     wtByName.delete(name);
+    fieldsByName.delete(name);
   };
-  return { m, team, home, tstore, seat, seatWithTree, gated, upserted, removed, worktreeSet, stripCalls, acCalls, archiveSeat, killSeat,
+  // The record as the CODE sees it, for tests whose subject is a field the seat
+  // record carries (`ephemeral`) rather than the bare fact that a name was
+  // upserted. Reading `upserted` alone cannot express those.
+  const record = (n) => (upserted.includes(n)
+    ? { ...(fieldsByName.get(n) || {}), name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) }
+    : null);
+  return { m, team, home, tstore, seat, seatWithTree, gated, upserted, removed, worktreeSet, stripCalls, acCalls, archiveSeat, killSeat, record,
     load: () => tstore.load(team.root), one: (id) => tstore.load(team.root).find((t) => t.id === id) };
 }
 
@@ -13887,6 +13911,11 @@ test('task accept: a spawn seat is ARCHIVED, and the reply says so', async () =>
 
   assert.strictEqual(f.one('t1').state, 'done', 'ENTER: the ticket is done, so accept reaches its arms');
   assert.ok(f.m.sessions.has('team-hand-1'), 'ENTER: and the seat is still LIVE, or the archive is vacuous');
+  // ENTER: the arm tells a spawn seat from a standing one by THIS key. A fixture
+  // whose persistence stub dropped it would send this test down the standing arm
+  // and report a teardown that never ran — which is exactly how it first failed.
+  assert.strictEqual(f.record('team-hand-1').ephemeral, true,
+    'ENTER: the seat record carries `ephemeral`, which is what accept reads');
 
   const said = [];
   await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
