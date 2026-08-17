@@ -27,7 +27,7 @@ function fakeNode() {
 
 const prevDoc = global.document;
 global.document = { createElement: () => fakeNode() };
-const { bustRow, renderDiffHtml } = require('../renderer/lib/render-html');
+const { bustRow, renderDiffHtml, isZeroCostBust } = require('../renderer/lib/render-html');
 process.on('exit', () => {
   if (prevDoc === undefined) delete global.document; else global.document = prevDoc;
 });
@@ -138,6 +138,56 @@ test('bustRow: a one-sided divergence still renders (old present, new empty)', (
   assert.ok(hasDiff(html),
     'one empty side is still a divergence worth rendering — only BOTH empty means the locus located no text');
   assert.ok(html.includes('text that went away'), 'and the side that has content must be shown');
+});
+
+// ------------------------------------------------- (b2) free-and-mute lapse rows
+
+// The panel collapses these instead of listing them. The predicate is what the
+// popover filters on, so its boundaries are the whole behaviour: hide too much
+// and a real bust disappears from the count the operator reads as "what this
+// session paid".
+test('isZeroCostBust: a lapse row that rewrote nothing and shows nothing is free-and-mute', () => {
+  // The live shape, verified against session fe9de2fc: 119 of these across an
+  // idle day. FULL-REWRITE severity, 0 tokens, no locus at all.
+  const lapse = tx({
+    class: 'lapse', fault: 'environment', write_tokens: 0, write_frac: 0,
+    fix_hint: 'the cache lapsed (idle > TTL) and re-wrote the whole prefix — arm a keep-warm hold or ping to hold it',
+  });
+  delete lapse.locus;
+  assert.strictEqual(isZeroCostBust(lapse), true,
+    'ENTER: this is the row the panel is drowning in — a FULL-REWRITE that rewrote 0 tokens and carries no diff');
+
+  // Same, but the keys are present and empty (the `conversation` shape).
+  assert.strictEqual(isZeroCostBust(tx({ write_tokens: 0, locus: { old: '', new: '' } })), true,
+    'both sides empty is the same mute row wearing a locus object');
+});
+
+test('isZeroCostBust: a zero-token row that still says WHAT changed is kept', () => {
+  // This is the clause that keeps the filter honest. A free rewrite is still
+  // worth reading when it names the change — a CLAUDE.md edit that happened to
+  // cost nothing this turn is exactly the actionable case.
+  const informative = tx({ write_tokens: 0, locus: { old: 'old prose', new: 'new prose' } });
+  assert.strictEqual(isZeroCostBust(informative), false,
+    'a locus with text is actionable whatever it cost — hiding it would lose the only row that says what moved');
+
+  const oneSided = tx({ write_tokens: 0, locus: { old: 'text that went away', new: '' } });
+  assert.strictEqual(isZeroCostBust(oneSided), false,
+    'one populated side is still something to show, matching bustRow\'s own OR guard');
+});
+
+test('isZeroCostBust: an unknown write_tokens is NOT treated as free', () => {
+  // The degrade direction that matters: an older proxy omits write_tokens, and
+  // reading absent as zero would hide EVERY row it emits — the panel would go
+  // quiet exactly where it has least information.
+  const noLocus = (over) => { const t = tx(over); delete t.locus; return t; };
+  assert.strictEqual(isZeroCostBust(noLocus({ write_tokens: null })), false,
+    'null is unknown, not free — unknown must render');
+  assert.strictEqual(isZeroCostBust(noLocus({ write_tokens: undefined })), false,
+    'and so is an absent field');
+  assert.strictEqual(isZeroCostBust(null), false, 'a missing transition is not a free one');
+  // A row that DID cost tokens is never hidden, mute or not.
+  assert.strictEqual(isZeroCostBust(noLocus({ write_tokens: 25886 })), false,
+    'a real rewrite stays listed even when its locus shows nothing');
 });
 
 // ------------------------------------------------------- (c) inherent compacts

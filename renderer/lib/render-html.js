@@ -158,6 +158,31 @@ function isInherentCompact(t, loc) {
   return collapsed || appendedTail;
 }
 
+// A transition that rewrote nothing AND has nothing to show. The /_bust series
+// records every prefix divergence, including ones that cost zero tokens — an
+// idle `lapse` row is the common case: the cache expired, so the next real turn
+// necessarily re-wrote the prefix, and the transition is recorded against the
+// moment of the lapse rather than against that turn. It carries no locus, no
+// diff, and `0 tok rewritten · 0%`, which is the row contradicting itself: a
+// FULL-REWRITE that rewrote nothing. Listing them buries the busts that did cost
+// something, and the count in the header stops meaning "what this session paid".
+//
+// BOTH clauses are required, and the second is the one that keeps this honest.
+// A zero-token row that DOES carry a locus still says WHAT changed (a CLAUDE.md
+// edit, a model swap), and that is actionable whatever it cost — so it stays.
+// Only a row that is simultaneously free and mute is hidden.
+//
+// `write_tokens == null` is NOT zero: an older proxy omits the field, and
+// treating unknown as free would silently hide every row it emits. Same degrade
+// posture as fault/fix_hint — unknown renders.
+function isZeroCostBust(t) {
+  if (!t || t.write_tokens !== 0) return false;
+  const loc = t.locus || {};
+  const o = typeof loc.old === 'string' ? loc.old : '';
+  const n = typeof loc.new === 'string' ? loc.new : '';
+  return !o && !n;
+}
+
 // A divergence snippet: raw request bytes, so esc() first, and only then swap
 // the literal newlines the snippets routinely carry for a visible glyph — the
 // window is cut by character offset, not by line, so a real break here would
@@ -230,5 +255,5 @@ function bustRow(t, base, sid) {
     + `</div>`;
 }
 
-module.exports = { renderDiffHtml, costStackBlock, svgCostChart, bustRow };
+module.exports = { renderDiffHtml, costStackBlock, svgCostChart, bustRow, isZeroCostBust };
 

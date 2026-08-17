@@ -8,7 +8,7 @@
 // DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the guarantee.
 
 const { esc, fmtAgo } = require('../lib/format');
-const { bustRow } = require('../lib/render-html');
+const { bustRow, isZeroCostBust } = require('../lib/render-html');
 
 // The bust_summary's age triad (wirescope /_status → shaped `p.busts`). first_ts
 // (v0.6.33+) is the set-once epoch of the session's FIRST real bust; last_ts (=
@@ -67,13 +67,28 @@ function initBustPopover({ popoverApi, proxyState }) {
     // microbusts are the designed per-turn strip cost — collapsed to one muted
     // line, not listed row-by-row (they're identical and expected). Matches the
     // chip, which counts genuine only.
-    const genuine = busts.filter((t) => t.fault !== 'self');
+    // Two collapsed populations, not one: the designed per-turn strip cost
+    // (fault:self) and the free-and-mute rows (an idle cache lapse). They are
+    // counted and summarised separately because they mean different things — one
+    // is a cost we chose, the other is a cost nobody paid — and merging them into
+    // a single "hidden" line would make the panel unable to say which.
+    const genuine = busts.filter((t) => t.fault !== 'self' && !isZeroCostBust(t));
     const designed = busts.filter((t) => t.fault === 'self');
+    const freeRows = busts.filter((t) => t.fault !== 'self' && isZeroCostBust(t));
+    const lapseNote = freeRows.length
+      ? `<div class="cost-note">+ ${freeRows.length} zero-token prefix lapse${freeRows.length === 1 ? '' : 's'} (idle cache expired, nothing rewritten) — not shown.</div>`
+      : '';
     if (!genuine.length) {
+      // "the prefix stayed warm" is only true when nothing was recorded at all.
+      // Once the free rows are hidden this branch is reachable with a long list of
+      // lapses behind it — the prefix went cold repeatedly and cost nothing to
+      // re-establish, which is a different sentence and must not borrow that one.
       const only = designed.length
         ? `<div class="cost-note">No genuine cache busts — the ${designed.length} recorded event${designed.length === 1 ? ' is' : 's are'} the designed per-turn strip cost (thinking falling behind the boundary), not a cache problem.</div>`
-        : `<div class="cost-note">No cache busts recorded${nT != null ? ` across ${nT} turn transition${nT === 1 ? '' : 's'}` : ''} — the prefix stayed warm.</div>`;
-      return triad + only + link;
+        : freeRows.length
+          ? `<div class="cost-note">No cache busts that cost anything${nT != null ? ` across ${nT} turn transition${nT === 1 ? '' : 's'}` : ''} — the prefix lapsed while idle and was re-established free.</div>`
+          : `<div class="cost-note">No cache busts recorded${nT != null ? ` across ${nT} turn transition${nT === 1 ? '' : 's'}` : ''} — the prefix stayed warm.</div>`;
+      return triad + only + lapseNote + link;
     }
     const nStatic = d.n_static_prefix_busts != null ? d.n_static_prefix_busts : null;
     const head = `<div class="cost-head"><b>${genuine.length}</b> genuine cache-bust${genuine.length === 1 ? '' : 's'}`
@@ -85,8 +100,12 @@ function initBustPopover({ popoverApi, proxyState }) {
     const designedNote = designed.length
       ? `<div class="cost-note">+ ${designed.length} designed strip-cost microbust${designed.length === 1 ? '' : 's'} (fault:self) — expected every turn, not shown.</div>`
       : '';
-    const note = '<div class="cost-note">Amber = a real injected-prefix change worth fixing (model swap, date rollover, CLAUDE.md edit). Dim = expected (idle cold cache, or a one-time deploy tax that self-heals).</div>';
-    return triad + head + `<div class="bust-list">${rows}</div>` + designedNote + note + link;
+    // "idle cold cache" is deliberately gone from the legend: those rows are the
+    // free-and-mute population, now collapsed, so naming them here would describe
+    // a treatment nothing in the list has. A cold-cache row that DID cost tokens
+    // is still listed and still reads dim.
+    const note = '<div class="cost-note">Amber = a real injected-prefix change worth fixing (model swap, date rollover, CLAUDE.md edit). Dim = expected (a one-time deploy tax that self-heals, or a compact rewriting its own summary).</div>';
+    return triad + head + `<div class="bust-list">${rows}</div>` + designedNote + lapseNote + note + link;
   }
 
   async function openBustPopover(name, anchor) {

@@ -20198,6 +20198,13 @@ ${i3.join("\n")}
         const appendedTail = !!o && n.length > o.length && n.startsWith(o);
         return collapsed || appendedTail;
       }
+      function isZeroCostBust(t) {
+        if (!t || t.write_tokens !== 0) return false;
+        const loc = t.locus || {};
+        const o = typeof loc.old === "string" ? loc.old : "";
+        const n = typeof loc.new === "string" ? loc.new : "";
+        return !o && !n;
+      }
       function bustSnip(s) {
         return esc(s).replace(/\n/g, '<span class="bust-nl">\u23CE</span>');
       }
@@ -20222,7 +20229,7 @@ ${i3.join("\n")}
         const diff = oldSnip || newSnip ? `<div class="bust-diff">${at}<div class="diff-line diff-del">- ${bustSnip(oldSnip)}</div><div class="diff-line diff-add">+ ${bustSnip(newSnip)}</div></div>` : "";
         return `<div class="bust-row bust-sev-${esc(sev)}"><div class="bust-row-head"><span class="bust-what">${esc(what)}</span>${faultBadge}${healBadge}</div><div class="bust-row-meta"><span class="bust-sev">${esc(sev)}</span>${mag}${stamp}${turnLink}</div>` + hint + diff + `</div>`;
       }
-      module.exports = { renderDiffHtml, costStackBlock, svgCostChart, bustRow };
+      module.exports = { renderDiffHtml, costStackBlock, svgCostChart, bustRow, isZeroCostBust };
     }
   });
 
@@ -25195,7 +25202,7 @@ helper=${d.helperPath}`;
   var require_bust_popover = __commonJS({
     "renderer/popovers/bust-popover.js"(exports, module) {
       var { esc, fmtAgo } = require_format();
-      var { bustRow } = require_render_html();
+      var { bustRow, isZeroCostBust } = require_render_html();
       function absStamp(sec) {
         try {
           return new Date(sec * 1e3).toLocaleString(void 0, {
@@ -25235,18 +25242,20 @@ helper=${d.helperPath}`;
           const busts = Array.isArray(d && d.busts) ? d.busts : [];
           const nT = d && d.count != null ? d.count : null;
           const link = base && sid ? `<span class="px-link-ext" data-url="${esc(`${base}/_session?session=${encodeURIComponent(sid)}`)}" title="Open the session in the wirescope navigator (\u2318-click for browser)">Open navigator \u2192</span>` : "";
-          const genuine = busts.filter((t) => t.fault !== "self");
+          const genuine = busts.filter((t) => t.fault !== "self" && !isZeroCostBust(t));
           const designed = busts.filter((t) => t.fault === "self");
+          const freeRows = busts.filter((t) => t.fault !== "self" && isZeroCostBust(t));
+          const lapseNote = freeRows.length ? `<div class="cost-note">+ ${freeRows.length} zero-token prefix lapse${freeRows.length === 1 ? "" : "s"} (idle cache expired, nothing rewritten) \u2014 not shown.</div>` : "";
           if (!genuine.length) {
-            const only = designed.length ? `<div class="cost-note">No genuine cache busts \u2014 the ${designed.length} recorded event${designed.length === 1 ? " is" : "s are"} the designed per-turn strip cost (thinking falling behind the boundary), not a cache problem.</div>` : `<div class="cost-note">No cache busts recorded${nT != null ? ` across ${nT} turn transition${nT === 1 ? "" : "s"}` : ""} \u2014 the prefix stayed warm.</div>`;
-            return triad + only + link;
+            const only = designed.length ? `<div class="cost-note">No genuine cache busts \u2014 the ${designed.length} recorded event${designed.length === 1 ? " is" : "s are"} the designed per-turn strip cost (thinking falling behind the boundary), not a cache problem.</div>` : freeRows.length ? `<div class="cost-note">No cache busts that cost anything${nT != null ? ` across ${nT} turn transition${nT === 1 ? "" : "s"}` : ""} \u2014 the prefix lapsed while idle and was re-established free.</div>` : `<div class="cost-note">No cache busts recorded${nT != null ? ` across ${nT} turn transition${nT === 1 ? "" : "s"}` : ""} \u2014 the prefix stayed warm.</div>`;
+            return triad + only + lapseNote + link;
           }
           const nStatic = d.n_static_prefix_busts != null ? d.n_static_prefix_busts : null;
           const head = `<div class="cost-head"><b>${genuine.length}</b> genuine cache-bust${genuine.length === 1 ? "" : "s"}` + (nT != null ? ` over <b>${nT}</b> transitions` : "") + (nStatic ? ` \xB7 <b>${nStatic}</b> touched the static prefix` : "") + `</div>`;
           const rows = genuine.slice().reverse().map((t) => bustRow(t, base, sid)).join("");
           const designedNote = designed.length ? `<div class="cost-note">+ ${designed.length} designed strip-cost microbust${designed.length === 1 ? "" : "s"} (fault:self) \u2014 expected every turn, not shown.</div>` : "";
-          const note = '<div class="cost-note">Amber = a real injected-prefix change worth fixing (model swap, date rollover, CLAUDE.md edit). Dim = expected (idle cold cache, or a one-time deploy tax that self-heals).</div>';
-          return triad + head + `<div class="bust-list">${rows}</div>` + designedNote + note + link;
+          const note = '<div class="cost-note">Amber = a real injected-prefix change worth fixing (model swap, date rollover, CLAUDE.md edit). Dim = expected (a one-time deploy tax that self-heals, or a compact rewriting its own summary).</div>';
+          return triad + head + `<div class="bust-list">${rows}</div>` + designedNote + lapseNote + note + link;
         }
         async function openBustPopover(name, anchor) {
           const p = (proxyState.get(name) || {}).payload;
