@@ -619,6 +619,12 @@ function createTicketMethods(deps, shared) {
       const argsWarn = shape.modelRefused
         ? ` — reviewer template model "${shape.modelRefused}" is not a usable model name (a value is required and cannot begin with "-") — ignored; spawned on the default model (fix the template's "extraArgs")`
         : '';
+      // A role cwd that could not be honored. Warned, never fatal: the seat is
+      // already useful at the team root, and the alternative — refusing the review
+      // over a directory — blocks the ticket. Silence is what this must not be:
+      // the reviewer would be reading the right repo from the wrong place, and
+      // nothing else in the system would ever say so.
+      const cwdWarn = shape.cwdFallback ? ` — NOTE: ${shape.cwdFallback}` : '';
 
       // Two refusals, one ruling: a `tools` the cap cannot honor must NOT fall back
       // to the full cap. The only fallback available grants more than the template
@@ -800,7 +806,7 @@ function createTicketMethods(deps, shared) {
             type: 'team-review', from: session.name, to: name, body: `review → ${name} @ ${cwd}`,
           });
           log.info('intent', `team-review by ${session.name} → ${name} (${type}) @ ${cwd}`);
-          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${envWarn}${argsWarn}${promptWarn}${spawnPromptWarn}${promptEscapeWarn}${tplWarn}`);
+          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${envWarn}${argsWarn}${cwdWarn}${promptWarn}${spawnPromptWarn}${promptEscapeWarn}${tplWarn}`);
         } catch (err) {
           if (!this.sessions.has(name)) getPersistence().remove(name);
           log.error('intent', `team-review by ${session.name} → ${name} failed: ${err.message}`);
@@ -1722,6 +1728,25 @@ function createTicketMethods(deps, shared) {
           + `That tree is yours for this ticket: commit to ${ticket.worktree.branch} as you go, never push, and do not merge it. `
           + `Your cwd is the shared repo checkout; editing files there instead would collide with the other seats working in it.\n`
         : '';
+      // ADDITIVE to the line above, never a rewrite of it. `wt.path` is the tree
+      // identity every other mechanism uses — claimTree, the suite runner, the
+      // merge — so a `WORK IN:` naming a subdirectory would be copied straight
+      // into a git command that then operates in the wrong place. The role's area
+      // gets its own line instead, and only when the role actually names one.
+      // `role || assignee`, the idiom every other read of the ticket's role uses:
+      // `role` is set only once the ticket is PINNED to a seat, and before that
+      // the role key lives in `assignee`. Reading `role` alone would drop this
+      // line on exactly the first delivery, which is the one that matters most.
+      // hasOwnProperty-gated because `assignee` is a seat NAME once pinned, and a
+      // seat named like an Object.prototype key must not resolve to a function.
+      const roleName = (ticket && (ticket.role || ticket.assignee)) || '';
+      const roleDef = (team && team.roles && roleName
+        && Object.prototype.hasOwnProperty.call(team.roles, roleName)) ? team.roles[roleName] : null;
+      const roleCwdRel = (roleDef && typeof roleDef.cwd === 'string' && roleDef.cwd.trim()) ? roleDef.cwd.trim() : '';
+      const areaLine = (roleCwdRel && ticket && ticket.worktree && ticket.worktree.path)
+        ? `YOUR AREA in that tree: ${path.join(ticket.worktree.path, roleCwdRel)} — your role works in "${roleCwdRel}". `
+          + `The tree ROOT above stays the path for git commands and for the suite; this is where your files live.\n`
+        : '';
       // Rides EVERY dispatch, replays included: a respawned seat has no memory of
       // the verb, exactly as it has none of its worktree. See ticketCloseLine.
       const closeLine = ticketCloseLine(ticket.id);
@@ -1732,7 +1757,7 @@ function createTicketMethods(deps, shared) {
       // attached", which would put the close verb behind the very turn this line
       // exists to save. The verb is safe here for the same reason as in the body:
       // `[agent:from <sender>] ` precedes the tag, so it is never at column 1.
-      const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${closeLine}${specText}`, urgent,
+      const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${areaLine}${closeLine}${specText}`, urgent,
         replay
           ? `[ticket ${ticket.id} REPLAY] close with ${ticketCloseVerb(ticket.id)}`
           : respec
@@ -2633,6 +2658,53 @@ function createTicketMethods(deps, shared) {
       };
     },
 
+    // A role's `cwd` → the absolute directory its seat boots in, plus the reason
+    // it fell back when it did. Returns {cwd, fallback} where `fallback` is null
+    // on the honored path and an operator-facing clause otherwise.
+    //
+    // NEVER throws and never creates anything: this runs at SPAWN, where the
+    // write-time refusals in team-manifest have already had their say, and the
+    // remaining cases are ones the disk changed under us. A throw here would
+    // block a ticket over a directory; falling back to team.root spawns a working
+    // seat in the place the whole team already agreed on. Silent is the one thing
+    // it must not be — both call sites print `fallback`.
+    //
+    // The re-parenting guard is the non-obvious one. resolveTeam is
+    // deepest-root-wins, so a nested team.json under `api/` OWNS that directory:
+    // a seat booted there resolves onto the CHILD team — its board, its roster,
+    // its lead — and every ticket verb the seat runs would quietly address the
+    // wrong team. Nothing else in the system would report that.
+    _resolveRoleCwd(team, def) {
+      const root = team && team.root;
+      const rel = def && typeof def.cwd === 'string' ? def.cwd.trim() : '';
+      if (!root || !rel) return { cwd: root, fallback: null };
+      // Re-checked at spawn even though every write path refuses these: team.json
+      // is hand-editable, and a file that predates the write gate must not be able
+      // to point a PTY outside the project.
+      if (path.isAbsolute(rel)) {
+        return { cwd: root, fallback: `role cwd "${rel}" is absolute (it must be relative to the team root) — the seat was spawned in ${root} instead` };
+      }
+      const resolved = path.resolve(root, rel);
+      const within = path.relative(root, resolved);
+      if (within.startsWith('..') || path.isAbsolute(within)) {
+        return { cwd: root, fallback: `role cwd "${rel}" resolves outside the team root — the seat was spawned in ${root} instead` };
+      }
+      let isDir = false;
+      try { isDir = fs.statSync(resolved).isDirectory(); } catch { isDir = false; }
+      if (!isDir) {
+        return { cwd: root, fallback: `role cwd "${rel}" does not exist under the team root (Clodex never creates it) — the seat was spawned in ${root} instead` };
+      }
+      // Compared by ROOT, not by name: two manifests can name the same root only
+      // by hand-edit, while the reparenting case is precisely a DIFFERENT root
+      // (a nested team.json) resolving for this path.
+      let owner = null;
+      try { owner = resolveTeam(resolved); } catch { owner = null; }
+      if (owner && path.resolve(owner.root) !== path.resolve(root)) {
+        return { cwd: root, fallback: `role cwd "${rel}" belongs to team "${owner.name}" (its own team.json at ${owner.root} owns that directory), so a seat there would join THAT team's board — the seat was spawned in ${root} instead` };
+      }
+      return { cwd: resolved, fallback: null };
+    },
+
     // The ONE seat shape both team spawn paths pass to create(). They diverged
     // silently twice — the review path hand-rolled a second copy of the env
     // allowlist filter against the same constant, so either copy could be edited
@@ -2661,6 +2733,10 @@ function createTicketMethods(deps, shared) {
       const postureArgs = leadArgs.includes('--dangerously-skip-permissions')
         ? ['--dangerously-skip-permissions'] : [];
       const workspaceId = opener.workspaceId || DEFAULT_WORKSPACE_ID;
+      // Resolved ONCE for both arms: a role cwd is not a reviewer concept or a
+      // ticket concept, and two copies of this call are exactly the divergence
+      // this resolver exists to prevent.
+      const roleCwd = this._resolveRoleCwd(team, def);
 
       if (!review) {
         return {
@@ -2673,7 +2749,17 @@ function createTicketMethods(deps, shared) {
           // there itself. Booting it in the worktree would bind the seat's whole
           // identity — transcript, project root, team block, recent-cwd — to one
           // branch's checkout, which is removed when the ticket's session is deleted.
-          cwd: team.root,
+          //
+          // A role `cwd` moves this WITHIN the main checkout (team.root by
+          // default), never into the worktree: the property above is about which
+          // CHECKOUT the seat lives in, and it is unchanged by which subdirectory
+          // of that checkout the role names.
+          cwd: roleCwd.cwd,
+          // Why the cwd is not what the role asked for, or null. A key on the
+          // shape rather than a second resolution at the call site: both spawn
+          // paths print it, and a re-derivation there could disagree with the
+          // directory actually used.
+          cwdFallback: roleCwd.fallback,
           tpl,
           extraArgs: (shape && shape.extraArgs) || postureArgs,
           agents: (shape && shape.agents) || [],
@@ -2788,7 +2874,12 @@ function createTicketMethods(deps, shared) {
 
       return {
         type,
-        cwd: team.root,
+        // Honored on this arm too (D4): the resolver is shared, so it costs
+        // nothing, and special-casing the reviewer out would be a second rule to
+        // remember. The reviewer stays agent-unwritable via RESERVED_ROLE_KEYS —
+        // only the operator's GUI can set its cwd at all.
+        cwd: roleCwd.cwd,
+        cwdFallback: roleCwd.fallback,
         tpl,
         // MERGED onto postureArgs, never replacing them (that is the ticket
         // arm's shape, and the reason a template can hand a ticket seat posture
@@ -3047,7 +3138,12 @@ function createTicketMethods(deps, shared) {
           // already working on the spec by the time this lands — a warn, not a
           // block, exactly like the env drops beside it.
           const promptWarn = (spawned && spawned.missingPrompt) ? ` — WARNING: ${spawned.missingPrompt}` : '';
-          reply(`ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name)}${envWarn}${promptWarn}`);
+          // Same rule as the env drops beside it: the seat is already working by
+          // the time this lands, and the lead is the only party who can fix the
+          // role def. A seat silently booted somewhere other than where its role
+          // says is the failure this line exists to make visible.
+          const cwdWarn = shape.cwdFallback ? ` — NOTE: ${shape.cwdFallback}` : '';
+          reply(`ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name)}${envWarn}${cwdWarn}${promptWarn}`);
         } catch (err) {
           const live = this.sessions.has(seat.name);
           if (!live) getPersistence().remove(seat.name);

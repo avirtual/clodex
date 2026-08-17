@@ -348,6 +348,7 @@
         <input type="text" id="team-roles-add-brief" placeholder="one line: what this role is for">
         <select id="team-roles-add-prompt" title="System-prompt name from the library — sets how this teammate behaves"></select>
         <input type="text" id="team-roles-add-template" placeholder="optional: spawn template name">
+        <input type="text" id="team-roles-add-cwd" placeholder="optional: subdirectory this role works in (e.g. api)" title="Relative to the team root — where seats holding this role start. Blank = the team root.">
         <select id="team-roles-add-dispatch" title="What dispatching a ticket to this role does">
           <option value="standing">standing — the live seat holding this role gets the spec</option>
           <option value="worktree">worktree — a one-shot seat on its own branch, in its own checkout</option>

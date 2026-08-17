@@ -25,7 +25,7 @@ const MANIFEST_VERSION = 3;
 // warning rather than throwing: team.json is agent-writable and old files carry
 // the version-1 keys, so a hard failure here would read as "no team" everywhere
 // (every caller resolves teams inside a best-effort catch).
-const ROLE_KEYS = new Set(['template', 'prompt', 'brief', 'dispatch']);
+const ROLE_KEYS = new Set(['template', 'prompt', 'brief', 'dispatch', 'cwd']);
 
 // What dispatching a ticket to this role DOES. The predecessor was named
 // `worktree`, after one artifact of the behaviour rather than the behaviour, and
@@ -74,7 +74,7 @@ const HONORED_CUT_FIELDS = new Map([['worktree', 'dispatch: "worktree"']]);
 // Every role field a front door (setRole, the Add Role form, the popover row
 // model) may set. Exported so the legibility test compares the real list against
 // the schema instead of a copy that can drift from it.
-const EDITABLE_ROLE_FIELDS = ['brief', 'dispatch', 'prompt', 'template'];
+const EDITABLE_ROLE_FIELDS = ['brief', 'cwd', 'dispatch', 'prompt', 'template'];
 
 // team.json is agent-writable and these role keys are trusted downstream, so the
 // mutators below must never create, destroy or rename them; only the operator
@@ -123,6 +123,9 @@ function normalizeRoleDef(roleName, def, file) {
   if (def.dispatch != null && !ROLE_DISPATCH_VALUES.has(def.dispatch)) {
     throw new Error(`role "${roleName}" dispatch must be one of ${[...ROLE_DISPATCH_VALUES].join(', ')} (${file})`);
   }
+  if (def.cwd != null && typeof def.cwd !== 'string') {
+    throw new Error(`role "${roleName}" cwd must be a string (${file})`);
+  }
   return {
     template: def.template ?? null,
     prompt: def.prompt ?? null,
@@ -152,6 +155,16 @@ function normalizeRoleDef(roleName, def, file) {
     // lands a hand in the shared checkout holding a spec that assumes isolation.
     dispatch: def.dispatch
       ?? ((def.worktree === true && !RESERVED_ROLE_KEYS.has(roleName)) ? 'worktree' : DEFAULT_ROLE_DISPATCH),
+    // Where in the team this role's seats boot, RELATIVE to team.root. A role
+    // already knows its team, so "where in the team" is the only expressible
+    // thing; an absolute path would let an agent-writable team.json point a seat
+    // at another project entirely, which assertRoleCwd refuses at every write.
+    //
+    // Blank normalizes to null — the UI's cleared text input sends '', and
+    // path.resolve(root, '') is root, so storing '' would put a value on disk
+    // meaning exactly what its absence does. Trimmed for the same reason: a
+    // stray space is not a directory anyone meant to name.
+    cwd: (typeof def.cwd === 'string' && def.cwd.trim()) ? def.cwd.trim() : null,
   };
 }
 
@@ -448,6 +461,56 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
   }
 
+  // The write-time gate on a role's `cwd`. Every mutator that can land one on
+  // disk runs it, because the field flows to create() as a PTY working directory
+  // and team.json is agent-writable — this is a security boundary, not tidiness.
+  //
+  // Confinement is decided by RESOLVING and comparing (containsPath), never by a
+  // prefix match on the raw string: "../sibling-repo" is not a prefix of the
+  // root, and "/etc" shares no prefix with anything, but a string check that
+  // looks only for a leading ".." misses `api/../../elsewhere`.
+  //
+  // The refusals are here rather than in normalizeRoleDef because they need the
+  // team's ROOT and the filesystem, neither of which that pure function has —
+  // and because a LOAD must not throw on them: loadManifest runs inside every
+  // caller's best-effort catch, so a hand-edited bad cwd would read as "no team
+  // at all" everywhere. On the load path a bad cwd is instead neutralized at
+  // spawn time, which reports the fallback (the same shape as a nested team.json).
+  function assertRoleCwd(roleName, def, root, file) {
+    if (!def || typeof def !== 'object' || Array.isArray(def)) return;
+    const raw = def.cwd;
+    if (raw == null || (typeof raw === 'string' && !raw.trim())) return;
+    if (typeof raw !== 'string') {
+      throw new Error(`role "${roleName}" cwd must be a string (${file})`);
+    }
+    const rel = raw.trim();
+    // The lead's seat is operator-created and standing — resolveSeatShape is
+    // never called with roleKey 'lead' — so a cwd here would be inert but
+    // believed, on exactly one role. That is the shape that got `type` and
+    // `tools` cut from this schema; refuse it at the door, and say why, because
+    // the operator CAN set the directory they wanted — just not from here.
+    if (roleName === 'lead') {
+      throw new Error(`role "lead" cannot take a cwd: the lead's seat is not spawned by the team, so its directory is set when the operator creates the seat (${file})`);
+    }
+    if (path.isAbsolute(rel)) {
+      throw new Error(`role "${roleName}" cwd must be RELATIVE to the team root — "${rel}" is absolute, and an absolute cwd could point a seat at another project (${file})`);
+    }
+    const resolvedRoot = path.resolve(root);
+    const resolved = path.resolve(resolvedRoot, rel);
+    if (!containsPath(resolvedRoot, resolved)) {
+      throw new Error(`role "${roleName}" cwd "${rel}" resolves outside the team root ${resolvedRoot} (${file})`);
+    }
+    // Refused, never created: a mkdir here would invent structure the project did
+    // not ask for, and a seat working in an invented empty directory looks exactly
+    // like a seat working correctly. Refusing at WRITE puts the error where the
+    // operator can still fix it.
+    let isDir = false;
+    try { isDir = fs.statSync(resolved).isDirectory(); } catch { isDir = false; }
+    if (!isDir) {
+      throw new Error(`role "${roleName}" cwd "${rel}" is not an existing directory under the team root (${resolvedRoot}) — create it first; Clodex never makes it for you (${file})`);
+    }
+  }
+
   // The checkout a linked git worktree belongs to, or null. A linked worktree's
   // `.git` is a FILE reading `gitdir: <main>/.git/worktrees/<id>`, so the main
   // checkout is derivable with one read — no `git` subprocess, which is what makes
@@ -576,6 +639,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       // path too — without this a brand-new file could be born naming lead as a
       // worktree role, which every other door refuses.
       assertDispatchAllowed(k, seedRoles[k], file);
+      // Against `resolvedRoot`, not the team on disk: there is no manifest to
+      // load yet, and this is the root the file is about to name.
+      assertRoleCwd(k, seedRoles[k], resolvedRoot, file);
     }
     const manifest = {
       version: MANIFEST_VERSION,
@@ -615,6 +681,11 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       // with `dispatch: "worktree"`. A stock def that ever grew one would land it
       // here alone, through the door added to make reserved roles recoverable.
       assertDispatchAllowed(roleName, rawMint.roles[roleName], team.file);
+      // Inert for the same reason as the line above (no stock def carries a cwd)
+      // and present for the same reason: this is a write path, and it is the one
+      // that would not otherwise refuse a stock def that grew one — including on
+      // `lead`, where the field is inert-but-believed.
+      assertRoleCwd(roleName, rawMint.roles[roleName], team.root, team.file);
       atomicWrite(team.file, JSON.stringify(migrateRoles(rawMint), null, 2));
       return loadManifest(teamName);
     }
@@ -629,6 +700,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     }
     const normalized = normalizeRoleDef(roleName, def, team.file);
     assertDispatchAllowed(roleName, normalized, team.file);
+    assertRoleCwd(roleName, normalized, team.root, team.file);
     if (normalized.template != null && !NAME_RE.test(normalized.template)) {
       throw new Error(`role "${roleName}" template must be a library-template name matching ${NAME_RE} (${team.file})`);
     }
@@ -690,6 +762,12 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if ('dispatch' in clean && !ROLE_DISPATCH_VALUES.has(clean.dispatch)) {
       throw new Error(`role "${roleName}" dispatch must be one of ${[...ROLE_DISPATCH_VALUES].join(', ')} (${team.file})`);
     }
+    // Validated on `clean` (the patch), not on the merged def below: the merge
+    // preserves an EXISTING cwd that a stale/foreign check could re-refuse, and
+    // the caller must be told about the value THEY sent. setRole cannot reach
+    // `lead` at all (RESERVED_ROLE_KEYS refuses above), so D3's refusal is
+    // structural here rather than restated.
+    if ('cwd' in clean) assertRoleCwd(roleName, clean, team.root, team.file);
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
     // NOT picked down to the schema, unlike addRole's new role: this write
@@ -697,6 +775,15 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // is already EDITABLE-only, so no cut field can enter here. The cut fields
     // that are already on disk leave via migrateRoles, which names them.
     raw.roles[roleName] = { ...raw.roles[roleName], ...clean };
+    // A blank cwd is a CLEAR, and it deletes the key rather than storing '': the
+    // popover's text input sends '' for "no cwd", and path.resolve(root, '') is
+    // the root — so an empty string on disk would be a value meaning exactly what
+    // its absence means, which is the state migrateRoles exists to keep out.
+    // Unlike `template`, blank is reachable and legitimate here (there is a
+    // clear-cwd semantic); unlike `brief`, '' is not a displayable value.
+    if ('cwd' in clean && !String(clean.cwd == null ? '' : clean.cwd).trim()) {
+      delete raw.roles[roleName].cwd;
+    }
     normalizeRoleDef(roleName, raw.roles[roleName], team.file);
     atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
     return loadManifest(teamName);

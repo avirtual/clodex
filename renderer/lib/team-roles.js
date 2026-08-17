@@ -42,6 +42,8 @@ function teamRoleRows(manifest) {
   return Object.entries(roles).map(([key, def]) => ({
     key,
     brief: (def && def.brief) || '',
+    // Relative to the team root; '' means the seat boots at the root itself.
+    cwd: (def && def.cwd) || '',
     dispatch: (def && def.dispatch) || DEFAULT_DISPATCH,
     prompt: (def && def.prompt) || '',
     template: (def && def.template) || '',
@@ -117,6 +119,12 @@ function buildSavePatch(formValues) {
   if (template) patch.template = template;
   const dispatch = trim(formValues && formValues.dispatch);
   if (DISPATCH_VALUES.includes(dispatch)) patch.dispatch = dispatch;
+  // Always sent, blank INCLUDED — unlike `template`, blank is a legitimate clear
+  // here (setRole deletes the key on an empty value), and omitting it would make
+  // "put this role back at the team root" unreachable from the only door that
+  // can undo it. Backend validates the non-blank case; a bad path is refused
+  // there with the reason, so no mirror of that check belongs in this leaf.
+  patch.cwd = trim(formValues && formValues.cwd);
   return patch;
 }
 

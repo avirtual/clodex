@@ -44,6 +44,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   const addBrief = document.getElementById('team-roles-add-brief');
   const addPrompt = document.getElementById('team-roles-add-prompt');
   const addTemplate = document.getElementById('team-roles-add-template');
+  const addCwd = document.getElementById('team-roles-add-cwd');
   const addDispatch = document.getElementById('team-roles-add-dispatch');
   const addBtn = document.getElementById('team-roles-add-btn');
   const watchdogInput = document.getElementById('team-roles-watchdog-ms');
@@ -255,7 +256,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           el.appendChild(actions);
         }
       } else {
-        // SECURITY: brief/prompt/template are agent-writable unconstrained strings
+        // SECURITY: brief/prompt/template/cwd are agent-writable unconstrained strings
         // (only role KEYS are charset-gated). NEVER interpolate them into a
         // value="…" attribute — a `" onfocus="…` payload would break out of the
         // attribute and execute in this nodeIntegration renderer. Build the inputs
@@ -268,6 +269,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label>` +
           `<label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label>` +
           `<label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label>` +
+          `<label class="team-role-field" title="Relative to the team root — where seats holding this role start. Blank = the team root."><span>cwd</span><input type="text" data-f="cwd" placeholder="optional: subdirectory (e.g. api)"></label>` +
           `<label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span>` +
           `<select data-f="dispatch">` +
           `<option value="standing">standing — the live seat gets the spec</option>` +
@@ -320,6 +322,9 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           sel.value = row.prompt;
         }
         el.querySelector('input[data-f="template"]').value = row.template;
+        // PROPERTY, never an attribute: `cwd` comes from an agent-writable
+        // team.json, and this renderer runs with nodeIntegration.
+        el.querySelector('input[data-f="cwd"]').value = row.cwd;
         // A hand-edited team.json can hold a value this picker has no option for.
         // Fall back to the default rather than leaving the select blank, which
         // would send '' and have buildSavePatch drop the key silently.
@@ -465,7 +470,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     helpPanel.classList.add('hidden'); // help starts collapsed on every open
     resetDrag(popover);                // a fresh open re-anchors; drop any drag offset
     await populatePromptOptions();
-    addName.value = ''; addBrief.value = ''; addTemplate.value = ''; addPrompt.value = '';
+    addName.value = ''; addBrief.value = ''; addTemplate.value = ''; addPrompt.value = ''; addCwd.value = '';
     popover.dataset.name = name;
     const ok = await refresh(name);
     if (!ok) { popover.dataset.name = ''; return; } // not a team / unreadable → show nothing
@@ -530,6 +535,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
       // template — backend setRole throws NAME_RE on '' (no clear-template in v1).
       const patch = buildSavePatch({
         brief: val('brief'), prompt: val('prompt'), template: val('template'), dispatch: val('dispatch'),
+        cwd: val('cwd'),
       });
       const res = await window.api.teamSetRole(name, role, patch);
       await afterMutation(res, `role "${role}" saved`);
@@ -583,13 +589,19 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     if (v.template) def.template = v.template;
     const brief = addBrief.value.trim();
     if (brief) def.brief = brief;
+    // Omitted when blank, like the fields above: absent already means "the team
+    // root", so writing '' would put a value on disk that means what its absence
+    // means. A bad path is refused by addRole with the reason, which surfaces on
+    // the status line — no mirror of that validation here.
+    const cwd = addCwd.value.trim();
+    if (cwd) def.cwd = cwd;
     // Only the non-default is written: absent already reads as `standing`, so an
     // explicit one would put a value on disk that means exactly what its absence
     // does (the same rule migrateRoles follows).
     if (addDispatch.value === 'worktree') def.dispatch = 'worktree';
     const res = await window.api.teamAddRole(name, v.name, def);
     if (res && res.ok) {
-      addName.value = ''; addBrief.value = ''; addTemplate.value = ''; addPrompt.value = '';
+      addName.value = ''; addBrief.value = ''; addTemplate.value = ''; addPrompt.value = ''; addCwd.value = '';
       addDispatch.value = DEFAULT_DISPATCH;
     }
     await afterMutation(res, `role "${v.name}" added`);
