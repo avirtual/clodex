@@ -67,6 +67,15 @@ app.whenReady().then(async () => {
   check('MF2: the cleared cwd stays cleared across a dispatch change',
     await js(`${body}.querySelector('[data-field="cwd"] input').value`), '');
 
+  // --- r2 nit 1: a Clear must reach the STATE computation, not just the DOM.
+  //     Returning to standing re-derives stale-vs-hidden from what is stored,
+  //     and a Clear is a promise that nothing is stored any more — so the field
+  //     must be GONE, not back as an empty disabled box with an inert Clear. ---
+  await setDispatch('standing');
+  check('r2: a cleared cwd is HIDDEN on the way back to standing, not an empty stale box',
+    await fieldState(), [{ field: 'template', stale: true, value: 'fable-design', hasClear: false }]);
+  await setDispatch('spawn');
+
   // --- MF2(a): typing then switching between two ACTIVE dispatches. ---
   await js(`(() => { ${body}.querySelector('[data-field="cwd"] input').value = 'services/api'; return null; })()`);
   await setDispatch('worktree');

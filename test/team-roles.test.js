@@ -454,6 +454,64 @@ test('r1 MF2: every dispatch pair either changes state or is skipped — no rebu
     `ENTER: at least the identity transitions skipped the rebuild (saw ${skipped})`);
 });
 
+test('r2 nit1: a pending Clear reaches the STATE source, so the field hides on the way back', () => {
+  // The leaf half of the round trip. `stale` vs `hidden` is decided from what is
+  // STORED, so the question is what the editor calls "stored" after a Clear. If
+  // it keeps meaning "what was on disk when the row opened", standing → spawn →
+  // standing re-derives `stale` from the value the operator just cleared and
+  // rebuilds an empty, disabled field carrying a Clear that now does nothing.
+  const onDisk = { cwd: 'api', template: 'fable-design' };
+  const stored = { ...onDisk };
+
+  const reveal = fieldReveal('standing', stored);
+  assert.strictEqual(reveal.cwd, 'stale', 'ENTER: the row opens with a genuinely stale cwd — without it the rest is vacuous');
+
+  // The Clear, as the popover's handler performs it: the value is gone as far as
+  // Save is concerned from this click onward, so it must be gone here too.
+  stored.cwd = '';
+
+  const toSpawn = reconcileReveal(reveal, 'spawn', stored);
+  assert.strictEqual(toSpawn.rebuild, true, 'ENTER: stale → edit must rebuild, or the return trip below tests nothing');
+  const back = reconcileReveal(toSpawn.reveal, 'standing', stored);
+  assert.deepStrictEqual(back, {
+    reveal: { cwd: 'hidden', template: 'stale' },
+    rebuild: true,
+  }, 'a cleared cwd returns as HIDDEN; reading the on-disk value here resurrects it as an empty stale box');
+
+  // And the contrast that makes it a real distinction rather than a constant:
+  // the SAME trip against the untouched snapshot is exactly the defect.
+  const stale = reconcileReveal(toSpawn.reveal, 'standing', onDisk);
+  assert.strictEqual(stale.reveal.cwd, 'stale',
+    'ENTER: the frozen snapshot really does yield `stale` — this is the state the fix removes');
+});
+
+test('r2 nit1: the editor feeds reconcileReveal a snapshot its Clear can mutate', () => {
+  // The wiring half, and the half that actually regresses: the leaf above is
+  // correct with or without the fix, because the defect was WHICH object the
+  // editor handed it. There is no DOM in this suite, so this pins the shape the
+  // behaviour rests on; the behaviour itself is asserted end-to-end by
+  // `manual/team-popover-stale-fields.js` ("a cleared cwd is HIDDEN on the way
+  // back to standing").
+  const pop = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'popovers', 'team-roles-popover.js'), 'utf-8');
+
+  const editor = /const stored = \{ cwd: row\.cwd, template: row\.template \};[\s\S]*?renderRevealedFields\(revealBox, shownReveal[^\n]*\n/.exec(pop);
+  assert.ok(editor, 'ENTER: found the editor\'s reveal wiring — a rename would reduce every assertion below to nothing');
+  const src = editor[0];
+
+  assert.match(src, /const onClear = \(f\) => \{ stored\[f\] = ''; \};/,
+    'the Clear handler must blank the STATE source, not only the input');
+  assert.match(src, /reconcileReveal\(shownReveal, dispatch, stored\)/,
+    'and the state must be derived from that mutable snapshot');
+  assert.ok(!/reconcileReveal\([^)]*\{ cwd: row\.cwd/.test(src),
+    'deriving state from a fresh `row` read re-freezes the snapshot and restores the defect');
+  // Both halves of one line: every REBUILT field set is wired to the same
+  // handler (or a Clear on a rebuilt field is lost again), and its values still
+  // come from the live inputs — that second half is r1 MF2 and must not regress
+  // here, since seeding a rebuild from `stored` would revert unsaved typing.
+  assert.match(src, /renderRevealedFields\(revealBox, reveal, liveValues\(\), onClear\)/,
+    'rebuilds must pass the live values AND the clear handler');
+});
+
 test('reservedRoleNote: newcomer-facing lock reason for lead/reviewer, safe generic otherwise', () => {
   assert.match(reservedRoleNote('lead'), /Runs the team/);
   assert.match(reservedRoleNote('reviewer'), /Independently checks the lead's work/);
