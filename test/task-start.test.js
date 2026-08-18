@@ -416,6 +416,10 @@ test('startedAt: a pre-upgrade PARKED record is read as never started, so it can
   const now = Date.now();
   f.tstore.save(f.team.root, [{
     id: 't1', title: 'filed for later', spec: 'filed for later\ndetail',
+    // A dispatchable ticket carries one (t431 refuses one without at start), and
+    // this record is genuinely never-started, so the gate applies to it. Its
+    // subject is how a pre-upgrade record READS, not artifact resolution.
+    taskDir: 'tasks/filed-for-later/SPEC.md',
     assignee: 'hand', opener: 'lead', state: 'open', parked: true,
     openedAt: now - 90000, closedAt: null, lastActivityAt: now - 90000, nudgedAt: null,
   }]);
