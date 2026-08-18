@@ -67,8 +67,10 @@ const EXCLUDED = {
   'dist/': 'build output, gitignored — it IS the artifact',
   'docker/': 'Dockerfile for the headless image, built from a checkout, never read by the app',
   'manual/': 'Electron-driven behavioural checks run by hand (real keyboard/ARIA, focus, live '
-    + 'DOM) — node --test discovers no tree named manual/ and the suite spawns no browser, so '
-    + 'these are not part of it; nothing reads them at runtime',
+    + 'DOM) — nothing reads them at runtime. They stay OUT of the suite only by their names: '
+    + 'node --test globs *.test.js, test-*.js and test.js, plus every .js under a directory '
+    + 'named test. A script added here under any of those would be swept in and run headless, '
+    + 'where it needs an Electron browser and fails. Name new ones like the existing three',
   'tasks/': 'task artifacts and journals — development record, no runtime reader',
   'test/': 'the test suite does not ship',
   'vendor/': 'ships via build.extraResources (vendor/wirescope → Contents/Resources/wirescope), '

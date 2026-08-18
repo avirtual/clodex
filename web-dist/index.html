@@ -27153,7 +27153,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           return group;
         }
-        function renderRevealedFields(box, reveal, values) {
+        function renderRevealedFields(box, reveal, values, onClear) {
           box.innerHTML = "";
           for (const f of ["template", "cwd"]) {
             const state = reveal[f];
@@ -27190,6 +27190,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                   field.classList.remove("stale");
                   why.remove();
                   clear.remove();
+                  if (typeof onClear === "function") onClear(f);
                 });
                 field.appendChild(clear);
               }
@@ -27386,17 +27387,21 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 return { cwd: read("cwd"), template: read("template") };
               };
               let shownReveal = null;
+              const stored = { cwd: row.cwd, template: row.template };
+              const onClear = (f) => {
+                stored[f] = "";
+              };
               const paintReveal = (dispatch) => {
-                const { reveal, rebuild } = reconcileReveal(shownReveal, dispatch, { cwd: row.cwd, template: row.template });
+                const { reveal, rebuild } = reconcileReveal(shownReveal, dispatch, stored);
                 if (!rebuild) return;
-                renderRevealedFields(revealBox, reveal, liveValues());
+                renderRevealedFields(revealBox, reveal, liveValues(), onClear);
                 shownReveal = reveal;
               };
               body.querySelector('[data-f-group="dispatch"]').appendChild(
                 buildDispatchSegments(initialDispatch, paintReveal)
               );
-              shownReveal = fieldReveal(initialDispatch, { cwd: row.cwd, template: row.template });
-              renderRevealedFields(revealBox, shownReveal, { cwd: row.cwd, template: row.template });
+              shownReveal = fieldReveal(initialDispatch, stored);
+              renderRevealedFields(revealBox, shownReveal, { cwd: stored.cwd, template: stored.template }, onClear);
             }
             if (owed.length) {
               const box = document.createElement("div");

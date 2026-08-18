@@ -297,7 +297,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   // team.json. Every one of them lands here as a `.value` PROPERTY or a
   // textContent — never in a value="…" attribute, which a `" onfocus="` payload
   // would break out of in this nodeIntegration renderer.
-  function renderRevealedFields(box, reveal, values) {
+  function renderRevealedFields(box, reveal, values, onClear) {
     box.innerHTML = '';
     for (const f of ['template', 'cwd']) {
       const state = reveal[f];
@@ -359,6 +359,13 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
             field.classList.remove('stale');
             why.remove();
             clear.remove();
+            // The state side has to hear about this too. `stale` vs `hidden` is
+            // decided from what is STORED, so a caller that keeps its own stored
+            // snapshot would still say `stale` on the next dispatch change and
+            // rebuild this field as an empty disabled box with a Clear that
+            // looks inert. Nothing is written wrongly either way — Save sends
+            // the blank regardless — but the field must not come back.
+            if (typeof onClear === 'function') onClear(f);
           });
           field.appendChild(clear);
         }
@@ -688,21 +695,29 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
         // The reveal currently ON SCREEN, so an unchanged transition can skip the
         // rebuild entirely rather than destroy and recreate identical fields.
         let shownReveal = null;
+        // What Save would write for the STATE fields, which is the stored value
+        // plus any pending Clear — not a frozen copy of `row`. A Clear is a
+        // promise that the value is gone once saved, so from that click onward
+        // the field is empty as far as `stale` vs `hidden` is concerned; reading
+        // `row` forever would resurrect it as an empty stale box on the next
+        // dispatch change. It is still not the LIVE input: see reconcileReveal.
+        const stored = { cwd: row.cwd, template: row.template };
+        const onClear = (f) => { stored[f] = ''; };
         const paintReveal = (dispatch) => {
           // State from the STORED def, values from the LIVE inputs — see
           // reconcileReveal's header for why those two sources differ.
-          const { reveal, rebuild } = reconcileReveal(shownReveal, dispatch, { cwd: row.cwd, template: row.template });
+          const { reveal, rebuild } = reconcileReveal(shownReveal, dispatch, stored);
           if (!rebuild) return;
-          renderRevealedFields(revealBox, reveal, liveValues());
+          renderRevealedFields(revealBox, reveal, liveValues(), onClear);
           shownReveal = reveal;
         };
         body.querySelector('[data-f-group="dispatch"]').appendChild(
           buildDispatchSegments(initialDispatch, paintReveal),
         );
-        // The FIRST paint seeds from the stored def: there are no inputs to carry
-        // forward yet, and this is the one moment `row` is the right source.
-        shownReveal = fieldReveal(initialDispatch, { cwd: row.cwd, template: row.template });
-        renderRevealedFields(revealBox, shownReveal, { cwd: row.cwd, template: row.template });
+        // The FIRST paint seeds from `stored`: there are no inputs to carry
+        // forward yet, and no Clear can have happened, so it still equals `row`.
+        shownReveal = fieldReveal(initialDispatch, stored);
+        renderRevealedFields(revealBox, shownReveal, { cwd: stored.cwd, template: stored.template }, onClear);
       }
       // The preflight checklist, on BOTH arms: lead and reviewer are read-only
       // topology but they name prompts and templates like any other role, and a
