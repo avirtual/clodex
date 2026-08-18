@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — the team popover, redesigned
 
 - The team popover's Add Role form is now behind a single `+ Add role` button,
   and asks for the name and how tickets reach the role first, with the optional
