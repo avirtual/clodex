@@ -1887,7 +1887,24 @@ function createSessionManager(deps) {
                 try { getRemoteServer().pushTelemetry(name, { ctx: session.ctxInfo }); } catch {}
               }
               const warnPath = pathFor(REGISTRY_DIR, name, 'ctxwarn');
-              const warn = ctxReminderFor(c.tok);
+              // An ephemeral seat is never nudged. It is sized to one ticket and
+              // retired after it, so a compact buys it nothing it does not already
+              // get for free at retirement, and the boundary it reads as natural is
+              // `done` — immediately before the rework that needs exactly the
+              // context the compact discarded. Suppressed HERE rather than inside
+              // ctxReminderFor, which stays pure: "is this context heavy" is still
+              // true of an ephemeral seat, and only whether we act on it changes.
+              // Read off the persistence record (team-tickets seeds `ephemeral`
+              // before create), never re-derived from the name shape.
+              let warn = ctxReminderFor(c.tok);
+              // Consulted only when there is something to suppress: under threshold
+              // the file is removed either way, and get() re-reads all of
+              // sessions.json on what is otherwise a per-turn path.
+              if (warn) {
+                let rec = null;
+                try { rec = getPersistence().get(name); } catch {}
+                if (rec && rec.ephemeral) warn = null;
+              }
               try {
                 if (warn) fs.writeFileSync(warnPath, warn);
                 else fs.rmSync(warnPath, { force: true });

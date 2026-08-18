@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- Agents are now told their context is heavy at 200k tokens rather than 150k,
+  and a seat spawned for a single ticket is never told at all. The old threshold
+  was set before ticket work existed and fired in the middle of ordinary tickets;
+  a one-ticket seat is retired when it finishes, so compacting costs it the
+  context its rework needs and saves nothing it would not get for free anyway.
+
 ## 5.12.0 — 2026-08-18 — the team popover, redesigned
 
 - The team popover's Add Role form is now behind a single `+ Add role` button,
