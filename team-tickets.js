@@ -2656,6 +2656,15 @@ function createTicketMethods(deps, shared) {
     // exactly the recovery a dead hand depends on.
     _ticketTaskDirRefusal(ticket, verb) {
       if (ticket.taskDir) return null;
+      // Only a ticket that has NOT been dispatched yet. Past that point the two
+      // verbs are re-send paths, not decisions to start work: `assign` back to a
+      // ticket's own seat is the redelivery a respawned or stuck seat recovers
+      // through, the same recovery `_deliverTicketSpec` is deliberately left
+      // ungated for. Refusing here would strand it, and would refuse work that is
+      // already done rather than preventing any — the cost this gate exists to
+      // avoid was paid the moment it dispatched. Verify is its backstop, which is
+      // why that check stays.
+      if (ticketStarted(ticket)) return null;
       // `respec` and not `reject`-then-respec: the ticket is still OPEN here (both
       // callers refused a non-open one above), so respec applies directly. The
       // verify-time twin has to name reject first because by then the ticket is

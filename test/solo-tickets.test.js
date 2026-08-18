@@ -335,7 +335,7 @@ test('team path unchanged: with a team resolved, the board keys team.root and ro
   f.seat('team-hand', root);
   assert.strictEqual(f.deps.resolveTeam(root), team, 'PRECONDITION: a team DOES resolve here');
 
-  f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'team work' });
+  f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'team work\ntasks/team-work/SPEC.md' });
   // t308 split the dispatch half out of `add`, so the re-pin and the delivery
   // this test pins now happen at `start`. What it is actually checking is
   // unchanged and still worth checking: on the TEAM path the board keys
@@ -346,7 +346,7 @@ test('team path unchanged: with a team resolved, the board keys team.root and ro
   assert.strictEqual(board.length, 1, 'written to the team.root board');
   assert.strictEqual(board[0].assignee, 'team-hand', 'role resolved and re-pinned to the seat');
   assert.strictEqual(board[0].role, 'hand', 'the filed role survives — team semantics intact');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', 'team work') }],
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', 'team work\ntasks/team-work/SPEC.md') }],
     'spec delivered through the unchanged team path');
 });
 
