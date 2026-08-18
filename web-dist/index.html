@@ -1623,19 +1623,75 @@ body {
 }
 .team-role-field {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 2px 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  margin: 6px 0;
   font-size: 11px;
 }
-.team-role-field span {
-  flex: 0 0 56px;
+.team-role-field > span {
   color: var(--text-dim);
-  text-align: right;
 }
-.team-role-field input {
-  flex: 1;
+.team-role-field input,
+.team-role-field select {
+  width: 100%;
   min-width: 0;
+  box-sizing: border-box;
+}
+.team-role-field.hidden {
+  display: none;
+}
+.team-role-field.stale input {
+  opacity: 0.55;
+}
+.team-role-stale-note {
+  color: var(--warn);
+  font-size: 10px;
+}
+.team-role-stale-clear {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+.team-role-dispatch {
+  margin: 6px 0;
+}
+.team-role-segments {
+  display: flex;
+  border: 1px solid var(--border, #333);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.team-role-segment {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-right: 1px solid var(--border, #333);
+}
+.team-role-segment:last-child {
+  border-right: none;
+}
+.team-role-segment input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.team-role-segment:hover {
+  color: var(--text);
+}
+.team-role-segment:has(input:checked) {
+  background: var(--accent);
+  color: var(--bg, #1e1e1e);
+}
+.team-role-segment:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .team-role-actions {
   display: flex;
@@ -1644,14 +1700,37 @@ body {
 }
 .team-roles-add {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
+  flex-direction: column;
+  gap: 2px;
 }
-.team-roles-add input,
-.team-roles-add select {
-  flex: 1 1 120px;
-  min-width: 0;
+.team-roles-add-toggle {
+  background: none;
+  border: 1px dashed var(--border, #333);
+  color: var(--text-dim);
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  width: 100%;
+}
+.team-roles-add-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+#team-roles-newrole-panel.hidden {
+  display: none;
+}
+.team-roles-dispatch-hint {
+  display: block;
+  margin: 0 0 4px;
+}
+.team-roles-add-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+#team-roles-settings-btn.hidden {
+  display: none;
 }
 .team-roles-watchdog {
   display: flex;
@@ -1722,14 +1801,13 @@ body {
 }
 .team-role-ro-field {
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  gap: 2px;
   font-size: 11px;
-  margin: 2px 0;
+  margin: 6px 0;
 }
 .team-role-ro-field span:first-child {
-  flex: 0 0 56px;
   color: var(--text-dim);
-  text-align: right;
 }
 .team-role-ro-field .ro-val {
   flex: 1;
@@ -6116,7 +6194,7 @@ body {
       </div>
     </div>
     <div id="team-roles-popover" class="hidden">
-      <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><span class="popover-title-actions"><button type="button" class="popover-help-btn" id="team-roles-help-btn" title="What is this page?" aria-label="Help">?</button><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></span></div>
+      <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><span class="popover-title-actions"><button type="button" class="popover-help-btn" id="team-roles-settings-btn" title="Team settings" aria-label="Team settings" aria-expanded="false">&#9881;</button><button type="button" class="popover-help-btn" id="team-roles-help-btn" title="What is this page?" aria-label="Help">?</button><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></span></div>
       <div class="popover-intro">Your team's roles — who does what. Edit them here; no config files needed.</div>
       <div class="popover-help hidden" id="team-roles-help" data-help>
         <p><strong>What this is.</strong> A team is a group of AI teammates that work together. Each <em>role</em> below is one kind of teammate — what it's for and how it behaves.</p>
@@ -6126,23 +6204,26 @@ body {
       </div>
       <div id="team-roles-list" class="team-roles-list"></div>
       <div id="team-roles-add-section">
-      <div class="popover-subhead" title="Define a new kind of teammate for this team">Add Role</div>
-      <div class="hint-text team-roles-hint">Define a new kind of teammate for this team.</div>
+      <button type="button" id="team-roles-newrole-toggle" class="team-roles-add-toggle" aria-expanded="false" aria-controls="team-roles-newrole-panel" title="Define a new kind of teammate for this team">+ Add role</button>
+      <div id="team-roles-newrole-panel" class="hidden">
+      <div class="hint-text team-roles-hint">Name it and choose how tickets reach it. Details are optional.</div>
       <div class="team-roles-add">
-        <input type="text" id="team-roles-add-name" placeholder="role name (e.g. researcher)">
-        <input type="text" id="team-roles-add-brief" placeholder="one line: what this role is for">
-        <select id="team-roles-add-prompt" title="System-prompt name from the library — sets how this teammate behaves"></select>
-        <input type="text" id="team-roles-add-template" placeholder="optional: spawn template name">
-        <input type="text" id="team-roles-add-cwd" placeholder="optional: subdirectory this role works in (e.g. api)" title="Relative to the team root — where seats holding this role start. Blank = the team root. Applies to spawn- and worktree-dispatch roles and the reviewer; a standing role's seat is operator-created, so this does nothing for it.">
-        <select id="team-roles-add-dispatch" title="What dispatching a ticket to this role does">
-          <option value="standing">standing — the live seat holding this role gets the spec</option>
-          <option value="spawn">spawn — one-shot seat, shared checkout, no branch</option>
-          <option value="worktree">worktree — a one-shot seat on its own branch, in its own checkout</option>
-        </select>
-        <button type="button" id="team-roles-add-btn">Add</button>
+        <label class="team-role-field"><span>role name</span><input type="text" id="team-roles-add-name" placeholder="e.g. researcher"></label>
+        <label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span><select id="team-roles-add-dispatch">
+          <option value="standing">standing</option>
+          <option value="spawn">spawn</option>
+          <option value="worktree">worktree</option>
+        </select></label>
+        <span class="hint-text team-roles-dispatch-hint" id="team-roles-dispatch-help"></span>
+        <label class="team-role-field"><span>brief</span><input type="text" id="team-roles-add-brief" placeholder="one line: what this role is for"></label>
+        <label class="team-role-field" title="System-prompt name from the library — sets how this teammate behaves"><span>prompt</span><select id="team-roles-add-prompt"></select></label>
+        <label class="team-role-field" data-field="template"><span>template</span><input type="text" id="team-roles-add-template" placeholder="optional: spawn template name"></label>
+        <label class="team-role-field" data-field="cwd" title="Relative to the team root — where seats holding this role start. Blank = the team root."><span>cwd</span><input type="text" id="team-roles-add-cwd" placeholder="optional: subdirectory (e.g. api)"></label>
+        <span class="team-roles-add-actions"><button type="button" id="team-roles-add-btn">Add</button><button type="button" id="team-roles-newrole-cancel" class="secondary">Cancel</button></span>
       </div>
       </div>
-      <div id="team-roles-watchdog-section">
+      </div>
+      <div id="team-roles-watchdog-section" class="hidden">
       <div class="popover-subhead" title="How long a teammate can sit idle on an assigned task before the lead gets a nudge">Stall Watchdog</div>
       <div class="hint-text team-roles-hint">How long a teammate can sit idle on an assigned task before the lead gets a nudge. Blank = default (30m).</div>
       <div class="team-roles-watchdog">
@@ -26813,6 +26894,14 @@ This starts a NEW conversation \u2014 the current session's history will be clea
       function offerDispatchLine() {
         return "Runs as: standing \u2014 the live seat holding this role gets the spec.";
       }
+      function fieldReveal(dispatch, { cwd, template } = {}) {
+        const active = dispatch === "spawn" || dispatch === "worktree";
+        const state = (v) => {
+          if (active) return "edit";
+          return String(v == null ? "" : v).trim() ? "stale" : "hidden";
+        };
+        return { cwd: state(cwd), template: state(template) };
+      }
       function preflightByRole(findings) {
         const out = /* @__PURE__ */ new Map();
         for (const f of Array.isArray(findings) ? findings : []) {
@@ -26841,6 +26930,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         absentStockRoles,
         absentStockNote,
         offerDispatchLine,
+        fieldReveal,
         DISPATCH_VALUES,
         DEFAULT_DISPATCH,
         REMOVABLE_RESERVED_ROLE_KEYS,
@@ -26871,6 +26961,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         absentStockRoles,
         absentStockNote,
         offerDispatchLine,
+        fieldReveal,
         reservedRemovalWarning,
         REMOVABLE_RESERVED_ROLE_KEYS
       } = require_team_roles();
@@ -26886,6 +26977,10 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         const addCwd = document.getElementById("team-roles-add-cwd");
         const addDispatch = document.getElementById("team-roles-add-dispatch");
         const addBtn = document.getElementById("team-roles-add-btn");
+        const addToggle = document.getElementById("team-roles-newrole-toggle");
+        const addPanel = document.getElementById("team-roles-newrole-panel");
+        const addCancel = document.getElementById("team-roles-newrole-cancel");
+        const addDispatchHelp = document.getElementById("team-roles-dispatch-help");
         const addSection = document.getElementById("team-roles-add-section");
         const watchdogSection = document.getElementById("team-roles-watchdog-section");
         const watchdogInput = document.getElementById("team-roles-watchdog-ms");
@@ -26893,6 +26988,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         const watchdogClear = document.getElementById("team-roles-watchdog-clear");
         const statusEl = document.getElementById("team-roles-status");
         const helpBtn = document.getElementById("team-roles-help-btn");
+        const settingsBtn = document.getElementById("team-roles-settings-btn");
         const helpPanel = document.getElementById("team-roles-help");
         const setStatus = (msg, warn = false) => {
           statusEl.textContent = msg || "";
@@ -27009,6 +27105,82 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           box.appendChild(hint);
           return box;
         }
+        const DISPATCH_HELP = {
+          standing: "standing \u2014 the live seat holding this role gets the spec.",
+          spawn: "spawn \u2014 a one-shot seat in the shared checkout, no branch of its own.",
+          worktree: "worktree \u2014 a one-shot seat on its own branch, in its own checkout."
+        };
+        let dispatchGroupSeq = 0;
+        function buildDispatchSegments(current, onChange) {
+          const group = document.createElement("div");
+          group.className = "team-role-segments";
+          group.setAttribute("role", "radiogroup");
+          group.setAttribute("aria-label", "dispatch");
+          const gname = `dispatch-seg-${++dispatchGroupSeq}`;
+          for (const value of DISPATCH_VALUES) {
+            const seg = document.createElement("label");
+            seg.className = "team-role-segment";
+            seg.title = DISPATCH_HELP[value] || value;
+            const radio = document.createElement("input");
+            radio.type = "radio";
+            radio.name = gname;
+            radio.value = value;
+            radio.dataset.f = "dispatch";
+            radio.checked = value === current;
+            radio.addEventListener("change", () => {
+              if (radio.checked && typeof onChange === "function") onChange(radio.value);
+            });
+            const txt = document.createElement("span");
+            txt.textContent = value;
+            seg.appendChild(radio);
+            seg.appendChild(txt);
+            group.appendChild(seg);
+          }
+          return group;
+        }
+        function renderRevealedFields(box, dispatch, stored) {
+          box.innerHTML = "";
+          const reveal = fieldReveal(dispatch, stored);
+          for (const f of ["template", "cwd"]) {
+            const state = reveal[f];
+            if (state === "hidden") continue;
+            const field = document.createElement("label");
+            field.className = `team-role-field ${state === "stale" ? "stale" : ""}`.trim();
+            field.dataset.field = f;
+            const label = document.createElement("span");
+            label.textContent = f;
+            const input = document.createElement("input");
+            input.type = "text";
+            input.dataset.f = f;
+            input.placeholder = f === "cwd" ? "optional: subdirectory (e.g. api)" : "optional: spawn template name";
+            input.value = stored && stored[f] || "";
+            field.appendChild(label);
+            field.appendChild(input);
+            if (state === "stale") {
+              input.disabled = true;
+              const why = document.createElement("span");
+              why.className = "team-role-stale-note";
+              why.textContent = "not used while standing";
+              why.title = `A standing role's seat is operator-created, so ${f} does nothing for it. Clear it, or switch dispatch to spawn/worktree.`;
+              const clear = document.createElement("button");
+              clear.type = "button";
+              clear.className = "secondary team-role-stale-clear";
+              clear.dataset.act = `clear-${f}`;
+              clear.textContent = "Clear";
+              clear.title = `Remove the stored ${f}. Takes effect when you Save.`;
+              clear.addEventListener("click", () => {
+                input.value = "";
+                input.disabled = false;
+                field.classList.remove("stale");
+                why.remove();
+                clear.remove();
+              });
+              field.appendChild(why);
+              field.appendChild(clear);
+            }
+            box.appendChild(field);
+          }
+        }
         let expandedRole = null;
         function dotStateFor(summary, res) {
           if (summary.key === "lead" && res) {
@@ -27120,7 +27292,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const res = leadResolution(manifest && manifest.lead, { sessions: leadSessions, known: leadKnown });
           const stage = teamStage(res);
           addSection.classList.toggle("hidden", stage === "setup");
-          watchdogSection.classList.toggle("hidden", stage === "setup");
+          if (stage === "setup") {
+            watchdogSection.classList.add("hidden");
+            settingsBtn.setAttribute("aria-expanded", "false");
+          }
+          settingsBtn.classList.toggle("hidden", stage === "setup");
           if (stage !== "normal") listEl.appendChild(buildLeadBlockCard(manifest, res, stage));
           if (stage === "setup") return;
           const summaries = roleSummaries(manifest, leadSessions, { lead: manifest && manifest.lead });
@@ -27153,7 +27329,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 body.appendChild(actions);
               }
             } else {
-              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label><label class="team-role-field" title="Relative to the team root \u2014 where seats holding this role start. Blank = the team root. Applies to spawn- and worktree-dispatch roles and the reviewer; a standing role's seat is operator-created, so this does nothing for it."><span>cwd</span><input type="text" data-f="cwd" placeholder="optional: subdirectory (e.g. api)"></label><label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span><select data-f="dispatch"><option value="standing">standing \u2014 the live seat gets the spec</option><option value="spawn">spawn \u2014 one-shot seat, shared checkout, no branch</option><option value="worktree">worktree \u2014 one-shot seat, own branch + checkout</option></select></label><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
+              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><div class="team-role-dispatch" data-f-group="dispatch"></div><div class="team-role-reveal" data-reveal></div><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
               body.querySelector('input[data-f="brief"]').value = row.brief;
               const sel = body.querySelector('select[data-f="prompt"]');
               {
@@ -27184,10 +27360,15 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 }
                 sel.value = row.prompt;
               }
-              body.querySelector('input[data-f="template"]').value = row.template;
-              body.querySelector('input[data-f="cwd"]').value = row.cwd;
-              const disp = body.querySelector('select[data-f="dispatch"]');
-              disp.value = DISPATCH_VALUES.includes(row.dispatch) ? row.dispatch : DEFAULT_DISPATCH;
+              const initialDispatch = DISPATCH_VALUES.includes(row.dispatch) ? row.dispatch : DEFAULT_DISPATCH;
+              const revealBox = body.querySelector("[data-reveal]");
+              const paintReveal = (dispatch) => {
+                renderRevealedFields(revealBox, dispatch, { cwd: row.cwd, template: row.template });
+              };
+              body.querySelector('[data-f-group="dispatch"]').appendChild(
+                buildDispatchSegments(initialDispatch, paintReveal)
+              );
+              paintReveal(initialDispatch);
             }
             if (owed.length) {
               const box = document.createElement("div");
@@ -27266,11 +27447,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           resetDrag(popover);
           await populatePromptOptions();
           expandedRole = null;
-          addName.value = "";
-          addBrief.value = "";
-          addTemplate.value = "";
-          addPrompt.value = "";
-          addCwd.value = "";
+          setAddPanel(false);
+          watchdogSection.classList.add("hidden");
+          settingsBtn.setAttribute("aria-expanded", "false");
           popover.dataset.name = name;
           const ok = await refresh(name);
           if (!ok) {
@@ -27330,11 +27509,15 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               const inp = rowEl.querySelector(`[data-f="${f}"]`);
               return inp ? inp.value : "";
             };
+            const dispatchVal = () => {
+              const on = rowEl.querySelector('input[data-f="dispatch"]:checked');
+              return on ? on.value : "";
+            };
             const patch = buildSavePatch({
               brief: val("brief"),
               prompt: val("prompt"),
               template: val("template"),
-              dispatch: val("dispatch"),
+              dispatch: dispatchVal(),
               cwd: val("cwd")
             });
             const res = await window.api.teamSetRole(name, role, patch);
@@ -27365,6 +27548,37 @@ You can add it back from this popover.` : "";
             await afterMutation(res, `role "${role}" added back`);
           }
         });
+        const resetAddForm = () => {
+          addName.value = "";
+          addBrief.value = "";
+          addTemplate.value = "";
+          addPrompt.value = "";
+          addCwd.value = "";
+          addDispatch.value = DEFAULT_DISPATCH;
+          paintAddReveal();
+        };
+        const setAddPanel = (open) => {
+          addPanel.classList.toggle("hidden", !open);
+          addToggle.setAttribute("aria-expanded", open ? "true" : "false");
+          addToggle.textContent = open ? "\u2212 Add role" : "+ Add role";
+          if (!open) resetAddForm();
+          else addName.focus();
+        };
+        function paintAddReveal() {
+          const reveal = fieldReveal(addDispatch.value, { cwd: "", template: "" });
+          for (const [f, el] of [["cwd", addCwd], ["template", addTemplate]]) {
+            const field = el.closest(".team-role-field");
+            if (field) field.classList.toggle("hidden", reveal[f] === "hidden");
+          }
+          addDispatchHelp.textContent = DISPATCH_HELP[addDispatch.value] || "";
+        }
+        addToggle.addEventListener("click", () => setAddPanel(addPanel.classList.contains("hidden")));
+        addCancel.addEventListener("click", () => setAddPanel(false));
+        addDispatch.addEventListener("change", paintAddReveal);
+        settingsBtn.addEventListener("click", () => {
+          const nowHidden = watchdogSection.classList.toggle("hidden");
+          settingsBtn.setAttribute("aria-expanded", nowHidden ? "false" : "true");
+        });
         addBtn.addEventListener("click", async () => {
           const name = teamName();
           if (!name) return;
@@ -27375,23 +27589,19 @@ You can add it back from this popover.` : "";
           }
           const def = {};
           if (addPrompt.value) def.prompt = addPrompt.value;
-          if (v.template) def.template = v.template;
+          if (v.template && fieldReveal(addDispatch.value, { cwd: "", template: "" }).template !== "hidden") {
+            def.template = v.template;
+          }
           const brief = addBrief.value.trim();
           if (brief) def.brief = brief;
+          const addReveal = fieldReveal(addDispatch.value, { cwd: "", template: "" });
           const cwd = addCwd.value.trim();
-          if (cwd) def.cwd = cwd;
+          if (cwd && addReveal.cwd !== "hidden") def.cwd = cwd;
           if (addDispatch.value !== DEFAULT_DISPATCH && DISPATCH_VALUES.includes(addDispatch.value)) {
             def.dispatch = addDispatch.value;
           }
           const res = await window.api.teamAddRole(name, v.name, def);
-          if (res && res.ok) {
-            addName.value = "";
-            addBrief.value = "";
-            addTemplate.value = "";
-            addPrompt.value = "";
-            addCwd.value = "";
-            addDispatch.value = DEFAULT_DISPATCH;
-          }
+          if (res && res.ok) setAddPanel(false);
           await afterMutation(res, `role "${v.name}" added`);
         });
         watchdogSet.addEventListener("click", async () => {

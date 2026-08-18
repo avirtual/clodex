@@ -13,6 +13,35 @@ blocks a release.
 
 ## Unreleased
 
+- The team popover's Add Role form is now behind a single `+ Add role` button,
+  and asks for the name and how tickets reach the role first, with the optional
+  details below. It asked for five fields up front before, all of them on screen
+  whether or not you were adding anything. Closing it clears what you typed, so
+  a half-filled form is never left looking like a role that was saved.
+
+- The stall watchdog moved behind a gear beside the `?` in the team popover's
+  title. It is a setting for the whole team rather than part of any role, and it
+  was taking up room on a panel you open to look at roles. Its behaviour is
+  unchanged — the same field, the same friendly units, the same Set and Clear.
+
+- A role's `cwd` and spawn `template` now appear only when they do something.
+  Both are used when a ticket spawns a seat for the role; a standing role's seat
+  is one you created yourself, so neither has any effect on it. On a standing
+  role they are hidden when empty, and when a value IS stored the field stays
+  visible, marked as unused, with a Clear button — the popover always saves
+  `cwd`, so a hidden one would have been kept forever with no way to see or
+  remove it. Switching a role between standing and spawn shows or hides them
+  immediately, before you save.
+
+- The dispatch picker in a role's editor is now three labelled segments instead
+  of a dropdown of sentences, and it works from the keyboard: arrow keys move
+  between the modes, and what each mode does is on the segment's tooltip rather
+  than crammed into its label. The Add Role form keeps a short dropdown, where
+  the panel is too narrow for segments.
+
+- Field labels in the team popover sit above their inputs rather than in a
+  right-aligned column, so long values get the full width of the panel.
+
 - The team popover now opens on a summary of the team rather than on every
   field of every role at once. Each role is one line — who is filling it, how
   many of them are working, and how its tickets are dispatched — and clicking a
