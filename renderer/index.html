@@ -332,7 +332,7 @@
       </div>
     </div>
     <div id="team-roles-popover" class="hidden">
-      <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><span class="popover-title-actions"><button type="button" class="popover-help-btn" id="team-roles-help-btn" title="What is this page?" aria-label="Help">?</button><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></span></div>
+      <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><span class="popover-title-actions"><button type="button" class="popover-help-btn" id="team-roles-settings-btn" title="Team settings" aria-label="Team settings" aria-expanded="false">&#9881;</button><button type="button" class="popover-help-btn" id="team-roles-help-btn" title="What is this page?" aria-label="Help">?</button><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></span></div>
       <div class="popover-intro">Your team's roles — who does what. Edit them here; no config files needed.</div>
       <div class="popover-help hidden" id="team-roles-help" data-help>
         <p><strong>What this is.</strong> A team is a group of AI teammates that work together. Each <em>role</em> below is one kind of teammate — what it's for and how it behaves.</p>
@@ -342,23 +342,26 @@
       </div>
       <div id="team-roles-list" class="team-roles-list"></div>
       <div id="team-roles-add-section">
-      <div class="popover-subhead" title="Define a new kind of teammate for this team">Add Role</div>
-      <div class="hint-text team-roles-hint">Define a new kind of teammate for this team.</div>
+      <button type="button" id="team-roles-newrole-toggle" class="team-roles-add-toggle" aria-expanded="false" aria-controls="team-roles-newrole-panel" title="Define a new kind of teammate for this team">+ Add role</button>
+      <div id="team-roles-newrole-panel" class="hidden">
+      <div class="hint-text team-roles-hint">Name it and choose how tickets reach it. Details are optional.</div>
       <div class="team-roles-add">
-        <input type="text" id="team-roles-add-name" placeholder="role name (e.g. researcher)">
-        <input type="text" id="team-roles-add-brief" placeholder="one line: what this role is for">
-        <select id="team-roles-add-prompt" title="System-prompt name from the library — sets how this teammate behaves"></select>
-        <input type="text" id="team-roles-add-template" placeholder="optional: spawn template name">
-        <input type="text" id="team-roles-add-cwd" placeholder="optional: subdirectory this role works in (e.g. api)" title="Relative to the team root — where seats holding this role start. Blank = the team root. Applies to spawn- and worktree-dispatch roles and the reviewer; a standing role's seat is operator-created, so this does nothing for it.">
-        <select id="team-roles-add-dispatch" title="What dispatching a ticket to this role does">
-          <option value="standing">standing — the live seat holding this role gets the spec</option>
-          <option value="spawn">spawn — one-shot seat, shared checkout, no branch</option>
-          <option value="worktree">worktree — a one-shot seat on its own branch, in its own checkout</option>
-        </select>
-        <button type="button" id="team-roles-add-btn">Add</button>
+        <label class="team-role-field"><span>role name</span><input type="text" id="team-roles-add-name" placeholder="e.g. researcher"></label>
+        <label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span><select id="team-roles-add-dispatch">
+          <option value="standing">standing</option>
+          <option value="spawn">spawn</option>
+          <option value="worktree">worktree</option>
+        </select></label>
+        <span class="hint-text team-roles-dispatch-hint" id="team-roles-dispatch-help"></span>
+        <label class="team-role-field"><span>brief</span><input type="text" id="team-roles-add-brief" placeholder="one line: what this role is for"></label>
+        <label class="team-role-field" title="System-prompt name from the library — sets how this teammate behaves"><span>prompt</span><select id="team-roles-add-prompt"></select></label>
+        <label class="team-role-field" data-field="template"><span>template</span><input type="text" id="team-roles-add-template" placeholder="optional: spawn template name"></label>
+        <label class="team-role-field" data-field="cwd" title="Relative to the team root — where seats holding this role start. Blank = the team root."><span>cwd</span><input type="text" id="team-roles-add-cwd" placeholder="optional: subdirectory (e.g. api)"></label>
+        <span class="team-roles-add-actions"><button type="button" id="team-roles-add-btn">Add</button><button type="button" id="team-roles-newrole-cancel" class="secondary">Cancel</button></span>
       </div>
       </div>
-      <div id="team-roles-watchdog-section">
+      </div>
+      <div id="team-roles-watchdog-section" class="hidden">
       <div class="popover-subhead" title="How long a teammate can sit idle on an assigned task before the lead gets a nudge">Stall Watchdog</div>
       <div class="hint-text team-roles-hint">How long a teammate can sit idle on an assigned task before the lead gets a nudge. Blank = default (30m).</div>
       <div class="team-roles-watchdog">
