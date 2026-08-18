@@ -341,6 +341,7 @@
         <p><strong>Stall Watchdog.</strong> If a teammate sits idle on an assigned task too long, the lead gets a nudge. Blank uses the default (30m).</p>
       </div>
       <div id="team-roles-list" class="team-roles-list"></div>
+      <div id="team-roles-add-section">
       <div class="popover-subhead" title="Define a new kind of teammate for this team">Add Role</div>
       <div class="hint-text team-roles-hint">Define a new kind of teammate for this team.</div>
       <div class="team-roles-add">
@@ -356,12 +357,15 @@
         </select>
         <button type="button" id="team-roles-add-btn">Add</button>
       </div>
+      </div>
+      <div id="team-roles-watchdog-section">
       <div class="popover-subhead" title="How long a teammate can sit idle on an assigned task before the lead gets a nudge">Stall Watchdog</div>
       <div class="hint-text team-roles-hint">How long a teammate can sit idle on an assigned task before the lead gets a nudge. Blank = default (30m).</div>
       <div class="team-roles-watchdog">
         <input type="text" id="team-roles-watchdog-ms" placeholder="e.g. 30m, 2h, or 45 (minutes) — blank = default">
         <button type="button" id="team-roles-watchdog-set">Set</button>
         <button type="button" id="team-roles-watchdog-clear" class="secondary">Clear</button>
+      </div>
       </div>
       <span class="hint-text" id="team-roles-status"></span>
       <div class="popover-actions">

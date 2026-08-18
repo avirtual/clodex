@@ -13,8 +13,9 @@ const {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote,
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,
-  absentReservedRoles, reservedRemovalWarning, absentReservedNote,
-  REMOVABLE_RESERVED_ROLE_KEYS, DISPATCH_VALUES,
+  reservedRemovalWarning,
+  teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine,
+  REMOVABLE_RESERVED_ROLE_KEYS, OFFERABLE_STOCK_ROLE_KEYS, DISPATCH_VALUES,
 } = require('../renderer/lib/team-roles');
 
 test('teamRoleRows: one row per role in key order, reserved keys marked read-only', () => {
@@ -205,38 +206,171 @@ test('REMOVABLE_RESERVED_ROLE_KEYS is exactly {reviewer} — never `lead`', () =
     'loadManifest hard-requires `lead`; offering to remove it would produce a team.json that cannot load');
 });
 
-test('absentReservedRoles: names a removed reviewer, and nothing when the team has one', () => {
-  // The add-it-back affordance's whole input. A team with no reviewer row at all
-  // is how this orphan state stayed invisible.
-  assert.deepStrictEqual(absentReservedRoles({ roles: { lead: {}, hand: {} } }), ['reviewer']);
-  assert.deepStrictEqual(absentReservedRoles({ roles: { lead: {}, reviewer: {} } }), [],
-    'a team WITH a reviewer gets no synthetic row — it already has a real one');
+test('absentStockRoles: every absent STOCK role is offered, `lead` never', () => {
+  // The offer-card affordance's whole input. A team with no row at all for a
+  // missing role is how this orphan state stayed invisible — for `reviewer` until
+  // a ticket reached the review step, for `hand` until a dispatch had nowhere to
+  // land.
+  assert.deepStrictEqual(absentStockRoles({ roles: { lead: {}, hand: {} } }), ['reviewer']);
+  assert.deepStrictEqual(absentStockRoles({ roles: { lead: {}, reviewer: {} } }), ['hand'],
+    'a removed hand is offered too — it is not reserved, so nothing else guards its absence');
+  assert.deepStrictEqual(absentStockRoles({ roles: { lead: {}, hand: {}, reviewer: {} } }), [],
+    'a team WITH both gets no offer cards — it already has real rows');
   // A lead-less manifest never reaches the popover (loadManifest throws first),
-  // but the helper must not invent a `lead` row for one: it is not removable, so
-  // it can never be re-added from here either.
-  assert.deepStrictEqual(absentReservedRoles({ roles: {} }), ['reviewer']);
-  assert.deepStrictEqual(absentReservedRoles(null), ['reviewer'], 'no manifest → no throw');
+  // but the helper must not invent a `lead` offer for one: the lead decision is
+  // its own block, and Enable would write a def where a POINTER is what is missing.
+  assert.deepStrictEqual(absentStockRoles({ roles: {} }), ['hand', 'reviewer']);
+  assert.deepStrictEqual(absentStockRoles(null), ['hand', 'reviewer'], 'no manifest → no throw');
+  assert.strictEqual(OFFERABLE_STOCK_ROLE_KEYS.includes('lead'), false);
 });
 
-test('absentReservedRoles rows are NOT in teamRoleRows — the schema-pinned model stays manifest-only', () => {
+test('offer cards are NOT rows in teamRoleRows — the schema-pinned model stays manifest-only', () => {
   // The legibility test reads teamRoleRows' keys as the schema fields a row can
   // display, and every caller relies on "one row per role in the manifest". A
   // synthetic absent-role row folded in there would break both at once, silently.
   const manifest = { roles: { lead: {}, hand: {} } };
   assert.deepStrictEqual(teamRoleRows(manifest).map((r) => r.key), ['lead', 'hand'],
     'the row model still describes exactly what is on disk');
-  assert.deepStrictEqual(absentReservedRoles(manifest), ['reviewer'],
+  assert.deepStrictEqual(absentStockRoles(manifest), ['reviewer'],
     'and the absent one is reported separately');
 });
 
-test('reservedRemovalWarning / absentReservedNote say what is LOST, not merely what changed', () => {
+test('reservedRemovalWarning / absentStockNote say what is LOST, not merely what changed', () => {
   // Removal is destructive, one click away, and its only other symptom arrives a
   // ticket later at the review step — so the confirm has to carry the consequence.
   assert.match(reservedRemovalWarning('reviewer'), /escalate to you at the review step/);
-  assert.match(absentReservedNote('reviewer'), /escalate to the lead at the review step/);
+  assert.match(absentStockNote('reviewer'), /escalate to the lead at the review step/);
+  // The hand's consequence is different and must READ differently: nothing
+  // implements the specs the lead writes.
+  assert.match(absentStockNote('hand'), /Nothing implements/);
   // An unknown key still gets a safe, non-empty line rather than undefined text.
   assert.ok(reservedRemovalWarning('mystery').length > 0);
-  assert.ok(absentReservedNote('mystery').length > 0);
+  assert.ok(absentStockNote('mystery').length > 0);
+});
+
+test('offerDispatchLine names the dispatch CONCEPT on a role the team does not have (R2)', () => {
+  // Hiding field density is the point of the redesign; hiding the app's
+  // differentiator is not. An operator who only ever sees offer cards must still
+  // learn that dispatch exists.
+  assert.match(offerDispatchLine(), /standing/);
+  // A FIXED string, not a value read off a def: no stock def ships a `dispatch`,
+  // so anything "read" here would be invented. Pinned so a later edit that starts
+  // interpolating a mode has to come through this assertion.
+  assert.strictEqual(offerDispatchLine(), offerDispatchLine());
+});
+
+// ── A1: the three-way stage ──────────────────────────────────────────────────
+test('teamStage: unset → setup, missing/ineligible → repair, stopped/live → normal', () => {
+  assert.strictEqual(teamStage({ state: 'unset' }), 'setup');
+  assert.strictEqual(teamStage({ state: 'missing' }), 'repair');
+  assert.strictEqual(teamStage({ state: 'ineligible' }), 'repair');
+  assert.strictEqual(teamStage({ state: 'live' }), 'normal');
+  // `stopped` is NORMAL and that is the finding R1 was raised on: its own note
+  // says it restarts under this name, so treating it as broken puts a working
+  // team into repair mode.
+  assert.strictEqual(teamStage({ state: 'stopped' }), 'normal',
+    'a stopped lead is known-and-restartable, not broken');
+});
+
+test('teamStage: an UNRECOGNIZED state falls to repair, never to normal', () => {
+  // Repair is the mode that still shows everything. A state this function cannot
+  // reason about must not select the mode that HIDES the lead decision, which is
+  // what `setup` does, nor claim the team is fine.
+  assert.strictEqual(teamStage({ state: 'wat' }), 'repair');
+  assert.strictEqual(teamStage({}), 'repair');
+  assert.strictEqual(teamStage(null), 'repair', 'no resolution → no throw');
+});
+
+// ── A2: the summary row model ────────────────────────────────────────────────
+// Whole objects, not probed fields: an unwired seat count arrives as `undefined`,
+// and a regex over the note would happily match around it.
+test('roleSummaries: a zero-seat role reads "no seat"', () => {
+  const out = roleSummaries({ name: 'shop', roles: { hand: {} } }, [], { lead: 'shop-lead' });
+  assert.deepStrictEqual(out, [{
+    key: 'hand',
+    dispatch: 'standing',
+    readOnly: false,
+    seats: { total: 0, working: 0, names: [] },
+    note: 'no seat',
+  }]);
+});
+
+test('roleSummaries: a one-seat role reads the bare seat NAME, not a count', () => {
+  const sessions = [{ name: 'shop-hand', role: 'hand', team: 'shop', activity: 'idle' }];
+  const out = roleSummaries({ name: 'shop', roles: { hand: {} } }, sessions, {});
+  assert.deepStrictEqual(out, [{
+    key: 'hand',
+    dispatch: 'standing',
+    readOnly: false,
+    seats: { total: 1, working: 0, names: ['shop-hand'] },
+    note: 'shop-hand',
+  }]);
+});
+
+test('roleSummaries: multi-seat counts WORKING as not-idle, in the order given', () => {
+  const sessions = [
+    { name: 'shop-hand', role: 'hand', team: 'shop', activity: 'working' },
+    { name: 'shop-hand2', role: 'hand', team: 'shop', activity: 'idle' },
+    { name: 'shop-hand3', role: 'hand', team: 'shop', activity: 'thinking' },
+  ];
+  const out = roleSummaries({ name: 'shop', roles: { hand: {} } }, sessions, {});
+  assert.deepStrictEqual(out, [{
+    key: 'hand',
+    dispatch: 'standing',
+    readOnly: false,
+    seats: { total: 3, working: 2, names: ['shop-hand', 'shop-hand2', 'shop-hand3'] },
+    note: '3 seats · 2 working',
+  }]);
+});
+
+test('roleSummaries: a lead seat named OFF-convention resolves through the `lead` pointer', () => {
+  // The normal case, not an edge one: the backend's matchSeatRole short-circuits
+  // on `seatName === team.lead`, so a lead called `boss` holds the role while
+  // matching on `<team>-lead` finds nothing. Role matching alone would report
+  // "no seat" for a team whose lead is running right there.
+  const sessions = [
+    { name: 'boss', role: 'lead', team: 'shop', activity: 'working' },
+    { name: 'shop-hand', role: 'hand', team: 'shop', activity: 'idle' },
+  ];
+  const out = roleSummaries({ name: 'shop', roles: { lead: {}, hand: {} } }, sessions, { lead: 'boss' });
+  assert.deepStrictEqual(out.map((r) => [r.key, r.seats]), [
+    ['lead', { total: 1, working: 1, names: ['boss'] }],
+    ['hand', { total: 1, working: 0, names: ['shop-hand'] }],
+  ]);
+});
+
+test('roleSummaries: seats of ANOTHER team holding the same role key are not counted', () => {
+  // Session rows are workspace-scoped, not team-scoped: two teams open in one
+  // window both have a `hand`, and matching on the role key alone would have each
+  // report the other's seats as its own.
+  const sessions = [
+    { name: 'shop-hand', role: 'hand', team: 'shop', activity: 'idle' },
+    { name: 'api-hand', role: 'hand', team: 'api', activity: 'working' },
+  ];
+  const out = roleSummaries({ name: 'shop', roles: { hand: {} } }, sessions, {});
+  assert.deepStrictEqual(out[0].seats, { total: 1, working: 0, names: ['shop-hand'] });
+});
+
+test('roleSummaries: an unknown dispatch on disk normalizes to standing', () => {
+  // A hand-edited team.json can hold anything. The chip has no picker behind it
+  // to correct a made-up mode, and `standing` is what the role actually behaves
+  // as, so displaying the raw value would state a behaviour the app does not have.
+  const out = roleSummaries({ name: 'shop', roles: { a: { dispatch: 'teleport' }, b: { dispatch: 'worktree' }, c: {} } }, [], {});
+  assert.deepStrictEqual(out.map((r) => r.dispatch), ['standing', 'worktree', 'standing']);
+  assert.deepStrictEqual(out.map((r) => r.key), ['a', 'b', 'c'], 'ENTER: all three rows survived to be checked');
+});
+
+test('roleSummaries: reserved keys are marked readOnly, same as the row model', () => {
+  const out = roleSummaries({ name: 'shop', roles: { lead: {}, reviewer: {}, hand: {} } }, [], {});
+  assert.deepStrictEqual(out.map((r) => [r.key, r.readOnly]), [['lead', true], ['reviewer', true], ['hand', false]]);
+});
+
+test('roleSummaries: keys are EXACTLY the summary shape — it must not grow into the schema model', () => {
+  // teamRoleRows' keys are pinned as schema fields by team-role-schema-legibility.
+  // This model is separate precisely so presentation can vary without touching
+  // that gate; asserting the whole key set is what keeps the two from converging.
+  const out = roleSummaries({ name: 'shop', roles: { hand: {} } }, [], {});
+  assert.deepStrictEqual(Object.keys(out[0]).sort(), ['dispatch', 'key', 'note', 'readOnly', 'seats']);
 });
 
 test('parseDuration: friendly units → ms; bare number = minutes; rejects junk/zero/blank', () => {

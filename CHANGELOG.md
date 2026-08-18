@@ -13,6 +13,31 @@ blocks a release.
 
 ## Unreleased
 
+- The team popover now opens on a summary of the team rather than on every
+  field of every role at once. Each role is one line — who is filling it, how
+  many of them are working, and how its tickets are dispatched — and clicking a
+  line opens that role's editor, one at a time. The fields themselves are
+  unchanged; they are just no longer all on screen simultaneously, which on a
+  four-role team meant scrolling past three editors to reach the fourth. A team
+  with no lead set now shows only that one decision, since nothing else on the
+  panel can work until it is made, and a lead pointer that names something
+  Clodex cannot find says so at the top instead of leaving the panel looking
+  ordinary. A lead that is merely stopped is not treated as broken — it restarts
+  under its name.
+
+- A team missing its `hand` role is now offered one back, the way a missing
+  `reviewer` already was. Removing the hand left a team that reads as complete
+  but has nothing to implement the specs its lead writes, with no symptom until
+  a ticket has nowhere to land. The offer card says what is currently happening,
+  not just what the role would do, and the definition it adds is Clodex's own —
+  what you type in the card is never mixed into it. Teams that already have both
+  roles see no change.
+
+- Read-only roles are no longer dimmed as a whole. `lead` and `reviewer` are
+  operator-owned, and fading their entire row also faded the buttons that still
+  work on them — the seat picker on the lead, Remove on the reviewer — so a live
+  control looked disabled. Only the locked text is dimmed now.
+
 - A role can now dispatch a one-shot seat that works in the shared checkout.
   The `dispatch` picker in the team popover gained a third option, `spawn`:
   Clodex mints a fresh seat for the ticket, hands it the spec, and that seat is

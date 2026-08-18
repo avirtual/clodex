@@ -2699,12 +2699,31 @@ function createSessionManager(deps) {
         if (!liveByRoot.has(t.root)) liveByRoot.set(t.root, this._teamLiveSeatNames(t.root));
         return liveByRoot.get(t.root);
       };
+      // Which manifest role a seat holds. Memoized per session, and the ONE place
+      // this row resolves it: the renderer cannot compute it (matchSeatRole strips
+      // an `-r<N>` review tail then a numeric one, guards its lookup with
+      // hasOwnProperty, and short-circuits on the lead pointer), and a second copy
+      // in a second process is the divergence this codebase keeps paying for.
+      const roleByName = new Map();
+      const roleFor = (s) => {
+        if (roleByName.has(s.name)) return roleByName.get(s.name);
+        let role = null;
+        try {
+          const t = resolvedTeamFor(s.cwd);
+          role = t ? matchSeatRole(t, s.name) : null;
+        } catch { role = null; }
+        roleByName.set(s.name, role);
+        return role;
+      };
       const openTicketFor = (s) => {
         try {
           const t = resolvedTeamFor(s.cwd);
           if (!t || !t.root) return null;
           if (!ticketsByRoot.has(t.root)) ticketsByRoot.set(t.root, ticketsStore.load(t.root));
-          const role = matchSeatRole(t, s.name);
+          // The shared helper, not a second matchSeatRole call: the ticket badge
+          // and the row's `role` must not be able to disagree about which role a
+          // seat holds.
+          const role = roleFor(s);
           const live = liveSeatsFor(t);
           // Same filter as _reconcileTickets: this is the badge on first paint
           // and that is the badge on every change, so a term here that is
@@ -2723,6 +2742,10 @@ function createSessionManager(deps) {
         cwd: s.cwd,
         workspaceId: s.workspaceId,
         team: teamFor(s.cwd),
+        // Non-agent (bash) sessions are null by construction, not by omission: a
+        // bash session has no registry entry and no socket, so it cannot hold a
+        // role, and this must not become a second place that decides that.
+        role: s.agentType ? roleFor(s) : null,
         ticket: s.agentType ? openTicketFor(s) : null,
         backend: s.backend || null,
         noWire: !!s.noWire,

@@ -27,7 +27,8 @@ const {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, DISPATCH_VALUES, DEFAULT_DISPATCH,
   parseDuration, formatDuration, formatBlockedBy, preflightByRole,
   leadSeatCandidates, leadResolution,
-  absentReservedRoles, reservedRemovalWarning, absentReservedNote, REMOVABLE_RESERVED_ROLE_KEYS,
+  teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine,
+  reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
 
@@ -47,6 +48,11 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   const addCwd = document.getElementById('team-roles-add-cwd');
   const addDispatch = document.getElementById('team-roles-add-dispatch');
   const addBtn = document.getElementById('team-roles-add-btn');
+  // The two whole sections `setup` hides. Wrappers rather than per-control
+  // toggles: the subhead and hint belong to the section, and hiding the inputs
+  // alone would leave two headings standing over nothing.
+  const addSection = document.getElementById('team-roles-add-section');
+  const watchdogSection = document.getElementById('team-roles-watchdog-section');
   const watchdogInput = document.getElementById('team-roles-watchdog-ms');
   const watchdogSet = document.getElementById('team-roles-watchdog-set');
   const watchdogClear = document.getElementById('team-roles-watchdog-clear');
@@ -218,26 +224,204 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     return box;
   }
 
+  // Which role's editor is open. ONE at a time by construction — expanding a
+  // second collapses the first, so this is a single key rather than a set. Reset
+  // to null on every open (the acceptance test is measured fully collapsed);
+  // PRESERVED across a post-mutation refresh, because a Save that collapsed the
+  // row you just saved would hide its own result.
+  let expandedRole = null;
+
+  // The state dot on a summary line. The lead's dot follows its POINTER
+  // resolution, not its seat count: a lead whose seat is stopped is fine and a
+  // pointer that resolves to nothing is not, and seat-counting cannot tell those
+  // apart. Every other role has no pointer, so presence is all there is.
+  function dotStateFor(summary, res) {
+    if (summary.key === 'lead' && res) {
+      if (res.state === 'live') return 'ok';
+      if (res.state === 'stopped') return 'idle';
+      return 'warn';
+    }
+    if (!summary.seats.total) return 'none';
+    return summary.seats.working ? 'ok' : 'idle';
+  }
+
+  // The collapsed line: dot, key, one-line note, dispatch chip, disclosure.
+  // Built imperatively — `key` is charset-gated by ROLE_RE but the note carries
+  // SEAT NAMES, and neither may reach an attribute in this nodeIntegration
+  // renderer. Every string below lands as textContent.
+  function buildSummaryLine(summary, { res, expanded, owed }) {
+    const head = document.createElement('div');
+    head.className = 'team-role-summary';
+
+    const dot = document.createElement('span');
+    dot.className = `team-role-dot ${dotStateFor(summary, res)}`;
+    // The dot alone is not information for a screen reader, and colour alone is
+    // not information for anyone who cannot distinguish it.
+    dot.title = summary.key === 'lead' && res ? res.note : `${summary.seats.total} seat(s), ${summary.seats.working} working`;
+    head.appendChild(dot);
+
+    const k = document.createElement('span');
+    k.className = 'team-role-key';
+    k.textContent = summary.key;
+    head.appendChild(k);
+
+    const note = document.createElement('span');
+    note.className = 'team-role-note';
+    // The lead's line names the SEAT its pointer holds, even when that seat is
+    // not running: `roleSummaries` counts live rows, and "no seat" is the wrong
+    // word for a stopped lead that restarts under this name. The dot and the
+    // title carry the state.
+    note.textContent = summary.key === 'lead' && res ? (res.name || 'no seat') : summary.note;
+    head.appendChild(note);
+
+    // R2: the dispatch CONCEPT stays on screen even when the field is collapsed.
+    const chip = document.createElement('span');
+    chip.className = 'team-role-chip';
+    chip.textContent = summary.dispatch;
+    chip.title = 'What dispatching a ticket to this role does';
+    head.appendChild(chip);
+
+    // A collapsed row must not swallow an unresolved reference. The checklist
+    // itself lives in the body; this is the marker that says there is one.
+    if (owed && owed.length) {
+      const warns = owed.filter((f) => f.level === 'warn').length;
+      const mark = document.createElement('span');
+      mark.className = `team-role-owed ${warns ? 'warn' : 'note'}`;
+      mark.textContent = warns ? '!' : '·';
+      mark.title = `${owed.length} unresolved reference(s) — expand for detail`;
+      head.appendChild(mark);
+    }
+
+    const disclose = document.createElement('button');
+    disclose.type = 'button';
+    disclose.className = 'team-role-disclose';
+    disclose.dataset.act = 'disclose';
+    disclose.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    disclose.textContent = expanded ? '▾' : '▸';
+    disclose.title = expanded ? 'Collapse this role' : 'Expand this role';
+    head.appendChild(disclose);
+
+    return head;
+  }
+
+  // One absent stock role, offered back (R3). ONE component for every stock key
+  // rather than a wizard mode, so a lead-only team looks like a setup screen
+  // without being a second code path. Fixed strings only — the key comes from a
+  // module constant and the note from a fixed table, nothing here is
+  // agent-writable — and the def it mints is the BACKEND's, never this surface's.
+  function buildOfferCard(key, { note, dispatchLine }) {
+    const el = document.createElement('div');
+    el.className = 'team-role-row read-only absent';
+    el.dataset.role = key;
+    const head = document.createElement('div');
+    head.className = 'team-role-head';
+    const k = document.createElement('span');
+    k.className = 'team-role-key';
+    k.textContent = key;
+    const badge = document.createElement('span');
+    badge.className = 'team-role-badge';
+    badge.textContent = 'not on this team';
+    head.appendChild(k);
+    head.appendChild(badge);
+    el.appendChild(head);
+    const noteEl = document.createElement('div');
+    noteEl.className = 'team-role-lock-note';
+    noteEl.textContent = note;
+    el.appendChild(noteEl);
+    // R2 again: an offer names how tickets would reach the role, so the concept
+    // is learnable from a team that does not have the role yet.
+    const disp = document.createElement('div');
+    disp.className = 'team-role-offer-dispatch';
+    disp.textContent = dispatchLine;
+    el.appendChild(disp);
+    const actions = document.createElement('div');
+    actions.className = 'team-role-actions';
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.dataset.act = 'readd';
+    add.textContent = 'Enable';
+    // Says what it writes. The def is Clodex's, not the operator's, and not
+    // whatever a previous team.json held — that is the property that makes
+    // remove-then-re-add safe to offer.
+    add.title = "Adds Clodex's built-in definition of this role to the team.";
+    actions.appendChild(add);
+    el.appendChild(actions);
+    return el;
+  }
+
+  // The lead decision, with a heading, hoisted OUT of the role list. Used by
+  // `setup` (where it is the only thing on screen) and by `repair` (where it
+  // sits above the collapsed rows carrying the reason).
+  function buildLeadBlockCard(manifest, res, stage) {
+    const el = document.createElement('div');
+    el.className = `team-role-row team-lead-card ${stage}`;
+    el.dataset.role = 'lead';
+    const head = document.createElement('div');
+    head.className = 'team-role-head';
+    const k = document.createElement('span');
+    k.className = 'team-role-key';
+    k.textContent = stage === 'setup' ? 'Choose this team’s lead' : 'This team’s lead needs attention';
+    head.appendChild(k);
+    el.appendChild(head);
+    const why = document.createElement('div');
+    why.className = 'team-role-lock-note';
+    // The RESOLUTION's own note is the reason — it is the sentence that names
+    // the fix, and restating it here in different words is how the two drift.
+    why.textContent = res.note;
+    el.appendChild(why);
+    el.appendChild(buildLeadSeatBlock(manifest));
+    if (stage === 'setup') {
+      const after = document.createElement('div');
+      after.className = 'team-lead-hint';
+      after.textContent = 'Roles appear here once this team has a lead.';
+      el.appendChild(after);
+    }
+    return el;
+  }
+
   function renderRows(manifest) {
     listEl.innerHTML = '';
+    const res = leadResolution(manifest && manifest.lead, { sessions: leadSessions, known: leadKnown });
+    const stage = teamStage(res);
+    // `setup` is the ONE stage that hides the rest of the popover: with no lead
+    // there is exactly one decision to make, and every other control acts on a
+    // team that cannot dispatch anything yet. `repair` keeps them — an operator
+    // repairing a pointer still needs to see what the team was configured to do.
+    addSection.classList.toggle('hidden', stage === 'setup');
+    watchdogSection.classList.toggle('hidden', stage === 'setup');
+    if (stage !== 'normal') listEl.appendChild(buildLeadBlockCard(manifest, res, stage));
+    if (stage === 'setup') return;
+    const summaries = roleSummaries(manifest, leadSessions, { lead: manifest && manifest.lead });
+    const summaryByKey = new Map(summaries.map((s) => [s.key, s]));
     for (const row of teamRoleRows(manifest)) {
       const el = document.createElement('div');
       el.className = 'team-role-row';
       el.dataset.role = row.key;
+      const owed = preflight.get(row.key) || [];
+      const expanded = expandedRole === row.key;
+      el.appendChild(buildSummaryLine(summaryByKey.get(row.key), { res, expanded, owed }));
+      // The editor lives in a body element that the summary line discloses. Its
+      // MARKUP is unchanged — the same innerHTML strings, the same property
+      // assignments after them — so the security shape of both arms is exactly
+      // what it was; only the container it hangs from is new.
+      const body = document.createElement('div');
+      body.className = 'team-role-body';
+      if (!expanded) body.classList.add('hidden');
+      el.appendChild(body);
       if (row.readOnly) {
         // Reserved (lead/reviewer): explained-and-locked. brief + prompt are shown
         // read-only. SECURITY: these are agent-writable strings — rendered as
         // ESCAPED TEXT between tags (never into an attribute), same rule as the
         // editable branch. The lock note is a fixed, newcomer-facing string.
         el.classList.add('read-only');
-        el.innerHTML =
+        body.innerHTML =
           `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span>` +
           `<span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div>` +
           `<div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div>` +
           `<div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || '—')}</span></div>` +
           `<div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || '—')}</span></div>`;
         // The lead ROLE stays locked; which SEAT fills it does not (t420).
-        if (row.key === 'lead') el.appendChild(buildLeadSeatBlock(manifest));
+        if (row.key === 'lead') body.appendChild(buildLeadSeatBlock(manifest));
         // A reserved role's DEFINITION stays locked, but whether the team has one
         // at all is the operator's call (t421) — `reviewer` only, and only from
         // here: the backend takes an operator opt-in this channel passes and the
@@ -253,7 +437,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           rm.textContent = 'Remove';
           rm.title = 'Take this built-in role off the team. You can add it back here.';
           actions.appendChild(rm);
-          el.appendChild(actions);
+          body.appendChild(actions);
         }
       } else {
         // SECURITY: brief/prompt/template/cwd are agent-writable unconstrained strings
@@ -263,7 +447,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
         // WITHOUT value attrs, then assign each `.value` by property below (a
         // property assignment can't escape an attribute context). Placeholders +
         // the caption are fixed strings — they signal this row is editable (C3).
-        el.innerHTML =
+        body.innerHTML =
           `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div>` +
           `<div class="team-role-editcap">Edit this role</div>` +
           `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label>` +
@@ -281,13 +465,13 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           `<button type="button" data-act="rename" class="secondary">Rename</button>` +
           `<button type="button" data-act="remove" class="secondary">Remove</button>` +
           `</div>`;
-        el.querySelector('input[data-f="brief"]').value = row.brief;
+        body.querySelector('input[data-f="brief"]').value = row.brief;
         // Prompt is a picker (must be a library prompt name — free text just
         // fails at spawn time; matches the Add Role form). Options come from the
         // same rail-filtered list; a stored prompt missing from the library still
         // has to display, so it's appended as a marked option rather than
         // silently blanking. Values/labels set by PROPERTY (agent-writable).
-        const sel = el.querySelector('select[data-f="prompt"]');
+        const sel = body.querySelector('select[data-f="prompt"]');
         {
           const none = document.createElement('option');
           none.value = ''; none.textContent = '(no prompt)';
@@ -322,14 +506,14 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           }
           sel.value = row.prompt;
         }
-        el.querySelector('input[data-f="template"]').value = row.template;
+        body.querySelector('input[data-f="template"]').value = row.template;
         // PROPERTY, never an attribute: `cwd` comes from an agent-writable
         // team.json, and this renderer runs with nodeIntegration.
-        el.querySelector('input[data-f="cwd"]').value = row.cwd;
+        body.querySelector('input[data-f="cwd"]').value = row.cwd;
         // A hand-edited team.json can hold a value this picker has no option for.
         // Fall back to the default rather than leaving the select blank, which
         // would send '' and have buildSavePatch drop the key silently.
-        const disp = el.querySelector('select[data-f="dispatch"]');
+        const disp = body.querySelector('select[data-f="dispatch"]');
         disp.value = DISPATCH_VALUES.includes(row.dispatch) ? row.dispatch : DEFAULT_DISPATCH;
       }
       // The preflight checklist, on BOTH arms: lead and reviewer are read-only
@@ -341,7 +525,6 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
       // innerHTML: `message` and `ref` come from an agent-writable team.json and
       // from template JSON, and this keeps every one of them a TEXT assignment
       // that cannot reach an attribute context in this nodeIntegration renderer.
-      const owed = preflight.get(row.key) || [];
       if (owed.length) {
         const box = document.createElement('div');
         box.className = 'team-role-preflight';
@@ -359,47 +542,26 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           line.appendChild(txt);
           box.appendChild(line);
         }
-        el.appendChild(box);
+        // In the BODY, behind the disclosure: a collapsed row keeps only the
+        // marker on its summary line. The checklist is several lines per finding
+        // and putting it outside the body would defeat the collapse on exactly
+        // the teams that most need to fit.
+        body.appendChild(box);
       }
       listEl.appendChild(el);
     }
-    // A removable reserved role the team does NOT have still gets a row — the
-    // orphan state has no other symptom until a ticket reaches the review step
-    // and escalates, and a row that simply vanished is how it stayed invisible.
-    // Built as nodes with fixed strings only: nothing here is agent-writable
-    // (the key comes from a module constant, not from team.json).
-    for (const key of absentReservedRoles(manifest)) {
-      const el = document.createElement('div');
-      el.className = 'team-role-row read-only absent';
-      el.dataset.role = key;
-      const head = document.createElement('div');
-      head.className = 'team-role-head';
-      const k = document.createElement('span');
-      k.className = 'team-role-key';
-      k.textContent = key;
-      const badge = document.createElement('span');
-      badge.className = 'team-role-badge';
-      badge.textContent = 'not on this team';
-      head.appendChild(k);
-      head.appendChild(badge);
-      el.appendChild(head);
-      const note = document.createElement('div');
-      note.className = 'team-role-lock-note';
-      note.textContent = absentReservedNote(key);
-      el.appendChild(note);
-      const actions = document.createElement('div');
-      actions.className = 'team-role-actions';
-      const add = document.createElement('button');
-      add.type = 'button';
-      add.dataset.act = 'readd';
-      add.textContent = 'Add it back';
-      // Says what it writes. The def is Clodex's, not the operator's, and not
-      // whatever a previous team.json held — that is the property that makes
-      // remove-then-re-add safe to offer.
-      add.title = "Adds Clodex's built-in definition of this role back to the team.";
-      actions.appendChild(add);
-      el.appendChild(actions);
-      listEl.appendChild(el);
+    // Every absent STOCK role gets an offer card — the same component for a
+    // removed reviewer, a removed hand, and a lead-only team that never had
+    // either. The orphan state has no other symptom until a ticket reaches a
+    // role that does not exist, and a role that simply vanished from the list is
+    // how it stayed invisible. Offers come last, below the roles the team has.
+    // Not rendered in `repair`: it lists what the team HAS so the operator can
+    // decide about the lead, and an Enable button there acts on a team that
+    // cannot dispatch anything yet.
+    if (stage === 'normal') {
+      for (const key of absentStockRoles(manifest)) {
+        listEl.appendChild(buildOfferCard(key, { note: absentStockNote(key), dispatchLine: offerDispatchLine() }));
+      }
     }
   }
 
@@ -471,6 +633,11 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     helpPanel.classList.add('hidden'); // help starts collapsed on every open
     resetDrag(popover);                // a fresh open re-anchors; drop any drag offset
     await populatePromptOptions();
+    // Every open starts fully collapsed — the acceptance test (lead + hand +
+    // reviewer + one custom role fitting without scrolling) is measured in this
+    // state, so it must be the state an open lands in, not one the operator has
+    // to reach by collapsing what a previous open left behind.
+    expandedRole = null;
     addName.value = ''; addBrief.value = ''; addTemplate.value = ''; addPrompt.value = ''; addCwd.value = '';
     popover.dataset.name = name;
     const ok = await refresh(name);
@@ -497,6 +664,16 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     const name = teamName();
     if (!name || !role) return;
     const act = btn.dataset.act;
+    if (act === 'disclose') {
+      // ONE row open at a time: this assignment IS the collapse of the previous
+      // one, since renderRows reads a single key. Re-render rather than toggling
+      // a class, so the summary line's arrow, aria-expanded and the body agree
+      // by construction instead of by two code paths kept in step.
+      expandedRole = expandedRole === role ? null : role;
+      const res = await window.api.teamGet(name);
+      if (res && res.ok) renderRows(res.team);
+      return;
+    }
     if (act === 'set-lead') {
       const inp = rowEl.querySelector('input[data-f="lead-seat"]');
       const seat = ((inp && inp.value) || '').trim();
@@ -563,9 +740,13 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
       // action that in fact succeeded.
       if (btn.disabled) return;
       btn.disabled = true;
-      // `{}` because the backend IGNORES the def when re-minting a reserved key
-      // and writes the stock one — sending a def here would suggest this surface
-      // authors it, which is exactly the belief that makes the guard rot.
+      // `{}` because the BACKEND owns the definition of a stock role: a reserved
+      // key is re-minted from the stock def with `def` ignored outright, and an
+      // empty def on a non-reserved stock key (`hand`) is substituted for the
+      // stock one at the operator door. Mirroring STOCK_ROLE_DEFS here to send a
+      // real def would put a second copy of every stock role in the renderer and
+      // make this surface look like the author of them — exactly the belief that
+      // makes the reserved-key guard rot.
       let res;
       try {
         res = await window.api.teamAddRole(name, role, {});
