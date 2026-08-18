@@ -12495,10 +12495,14 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   // t431: same dispatch precondition mkTasks supplies, for the same reason — these
   // specs exercise worktree minting, not artifact resolution. On the record, not
   // in the spec text, so the delivered body stays what each test wrote.
+  // Opt-out: the cost ledger only runs for a ticket that HAS a task dir, so a
+  // test measuring the no-git path needs a ticket without one — stamping it
+  // unconditionally would drag `listWorktrees` onto a path that must not touch git.
+  const wtState = { autoTaskDir: true };
   const handleTaskWt = m._handleTask.bind(m);
   m._handleTask = (session, intent) => {
     const r = handleTaskWt(session, intent);
-    if (intent && intent.type === 'task' && intent.sub === 'add') {
+    if (wtState.autoTaskDir && intent && intent.type === 'task' && intent.sub === 'add') {
       const ts = tstore.load(team.root);
       let touched = false;
       for (const t of ts) if (!t.taskDir) { t.taskDir = `tasks/${t.id}-fixture/SPEC.md`; touched = true; }
@@ -12506,7 +12510,7 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
     }
     return r;
   };
-  return { m, team, home, tstore, seat, seatWithTree, gated, upserted, removed, worktreeSet, stripCalls, acCalls, archiveSeat, killSeat, record, persistence,
+  return { m, team, home, tstore, seat, seatWithTree, gated, upserted, removed, worktreeSet, stripCalls, acCalls, archiveSeat, killSeat, record, persistence, wtState,
     load: () => tstore.load(team.root), one: (id) => tstore.load(team.root).find((t) => t.id === id) };
 }
 
@@ -14029,6 +14033,13 @@ test('a non-git team root can dispatch, spawn and accept a spawn ticket end to e
       deleteBranch: boom('deleteBranch'),
     },
   });
+  // The COST ledger is the one thing on the accept path that lists worktrees, and
+  // it runs for any ticket carrying a task dir — which every dispatched ticket now
+  // must, since t431 refuses one without. It is a separate concern from the
+  // question under test (does the DISPATCH/ACCEPT path shell out to git), and it
+  // already guards its own git calls, so it is stubbed out rather than dodged by
+  // filing a ticket that could not be dispatched at all.
+  f.m._writeTicketCost = () => {};
   const cwds = {};
   f.m.create = async (...args) => { cwds[args[0]] = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
   const said = [];
