@@ -2643,6 +2643,28 @@ function createTicketMethods(deps, shared) {
         : `it had no worktree of its own, so nothing on disk is removed — anything it left in the shared checkout survives.`;
     },
 
+    // The dispatch-time half of the verify-time `verify: task-dir` check. Asked by
+    // both lead-initiated dispatch verbs BEFORE they mint a seat or a worktree,
+    // because the ticket is unreviewable either way and refusing at verify only
+    // buys the hand a whole no-op round first (t429 cost two). Only the MISSING
+    // case moves here: a taskDir that is set but escapes confinement is a
+    // different failure with a different recovery, and verify keeps it.
+    //
+    // Not in `_deliverTicketSpec`, which is the shared funnel but also carries
+    // replays and redeliveries — a dispatched ticket must keep being able to
+    // replay its spec to a respawned seat, and gating the funnel would strand
+    // exactly the recovery a dead hand depends on.
+    _ticketTaskDirRefusal(ticket, verb) {
+      if (ticket.taskDir) return null;
+      // `respec` and not `reject`-then-respec: the ticket is still OPEN here (both
+      // callers refused a non-open one above), so respec applies directly. The
+      // verify-time twin has to name reject first because by then the ticket is
+      // `done`, which respec refuses — same fix, two different reachable doors.
+      return `ticket ${ticket.id} has no task dir, so nothing was ${verb === 'start' ? 'started' : 'assigned'} — its spec names no \`tasks/…\` path on any line, `
+        + `and the review step has nowhere to write its diff. Nothing was changed. `
+        + `Fix: re-file it with the artifact dir on the spec's first line, or \`[agent:task respec ${ticket.id}]\` <the corrected spec> to replace it in place.`;
+    },
+
     // The live seat working in `treePath`, or null. Read off the PERSISTED record
     // rather than the session: a seat's cwd is the shared repo (it is told its tree
     // rather than booted in it), so cwd cannot answer this.
@@ -3453,6 +3475,11 @@ function createTicketMethods(deps, shared) {
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — only an open ticket can be started`); return; }
       if (!ticket.assignee) { reply(`error: ticket ${intent.id} is backlog (no assignee) — [agent:task assign ${intent.id} <role|name>] files AND dispatches it`); return; }
+      // Above the mint and above every write below it: a gate placed one line
+      // later still refuses and still returns this string, having already
+      // reserved the seat name and cut the worktree.
+      const noTaskDir = this._ticketTaskDirRefusal(ticket, 'start');
+      if (noTaskDir) { log.info('intent', `task start by ${session.name}: ${ticket.id} refused — no task dir`); reply(noTaskDir); return; }
       const assignee = ticket.assignee;
       // The role the ticket was FILED under, which is what mints the seat name and
       // resolves the worktree opt-in. On an unstarted ticket `assignee` still holds
@@ -3569,6 +3596,12 @@ function createTicketMethods(deps, shared) {
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot assign`); return; }
       const assignee = this._resolveAssignee(team, intent.who);
       if (!assignee) { reply(`error: ${this._assigneeMissText(team, intent.who)}`); return; }
+      // Same gate start makes, and for the same reason — assign is the OTHER
+      // dispatch path, so a ticket refused by one verb must not be dispatchable
+      // by the other. Above the mint and above the reassign notice, which tells
+      // the previous holder to stand down before any of the writes below.
+      const noTaskDir = this._ticketTaskDirRefusal(ticket, 'assign');
+      if (noTaskDir) { log.info('intent', `task assign by ${session.name}: ${ticket.id} refused — no task dir`); reply(noTaskDir); return; }
       const prev = ticket.assignee;
       // Captured before the re-pin below rewrites it — the reply reports where the
       // ticket came FROM, which is the role it was filed under.
