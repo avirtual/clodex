@@ -5487,6 +5487,30 @@ function mkTasks(extra = {}) {
   };
   const load = () => tstore.load(team.root);
   const one = (id) => load().find((t) => t.id === id);
+  // t431: dispatch refuses a ticket whose spec names no `tasks/…` path, since the
+  // review step would have nowhere to write its diff. The specs in this file are
+  // written to exercise DISPATCH, not artifact resolution, so the precondition is
+  // supplied here rather than by editing a hundred spec strings.
+  //
+  // Stamped onto the RECORD after `add`, never appended to the spec text: a
+  // large number of assertions in this file pin the delivered body byte-for-byte
+  // through `specBody`, and widening the spec would break every one of them for
+  // a reason that has nothing to do with what they test. Tests that want the
+  // task-dir-less case set it back to undefined themselves — the gate's own
+  // tests live in task-start.test.js.
+  const handleTask = m._handleTask.bind(m);
+  m._handleTask = (session, intent) => {
+    const r = handleTask(session, intent);
+    if (intent && intent.type === 'task' && intent.sub === 'add') {
+      const ts = tstore.load(team.root);
+      let touched = false;
+      for (const t of ts) {
+        if (!t.taskDir) { t.taskDir = `tasks/${t.id}-fixture/SPEC.md`; touched = true; }
+      }
+      if (touched) tstore.save(team.root, ts);
+    }
+    return r;
+  };
   return { m, injected, gated, urgents, tags, broadcasts, team, home, tstore, seat, load, one };
 }
 
@@ -12468,6 +12492,20 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   const record = (n) => (upserted.includes(n)
     ? { ...(fieldsByName.get(n) || {}), name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) }
     : null);
+  // t431: same dispatch precondition mkTasks supplies, for the same reason — these
+  // specs exercise worktree minting, not artifact resolution. On the record, not
+  // in the spec text, so the delivered body stays what each test wrote.
+  const handleTaskWt = m._handleTask.bind(m);
+  m._handleTask = (session, intent) => {
+    const r = handleTaskWt(session, intent);
+    if (intent && intent.type === 'task' && intent.sub === 'add') {
+      const ts = tstore.load(team.root);
+      let touched = false;
+      for (const t of ts) if (!t.taskDir) { t.taskDir = `tasks/${t.id}-fixture/SPEC.md`; touched = true; }
+      if (touched) tstore.save(team.root, ts);
+    }
+    return r;
+  };
   return { m, team, home, tstore, seat, seatWithTree, gated, upserted, removed, worktreeSet, stripCalls, acCalls, archiveSeat, killSeat, record, persistence,
     load: () => tstore.load(team.root), one: (id) => tstore.load(team.root).find((t) => t.id === id) };
 }

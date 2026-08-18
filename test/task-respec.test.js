@@ -372,7 +372,7 @@ test('an ordinary dispatch carries no RESPEC marker', () => {
   const f = mkRespec();
   const lead = f.seat('lead');
   f.seat('team-hand');
-  f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'a fresh spec' });
+  f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'a fresh spec\ntasks/fresh/SPEC.md' });
   f.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
 
   assert.ok(f.gated.length >= 1, 'ENTER: start dispatched it');

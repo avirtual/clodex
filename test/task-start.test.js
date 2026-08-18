@@ -91,8 +91,29 @@ function mkStart(extra = {}) {
     m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle' });
     return m.sessions.get(name);
   };
+  // t431: dispatch refuses a ticket whose spec names no `tasks/…` path. The specs
+  // in this file are about the dispatch VERB, not artifact resolution, so the
+  // precondition is supplied here — on the RECORD, never appended to the spec,
+  // because many assertions below pin the delivered body byte-for-byte through
+  // `specBody`.
+  //
+  // Opt-out rather than unconditional: the gate's OWN tests need a ticket that
+  // genuinely lacks a task dir, and a fixture that silently made that state
+  // unreachable would leave them asserting against a case they never built.
+  const state = { autoTaskDir: true };
+  const handleTask = m._handleTask.bind(m);
+  m._handleTask = (session, intent) => {
+    const r = handleTask(session, intent);
+    if (state.autoTaskDir && intent && intent.type === 'task' && intent.sub === 'add') {
+      const ts = tstore.load(team.root);
+      let touched = false;
+      for (const t of ts) if (!t.taskDir) { t.taskDir = `tasks/${t.id}-fixture/SPEC.md`; touched = true; }
+      if (touched) tstore.save(team.root, ts);
+    }
+    return r;
+  };
   return {
-    m, team, home, tstore, injected, gated, urgents, broadcasts, seat,
+    m, team, home, tstore, injected, gated, urgents, broadcasts, seat, state,
     load: () => tstore.load(team.root),
     one: (id) => tstore.load(team.root).find((t) => t.id === id),
     notes: () => injected.join('\n'),
@@ -494,6 +515,7 @@ test('an added-but-unstarted ticket is invisible to REPLAY too', () => {
 // spec that names no path is exactly how these records occur in the wild (three
 // on the live board when this was written).
 function openedNoTaskDir(f, who = 'hand', body = 'build the widget\nno artifact path anywhere') {
+  f.state.autoTaskDir = false;   // the fixture's convenience stamp would erase the case under test
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who, id: null, body });
   const t = f.one('t1');
@@ -582,6 +604,7 @@ test('t431: a dispatched task-dir-less ticket can still REPLAY to a respawned se
   f.seat('lead');
   const s = f.seat('team-hand', '/proj');
   s.incarnation = 7;
+  f.state.autoTaskDir = false;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'legacy work, no path' });
   // Dispatched BEFORE the gate existed — the state every pre-upgrade ticket on
   // the board is in, and the one the verify-time backstop still exists for.

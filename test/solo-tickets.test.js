@@ -174,7 +174,7 @@ test('solo add writes the SAME board file a team rooted at that repo resolves', 
   const f = mkSolo();
   const s = f.seat('solo');
   assert.strictEqual(f.deps.resolveTeam(s.cwd), null, 'PRECONDITION: no team');
-  f.m._handleTask(s, { type: 'task', sub: 'add', who: null, id: null, body: 'shared board' });
+  f.m._handleTask(s, { type: 'task', sub: 'add', who: null, id: null, body: 'shared board\ntasks/board/SPEC.md' });
 
   const soloBoard = f.boardPath(f.repo);
   assert.ok(fsReal.existsSync(soloBoard), 'solo verb wrote the project board');
@@ -217,7 +217,7 @@ test('solo assign: the target names a LIVE SESSION (no roles exist to match)', (
   const worker = f.seat('worker');
   assert.strictEqual(f.deps.resolveTeam(s.cwd), null, 'PRECONDITION: no team');
 
-  f.m._handleTask(s, { type: 'task', sub: 'add', who: null, id: null, body: 'work' });
+  f.m._handleTask(s, { type: 'task', sub: 'add', who: null, id: null, body: 'work\ntasks/work/SPEC.md' });
   f.m._handleTask(s, { type: 'task', sub: 'assign', who: 'worker', id: 't1', body: '' });
 
   assert.strictEqual(f.one('t1').assignee, 'worker', 'assigned to the live session');
@@ -229,7 +229,7 @@ test('solo assign: an unknown target is refused in session vocabulary, not role 
   const f = mkSolo();
   const s = f.seat('solo');
   assert.strictEqual(f.deps.resolveTeam(s.cwd), null, 'PRECONDITION: no team');
-  f.m._handleTask(s, { type: 'task', sub: 'add', who: null, id: null, body: 'work' });
+  f.m._handleTask(s, { type: 'task', sub: 'add', who: null, id: null, body: 'work\ntasks/work/SPEC.md' });
 
   f.m._handleTask(s, { type: 'task', sub: 'assign', who: 'ghost', id: 't1', body: '' });
 

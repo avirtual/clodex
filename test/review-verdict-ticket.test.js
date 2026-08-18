@@ -160,6 +160,17 @@ function mkVerdict(extra = {}) {
 function openTicket(f, body = 'the spec') {
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body });
+  // t431: dispatch refuses a ticket with no `tasks/…` path in its spec. Stamped
+  // on the RECORD rather than appended to the spec, because the assertion below
+  // pins the delivered body byte-for-byte — widening the spec would break every
+  // caller for a reason unrelated to verdict routing. A spec that already names
+  // a path keeps it: several callers pass one and assert on where the verdict
+  // file landed.
+  {
+    const ts = f.tstore.load(f.team.root);
+    const t0 = ts.find((t) => t.id === 't1');
+    if (t0 && !t0.taskDir) { t0.taskDir = 'tasks/t1-fixture/SPEC.md'; f.tstore.save(f.team.root, ts); }
+  }
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', id: 't1', who: null, body: '' });
   const t = f.one('t1');
   assert.ok(t, 'ENTER: the ticket exists on the board');
@@ -761,9 +772,22 @@ test('the verdict file is round-stamped, so round 2 does not overwrite round 1',
 
 test('a verdict body that cannot be written still notifies, and still leaves the verdict on the record', async () => {
   const f = mkVerdict();
-  // No task dir in the spec → nothing to resolve. The notification must degrade
-  // to an honest "could NOT be saved" rather than citing a path that is not there.
+  // No task dir → nothing to resolve. The notification must degrade to an honest
+  // "could NOT be saved" rather than citing a path that is not there.
+  //
+  // Stripped AFTER dispatch, not filed without one: since t431 the dispatch verbs
+  // refuse a task-dir-less ticket outright, so this state is no longer reachable
+  // through `start`. It remains reachable on the board — every ticket dispatched
+  // before that gate existed is in it, which is exactly why the verify-time
+  // backstop stayed — so the case this test covers is still live.
   openTicket(f, 'a spec with no task dir at all');
+  {
+    const ts = f.tstore.load(f.team.root);
+    const t0 = ts.find((t) => t.id === 't1');
+    delete t0.taskDir;
+    f.tstore.save(f.team.root, ts);
+    assert.strictEqual(f.one('t1').taskDir, undefined, 'ENTER: the ticket really has no task dir, or this measures the ordinary path');
+  }
   const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
 
   await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT\n\nMUST-FIX: none');
