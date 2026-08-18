@@ -27165,7 +27165,6 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               const clear = document.createElement("button");
               clear.type = "button";
               clear.className = "secondary team-role-stale-clear";
-              clear.dataset.act = `clear-${f}`;
               clear.textContent = "Clear";
               clear.title = `Remove the stored ${f}. Takes effect when you Save.`;
               clear.addEventListener("click", () => {
