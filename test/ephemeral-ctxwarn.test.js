@@ -40,10 +40,8 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
   // its OWN events — the `session-ctx` push that opens it and the ctxwarn
   // write/remove that ends it — and only reads inside that window are counted.
   // Bracketing on the arm's events rather than on "the session is in the map"
-  // is what keeps the count honest: the latter counted every persistence read
-  // anywhere after sessions.set, so a get() added elsewhere in create() broke
-  // this file with a message pointing at the ctx arm, which is not where the
-  // change was.
+  // is what keeps the count honest: the latter attributed every persistence read
+  // after sessions.set to this arm.
   const getCalls = [];
   const ctxArmReads = [];
   let armOpen = false;
