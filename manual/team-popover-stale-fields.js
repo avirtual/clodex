@@ -65,6 +65,14 @@ app.whenReady().then(async () => {
   // Save would write to a role that never reads it — invisible on the next open.
   check('archivist: the cleared cwd is inert while the role is still standing',
     await js(`${body}.querySelector('[data-field="cwd"] input').disabled`), true);
+  // r1 nit 1: inert must also LOOK inert. The Clear drops the `stale` class, so
+  // `.team-role-field.stale input` no longer applies; without a rule keyed on
+  // `disabled` the box renders at full opacity — uneditable and unexplained.
+  check('archivist: and it is dimmed by a rule keyed on disabled, not on .stale',
+    await js(`(() => { const i = ${body}.querySelector('[data-field="cwd"] input');
+      return { stale: i.closest('.team-role-field').classList.contains('stale'),
+               opacity: getComputedStyle(i).opacity }; })()`),
+    { stale: false, opacity: '0.55' });
 
   // --- MF2(b): a cleared field must NOT come back when dispatch changes. ---
   await setDispatch('spawn');
