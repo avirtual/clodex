@@ -1327,7 +1327,7 @@ html, body {
    behaviour is the platform's rather than a keydown handler of ours. */
 .team-role-dispatch { margin: 6px 0; }
 .team-role-segments { display: flex; border: 1px solid var(--border, #333); border-radius: 4px; overflow: hidden; }
-.team-role-segment { flex: 1 1 0; display: flex; align-items: center; justify-content: center; padding: 3px 6px; font-size: 11px; color: var(--text-dim); cursor: pointer; border-right: 1px solid var(--border, #333); }
+.team-role-segment { position: relative; flex: 1 1 0; display: flex; align-items: center; justify-content: center; padding: 3px 6px; font-size: 11px; color: var(--text-dim); cursor: pointer; border-right: 1px solid var(--border, #333); }
 .team-role-segment:last-child { border-right: none; }
 /* Visually hidden, NOT display:none — a display:none radio is unfocusable and
    drops out of the group's keyboard navigation, which is the whole reason for

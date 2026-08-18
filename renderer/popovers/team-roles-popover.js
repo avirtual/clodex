@@ -28,6 +28,7 @@ const {
   parseDuration, formatDuration, formatBlockedBy, preflightByRole,
   leadSeatCandidates, leadResolution,
   teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
+  reconcileReveal, clearableFields,
   reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
@@ -235,6 +236,11 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   // What each dispatch mode DOES, one line each. Shown as the segment's `title`
   // and as the Add Role helper text — never as a visible option label, which is
   // what made the old select a sentence wide in a narrow popover.
+  // Which stale fields may offer a Clear, derived from buildSavePatch rather than
+  // listed here — a hardcoded list would drift the moment the backend grows
+  // clear-template semantics, in the direction of promising one it cannot keep.
+  const CLEARABLE = clearableFields();
+
   const DISPATCH_HELP = {
     standing: 'standing — the live seat holding this role gets the spec.',
     spawn: 'spawn — a one-shot seat in the shared checkout, no branch of its own.',
@@ -291,9 +297,8 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   // team.json. Every one of them lands here as a `.value` PROPERTY or a
   // textContent — never in a value="…" attribute, which a `" onfocus="` payload
   // would break out of in this nodeIntegration renderer.
-  function renderRevealedFields(box, dispatch, stored) {
+  function renderRevealedFields(box, reveal, values) {
     box.innerHTML = '';
-    const reveal = fieldReveal(dispatch, stored);
     for (const f of ['template', 'cwd']) {
       const state = reveal[f];
       // 'hidden' only ever applies to an ALREADY-EMPTY value (fieldReveal's own
@@ -309,40 +314,54 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
       input.type = 'text';
       input.dataset.f = f;
       input.placeholder = f === 'cwd' ? 'optional: subdirectory (e.g. api)' : 'optional: spawn template name';
-      input.value = (stored && stored[f]) || ''; // PROPERTY (agent-writable).
+      input.value = (values && values[f]) || ''; // PROPERTY (agent-writable).
       field.appendChild(label);
       field.appendChild(input);
       if (state === 'stale') {
         // The R4 case: a value IS stored but the role dispatches standing, so
-        // nothing consumes it. It must stay VISIBLE and clearable — buildSavePatch
-        // always sends `cwd`, so a hidden non-empty one would be resubmitted on
-        // every save with no way for the operator to see or remove it.
+        // nothing consumes it. It must stay VISIBLE — buildSavePatch always sends
+        // `cwd`, so a hidden non-empty one would be resubmitted on every save
+        // with no way for the operator to see or remove it.
         input.disabled = true;
         const why = document.createElement('span');
         why.className = 'team-role-stale-note';
         why.textContent = 'not used while standing';
-        why.title = `A standing role's seat is operator-created, so ${f} does nothing for it. Clear it, or switch dispatch to spawn/worktree.`;
-        const clear = document.createElement('button');
-        clear.type = 'button';
-        clear.className = 'secondary team-role-stale-clear';
-        // Deliberately NO data-act: the list's click delegation matches
-        // `button[data-act]`, and a value there would route this button through
-        // the row action switch on every click to match nothing. Its own
-        // listener below is the whole behaviour.
-        clear.textContent = 'Clear';
-        clear.title = `Remove the stored ${f}. Takes effect when you Save.`;
-        // Clears the INPUT only; Save is still what writes. A button that wrote
-        // straight through would be a destructive action with no confirm and no
-        // undo, on a field the operator may have opened the row just to read.
-        clear.addEventListener('click', () => {
-          input.value = '';
-          input.disabled = false;
-          field.classList.remove('stale');
-          why.remove();
-          clear.remove();
-        });
+        const clearable = CLEARABLE.includes(f);
+        // A Clear is a PROMISE that Save removes the value, and it is only
+        // keepable where buildSavePatch transmits a blank. It does for `cwd`
+        // (setRole deletes the key on empty); it does NOT for `template`, which
+        // is omitted when blank because setRole validates any present template
+        // against NAME_RE and throws on ''. Offering one there round-trips to
+        // "saved" with the value still on disk and no error anywhere — the
+        // operator is told a removal happened that did not. The stock `hand`
+        // role is exactly this shape (a template, no dispatch, so standing), so
+        // it is the DEFAULT team's first expanded row, not an edge case.
+        why.title = clearable
+          ? `A standing role's seat is operator-created, so ${f} does nothing for it. Clear it, or switch dispatch to spawn/worktree.`
+          : `A standing role's seat is operator-created, so ${f} does nothing for it. It can't be cleared from the app in this version — switch dispatch to spawn/worktree, or remove it in team.json.`;
         field.appendChild(why);
-        field.appendChild(clear);
+        if (clearable) {
+          const clear = document.createElement('button');
+          clear.type = 'button';
+          clear.className = 'secondary team-role-stale-clear';
+          // Deliberately NO data-act: the list's click delegation matches
+          // `button[data-act]`, and a value there would route this button through
+          // the row action switch on every click to match nothing. Its own
+          // listener below is the whole behaviour.
+          clear.textContent = 'Clear';
+          clear.title = `Remove the stored ${f}. Takes effect when you Save.`;
+          // Clears the INPUT only; Save is still what writes. A button that wrote
+          // straight through would be a destructive action with no confirm and no
+          // undo, on a field the operator may have opened the row just to read.
+          clear.addEventListener('click', () => {
+            input.value = '';
+            input.disabled = false;
+            field.classList.remove('stale');
+            why.remove();
+            clear.remove();
+          });
+          field.appendChild(clear);
+        }
       }
       box.appendChild(field);
     }
@@ -649,20 +668,41 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
         // which would send '' and have buildSavePatch drop the key silently.
         const initialDispatch = DISPATCH_VALUES.includes(row.dispatch) ? row.dispatch : DEFAULT_DISPATCH;
         const revealBox = body.querySelector('[data-reveal]');
-        // Re-rendered on every dispatch change so the reveal follows the control
-        // WITHOUT a save round-trip (B3). Reads the live segment value, never the
-        // stored one — the operator's unsaved choice is the question being asked.
+        // The reveal follows the dispatch control WITHOUT a save round-trip (B3).
+        //
+        // What the fields currently HOLD, not what is on disk. Rebuilding empties
+        // the container and re-seeds it, so seeding from `row` would silently
+        // revert unsaved input: typing a cwd then picking another ACTIVE dispatch
+        // reverted it (edit → edit, nothing needed rebuilding at all), and
+        // clearing a stale cwd then switching to spawn brought the cleared value
+        // back so the next Save re-wrote it. A field returning from `hidden`
+        // reads '' here and that is correct — fieldReveal only hides an already
+        // empty value, which is the same invariant that makes hiding lossless.
+        const liveValues = () => {
+          const read = (f) => {
+            const el = revealBox.querySelector(`input[data-f="${f}"]`);
+            return el ? el.value : '';
+          };
+          return { cwd: read('cwd'), template: read('template') };
+        };
+        // The reveal currently ON SCREEN, so an unchanged transition can skip the
+        // rebuild entirely rather than destroy and recreate identical fields.
+        let shownReveal = null;
         const paintReveal = (dispatch) => {
-          // The stored values, not the current input contents: a field being
-          // re-revealed must come back holding what is on disk, and reading the
-          // node about to be destroyed would resurrect a half-typed edit as
-          // though it had been saved.
-          renderRevealedFields(revealBox, dispatch, { cwd: row.cwd, template: row.template });
+          // State from the STORED def, values from the LIVE inputs — see
+          // reconcileReveal's header for why those two sources differ.
+          const { reveal, rebuild } = reconcileReveal(shownReveal, dispatch, { cwd: row.cwd, template: row.template });
+          if (!rebuild) return;
+          renderRevealedFields(revealBox, reveal, liveValues());
+          shownReveal = reveal;
         };
         body.querySelector('[data-f-group="dispatch"]').appendChild(
           buildDispatchSegments(initialDispatch, paintReveal),
         );
-        paintReveal(initialDispatch);
+        // The FIRST paint seeds from the stored def: there are no inputs to carry
+        // forward yet, and this is the one moment `row` is the right source.
+        shownReveal = fieldReveal(initialDispatch, { cwd: row.cwd, template: row.template });
+        renderRevealedFields(revealBox, shownReveal, { cwd: row.cwd, template: row.template });
       }
       // The preflight checklist, on BOTH arms: lead and reviewer are read-only
       // topology but they name prompts and templates like any other role, and a
@@ -975,16 +1015,24 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   addBtn.addEventListener('click', async () => {
     const name = teamName();
     if (!name) return;
-    const v = validateAddRole({ name: addName.value, template: addTemplate.value });
+    // The template is validated only when the chosen dispatch actually consumes
+    // it: a `foo/bar` typed under spawn and then switched to standing is off
+    // screen, and erroring about a field the operator cannot see is a dead end.
+    // Same gate that decides whether it is written, below.
+    const addReveal = fieldReveal(addDispatch.value, { cwd: '', template: '' });
+    const v = validateAddRole({
+      name: addName.value,
+      template: addReveal.template === 'hidden' ? '' : addTemplate.value,
+    });
     if (!v.ok) { setStatus(v.error, true); return; }
     // Omit empty fields rather than writing literal nulls into the def (keeps the
     // manifest clean; the schema treats absent === null anyway).
     const def = {};
     if (addPrompt.value) def.prompt = addPrompt.value;
     // Same gate as `cwd` below: inert under a standing dispatch, so not written.
-    if (v.template && fieldReveal(addDispatch.value, { cwd: '', template: '' }).template !== 'hidden') {
-      def.template = v.template;
-    }
+    // `v.template` is already '' in that case (validateAddRole was given the
+    // gated value), so this is belt-and-braces against the two drifting apart.
+    if (v.template && addReveal.template !== 'hidden') def.template = v.template;
     const brief = addBrief.value.trim();
     if (brief) def.brief = brief;
     // Omitted when blank, like the fields above: absent already means "the team
@@ -995,7 +1043,6 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     // under `spawn` and then switched to `standing` is inert, and writing it
     // would mint exactly the haunted config R4 exists to prevent — on a role
     // that is brand new and has no reason to carry one.
-    const addReveal = fieldReveal(addDispatch.value, { cwd: '', template: '' });
     const cwd = addCwd.value.trim();
     if (cwd && addReveal.cwd !== 'hidden') def.cwd = cwd;
     // Only the non-default is written: absent already reads as `standing`, so an
@@ -1071,6 +1118,11 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     if (e.key !== 'Enter' || e.isComposing) return;
     const inp = e.target.closest('input[data-f]');
     if (!inp) return;
+    // RADIOS EXCLUDED. B4's dispatch segments carry data-f="dispatch", so without
+    // this an Enter while arrowing between modes submits the row immediately —
+    // mid-decision, and on the one control the operator is most likely to be
+    // driving from the keyboard. Enter is a submit for the TEXT fields only.
+    if (inp.type === 'radio') return;
     const rowEl = inp.closest('.team-role-row');
     // The lead row has no Save — its input pairs with Set lead. Matched on the
     // field rather than on the row's role so a row that grows both buttons later

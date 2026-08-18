@@ -15,6 +15,7 @@ const {
   leadSeatCandidates, leadResolution,
   reservedRemovalWarning,
   teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
+  reconcileReveal, clearableFields,
   REMOVABLE_RESERVED_ROLE_KEYS, OFFERABLE_STOCK_ROLE_KEYS, DISPATCH_VALUES,
 } = require('../renderer/lib/team-roles');
 
@@ -212,6 +213,18 @@ test('B4: the dispatch segments are a real radiogroup, one tab stop, no attribut
   assert.match(src, /radio\.checked = value === current/, 'checked state tracks the current dispatch');
 });
 
+// The BEHAVIOUR behind these source pins — arrow-key navigation, the single tab
+// stop, focus, and the stale/carry-forward interleavings — is the browser's, and
+// this repo has no DOM in its suite (jsdom is not a dependency, and would not
+// implement radio-group navigation if it were: that is precisely why the control
+// is built on native radios). It is covered by two runnable checks instead:
+//
+//   ./node_modules/.bin/electron manual/team-popover-keyboard.js
+//   ./node_modules/.bin/electron manual/team-popover-stale-fields.js
+//
+// Both self-assert and exit nonzero on failure. Run them when touching the
+// dispatch control or the cwd/template reveal — the tests below pin the shape
+// those checks depend on, not the behaviour itself.
 test('B4: aria-checked is the radios\' own, and the CSS keeps them focusable', () => {
   // A visually-hidden radio must stay focusable: `display:none` (or
   // `visibility:hidden`) removes it from the tab order and from the group's
@@ -337,6 +350,108 @@ test('fieldReveal: `hidden` is reachable ONLY for an empty value — hiding can 
   // ENTER: the interesting case actually occurred. Without this the loop above
   // is vacuously true of a fieldReveal that never returns 'hidden' at all.
   assert.ok(hiddenSeen > 0, 'ENTER: at least one hidden state was produced — otherwise the invariant is asserted over nothing');
+});
+
+test('r1 MF1: only `cwd` is clearable — a blank `template` never reaches the backend', () => {
+  // The bug this pins: the editor offered a Clear on a stale `template` titled
+  // "Remove the stored template. Takes effect when you Save." It could not.
+  // buildSavePatch OMITS a blank template (setRole validates any present
+  // `template` against NAME_RE and throws on ''), so Clear → Save round-tripped
+  // to `role "x" saved` with the value still on disk and no error anywhere.
+  assert.deepStrictEqual(clearableFields(), ['cwd']);
+
+  // Derived, not declared — this is the assertion that makes it stay true. If
+  // the backend ever grows clear-template semantics and buildSavePatch starts
+  // sending a blank one, clearableFields picks it up and this flips on its own.
+  const blanked = buildSavePatch({ brief: '', prompt: '', cwd: '', template: '' });
+  assert.ok('cwd' in blanked, 'a blank cwd IS transmitted — that is what makes its Clear honest');
+  assert.ok(!('template' in blanked), 'a blank template is omitted — so a Clear there would be a lie');
+});
+
+test('r1 MF1: the stock `hand` role is exactly the shape that exposed the dead Clear', () => {
+  // Not an edge case, which is why this pins the SHAPE and not just the leaf:
+  // STOCK_ROLE_DEFS.hand carries a template and no dispatch, so it is standing,
+  // so its template is stale — a default team's `hand` row hits this the first
+  // time anyone expands it.
+  const { STOCK_ROLE_DEFS } = require('../team-manifest');
+  const hand = STOCK_ROLE_DEFS.hand;
+  assert.ok(hand, 'ENTER: the stock hand def exists — a rename would leave every assertion below vacuous');
+  assert.ok(hand.template, 'the stock hand names a template');
+  assert.strictEqual(hand.dispatch, undefined, 'and no dispatch, so it is standing');
+  const reveal = fieldReveal(hand.dispatch, { cwd: hand.cwd, template: hand.template });
+  assert.strictEqual(reveal.template, 'stale',
+    'so a default team shows a stale template on `hand` — which must therefore not carry a Clear');
+  assert.ok(!clearableFields().includes('template'),
+    'the field a default team shows stale is the one field whose Clear cannot work');
+});
+
+test('r1 MF2: an unchanged reveal is NOT rebuilt — that rebuild discarded unsaved input', () => {
+  // Rebuilding empties the container and re-seeds it, so a rebuild on a
+  // transition where nothing changed state silently reverted whatever had been
+  // typed. Both of these are edit → edit: nothing needs rebuilding at all.
+  const both = { cwd: 'edit', template: 'edit' };
+  assert.deepStrictEqual(
+    reconcileReveal(both, 'worktree', { cwd: '', template: '' }),
+    { reveal: both, rebuild: false },
+    'spawn → worktree leaves both fields editable, so the DOM must be left alone',
+  );
+  assert.deepStrictEqual(
+    reconcileReveal(both, 'spawn', { cwd: 'api', template: 'fable-design' }),
+    { reveal: both, rebuild: false },
+    'and a stored value does not change that — the states are what decide',
+  );
+  // A first paint has nothing on screen yet, so it always builds.
+  assert.deepStrictEqual(
+    reconcileReveal(null, 'spawn', { cwd: '', template: '' }),
+    { reveal: both, rebuild: true },
+    'no previous reveal means the fields do not exist yet',
+  );
+});
+
+test('r1 MF2: a CHANGED reveal rebuilds, and the state comes from STORED, never from live input', () => {
+  // standing + stored → both stale; switching to spawn makes them editable, so
+  // the states differ and the rebuild is required.
+  const stale = { cwd: 'stale', template: 'stale' };
+  const out = reconcileReveal(stale, 'spawn', { cwd: 'api', template: 'fable-design' });
+  assert.deepStrictEqual(out, { reveal: { cwd: 'edit', template: 'edit' }, rebuild: true });
+
+  // The half that is easy to get backwards, and that I did get backwards first:
+  // the STATE must be decided from the stored def. Deciding it from the live
+  // input would promote a merely-TYPED value to `stale` — a disabled field that
+  // Save still reads — writing a standing role a cwd that was never on disk.
+  const typedButUnstored = reconcileReveal({ cwd: 'edit', template: 'edit' }, 'standing', { cwd: '', template: '' });
+  assert.deepStrictEqual(typedButUnstored.reveal, { cwd: 'hidden', template: 'hidden' },
+    'nothing stored means hidden, however much the operator typed — the value is dropped, unwritten');
+  assert.strictEqual(typedButUnstored.rebuild, true);
+
+  // And the mirror: a value that IS on disk goes stale rather than vanishing,
+  // because buildSavePatch would otherwise keep resubmitting it invisibly.
+  assert.deepStrictEqual(
+    reconcileReveal({ cwd: 'edit', template: 'edit' }, 'standing', { cwd: 'api', template: 'fable-design' }).reveal,
+    stale,
+  );
+});
+
+test('r1 MF2: every dispatch pair either changes state or is skipped — no rebuild is gratuitous', () => {
+  // The property behind the fix, over the whole transition matrix rather than
+  // the two interleavings the review happened to find.
+  const stored = { cwd: 'api', template: 'fable-design' };
+  let skipped = 0;
+  for (const from of DISPATCH_VALUES) {
+    for (const to of DISPATCH_VALUES) {
+      const prev = fieldReveal(from, stored);
+      const { reveal, rebuild } = reconcileReveal(prev, to, stored);
+      if (!rebuild) {
+        skipped++;
+        assert.deepStrictEqual(reveal, prev,
+          `${from} → ${to} skipped the rebuild, so the states must be identical`);
+      }
+    }
+  }
+  // ENTER: skips actually occurred. Without this the assertion above is true of
+  // an implementation that rebuilds unconditionally — i.e. of the bug.
+  assert.ok(skipped >= DISPATCH_VALUES.length,
+    `ENTER: at least the identity transitions skipped the rebuild (saw ${skipped})`);
 });
 
 test('reservedRoleNote: newcomer-facing lock reason for lead/reviewer, safe generic otherwise', () => {

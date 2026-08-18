@@ -28,10 +28,14 @@ blocks a release.
   Both are used when a ticket spawns a seat for the role; a standing role's seat
   is one you created yourself, so neither has any effect on it. On a standing
   role they are hidden when empty, and when a value IS stored the field stays
-  visible, marked as unused, with a Clear button — the popover always saves
-  `cwd`, so a hidden one would have been kept forever with no way to see or
-  remove it. Switching a role between standing and spawn shows or hides them
-  immediately, before you save.
+  visible and marked as unused rather than disappearing — the popover always
+  saves `cwd`, so a hidden one would have been kept forever with no way to see
+  it. A stored `cwd` can be cleared there; a stored `template` shows why it
+  cannot be removed from the app in this version, and points at the two things
+  that do work — switching the role to spawn or worktree, or editing
+  `team.json`. Switching a role between standing and spawn shows or hides the
+  fields immediately, before you save, and anything you have typed or cleared
+  is kept across the switch.
 
 - The dispatch picker in a role's editor is now three labelled segments instead
   of a dropdown of sentences, and it works from the keyboard: arrow keys move

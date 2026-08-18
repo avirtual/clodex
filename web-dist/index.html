@@ -1662,6 +1662,7 @@ body {
   overflow: hidden;
 }
 .team-role-segment {
+  position: relative;
   flex: 1 1 0;
   display: flex;
   align-items: center;
@@ -6194,7 +6195,7 @@ body {
       </div>
     </div>
     <div id="team-roles-popover" class="hidden">
-      <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><span class="popover-title-actions"><button type="button" class="popover-help-btn" id="team-roles-settings-btn" title="Team settings" aria-label="Team settings" aria-expanded="false">&#9881;</button><button type="button" class="popover-help-btn" id="team-roles-help-btn" title="What is this page?" aria-label="Help">?</button><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></span></div>
+      <div class="popover-title"><span>Team — <span id="team-roles-popover-name"></span></span><span class="popover-title-actions"><button type="button" class="popover-help-btn" id="team-roles-settings-btn" title="Team settings" aria-label="Team settings" aria-expanded="false" aria-controls="team-roles-watchdog-section">&#9881;</button><button type="button" class="popover-help-btn" id="team-roles-help-btn" title="What is this page?" aria-label="Help">?</button><button type="button" class="popover-close" id="team-roles-popover-close" title="Close" aria-label="Close">&times;</button></span></div>
       <div class="popover-intro">Your team's roles — who does what. Edit them here; no config files needed.</div>
       <div class="popover-help hidden" id="team-roles-help" data-help>
         <p><strong>What this is.</strong> A team is a group of AI teammates that work together. Each <em>role</em> below is one kind of teammate — what it's for and how it behaves.</p>
@@ -26902,6 +26903,15 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         };
         return { cwd: state(cwd), template: state(template) };
       }
+      function reconcileReveal(prevReveal, dispatch, stored) {
+        const reveal = fieldReveal(dispatch, stored);
+        const rebuild = !prevReveal || prevReveal.cwd !== reveal.cwd || prevReveal.template !== reveal.template;
+        return { reveal, rebuild };
+      }
+      function clearableFields() {
+        const blanked = buildSavePatch({ brief: "", prompt: "", cwd: "", template: "" });
+        return ["cwd", "template"].filter((f) => f in blanked);
+      }
       function preflightByRole(findings) {
         const out = /* @__PURE__ */ new Map();
         for (const f of Array.isArray(findings) ? findings : []) {
@@ -26931,6 +26941,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         absentStockNote,
         offerDispatchLine,
         fieldReveal,
+        reconcileReveal,
+        clearableFields,
         DISPATCH_VALUES,
         DEFAULT_DISPATCH,
         REMOVABLE_RESERVED_ROLE_KEYS,
@@ -26962,6 +26974,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         absentStockNote,
         offerDispatchLine,
         fieldReveal,
+        reconcileReveal,
+        clearableFields,
         reservedRemovalWarning,
         REMOVABLE_RESERVED_ROLE_KEYS
       } = require_team_roles();
@@ -27105,6 +27119,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           box.appendChild(hint);
           return box;
         }
+        const CLEARABLE = clearableFields();
         const DISPATCH_HELP = {
           standing: "standing \u2014 the live seat holding this role gets the spec.",
           spawn: "spawn \u2014 a one-shot seat in the shared checkout, no branch of its own.",
@@ -27138,9 +27153,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           return group;
         }
-        function renderRevealedFields(box, dispatch, stored) {
+        function renderRevealedFields(box, reveal, values) {
           box.innerHTML = "";
-          const reveal = fieldReveal(dispatch, stored);
           for (const f of ["template", "cwd"]) {
             const state = reveal[f];
             if (state === "hidden") continue;
@@ -27153,7 +27167,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             input.type = "text";
             input.dataset.f = f;
             input.placeholder = f === "cwd" ? "optional: subdirectory (e.g. api)" : "optional: spawn template name";
-            input.value = stored && stored[f] || "";
+            input.value = values && values[f] || "";
             field.appendChild(label);
             field.appendChild(input);
             if (state === "stale") {
@@ -27161,21 +27175,24 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               const why = document.createElement("span");
               why.className = "team-role-stale-note";
               why.textContent = "not used while standing";
-              why.title = `A standing role's seat is operator-created, so ${f} does nothing for it. Clear it, or switch dispatch to spawn/worktree.`;
-              const clear = document.createElement("button");
-              clear.type = "button";
-              clear.className = "secondary team-role-stale-clear";
-              clear.textContent = "Clear";
-              clear.title = `Remove the stored ${f}. Takes effect when you Save.`;
-              clear.addEventListener("click", () => {
-                input.value = "";
-                input.disabled = false;
-                field.classList.remove("stale");
-                why.remove();
-                clear.remove();
-              });
+              const clearable = CLEARABLE.includes(f);
+              why.title = clearable ? `A standing role's seat is operator-created, so ${f} does nothing for it. Clear it, or switch dispatch to spawn/worktree.` : `A standing role's seat is operator-created, so ${f} does nothing for it. It can't be cleared from the app in this version \u2014 switch dispatch to spawn/worktree, or remove it in team.json.`;
               field.appendChild(why);
-              field.appendChild(clear);
+              if (clearable) {
+                const clear = document.createElement("button");
+                clear.type = "button";
+                clear.className = "secondary team-role-stale-clear";
+                clear.textContent = "Clear";
+                clear.title = `Remove the stored ${f}. Takes effect when you Save.`;
+                clear.addEventListener("click", () => {
+                  input.value = "";
+                  input.disabled = false;
+                  field.classList.remove("stale");
+                  why.remove();
+                  clear.remove();
+                });
+                field.appendChild(clear);
+              }
             }
             box.appendChild(field);
           }
@@ -27361,13 +27378,25 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               }
               const initialDispatch = DISPATCH_VALUES.includes(row.dispatch) ? row.dispatch : DEFAULT_DISPATCH;
               const revealBox = body.querySelector("[data-reveal]");
+              const liveValues = () => {
+                const read = (f) => {
+                  const el2 = revealBox.querySelector(`input[data-f="${f}"]`);
+                  return el2 ? el2.value : "";
+                };
+                return { cwd: read("cwd"), template: read("template") };
+              };
+              let shownReveal = null;
               const paintReveal = (dispatch) => {
-                renderRevealedFields(revealBox, dispatch, { cwd: row.cwd, template: row.template });
+                const { reveal, rebuild } = reconcileReveal(shownReveal, dispatch, { cwd: row.cwd, template: row.template });
+                if (!rebuild) return;
+                renderRevealedFields(revealBox, reveal, liveValues());
+                shownReveal = reveal;
               };
               body.querySelector('[data-f-group="dispatch"]').appendChild(
                 buildDispatchSegments(initialDispatch, paintReveal)
               );
-              paintReveal(initialDispatch);
+              shownReveal = fieldReveal(initialDispatch, { cwd: row.cwd, template: row.template });
+              renderRevealedFields(revealBox, shownReveal, { cwd: row.cwd, template: row.template });
             }
             if (owed.length) {
               const box = document.createElement("div");
@@ -27581,19 +27610,20 @@ You can add it back from this popover.` : "";
         addBtn.addEventListener("click", async () => {
           const name = teamName();
           if (!name) return;
-          const v = validateAddRole({ name: addName.value, template: addTemplate.value });
+          const addReveal = fieldReveal(addDispatch.value, { cwd: "", template: "" });
+          const v = validateAddRole({
+            name: addName.value,
+            template: addReveal.template === "hidden" ? "" : addTemplate.value
+          });
           if (!v.ok) {
             setStatus(v.error, true);
             return;
           }
           const def = {};
           if (addPrompt.value) def.prompt = addPrompt.value;
-          if (v.template && fieldReveal(addDispatch.value, { cwd: "", template: "" }).template !== "hidden") {
-            def.template = v.template;
-          }
+          if (v.template && addReveal.template !== "hidden") def.template = v.template;
           const brief = addBrief.value.trim();
           if (brief) def.brief = brief;
-          const addReveal = fieldReveal(addDispatch.value, { cwd: "", template: "" });
           const cwd = addCwd.value.trim();
           if (cwd && addReveal.cwd !== "hidden") def.cwd = cwd;
           if (addDispatch.value !== DEFAULT_DISPATCH && DISPATCH_VALUES.includes(addDispatch.value)) {
@@ -27644,6 +27674,7 @@ You can add it back from this popover.` : "";
           if (e.key !== "Enter" || e.isComposing) return;
           const inp = e.target.closest("input[data-f]");
           if (!inp) return;
+          if (inp.type === "radio") return;
           const rowEl = inp.closest(".team-role-row");
           const act = inp.dataset.f === "lead-seat" ? "set-lead" : "save";
           const btn = rowEl && rowEl.querySelector(`button[data-act="${act}"]`);

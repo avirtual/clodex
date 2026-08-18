@@ -394,6 +394,57 @@ function fieldReveal(dispatch, { cwd, template } = {}) {
   return { cwd: state(cwd), template: state(template) };
 }
 
+// Does the reveal need REBUILDING, and what does it reveal now? Split out of the
+// popover because the DOM half is untestable and this decision is where unsaved
+// operator input gets destroyed.
+//
+// The rebuild empties a container and re-seeds it, so doing it when nothing
+// changed state silently reverts whatever the operator had typed but not saved.
+// Two transitions where that bit: typing a new `cwd` and then picking a
+// different ACTIVE dispatch (edit → edit, nothing needed rebuilding), and
+// clearing a stale `cwd` then switching to spawn to make it live (the cleared
+// field came back holding the old stored value, and the next Save wrote it).
+//
+// The split that makes both halves correct: the STATE is decided from the stored
+// def (below), while the VALUE the caller re-seeds with is what the fields
+// currently hold. Seeding from the stored def would silently revert unsaved
+// input; deciding the state from the live input would write it.
+//
+// A field going TO `hidden` therefore drops its value, and that stays right:
+// `hidden` means nothing is stored, so an unsaved value there is one the
+// operator typed under a dispatch that consumed it and then moved away from —
+// dropping it writes nothing haunted, which is the whole point.
+function reconcileReveal(prevReveal, dispatch, stored) {
+  // STATE from what is on DISK, deliberately — `stale` means "a value is stored
+  // and this dispatch does not consume it", which is a fact about the manifest,
+  // not about the textbox. Deciding it from the live input instead would promote
+  // a value the operator merely TYPED into a stale-and-disabled field, and Save
+  // reads disabled inputs too: a standing role would be written a cwd that had
+  // never been on disk — the haunted config R4 exists to prevent. The VALUE is
+  // carried forward separately, by the caller.
+  const reveal = fieldReveal(dispatch, stored);
+  const rebuild = !prevReveal
+    || prevReveal.cwd !== reveal.cwd
+    || prevReveal.template !== reveal.template;
+  return { reveal, rebuild };
+}
+
+// Which fields the editor may offer a CLEAR button for. Not a style choice: a
+// Clear is a promise that Save removes the value, and it can only be kept where
+// buildSavePatch actually transmits a blank.
+//
+// `cwd` qualifies — buildSavePatch always sends it, blank included, and setRole
+// deletes the key on an empty value. `template` does NOT: buildSavePatch OMITS a
+// blank template because setRole validates any present `template` against
+// NAME_RE and throws on ''. A Clear there would round-trip to "saved" with the
+// value still on disk and no error anywhere — telling the operator a removal
+// happened that did not. Derived from buildSavePatch rather than listed, so the
+// two cannot drift apart.
+function clearableFields() {
+  const blanked = buildSavePatch({ brief: '', prompt: '', cwd: '', template: '' });
+  return ['cwd', 'template'].filter((f) => f in blanked);
+}
+
 // teamPreflight findings (a flat array over the whole team) → the per-role
 // buckets renderRows needs, in the order the resolver emitted them. A role with
 // nothing unresolved is ABSENT from the map rather than present-and-empty: the
@@ -420,5 +471,6 @@ module.exports = {
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,
   teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
+  reconcileReveal, clearableFields,
   DISPATCH_VALUES, DEFAULT_DISPATCH, REMOVABLE_RESERVED_ROLE_KEYS, OFFERABLE_STOCK_ROLE_KEYS,
 };
