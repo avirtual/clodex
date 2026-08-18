@@ -1887,7 +1887,35 @@ function createSessionManager(deps) {
                 try { getRemoteServer().pushTelemetry(name, { ctx: session.ctxInfo }); } catch {}
               }
               const warnPath = pathFor(REGISTRY_DIR, name, 'ctxwarn');
-              const warn = ctxReminderFor(c.tok);
+              // An ephemeral seat is never nudged. It is sized to one ticket and
+              // retired after it, so a compact buys it nothing it does not already
+              // get for free at retirement, and the boundary it reads as natural is
+              // `done` — immediately before the rework that needs exactly the
+              // context the compact discarded. Suppressed HERE rather than inside
+              // ctxReminderFor, which stays pure: "is this context heavy" is still
+              // true of an ephemeral seat, and only whether we act on it changes.
+              // Read off the persistence record (team-tickets seeds `ephemeral`
+              // before create), never re-derived from the name shape.
+              let warn = ctxReminderFor(c.tok);
+              // Memoized on the session, and read LAZILY at the first over-threshold
+              // tick rather than eagerly at create. get() re-parses the whole of
+              // sessions.json, and _load() can WRITE it (the legacy workspaceId
+              // backfill) — this tick is per-turn for a seat sitting above the
+              // threshold, which is exactly the long-lived lead. Lazy rather than
+              // eager because ephemerality is fixed for a seat's lifetime but the
+              // record may be seeded just after create; this still costs one read
+              // per seat ever.
+              if (warn) {
+                if (session._ephemeralSeat === undefined) {
+                  let rec = null;
+                  try { rec = getPersistence().get(name); } catch {}
+                  // Memoized only on a record we actually got. A missing or throwing
+                  // read leaves it unset, so the seat stays NUDGED and a later tick
+                  // can still settle it — never silently silenced by a failed read.
+                  if (rec) session._ephemeralSeat = !!rec.ephemeral;
+                }
+                if (session._ephemeralSeat) warn = null;
+              }
               try {
                 if (warn) fs.writeFileSync(warnPath, warn);
                 else fs.rmSync(warnPath, { force: true });
