@@ -61,11 +61,19 @@ app.whenReady().then(async () => {
     { field: 'template', stale: true, value: 'fable-design', hasClear: false },
     { field: 'cwd', stale: false, value: '', hasClear: false },
   ]);
+  // The role is STILL standing here. An enabled box invites a fresh cwd that
+  // Save would write to a role that never reads it — invisible on the next open.
+  check('archivist: the cleared cwd is inert while the role is still standing',
+    await js(`${body}.querySelector('[data-field="cwd"] input').disabled`), true);
 
   // --- MF2(b): a cleared field must NOT come back when dispatch changes. ---
   await setDispatch('spawn');
   check('MF2: the cleared cwd stays cleared across a dispatch change',
     await js(`${body}.querySelector('[data-field="cwd"] input').value`), '');
+  // ...and becomes editable again, because a spawn role DOES consume a cwd. The
+  // inertness above is a property of `standing`, not a one-way trip.
+  check('MF2: and is editable again once the dispatch consumes it',
+    await js(`${body}.querySelector('[data-field="cwd"] input').disabled`), false);
 
   // --- r2 nit 1: a Clear must reach the STATE computation, not just the DOM.
   //     Returning to standing re-derives stale-vs-hidden from what is stored,

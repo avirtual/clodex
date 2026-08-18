@@ -355,7 +355,13 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           // undo, on a field the operator may have opened the row just to read.
           clear.addEventListener('click', () => {
             input.value = '';
-            input.disabled = false;
+            // Stays DISABLED. The role is still `standing` at this point, so a
+            // cwd typed into a re-enabled box would save to a role that does not
+            // consume it and vanish on the next open — the haunted value the
+            // stale/hidden states exist to prevent, reached through the Clear.
+            // Removing the field instead would yank it from under the cursor;
+            // visible-empty-inert says "gone, and this is where it was". It comes
+            // back editable on the next active dispatch, which rebuilds it `edit`.
             field.classList.remove('stale');
             why.remove();
             clear.remove();

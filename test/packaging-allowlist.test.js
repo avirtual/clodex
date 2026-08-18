@@ -68,9 +68,10 @@ const EXCLUDED = {
   'docker/': 'Dockerfile for the headless image, built from a checkout, never read by the app',
   'manual/': 'Electron-driven behavioural checks run by hand (real keyboard/ARIA, focus, live '
     + 'DOM) — nothing reads them at runtime. They stay OUT of the suite only by their names: '
-    + 'node --test globs *.test.js, test-*.js and test.js, plus every .js under a directory '
-    + 'named test. A script added here under any of those would be swept in and run headless, '
-    + 'where it needs an Electron browser and fails. Name new ones like the existing three',
+    + 'node --test globs *.test.js, *-test.js, *_test.js, test-*.js and test.js (each also in '
+    + 'its .cjs/.mjs form), plus every .js under a directory named test. A script added here '
+    + 'under any of those would be swept in and run headless, where it needs an Electron '
+    + 'browser and fails. Name new ones like the existing three',
   'tasks/': 'task artifacts and journals — development record, no runtime reader',
   'test/': 'the test suite does not ship',
   'vendor/': 'ships via build.extraResources (vendor/wirescope → Contents/Resources/wirescope), '

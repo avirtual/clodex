@@ -512,6 +512,40 @@ test('r2 nit1: the editor feeds reconcileReveal a snapshot its Clear can mutate'
     'rebuilds must pass the live values AND the clear handler');
 });
 
+test('r3 nit2: Clear leaves the stale cwd INERT — the role is still standing', () => {
+  // The door the stale/hidden states left open. Clear un-stales the field in
+  // place; if it also re-enables the input, the operator can type a fresh cwd
+  // into a role that dispatches `standing`, Save writes it, and nothing consumes
+  // or shows it again — the haunted value everything else here prevents. The
+  // field must stay VISIBLE (removing it mid-interaction yanks it from under the
+  // cursor, and `manual/team-popover-stale-fields.js` pins its presence) and
+  // must stay disabled until a dispatch that actually reads a cwd rebuilds it.
+  const pop = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'popovers', 'team-roles-popover.js'), 'utf-8');
+
+  const handler = /clear\.addEventListener\('click', \(\) => \{[\s\S]*?\n {10}\}\);/.exec(pop);
+  assert.ok(handler, 'ENTER: found the Clear handler — a rename would vacuum out every assertion below');
+  const src = handler[0];
+  assert.match(src, /input\.value = '';/, 'ENTER: this really is the handler that blanks the input');
+
+  assert.ok(!/input\.disabled = false/.test(src),
+    're-enabling the input lets a fresh cwd be typed into a standing role, which Save persists invisibly');
+  assert.ok(!/field\.remove\(\)|input\.remove\(\)/.test(src),
+    'and the field is not removed either — inert beats vanishing under the cursor');
+
+  // The other half of "inert": the field was disabled when rendered stale, so
+  // saying nothing in the handler is what keeps it that way. If the render side
+  // ever stopped disabling, the absence above would assert nothing.
+  const stale = /if \(state === 'stale'\) \{[\s\S]*?clear\.addEventListener/.exec(pop);
+  assert.ok(stale, 'ENTER: found the stale branch that renders the field in the first place');
+  assert.match(stale[0], /input\.disabled = true;/,
+    'the stale field starts disabled — that is the state the Clear handler must leave alone');
+
+  // A standing role really does regain an editable cwd on an active dispatch,
+  // so the inertness above is scoped to `standing` rather than permanent.
+  assert.strictEqual(fieldReveal('spawn', { cwd: '', template: 'fable-design' }).cwd, 'edit',
+    'a rebuild under spawn renders `edit`, which is the enabled path');
+});
+
 test('reservedRoleNote: newcomer-facing lock reason for lead/reviewer, safe generic otherwise', () => {
   assert.match(reservedRoleNote('lead'), /Runs the team/);
   assert.match(reservedRoleNote('reviewer'), /Independently checks the lead's work/);

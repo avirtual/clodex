@@ -27186,7 +27186,6 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 clear.title = `Remove the stored ${f}. Takes effect when you Save.`;
                 clear.addEventListener("click", () => {
                   input.value = "";
-                  input.disabled = false;
                   field.classList.remove("stale");
                   why.remove();
                   clear.remove();
