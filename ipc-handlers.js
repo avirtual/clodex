@@ -305,10 +305,19 @@ function registerIpcHandlers(deps) {
   // and the intent path (`[agent:team role-add]`) never reaches here at all: it
   // calls the mutator without the operator opt-in, which this handler is the only
   // caller to pass.
+  //
+  // SEED-ONLY, and the absence check is what makes that true — the same shape
+  // team:join uses. addRole is exact-match-or-throw, so substituting the stock def
+  // for a role the team ALREADY has would turn a no-op re-add (empty def matching
+  // an empty-normalized role on disk) into "already exists with a different
+  // definition": the stock def refusing a live team's role. Gating on absence
+  // keeps this a mint and nothing else. Pinned by team-hand-template-portable.test.js.
   const isEmptyDef = (d) => !d || typeof d !== 'object' || Array.isArray(d) || Object.keys(d).length === 0;
   handle('team:addRole', (_e, team, role, def) => {
     try {
-      const d = isEmptyDef(def) && STOCK_ROLE_DEFS[role] ? { ...STOCK_ROLE_DEFS[role] } : def;
+      let absent = false;
+      try { absent = !loadManifest(team).roles[role]; } catch { absent = false; }
+      const d = absent && isEmptyDef(def) && STOCK_ROLE_DEFS[role] ? { ...STOCK_ROLE_DEFS[role] } : def;
       return { ok: true, team: addRole(team, role, d, { operator: true }) };
     } catch (err) { return { ok: false, error: err.message }; }
   });
