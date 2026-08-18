@@ -69,7 +69,7 @@ const EXCLUDED = {
   'manual/': 'Electron-driven behavioural checks run by hand (real keyboard/ARIA, focus, live '
     + 'DOM) — nothing reads them at runtime. They stay OUT of the suite only by their names: '
     + 'node --test globs *.test.js, *-test.js, *_test.js, test-*.js and test.js (each also in '
-    + 'its .cjs/.mjs form), plus every .js under a directory named test. A script added here '
+    + 'its .cjs/.mjs form), plus every .js/.cjs/.mjs under a directory named test. A script added here '
     + 'under any of those would be swept in and run headless, where it needs an Electron '
     + 'browser and fails. Name new ones like the existing three',
   'tasks/': 'task artifacts and journals — development record, no runtime reader',

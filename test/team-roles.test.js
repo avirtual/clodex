@@ -527,8 +527,13 @@ test('r3 nit2: Clear leaves the stale cwd INERT — the role is still standing',
   const src = handler[0];
   assert.match(src, /input\.value = '';/, 'ENTER: this really is the handler that blanks the input');
 
-  assert.ok(!/input\.disabled = false/.test(src),
+  // Any MENTION of `disabled`, not just the literal re-enable: `leave it alone`
+  // is the whole fix, and `removeAttribute('disabled')` or `disabled = someFlag`
+  // would satisfy a narrower pattern while restoring the defect.
+  assert.ok(!/\binput\.disabled\b/.test(src),
     're-enabling the input lets a fresh cwd be typed into a standing role, which Save persists invisibly');
+  assert.ok(!/removeAttribute\(\s*['"`]disabled/.test(src),
+    'and the attribute route is the same defect wearing a different spelling');
   assert.ok(!/field\.remove\(\)|input\.remove\(\)/.test(src),
     'and the field is not removed either — inert beats vanishing under the cursor');
 

@@ -1318,6 +1318,11 @@ html, body {
    sends `cwd`, so a hidden non-empty one would be resubmitted forever with no
    way to see or clear it. */
 .team-role-field.stale input { opacity: 0.55; }
+/* Inertness must read from `disabled`, NOT from `.stale`: clearing a stale cwd
+   removes that class and its note, but the input stays disabled because the role
+   is still standing. Without this rule that state renders at full opacity —
+   uneditable, unexplained, and indistinguishable from an ordinary empty field. */
+.team-role-field input:disabled { opacity: 0.55; }
 .team-role-stale-note { color: var(--warn); font-size: 10px; }
 .team-role-stale-clear { align-self: flex-start; margin-top: 2px; }
 
