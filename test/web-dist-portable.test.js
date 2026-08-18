@@ -2,11 +2,19 @@
 // web-dist-portable.test.js — the bundle must not name the machine that built it.
 //
 // esbuild writes a source-marker comment naming each file it inlines, and the
-// name is RELATIVE TO THE BUILD'S WORKING DIRECTORY. Build `web-dist/index.html`
-// from the repo root and the markers read `node_modules/@xterm/xterm/lib/...`.
-// Build it from a git worktree — which is exactly where a delegated hand does
-// its work — and the same markers read `../wb-wrap-ui/node_modules/@xterm/...`,
-// pointing back at the original checkout.
+// name is RELATIVE TO THE BUILD'S WORKING DIRECTORY, after symlinks are
+// resolved. Two ways that leaked the build machine into the bundle: building
+// from a git worktree — which is exactly where a delegated hand does its work —
+// escaped through the loop's `node_modules` symlink and wrote
+// `../wb-wrap-ui/node_modules/@xterm/...`, pointing back at the original
+// checkout; and invoking the build from a subdirectory moved every marker with
+// the cwd.
+//
+// Both are now closed AT THE BUILD, not by convention: build/build-web.js pins
+// `absWorkingDir: ROOT` + `preserveSymlinks: true` on both esbuild calls, so the
+// bundle is byte-identical wherever it is built from. Verified by building the
+// same tree from a worktree and from a subdirectory of one — both reproduced the
+// committed root-built bundle exactly.
 //
 // It has shipped twice. Nothing catches it: the file commits clean, the suite
 // stays green, and a reviewer reading a 1.4MB generated bundle would not see
@@ -32,8 +40,12 @@
 // with a legitimate path the way a home-directory pattern can — the bundle
 // legitimately contains `/home/clodex/work`, the sandbox container work dir.
 //
-// Fix when this fails: `npm run build:web` FROM THE REPO ROOT, commit the
-// regenerated bundle.
+// Fix when this fails: `npm run build:web` (from anywhere — the build pins its
+// own working directory), commit the regenerated bundle. If a rebuild does NOT
+// clear it, the two esbuild options above were dropped from build/build-web.js;
+// restore them rather than rebuilding from somewhere else. The old advice here
+// said "build from the repo root", which a hand cannot do — the root is the
+// shared checkout holding master's sources, not the branch under review.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -58,8 +70,10 @@ test('web-dist bundle names no path from the build machine', () => {
     + `${prefixes(src).join(', ')}. esbuild names inlined files RELATIVE TO THE `
     + 'BUILD DIRECTORY, so a prefix means this bundle was built from a git '
     + 'worktree rather than the repo root — the paths point back at the original '
-    + 'checkout and are meaningful on that machine alone. Remedy: run '
-    + '`npm run build:web` from the repo root and commit the regenerated bundle.');
+    + 'checkout and are meaningful on that machine alone. Remedy: re-run '
+    + '`npm run build:web` (from anywhere) and commit the regenerated bundle. If '
+    + 'the prefix survives a rebuild, build/build-web.js has lost its '
+    + '`absWorkingDir: ROOT` / `preserveSymlinks: true` esbuild options.');
 });
 
 test('web-dist bundle embeds no absolute path from this machine', () => {
@@ -95,4 +109,31 @@ test('the detector separates the shipped defect from a correct build', () => {
   assert.deepStrictEqual(prefixes(correct), [],
     'the detector flags a correct root build, so it would fail on every clean '
     + 'bundle and be disabled within a week');
+});
+
+test('build-web pins the two esbuild options that keep the bundle portable', () => {
+  // The tests above read the COMMITTED bundle, so they cannot see this
+  // regression: drop the options, rebuild from the repo root, and the bundle is
+  // still clean and still green — the defect only reappears later, for the next
+  // hand who builds from a worktree and gets sent back over a file they built
+  // correctly. That is the loop this ticket closed, so pin the cause.
+  //
+  // Both options, both esbuild calls. Measured from a worktree: with only
+  // `preserveSymlinks` a subdirectory build writes `../node_modules/`, and with
+  // only `absWorkingDir` the symlink escape is untouched. Neither is redundant.
+  const src = fs.readFileSync(path.join(ROOT, 'build', 'build-web.js'), 'utf8');
+  const calls = src.match(/esbuild\.build\(\{[\s\S]*?\n  \}\)/g) || [];
+  assert.strictEqual(calls.length, 2,
+    'build/build-web.js no longer has exactly two esbuild.build calls — this pin '
+    + 'matched them by shape, so re-derive it rather than deleting it');
+  for (const call of calls) {
+    assert.match(call, /absWorkingDir:\s*ROOT/,
+      'an esbuild.build call in build/build-web.js lost `absWorkingDir: ROOT`, so its '
+      + 'source markers move with the invocation cwd and a build from a subdirectory '
+      + 'embeds the build machine in the shipped bundle');
+    assert.match(call, /preserveSymlinks:\s*true/,
+      'an esbuild.build call in build/build-web.js lost `preserveSymlinks: true`, so it '
+      + 'resolves through the ticket loop\'s worktree `node_modules` symlink and writes '
+      + 'paths back into the original checkout');
+  }
 });
