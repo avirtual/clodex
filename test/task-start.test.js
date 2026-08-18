@@ -103,11 +103,18 @@ function mkStart(extra = {}) {
   const state = { autoTaskDir: true };
   const handleTask = m._handleTask.bind(m);
   m._handleTask = (session, intent) => {
+    const isAdd = state.autoTaskDir && intent && intent.type === 'task' && intent.sub === 'add';
+    const before = isAdd ? new Set(tstore.load(team.root).map((t) => t.id)) : null;
     const r = handleTask(session, intent);
-    if (state.autoTaskDir && intent && intent.type === 'task' && intent.sub === 'add') {
+    if (isAdd) {
       const ts = tstore.load(team.root);
       let touched = false;
-      for (const t of ts) if (!t.taskDir) { t.taskDir = `tasks/${t.id}-fixture/SPEC.md`; touched = true; }
+      // Only the ids this `add` INTRODUCED. Stamping every task-dir-less ticket on
+      // the board would resurrect state a test deliberately built: strip `taskDir`
+      // from t1, file t2, and the loop silently puts t1's back.
+      for (const t of ts) {
+        if (!before.has(t.id) && !t.taskDir) { t.taskDir = `tasks/${t.id}-fixture/SPEC.md`; touched = true; }
+      }
       if (touched) tstore.save(team.root, ts);
     }
     return r;

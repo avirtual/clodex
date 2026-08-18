@@ -174,7 +174,7 @@ test('solo add writes the SAME board file a team rooted at that repo resolves', 
   const f = mkSolo();
   const s = f.seat('solo');
   assert.strictEqual(f.deps.resolveTeam(s.cwd), null, 'PRECONDITION: no team');
-  f.m._handleTask(s, { type: 'task', sub: 'add', who: null, id: null, body: 'shared board\ntasks/board/SPEC.md' });
+  f.m._handleTask(s, { type: 'task', sub: 'add', who: null, id: null, body: 'shared board' });
 
   const soloBoard = f.boardPath(f.repo);
   assert.ok(fsReal.existsSync(soloBoard), 'solo verb wrote the project board');
@@ -217,7 +217,7 @@ test('solo assign: the target names a LIVE SESSION (no roles exist to match)', (
   const worker = f.seat('worker');
   assert.strictEqual(f.deps.resolveTeam(s.cwd), null, 'PRECONDITION: no team');
 
-  f.m._handleTask(s, { type: 'task', sub: 'add', who: null, id: null, body: 'work\ntasks/work/SPEC.md' });
+  f.m._handleTask(s, { type: 'task', sub: 'add', who: null, id: null, body: 'work' });
   f.m._handleTask(s, { type: 'task', sub: 'assign', who: 'worker', id: 't1', body: '' });
 
   assert.strictEqual(f.one('t1').assignee, 'worker', 'assigned to the live session');
@@ -229,7 +229,7 @@ test('solo assign: an unknown target is refused in session vocabulary, not role 
   const f = mkSolo();
   const s = f.seat('solo');
   assert.strictEqual(f.deps.resolveTeam(s.cwd), null, 'PRECONDITION: no team');
-  f.m._handleTask(s, { type: 'task', sub: 'add', who: null, id: null, body: 'work\ntasks/work/SPEC.md' });
+  f.m._handleTask(s, { type: 'task', sub: 'add', who: null, id: null, body: 'work' });
 
   f.m._handleTask(s, { type: 'task', sub: 'assign', who: 'ghost', id: 't1', body: '' });
 
@@ -263,6 +263,12 @@ test('solo done: the ASSIGNEE may close, and no spec is dispatched onward', () =
   f.m._handleTask(s, { type: 'task', sub: 'assign', who: 'worker', id: 't1', body: '' });
   f.m._handleTask(s, { type: 'task', sub: 'assign', who: 'worker', id: 't2', body: '' });
   const before = f.gated.length;
+  // ENTER: the payoff below is an ABSENCE, and an absence is equally true of a
+  // board where the assign never landed at all — which is exactly what a gate
+  // refusing these tickets would produce. Pinning the assignment first is what
+  // makes the empty slice mean "did not auto-advance" rather than "never ran".
+  assert.strictEqual(f.one('t1').assignee, 'worker', 'ENTER: t1 really reached the assignee');
+  assert.strictEqual(f.one('t2').assignee, 'worker', 'ENTER: and t2 is queued on that same seat, or nothing could advance');
 
   f.m._handleTask(worker, { type: 'task', sub: 'done', who: null, id: 't1', body: 'done by assignee' });
 
@@ -335,7 +341,15 @@ test('team path unchanged: with a team resolved, the board keys team.root and ro
   f.seat('team-hand', root);
   assert.strictEqual(f.deps.resolveTeam(root), team, 'PRECONDITION: a team DOES resolve here');
 
-  f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'team work\ntasks/team-work/SPEC.md' });
+  f.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'team work' });
+  // A REAL team resolves here, so unlike every other test in this file the t431
+  // dispatch gate applies. Stamped on the record rather than written into the
+  // spec, because the delivered body is pinned byte-for-byte below.
+  {
+    const ts = f.tstore.load(root);
+    ts[0].taskDir = 'tasks/team-work/SPEC.md';
+    f.tstore.save(root, ts);
+  }
   // t308 split the dispatch half out of `add`, so the re-pin and the delivery
   // this test pins now happen at `start`. What it is actually checking is
   // unchanged and still worth checking: on the TEAM path the board keys
@@ -346,7 +360,7 @@ test('team path unchanged: with a team resolved, the board keys team.root and ro
   assert.strictEqual(board.length, 1, 'written to the team.root board');
   assert.strictEqual(board[0].assignee, 'team-hand', 'role resolved and re-pinned to the seat');
   assert.strictEqual(board[0].role, 'hand', 'the filed role survives — team semantics intact');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', 'team work\ntasks/team-work/SPEC.md') }],
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', 'team work') }],
     'spec delivered through the unchanged team path');
 });
 
