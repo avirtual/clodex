@@ -128,7 +128,12 @@ popovers the owner will answer.
   re-delivers every submit while over (recurrence counters habituation).
   The tick SKIPS the write for a seat whose persistence record is
   `ephemeral` — the decision function stays pure and still calls the context
-  heavy; only the write site acts on it.
+  heavy; only the write site acts on it. The REMOVE arm still runs for a
+  suppressed seat, so a ctxwarn written before it was suppressed is cleared
+  rather than stranded to re-deliver every submit forever (pinned by
+  `test/ephemeral-ctxwarn.test.js`); and the record is read once per seat —
+  memoized on the session at the first over-threshold tick, since `get()`
+  re-parses the whole of sessions.json.
 - **Update checker** (update-checker.js, data layer only): startup + 6h;
   `updateInfo` drives the banner/tray/notification (side effects stay in
   main.js); `releasesCache` feeds the peer ⓘ popover's version-severity
