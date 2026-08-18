@@ -26,7 +26,14 @@
 
 // Nudge once context passes this; escalate the wording past the second. Cache-
 // warm reads are discounted but not free, and the discount lapses.
-const CTX_REMINDER_NUDGE_TOKENS = 150_000;
+//
+// The nudge was tuned before the ticket loop existed. Tickets land hands in the
+// 140-180k band, so a 150k threshold fires mid-ticket on ordinary work rather
+// than on a genuinely heavy context; 200k keeps a real backstop while clearing
+// the band a normal ticket occupies. That narrows the gap to escalate on
+// purpose: a seat reaching 200k on a ticket is already anomalous, so the
+// sterner wording should follow sooner after the first warning.
+const CTX_REMINDER_NUDGE_TOKENS = 200_000;
 const CTX_REMINDER_ESCALATE_TOKENS = 250_000;
 
 // Pure decision: given the current absolute input-token count, return the

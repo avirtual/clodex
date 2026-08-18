@@ -1887,7 +1887,29 @@ function createSessionManager(deps) {
                 try { getRemoteServer().pushTelemetry(name, { ctx: session.ctxInfo }); } catch {}
               }
               const warnPath = pathFor(REGISTRY_DIR, name, 'ctxwarn');
-              const warn = ctxReminderFor(c.tok);
+              // An ephemeral seat is never nudged: it is retired at `done`, the
+              // moment a compact would cost it exactly the context its rework
+              // needs. Suppressed HERE, not inside ctxReminderFor, which stays
+              // pure — "is this context heavy" is still true of such a seat, and
+              // only whether we act on it changes. Read off the persistence
+              // record (team-tickets seeds `ephemeral` before create), never
+              // re-derived from the name shape.
+              let warn = ctxReminderFor(c.tok);
+              // Read lazily at the first over-threshold tick, not eagerly at
+              // create: get() re-parses the whole of sessions.json and _load()
+              // can WRITE it (the workspaceId backfill), while the record may be
+              // seeded just after create. Memoized only on a record actually
+              // returned — a missing or throwing read leaves it unset, so the
+              // seat stays NUDGED and a later tick can still settle it, rather
+              // than being silently silenced by a failed read.
+              if (warn) {
+                if (session._ephemeralSeat === undefined) {
+                  let rec = null;
+                  try { rec = getPersistence().get(name); } catch {}
+                  if (rec) session._ephemeralSeat = !!rec.ephemeral;
+                }
+                if (session._ephemeralSeat) warn = null;
+              }
               try {
                 if (warn) fs.writeFileSync(warnPath, warn);
                 else fs.rmSync(warnPath, { force: true });
