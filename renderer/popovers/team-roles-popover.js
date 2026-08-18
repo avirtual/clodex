@@ -325,7 +325,10 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
         const clear = document.createElement('button');
         clear.type = 'button';
         clear.className = 'secondary team-role-stale-clear';
-        clear.dataset.act = `clear-${f}`;
+        // Deliberately NO data-act: the list's click delegation matches
+        // `button[data-act]`, and a value there would route this button through
+        // the row action switch on every click to match nothing. Its own
+        // listener below is the whole behaviour.
         clear.textContent = 'Clear';
         clear.title = `Remove the stored ${f}. Takes effect when you Save.`;
         // Clears the INPUT only; Save is still what writes. A button that wrote
