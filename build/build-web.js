@@ -88,8 +88,19 @@ async function main() {
     child_process: path.join(WEB, 'child_process-shim.js'),
   };
 
+  // Both flags are load-bearing, and each is dead without the other — esbuild
+  // names every inlined module RELATIVE TO THE BUILD'S WORKING DIRECTORY, after
+  // resolving symlinks. The ticket loop plants `node_modules` in each worktree
+  // as a symlink to the root checkout, so without `preserveSymlinks` esbuild
+  // escapes through it and writes `../wb-wrap-ui/node_modules/...`; without
+  // `absWorkingDir` the markers move with the invocation cwd, so building from
+  // a subdirectory writes `../node_modules/...`. Measured: dropping either one
+  // reintroduces a prefixed marker. Pinned by test/web-dist-portable.test.js,
+  // which exists because that defect shipped twice.
   const js = await esbuild.build({
     entryPoints: [path.join(WEB, 'boot.js')],
+    absWorkingDir: ROOT,
+    preserveSymlinks: true,
     bundle: true,
     write: false,
     format: 'iife',
@@ -102,6 +113,8 @@ async function main() {
 
   const css = await esbuild.build({
     entryPoints: [path.join(WEB, 'app.css')],
+    absWorkingDir: ROOT,
+    preserveSymlinks: true,
     bundle: true,
     write: false,
     loader: { '.woff': 'dataurl', '.woff2': 'dataurl', '.ttf': 'dataurl' },
