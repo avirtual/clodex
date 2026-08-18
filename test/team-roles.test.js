@@ -14,7 +14,7 @@ const {
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,
   reservedRemovalWarning,
-  teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine,
+  teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
   REMOVABLE_RESERVED_ROLE_KEYS, OFFERABLE_STOCK_ROLE_KEYS, DISPATCH_VALUES,
 } = require('../renderer/lib/team-roles');
 
@@ -187,6 +187,86 @@ test('buildSavePatch: sends `dispatch` for BOTH enum values, drops an off-enum o
     assert.ok(!('dispatch' in p), `off-enum dispatch ${JSON.stringify(bad)} is omitted`);
     assert.deepStrictEqual(p, { brief: 'b', prompt: 'p', cwd: '' }, 'and the rest of the patch is unharmed');
   }
+});
+
+test('fieldReveal: spawn/worktree make BOTH fields plain editable fields', () => {
+  // Whole-object deepStrictEqual, not a per-key probe: a reveal that forgot to
+  // return one of the two keys would come back `undefined`, and `undefined`
+  // compares unequal to every state string while a per-key check for the OTHER
+  // field still passes. The object is the unit under test.
+  assert.deepStrictEqual(fieldReveal('spawn', { cwd: '', template: '' }), { cwd: 'edit', template: 'edit' });
+  assert.deepStrictEqual(fieldReveal('worktree', { cwd: 'api', template: 'fable-lead' }), { cwd: 'edit', template: 'edit' });
+  // A stored value does not change the state on the active paths — 'edit' is
+  // 'edit' whether or not something is in the box.
+  assert.deepStrictEqual(fieldReveal('spawn', { cwd: 'api', template: '' }), { cwd: 'edit', template: 'edit' });
+});
+
+test('fieldReveal: standing + EMPTY hides, standing + STORED goes stale — per field, independently', () => {
+  assert.deepStrictEqual(fieldReveal('standing', { cwd: '', template: '' }), { cwd: 'hidden', template: 'hidden' });
+  assert.deepStrictEqual(fieldReveal('standing', { cwd: 'api', template: 'fable-lead' }), { cwd: 'stale', template: 'stale' });
+  // The two fields are decided SEPARATELY. One object per role carrying one
+  // state for both would hide a stale cwd whenever the template happened to be
+  // blank — which is the exact data-losing shape R4 exists to prevent.
+  assert.deepStrictEqual(fieldReveal('standing', { cwd: 'api', template: '' }), { cwd: 'stale', template: 'hidden' });
+  assert.deepStrictEqual(fieldReveal('standing', { cwd: '', template: 'fable-lead' }), { cwd: 'hidden', template: 'stale' });
+});
+
+test('fieldReveal: whitespace is not a stored value — it hides rather than going stale', () => {
+  // buildSavePatch trims before sending, so a whitespace-only cwd submits as ''
+  // and is already the cleared state. Calling it 'stale' would offer a Clear
+  // button for a value that is, after the trim every write path applies,
+  // already blank.
+  assert.deepStrictEqual(fieldReveal('standing', { cwd: '   ', template: '\t' }), { cwd: 'hidden', template: 'hidden' });
+});
+
+test('fieldReveal: an UNRECOGNIZED dispatch reveals as if standing — never as spawn', () => {
+  // Fail-closed, mirroring roleSummaries' stance rather than teamRoleRows'. A
+  // hand-edited team.json holding a mode this build does not model must not make
+  // a field VANISH that the unknown mode might depend on — and must not be
+  // written back either (buildSavePatch drops an off-enum dispatch; pinned above).
+  for (const weird of ['teleport', '', null, undefined, 'SPAWN', 'spawn ', 42, {}]) {
+    assert.deepStrictEqual(
+      fieldReveal(weird, { cwd: 'api', template: 'fable-lead' }),
+      { cwd: 'stale', template: 'stale' },
+      `unrecognized dispatch ${JSON.stringify(weird)} must reveal like standing, showing the stored values`,
+    );
+    assert.deepStrictEqual(
+      fieldReveal(weird, { cwd: '', template: '' }),
+      { cwd: 'hidden', template: 'hidden' },
+      `and hide them when there is nothing stored (${JSON.stringify(weird)})`,
+    );
+  }
+  // A PADDED enum value is unrecognized too, and deliberately so: loadManifest
+  // refuses an off-enum dispatch outright and resolveSeatShape compares with
+  // ===, so ' spawn ' behaves as spawn nowhere in the app. Revealing it as
+  // editable would be this surface inventing a mode the engine does not honour.
+  assert.deepStrictEqual(fieldReveal('  spawn  ', { cwd: '', template: '' }), { cwd: 'hidden', template: 'hidden' });
+});
+
+test('fieldReveal: a missing values object is the all-empty case, not a throw', () => {
+  // The Add Role subpanel calls this with nothing stored yet.
+  assert.deepStrictEqual(fieldReveal('standing'), { cwd: 'hidden', template: 'hidden' });
+  assert.deepStrictEqual(fieldReveal('spawn'), { cwd: 'edit', template: 'edit' });
+  assert.deepStrictEqual(fieldReveal('standing', {}), { cwd: 'hidden', template: 'hidden' });
+});
+
+test('fieldReveal: `hidden` is reachable ONLY for an empty value — hiding can never lose data', () => {
+  // The property the whole split rests on, asserted directly rather than left as
+  // a consequence of the cases above: across every dispatch, a field that comes
+  // back 'hidden' had nothing in it. buildSavePatch always sends `cwd`, so if
+  // this ever became false the form would submit an invisible, unclearable value.
+  const values = ['', '   ', 'api', 'a/b', 'fable-lead'];
+  const dispatches = ['standing', 'spawn', 'worktree', 'teleport', ''];
+  let hiddenSeen = 0;
+  for (const d of dispatches) {
+    for (const cwd of values) {
+      const out = fieldReveal(d, { cwd, template: cwd });
+      if (out.cwd === 'hidden') { hiddenSeen++; assert.strictEqual(cwd.trim(), '', `hid a non-empty cwd under dispatch ${d}`); }
+    }
+  }
+  // ENTER: the interesting case actually occurred. Without this the loop above
+  // is vacuously true of a fieldReveal that never returns 'hidden' at all.
+  assert.ok(hiddenSeen > 0, 'ENTER: at least one hidden state was produced — otherwise the invariant is asserted over nothing');
 });
 
 test('reservedRoleNote: newcomer-facing lock reason for lead/reviewer, safe generic otherwise', () => {

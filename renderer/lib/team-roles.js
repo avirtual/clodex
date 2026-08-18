@@ -355,6 +355,45 @@ function offerDispatchLine() {
   return 'Runs as: standing — the live seat holding this role gets the spec.';
 }
 
+// Which of `cwd`/`template` the editor shows for a given dispatch, and in what
+// state (R4). Both fields are inert for a `standing` role: `template` is consumed
+// only by resolveSeatShape, reached on the spawn paths, and `cwd` likewise — a
+// standing role's seat is operator-created and passes through neither.
+//
+//   'edit'   — spawn/worktree: the field does something, edit it normally.
+//   'hidden' — standing AND stored blank: omit the field entirely.
+//   'stale'  — standing AND a value IS stored: shown, inactive, with a Clear.
+//
+// The 'stale' state is not a nicety. buildSavePatch ALWAYS sends `cwd`, blank
+// included, because blank is the only way to clear it — so hiding a NON-EMPTY
+// cwd would keep submitting a value the operator can neither see nor remove.
+// The pleasant consequence of splitting the two: 'hidden' applies only to an
+// already-empty value, so hiding a field can never lose data.
+//
+// Fail-closed like roleSummaries, not like teamRoleRows: an unrecognized
+// dispatch reveals AS IF standing, because a hand-edited value this build does
+// not model must never cause a field it might depend on to vanish. The value is
+// not written back here — normalization for display only.
+//
+// A separate leaf from teamRoleRows on purpose: that model's keys are pinned
+// against the manifest schema by the legibility test, so a reveal key added
+// there would read as a sixth schema field.
+function fieldReveal(dispatch, { cwd, template } = {}) {
+  // Membership, NOT a trim-then-compare: every consumer of this value is strict
+  // (loadManifest refuses an off-enum `dispatch` outright, and resolveSeatShape
+  // compares with ===), so a padded " spawn " does not behave as spawn anywhere.
+  // Trimming here would show two live fields for a role that dispatches standing.
+  const active = dispatch === 'spawn' || dispatch === 'worktree';
+  const state = (v) => {
+    if (active) return 'edit';
+    // Trimmed for EMPTINESS only: buildSavePatch trims before sending, so a
+    // whitespace-only value already submits as cleared and offering a Clear for
+    // it would be a button that changes nothing.
+    return String(v == null ? '' : v).trim() ? 'stale' : 'hidden';
+  };
+  return { cwd: state(cwd), template: state(template) };
+}
+
 // teamPreflight findings (a flat array over the whole team) → the per-role
 // buckets renderRows needs, in the order the resolver emitted them. A role with
 // nothing unresolved is ABSENT from the map rather than present-and-empty: the
@@ -380,6 +419,6 @@ module.exports = {
   reservedRemovalWarning,
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,
-  teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine,
+  teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
   DISPATCH_VALUES, DEFAULT_DISPATCH, REMOVABLE_RESERVED_ROLE_KEYS, OFFERABLE_STOCK_ROLE_KEYS,
 };
