@@ -246,6 +246,13 @@ function leadResolution(lead, { sessions, known } = {}) {
 // falls to 'repair' rather than 'normal' — a state this function cannot reason
 // about must land in the mode that still shows everything, never in the one that
 // hides the lead decision.
+//
+// 'setup' is UNREACHABLE through the popover's only manifest source today:
+// `team:get` goes through loadManifest, which refuses a team.json whose `lead`
+// does not match NAME_RE, so a lead-less manifest never reaches a render. It is
+// kept because the alternative is an un-mapped state falling into 'normal' if a
+// load path is ever loosened — do not "simplify" it away, and do not describe it
+// to operators as a state they can be in.
 function teamStage(leadRes) {
   const state = leadRes && typeof leadRes.state === 'string' ? leadRes.state : '';
   if (state === 'unset') return 'setup';
@@ -288,7 +295,11 @@ function roleSummaries(manifest, sessions, { lead } = {}) {
     const working = mine.filter((s) => s.activity && s.activity !== 'idle').length;
     const total = names.length;
     let note;
-    if (total === 0) note = 'no seat';
+    // "in this window" is load-bearing for the same reason leadResolution's
+    // `stopped` note carries it: these rows are workspace-scoped, so a seat
+    // filling this role in ANOTHER window counts zero here. Without the
+    // qualifier the row states a falsehood about a running seat.
+    if (total === 0) note = 'no seat in this window';
     else if (total === 1) note = names[0];
     else note = `${total} seats · ${working} working`;
     // Fail-closed on an unrecognized value, unlike teamRoleRows: this feeds a

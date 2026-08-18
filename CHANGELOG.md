@@ -18,12 +18,10 @@ blocks a release.
   many of them are working, and how its tickets are dispatched — and clicking a
   line opens that role's editor, one at a time. The fields themselves are
   unchanged; they are just no longer all on screen simultaneously, which on a
-  four-role team meant scrolling past three editors to reach the fourth. A team
-  with no lead set now shows only that one decision, since nothing else on the
-  panel can work until it is made, and a lead pointer that names something
-  Clodex cannot find says so at the top instead of leaving the panel looking
-  ordinary. A lead that is merely stopped is not treated as broken — it restarts
-  under its name.
+  four-role team meant scrolling past three editors to reach the fourth. A lead
+  pointer that names something Clodex cannot find now says so at the top instead
+  of leaving the panel looking ordinary. A lead that is merely stopped is not
+  treated as broken — it restarts under its name.
 
 - A team missing its `hand` role is now offered one back, the way a missing
   `reviewer` already was. Removing the hand left a team that reads as complete

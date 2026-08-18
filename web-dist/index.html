@@ -26783,7 +26783,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const working = mine.filter((s) => s.activity && s.activity !== "idle").length;
           const total = names.length;
           let note;
-          if (total === 0) note = "no seat";
+          if (total === 0) note = "no seat in this window";
           else if (total === 1) note = names[0];
           else note = `${total} seats \xB7 ${working} working`;
           const raw = def && def.dispatch || DEFAULT_DISPATCH;
@@ -27139,7 +27139,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             if (row.readOnly) {
               el.classList.add("read-only");
               body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div>`;
-              if (row.key === "lead") body.appendChild(buildLeadSeatBlock(manifest));
+              if (row.key === "lead" && stage === "normal") body.appendChild(buildLeadSeatBlock(manifest));
               if (REMOVABLE_RESERVED_ROLE_KEYS.has(row.key)) {
                 const actions = document.createElement("div");
                 actions.className = "team-role-actions";

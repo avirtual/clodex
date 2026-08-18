@@ -421,7 +421,12 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           `<div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || '—')}</span></div>` +
           `<div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || '—')}</span></div>`;
         // The lead ROLE stays locked; which SEAT fills it does not (t420).
-        if (row.key === 'lead') body.appendChild(buildLeadSeatBlock(manifest));
+        // Gated on `normal` because a non-normal stage ALREADY hoisted a lead
+        // block card above the list: two live seat editors for one setting, each
+        // internally consistent under the row-scoped click delegation, would show
+        // divergent values for the same field on exactly the screen whose job is
+        // to fix a broken pointer.
+        if (row.key === 'lead' && stage === 'normal') body.appendChild(buildLeadSeatBlock(manifest));
         // A reserved role's DEFINITION stays locked, but whether the team has one
         // at all is the operator's call (t421) — `reviewer` only, and only from
         // here: the backend takes an operator opt-in this channel passes and the

@@ -284,14 +284,17 @@ test('teamStage: an UNRECOGNIZED state falls to repair, never to normal', () => 
 // ── A2: the summary row model ────────────────────────────────────────────────
 // Whole objects, not probed fields: an unwired seat count arrives as `undefined`,
 // and a regex over the note would happily match around it.
-test('roleSummaries: a zero-seat role reads "no seat"', () => {
+test('roleSummaries: a zero-seat role SCOPES its "no seat" note to this window', () => {
+  // The rows are workspace-scoped, so zero seats here does not mean zero seats.
+  // The unqualified wording was a falsehood about a role running in another
+  // window; leadResolution's `stopped` note carries the same qualifier.
   const out = roleSummaries({ name: 'shop', roles: { hand: {} } }, [], { lead: 'shop-lead' });
   assert.deepStrictEqual(out, [{
     key: 'hand',
     dispatch: 'standing',
     readOnly: false,
     seats: { total: 0, working: 0, names: [] },
-    note: 'no seat',
+    note: 'no seat in this window',
   }]);
 });
 
