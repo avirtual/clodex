@@ -1897,13 +1897,24 @@ function createSessionManager(deps) {
               // Read off the persistence record (team-tickets seeds `ephemeral`
               // before create), never re-derived from the name shape.
               let warn = ctxReminderFor(c.tok);
-              // Consulted only when there is something to suppress: under threshold
-              // the file is removed either way, and get() re-reads all of
-              // sessions.json on what is otherwise a per-turn path.
+              // Memoized on the session, and read LAZILY at the first over-threshold
+              // tick rather than eagerly at create. get() re-parses the whole of
+              // sessions.json, and _load() can WRITE it (the legacy workspaceId
+              // backfill) — this tick is per-turn for a seat sitting above the
+              // threshold, which is exactly the long-lived lead. Lazy rather than
+              // eager because ephemerality is fixed for a seat's lifetime but the
+              // record may be seeded just after create; this still costs one read
+              // per seat ever.
               if (warn) {
-                let rec = null;
-                try { rec = getPersistence().get(name); } catch {}
-                if (rec && rec.ephemeral) warn = null;
+                if (session._ephemeralSeat === undefined) {
+                  let rec = null;
+                  try { rec = getPersistence().get(name); } catch {}
+                  // Memoized only on a record we actually got. A missing or throwing
+                  // read leaves it unset, so the seat stays NUDGED and a later tick
+                  // can still settle it — never silently silenced by a failed read.
+                  if (rec) session._ephemeralSeat = !!rec.ephemeral;
+                }
+                if (session._ephemeralSeat) warn = null;
               }
               try {
                 if (warn) fs.writeFileSync(warnPath, warn);
