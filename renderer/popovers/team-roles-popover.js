@@ -27,7 +27,8 @@ const {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, DISPATCH_VALUES, DEFAULT_DISPATCH,
   parseDuration, formatDuration, formatBlockedBy, preflightByRole,
   leadSeatCandidates, leadResolution,
-  teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine,
+  teamStage, roleSummaries, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
+  reconcileReveal, clearableFields,
   reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
@@ -48,6 +49,13 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   const addCwd = document.getElementById('team-roles-add-cwd');
   const addDispatch = document.getElementById('team-roles-add-dispatch');
   const addBtn = document.getElementById('team-roles-add-btn');
+  // B1: the Add Role controls live behind a disclosure now. The section wrapper
+  // is still what `setup` hides; the PANEL is what the toggle opens, so the two
+  // gates stay independent — a stage change must not silently open the form.
+  const addToggle = document.getElementById('team-roles-newrole-toggle');
+  const addPanel = document.getElementById('team-roles-newrole-panel');
+  const addCancel = document.getElementById('team-roles-newrole-cancel');
+  const addDispatchHelp = document.getElementById('team-roles-dispatch-help');
   // The two whole sections `setup` hides. Wrappers rather than per-control
   // toggles: the subhead and hint belong to the section, and hiding the inputs
   // alone would leave two headings standing over nothing.
@@ -58,6 +66,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
   const watchdogClear = document.getElementById('team-roles-watchdog-clear');
   const statusEl = document.getElementById('team-roles-status');
   const helpBtn = document.getElementById('team-roles-help-btn');
+  const settingsBtn = document.getElementById('team-roles-settings-btn');
   const helpPanel = document.getElementById('team-roles-help');
 
   const setStatus = (msg, warn = false) => {
@@ -224,6 +233,140 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     return box;
   }
 
+  // What each dispatch mode DOES, one line each. Shown as the segment's `title`
+  // and as the Add Role helper text — never as a visible option label, which is
+  // what made the old select a sentence wide in a narrow popover.
+  // Which stale fields may offer a Clear, derived from buildSavePatch rather than
+  // listed here — a hardcoded list would drift the moment the backend grows
+  // clear-template semantics, in the direction of promising one it cannot keep.
+  const CLEARABLE = clearableFields();
+
+  const DISPATCH_HELP = {
+    standing: 'standing — the live seat holding this role gets the spec.',
+    spawn: 'spawn — a one-shot seat in the shared checkout, no branch of its own.',
+    worktree: 'worktree — a one-shot seat on its own branch, in its own checkout.',
+  };
+
+  // B4: the dispatch picker as a segmented control, built from NATIVE radios
+  // rather than role="radio" divs. The keyboard and ARIA behaviour REVISION 1
+  // requires — arrow keys moving between segments, Space/Enter selecting, one
+  // tab stop for the group, checked state exposed — is then the platform's, not
+  // a keydown handler of ours that has to be right on every browser. The labels
+  // are CSS-styled segments; the inputs themselves are visually hidden but
+  // remain focusable and hit-testable through their labels.
+  //
+  // `name` is per-render-unique so two open editors (or the same role re-rendered)
+  // can never share a radio group — same-named radios anywhere in the document
+  // are ONE group, and a second row would silently uncheck the first.
+  let dispatchGroupSeq = 0;
+  function buildDispatchSegments(current, onChange) {
+    const group = document.createElement('div');
+    group.className = 'team-role-segments';
+    // A native radio group is already a radiogroup to the a11y tree; the label
+    // is what it lacks, since the visible caption sits outside the control.
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'dispatch');
+    const gname = `dispatch-seg-${++dispatchGroupSeq}`;
+    for (const value of DISPATCH_VALUES) {
+      const seg = document.createElement('label');
+      seg.className = 'team-role-segment';
+      // The explanation rides `title`, per B4 — the visible label stays one word.
+      seg.title = DISPATCH_HELP[value] || value;
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = gname;
+      radio.value = value;          // PROPERTY, never an attribute.
+      radio.dataset.f = 'dispatch';
+      radio.checked = value === current;
+      radio.addEventListener('change', () => {
+        if (radio.checked && typeof onChange === 'function') onChange(radio.value);
+      });
+      const txt = document.createElement('span');
+      txt.textContent = value;      // one word, by property
+      seg.appendChild(radio);
+      seg.appendChild(txt);
+      group.appendChild(seg);
+    }
+    return group;
+  }
+
+  // B3/R4: the cwd + template fields, in whatever state fieldReveal says. Built
+  // imperatively and rebuilt on every dispatch change.
+  //
+  // SECURITY: `cwd` and `template` are agent-writable unconstrained strings from
+  // team.json. Every one of them lands here as a `.value` PROPERTY or a
+  // textContent — never in a value="…" attribute, which a `" onfocus="` payload
+  // would break out of in this nodeIntegration renderer.
+  function renderRevealedFields(box, reveal, values) {
+    box.innerHTML = '';
+    for (const f of ['template', 'cwd']) {
+      const state = reveal[f];
+      // 'hidden' only ever applies to an ALREADY-EMPTY value (fieldReveal's own
+      // invariant, pinned in its tests), so omitting the field here cannot lose
+      // data — buildSavePatch will send '' for a cwd that was already ''.
+      if (state === 'hidden') continue;
+      const field = document.createElement('label');
+      field.className = `team-role-field ${state === 'stale' ? 'stale' : ''}`.trim();
+      field.dataset.field = f;
+      const label = document.createElement('span');
+      label.textContent = f;
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.dataset.f = f;
+      input.placeholder = f === 'cwd' ? 'optional: subdirectory (e.g. api)' : 'optional: spawn template name';
+      input.value = (values && values[f]) || ''; // PROPERTY (agent-writable).
+      field.appendChild(label);
+      field.appendChild(input);
+      if (state === 'stale') {
+        // The R4 case: a value IS stored but the role dispatches standing, so
+        // nothing consumes it. It must stay VISIBLE — buildSavePatch always sends
+        // `cwd`, so a hidden non-empty one would be resubmitted on every save
+        // with no way for the operator to see or remove it.
+        input.disabled = true;
+        const why = document.createElement('span');
+        why.className = 'team-role-stale-note';
+        why.textContent = 'not used while standing';
+        const clearable = CLEARABLE.includes(f);
+        // A Clear is a PROMISE that Save removes the value, and it is only
+        // keepable where buildSavePatch transmits a blank. It does for `cwd`
+        // (setRole deletes the key on empty); it does NOT for `template`, which
+        // is omitted when blank because setRole validates any present template
+        // against NAME_RE and throws on ''. Offering one there round-trips to
+        // "saved" with the value still on disk and no error anywhere — the
+        // operator is told a removal happened that did not. The stock `hand`
+        // role is exactly this shape (a template, no dispatch, so standing), so
+        // it is the DEFAULT team's first expanded row, not an edge case.
+        why.title = clearable
+          ? `A standing role's seat is operator-created, so ${f} does nothing for it. Clear it, or switch dispatch to spawn/worktree.`
+          : `A standing role's seat is operator-created, so ${f} does nothing for it. It can't be cleared from the app in this version — switch dispatch to spawn/worktree, or remove it in team.json.`;
+        field.appendChild(why);
+        if (clearable) {
+          const clear = document.createElement('button');
+          clear.type = 'button';
+          clear.className = 'secondary team-role-stale-clear';
+          // Deliberately NO data-act: the list's click delegation matches
+          // `button[data-act]`, and a value there would route this button through
+          // the row action switch on every click to match nothing. Its own
+          // listener below is the whole behaviour.
+          clear.textContent = 'Clear';
+          clear.title = `Remove the stored ${f}. Takes effect when you Save.`;
+          // Clears the INPUT only; Save is still what writes. A button that wrote
+          // straight through would be a destructive action with no confirm and no
+          // undo, on a field the operator may have opened the row just to read.
+          clear.addEventListener('click', () => {
+            input.value = '';
+            input.disabled = false;
+            field.classList.remove('stale');
+            why.remove();
+            clear.remove();
+          });
+          field.appendChild(clear);
+        }
+      }
+      box.appendChild(field);
+    }
+  }
+
   // Which role's editor is open. ONE at a time by construction — expanding a
   // second collapses the first, so this is a single key rather than a set. Reset
   // to null on every open (the acceptance test is measured fully collapsed);
@@ -388,7 +531,17 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     // team that cannot dispatch anything yet. `repair` keeps them — an operator
     // repairing a pointer still needs to see what the team was configured to do.
     addSection.classList.toggle('hidden', stage === 'setup');
-    watchdogSection.classList.toggle('hidden', stage === 'setup');
+    // The watchdog's visibility belongs to the GEAR now (B2), not to the stage:
+    // renderRows runs on every post-mutation refresh, so a `toggle(…, stage ===
+    // 'setup')` here would re-SHOW the section every time the operator saved
+    // anything — the gear would look like it had come back open by itself.
+    // `setup` still suppresses it, along with the gear that opens it, because
+    // there is no team to configure a watchdog for yet.
+    if (stage === 'setup') {
+      watchdogSection.classList.add('hidden');
+      settingsBtn.setAttribute('aria-expanded', 'false');
+    }
+    settingsBtn.classList.toggle('hidden', stage === 'setup');
     if (stage !== 'normal') listEl.appendChild(buildLeadBlockCard(manifest, res, stage));
     if (stage === 'setup') return;
     const summaries = roleSummaries(manifest, leadSessions, { lead: manifest && manifest.lead });
@@ -457,14 +610,8 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           `<div class="team-role-editcap">Edit this role</div>` +
           `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label>` +
           `<label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label>` +
-          `<label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label>` +
-          `<label class="team-role-field" title="Relative to the team root — where seats holding this role start. Blank = the team root. Applies to spawn- and worktree-dispatch roles and the reviewer; a standing role's seat is operator-created, so this does nothing for it."><span>cwd</span><input type="text" data-f="cwd" placeholder="optional: subdirectory (e.g. api)"></label>` +
-          `<label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span>` +
-          `<select data-f="dispatch">` +
-          `<option value="standing">standing — the live seat gets the spec</option>` +
-          `<option value="spawn">spawn — one-shot seat, shared checkout, no branch</option>` +
-          `<option value="worktree">worktree — one-shot seat, own branch + checkout</option>` +
-          `</select></label>` +
+          `<div class="team-role-dispatch" data-f-group="dispatch"></div>` +
+          `<div class="team-role-reveal" data-reveal></div>` +
           `<div class="team-role-actions">` +
           `<button type="button" data-act="save">Save</button>` +
           `<button type="button" data-act="rename" class="secondary">Rename</button>` +
@@ -511,15 +658,51 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
           }
           sel.value = row.prompt;
         }
-        body.querySelector('input[data-f="template"]').value = row.template;
-        // PROPERTY, never an attribute: `cwd` comes from an agent-writable
-        // team.json, and this renderer runs with nodeIntegration.
-        body.querySelector('input[data-f="cwd"]').value = row.cwd;
-        // A hand-edited team.json can hold a value this picker has no option for.
-        // Fall back to the default rather than leaving the select blank, which
-        // would send '' and have buildSavePatch drop the key silently.
-        const disp = body.querySelector('select[data-f="dispatch"]');
-        disp.value = DISPATCH_VALUES.includes(row.dispatch) ? row.dispatch : DEFAULT_DISPATCH;
+        // `template` and `cwd` are NOT assigned here any more: both are built by
+        // renderRevealedFields below, which may legitimately omit either one (B3),
+        // and a querySelector for a field the reveal rules hid returns null. Their
+        // values land there, by property, from the same `row`.
+        // B4: dispatch is a segmented radiogroup, not a sentence-length select.
+        // A hand-edited team.json can hold a value no segment carries; the
+        // control falls back to the default rather than leaving nothing checked,
+        // which would send '' and have buildSavePatch drop the key silently.
+        const initialDispatch = DISPATCH_VALUES.includes(row.dispatch) ? row.dispatch : DEFAULT_DISPATCH;
+        const revealBox = body.querySelector('[data-reveal]');
+        // The reveal follows the dispatch control WITHOUT a save round-trip (B3).
+        //
+        // What the fields currently HOLD, not what is on disk. Rebuilding empties
+        // the container and re-seeds it, so seeding from `row` would silently
+        // revert unsaved input: typing a cwd then picking another ACTIVE dispatch
+        // reverted it (edit → edit, nothing needed rebuilding at all), and
+        // clearing a stale cwd then switching to spawn brought the cleared value
+        // back so the next Save re-wrote it. A field returning from `hidden`
+        // reads '' here and that is correct — fieldReveal only hides an already
+        // empty value, which is the same invariant that makes hiding lossless.
+        const liveValues = () => {
+          const read = (f) => {
+            const el = revealBox.querySelector(`input[data-f="${f}"]`);
+            return el ? el.value : '';
+          };
+          return { cwd: read('cwd'), template: read('template') };
+        };
+        // The reveal currently ON SCREEN, so an unchanged transition can skip the
+        // rebuild entirely rather than destroy and recreate identical fields.
+        let shownReveal = null;
+        const paintReveal = (dispatch) => {
+          // State from the STORED def, values from the LIVE inputs — see
+          // reconcileReveal's header for why those two sources differ.
+          const { reveal, rebuild } = reconcileReveal(shownReveal, dispatch, { cwd: row.cwd, template: row.template });
+          if (!rebuild) return;
+          renderRevealedFields(revealBox, reveal, liveValues());
+          shownReveal = reveal;
+        };
+        body.querySelector('[data-f-group="dispatch"]').appendChild(
+          buildDispatchSegments(initialDispatch, paintReveal),
+        );
+        // The FIRST paint seeds from the stored def: there are no inputs to carry
+        // forward yet, and this is the one moment `row` is the right source.
+        shownReveal = fieldReveal(initialDispatch, { cwd: row.cwd, template: row.template });
+        renderRevealedFields(revealBox, shownReveal, { cwd: row.cwd, template: row.template });
       }
       // The preflight checklist, on BOTH arms: lead and reviewer are read-only
       // topology but they name prompts and templates like any other role, and a
@@ -643,7 +826,13 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     // state, so it must be the state an open lands in, not one the operator has
     // to reach by collapsing what a previous open left behind.
     expandedRole = null;
-    addName.value = ''; addBrief.value = ''; addTemplate.value = ''; addPrompt.value = ''; addCwd.value = '';
+    // Both progressive disclosures start closed on every open — the acceptance
+    // measurement is taken in this state, so it must be the state an open LANDS
+    // in, not one the operator has to reach by collapsing what a previous open
+    // left behind.
+    setAddPanel(false);
+    watchdogSection.classList.add('hidden');
+    settingsBtn.setAttribute('aria-expanded', 'false');
     popover.dataset.name = name;
     const ok = await refresh(name);
     if (!ok) { popover.dataset.name = ''; return; } // not a team / unreadable → show nothing
@@ -714,10 +903,22 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
         const inp = rowEl.querySelector(`[data-f="${f}"]`);
         return inp ? inp.value : '';
       };
+      // dispatch is a RADIO GROUP (B4), so the plain lookup above would return
+      // the first segment rather than the chosen one — i.e. `standing` on every
+      // save, silently reverting a worktree role. Read the checked member.
+      const dispatchVal = () => {
+        const on = rowEl.querySelector('input[data-f="dispatch"]:checked');
+        return on ? on.value : '';
+      };
+      // A field fieldReveal HID is absent from the DOM, and `val` returns '' for
+      // it — which is the right patch value in both cases: `cwd` is hidden only
+      // when it is already blank (so '' is a no-op clear), and buildSavePatch
+      // OMITS a blank `template`, leaving the stored one untouched.
+
       // buildSavePatch sends brief/prompt (blank clears) but OMITS a blank
       // template — backend setRole throws NAME_RE on '' (no clear-template in v1).
       const patch = buildSavePatch({
-        brief: val('brief'), prompt: val('prompt'), template: val('template'), dispatch: val('dispatch'),
+        brief: val('brief'), prompt: val('prompt'), template: val('template'), dispatch: dispatchVal(),
         cwd: val('cwd'),
       });
       const res = await window.api.teamSetRole(name, role, patch);
@@ -764,24 +965,86 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     }
   });
 
+  // B1: the Add Role subpanel. Collapsed to a single `+ Add role` button at rest
+  // — the largest block of resting height the popover had left.
+  //
+  // Collapsing RESETS the fields: an abandoned half-filled form that reappeared
+  // on the next open would read as saved state for a role that was never added.
+  const resetAddForm = () => {
+    addName.value = ''; addBrief.value = ''; addTemplate.value = '';
+    addPrompt.value = ''; addCwd.value = '';
+    addDispatch.value = DEFAULT_DISPATCH;
+    paintAddReveal();
+  };
+  const setAddPanel = (open) => {
+    addPanel.classList.toggle('hidden', !open);
+    addToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    // The toggle stays visible while open so the operator can collapse it back
+    // without adding anything; only its caption changes.
+    addToggle.textContent = open ? '− Add role' : '+ Add role';
+    if (!open) resetAddForm();
+    else addName.focus();
+  };
+  // B3 in the Add Role subpanel: the same reveal rules as the row editor. Nothing
+  // is stored yet here, so `stale` is unreachable BY CONSTRUCTION — a field the
+  // operator typed into and then switched away from would otherwise be re-shown
+  // as "stale" while it has never been anywhere near disk. The typed value is
+  // preserved across a hide (the input is not destroyed, only hidden) and
+  // deliberately NOT sent: the add handler reads the field only when the dispatch
+  // makes it live, so a value typed under `spawn` and then switched to
+  // `standing` cannot be written invisibly.
+  function paintAddReveal() {
+    const reveal = fieldReveal(addDispatch.value, { cwd: '', template: '' });
+    for (const [f, el] of [['cwd', addCwd], ['template', addTemplate]]) {
+      const field = el.closest('.team-role-field');
+      if (field) field.classList.toggle('hidden', reveal[f] === 'hidden');
+    }
+    addDispatchHelp.textContent = DISPATCH_HELP[addDispatch.value] || '';
+  }
+  addToggle.addEventListener('click', () => setAddPanel(addPanel.classList.contains('hidden')));
+  addCancel.addEventListener('click', () => setAddPanel(false));
+  addDispatch.addEventListener('change', paintAddReveal);
+
+  // B2: the stall watchdog is a TEAM-level setting, not part of the role flow —
+  // behind the gear, same show/hide shape as the `?` help panel beside it.
+  settingsBtn.addEventListener('click', () => {
+    const nowHidden = watchdogSection.classList.toggle('hidden');
+    settingsBtn.setAttribute('aria-expanded', nowHidden ? 'false' : 'true');
+  });
+
   addBtn.addEventListener('click', async () => {
     const name = teamName();
     if (!name) return;
-    const v = validateAddRole({ name: addName.value, template: addTemplate.value });
+    // The template is validated only when the chosen dispatch actually consumes
+    // it: a `foo/bar` typed under spawn and then switched to standing is off
+    // screen, and erroring about a field the operator cannot see is a dead end.
+    // Same gate that decides whether it is written, below.
+    const addReveal = fieldReveal(addDispatch.value, { cwd: '', template: '' });
+    const v = validateAddRole({
+      name: addName.value,
+      template: addReveal.template === 'hidden' ? '' : addTemplate.value,
+    });
     if (!v.ok) { setStatus(v.error, true); return; }
     // Omit empty fields rather than writing literal nulls into the def (keeps the
     // manifest clean; the schema treats absent === null anyway).
     const def = {};
     if (addPrompt.value) def.prompt = addPrompt.value;
-    if (v.template) def.template = v.template;
+    // Same gate as `cwd` below: inert under a standing dispatch, so not written.
+    // `v.template` is already '' in that case (validateAddRole was given the
+    // gated value), so this is belt-and-braces against the two drifting apart.
+    if (v.template && addReveal.template !== 'hidden') def.template = v.template;
     const brief = addBrief.value.trim();
     if (brief) def.brief = brief;
     // Omitted when blank, like the fields above: absent already means "the team
     // root", so writing '' would put a value on disk that means what its absence
     // means. A bad path is refused by addRole with the reason, which surfaces on
     // the status line — no mirror of that validation here.
+    // Only when the chosen dispatch actually consumes it (B3). A value typed
+    // under `spawn` and then switched to `standing` is inert, and writing it
+    // would mint exactly the haunted config R4 exists to prevent — on a role
+    // that is brand new and has no reason to carry one.
     const cwd = addCwd.value.trim();
-    if (cwd) def.cwd = cwd;
+    if (cwd && addReveal.cwd !== 'hidden') def.cwd = cwd;
     // Only the non-default is written: absent already reads as `standing`, so an
     // explicit one would put a value on disk that means exactly what its absence
     // does (the same rule migrateRoles follows).
@@ -795,10 +1058,9 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
       def.dispatch = addDispatch.value;
     }
     const res = await window.api.teamAddRole(name, v.name, def);
-    if (res && res.ok) {
-      addName.value = ''; addBrief.value = ''; addTemplate.value = ''; addPrompt.value = ''; addCwd.value = '';
-      addDispatch.value = DEFAULT_DISPATCH;
-    }
+    // Collapse on success: the role now has a row of its own in the list above,
+    // and a still-open form holding the values that made it invites a duplicate.
+    if (res && res.ok) setAddPanel(false);
     await afterMutation(res, `role "${v.name}" added`);
   });
 
@@ -856,6 +1118,11 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
     if (e.key !== 'Enter' || e.isComposing) return;
     const inp = e.target.closest('input[data-f]');
     if (!inp) return;
+    // RADIOS EXCLUDED. B4's dispatch segments carry data-f="dispatch", so without
+    // this an Enter while arrowing between modes submits the row immediately —
+    // mid-decision, and on the one control the operator is most likely to be
+    // driving from the keyboard. Enter is a submit for the TEXT fields only.
+    if (inp.type === 'radio') return;
     const rowEl = inp.closest('.team-role-row');
     // The lead row has no Save — its input pairs with Set lead. Matched on the
     // field rather than on the row's role so a row that grows both buttons later

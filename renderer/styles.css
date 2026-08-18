@@ -1305,12 +1305,61 @@ html, body {
 .team-role-preflight-line.warn { color: var(--warn); }
 .team-role-preflight-line.note { color: var(--text-dim); }
 .team-role-preflight-kind { flex: 0 0 auto; font-weight: 600; opacity: 0.85; }
-.team-role-field { display: flex; align-items: center; gap: 6px; margin: 2px 0; font-size: 11px; }
-.team-role-field span { flex: 0 0 56px; color: var(--text-dim); text-align: right; }
-.team-role-field input { flex: 1; min-width: 0; }
+/* B5: label ABOVE its input. The old rule was a `flex: 0 0 56px; text-align:
+   right` spine — it truncated every label to the width of the longest short one
+   and left a ragged gutter down the form. Column layout also lets the field grow
+   a note or a Clear button (the R4 stale state) without a third column. */
+.team-role-field { display: flex; flex-direction: column; align-items: stretch; gap: 2px; margin: 6px 0; font-size: 11px; }
+.team-role-field > span { color: var(--text-dim); }
+.team-role-field input, .team-role-field select { width: 100%; min-width: 0; box-sizing: border-box; }
+.team-role-field.hidden { display: none; }
+/* R4's stale state: the value is stored but nothing consumes it while the role
+   dispatches standing. Dimmed and disabled, but PRESENT — buildSavePatch always
+   sends `cwd`, so a hidden non-empty one would be resubmitted forever with no
+   way to see or clear it. */
+.team-role-field.stale input { opacity: 0.55; }
+.team-role-stale-note { color: var(--warn); font-size: 10px; }
+.team-role-stale-clear { align-self: flex-start; margin-top: 2px; }
+
+/* B4: the dispatch segmented control. Native radios styled as segments — the
+   inputs stay in the DOM (focusable, arrow-key navigable, announced as a radio
+   group) and only their default box is hidden, so the keyboard and ARIA
+   behaviour is the platform's rather than a keydown handler of ours. */
+.team-role-dispatch { margin: 6px 0; }
+.team-role-segments { display: flex; border: 1px solid var(--border, #333); border-radius: 4px; overflow: hidden; }
+.team-role-segment { position: relative; flex: 1 1 0; display: flex; align-items: center; justify-content: center; padding: 3px 6px; font-size: 11px; color: var(--text-dim); cursor: pointer; border-right: 1px solid var(--border, #333); }
+.team-role-segment:last-child { border-right: none; }
+/* Visually hidden, NOT display:none — a display:none radio is unfocusable and
+   drops out of the group's keyboard navigation, which is the whole reason for
+   using native radios here. */
+.team-role-segment input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+.team-role-segment:hover { color: var(--text); }
+.team-role-segment:has(input:checked) { background: var(--accent); color: var(--bg, #1e1e1e); }
+/* The focus ring has to live on the LABEL: the input it belongs to is visually
+   hidden, so its own outline would be invisible and the group would look like
+   it had lost focus entirely while being navigated by keyboard. */
+.team-role-segment:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
 .team-role-actions { display: flex; gap: 6px; margin-top: 6px; }
-.team-roles-add { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.team-roles-add input, .team-roles-add select { flex: 1 1 120px; min-width: 0; }
+/* B1: Add Role is a progressive subpanel — one button at rest, the form behind
+   it. The container stays a FLAT column of labels: the legibility test slices it
+   with a non-greedy /<div class="team-roles-add">([\s\S]*?)<\/div>/, so a
+   nested <div> here would truncate the field set it reads. */
+.team-roles-add { display: flex; flex-direction: column; gap: 2px; }
+.team-roles-add-toggle {
+  background: none;
+  border: 1px dashed var(--border, #333);
+  color: var(--text-dim);
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  width: 100%;
+}
+.team-roles-add-toggle:hover { color: var(--text); border-color: var(--accent); }
+#team-roles-newrole-panel.hidden { display: none; }
+.team-roles-dispatch-hint { display: block; margin: 0 0 4px; }
+.team-roles-add-actions { display: flex; gap: 6px; margin-top: 6px; }
+#team-roles-settings-btn.hidden { display: none; }
 .team-roles-watchdog { display: flex; gap: 6px; align-items: center; }
 .team-roles-watchdog input { flex: 1; min-width: 0; }
 #team-roles-status.warn { color: var(--danger, #e06c75); }
@@ -1348,8 +1397,10 @@ html, body {
 .team-roles-hint { margin: 0 0 6px; display: block; }
 /* Read-only reserved rows explain themselves rather than reading as half-built. */
 .team-role-lock-note { font-size: 11px; color: var(--text); margin-bottom: 6px; }
-.team-role-ro-field { display: flex; gap: 6px; font-size: 11px; margin: 2px 0; }
-.team-role-ro-field span:first-child { flex: 0 0 56px; color: var(--text-dim); text-align: right; }
+/* Same column shape as the editable fields (B5) — a read-only row that kept the
+   right-aligned spine would sit visibly out of line beside them. */
+.team-role-ro-field { display: flex; flex-direction: column; gap: 2px; font-size: 11px; margin: 6px 0; }
+.team-role-ro-field span:first-child { color: var(--text-dim); }
 .team-role-ro-field .ro-val { flex: 1; min-width: 0; color: var(--text-dim); word-break: break-word; }
 .team-lead-seat { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .team-lead-status { display: flex; gap: 8px; align-items: baseline; font-size: 11px; flex-wrap: wrap; }

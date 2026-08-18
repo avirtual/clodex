@@ -66,6 +66,9 @@ const ENTRIES = ['main.js', 'preload.js'];
 const EXCLUDED = {
   'dist/': 'build output, gitignored — it IS the artifact',
   'docker/': 'Dockerfile for the headless image, built from a checkout, never read by the app',
+  'manual/': 'Electron-driven behavioural checks run by hand (real keyboard/ARIA, focus, live '
+    + 'DOM) — node --test discovers no tree named manual/ and the suite spawns no browser, so '
+    + 'these are not part of it; nothing reads them at runtime',
   'tasks/': 'task artifacts and journals — development record, no runtime reader',
   'test/': 'the test suite does not ship',
   'vendor/': 'ships via build.extraResources (vendor/wirescope → Contents/Resources/wirescope), '
