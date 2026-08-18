@@ -1478,15 +1478,104 @@ body {
   border-radius: 5px;
   padding: 8px;
 }
-.team-role-row.read-only {
-  opacity: 0.72;
+.team-role-row.read-only .team-role-lock-note,
+.team-role-row.read-only .team-role-ro-field .ro-val {
+  color: var(--text-dim);
 }
 .team-role-row.absent {
   border-style: dashed;
 }
 .team-role-row.absent .team-role-key,
+.team-role-row.absent .team-role-offer-dispatch,
 .team-role-row.absent .team-role-lock-note {
   color: var(--text-dim);
+}
+.team-role-offer-dispatch {
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+.team-role-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.team-role-summary .team-role-key {
+  flex: 0 0 auto;
+}
+.team-role-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-role-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.team-role-dot.ok {
+  background: var(--accent);
+}
+.team-role-dot.idle {
+  background: var(--text-dim);
+}
+.team-role-dot.warn {
+  background: var(--warn);
+}
+.team-role-dot.none {
+  background: transparent;
+  border: 1px solid var(--border, #333);
+}
+.team-role-chip {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--text-dim);
+  border: 1px solid var(--border, #333);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.team-role-owed {
+  flex: 0 0 auto;
+  font-weight: 600;
+  font-size: 11px;
+}
+.team-role-owed.warn {
+  color: var(--warn);
+}
+.team-role-owed.note {
+  color: var(--text-dim);
+}
+.team-role-disclose {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1;
+}
+.team-role-disclose:hover {
+  color: var(--text);
+}
+.team-role-body {
+  margin-top: 6px;
+}
+.team-role-body.hidden {
+  display: none;
+}
+.team-role-row.team-lead-card.repair {
+  border-color: var(--warn);
+}
+#team-roles-add-section.hidden,
+#team-roles-watchdog-section.hidden {
+  display: none;
 }
 .team-role-head {
   display: flex;
@@ -1652,7 +1741,6 @@ body {
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--border);
-  opacity: 1;
 }
 .team-lead-status {
   display: flex;
@@ -6037,6 +6125,7 @@ body {
         <p><strong>Stall Watchdog.</strong> If a teammate sits idle on an assigned task too long, the lead gets a nudge. Blank uses the default (30m).</p>
       </div>
       <div id="team-roles-list" class="team-roles-list"></div>
+      <div id="team-roles-add-section">
       <div class="popover-subhead" title="Define a new kind of teammate for this team">Add Role</div>
       <div class="hint-text team-roles-hint">Define a new kind of teammate for this team.</div>
       <div class="team-roles-add">
@@ -6052,12 +6141,15 @@ body {
         </select>
         <button type="button" id="team-roles-add-btn">Add</button>
       </div>
+      </div>
+      <div id="team-roles-watchdog-section">
       <div class="popover-subhead" title="How long a teammate can sit idle on an assigned task before the lead gets a nudge">Stall Watchdog</div>
       <div class="hint-text team-roles-hint">How long a teammate can sit idle on an assigned task before the lead gets a nudge. Blank = default (30m).</div>
       <div class="team-roles-watchdog">
         <input type="text" id="team-roles-watchdog-ms" placeholder="e.g. 30m, 2h, or 45 (minutes) — blank = default">
         <button type="button" id="team-roles-watchdog-set">Set</button>
         <button type="button" id="team-roles-watchdog-clear" class="secondary">Clear</button>
+      </div>
       </div>
       <span class="hint-text" id="team-roles-status"></span>
       <div class="popover-actions">
@@ -26585,21 +26677,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           readOnly: RESERVED_ROLE_KEYS.has(key)
         }));
       }
-      function absentReservedRoles(manifest) {
-        const roles = manifest && manifest.roles || {};
-        return [...REMOVABLE_RESERVED_ROLE_KEYS].filter((k) => !roles[k]);
-      }
       function reservedRemovalWarning(key) {
         if (key === "reviewer") {
           return "Tickets on this team will escalate to you at the review step instead of getting a cold reviewer.";
         }
         return "This role will no longer exist on the team.";
-      }
-      function absentReservedNote(key) {
-        if (key === "reviewer") {
-          return "Not on this team. Tickets escalate to the lead at the review step. Add it back to get an independent review pass.";
-        }
-        return "Not on this team.";
       }
       function validateAddRole({ name, template } = {}) {
         const n = String(name == null ? "" : name).trim();
@@ -26684,6 +26766,53 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           note: "no session by this name exists \u2014 this team has no lead until you pick or create one"
         };
       }
+      function teamStage(leadRes) {
+        const state = leadRes && typeof leadRes.state === "string" ? leadRes.state : "";
+        if (state === "unset") return "setup";
+        if (state === "stopped" || state === "live") return "normal";
+        return "repair";
+      }
+      function roleSummaries(manifest, sessions, { lead } = {}) {
+        const roles = manifest && manifest.roles || {};
+        const teamName = manifest && manifest.name || "";
+        const rows = (Array.isArray(sessions) ? sessions : []).filter((s) => s && typeof s.name === "string" && s.name);
+        const leadName = String(lead == null ? "" : lead).trim();
+        return Object.entries(roles).map(([key, def]) => {
+          const mine = key === "lead" && leadName ? rows.filter((s) => s.name === leadName) : rows.filter((s) => s.role === key && s.team === teamName);
+          const names = mine.map((s) => s.name);
+          const working = mine.filter((s) => s.activity && s.activity !== "idle").length;
+          const total = names.length;
+          let note;
+          if (total === 0) note = "no seat";
+          else if (total === 1) note = names[0];
+          else note = `${total} seats \xB7 ${working} working`;
+          const raw = def && def.dispatch || DEFAULT_DISPATCH;
+          return {
+            key,
+            dispatch: DISPATCH_VALUES.includes(raw) ? raw : DEFAULT_DISPATCH,
+            readOnly: RESERVED_ROLE_KEYS.has(key),
+            seats: { total, working, names },
+            note
+          };
+        });
+      }
+      var OFFERABLE_STOCK_ROLE_KEYS = ["hand", "reviewer"];
+      function absentStockRoles(manifest) {
+        const roles = manifest && manifest.roles || {};
+        return OFFERABLE_STOCK_ROLE_KEYS.filter((k) => !roles[k]);
+      }
+      function absentStockNote(key) {
+        if (key === "reviewer") {
+          return "Not on this team. Tickets escalate to the lead at the review step. Add it back to get an independent review pass.";
+        }
+        if (key === "hand") {
+          return "Not on this team. Nothing implements the specs the lead writes \u2014 dispatched work has no seat to land on. Add it back to get an implementer.";
+        }
+        return "Not on this team.";
+      }
+      function offerDispatchLine() {
+        return "Runs as: standing \u2014 the live seat holding this role gets the spec.";
+      }
       function preflightByRole(findings) {
         const out = /* @__PURE__ */ new Map();
         for (const f of Array.isArray(findings) ? findings : []) {
@@ -26701,17 +26830,21 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         buildSavePatch,
         reservedRoleNote,
         preflightByRole,
-        absentReservedRoles,
         reservedRemovalWarning,
-        absentReservedNote,
         parseDuration,
         formatDuration,
         formatBlockedBy,
         leadSeatCandidates,
         leadResolution,
+        teamStage,
+        roleSummaries,
+        absentStockRoles,
+        absentStockNote,
+        offerDispatchLine,
         DISPATCH_VALUES,
         DEFAULT_DISPATCH,
-        REMOVABLE_RESERVED_ROLE_KEYS
+        REMOVABLE_RESERVED_ROLE_KEYS,
+        OFFERABLE_STOCK_ROLE_KEYS
       };
     }
   });
@@ -26733,9 +26866,12 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         preflightByRole,
         leadSeatCandidates,
         leadResolution,
-        absentReservedRoles,
+        teamStage,
+        roleSummaries,
+        absentStockRoles,
+        absentStockNote,
+        offerDispatchLine,
         reservedRemovalWarning,
-        absentReservedNote,
         REMOVABLE_RESERVED_ROLE_KEYS
       } = require_team_roles();
       var { anchorRect, makeDraggable, resetDrag } = require_popover_drag();
@@ -26750,6 +26886,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         const addCwd = document.getElementById("team-roles-add-cwd");
         const addDispatch = document.getElementById("team-roles-add-dispatch");
         const addBtn = document.getElementById("team-roles-add-btn");
+        const addSection = document.getElementById("team-roles-add-section");
+        const watchdogSection = document.getElementById("team-roles-watchdog-section");
         const watchdogInput = document.getElementById("team-roles-watchdog-ms");
         const watchdogSet = document.getElementById("team-roles-watchdog-set");
         const watchdogClear = document.getElementById("team-roles-watchdog-clear");
@@ -26871,16 +27009,137 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           box.appendChild(hint);
           return box;
         }
+        let expandedRole = null;
+        function dotStateFor(summary, res) {
+          if (summary.key === "lead" && res) {
+            if (res.state === "live") return "ok";
+            if (res.state === "stopped") return "idle";
+            return "warn";
+          }
+          if (!summary.seats.total) return "none";
+          return summary.seats.working ? "ok" : "idle";
+        }
+        function buildSummaryLine(summary, { res, expanded, owed }) {
+          const head = document.createElement("div");
+          head.className = "team-role-summary";
+          const dot = document.createElement("span");
+          dot.className = `team-role-dot ${dotStateFor(summary, res)}`;
+          dot.title = summary.key === "lead" && res ? res.note : `${summary.seats.total} seat(s), ${summary.seats.working} working`;
+          head.appendChild(dot);
+          const k = document.createElement("span");
+          k.className = "team-role-key";
+          k.textContent = summary.key;
+          head.appendChild(k);
+          const note = document.createElement("span");
+          note.className = "team-role-note";
+          note.textContent = summary.key === "lead" && res ? res.name || "no seat" : summary.note;
+          head.appendChild(note);
+          const chip = document.createElement("span");
+          chip.className = "team-role-chip";
+          chip.textContent = summary.dispatch;
+          chip.title = "What dispatching a ticket to this role does";
+          head.appendChild(chip);
+          if (owed && owed.length) {
+            const warns = owed.filter((f) => f.level === "warn").length;
+            const mark = document.createElement("span");
+            mark.className = `team-role-owed ${warns ? "warn" : "note"}`;
+            mark.textContent = warns ? "!" : "\xB7";
+            mark.title = `${owed.length} unresolved reference(s) \u2014 expand for detail`;
+            head.appendChild(mark);
+          }
+          const disclose = document.createElement("button");
+          disclose.type = "button";
+          disclose.className = "team-role-disclose";
+          disclose.dataset.act = "disclose";
+          disclose.setAttribute("aria-expanded", expanded ? "true" : "false");
+          disclose.textContent = expanded ? "\u25BE" : "\u25B8";
+          disclose.title = expanded ? "Collapse this role" : "Expand this role";
+          head.appendChild(disclose);
+          return head;
+        }
+        function buildOfferCard(key, { note, dispatchLine }) {
+          const el = document.createElement("div");
+          el.className = "team-role-row read-only absent";
+          el.dataset.role = key;
+          const head = document.createElement("div");
+          head.className = "team-role-head";
+          const k = document.createElement("span");
+          k.className = "team-role-key";
+          k.textContent = key;
+          const badge = document.createElement("span");
+          badge.className = "team-role-badge";
+          badge.textContent = "not on this team";
+          head.appendChild(k);
+          head.appendChild(badge);
+          el.appendChild(head);
+          const noteEl = document.createElement("div");
+          noteEl.className = "team-role-lock-note";
+          noteEl.textContent = note;
+          el.appendChild(noteEl);
+          const disp = document.createElement("div");
+          disp.className = "team-role-offer-dispatch";
+          disp.textContent = dispatchLine;
+          el.appendChild(disp);
+          const actions = document.createElement("div");
+          actions.className = "team-role-actions";
+          const add = document.createElement("button");
+          add.type = "button";
+          add.dataset.act = "readd";
+          add.textContent = "Enable";
+          add.title = "Adds Clodex's built-in definition of this role to the team.";
+          actions.appendChild(add);
+          el.appendChild(actions);
+          return el;
+        }
+        function buildLeadBlockCard(manifest, res, stage) {
+          const el = document.createElement("div");
+          el.className = `team-role-row team-lead-card ${stage}`;
+          el.dataset.role = "lead";
+          const head = document.createElement("div");
+          head.className = "team-role-head";
+          const k = document.createElement("span");
+          k.className = "team-role-key";
+          k.textContent = stage === "setup" ? "Choose this team\u2019s lead" : "This team\u2019s lead needs attention";
+          head.appendChild(k);
+          el.appendChild(head);
+          const why = document.createElement("div");
+          why.className = "team-role-lock-note";
+          why.textContent = res.note;
+          el.appendChild(why);
+          el.appendChild(buildLeadSeatBlock(manifest));
+          if (stage === "setup") {
+            const after = document.createElement("div");
+            after.className = "team-lead-hint";
+            after.textContent = "Roles appear here once this team has a lead.";
+            el.appendChild(after);
+          }
+          return el;
+        }
         function renderRows(manifest) {
           listEl.innerHTML = "";
+          const res = leadResolution(manifest && manifest.lead, { sessions: leadSessions, known: leadKnown });
+          const stage = teamStage(res);
+          addSection.classList.toggle("hidden", stage === "setup");
+          watchdogSection.classList.toggle("hidden", stage === "setup");
+          if (stage !== "normal") listEl.appendChild(buildLeadBlockCard(manifest, res, stage));
+          if (stage === "setup") return;
+          const summaries = roleSummaries(manifest, leadSessions, { lead: manifest && manifest.lead });
+          const summaryByKey = new Map(summaries.map((s) => [s.key, s]));
           for (const row of teamRoleRows(manifest)) {
             const el = document.createElement("div");
             el.className = "team-role-row";
             el.dataset.role = row.key;
+            const owed = preflight.get(row.key) || [];
+            const expanded = expandedRole === row.key;
+            el.appendChild(buildSummaryLine(summaryByKey.get(row.key), { res, expanded, owed }));
+            const body = document.createElement("div");
+            body.className = "team-role-body";
+            if (!expanded) body.classList.add("hidden");
+            el.appendChild(body);
             if (row.readOnly) {
               el.classList.add("read-only");
-              el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div>`;
-              if (row.key === "lead") el.appendChild(buildLeadSeatBlock(manifest));
+              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span><span class="team-role-badge" title="Clodex defines this role so a team always has one. Which seat fills it is yours to decide.">built-in role</span></div><div class="team-role-lock-note">${esc(reservedRoleNote(row.key))}</div><div class="team-role-ro-field"><span>brief</span><span class="ro-val">${esc(row.brief || "\u2014")}</span></div><div class="team-role-ro-field"><span>prompt</span><span class="ro-val">${esc(row.prompt || "\u2014")}</span></div>`;
+              if (row.key === "lead") body.appendChild(buildLeadSeatBlock(manifest));
               if (REMOVABLE_RESERVED_ROLE_KEYS.has(row.key)) {
                 const actions = document.createElement("div");
                 actions.className = "team-role-actions";
@@ -26891,12 +27150,12 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 rm.textContent = "Remove";
                 rm.title = "Take this built-in role off the team. You can add it back here.";
                 actions.appendChild(rm);
-                el.appendChild(actions);
+                body.appendChild(actions);
               }
             } else {
-              el.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label><label class="team-role-field" title="Relative to the team root \u2014 where seats holding this role start. Blank = the team root. Applies to spawn- and worktree-dispatch roles and the reviewer; a standing role's seat is operator-created, so this does nothing for it."><span>cwd</span><input type="text" data-f="cwd" placeholder="optional: subdirectory (e.g. api)"></label><label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span><select data-f="dispatch"><option value="standing">standing \u2014 the live seat gets the spec</option><option value="spawn">spawn \u2014 one-shot seat, shared checkout, no branch</option><option value="worktree">worktree \u2014 one-shot seat, own branch + checkout</option></select></label><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
-              el.querySelector('input[data-f="brief"]').value = row.brief;
-              const sel = el.querySelector('select[data-f="prompt"]');
+              body.innerHTML = `<div class="team-role-head"><span class="team-role-key">${esc(row.key)}</span></div><div class="team-role-editcap">Edit this role</div><label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field"><span>template</span><input type="text" data-f="template" placeholder="optional: spawn template name"></label><label class="team-role-field" title="Relative to the team root \u2014 where seats holding this role start. Blank = the team root. Applies to spawn- and worktree-dispatch roles and the reviewer; a standing role's seat is operator-created, so this does nothing for it."><span>cwd</span><input type="text" data-f="cwd" placeholder="optional: subdirectory (e.g. api)"></label><label class="team-role-field" title="What dispatching a ticket to this role does"><span>dispatch</span><select data-f="dispatch"><option value="standing">standing \u2014 the live seat gets the spec</option><option value="spawn">spawn \u2014 one-shot seat, shared checkout, no branch</option><option value="worktree">worktree \u2014 one-shot seat, own branch + checkout</option></select></label><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
+              body.querySelector('input[data-f="brief"]').value = row.brief;
+              const sel = body.querySelector('select[data-f="prompt"]');
               {
                 const none = document.createElement("option");
                 none.value = "";
@@ -26925,12 +27184,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 }
                 sel.value = row.prompt;
               }
-              el.querySelector('input[data-f="template"]').value = row.template;
-              el.querySelector('input[data-f="cwd"]').value = row.cwd;
-              const disp = el.querySelector('select[data-f="dispatch"]');
+              body.querySelector('input[data-f="template"]').value = row.template;
+              body.querySelector('input[data-f="cwd"]').value = row.cwd;
+              const disp = body.querySelector('select[data-f="dispatch"]');
               disp.value = DISPATCH_VALUES.includes(row.dispatch) ? row.dispatch : DEFAULT_DISPATCH;
             }
-            const owed = preflight.get(row.key) || [];
             if (owed.length) {
               const box = document.createElement("div");
               box.className = "team-role-preflight";
@@ -26946,39 +27204,14 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 line.appendChild(txt);
                 box.appendChild(line);
               }
-              el.appendChild(box);
+              body.appendChild(box);
             }
             listEl.appendChild(el);
           }
-          for (const key of absentReservedRoles(manifest)) {
-            const el = document.createElement("div");
-            el.className = "team-role-row read-only absent";
-            el.dataset.role = key;
-            const head = document.createElement("div");
-            head.className = "team-role-head";
-            const k = document.createElement("span");
-            k.className = "team-role-key";
-            k.textContent = key;
-            const badge = document.createElement("span");
-            badge.className = "team-role-badge";
-            badge.textContent = "not on this team";
-            head.appendChild(k);
-            head.appendChild(badge);
-            el.appendChild(head);
-            const note = document.createElement("div");
-            note.className = "team-role-lock-note";
-            note.textContent = absentReservedNote(key);
-            el.appendChild(note);
-            const actions = document.createElement("div");
-            actions.className = "team-role-actions";
-            const add = document.createElement("button");
-            add.type = "button";
-            add.dataset.act = "readd";
-            add.textContent = "Add it back";
-            add.title = "Adds Clodex's built-in definition of this role back to the team.";
-            actions.appendChild(add);
-            el.appendChild(actions);
-            listEl.appendChild(el);
+          if (stage === "normal") {
+            for (const key of absentStockRoles(manifest)) {
+              listEl.appendChild(buildOfferCard(key, { note: absentStockNote(key), dispatchLine: offerDispatchLine() }));
+            }
           }
         }
         async function refresh(teamName2) {
@@ -27032,6 +27265,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           helpPanel.classList.add("hidden");
           resetDrag(popover);
           await populatePromptOptions();
+          expandedRole = null;
           addName.value = "";
           addBrief.value = "";
           addTemplate.value = "";
@@ -27061,6 +27295,12 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const name = teamName();
           if (!name || !role) return;
           const act = btn.dataset.act;
+          if (act === "disclose") {
+            expandedRole = expandedRole === role ? null : role;
+            const res = await window.api.teamGet(name);
+            if (res && res.ok) renderRows(res.team);
+            return;
+          }
           if (act === "set-lead") {
             const inp = rowEl.querySelector('input[data-f="lead-seat"]');
             const seat = (inp && inp.value || "").trim();
