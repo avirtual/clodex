@@ -35,17 +35,29 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
   // Three tmp trees leaked per run without this.
   if (t) t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   let record = { name: 'seat', type: 'claude', createdAt: 1, ...(ephemeral ? { ephemeral: true } : {}) };
-  // create() reads the record itself (existingEntry) BEFORE the session lands in
-  // the map, while the ctx write site reads it after. Splitting the two is what
-  // lets the memo be counted: a bare call count would be dominated by create's
-  // own lookup and could not tell one write-site read from three.
+  // create() reads the record itself (existingEntry) too, so a bare call count
+  // could not tell one ctx-arm read from three. The arm is bracketed by two of
+  // its OWN events — the `session-ctx` push that opens it and the ctxwarn
+  // write/remove that ends it — and only reads inside that window are counted.
+  // Bracketing on the arm's events rather than on "the session is in the map"
+  // is what keeps the count honest: the latter counted every persistence read
+  // anywhere after sessions.set, so a get() added elsewhere in create() broke
+  // this file with a message pointing at the ctx arm, which is not where the
+  // change was.
   const getCalls = [];
-  const writeSiteCalls = [];
-  let mgr = null;
-  const atWriteSite = () => !!(mgr && mgr.sessions.has('seat'));
+  const ctxArmReads = [];
+  let armOpen = false;
+  const seatWarnPath = pathFor(root, 'seat', 'ctxwarn');
+  const closeArm = (p) => { if (p === seatWarnPath) armOpen = false; };
+  // Prototype delegation, not a spread: fs's own `promises` is a getter, and
+  // copying it would construct the whole promises API per harness.
+  const fsSpy = Object.assign(Object.create(fs), {
+    writeFileSync: (p, ...rest) => { closeArm(p); return fs.writeFileSync(p, ...rest); },
+    rmSync: (p, ...rest) => { closeArm(p); return fs.rmSync(p, ...rest); },
+  });
   const SessionManager = createSessionManager({
     REGISTRY_DIR: root,
-    fs, path, pathFor,
+    fs: fsSpy, path, pathFor,
     promptCacheDir,
     PENDING_DIR: path.join(root, 'pending'),
     appVersion: '5.12.0',
@@ -90,9 +102,9 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
       // a write site that looked up the wrong seat's record.
       get: (n) => {
         getCalls.push(n);
-        if (atWriteSite()) {
-          writeSiteCalls.push(n);
-          // Only the write-site read fails, so create() still completes and the
+        if (armOpen) {
+          ctxArmReads[ctxArmReads.length - 1].push(n);
+          // Only the ctx-arm read fails, so create() still completes and the
           // seat under test genuinely reaches the over-threshold tick.
           if (getThrows) throw new Error('sessions.json unreadable');
         }
@@ -111,16 +123,22 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });
   const m = new SessionManager();
-  mgr = m;
-  m._sendToSession = () => {};
+  // Opens the arm. The real one pushes `session-ctx` immediately above the
+  // ctxwarn logic, so a tick that never got this far records no window at all
+  // and the count assertions fail loudly instead of reading an empty one.
+  m._sendToSession = (_n, channel) => {
+    if (channel !== 'session-ctx') return;
+    armOpen = true;
+    ctxArmReads.push([]);
+  };
   // _cleanup drops the session from the map; the object itself survives, and the
   // memo under test lives on it.
   let captured = null;
 
   return {
-    m, root, getCalls, writeSiteCalls,
+    m, root, getCalls, ctxArmReads,
     session: () => captured,
-    warnPath: () => pathFor(root, 'seat', 'ctxwarn'),
+    warnPath: () => seatWarnPath,
     // Written BEFORE create so the arm's initial readCtx() sees it. The poll is
     // otherwise fs.watch-driven, which is not synchronous enough to assert on.
     writeCtx: (tokens) => {
@@ -200,7 +218,8 @@ test('the record is looked up by THIS seat\'s name, exactly once, and memoized',
   // The lookup KEY, not just that a lookup happened: the stub returns null for
   // any other name, so a write site reading someone else's record would fall
   // through to "not ephemeral" and write the file.
-  assert.deepStrictEqual(h.writeSiteCalls, ['seat'], 'one read, keyed by the seat under test');
+  assert.deepStrictEqual(h.ctxArmReads, [['seat']],
+    'one ctx tick, one read inside its arm, keyed by the seat under test');
   assert.ok(h.getCalls.every((n) => n === 'seat'), 'no lookup anywhere used a different key');
   // The memo is what makes every later tick free. get() re-parses all of
   // sessions.json and _load() can WRITE it (the legacy workspaceId backfill),
@@ -212,7 +231,7 @@ test('a persistence read that THROWS leaves the seat nudged, and unsettled', asy
   const h = harness(t, { ephemeral: true, getThrows: true });
   h.writeCtx(OVER);
   await h.spawn();
-  assert.deepStrictEqual(h.writeSiteCalls, ['seat'], 'ENTER: the write site attempted the lookup, and it threw');
+  assert.deepStrictEqual(h.ctxArmReads, [['seat']], 'ENTER: the arm attempted the lookup, and it threw');
   // Degradation direction. Silence is the dangerous default: a seat that never
   // learns its context is heavy is worse off than one nudged unnecessarily, and
   // a record that is merely unreadable right now is not a claim of ephemerality.
