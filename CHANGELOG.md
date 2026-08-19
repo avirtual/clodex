@@ -20,18 +20,20 @@ blocks a release.
   nothing saying why the box could not be typed into. It now says the value is
   cleared and that the field stays inert while the role is standing.
 
-- Dispatching a ticket from the tickets board now refuses it, rather than
-  sending it, when its spec names no `tasks/…` artifact directory — the same
-  refusal `[agent:task assign]` already makes. On a new ticket the refusal names
-  the fix in the only terms that apply: nothing was filed, so there is nothing to
-  `respec` and no ticket id to name. Such a ticket has nowhere for the review
-  step to write its diff, so it used to be accepted, worked all the way through,
-  and only then rejected at verify. This covers both
-  ways the board dispatches: assigning an existing ticket, and opening a new one
-  with an assignee already picked. Filing a ticket with no assignee is unaffected
-  — it dispatches nothing — as are boards with no team, and re-assigning a ticket
-  that already owns a worktree still goes through, so a stuck seat can still be
-  re-sent its spec.
+- Dispatching a ticket whose spec names no `tasks/…` artifact directory now
+  refuses at dispatch instead of at verify. Such a ticket has nowhere for the
+  review step to write its diff, so it used to be accepted, worked all the way
+  through, and only then rejected — costing a whole round on work that could
+  never land. `[agent:task start]` and `[agent:task assign]` refuse it, and so
+  does the tickets board, on both of the ways it dispatches: assigning an
+  existing ticket, and opening a new one with an assignee already picked. On a
+  new ticket the refusal names the fix in the only terms that apply — nothing
+  was filed, so there is nothing to `respec` and no ticket id to name.
+
+  Filing a ticket with no assignee is unaffected, since it dispatches nothing,
+  as are solo boards with no team. Re-sending a spec still goes through:
+  re-assigning a ticket that already owns a worktree is how a respawned or stuck
+  seat recovers, and refusing that would strand the recovery.
 
 - Agents are now told their context is heavy at 200k tokens rather than 150k,
   and a seat spawned for a single ticket is never told at all. The old threshold
