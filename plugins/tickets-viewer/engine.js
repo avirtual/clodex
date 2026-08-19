@@ -139,6 +139,40 @@ function ticketStarted(ticket) {
 }
 
 /**
+ * Core's team-tickets `_ticketTaskDirRefusal`, copied for the same §4 reason and
+ * pinned byte-for-byte against core's in test/tickets-viewer-path-parity.test.js.
+ *
+ * A ticket whose spec names no `tasks/…` path has nowhere for the review step to
+ * write its diff, so it dies at VERIFY — after the hand has done the whole job.
+ * Core refuses it at dispatch on both intent verbs; `assign` below is the other
+ * dispatch path, and without this copy the same act is refused when typed and
+ * allowed when clicked.
+ *
+ * The SENTENCE is the deliverable as much as the predicate: it carries the fix
+ * instruction, and a lead who cannot act on a refusal is worse off than one who
+ * hit the gap. Keep it byte-equivalent to core's.
+ */
+function ticketTaskDirRefusal(team, ticket, verb, reSend) {
+  if (ticket.taskDir) return null;
+  // Core spells this `team.solo`, which the viewer can NEVER observe: it is set
+  // only by _soloContext, in memory, and is never written to a team manifest. The
+  // observable equivalent is that no team names this project — `teamIndex()` has
+  // an entry only for a project a manifest points at. A solo ticket mints no
+  // worktree and gets no loop step, so it cannot reach the verify-time refusal
+  // this gate prevents; gating it would be pure cost on a path that ships fine.
+  if (team && team.solo) return null;
+  // A re-send is a redelivery, not a decision to start work — the recovery a
+  // respawned or stuck seat depends on. Refusing it would strand that recovery
+  // and would refuse work already done.
+  if (reSend) return null;
+  // `respec` and not `reject`-then-respec: the ticket is still OPEN here (the
+  // caller refused a non-open one above), so respec applies directly.
+  return `ticket ${ticket.id} has no task dir, so nothing was ${verb === 'start' ? 'started' : 'assigned'} — its spec names no \`tasks/…\` path on any line, `
+    + `and the review step has nowhere to write its diff. Nothing was changed. `
+    + `Fix: re-file it with the artifact dir on the spec's first line, or \`[agent:task respec ${ticket.id}]\` <the corrected spec> to replace it in place.`;
+}
+
+/**
  * Core's fs-util.atomicWriteFileSync, copied for the same §4 reason. Every
  * clause is load-bearing and none may be simplified into a plain writeFileSync:
  * the board is a single JSON array rewritten whole, so a torn write does not
@@ -929,6 +963,28 @@ function assign(payload) {
     const found = findOpen(tickets, ticketId);
     if (found.error) return { error: found.error };
     const t = found.ticket;
+    // The same gate core's `_taskAssign` makes, and for the same reason: assign
+    // is a DISPATCH here (deliverSpec runs below), so a ticket the intent verbs
+    // refuse must not be dispatchable by clicking. Returning `{ error }` refuses
+    // before mutateBoard saves — a check placed after the writes below would
+    // still return this string having already re-pointed the assignee, cleared
+    // the park and pushed `lastActivityAt` forward, while promising in words
+    // that nothing was changed.
+    //
+    // Both arguments are NARROWER than core's, deliberately:
+    //   - solo: core reads `team.solo`, which is never persisted. "No team names
+    //     this project" is the observable equivalent — see the copy's header.
+    //   - reSend: core's is `ownSeat || the ticket's tree`, and `ownSeat` is read
+    //     off persisted session records the plugin cannot see. The tree half
+    //     alone is the honest mapping, so the viewer may refuse a re-send core
+    //     would allow. NOT widened to `ticketStarted`, which t431 rejected on
+    //     this exact path: a legacy record with no `startedAt` key and no `parked`
+    //     flag reads as started while owning no seat and no tree, and an assign on
+    //     it would run the whole job to a verify-time refusal.
+    const refusal = ticketTaskDirRefusal(
+      teamIndex().get(str(project)) ? {} : { solo: true },
+      t, 'assign', !!(t.worktree && t.worktree.path));
+    if (refusal) return { error: refusal };
     t.assignee = who;
     t.lastActivityAt = Date.now();
     // The new holder has not been chased, whatever the old one had accrued.
@@ -1032,7 +1088,7 @@ module.exports._internals = {
   confine, readTickets, readTicketsAt, readManifest, stallMsFor, shape,
   board, teams, projects, teamsRoot, projectsRoot, teamIndex, projectRootFor,
   clodexHome, projectDirFor, nextTicketId, ticketTitle, extractTaskDir, ticketStarted,
-  atomicWriteFileSync, resolveProject,
+  atomicWriteFileSync, resolveProject, ticketTaskDirRefusal,
   add, editSpec, assign, closeTicket, sessions,
   VIEWER_ACTOR, closeLine,
   DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, RECENT_DONE_MS, RECENT_DONE_CAP,
