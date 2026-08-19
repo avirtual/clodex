@@ -1367,6 +1367,116 @@ test('tickets-viewer: a re-send to a ticket that owns a TREE is exempt from the 
   } finally { cleanup(); }
 });
 
+// ── add-with-an-assignee is a DISPATCH, and gated like one (t438) ────────────
+//
+// t435 gated `assign` on the premise that it was the one remaining dispatch
+// door. That premise was wrong. This `add` delivers the spec itself and stamps
+// `startedAt` when an assignee is given — core's `_taskAdd` is writes-only and
+// says so — so "New ticket + pick an assignee + a spec naming no `tasks/…`"
+// reaches exactly the state `assign` now refuses, and a lead refused at assign
+// can walk around the gate by re-filing.
+//
+// The three cases are the door and the two shapes that must stay open. The
+// door test alone passes against a viewer that refuses every add, which is why
+// the backlog case below is not optional: filing an unassigned ticket for later
+// dispatches nothing and must never be refused.
+
+test('tickets-viewer: add REFUSES a task-dir-less ticket WITH an assignee, writing nothing (t438)', async () => {
+  const { host, home, teams, sessions, injected, cleanup } = boot();
+  try {
+    // A TEAM board, because a project no team names is the solo equivalent and
+    // is exempt by design — see the third test.
+    const teamDir = mkTeam(teams, 'add-gated');
+    const key = keyOfTeam(teamDir);
+    // A pre-existing record, so "nothing was written" is asserted against a
+    // board with content: an empty board that stayed empty is also what a
+    // handler which failed to resolve the project at all would leave behind.
+    writeTickets(teamDir, [ticket('t1')]);
+    addSession(sessions, 'hand-1');
+    assertWritesLandInFixture(home, key);
+
+    const before = fs.readFileSync(boardFileFor(home, key), 'utf8');
+    assert.ok(teamIndex().get(key), 'ENTER: a team names this project, so the solo carve-out is not in play');
+    assert.equal(viewerEngine._internals.extractTaskDir('do the thing'), null,
+      'ENTER: the spec really names no tasks/… path, so the gate has something to refuse');
+
+    const res = await host.dispatch('tickets-viewer', 'add',
+      [{ project: key, spec: 'do the thing', assignee: 'hand-1' }], 'desktop');
+
+    assert.equal(res.ok, false, 'the add is refused');
+    // The id in the sentence is the one the ticket WOULD have taken. It is the
+    // only id the refusal can name, and naming none would leave the respec
+    // instruction unusable.
+    assert.match(res.error, /^ticket t2 has no task dir, so nothing was assigned/);
+    assert.match(res.error, /\[agent:task respec t2\]/,
+      'and names the fix — a refusal the lead cannot act on is worse than the gap');
+
+    // The gate must sit INSIDE the mutate callback. Placed after it, the handler
+    // returns this exact string having already pushed the new record onto the
+    // board and saved it — a refused add that filed the ticket anyway.
+    assert.equal(fs.readFileSync(boardFileFor(home, key), 'utf8'), before,
+      'the board is byte-identical: no ticket was filed by a refused add');
+    assert.deepEqual(injected, [],
+      'and no seat was told to start work that would die at verify');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: add with NO assignee is ungated — filing a backlog ticket dispatches nothing (t438)', async () => {
+  const { host, home, teams, injected, cleanup } = boot();
+  try {
+    // The case that stops this fix being a viewer which refuses ordinary filing.
+    // A backlog ticket delivers no spec and stamps no startedAt, so it cannot
+    // reach the verify-time refusal the gate exists to prevent — and a lead
+    // filing work for later has no assignee to name yet, by definition.
+    const teamDir = mkTeam(teams, 'add-backlog');
+    const key = keyOfTeam(teamDir);
+    // An empty board, which is what mints the project dir — a team manifest
+    // alone does not, and `add` resolves the project before it writes.
+    writeTickets(teamDir, []);
+    assertWritesLandInFixture(home, key);
+    assert.ok(teamIndex().get(key),
+      'ENTER: a team names this project, so this passes because there is no assignee and not because of the solo carve-out');
+
+    const res = await host.dispatch('tickets-viewer', 'add',
+      [{ project: key, spec: 'do the thing' }], 'desktop');
+
+    assert.equal(res.ok, true, res.error);
+    const board = onDisk(home, key);
+    assert.equal(board.length, 1, 'the ticket really was filed, not merely reported ok');
+    const t = board[0];
+    assert.equal('taskDir' in t, false,
+      'ENTER: task-dir-less, so the gate had something it COULD have refused and did not');
+    assert.equal(t.assignee, '', 'it opens to the backlog');
+    assert.equal(t.startedAt, null, 'which is why it is ungated: nothing started');
+    assert.deepEqual(injected, [], 'and nothing was dispatched');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: a SOLO board still adds-and-dispatches a task-dir-less ticket (t438)', async () => {
+  const { host, home, teams, sessions, injected, cleanup } = boot();
+  try {
+    // The carve-out core spells `team.solo`, mapped here to "no team names this
+    // project" — the observable equivalent, since team.solo is set only in
+    // memory and never written to a manifest. A solo ticket mints no worktree
+    // and gets no loop step, so it cannot reach the verify-time refusal.
+    const key = mkProject(home, '/solo/add-no-task-dir');
+    addSession(sessions, 'hand-1');
+    assertWritesLandInFixture(home, key);
+    assert.deepEqual(fs.readdirSync(teams), [], 'ENTER: no team exists, which IS the solo case here');
+
+    const res = await host.dispatch('tickets-viewer', 'add',
+      [{ project: key, spec: 'do the thing', assignee: 'hand-1' }], 'desktop');
+
+    assert.equal(res.ok, true, res.error);
+    assert.equal(res.delivered, true, 'the spec still reaches the seat');
+    const t = onDisk(home, key)[0];
+    assert.equal('taskDir' in t, false,
+      'ENTER: task-dir-less, so this passes because of the carve-out and not because the gate had nothing to refuse');
+    assert.equal(t.assignee, 'hand-1', 'and the board still moved');
+    assert.equal(injected.length, 1, 'exactly the one delivery');
+  } finally { cleanup(); }
+});
+
 test('tickets-viewer: close and cancel write the SAME closing shape, differing only in state', async () => {
   const { host, home, cleanup } = boot();
   try {
