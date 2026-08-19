@@ -13,6 +13,13 @@ blocks a release.
 
 ## Unreleased
 
+- Clearing a role's unused `cwd` in the team-roles editor no longer leaves an
+  unexplained empty box. The field stays visible and uneditable on purpose — the
+  role still dispatches `standing`, so a value typed there would be saved and
+  never used — but its note used to disappear along with the value, leaving
+  nothing saying why the box could not be typed into. It now says the value is
+  cleared and that the field stays inert while the role is standing.
+
 - Dispatching a ticket from the tickets board now refuses it, rather than
   sending it, when its spec names no `tasks/…` artifact directory — the same
   refusal `[agent:task assign]` already makes. On a new ticket the refusal names
