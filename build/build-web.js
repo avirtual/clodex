@@ -88,8 +88,8 @@ async function main() {
     child_process: path.join(WEB, 'child_process-shim.js'),
   };
 
-  // Both flags stay, for different reasons — esbuild names every inlined module RELATIVE TO
-  // THE BUILD'S WORKING DIRECTORY, after resolving symlinks.
+  // Both flags stay, for different reasons — esbuild names every inlined module
+  // RELATIVE TO THE BUILD'S WORKING DIRECTORY, after resolving symlinks.
   //
   // `preserveSymlinks`: the ticket loop plants `node_modules` in each worktree as
   // a symlink to the root checkout, so without it esbuild escapes through the
