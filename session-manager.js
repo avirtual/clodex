@@ -4359,7 +4359,24 @@ function createSessionManager(deps) {
         const finish = (fn) => { if (done) return; done = true; clearTimeout(timer); fn(); };
         const timer = setTimeout(() => {
           try { child.kill('SIGKILL'); } catch {}
-          finish(() => fail(`timed out after ${timeoutMs}ms`));
+          // A TIMEOUT IS NOT A FAILURE, and telling the two apart is the caller's
+          // whole decision (t440). A command that exits nonzero has ANSWERED —
+          // the right response is to read the answer. A command killed at the
+          // ceiling has not: the work may have completed and lost only its
+          // report, or may still be running right now, holding whatever it
+          // holds. `clodex-run-tests` is exactly that shape — its digest exists
+          // only on the wrapper's stderr, so a SIGKILL at the ceiling drops a
+          // green suite's number on the floor while the suite runs on and keeps
+          // the box-wide lock.
+          //
+          // Said in seconds as well as ms because the number is chosen against
+          // wall-clock budgets and "420000ms" is not a duration a reader parses.
+          // The "may still be running" clause is the load-bearing half: without
+          // it the natural next move is to re-fire the command, which for a
+          // lock-taking one queues a second run behind the first.
+          finish(() => fail(`TIMED OUT after ${Math.round(timeoutMs / 1000)}s (${timeoutMs}ms) — no result was returned. `
+            + 'This is not a failure report: the command was killed at its ceiling, so it may have '
+            + 'succeeded and lost only its output, and any work it started may still be running.'));
         }, timeoutMs);
         if (child.stderr) {
           // setEncoding, not d.toString(): a chunk boundary inside a multi-byte

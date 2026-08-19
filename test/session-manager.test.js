@@ -9443,7 +9443,57 @@ test('_handleExecIntent: a slow command is timeout-killed and bounces', async ()
   const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry });
   m._handleExecIntent(session, 'bridge-reply', '{}');
   await waitFor(() => replies.length > 0, 3000);
-  assert.match(replies.at(-1), /timed out/);
+  assert.match(replies.at(-1), /TIMED OUT/);
+});
+
+test('_handleExecIntent: a TIMEOUT is told apart from a failure, in seconds and by name', async () => {
+  // t440. Both used to arrive as a bare `fail(...)`, and the correct response
+  // differs: a command that exited nonzero has ANSWERED, so read the answer; a
+  // command SIGKILLed at its ceiling has not, so the work may have completed and
+  // lost only its report, or may still be running. `clodex-run-tests` is exactly
+  // that shape — its digest exists only on the wrapper's stderr, and the suite
+  // keeps holding the box-wide lock after the wrapper dies. A caller that read
+  // the kill as "the suite failed" would be wrong twice over, and a caller that
+  // re-fired the command would queue a second run behind the first.
+  const entry = { argv: ['/bin/sh', '-c', 'cat >/dev/null; sleep 5'], timeoutMs: 150, schema: { type: 'object' } };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  await waitFor(() => replies.length > 0, 3000);
+  const body = replies.at(-1);
+
+  assert.match(body, /TIMED OUT/, 'ENTER: this is the timeout arm, not some other bounce');
+  assert.match(body, /no result was returned/,
+    'the absence of an answer is the fact, and it is stated rather than left to be inferred from a duration');
+  assert.match(body, /not a failure report/,
+    'and it says so in the words that keep a caller from reading the kill as a red result');
+  assert.match(body, /may still be running/,
+    'the load-bearing half: without it the natural next move is a re-fire, which for a '
+    + 'lock-taking command queues a second run behind the first');
+  // Seconds AND ms. The ceiling is chosen against wall-clock budgets, and
+  // "420000ms" is not a duration a reader parses at a glance.
+  assert.match(body, /\b0s\b/, 'the wait is given in seconds');
+  assert.match(body, /150ms/, 'and the exact configured ceiling is still there to match against the def');
+});
+
+test('_handleExecIntent: a nonzero exit is NOT dressed up as a timeout', async () => {
+  // The other side of the distinction, and the one that decays silently: a
+  // wording change that made every bounce say TIMED OUT would satisfy the
+  // subject above on its own, and would tell a caller to wait for a command that
+  // has already answered.
+  //
+  // This one PASSES against the pre-t440 code, necessarily: it asserts an
+  // absence that was true when NEITHER arm said TIMED OUT. It is not falsifiable
+  // against the old shape and is not meant to be — what it guards is the new
+  // wording leaking onto the arm it does not belong on.
+  const entry = { argv: ['/bin/sh', '-c', 'cat >/dev/null; echo boom 1>&2; exit 3'], timeoutMs: 5000, schema: { type: 'object' } };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  await waitFor(() => replies.length > 0);
+  const body = replies.at(-1);
+
+  assert.match(body, /exit 3/, 'ENTER: the command really did answer with a nonzero exit');
+  assert.ok(!/TIMED OUT/.test(body), 'an answered command must not be reported as one that never answered');
+  assert.ok(!/may still be running/.test(body), 'and nothing is still running to wait for');
 });
 
 test('_handleExecIntent: malformed registry entry (no argv) bounces', () => {
