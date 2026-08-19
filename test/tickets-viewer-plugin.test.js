@@ -1486,6 +1486,35 @@ test('tickets-viewer: a SOLO board still adds-and-dispatches a task-dir-less tic
   } finally { cleanup(); }
 });
 
+test('tickets-viewer: a team board WITH a task dir still adds-and-dispatches (t438)', async () => {
+  const { host, home, teams, sessions, injected, cleanup } = boot();
+  try {
+    // The board's PRIMARY dispatch path, and the case the other three cannot
+    // cover: every other add-with-assignee success test runs on a solo project,
+    // so it passes through the carve-out and never reaches the predicate at all.
+    // Without this, a gate that refused every team add would still be green.
+    const teamDir = mkTeam(teams, 'add-ok');
+    const key = keyOfTeam(teamDir);
+    writeTickets(teamDir, []);
+    addSession(sessions, 'hand-1');
+    assertWritesLandInFixture(home, key);
+    assert.ok(teamIndex().get(key),
+      'ENTER: a team names this project, so this passes because the ticket HAS a dir and not because the carve-out fired');
+
+    const res = await host.dispatch('tickets-viewer', 'add',
+      [{ project: key, spec: 'tasks/the-work — do it', assignee: 'hand-1' }], 'desktop');
+
+    assert.equal(res.ok, true, res.error);
+    assert.equal(res.delivered, true, 'the spec reaches the seat');
+    const t = onDisk(home, key)[0];
+    assert.equal(t.taskDir, 'tasks/the-work',
+      'ENTER: the dir was extracted, which is WHY the gate let this through');
+    assert.equal(t.assignee, 'hand-1');
+    assert.ok(t.startedAt, 'and the dispatch is stamped');
+    assert.equal(injected.length, 1, 'exactly the one delivery');
+  } finally { cleanup(); }
+});
+
 test('tickets-viewer: close and cancel write the SAME closing shape, differing only in state', async () => {
   const { host, home, cleanup } = boot();
   try {

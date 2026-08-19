@@ -15,9 +15,11 @@ blocks a release.
 
 - Dispatching a ticket from the tickets board now refuses it, rather than
   sending it, when its spec names no `tasks/…` artifact directory — the same
-  refusal `[agent:task assign]` already makes, naming the same fix. Such a ticket
-  has nowhere for the review step to write its diff, so it used to be accepted,
-  worked all the way through, and only then rejected at verify. This covers both
+  refusal `[agent:task assign]` already makes. On a new ticket the refusal names
+  the fix in the only terms that apply: nothing was filed, so there is nothing to
+  `respec` and no ticket id to name. Such a ticket has nowhere for the review
+  step to write its diff, so it used to be accepted, worked all the way through,
+  and only then rejected at verify. This covers both
   ways the board dispatches: assigning an existing ticket, and opening a new one
   with an assignee already picked. Filing a ticket with no assignee is unaffected
   — it dispatches nothing — as are boards with no team, and re-assigning a ticket
