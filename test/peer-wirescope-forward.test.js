@@ -34,7 +34,7 @@ const { createPeerWiring } = require('../peer-wiring');
 // raise no wirescope forward at all, and an index would silently slide the web
 // manager into the wirescope slot and assert against the wrong recorder.
 
-function makeWiring({ peers = [], statuses = {}, localPort = 45501, openThrows = false } = {}) {
+function makeWiring({ peers = [], statuses = {}, localPort = 45501, openThrows = false, webOpenRefuses = false } = {}) {
   const store = { peers, peerAttached: {}, peerControlled: {}, peerVisible: {} };
   const uiSettings = { get: () => store, set: (p) => Object.assign(store, p) };
   const externals = [];      // every URL handed to the operator's browser
@@ -46,6 +46,7 @@ function makeWiring({ peers = [], statuses = {}, localPort = 45501, openThrows =
       opened: [], closed: [], synced: [], onState: () => {},
       open(o) {
         if (openThrows && rec.role === 'wirescope') throw new Error('supervisor exploded');
+        if (webOpenRefuses && rec.role === 'web') return { ok: false, error: 'refused' };
         rec.opened.push(o);
         return { ok: true, status: { id: o.id, state: 'down', url: null } };
       },
@@ -252,6 +253,68 @@ test('a wirescope forward that GIVES UP is logged as harmless, not raised as a f
     const line = h.logs.find((l) => /wirescope forward for p1 gave up/.test(l));
     assert.ok(line, 'the give-up is visible in the ops log');
     assert.match(line, /keeps working/i, 'and says the web view is unaffected');
+  } finally { h.restore(); }
+});
+
+// ── The web view DYING takes the companion with it (review round 1) ─────────
+// The teardown paths wired at first submission — closePeerWeb, the sync prune,
+// app quit — all assume someone or something still ASKS. A web tunnel that
+// gives up asks nobody: the affordance renders `action: 'open'` at that state,
+// so the operator has no close button, while the companion `ssh -N -L` keeps
+// republishing the box's unauthenticated wirescope on their loopback for the
+// rest of the process lifetime. That is the exact "forgotten forward open to a
+// remote machine" web-tunnel.js inversion 3 exists to prevent, reintroduced
+// one layer up.
+
+test('the web view GIVING UP tears the companion forward down', () => {
+  const h = makeWiring({ peers: [SSH], statuses: { p1: BOTH } });
+  try {
+    h.wiring.openPeerWeb('p1');
+    assert.deepEqual(h.wirescope().closed, [], 'live while the web view is');
+    h.web().onState('p1', { id: 'p1', state: 'gave-up', url: null, error: 'no route to host' });
+    assert.deepEqual(h.wirescope().closed, ['p1'],
+      'a give-up leaves no close button, so nothing else would ever close this');
+  } finally { h.restore(); }
+});
+
+test('the web view being CLOSED by the supervisor tears the companion down too', () => {
+  // `closed` is the manager's own final emit. It arrives on the closePeerWeb
+  // path (where the companion is closed anyway, and a second close is a no-op)
+  // AND on the sync prune — so keying on it costs nothing and covers a caller
+  // that closes the web manager directly.
+  const h = makeWiring({ peers: [SSH], statuses: { p1: BOTH } });
+  try {
+    h.wiring.openPeerWeb('p1');
+    h.web().onState('p1', { id: 'p1', state: 'closed', url: null });
+    assert.deepEqual(h.wirescope().closed, ['p1']);
+  } finally { h.restore(); }
+});
+
+test('an ordinary web-view blip does NOT tear the companion down', () => {
+  // The other half: `down` is a respawn away from `up`, and the pinned ports on
+  // both sides mean the operator's tab recovers by itself. Tearing the companion
+  // down on every wifi blip would take the dashboard link away permanently,
+  // since only a fresh ↗ click re-raises it.
+  const h = makeWiring({ peers: [SSH], statuses: { p1: BOTH } });
+  try {
+    h.wiring.openPeerWeb('p1');
+    h.web().onState('p1', { id: 'p1', state: 'down', url: null });
+    h.web().onState('p1', { id: 'p1', state: 'up', url: 'http://127.0.0.1:45001' });
+    assert.deepEqual(h.wirescope().closed, [], 'survives a blip');
+  } finally { h.restore(); }
+});
+
+test('a REFUSED web open unwinds the companion raised moments earlier', () => {
+  // openPeerWirescope runs BEFORE the web open (its pinned port must exist when
+  // the pop composes the URL), so a web open that refuses leaves a forward with
+  // nothing to decorate. Currently unreachable — the supervisor's own refusals
+  // are all caught earlier — but it is the failure the ordering creates, and it
+  // costs one line to close.
+  const h = makeWiring({ peers: [SSH], statuses: { p1: BOTH }, webOpenRefuses: true });
+  try {
+    const res = h.wiring.openPeerWeb('p1');
+    assert.equal(res.ok, false, 'the web open refused');
+    assert.deepEqual(h.wirescope().closed, ['p1'], 'and the companion did not outlive it');
   } finally { h.restore(); }
 });
 

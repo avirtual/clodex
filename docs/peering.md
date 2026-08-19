@@ -140,6 +140,14 @@ Rules, in order of what breaks if they go:
   may never be the reason the web view fails: no wirescope on the box is a
   normal quiet case (the frontend opens with no dashboard link), and every call
   into it is wrapped.
+- **Torn down on the web view's TERMINAL states too**, not only on
+  `closePeerWeb`. A web tunnel that reaches `gave-up` has no caller behind it and
+  the affordance renders `action: 'open'` at that state — so there is no close
+  button left, and a companion that ignored it would keep republishing the box's
+  unauthenticated wirescope on this machine's loopback for the life of the
+  process. `down` is deliberately not terminal: it is one respawn from `up`, both
+  ports are pinned, and only a fresh ↗ click re-raises the companion, so tearing
+  it down on a blip would cost the link permanently.
 - **Separate supervisor** from the web view's. The web manager's state is
   broadcast on `peer-web-tunnel`, which the renderer reads as the ↗ button's
   phase; a second tunnel emitting there under the same peer id would drive the

@@ -272,7 +272,7 @@ function createPeerWiring(deps) {
   // additionally behind a spawn and a TCP probe. The null branch is still real
   // (a peer with no wirescope in its hello, a refused transport) and is what
   // makes this safe when the ordering ever stops holding.
-  function openPeerWirescope(id, rec, dest) {
+  function openPeerWirescope(id, dest) {
     const key = String(id);
     const conn = getPeerManager() && getPeerManager().get(key);
     const st = conn ? conn.status() : null;
@@ -293,7 +293,12 @@ function createPeerWiring(deps) {
       });
       if (!res || !res.ok) return null;
       const local = wirescopeLocalPort(key);
+      // Both arms log. A forward that opened but has no local port yet is the
+      // one state where everything looks healthy and the page still gets no
+      // link — silent, it is indistinguishable from "the box has no wirescope",
+      // which is a different diagnosis entirely.
       if (local) log.info('peer', `wirescope forward for ${key}: 127.0.0.1:${local} → ${port}`);
+      else log.info('peer', `wirescope forward for ${key} opened but reported no local port yet — no dashboard link on this page`);
       return local;
     } catch (e) {
       log.info('peer', `wirescope forward for ${key} not raised: ${e.message}`);
@@ -344,6 +349,22 @@ function createPeerWiring(deps) {
       // poll, and it never has to cache a URL from when a popover opened.
       onState: (id, status) => {
         try { manager._broadcast('peer-web-tunnel', id, status); } catch {}
+        // The web view reaching a TERMINAL state takes the companion with it —
+        // the other half of "raised with the web view, torn down with it", and
+        // the half that has no caller behind it. `closePeerWeb` covers the
+        // operator closing the view; nobody at all covers a view that dies on
+        // its own, and `gave-up` is exactly that: the affordance renders
+        // `action: 'open'` at that state, so there is no close button left to
+        // press, while the companion's ssh child keeps republishing the box's
+        // unauthenticated wirescope on this machine's loopback. That is the
+        // "forgotten forward open to a remote machine" web-tunnel.js inversion 3
+        // exists to prevent.
+        //
+        // `down` is deliberately NOT terminal: it is one respawn away from up,
+        // and both ports are pinned, so the operator's tab recovers by itself —
+        // tearing the companion down on a wifi blip would cost the dashboard
+        // link permanently, since only a fresh ↗ click re-raises it.
+        if (status && (status.state === 'gave-up' || status.state === 'closed')) closePeerWirescope(id);
         // firstUp rides ONE emit, on the once-per-tunnel first success — so the
         // browser opens once and a respawn after a wifi blip does not pop a
         // second window (the pinned port means the existing tab just works).
@@ -412,11 +433,17 @@ function createPeerWiring(deps) {
     // no URL is ever composed, so a forward for it would be one nothing can use
     // — and the gating decision stays where t30b put it rather than being
     // re-derived here.
-    if (!tokenGated) openPeerWirescope(key, rec, dest);
+    if (!tokenGated) openPeerWirescope(key, dest);
     const res = ensureWebTunnelManager().open({
       id: key, sshHost: dest.sshHost, remotePort: webHost.port,
       ...(dest.cloud ? { [dest.cloud.kind]: dest.cloud.block } : {}),
     });
+    // A refused web open leaves the companion raised two lines above with
+    // nothing to decorate. Unreachable today — the refusals the supervisor can
+    // still return here are all caught earlier in this function — but the
+    // ordering is what creates the window, so it is closed where the ordering
+    // lives rather than trusted to stay unreachable.
+    if (!res || res.ok === false) closePeerWirescope(key);
     // tokenGated rides the result so the renderer can say "this box wants a
     // token" rather than implying a link is coming.
     return { ...res, tokenGated };
