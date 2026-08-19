@@ -5487,6 +5487,35 @@ function mkTasks(extra = {}) {
   };
   const load = () => tstore.load(team.root);
   const one = (id) => load().find((t) => t.id === id);
+  // t431: dispatch refuses a ticket whose spec names no `tasks/…` path, since the
+  // review step would have nowhere to write its diff. The specs in this file are
+  // written to exercise DISPATCH, not artifact resolution, so the precondition is
+  // supplied here rather than by editing a hundred spec strings.
+  //
+  // Stamped onto the RECORD after `add`, never appended to the spec text: a
+  // large number of assertions in this file pin the delivered body byte-for-byte
+  // through `specBody`, and widening the spec would break every one of them for
+  // a reason that has nothing to do with what they test. Tests that want the
+  // task-dir-less case set it back to undefined themselves — the gate's own
+  // tests live in task-start.test.js.
+  const handleTask = m._handleTask.bind(m);
+  m._handleTask = (session, intent) => {
+    const isAdd = intent && intent.type === 'task' && intent.sub === 'add';
+    const before = isAdd ? new Set(tstore.load(team.root).map((t) => t.id)) : null;
+    const r = handleTask(session, intent);
+    if (isAdd) {
+      const ts = tstore.load(team.root);
+      let touched = false;
+      // Only the ids this `add` INTRODUCED. Stamping every task-dir-less ticket on
+      // the board would resurrect state a test deliberately built: strip `taskDir`
+      // from t1, file t2, and the loop silently puts t1's back.
+      for (const t of ts) {
+        if (!before.has(t.id) && !t.taskDir) { t.taskDir = `tasks/${t.id}-fixture/SPEC.md`; touched = true; }
+      }
+      if (touched) tstore.save(team.root, ts);
+    }
+    return r;
+  };
   return { m, injected, gated, urgents, tags, broadcasts, team, home, tstore, seat, load, one };
 }
 
@@ -12468,7 +12497,32 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   const record = (n) => (upserted.includes(n)
     ? { ...(fieldsByName.get(n) || {}), name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) }
     : null);
-  return { m, team, home, tstore, seat, seatWithTree, gated, upserted, removed, worktreeSet, stripCalls, acCalls, archiveSeat, killSeat, record, persistence,
+  // t431: same dispatch precondition mkTasks supplies, for the same reason — these
+  // specs exercise worktree minting, not artifact resolution. On the record, not
+  // in the spec text, so the delivered body stays what each test wrote.
+  // Opt-out: the cost ledger only runs for a ticket that HAS a task dir, so a
+  // test measuring the no-git path needs a ticket without one — stamping it
+  // unconditionally would drag `listWorktrees` onto a path that must not touch git.
+  const wtState = { autoTaskDir: true };
+  const handleTaskWt = m._handleTask.bind(m);
+  m._handleTask = (session, intent) => {
+    const isAdd = wtState.autoTaskDir && intent && intent.type === 'task' && intent.sub === 'add';
+    const before = isAdd ? new Set(tstore.load(team.root).map((t) => t.id)) : null;
+    const r = handleTaskWt(session, intent);
+    if (isAdd) {
+      const ts = tstore.load(team.root);
+      let touched = false;
+      // Only the ids this `add` INTRODUCED. Stamping every task-dir-less ticket on
+      // the board would resurrect state a test deliberately built: strip `taskDir`
+      // from t1, file t2, and the loop silently puts t1's back.
+      for (const t of ts) {
+        if (!before.has(t.id) && !t.taskDir) { t.taskDir = `tasks/${t.id}-fixture/SPEC.md`; touched = true; }
+      }
+      if (touched) tstore.save(team.root, ts);
+    }
+    return r;
+  };
+  return { m, team, home, tstore, seat, seatWithTree, gated, upserted, removed, worktreeSet, stripCalls, acCalls, archiveSeat, killSeat, record, persistence, wtState,
     load: () => tstore.load(team.root), one: (id) => tstore.load(team.root).find((t) => t.id === id) };
 }
 
@@ -12521,6 +12575,51 @@ test('task add: a template env key outside the allowlist is dropped AND named in
   assert.match(reply, /FORCE_PROMPT_CACHING_5M/, 'the badly-typed key must be named too');
   assert.match(reply, /allowed but their values are not strings/, 'with its OWN reason, not the authority one');
 });
+
+// t431 point (b): the refusal must land before ANYTHING is written. The
+// whole-record assertions in task-start.test.js pin the BOARD, but the expensive
+// half of a mis-dispatch is on disk — a branch cut, a worktree checked out, a
+// persistence record upserted — and that half only exists on a worktree-dispatch
+// role, which task-start's fixture does not build. So the observables that would
+// catch a gate placed one line too late are asserted here, on the fixture that
+// has them: a gate below the mint still refuses, still returns the right string,
+// and has already cut the tree.
+test('t431: a task-dir-less ticket creates no branch, no worktree and no record, through EITHER verb', async () => {
+  const { repo } = mkGitRepo();
+  const f = mkTicketWt(repo, { dispatch: 'worktree' });
+  // The fixture's convenience stamp is the whole thing under test here.
+  f.wtState.autoTaskDir = false;
+  let created = null;
+  f.m.create = async (...args) => { created = args[0]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  const branches = () => require('node:child_process')
+    .execFileSync('git', ['-C', repo, 'branch', '--format=%(refname:short)'], { stdio: 'pipe' })
+    .toString().split('\n').filter(Boolean).sort();
+  const branchesBefore = branches();
+
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'no artifact path anywhere' });
+  assert.strictEqual(f.one('t1').taskDir, undefined, 'ENTER: the ticket really has no task dir');
+  const before = JSON.parse(JSON.stringify(f.one('t1')));
+
+  for (const intent of [
+    { type: 'task', sub: 'start', who: null, id: 't1', body: '' },
+    { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' },
+  ]) {
+    f.gated.length = 0;
+    f.m._handleTask(f.m.sessions.get('lead'), intent);
+    // The mint is async on the success path, so a gate that leaked would need
+    // these turns to show its worktree. Without the wait a leak could pass.
+    for (let i = 0; i < 15; i++) await new Promise((r) => setImmediate(r));
+
+    assert.deepStrictEqual(f.one('t1'), before, `${intent.sub}: the ticket record is exactly as it was found`);
+    assert.deepStrictEqual(f.worktreeSet, [], `${intent.sub}: no worktree was recorded on any seat`);
+    assert.deepStrictEqual(f.upserted, [], `${intent.sub}: no persistence record was written`);
+    assert.deepStrictEqual(branches(), branchesBefore, `${intent.sub}: no branch was cut`);
+    assert.strictEqual(created, null, `${intent.sub}: no seat was spawned`);
+    assert.deepStrictEqual(f.gated, [], `${intent.sub}: and no spec was delivered`);
+  }
+});
+
 
 test('task add: an opted-in role mints a branch, a worktree and a seat, and the ticket pins to the SEAT', async () => {
   const { root, repo } = mkGitRepo();
@@ -13991,6 +14090,13 @@ test('a non-git team root can dispatch, spawn and accept a spawn ticket end to e
       deleteBranch: boom('deleteBranch'),
     },
   });
+  // The COST ledger is the one thing on the accept path that lists worktrees, and
+  // it runs for any ticket carrying a task dir — which every dispatched ticket now
+  // must, since t431 refuses one without. It is a separate concern from the
+  // question under test (does the DISPATCH/ACCEPT path shell out to git), and it
+  // already guards its own git calls, so it is stubbed out rather than dodged by
+  // filing a ticket that could not be dispatched at all.
+  f.m._writeTicketCost = () => {};
   const cwds = {};
   f.m.create = async (...args) => { cwds[args[0]] = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
   const said = [];

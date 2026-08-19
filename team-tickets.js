@@ -2643,6 +2643,52 @@ function createTicketMethods(deps, shared) {
         : `it had no worktree of its own, so nothing on disk is removed — anything it left in the shared checkout survives.`;
     },
 
+    // The dispatch-time half of the verify-time `verify: task-dir` check. Asked by
+    // both lead-initiated dispatch verbs BEFORE they mint a seat or a worktree,
+    // because the ticket is unreviewable either way and refusing at verify only
+    // buys the hand a whole no-op round first (t429 cost two). Only the MISSING
+    // case moves here: a taskDir that is set but escapes confinement is a
+    // different failure with a different recovery, and verify keeps it.
+    //
+    // Not in `_deliverTicketSpec`, which is the shared funnel but also carries
+    // replays and redeliveries — a dispatched ticket must keep being able to
+    // replay its spec to a respawned seat, and gating the funnel would strand
+    // exactly the recovery a dead hand depends on.
+    // `reSend` is the caller's own answer to "is this a redelivery rather than a
+    // decision to start work", because the two verbs know it differently: assign
+    // has `ownSeat` and the ticket's tree, start refuses an already-started ticket
+    // outright a few lines below.
+    _ticketTaskDirRefusal(team, ticket, verb, reSend) {
+      if (ticket.taskDir) return null;
+      // SOLO boards never reach the cost this gate removes: a solo ticket mints no
+      // worktree and gets no loop step, so it cannot arrive at the verify-time
+      // refusal that makes a task-dir-less dispatch expensive. Gating it would be
+      // pure cost on a path that ships fine without artifacts. Same carve-out, and
+      // the same reason, as `_advanceSeat`'s.
+      if (team && team.solo) return null;
+      // A re-send is not a decision to start work: `assign` back to a ticket's own
+      // seat is the redelivery a respawned or stuck seat recovers through, the same
+      // recovery `_deliverTicketSpec` is deliberately left ungated for. Refusing it
+      // would strand that recovery and would refuse work already done — the cost
+      // this gate avoids was paid at dispatch. Verify is the backstop, which is why
+      // that check stays.
+      //
+      // Deliberately NOT `ticketStarted` on the assign path: a legacy record with
+      // no `startedAt` key and no `parked` flag reads as started while owning no
+      // seat and no tree, and an assign on it would mint a fresh worktree seat and
+      // run the whole job to a verify-time refusal — precisely the cost this
+      // removes. No record on the live board is in that shape today; this closes
+      // the hole rather than fixing a live bug.
+      if (reSend) return null;
+      // `respec` and not `reject`-then-respec: the ticket is still OPEN here (both
+      // callers refused a non-open one above), so respec applies directly. The
+      // verify-time twin has to name reject first because by then the ticket is
+      // `done`, which respec refuses — same fix, two different reachable doors.
+      return `ticket ${ticket.id} has no task dir, so nothing was ${verb === 'start' ? 'started' : 'assigned'} — its spec names no \`tasks/…\` path on any line, `
+        + `and the review step has nowhere to write its diff. Nothing was changed. `
+        + `Fix: re-file it with the artifact dir on the spec's first line, or \`[agent:task respec ${ticket.id}]\` <the corrected spec> to replace it in place.`;
+    },
+
     // The live seat working in `treePath`, or null. Read off the PERSISTED record
     // rather than the session: a seat's cwd is the shared repo (it is told its tree
     // rather than booted in it), so cwd cannot answer this.
@@ -3453,6 +3499,15 @@ function createTicketMethods(deps, shared) {
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — only an open ticket can be started`); return; }
       if (!ticket.assignee) { reply(`error: ticket ${intent.id} is backlog (no assignee) — [agent:task assign ${intent.id} <role|name>] files AND dispatches it`); return; }
+      // Above the mint and above every write below it: a gate placed one line
+      // later still refuses and still returns this string, having already
+      // reserved the seat name and cut the worktree.
+      //
+      // `ticketStarted` is the whole re-send test here, unlike assign's: start
+      // refuses an already-started ticket outright a few lines below, so the wider
+      // net costs nothing — those tickets never reach a dispatch on this path.
+      const noTaskDir = this._ticketTaskDirRefusal(team, ticket, 'start', ticketStarted(ticket));
+      if (noTaskDir) { log.info('intent', `task start by ${session.name}: ${ticket.id} refused — no task dir`); reply(noTaskDir); return; }
       const assignee = ticket.assignee;
       // The role the ticket was FILED under, which is what mints the seat name and
       // resolves the worktree opt-in. On an unstarted ticket `assignee` still holds
@@ -3588,6 +3643,18 @@ function createTicketMethods(deps, shared) {
       // nothing will. Liveness decides between re-send and the stuck reply below.
       const own = !!(minted && minted.taken && minted.name === prev);
       const ownSeat = (own && this._ticketAssigneeSeat(team, { assignee: prev }) === prev) ? prev : null;
+      // Same gate start makes, and for the same reason — assign is the OTHER
+      // dispatch path, so a ticket refused by one verb must not be dispatchable by
+      // the other. Below the mint only because the re-send test needs `ownSeat`:
+      // _mintTicketSeat derives a name and tests whether it is taken, writing
+      // nothing, so this is still above every write and above the reassign notice
+      // that tells a previous holder to stand down.
+      //
+      // A ticket that already OWNS a tree is a re-send too, even with no live seat
+      // in it: the tree is the work, and the seat holding it can be respawned.
+      const noTaskDir = this._ticketTaskDirRefusal(team, ticket, 'assign',
+        !!ownSeat || !!(ticket.worktree && ticket.worktree.path));
+      if (noTaskDir) { log.info('intent', `task assign by ${session.name}: ${ticket.id} refused — no task dir`); reply(noTaskDir); return; }
       // BOTH refusals run here, above the reassign notice and above every field
       // this method writes. Below them the ticket has already been mutated and
       // saved, so a refusal there tells the lead "nothing was changed" while the

@@ -91,8 +91,36 @@ function mkStart(extra = {}) {
     m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle' });
     return m.sessions.get(name);
   };
+  // t431: dispatch refuses a ticket whose spec names no `tasks/…` path. The specs
+  // in this file are about the dispatch VERB, not artifact resolution, so the
+  // precondition is supplied here — on the RECORD, never appended to the spec,
+  // because many assertions below pin the delivered body byte-for-byte through
+  // `specBody`.
+  //
+  // Opt-out rather than unconditional: the gate's OWN tests need a ticket that
+  // genuinely lacks a task dir, and a fixture that silently made that state
+  // unreachable would leave them asserting against a case they never built.
+  const state = { autoTaskDir: true };
+  const handleTask = m._handleTask.bind(m);
+  m._handleTask = (session, intent) => {
+    const isAdd = state.autoTaskDir && intent && intent.type === 'task' && intent.sub === 'add';
+    const before = isAdd ? new Set(tstore.load(team.root).map((t) => t.id)) : null;
+    const r = handleTask(session, intent);
+    if (isAdd) {
+      const ts = tstore.load(team.root);
+      let touched = false;
+      // Only the ids this `add` INTRODUCED. Stamping every task-dir-less ticket on
+      // the board would resurrect state a test deliberately built: strip `taskDir`
+      // from t1, file t2, and the loop silently puts t1's back.
+      for (const t of ts) {
+        if (!before.has(t.id) && !t.taskDir) { t.taskDir = `tasks/${t.id}-fixture/SPEC.md`; touched = true; }
+      }
+      if (touched) tstore.save(team.root, ts);
+    }
+    return r;
+  };
   return {
-    m, team, home, tstore, injected, gated, urgents, broadcasts, seat,
+    m, team, home, tstore, injected, gated, urgents, broadcasts, seat, state,
     load: () => tstore.load(team.root),
     one: (id) => tstore.load(team.root).find((t) => t.id === id),
     notes: () => injected.join('\n'),
@@ -395,6 +423,10 @@ test('startedAt: a pre-upgrade PARKED record is read as never started, so it can
   const now = Date.now();
   f.tstore.save(f.team.root, [{
     id: 't1', title: 'filed for later', spec: 'filed for later\ndetail',
+    // A dispatchable ticket carries one (t431 refuses one without at start), and
+    // this record is genuinely never-started, so the gate applies to it. Its
+    // subject is how a pre-upgrade record READS, not artifact resolution.
+    taskDir: 'tasks/filed-for-later/SPEC.md',
     assignee: 'hand', opener: 'lead', state: 'open', parked: true,
     openedAt: now - 90000, closedAt: null, lastActivityAt: now - 90000, nudgedAt: null,
   }]);
@@ -476,4 +508,124 @@ test('an added-but-unstarted ticket is invisible to REPLAY too', () => {
   assert.strictEqual(f.m._replayOpenTickets(s), true, 'the pass finishes — nothing is held');
   assert.deepStrictEqual(f.gated, [],
     'a respawn must not dispatch what the lead only filed — replay resumes work, it does not start it');
+});
+
+// ── t431: the task dir is a DISPATCH-time precondition ─────────────────────
+// A ticket whose spec names no `tasks/…` path has nowhere for the review step
+// to write its diff, so it cannot complete. That was discovered at VERIFY,
+// after the hand had done the entire job: on t429 it cost two no-op rounds for
+// a defect in the spec that was knowable the moment it was filed. Both
+// lead-initiated dispatch verbs now refuse it up front.
+//
+// The refusal must land before ANYTHING is written — the assertions below are
+// on the whole ticket record for that reason. A gate one line too late still
+// refuses, still returns the right sentence, and has already minted the seat
+// and cut the worktree; a partial assertion reads straight around it.
+
+// Deliberately NOT run through `add`: `add` derives taskDir from the spec, so a
+// spec that names no path is exactly how these records occur in the wild (three
+// on the live board when this was written).
+function openedNoTaskDir(f, who = 'hand', body = 'build the widget\nno artifact path anywhere') {
+  f.state.autoTaskDir = false;   // the fixture's convenience stamp would erase the case under test
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who, id: null, body });
+  const t = f.one('t1');
+  assert.strictEqual(t.taskDir, undefined, 'ENTER: no taskDir was extracted, or this measures the ordinary dispatch');
+  return t;
+}
+
+test('t431: start refuses a ticket with no task dir', () => {
+  const f = mkStart();
+  openedNoTaskDir(f);
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.match(f.notes(), /ticket t1 has no task dir, so nothing was started/);
+  assert.match(f.notes(), /names no `tasks\/…` path on any line/, 'names the actual defect');
+  assert.match(f.notes(), /\[agent:task respec t1\]/, 'and the in-place fix — the ticket is open, so respec applies directly');
+});
+
+test('t431: the start refusal writes NOTHING — the record is byte-identical after it', () => {
+  const f = mkStart();
+  openedNoTaskDir(f);
+  const before = JSON.parse(JSON.stringify(f.one('t1')));
+  f.gated.length = 0; f.broadcasts.length = 0;
+  const seatsBefore = [...f.m.sessions.keys()].sort();
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+
+  // The WHOLE record, not a field: `startedAt`, `parked`, `role`, `assignee`,
+  // `lastActivityAt`, `nudgedAt` and `worktree` are each written by a different
+  // line of the dispatch, and a gate that lands between any two of them passes
+  // every single-field assertion while having already done half the job.
+  assert.deepStrictEqual(f.one('t1'), before, 'the ticket is exactly as it was found');
+  assert.deepStrictEqual(f.gated, [], 'no spec delivered');
+  assert.deepStrictEqual(f.broadcasts, [], 'and no board event — a refusal is not a dispatch');
+  assert.deepStrictEqual([...f.m.sessions.keys()].sort(), seatsBefore, 'no seat minted');
+});
+
+test('t431: assign refuses a ticket with no task dir', () => {
+  const f = mkStart();
+  openedNoTaskDir(f);
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'hand', body: '' });
+  assert.match(f.notes(), /ticket t1 has no task dir, so nothing was assigned/);
+  assert.match(f.notes(), /\[agent:task respec t1\]/);
+});
+
+test('t431: the assign refusal writes NOTHING either', () => {
+  const f = mkStart();
+  openedNoTaskDir(f);
+  const before = JSON.parse(JSON.stringify(f.one('t1')));
+  f.gated.length = 0; f.broadcasts.length = 0;
+  const seatsBefore = [...f.m.sessions.keys()].sort();
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'hand', body: '' });
+
+  assert.deepStrictEqual(f.one('t1'), before, 'the ticket is exactly as it was found');
+  assert.deepStrictEqual(f.gated, [], 'nothing delivered — and in particular no stand-down notice to a previous holder');
+  assert.deepStrictEqual(f.broadcasts, [], 'no board event');
+  assert.deepStrictEqual([...f.m.sessions.keys()].sort(), seatsBefore, 'no seat minted');
+});
+
+// The control. Without it both refusals above are satisfied by a gate that
+// refuses EVERY ticket, which would wedge the whole loop.
+test('t431: a ticket WITH a task dir still dispatches, through both verbs', () => {
+  const f = mkStart();
+  f.seat('lead'); f.seat('team-hand');
+  const spec = 'build the widget\ntasks/t1-widget/SPEC.md';
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: spec });
+  assert.strictEqual(f.one('t1').taskDir, 'tasks/t1-widget/SPEC.md', 'ENTER: the path was extracted');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', spec) }],
+    'start dispatches exactly as before');
+  assert.ok(f.one('t1').startedAt, 'and stamps the dispatch');
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: spec });
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't2', who: 'hand', body: '' });
+  assert.ok(f.gated.length >= 1, 'assign dispatches exactly as before');
+  assert.ok(f.one('t2').startedAt, 'and stamps it too');
+});
+
+// The gate belongs to the dispatch VERB, not to the shared delivery funnel:
+// `_deliverTicketSpec` also carries replays and redeliveries, and a ticket that
+// is already dispatched must keep being able to replay its spec to a respawned
+// seat. Gating the funnel would strand exactly the recovery a dead hand depends
+// on — this pins that it did not happen.
+test('t431: a dispatched task-dir-less ticket can still REPLAY to a respawned seat', () => {
+  const f = mkStart();
+  f.seat('lead');
+  const s = f.seat('team-hand', '/proj');
+  s.incarnation = 7;
+  f.state.autoTaskDir = false;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'legacy work, no path' });
+  // Dispatched BEFORE the gate existed — the state every pre-upgrade ticket on
+  // the board is in, and the one the verify-time backstop still exists for.
+  const ts = f.load();
+  ts[0].startedAt = Date.now(); ts[0].assignee = 'team-hand'; ts[0].role = 'hand';
+  f.tstore.save(f.team.root, ts);
+  assert.strictEqual(f.one('t1').taskDir, undefined, 'ENTER: still no task dir');
+  f.gated.length = 0;
+
+  assert.strictEqual(f.m._replayOpenTickets(s), true);
+  assert.deepStrictEqual(f.gated.map((g) => g.target), ['team-hand'],
+    'the replay still reaches the seat — the gate is on the dispatch verbs, not on the funnel');
 });

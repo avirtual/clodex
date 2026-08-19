@@ -293,7 +293,7 @@ async function assigned(world, who = 'hand') {
   const app = boot(world);
   const lead = await app.spawn('lead');
   await app.spawn('team-hand');
-  app.m._handleTask(lead, { type: 'task', sub: 'add', who, id: null, body: 'BUILD THE WIDGET\nstep one' });
+  app.m._handleTask(lead, { type: 'task', sub: 'add', who, id: null, body: 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nstep one' });
   // t308 moved dispatch out of `add`: writing the ticket and running it are two
   // steps now. The property under test is unchanged — a seat that received its
   // spec in THIS process, so a replay in the next one is distinguishable from a
@@ -458,7 +458,7 @@ test('a backlog ticket (no assignee) is replayed to nobody', async () => {
   const app1 = boot(world);
   const lead = await app1.spawn('lead');
   await app1.spawn('team-hand');
-  app1.m._handleTask(lead, { type: 'task', sub: 'add', who: null, id: null, body: 'BUILD THE WIDGET\nunowned' });
+  app1.m._handleTask(lead, { type: 'task', sub: 'add', who: null, id: null, body: 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nunowned' });
   assert.strictEqual(world.tickets().find((t) => t.id === 't1').assignee, null,
     'ENTER: backlog means assignee null');
   app1.stop();
@@ -756,7 +756,7 @@ test('replay re-pins an inherited ticket to the seat that actually received it',
   const app1 = boot(world);
   const lead = await app1.spawn('lead');
   await app1.spawn('team-hand-1');
-  app1.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+  app1.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nstep one' });
   // t308: the pin is made by the DISPATCH, so it needs the second step. The
   // ENTER was pinning "a live seat holds this ticket before the process dies" —
   // the dead pin the replay is supposed to inherit — and that is unchanged; an
@@ -794,7 +794,7 @@ test('two seats on one role: the spec goes once, to the seat that resolves', asy
   const lead = await app1.spawn('lead');
   await app1.spawn('team-hand-1');
   await app1.spawn('team-hand-2');
-  app1.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+  app1.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nstep one' });
   // t308: `role` is written by the dispatch, not by `add` — that asymmetry is
   // deliberate (it is how `start` knows a ticket has already been started), so
   // this ENTER now needs the second step. What it pins is untouched: the ticket
@@ -835,8 +835,8 @@ test('with two tickets open, a respawn delivers only the head', async () => {
   const app1 = boot(world);
   const lead = await app1.spawn('lead');
   await app1.spawn('team-hand');
-  app1.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nfirst' });
-  app1.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'PAINT THE SHED\nsecond' });
+  app1.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nfirst' });
+  app1.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'PAINT THE SHED\ntasks/shed/SPEC.md\nsecond' });
   // t308: replay delivers STARTED tickets only, so both need the dispatch step —
   // an added-but-unstarted ticket is deliberately invisible to it. What this test
   // pins is untouched: with two in the queue, a respawn hands over exactly one.
@@ -933,7 +933,7 @@ async function dispatched(world, opts = {}) {
   // the silence assertions below would then be reading another mechanism's bytes
   // and failing (or worse, passing) for a reason that has nothing to do with this.
   await replayPassed(app, 'team-hand');
-  app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+  app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nstep one' });
   app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   const got = await settled(app, 'team-hand');
   assert.match(got, /BUILD THE WIDGET/,
@@ -1082,7 +1082,7 @@ test('t349: a spec PARKED to a busy seat is not watched — consuming it produce
     // becomes a FILE. That is the designed path, not a failure.
     s.activityState = 'thinking';
     const before = app.seen('team-hand');
-    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nstep one' });
     app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
     await new Promise((r) => setTimeout(r, 60));
 
@@ -1123,7 +1123,7 @@ test('t349: a spec DIVERTED to a park at write time drops the latch it already a
     // watching for an edge that consumption will never produce.
     s.lastUserInputTs = Date.now();
     s.lastUserSubmitTs = 0;
-    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nstep one' });
     app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
     await new Promise((r) => setTimeout(r, 120));
 
@@ -1218,7 +1218,7 @@ test('t349: a spec HELD-PARKED behind a permission dialog does not arm the latch
     // dialog attached, never the hold-park.
     s.needsAttention = { kind: 'permission', ts: Date.now(), message: 'allow?' };
     const before = app.seen('team-hand');
-    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nstep one' });
     app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
     await new Promise((r) => setTimeout(r, 60));
 
@@ -1261,7 +1261,7 @@ test('t349: a seat that went busy while the unit waited in the gates does not ar
     const lead = await app.spawn('lead');
     const s = await app.spawn('team-hand');
     await replayPassed(app, 'team-hand');
-    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nstep one' });
     // Busy at WRITE time, idle at park-decision time. _armSpecConfirm runs inside
     // `produce`, so it reads the state here, not the one the disposition was chosen
     // under. The ordering is deterministic rather than raced: _handleTask is
@@ -1549,7 +1549,7 @@ test('t349: a throw inside the confirmation check is contained, not raised into 
     const lead = await app.spawn('lead');
     const s = await app.spawn('team-hand');
     await replayPassed(app, 'team-hand');
-    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nstep one' });
     app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
     await settled(app, 'team-hand');
     assert.ok(s._specUnconfirmed,
@@ -1922,7 +1922,7 @@ test('a reassignment inside the deferral window is not overwritten by the late s
   // process rather than about an earlier one's leftovers.
   const app1 = boot(world);
   const lead1 = await app1.spawn('lead');
-  app1.m._handleTask(lead1, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\nstep one' });
+  app1.m._handleTask(lead1, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nstep one' });
   app1.m._handleTask(lead1, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   const filed = world.tickets().find((t) => t.id === 't1');
   assert.strictEqual(filed.state, 'open', 'ENTER: minted open');
