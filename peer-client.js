@@ -50,6 +50,13 @@ function webHostKey(w) {
   return w ? `${w.port}:${w.tokenGated ? 1 : 0}` : '';
 }
 
+// Same sentinel rule for the box's wirescope (t443): a port that appeared,
+// vanished or moved must all read as an identity change, so the affordance
+// downstream is never rendered from a stale port.
+function wirescopeKey(w) {
+  return w ? String(w.port) : '';
+}
+
 // A wterm owner is a WINDOW, addressed by its workspace id. Normalized to a
 // string because the Set is compared against ids arriving from two unrelated
 // callers — an IPC sender's workspace and main.js's window hooks — and a Set
@@ -195,6 +202,7 @@ class PeerConnection {
       platform: this.hello ? this.hello.platform : null,
       srcDir: this.hello ? this.hello.srcDir : null,
       webHost: this.hello ? this.hello.webHost : null,
+      wirescope: this.hello ? this.hello.wirescope : null,
       sessions: this.sessions,
     };
   }
@@ -211,7 +219,16 @@ class PeerConnection {
         const webHost = (wh && Number.isInteger(wh.port) && wh.port > 0 && wh.port <= 65535)
           ? { port: wh.port, tokenGated: wh.tokenGated === true }
           : null;
-        const next = { host: body.host, version: body.version, caps: body.caps || [], platform: body.platform || null, srcDir: body.srcDir || null, webHost };
+        // Validated exactly like webHost, and null on anything short of a
+        // usable integer port — including a peer too old to send the field at
+        // all. That degrades to "no wirescope forward"; it must never degrade
+        // to a guessed 7800, which would forward at whatever happens to listen
+        // on the box's 7800 (or, unforwarded, at the VIEWER'S own).
+        const wr = body.wirescope;
+        const wirescope = (wr && Number.isInteger(wr.port) && wr.port > 0 && wr.port <= 65535)
+          ? { port: wr.port }
+          : null;
+        const next = { host: body.host, version: body.version, caps: body.caps || [], platform: body.platform || null, srcDir: body.srcDir || null, webHost, wirescope };
 // Edge-triggered identity check: an in-place Update restarts the box faster
 // than the hello cadence can observe an offline dip, so _setOnline sees no
 // transition and never emits — leaving a stale version in the renderer.
@@ -220,6 +237,7 @@ class PeerConnection {
           prev.platform !== next.platform ||
           prev.srcDir !== next.srcDir ||
           webHostKey(prev.webHost) !== webHostKey(next.webHost) ||
+          wirescopeKey(prev.wirescope) !== wirescopeKey(next.wirescope) ||
           (prev.caps || []).join(',') !== (next.caps || []).join(',');
         // A grant withdrawn on the far side already closes the streams with a
         // reason; noticing the cap vanish from hello covers the case where the

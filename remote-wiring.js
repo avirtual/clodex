@@ -39,6 +39,8 @@ function createRemoteWiring(deps) {
     // The browser frontend's host, or null when this host has none (t30). A
     // getter because web-host.js starts after the engine builds this wiring.
     getWebInfo,
+    // This box's wirescope, or null when it has none to forward to (t443).
+    getWirescopeInfo,
   } = deps;
 
   function syncRemoteServer() {
@@ -303,6 +305,7 @@ function createRemoteWiring(deps) {
         version: appVersion,
         srcDir: isPackaged() ? null : homeRelativize(__dirname, os.homedir()),
         getWebInfo: typeof getWebInfo === 'function' ? getWebInfo : () => null,
+        getWirescopeInfo: typeof getWirescopeInfo === 'function' ? getWirescopeInfo : () => null,
         getAttachInfo: (name) => {
           const sess = manager.sessions.get(name);
           if (!sess || sess._dead) return { ok: false };

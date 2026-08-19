@@ -364,3 +364,149 @@ test('a steady web host emits no spurious peer-state across ticks', async () => 
     assert.equal(states.length, settled, 'not one re-emission from an unchanged web host');
   });
 });
+
+// ── t443: the box's own wirescope, same contract, one field over ─────────────
+// A peer forwards to this port so the dashboard links inside the box's web page
+// resolve. Everything below is the webHost rule applied to it, and it is
+// re-asserted rather than assumed because the failure is WORSE here: an
+// unforwarded wirescope link resolves against the VIEWER'S own wirescope, which
+// is usually listening on the same default 7800 and answers with a foreign
+// session id. A wrong webHost port yields a dead tab; a wrong wirescope port
+// yields a confident lie.
+
+test('hello carries wirescope when the box reports one, and an honest null when it does not', async () => {
+  await withServer({ getWirescopeInfo: () => ({ port: 7800 }) }, async (port) => {
+    assert.deepStrictEqual((await hello(port)).json.wirescope, { port: 7800 });
+  });
+  // Present-and-null on a box that HAS the field, exactly like webHost: the
+  // consumer distinguishes "no wirescope here" from "too old to say", and both
+  // mean no forward.
+  for (const seam of [() => null, undefined]) {
+    await withServer(seam ? { getWirescopeInfo: seam } : {}, async (port) => {
+      const r = await hello(port);
+      assert.ok(Object.prototype.hasOwnProperty.call(r.json, 'wirescope'), 'the field is always present');
+      assert.strictEqual(r.json.wirescope, null);
+    });
+  }
+});
+
+test('a malformed, out-of-range or throwing wirescope seam degrades to null with hello intact', async () => {
+  const bad = [
+    { label: 'zero', info: { port: 0 } },
+    { label: 'negative', info: { port: -1 } },
+    { label: 'above the range', info: { port: 65536 } },
+    { label: 'non-integer', info: { port: 7800.5 } },
+    { label: 'numeric string', info: { port: '7800' } },
+    { label: 'NaN', info: { port: NaN } },
+    { label: 'missing port', info: {} },
+    { label: 'not an object', info: 7800 },
+  ];
+  for (const { label, info } of bad) {
+    await withServer({ getWirescopeInfo: () => info }, async (port) => {
+      const r = await hello(port);
+      assert.equal(r.status, 200, `${label}: hello still serves`);
+      assert.strictEqual(r.json.wirescope, null, `${label} → null`);
+    });
+  }
+  // Identity is load-bearing for every peer feature; a dashboard link is not
+  // worth taking it down for.
+  await withServer({ getWirescopeInfo: () => { throw new Error('supervisor exploded'); } }, async (port) => {
+    const r = await hello(port);
+    assert.equal(r.status, 200);
+    assert.strictEqual(r.json.wirescope, null);
+    assert.equal(r.json.host, 'testhost', 'identity still reported');
+  });
+  await withServer({ getWirescopeInfo: () => ({ port: 65535 }) }, async (port) => {
+    assert.deepStrictEqual((await hello(port)).json.wirescope, { port: 65535 }, '65535 is valid and not swept up');
+  });
+});
+
+test('the wirescope block carries EXACTLY a port — no token, no gate, no extras', async () => {
+  // Wirescope has no token of its own: the forward's reachability is the whole
+  // boundary. A box inventing a field must not have it pass through to a
+  // consumer, for the same reason webHost is stripped to two keys.
+  await withServer({ getWirescopeInfo: () => ({ port: 7800, token: 'leak', tokenGated: true, extra: 1 }) }, async (port) => {
+    const r = await hello(port);
+    assert.deepStrictEqual(Object.keys(r.json.wirescope), ['port']);
+    assert.doesNotMatch(r.text, /leak/, 'nothing the box added rides along');
+  });
+});
+
+test('a malformed wirescope from a raw box is normalized to null on the CONSUMER', async () => {
+  // The consumer talks to boxes it did not build, so its own guard is a separate
+  // claim from the producer's. `{ port: 7800 }` inside a junk wrapper is the
+  // interesting one: it is the value most likely to be waved through.
+  for (const bad of [{ port: 'x' }, { port: 0 }, { port: -1 }, { port: 70000 },
+                     { port: 7800.5 }, { port: '7800' }, {}, 'nope', 7800, []]) {
+    await withRawPeer(() => ({ wirescope: bad }), async ({ conn }) => {
+      await waitFor(() => conn.online, 'online');
+      assert.strictEqual(conn.status().wirescope, null, `${JSON.stringify(bad)} → null`);
+    });
+  }
+});
+
+test('a valid wirescope survives the consumer, stripped to exactly {port}', async () => {
+  await withRawPeer(() => ({ wirescope: { port: 7800, token: 'leak', extra: 1 } }), async ({ conn }) => {
+    await waitFor(() => conn.online && conn.status().wirescope, 'online with a wirescope');
+    assert.deepStrictEqual(conn.status().wirescope, { port: 7800 });
+  });
+});
+
+test('an OLD box that never heard of the field reports null — the guess that must not happen', async () => {
+  // THE assertion for the degrade rule. Every peer on the network predates this
+  // field, and the tempting default (7800, wirescope's own default) is exactly
+  // the value that resolves against the viewer's own dashboard.
+  await withRawPeer(() => ({}), async ({ conn }) => {
+    await waitFor(() => conn.online, 'online');
+    assert.strictEqual(conn.status().wirescope, null);
+  });
+});
+
+test('identityChanged: a wirescope appearing, moving or vanishing re-emits peer-state', async () => {
+  // Same stale-forward hazard as the web host: a consumer still forwarding to
+  // the old port tunnels to nothing, or to whatever took it.
+  let info = null;
+  const server = minimal({ getWirescopeInfo: () => info });
+  await server.start();
+  const states = [];
+  const conn = new PeerConnection({
+    id: 'ws', label: 'wswatch', url: `http://127.0.0.1:${server.port}`, selfLabel: 'consumer',
+    helloIntervalMs: 30,
+    emit: (channel, ...args) => { if (channel === 'peer-state') states.push(args[1]); },
+  });
+  conn.start();
+  try {
+    await waitFor(() => states.find((s) => s.online), 'initial online state');
+    for (const [next, pred, what] of [
+      [{ port: 7800 }, (s) => s.wirescope && s.wirescope.port === 7800, 'appearing'],
+      [{ port: 7801 }, (s) => s.wirescope && s.wirescope.port === 7801, 'moving'],
+      [null, (s) => s.online && s.wirescope === null, 'vanishing'],
+    ]) {
+      const before = states.length;
+      info = next;
+      const seen = await waitFor(() => states.slice(before).find(pred), `peer-state after ${what}`);
+      assert.equal(seen.online, true, `${what}: no offline dip — the box never went away`);
+    }
+  } finally { conn.stop(); server.stop(); }
+});
+
+test('a steady wirescope emits no spurious peer-state across ticks', async () => {
+  // identityChanged compares a KEY: a fresh { port } object every hello must not
+  // read as a change and spam the renderer.
+  const server = minimal({ getWirescopeInfo: () => ({ port: 7800 }) });
+  await server.start();
+  const states = [];
+  const conn = new PeerConnection({
+    id: 'ws2', label: 'wswatch2', url: `http://127.0.0.1:${server.port}`, selfLabel: 'consumer',
+    helloIntervalMs: 30,
+    emit: (channel, ...args) => { if (channel === 'peer-state') states.push(args[1]); },
+  });
+  conn.start();
+  try {
+    await waitFor(() => conn.online && conn.status().wirescope, 'online with a wirescope');
+    await new Promise((r) => setTimeout(r, 60));
+    const settled = states.length;
+    await new Promise((r) => setTimeout(r, 200)); // ~6 more hello ticks
+    assert.equal(states.length, settled, 'not one re-emission from an unchanged wirescope');
+  } finally { conn.stop(); server.stop(); }
+});

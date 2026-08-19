@@ -7404,6 +7404,13 @@ body {
       var PARAMS = new URLSearchParams(location.search);
       var TOKEN = PARAMS.get("token") || null;
       var WORKSPACE = PARAMS.get("workspace") || "default";
+      var WIRESCOPE_PORT = (() => {
+        const raw = PARAMS.get("wirescope") || "";
+        if (!/^\d{1,5}$/.test(raw)) return null;
+        const n = Number(raw);
+        return n > 0 && n <= 65535 ? n : null;
+      })();
+      var WIRESCOPE_LOCAL_BASE = WIRESCOPE_PORT ? `http://127.0.0.1:${WIRESCOPE_PORT}` : "";
       var ws = null;
       var socketOpen = false;
       var everWelcomed = false;
@@ -7474,10 +7481,13 @@ body {
       function unreachableProxyUrl(url, proxyBase, publicBase) {
         return !publicBase && matchesProxyOrigin(url, proxyBase);
       }
+      function wirescopeBase(info) {
+        return WIRESCOPE_LOCAL_BASE || info && info.wirescopePublicBase || "";
+      }
       function dispatchEvent(channel, args) {
         if (channel === "open-external") {
           const proxyBase = welcomeInfo && welcomeInfo.proxyBase;
-          const publicBase = welcomeInfo && welcomeInfo.wirescopePublicBase;
+          const publicBase = wirescopeBase(welcomeInfo);
           if (unreachableProxyUrl(args[0], proxyBase, publicBase)) {
             toast("The wirescope dashboard runs on the box's loopback \u2014 this browser has no route to it.");
             return;
@@ -7851,7 +7861,7 @@ body {
       function appVersion() {
         return welcomeInfo && welcomeInfo.appVersion || null;
       }
-      module.exports = { start, emit, toast, invoke, rewriteExternalUrl, unreachableProxyUrl, appVersion };
+      module.exports = { start, emit, toast, invoke, rewriteExternalUrl, unreachableProxyUrl, wirescopeBase, appVersion };
     }
   });
 

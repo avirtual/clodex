@@ -1434,6 +1434,9 @@ const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
   appVersion,
   isPackaged,
   getWebInfo,
+  // Read per hello, so a peer sees the gate change (proxy disabled, port moved,
+  // CLODEX_WIRESCOPE=off) without the box restarting.
+  getWirescopeInfo: () => wirescope.localReach(),
 });
 
 
@@ -1445,6 +1448,7 @@ const { createPeerWiring } = require('./peer-wiring');
 const {
   forgetPeerAttached, forgetPeerControlled, rememberPeerControlled,
   syncPeerManager, resolvePeerUrls, openPeerWeb, closePeerWeb,
+  stopPeerWirescopeTunnels,
 } = createPeerWiring({
   manager, log, SELF_LABEL, scheduleAppMenuRefresh,
   getUiSettings: () => uiSettings,
@@ -1924,6 +1928,7 @@ const toolCache = createToolCache({ whichBin });
     if (peerManager) { try { peerManager.stopAll(); } catch {} peerManager = null; }
     if (tunnelManager) { try { tunnelManager.stopAll(); } catch {} tunnelManager = null; }
     if (webTunnelManager) { try { webTunnelManager.stopAll(); } catch {} webTunnelManager = null; }
+    try { stopPeerWirescopeTunnels(); } catch {}
     // The REPL's warm transport may be an ssh/tunnel CHILD process; without this
     // a quit leaves it orphaned holding a local port.
     if (ctlService) { try { ctlService.dispose(); } catch {} }

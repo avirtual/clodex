@@ -172,6 +172,23 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       } catch { return false; }
     }
 
+    // The loopback port a PEER could forward to, or null when this box has no
+    // wirescope to reach (t443). SYNCHRONOUS and unprobed on purpose: its only
+    // caller is the peering hello, which answers on the request thread and must
+    // not wait on a python process — status() is the probing one and is async
+    // for exactly that reason.
+    //
+    // Gated on autoStartWanted() rather than on the port alone: `wirescopePort`
+    // is a settings value that survives CLODEX_WIRESCOPE=off and a proxy pointed
+    // somewhere else, so advertising it unconditionally would tell a peer to
+    // forward to a port nothing listens on. That is the guess this ticket
+    // exists to prevent, one layer earlier.
+    localReach() {
+      if (!this.autoStartWanted()) return null;
+      const port = getUiSettings().get().wirescopePort || 7800;
+      return Number.isInteger(port) && port > 0 && port <= 65535 ? { port } : null;
+    }
+
     async status() {
       const s = getUiSettings().get();
       const port = s.wirescopePort || 7800;

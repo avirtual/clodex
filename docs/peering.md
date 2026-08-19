@@ -34,7 +34,7 @@ disk is the source of truth — SSE signals "changed", clients refetch.
 
 Endpoints: phone page (`/`), `GET /api/sessions|transcript/:name|events`
 (global SSE), `GET /api/peer/hello` (identity + caps + `dmOrigins` +
-`srcDir`), `GET /api/attach/:name` (per-session SSE: b64 scrollback replay
+`srcDir` + `webHost` + `wirescope`), `GET /api/attach/:name` (per-session SSE: b64 scrollback replay
 + telemetry seed), `POST /api/control|input|resize/:name` (input+resize
 token-gated; resize clamped), `POST /api/query/:name` (pull-on-demand
 popover data; kind whitelist lives in the injected callback),
@@ -113,6 +113,67 @@ forward, the manager decides which forwards should exist. While a tunnel is
 down the peer keeps a dead-placeholder URL
 (`http://127.0.0.1:1`) so the connection object and sidebar presence stay
 alive-but-offline.
+
+### 2a. Web view + the wirescope forward (t30b, t443)
+
+Two hello fields advertise loopback services a consumer may FORWARD to, both
+validate-or-null and both refusing rather than guessing (t30a): `webHost`
+(`{port, tokenGated}` — the browser frontend; `tokenGated` says a token is
+required and never what it is) and `wirescope` (`{port}` — the box's own wire
+dashboard, gated on `WirescopeSupervisor.localReach()` so a box with the proxy
+off or `CLODEX_WIRESCOPE=off` advertises nothing). A peer too old to send
+either degrades to "no forward" — never to a default port.
+
+`openPeerWeb` (peer-wiring.js) raises **two** forwards through the same
+`web-tunnel.js` policy (pinned local port, TCP-accept probe, give-up cap):
+the web view, and a companion one to the box's wirescope.
+
+The companion exists because the page is served BY the box, so its dashboard
+links are built against the box's loopback wirescope. Unforwarded, the
+operator's browser resolves them against ITSELF — where a local wirescope is
+usually listening on the same default 7800 — and shows them their own dashboard
+under a foreign session id. Confidently wrong, not visibly broken.
+
+Rules, in order of what breaks if they go:
+
+- **Subordinate.** It is raised with the web view and torn down with it, and it
+  may never be the reason the web view fails: no wirescope on the box is a
+  normal quiet case (the frontend opens with no dashboard link), and every call
+  into it is wrapped.
+- **Torn down on the web view's TERMINAL states too**, not only on
+  `closePeerWeb`. A web tunnel that reaches `gave-up` has no caller behind it and
+  the affordance renders `action: 'open'` at that state — so there is no close
+  button left, and a companion that ignored it would keep republishing the box's
+  unauthenticated wirescope on this machine's loopback for the life of the
+  process. `down` is deliberately not terminal: it is one respawn from `up`, both
+  ports are pinned, and only a fresh ↗ click re-raises the companion, so tearing
+  it down on a blip would cost the link permanently.
+- **Separate supervisor** from the web view's. The web manager's state is
+  broadcast on `peer-web-tunnel`, which the renderer reads as the ↗ button's
+  phase; a second tunnel emitting there under the same peer id would drive the
+  button from the wrong forward.
+- **Raised first**, because the browser pop reads its pinned local port when it
+  composes the page URL, and a port picked after the pop is one the tab never
+  learns.
+- **Not raised for a token-gated box.** No pop means no URL is composed, so the
+  forward would have no consumer — and t30b's decision stays where it is rather
+  than being re-derived.
+
+The local port reaches the page as `?wirescope=<port>`, the only channel into a
+tab the box served. A PORT, not a base: `api-shim.js` composes `127.0.0.1:<port>`
+from it, so a crafted value cannot re-point dashboard links at another origin.
+That local base **wins over** the welcome frame's `wirescopePublicBase` — the
+box's own idea of where it is publicly reachable is by construction not
+reachable from a viewer on the far side of a tunnel.
+
+`wirescopeBase()` is the SINGLE reader of that welcome field, and the base it
+returns feeds BOTH t442's reachability gate (`unreachableProxyUrl`, which
+suppresses a dashboard link with no base to rewrite to) and the rewrite itself.
+That is not tidiness: if the gate read the raw welcome field while the rewrite
+read the forward, a live forward would still be judged unreachable and
+suppressed — the two tickets would cancel out, silently, in the one state they
+were both built for. A source-level test in `test/api-shim.test.js` pins the
+single-reader rule.
 
 ## 4. Settings reconciliation (peer-wiring.js)
 
@@ -213,6 +274,9 @@ create/kill/restart now ride the `create` cap over the wire.
 - Split request/SSE socket pools (regression test pins this).
 - `peer-removed` fires on URL/label edits too — consumers must shed tabs.
 - Disabled ≠ removed: syncs exclude, prune keeps, sheds are soft.
+- A forwardable port is ADVERTISED or absent, never guessed — and the wirescope
+  forward is subordinate to the web view it decorates: it may cost the dashboard
+  link and nothing else.
 - Restore sweep is one-shot per name.
 - Control auto-releases on last-detach; re-take rides replay, not a loop.
 - A wterm want is owned by a window and dies with it (both edges: navigation
