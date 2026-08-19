@@ -1,7 +1,7 @@
 # Tickets
 
 The team ticket board — the tickets opened with `[agent:task add]`, as a
-surface you can look at instead of a listing you have to ask an agent for.
+surface you can work in instead of a listing you have to ask an agent for.
 Opens from the "Tickets" button in the sidebar footer, the only surface it
 adds. Teams on the left with their open counts, the selected team's board on
 the right.
@@ -9,18 +9,36 @@ the right.
 Each open ticket shows its id, title, assignee, how long it has been open, how
 long it has been quiet, and the `tasks/…` directory its spec lives in.
 
-## Read-only, on purpose
+## What it writes, and what it deliberately does not
 
-There is no close button, no assign, no reject and no cancel. Not an
-unfinished version of a board that will have them: `[agent:task …]` does more
-than edit `tickets.json` — it delivers the spec to the assignee, tells the old
-seat when a ticket moves, hands a seat its next ticket when it closes one, and
-resets the stall clock. A button here that wrote the file would skip all of
-that and leave the registry disagreeing with the seats.
+Opens, edits a spec, assigns, closes and cancels. There is no `reject`, no
+`start` and no `respec` — the loop verbs stay with `[agent:task …]`, because
+they move a ticket through a state machine this surface does not drive.
 
-Tickets are also not a `host.library` kind, so the one mutation the plugin API
-offers (`host.library.remove`) refuses them. That refusal is the design, not a
-gap to route around.
+The write half is **desktop-only**, and the mechanism is that it is absent from
+`manifest.json`'s `surfaces`: a board reachable from a browser would be a board
+a browser can close tickets on. Adding a write verb there is the mistake this
+omission prevents.
+
+A write here is the operator's own edit of the board, **not an impersonation of
+the intent path**, and that is a capability boundary rather than a taste
+judgement: `[agent:task …]` also drains the closed seat's queue, rebuilds the
+sidebar's ticket badges, writes `COST.json` and enforces the lead-only gates,
+and the host surface exposes no seam a plugin could reach any of them through.
+Records carry `viewer` as their opener or `closedBy` so the registry never
+misattributes one to an agent.
+
+Spec DELIVERY is the one side effect that IS reachable, and it is done:
+`add`-with-an-assignee and `assign` both inject the spec into the live seat and
+stamp the ticket started, because an assignment nobody is told about is the one
+failure that looks like success.
+
+Both dispatching verbs refuse a ticket whose spec names no `tasks/…` path,
+matching core — the review step would have nowhere to write its diff. The
+refusal changes nothing on disk and says how to fix it.
+
+`host.library.remove` still refuses tickets, since they are not a `host.library`
+kind. That refusal is the design, not a gap to route around.
 
 ## Stalled work
 
