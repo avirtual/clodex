@@ -7451,26 +7451,38 @@ body {
           frameSend({ t: "invoke", id, channel, args });
         }));
       }
-      function rewriteExternalUrl(url, proxyBase, publicBase) {
-        if (!url || !proxyBase || !publicBase) return url;
-        let origin;
+      function matchesProxyOrigin(url, proxyBase) {
+        if (!url || !proxyBase) return false;
+        let origin, proxyOrigin;
         try {
           origin = new URL(url).origin;
         } catch {
-          return url;
+          return false;
         }
-        let proxyOrigin;
         try {
           proxyOrigin = new URL(proxyBase).origin;
         } catch {
-          return url;
+          return false;
         }
-        if (origin !== proxyOrigin) return url;
+        return origin === proxyOrigin;
+      }
+      function rewriteExternalUrl(url, proxyBase, publicBase) {
+        if (!publicBase || !matchesProxyOrigin(url, proxyBase)) return url;
+        const origin = new URL(url).origin;
         return publicBase.replace(/\/+$/, "") + url.slice(origin.length);
+      }
+      function unreachableProxyUrl(url, proxyBase, publicBase) {
+        return !publicBase && matchesProxyOrigin(url, proxyBase);
       }
       function dispatchEvent(channel, args) {
         if (channel === "open-external") {
-          const url = rewriteExternalUrl(args[0], welcomeInfo && welcomeInfo.proxyBase, welcomeInfo && welcomeInfo.wirescopePublicBase);
+          const proxyBase = welcomeInfo && welcomeInfo.proxyBase;
+          const publicBase = welcomeInfo && welcomeInfo.wirescopePublicBase;
+          if (unreachableProxyUrl(args[0], proxyBase, publicBase)) {
+            toast("The wirescope dashboard runs on the box's loopback \u2014 this browser has no route to it.");
+            return;
+          }
+          const url = rewriteExternalUrl(args[0], proxyBase, publicBase);
           try {
             window.open(url, "_blank", "noopener,noreferrer");
           } catch {
@@ -7839,7 +7851,7 @@ body {
       function appVersion() {
         return welcomeInfo && welcomeInfo.appVersion || null;
       }
-      module.exports = { start, emit, toast, invoke, rewriteExternalUrl, appVersion };
+      module.exports = { start, emit, toast, invoke, rewriteExternalUrl, unreachableProxyUrl, appVersion };
     }
   });
 

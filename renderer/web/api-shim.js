@@ -75,6 +75,17 @@ function invoke(channel, args) {
   }));
 }
 
+// Does this url resolve against the engine's LOOPBACK proxyBase? The origin rule
+// lives here alone: both the rewrite and the reachability gate below key on it,
+// and a second copy would let them disagree about which urls are the box's.
+function matchesProxyOrigin(url, proxyBase) {
+  if (!url || !proxyBase) return false;
+  let origin, proxyOrigin;
+  try { origin = new URL(url).origin; } catch { return false; }
+  try { proxyOrigin = new URL(proxyBase).origin; } catch { return false; }
+  return origin === proxyOrigin;
+}
+
 // Rewrite a wirescope/proxy dashboard url so it resolves FROM THE BROWSER. The
 // renderer builds those links against the engine's loopback proxyBase
 // (127.0.0.1:<port>), which the browser can't reach; the container publishes
@@ -83,19 +94,32 @@ function invoke(channel, args) {
 // the path/query/hash. Anything else (github links, a blank publicBase, an
 // unparseable url) passes through untouched. Pure + exported for unit testing.
 function rewriteExternalUrl(url, proxyBase, publicBase) {
-  if (!url || !proxyBase || !publicBase) return url;
-  let origin;
-  try { origin = new URL(url).origin; } catch { return url; }
-  let proxyOrigin;
-  try { proxyOrigin = new URL(proxyBase).origin; } catch { return url; }
-  if (origin !== proxyOrigin) return url;
+  if (!publicBase || !matchesProxyOrigin(url, proxyBase)) return url;
+  const origin = new URL(url).origin;
   return publicBase.replace(/\/+$/, '') + url.slice(origin.length);
+}
+
+// A proxyBase-origin url with NO publicBase to rewrite it to must not be opened.
+// It would resolve against the VIEWER's own machine, where a local wirescope is
+// usually listening on the very same port — so the operator gets their own
+// dashboard rendering a foreign sessionId: confidently wrong, not visibly broken.
+// Only the ssh installer leaves the public base unset, so this is the common case
+// there. Keyed on origin-match AND empty publicBase — never on publicBase alone,
+// which would swallow every github/release link too. Pure + exported for testing.
+function unreachableProxyUrl(url, proxyBase, publicBase) {
+  return !publicBase && matchesProxyOrigin(url, proxyBase);
 }
 
 // ── synthetic host channels + local event fan-out.
 function dispatchEvent(channel, args) {
   if (channel === 'open-external') {
-    const url = rewriteExternalUrl(args[0], welcomeInfo && welcomeInfo.proxyBase, welcomeInfo && welcomeInfo.wirescopePublicBase);
+    const proxyBase = welcomeInfo && welcomeInfo.proxyBase;
+    const publicBase = welcomeInfo && welcomeInfo.wirescopePublicBase;
+    if (unreachableProxyUrl(args[0], proxyBase, publicBase)) {
+      toast("The wirescope dashboard runs on the box's loopback — this browser has no route to it.");
+      return;
+    }
+    const url = rewriteExternalUrl(args[0], proxyBase, publicBase);
     try { window.open(url, '_blank', 'noopener,noreferrer'); } catch { /* popup blocked */ } return;
   }
   if (channel === 'open-path') { toast(`Can't open on this machine from the browser: ${args[0]}`); return; }
@@ -426,4 +450,4 @@ function emit(channel, ...args) { dispatchEvent(channel, args); }
 // answer would come from the very bundle whose freshness is in question.
 function appVersion() { return (welcomeInfo && welcomeInfo.appVersion) || null; }
 
-module.exports = { start, emit, toast, invoke, rewriteExternalUrl, appVersion };
+module.exports = { start, emit, toast, invoke, rewriteExternalUrl, unreachableProxyUrl, appVersion };

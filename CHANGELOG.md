@@ -24,6 +24,16 @@ blocks a release.
   the case it gets used for — another round on an already-reviewed ticket. The
   loop's own reviewer is unaffected.
 
+- Viewing a box's Clodex in a browser no longer offers a wirescope link that
+  silently lands on the WRONG machine. The dashboard link is built against the
+  box's own loopback address, and unless the box publishes a reachable wirescope
+  URL the browser resolved it against the VIEWER's machine instead — where a
+  local wirescope is usually listening on the very same port, so it opened and
+  rendered a foreign session id: confidently wrong rather than visibly broken.
+  Boxes installed over ssh never publish that URL, so this was the normal case
+  there. Such a link is now suppressed with a short explanation instead of
+  opened. Every other link (GitHub, release notes) is unaffected.
+
 ## 5.13.0 — 2026-08-19 — the ticket loop stops losing work to its own machinery
 
 - The suite lock no longer costs a merge or eats a report. Two things shared one
