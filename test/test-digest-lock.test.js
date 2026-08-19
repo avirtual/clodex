@@ -228,8 +228,8 @@ test('lock: the exec ceiling clears a WHOLE run plus a whole lock wait, with roo
   // wrapper's stderr, is never delivered.
   //
   // So the floor asserted here is a whole run PLUS a whole lock wait, times a
-  // growth factor. At 420000ms the def tolerates roughly 4x today's wall time
-  // (~74s -> ~390s) before it can trip again, i.e. the suite quadrupling at
+  // growth factor. At 420000ms the def tolerates roughly 5x today's wall time
+  // (~74s -> ~390s) before it can trip again, i.e. the suite quintupling at
   // today's cost per test. A ceiling chosen to just clear today's number trips
   // again within weeks, because the suite grows monotonically.
   const MEASURED_WALL_MS = 74000;

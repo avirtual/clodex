@@ -9471,8 +9471,11 @@ test('_handleExecIntent: a TIMEOUT is told apart from a failure, in seconds and 
     + 'lock-taking command queues a second run behind the first');
   // Seconds AND ms. The ceiling is chosen against wall-clock budgets, and
   // "420000ms" is not a duration a reader parses at a glance.
-  assert.match(body, /\b0s\b/, 'the wait is given in seconds');
-  assert.match(body, /150ms/, 'and the exact configured ceiling is still there to match against the def');
+  // 150ms is below the seconds threshold, so the ceiling is given in ms ALONE.
+  // The refutation is the point: rounding a sub-second ceiling would print `0s`,
+  // and a subject that asserted that zero would pass on the degenerate render.
+  assert.doesNotMatch(body, /\b0s\b/, 'a sub-second ceiling is never rendered as a rounded-down zero');
+  assert.match(body, /150ms/, 'the exact configured ceiling is there to match against the def');
 });
 
 test('_handleExecIntent: a nonzero exit is NOT dressed up as a timeout', async () => {

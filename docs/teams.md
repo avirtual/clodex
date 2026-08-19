@@ -130,6 +130,12 @@ and it is how the seat decides to reach for your command instead of assembling
 the equivalent shell line itself. See `docs/exec-tools.md` for the payload
 schema vocabulary.
 
+`timeoutMs` above is a placeholder, not a recommendation. A command that runs a
+whole test suite needs far more than two minutes — the shipped
+`clodex-run-tests` sits at seven — and the failure it prevents is not the one it
+looks like: the wrapper is killed at the ceiling while the work carries on, so a
+run that SUCCEEDED loses its report and keeps holding whatever lock it took.
+
 ### 3. The merge gate wants `scripts/run-tests.js`
 
 Before a closed ticket reaches a reviewer, the loop runs the branch's own test
@@ -162,6 +168,27 @@ lap for a judgement call. Nothing rejects work for the absence of tests.
 > declare that the team has none — is designed but **not built**. Do not write
 > `verify` into a manifest yet; nothing reads it. Until it lands, the runner
 > path above is the whole story.
+
+**The suite runs under a box-wide lock, and that is deliberate.** Two suite runs
+on one machine can rewrite files under each other, so `scripts/test-digest.sh`
+locks at the team ROOT even when it is measuring a worktree. The consequence is
+worth stating plainly, because it looks like a bug the first time it bites: a
+hand verifying its own branch holds the lock for the whole run, so an unrelated
+ticket's merge can arrive to find the tree busy.
+
+That collision is transient and the loop treats it as such — it waits and
+retries, up to ten times and never more than ten minutes, then escalates with a
+manual `git merge --no-ff` command. It does not hold the merge queue while it
+waits: other tickets merge past a waiting one. Only this one refusal retries; a
+dirty tree, a moved branch and a red suite still stop on the first try, because
+each of those is a state a human has to look at.
+
+The rule that follows, for anyone reading a refusal: **a lock collision is not a
+wedge, and a lock is never cleared by hand.** A refusal names the pid holding
+the lock, but a pid file lags its real holder — the printed pid can be dead
+while a different live run holds the lock. Check `ps` for a live runner before
+concluding anything. Deleting a valid lock deadlocks the two runs it was
+protecting.
 
 ### 4. Project knowledge — the one file you are expected to write
 

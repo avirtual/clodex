@@ -4374,7 +4374,13 @@ function createSessionManager(deps) {
           // The "may still be running" clause is the load-bearing half: without
           // it the natural next move is to re-fire the command, which for a
           // lock-taking one queues a second run behind the first.
-          finish(() => fail(`TIMED OUT after ${Math.round(timeoutMs / 1000)}s (${timeoutMs}ms) — no result was returned. `
+          // Seconds are omitted below 1s rather than rounded: Math.round would
+          // render a sub-second ceiling as `0s`, and a stated zero reads as a
+          // bug in the reporter rather than as the configured ceiling.
+          const ceiling = timeoutMs >= 1000
+            ? `${Math.round(timeoutMs / 1000)}s (${timeoutMs}ms)`
+            : `${timeoutMs}ms`;
+          finish(() => fail(`TIMED OUT after ${ceiling} — no result was returned. `
             + 'This is not a failure report: the command was killed at its ceiling, so it may have '
             + 'succeeded and lost only its output, and any work it started may still be running.'));
         }, timeoutMs);
