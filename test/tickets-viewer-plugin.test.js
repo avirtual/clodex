@@ -1404,12 +1404,21 @@ test('tickets-viewer: add REFUSES a task-dir-less ticket WITH an assignee, writi
       [{ project: key, spec: 'do the thing', assignee: 'hand-1' }], 'desktop');
 
     assert.equal(res.ok, false, 'the add is refused');
-    // The id in the sentence is the one the ticket WOULD have taken. It is the
-    // only id the refusal can name, and naming none would leave the respec
-    // instruction unusable.
-    assert.match(res.error, /^ticket t2 has no task dir, so nothing was assigned/);
-    assert.match(res.error, /\[agent:task respec t2\]/,
-      'and names the fix — a refusal the lead cannot act on is worse than the gap');
+    assert.match(res.error, /^nothing was filed — the spec names no `tasks\/…` path/);
+    assert.match(res.error, /file it again/,
+      'and names the fix — a refusal the operator cannot act on is worse than the gap');
+
+    // The regression this pins is INVISIBLE until someone acts on it. The
+    // shared refusal sentence names the ticket id and offers `respec`, and both
+    // are wrong here: the id was minted before the gate but never filed, so
+    // `nextTicketId` hands that same id to the NEXT real add — an operator
+    // following `respec t2` would edit unrelated work. Asserted as "no t<N>
+    // anywhere" rather than "not t2", because any id in this sentence is the
+    // bug, whatever the board's numbering happens to make it.
+    assert.doesNotMatch(res.error, /\bt\d+\b/,
+      'the refusal names NO ticket id: nothing was filed, so every id it could name belongs to other work');
+    assert.doesNotMatch(res.error, /respec/,
+      'and offers no respec: there is nothing on the board to respec');
 
     // The gate must sit INSIDE the mutate callback. Placed after it, the handler
     // returns this exact string having already pushed the new record onto the

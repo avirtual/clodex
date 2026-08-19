@@ -914,12 +914,24 @@ function add(payload) {
     // `reSend` is false rather than mapped: a ticket being CREATED owns no
     // worktree, so there is no redelivery this could be. The solo mapping is
     // assign's, and narrower than core's for the reason its comment gives.
+    //
+    // The shared predicate makes the DECISION; its sentence is not used here.
+    // That sentence names the ticket id and offers `respec`, both of which are
+    // wrong on a creation path: the id above was minted but never filed, so
+    // `nextTicketId` hands the SAME id to the next real add, and an operator
+    // following a `respec t2` would edit unrelated work. There is also nothing
+    // to respec — the point of the refusal is that nothing was written. The
+    // recovery here is to retype the spec, which the operator still has.
     if (who && !taskDir) {
-      const refusal = ticketTaskDirRefusal(
+      const refuses = !!ticketTaskDirRefusal(
         teamIndex().get(str(project)) ? {} : { solo: true }, ticket, 'assign', false);
       // Refused from INSIDE the callback, so mutateBoard returns before the
       // save: the ticket is not on the board and `tickets` is discarded unwritten.
-      if (refusal) return { error: refusal };
+      if (refuses) {
+        return { error: 'nothing was filed — the spec names no `tasks/…` path on any line, '
+          + 'and the review step has nowhere to write its diff. Nothing was changed. '
+          + "Fix: add the artifact dir to the spec's first line and file it again." };
+      }
     }
     tickets.push(ticket);
     return { result: { id: ticket.id, ticket } };
