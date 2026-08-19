@@ -30,9 +30,15 @@ const WORKSPACE = PARAMS.get('workspace') || 'default';
 // base: the forward is on the viewer's loopback by construction, so this can
 // only ever compose a 127.0.0.1 origin — a crafted value cannot re-point
 // dashboard links somewhere else.
+// Digits-only, then range: parseInt alone TRUNCATES rather than rejecting, so
+// `80.5` arrives as 80 and `7800abc` as 7800 — a malformed param silently
+// becoming a different, plausible port is the one way a value we refuse to
+// trust could still be used.
 const WIRESCOPE_PORT = (() => {
-  const n = parseInt(PARAMS.get('wirescope') || '', 10);
-  return Number.isInteger(n) && n > 0 && n <= 65535 ? n : null;
+  const raw = PARAMS.get('wirescope') || '';
+  if (!/^\d{1,5}$/.test(raw)) return null;
+  const n = Number(raw);
+  return n > 0 && n <= 65535 ? n : null;
 })();
 const WIRESCOPE_LOCAL_BASE = WIRESCOPE_PORT ? `http://127.0.0.1:${WIRESCOPE_PORT}` : '';
 

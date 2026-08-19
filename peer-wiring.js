@@ -280,16 +280,21 @@ function createPeerWiring(deps) {
     // No field in the hello (a peer too old to send it) and an explicit null
     // (wirescope off on the box) are the SAME answer here: no forward. The port
     // is never defaulted to 7800 — see peer-client's normalization.
-    if (!wirescope || !Number.isInteger(wirescope.port)) return null;
+    //
+    // Re-validated in full rather than trusting that normalization: this is the
+    // side that SPENDS the value, and `Number.isInteger` alone admits 0 and
+    // 70000, which reach the supervisor as a forward nothing can serve.
+    const port = wirescope && wirescope.port;
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
     try {
       const res = ensureWirescopeTunnelManager().open({
-        id: key, sshHost: dest.sshHost, remotePort: wirescope.port,
+        id: key, sshHost: dest.sshHost, remotePort: port,
         ...(dest.cloud ? { [dest.cloud.kind]: dest.cloud.block } : {}),
       });
       if (!res || !res.ok) return null;
-      const port = wirescopeLocalPort(key);
-      if (port) log.info('peer', `wirescope forward for ${key}: 127.0.0.1:${port} → ${wirescope.port}`);
-      return port;
+      const local = wirescopeLocalPort(key);
+      if (local) log.info('peer', `wirescope forward for ${key}: 127.0.0.1:${local} → ${port}`);
+      return local;
     } catch (e) {
       log.info('peer', `wirescope forward for ${key} not raised: ${e.message}`);
       return null;
@@ -303,11 +308,17 @@ function createPeerWiring(deps) {
   // tab holding it starts working the moment the forward does. The failure this
   // trades for is a link at a dead port on our OWN loopback: visibly broken,
   // never a confidently-wrong dashboard.
+  //
+  // Wrapped like every other call into this forward: it runs on the pop path,
+  // where a throw would cost the operator the browser window they asked for —
+  // the one failure mode subordination exists to rule out.
   function wirescopeLocalPort(id) {
     if (!wirescopeTunnelManager) return null;
-    const st = wirescopeTunnelManager.statusFor(String(id));
-    const port = st && st.localPort;
-    return Number.isInteger(port) && port > 0 ? port : null;
+    try {
+      const st = wirescopeTunnelManager.statusFor(String(id));
+      const port = st && st.localPort;
+      return Number.isInteger(port) && port > 0 ? port : null;
+    } catch { return null; }
   }
 
   function closePeerWirescope(id) {

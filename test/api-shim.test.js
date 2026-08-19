@@ -219,6 +219,98 @@ test('open-external event rewrites a proxyBase dashboard url to the published ba
   } finally { restore(); }
 });
 
+// ── t443: ?wirescope= — a LOCAL forward beats the box's own public base ──────
+// When the viewer's Clodex opens this page through a peer web tunnel it also
+// forwards the box's wirescope, and puts that local port on the page URL. That
+// is the only channel into a tab the BOX served.
+
+test('wirescopeBase: a ?wirescope= port wins over the welcome frame`s public base', () => {
+  // Precedence, not merely presence: `wirescopePublicBase` is the BOX'S idea of
+  // where it is publicly reachable, which is by construction not reachable from
+  // a viewer on the far side of a tunnel — it is set for a browser on the box's
+  // own host. The local forward is a port on THIS machine raised for THIS page,
+  // so it is the only candidate known to resolve here.
+  const { shim, restore } = loadShim({ search: '?workspace=w1&wirescope=45501' });
+  try {
+    assert.equal(shim.wirescopeBase({ wirescopePublicBase: 'http://localhost:7811' }),
+      'http://127.0.0.1:45501', 'the local forward wins');
+    assert.equal(shim.wirescopeBase({}), 'http://127.0.0.1:45501', 'and stands alone when the box offers nothing');
+  } finally { restore(); }
+});
+
+test('wirescopeBase: with no param the box`s public base is still used — the compose case is untouched', () => {
+  // The container flavor publishes wirescope on a host port and advertises it.
+  // This ticket must not regress a viewer on the box's own host.
+  const { shim, restore } = loadShim({ search: '?workspace=w1' });
+  try {
+    assert.equal(shim.wirescopeBase({ wirescopePublicBase: 'http://localhost:7811' }), 'http://localhost:7811');
+    assert.equal(shim.wirescopeBase({}), '', 'and with neither, no base at all → rewriteExternalUrl passes through');
+    assert.equal(shim.wirescopeBase(null), '', 'a welcome frame that never arrived is not a crash');
+  } finally { restore(); }
+});
+
+test('SECURITY-adjacent: the param is a PORT, so it can only ever compose a 127.0.0.1 origin', () => {
+  // The value reaches the page through a URL, which anything can write. Reading
+  // it as a base would let a crafted link re-point every dashboard jump-out at
+  // an arbitrary origin; reading it as a port bounds the damage to a loopback
+  // port on the viewer's own machine. Each case below must fall back to the
+  // box's base rather than being believed.
+  for (const bad of ['http://evil.example', '0', '-1', '65536', '80.5', 'abc', '', '7800abc']) {
+    const { shim, restore } = loadShim({ search: `?wirescope=${encodeURIComponent(bad)}` });
+    try {
+      assert.equal(shim.wirescopeBase({ wirescopePublicBase: 'http://localhost:7811' }), 'http://localhost:7811',
+        `${JSON.stringify(bad)} is not a usable port → the local candidate is ignored`);
+    } finally { restore(); }
+  }
+  // '7800abc' deserves its own note: parseInt would happily return 7800 from it.
+  // The Number.isInteger guard on the PARSED value is what rejects it, and a
+  // future refactor to `parseInt(...) || null` would silently accept it again.
+  const { shim, restore } = loadShim({ search: '?wirescope=65535' });
+  try {
+    assert.equal(shim.wirescopeBase({}), 'http://127.0.0.1:65535', 'and the last valid port is not swept up');
+  } finally { restore(); }
+});
+
+test('open-external through a forwarded wirescope opens the LOCAL port, end to end', async () => {
+  // The whole chain in one assertion: the box serves this page, its renderer
+  // builds a dashboard link against the box's own loopback proxyBase, and the
+  // browser must be sent to the forward rather than to 127.0.0.1:7800 — which on
+  // the viewer's machine is usually their OWN wirescope, answering with a
+  // foreign session id.
+  const { shim, restore } = loadShim({ search: '?workspace=w1&wirescope=45501' });
+  try {
+    const opened = [];
+    global.window.open = (url) => { opened.push(url); };
+    shim.start();
+    const ws = FakeWS.last;
+    ws.onopen();
+    ws.onmessage({ data: JSON.stringify({ t: 'welcome', workspaceId: 'w1', home: '/h',
+      proxyBase: 'http://127.0.0.1:7800', wirescopePublicBase: 'http://localhost:7811' }) });
+    await tick();
+    ws.onmessage({ data: JSON.stringify({ t: 'event', channel: 'open-external', args: ['http://127.0.0.1:7800/_session?session=abc'] }) });
+    assert.deepEqual(opened, ['http://127.0.0.1:45501/_session?session=abc'],
+      'the link resolves through the forward, not through the box`s unreachable public base');
+  } finally { restore(); }
+});
+
+test('a non-wirescope external link is untouched by the param', async () => {
+  // The rewrite is origin-gated on proxyBase; a release link must not acquire a
+  // loopback origin because a forward happens to exist.
+  const { shim, restore } = loadShim({ search: '?wirescope=45501' });
+  try {
+    const opened = [];
+    global.window.open = (url) => { opened.push(url); };
+    shim.start();
+    const ws = FakeWS.last;
+    ws.onopen();
+    ws.onmessage({ data: JSON.stringify({ t: 'welcome', workspaceId: 'w1', home: '/h',
+      proxyBase: 'http://127.0.0.1:7800' }) });
+    await tick();
+    ws.onmessage({ data: JSON.stringify({ t: 'event', channel: 'open-external', args: ['https://github.com/avirtual/clodex/releases'] }) });
+    assert.deepEqual(opened, ['https://github.com/avirtual/clodex/releases']);
+  } finally { restore(); }
+});
+
 test('the in-page menu/dialog/toast styles are theme-token-driven, not hardcoded dark (Chunk 4)', () => {
   // Source-level guard: the shim's injected stylesheet is a template literal, so
   // assert on the source text. The always-dark panel/accent hexes that made the

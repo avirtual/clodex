@@ -353,3 +353,53 @@ test('pidfile: no raw unlink survives outside the guard', () => {
   assert.match(guard.slice(0, 400), /rec\.pid !== pid/,
     'the guard must compare the recorded pid against the caller\'s');
 });
+
+// ── t443: localReach — what this box tells a PEER it can forward to ──────────
+
+test('localReach: the advertised port rides the SAME gate as autostart, never the raw setting', async () => {
+  // `wirescopePort` is a settings value that survives CLODEX_WIRESCOPE=off and a
+  // proxy pointed elsewhere. Advertising it unconditionally would tell a peer to
+  // forward at a port nothing on this box is listening on — the guess this
+  // ticket exists to remove, one layer earlier than the consumer.
+  const { sup } = makeSup(ROUTED);
+  await withEnv({}, () => assert.deepStrictEqual(sup.localReach(), { port: 7800 }, 'ungated + routed → advertised'));
+  for (const patch of [{ CLODEX_WIRESCOPE: 'off' }, { CLODEX_WIRESCOPE: '0' },
+                       { CLAUDE_CODE_USE_BEDROCK: '1' }, { CLAUDE_CODE_USE_VERTEX: '1' }]) {
+    await withEnv(patch, () => assert.strictEqual(sup.localReach(), null,
+      `${JSON.stringify(patch)} → nothing advertised`));
+  }
+  // A box with the proxy switched off in Preferences has no wirescope to reach
+  // either, gate or no gate.
+  const { sup: off } = makeSup({ ...ROUTED, proxyEnabled: false });
+  await withEnv({}, () => assert.strictEqual(off.localReach(), null));
+  // And one routed at somebody ELSE'S wirescope advertises nothing: the port it
+  // would name is not a service this box owns.
+  const { sup: remote } = makeSup({ ...ROUTED, proxyUrl: 'http://wire.example:7800' });
+  await withEnv({}, () => assert.strictEqual(remote.localReach(), null));
+});
+
+test('localReach: a non-default port is reported as configured, and a nonsense one is refused', async () => {
+  // The port is what a peer forwards to, so it is reported rather than assumed —
+  // but never reported as a value that cannot be a port.
+  const { sup } = makeSup({ ...ROUTED, proxyUrl: 'http://127.0.0.1:7999', wirescopePort: 7999 });
+  await withEnv({}, () => assert.deepStrictEqual(sup.localReach(), { port: 7999 }));
+  for (const bad of [-1, 65536, 7800.5, '7800']) {
+    const { sup: s } = makeSup({ ...ROUTED, wirescopePort: bad });
+    // autoStartWanted's own URL match rejects most of these first; the guard is
+    // belt-and-braces for the ones it would not.
+    await withEnv({}, () => assert.strictEqual(s.localReach(), null, `${JSON.stringify(bad)} → null`));
+  }
+});
+
+test('localReach is SYNCHRONOUS and probes nothing — the hello answers on the request thread', async () => {
+  // Its only caller is the peering hello, which must not wait on a python
+  // process. status() is the probing one and is async for exactly that reason;
+  // if these ever merge, the hello acquires a network round trip per request.
+  const { sup, probes } = makeSup(ROUTED);
+  await withEnv({}, () => {
+    const out = sup.localReach();
+    assert.deepStrictEqual(out, { port: 7800 }, 'a plain value, not a promise');
+    assert.ok(!(out && typeof out.then === 'function'), 'never thenable');
+    assert.deepEqual(probes, [], 'and nothing was probed to answer it');
+  });
+});

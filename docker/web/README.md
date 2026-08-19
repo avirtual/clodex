@@ -153,6 +153,16 @@ so those links resolve from your browser instead of the container's unreachable
 loopback address. If you remap 7811, change `CLODEX_WIRESCOPE_PUBLIC_URL` to
 match.
 
+That variable answers the case where your browser is on the container's own
+host. It cannot answer the other one: a `localhost:7811` served to a viewer on
+a DIFFERENT machine points at that viewer's own machine. So it is no longer the
+only mechanism — if you reach this box's frontend through a desktop Clodex's
+peer web view (↗), that Clodex forwards this container's wirescope too and puts
+the local port on the page URL as `?wirescope=<port>`, which takes precedence
+over `CLODEX_WIRESCOPE_PUBLIC_URL`. Nothing to configure: it needs only that the
+box has a wirescope to advertise (the proxy enabled, and not
+`CLODEX_WIRESCOPE=off`). See `docs/peering.md` §2a.
+
 ## Peering the container with your desktop
 
 You can add this container to your desktop Clodex as a **peer** — see and drive

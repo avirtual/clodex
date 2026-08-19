@@ -173,3 +173,39 @@ test('headless-main declares webInfo as a closure over a `let` assigned LATER', 
 
 // createEngine's background timers keep the loop alive; exit once results flush.
 after(() => { setImmediate(() => process.exit(0)); });
+
+// ── t443: the wirescope seam takes the SAME path, one field over ─────────────
+
+test('engine threads a LIVE wirescope getter into the peer wire', () => {
+  // A getter for the same reason as webInfo, plus one of its own: the gate is a
+  // live fact (Preferences' proxy toggle, CLODEX_WIRESCOPE, the port setting), so
+  // a value captured once would advertise a port the box stopped serving. Read
+  // through the real engine, whose supervisor answers from real settings.
+  const opts = engineRemoteOptions({});
+  assert.strictEqual(typeof opts.getWirescopeInfo, 'function',
+    'always a function, so the hello needs no null check');
+  const out = opts.getWirescopeInfo();
+  assert.ok(out === null || (out && Number.isInteger(out.port)),
+    'and answers either null or a real port — never undefined');
+});
+
+test('remote-wiring tolerates a missing or non-callable getWirescopeInfo (old/partial hosts)', () => {
+  // Same degrade as webInfo: a host that does not supply the seam reports "no
+  // wirescope", which costs a dashboard link. A throw here would cost the whole
+  // peer wire.
+  for (const bad of [undefined, null, 42, 'nope', {}]) {
+    const opts = captureRemoteOptions({ getWirescopeInfo: bad });
+    assert.strictEqual(typeof opts.getWirescopeInfo, 'function', `${JSON.stringify(bad)} → still a function`);
+    assert.strictEqual(opts.getWirescopeInfo(), null, 'and it reports no wirescope');
+  }
+});
+
+test('remote-wiring passes a working seam straight through, and it stays LIVE', () => {
+  let info = null;
+  const opts = captureRemoteOptions({ getWirescopeInfo: () => info });
+  assert.strictEqual(opts.getWirescopeInfo(), null, 'before the supervisor wants one');
+  info = { port: 7800 };
+  assert.deepStrictEqual(opts.getWirescopeInfo(), { port: 7800 }, 'after, through the same captured getter');
+  info = { port: 7999 };
+  assert.deepStrictEqual(opts.getWirescopeInfo(), { port: 7999 }, 'and it tracks a move');
+});
