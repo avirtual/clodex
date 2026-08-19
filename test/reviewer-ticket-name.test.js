@@ -133,9 +133,19 @@ function mkFixture() {
 function openTicket(f, body = 'the spec') {
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body });
+  // Dispatch refuses a ticket whose spec names no `tasks/…` path, and these
+  // bodies deliberately carry none — stamped on the record so the bodies stay
+  // the subject. Without it `start` is silently refused and every helper below
+  // reasons about a ticket that was never dispatched.
+  {
+    const all = f.tstore.load(f.team.root);
+    for (const x of all) if (!x.taskDir) x.taskDir = `tasks/${x.id}-fixture/SPEC.md`;
+    f.tstore.save(f.team.root, all);
+  }
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', id: 't1', who: null, body: '' });
   const t = f.one('t1');
   assert.ok(t, 'ENTER: the ticket exists on the board');
+  assert.ok(t.startedAt, 'ENTER: start really dispatched it — `add` alone satisfies the check above');
   f.gated.length = 0;
   return t;
 }

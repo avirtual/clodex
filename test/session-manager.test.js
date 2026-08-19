@@ -12585,7 +12585,7 @@ test('task add: a template env key outside the allowlist is dropped AND named in
 // has them: a gate below the mint still refuses, still returns the right string,
 // and has already cut the tree.
 test('t431: a task-dir-less ticket creates no branch, no worktree and no record, through EITHER verb', async () => {
-  const { repo } = mkGitRepo();
+  const { repo, root } = mkGitRepo();
   const f = mkTicketWt(repo, { dispatch: 'worktree' });
   // The fixture's convenience stamp is the whole thing under test here.
   f.wtState.autoTaskDir = false;
@@ -12618,8 +12618,9 @@ test('t431: a task-dir-less ticket creates no branch, no worktree and no record,
     assert.strictEqual(created, null, `${intent.sub}: no seat was spawned`);
     assert.deepStrictEqual(f.gated, [], `${intent.sub}: and no spec was delivered`);
   }
-});
 
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
 
 test('task add: an opted-in role mints a branch, a worktree and a seat, and the ticket pins to the SEAT', async () => {
   const { root, repo } = mkGitRepo();
