@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — the ticket loop stops losing work to its own machinery
+## Unreleased
+
+## 5.13.0 — 2026-08-19 — the ticket loop stops losing work to its own machinery
 
 - The suite lock no longer costs a merge or eats a report. Two things shared one
   cause: the lock is box-wide, so a hand verifying its own worktree holds the

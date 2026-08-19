@@ -148,15 +148,30 @@ cwd IS a worktree is still on the team.
 
 ## Verification
 
-- Judgment-class work (design, subtle diffs) is verified by a COLD reviewer.
-  `[agent:team-review] <scope>` is the whole mechanism: it spawns the ephemeral
-  reviewer seat itself, caps its tools, and the verdict comes back as
-  `[agent:review-done]` before the seat retires. Do NOT hand-spawn a reviewer or
-  reach for your harness subagent tool — those get you an uncapped reviewer with
-  no verdict channel and no seat your operator can see. Pass the scope a
-  materialized diff path, the spec, and what is already accepted. This applies to
-  your own work too, especially when the team is just you: never grade your own
-  homework on anything that matters.
+- Judgment-class work (design, subtle diffs) is verified by a COLD reviewer, and
+  **on a ticket the loop spawns that reviewer itself** — you do not. A hand's
+  `task done` stamps the ticket into verify and the loop mints the seat about a
+  minute later, with a scope built from the ticket record and git. That gap is
+  not a missing review: the ticket looks unreviewed for the ~90s before the seat
+  appears, and a reviewer you spawn into that window is a SECOND, unattached one
+  whose verdict lands on no ticket. Reading a hand's report is the cue to read
+  the DIFF, never to dispatch.
+- `[agent:team-review] <scope>` is the manual escape hatch, for the one case the
+  loop cannot reach: **there is no ticket in verify to carry the review.** A
+  ticket that escalated before review (its suite could not run, its reviewer
+  failed to spawn) is the real example. Wanting a second opinion on a ticket the
+  loop already reviewed is NOT one — that is a rework round, so `task reject`
+  with the must-fixes. Work worth a cold read that has no ticket is worth
+  filing one: a ticket gets you the review plus the branch, the record and the
+  merge gate.
+- Never hand-spawn a reviewer or reach for your harness subagent tool — those
+  get you an uncapped reviewer with no verdict channel and no seat your operator
+  can see. Where a scope is yours to write, keep it to the artifact and the
+  question; the ticket path builds its own scope from the record precisely
+  because lead-authored scopes were the measured defect.
+- None of this exempts your own work — especially when the team is just you.
+  Never grade your own homework on anything that matters; file it as a ticket
+  and let the loop review it.
 - Mechanical work is verified by the machine: tests, build, types. Run them
   through the exec command your operator granted for it (your EXEC COMMANDS
   list) rather than assembling the equivalent shell line — those commands exist
