@@ -5,7 +5,8 @@
 // loop's `verify` step, and the loop's own call is not.
 //
 // The window: `task done` stamps `loopStep: 'verify'` and the loop mints its
-// reviewer 75-90s later (measured 74s, 76s, 81s). In that gap the ticket looks
+// reviewer only after the branch's full suite passes — MINUTES, not the 74-81s
+// spawn latency measured after it. For that whole run the ticket looks
 // unreviewed and is not, so a lead firing a bare team-review spawns a SECOND,
 // unattached reviewer — `opts.ticketId` is what binds a verdict to a ticket, and
 // an intent-driven call passes none, so that reviewer re-reads the whole diff and
@@ -158,15 +159,6 @@ function openTicket(f, body = 'the spec') {
   assert.ok(t.startedAt, 'ENTER: start really dispatched it — `add` alone satisfies the check above');
   f.gated.length = 0;
   return t;
-}
-
-function spawnReviewer(f, scope, opts) {
-  const before = new Set(f.persistence.list().map((e) => e.name));
-  f.m._handleTeamReview(f.seat('lead'), scope, opts);
-  const rec = f.persistence.list().find((e) => !before.has(e.name));
-  assert.ok(rec, 'ENTER: the reviewer seat was reserved — otherwise there is no name to assert about');
-  f.seat(rec.name);
-  return rec;
 }
 
 

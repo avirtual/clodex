@@ -15,7 +15,8 @@ blocks a release.
 
 - A lead can no longer spawn a duplicate reviewer into the ticket loop's blind
   window. Closing a ticket stamps it for verification, and the loop spawns its
-  own reviewer 75-90 seconds later; in that gap the ticket looks unreviewed and
+  own reviewer only once the branch's full suite has passed; for that whole run —
+  usually a couple of minutes — the ticket looks unreviewed and
   is not. A bare `[agent:team-review]` fired there spawned a second reviewer
   that re-read the whole diff and reported to nobody, because only the loop's
   call carries the ticket id a verdict routes back through. It is now refused,

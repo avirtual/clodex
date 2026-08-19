@@ -608,10 +608,13 @@ function createTicketMethods(deps, shared) {
       // very spawn this exists to protect, and every ticket would stall at review
       // permanently.
       //
-      // What it closes: `task done` stamps `loopStep: 'verify'` and the loop mints
-      // its reviewer 75-90s later (measured: 74s, 76s, 81s). In that gap the ticket
-      // LOOKS unreviewed and is not, so a bare `[agent:team-review]` spawns a
-      // second, unattached reviewer whose verdict lands nowhere.
+      // What it closes: `task done` stamps `loopStep: 'verify'` and the ticket stays
+      // there until the loop's own reviewer is minted at _setLoopStep(…, 'review').
+      // That is NOT the 74-81s spawn latency measured after the suite — the suite
+      // await ahead of it is MINUTES (see its own comment), so the blind window is
+      // a whole suite run. In it the ticket LOOKS unreviewed and is not, so a bare
+      // `[agent:team-review]` spawns a second, unattached reviewer whose verdict
+      // lands nowhere.
       //
       // Only `verify`. A `review` ticket already HAS its seat on the roster, so a
       // bare call there is visibly redundant; `verify` is the blind window.
@@ -629,7 +632,7 @@ function createTicketMethods(deps, shared) {
         } catch { inVerify = []; }
         if (inVerify.length) {
           const many = inVerify.length > 1;
-          reply(`error: ${many ? 'tickets' : 'ticket'} ${inVerify.join(', ')} ${many ? 'are' : 'is'} in the loop's verify step — the loop spawns its OWN reviewer for ${many ? 'each' : 'it'} within about 75-90 seconds of \`task done\`, and it looks unreviewed until then. A review requested here is not attached to ${many ? 'any of them' : 'it'}: its verdict lands nowhere and it re-reads the same diff. Wait for the loop's reviewer. To send an ALREADY-reviewed ticket back for another round, that is [agent:task reject <id>] with the must-fixes, not a second reviewer; no reviewer spawned`);
+          reply(`error: ${many ? 'tickets' : 'ticket'} ${inVerify.join(', ')} ${many ? 'are' : 'is'} in the loop's verify step — the loop spawns its OWN reviewer for ${many ? 'each' : 'it'} once the branch's full suite passes — usually a couple of minutes, longer if the suite is queued behind the box-wide lock — and it looks unreviewed the whole time. A review requested here is not attached to ${many ? 'any of them' : 'it'}: its verdict lands nowhere and it re-reads the same diff. Wait for the loop's reviewer. To send an ALREADY-reviewed ticket back for another round, that is [agent:task reject <id>] with the must-fixes, not a second reviewer; no reviewer spawned`);
           return;
         }
       }
