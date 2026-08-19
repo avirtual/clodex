@@ -961,39 +961,223 @@ test('a merge that has to wait for the chain says so in the log', async () => {
   assert.strictEqual(f.m._mergePending, 0, 'the in-flight count is not leaked');
 });
 
-test('a merge refuses to start while a LIVE pid holds the root suite lock', async () => {
+// A LIVE holder plants OUR OWN pid: alive by construction, and no process is
+// harmed by the probe.
+function plantLock(repo, pid = process.pid) {
+  fsReal.mkdirSync(pathReal.join(repo.dir, '.test-digest.lock'), { recursive: true });
+  fsReal.writeFileSync(pathReal.join(repo.dir, '.test-digest.lock', 'pid'), String(pid));
+}
+function clearLock(repo) {
+  fsReal.rmSync(pathReal.join(repo.dir, '.test-digest.lock'), { recursive: true, force: true });
+}
+
+// Captures the retry seam instead of arming a real timer. NO REAL SECONDS: the
+// delay between attempts is 30s and the cap is 10 of them, so a subject that
+// waited would be five minutes of suite time to prove a branch that is pure
+// arithmetic. What the fixture must not do is stub _autoMergeTicket or
+// _suiteLockHolder — the deferral being tested lives inside the first and reads
+// the second, so replacing either would step over the code under test.
+function captureRetries(f) {
+  const scheduled = [];
+  f.m._scheduleMergeRetry = (fn, ms) => { scheduled.push({ fn, ms }); return null; };
+  return {
+    scheduled,
+    // Runs the pending retries in order, awaiting the merge chain each time so
+    // the re-entry really completes before the next one is fired. Bounded: a
+    // retry loop that never terminates is the failure this ticket's whole
+    // second half is about, and a drain that spun forever would hang the suite
+    // rather than report it.
+    drain: async (max = 40) => {
+      let ran = 0;
+      while (scheduled.length && ran < max) {
+        ran += 1;
+        scheduled.shift().fn();
+        await f.m._mergeChain;
+      }
+      assert.ok(ran < max, `the retry did not terminate — ran ${ran} times and more were still queued`);
+      return ran;
+    },
+  };
+}
+
+test('a merge WAITS rather than dying when a LIVE pid holds the root suite lock', async () => {
   // The lead's exec grant runs `clodex-run-tests` in the root checkout and holds
   // this lock for minutes. A merge landing mid-run rewrites the files under the
   // running child, and the lead gets a spurious red with nothing naming the
   // cause — suite-lock contention already produced one false rejection here.
+  //
+  // t440: the refusal used to be TERMINAL, which made a permanent failure out of
+  // an inherently transient condition — the lock is box-wide, so any hand
+  // verifying its own worktree takes the ROOT's lock for the length of a run.
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const f = mkMerge({ repo });
+  const r = captureRetries(f);
   const before = f.masterHead();
-  // OUR OWN pid: alive by construction, and no process is harmed by the probe.
-  fsReal.mkdirSync(pathReal.join(repo.dir, '.test-digest.lock'), { recursive: true });
-  fsReal.writeFileSync(pathReal.join(repo.dir, '.test-digest.lock', 'pid'), String(process.pid));
+  plantLock(repo);
 
   await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
 
+  assert.deepStrictEqual(f.esc(), [], 'a held lock is not an escalation on the first try');
+  assert.strictEqual(f.masterHead(), before, 'ENTER: nothing was merged on this pass');
+  assert.strictEqual(r.scheduled.length, 1, 'a retry was armed instead');
+  assert.strictEqual(r.scheduled[0].ms, 30000,
+    'and it waits ~a third of a suite run — long enough to be a different sample of the lock');
+  // The board must NOT show a merge error while the loop is merely waiting its
+  // turn: `mergeError` is read as "this ticket needs a human".
+  assert.ok(!('mergeError' in f.one()), 'a waiting merge is not stamped as a failure');
+
+  // The whole point: the lock clears and the retry lands the merge.
+  clearLock(repo);
+  assert.strictEqual(await r.drain(), 1, 'one retry was enough');
+
+  assert.deepStrictEqual(f.esc(), [], 'the retry merged, so nothing escalated');
+  assert.match(f.masterLog(), /Merge t1:/, 'and the branch really did land on master');
+  assert.strictEqual(f.landed().length, 1, 'announced exactly once');
+});
+
+test('an exhausted retry escalates with the manual merge command intact', async () => {
+  // A retry that gave up SILENTLY would be worse than the terminal refusal it
+  // replaced: the lead would be waiting on a mechanism that had already stopped.
+  // So exhaustion escalates with the same message the terminal refusal used,
+  // including the exact command that lands the branch by hand.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  const before = f.masterHead();
+  plantLock(repo);   // never cleared: a wedged or abandoned lock
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  const attempts = await r.drain();
+
+  // The ATTEMPT BOUND is what terminated this, and it must be the constant
+  // rather than whatever the loop happened to do: a retry that stopped after two
+  // because of an unrelated bug would satisfy every assertion below.
+  assert.strictEqual(attempts, 10, 'ten retries, the attempt cap, and then it stops');
+  assert.deepStrictEqual(r.scheduled, [], 'nothing is left armed after the last one');
+
   const esc = f.esc();
-  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation');
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation, at the END of the retries');
   assert.match(esc[0].body, /suite-in-flight/, 'named as its own step, not folded into clean-tree');
   assert.match(esc[0].body, new RegExp(String(process.pid)), 'and it names the pid holding the lock');
   assert.strictEqual(f.masterHead(), before, 'nothing was merged');
   assert.deepStrictEqual(f.landed(), [], 'and no merge was announced');
+  assert.strictEqual(f.one().mergeError, 'suite-in-flight',
+    'the exhausted ticket IS stamped, so the board shows it even if the DM never arrived');
 
-  // The RECOVERY, and it is the assertion that matters most here: nothing
-  // re-drives a merge once its verdict has landed, so an escalation saying "try
-  // again later" would describe a mechanism that does not exist and leave the
-  // ticket stranded while the lead waits for a retry that never comes.
+  // The RECOVERY, and it is the assertion that matters most here: once the
+  // retries are spent nothing else re-drives this merge, so the escalation must
+  // not promise a mechanism that has stopped.
   assert.match(esc[0].body, /will NOT retry/, 'the lead is told plainly that no retry is coming');
+  assert.match(esc[0].body, /already retried 10 times/, 'and that waiting was already tried');
   assert.ok(!/re-run the accept/.test(esc[0].body),
     'and is NOT pointed at a recovery the loop cannot perform');
   // includes, not match: the root is a real tmpdir path and regex-escaping it
   // just to assert a literal is a way to get the assertion itself wrong.
   assert.ok(esc[0].body.includes(`git -C ${repo.dir} merge --no-ff tl-1`),
     'the exact hand-merge command is spelled out, root and branch included');
+});
+
+test('the TOTAL wait bounds the retry even when the attempt count has not run out', async () => {
+  // Two bounds, two different failure shapes. The attempt cap alone is not
+  // enough: the retries re-enter through the merge chain, so a busy chain can
+  // stretch ten attempts over hours, and a ticket pending that long is
+  // indistinguishable from a lost one. The clock is injected — a subject that
+  // waited ten real minutes for this branch is not a test anyone would run.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  let now = 1_000_000;
+  f.m._mergeRetryNow = () => now;
+  plantLock(repo);
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  assert.strictEqual(r.scheduled.length, 1, 'ENTER: the first pass really did defer');
+  // Past the 10-minute ceiling, on attempt TWO of ten: the deadline is the bound
+  // under test and the attempt cap must not be what stops this.
+  now += 11 * 60 * 1000;
+  const attempts = await r.drain();
+
+  assert.strictEqual(attempts, 1, 'the second pass gave up — the attempt cap was nowhere near spent');
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation');
+  assert.match(esc[0].body, /suite-in-flight/, 'the same step, reached by the other bound');
+  assert.match(esc[0].body, /already retried 1 time over 660s/,
+    'and the message reports the real elapsed wait, not the attempt count dressed up as one');
+});
+
+test('a NON-suite-in-flight failure is still terminal on the FIRST try', async () => {
+  // The retry is scoped to ONE arm on purpose. Every other fail() here names a
+  // state a human has to look at — a dirty tree, a moved branch, a red suite —
+  // and retrying those just re-reports the same thing later while the lead waits
+  // for a resolution that cannot come from waiting.
+  //
+  // Alone among the t440 subjects this one PASSES against the pre-retry code,
+  // and necessarily so: it asserts an absence that was true when nothing retried
+  // at all. It is not falsifiable against the old shape and is not meant to be —
+  // what it guards is the retry being WIDENED later to every arm, which is the
+  // cheap and plausible edit here.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  git(repo.dir, ['checkout', '-q', '-b', 'somewhere-else']);
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'escalated at once, on the first pass');
+  assert.match(esc[0].body, /merge: on-master/, 'ENTER: this really is the on-master arm, not suite-in-flight');
+  assert.deepStrictEqual(r.scheduled, [], 'and NOTHING was armed to try again');
+});
+
+test('a merge waiting on the lock does not hold the merge chain against another ticket', async () => {
+  // THE TRAP THIS TICKET IS ABOUT. _queueAutoMerge serializes every merge
+  // process-wide through _mergeChain, because two overlapping merges mean one
+  // rewrites the tree under the other's running suite. A retry that SLEPT inside
+  // that chain would convert one blocked merge into every merge blocked — and
+  // _mergePending's QUEUED line, which exists to make a wait visible, would be
+  // describing a stall instead. So the wait happens OUTSIDE the chain: the
+  // deferred call returns, its link resolves, and the queue drains.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'a.txt', 'work a\n');
+  git(repo.dir, ['branch', 'tl-2']);
+  commitOnBranch(repo.dir, 'tl-2', 'b.txt', 'work b\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  const t1 = f.one('t1');
+  f.tstore.save(f.team.root, [t1, {
+    ...t1, id: 't2', taskDir: 'tasks/merge-fixture-2',
+    spec: 'the second ticket — tasks/merge-fixture-2',
+    worktree: { path: pathReal.join(repo.dir, 'wt2'), branch: 'tl-2', baseSha: repo.baseSha },
+  }]);
+  plantLock(repo);
+
+  // t1 hits the held lock and defers. Fired the way _handleReviewDone fires
+  // them: through the chain, not awaited.
+  const p1 = f.m._queueAutoMerge(f.team, 't1', LANDED, ACCEPT);
+  await p1;
+  assert.strictEqual(r.scheduled.length, 1, 'ENTER: t1 really is waiting, not merged and not escalated');
+  assert.strictEqual(f.m._mergePending, 0,
+    'and its link has LEFT the chain — a sleeping retry would still be counted here');
+
+  // The holder finishes its run. t2 must now merge on the spot rather than
+  // queueing behind t1's outstanding wait.
+  clearLock(repo);
+  await f.m._queueAutoMerge(f.team, 't2', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc(), [], 'neither ticket escalated');
+  const mid = f.masterLog();
+  assert.match(mid, /Merge t2:/, 'the second ticket landed while the first was still waiting');
+  assert.ok(!/Merge t1:/.test(mid), 'ENTER: and the first really had not landed yet');
+  assert.strictEqual(r.scheduled.length, 1, 'ENTER: t1 is STILL waiting — its retry has not run');
+
+  // And the waiting one is not lost: its retry lands it afterwards.
+  assert.strictEqual(await r.drain(), 1, 'one retry was enough once the lock cleared');
+  assert.match(f.masterLog(), /Merge t1:/, 'so both tickets ended up on master');
+  assert.strictEqual(f.m._mergePending, 0, 'and the in-flight count is not leaked');
 });
 
 test('a liveness probe that throws stops the merge instead of being read as "nobody"', async () => {
