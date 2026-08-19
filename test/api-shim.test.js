@@ -290,7 +290,10 @@ function dispatchCapturingToasts(ws, frame) {
 }
 function toastTexts(node, out = []) {
   for (const c of node.children || []) {
-    if (String(c.className).includes('clx-toast') && c.textContent) out.push(c.textContent);
+    // innerHTML too: a toast rendered as markup has an empty textContent, and
+    // skipping it would make an "exactly one toast" count silently vacuous.
+    const text = c.textContent || c.innerHTML;
+    if (String(c.className).includes('clx-toast') && text) out.push(text);
     toastTexts(c, out);
   }
   return out;

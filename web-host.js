@@ -186,7 +186,9 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
   const openExternal = (url) => toConn('open-external', url);
 
 // The browser cannot reach the engine's loopback proxyBase; the shim rewrites
-// that origin to wirescopePublicBase. Both empty when unset → no rewrite.
+// that origin to wirescopePublicBase. With proxyBase set and no public base the
+// shim SUPPRESSES the link (renderer/web/api-shim.js `unreachableProxyUrl`)
+// rather than opening a url the browser would resolve against its own machine.
   const wirescopeReach = () => {
     const s = (engine.stores && engine.stores.uiSettings) ? engine.stores.uiSettings.get() : {};
     const proxyBase = s.proxyEnabled ? (s.proxyUrl || '').trim().replace(/\/+$/, '') : '';

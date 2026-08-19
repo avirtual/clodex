@@ -106,6 +106,12 @@ function rewriteExternalUrl(url, proxyBase, publicBase) {
 // Only the ssh installer leaves the public base unset, so this is the common case
 // there. Keyed on origin-match AND empty publicBase — never on publicBase alone,
 // which would swallow every github/release link too. Pure + exported for testing.
+//
+// Sees only the GLOBAL uiSettings.proxyUrl (web-host.js wirescopeReach). A
+// session spawned with a per-session proxy string, or one spawned while
+// proxyEnabled is false, renders its link against a base this cannot recognise
+// and is still opened — rarer configurations of the same defect, left open
+// deliberately rather than by oversight.
 function unreachableProxyUrl(url, proxyBase, publicBase) {
   return !publicBase && matchesProxyOrigin(url, proxyBase);
 }
