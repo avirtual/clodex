@@ -26,7 +26,7 @@ const RESIZE_DEBOUNCE_MS = 80;
 
 class RemoteServer {
   constructor({ port, host, pagePath, getSessions, getTranscript, send, restartApp,
-                hostLabel, version, srcDir, getWebInfo, getAttachInfo, sendInput, resizePty, onControlChange,
+                hostLabel, version, srcDir, getWebInfo, getWirescopeInfo, getAttachInfo, sendInput, resizePty, onControlChange,
                 query, createSession, killSession, restartSession, getCatalogs,
                 getSessionArgs, setSessionArgs,
                 getSkillCatalog, setSessionSkills,
@@ -47,6 +47,10 @@ class RemoteServer {
     // web-host.js starts after this server is constructed, and is absent
     // entirely under Electron.
     this._getWebInfo = typeof getWebInfo === 'function' ? getWebInfo : null;
+    // This box's wirescope, read per hello (t443). A getter for the same reason:
+    // the port is a live settings value and the supervisor's gate can change
+    // under a running server.
+    this._getWirescopeInfo = typeof getWirescopeInfo === 'function' ? getWirescopeInfo : null;
     this._getAttachInfo = getAttachInfo || null;
     this._sendInput = sendInput || null;
     this._resizePty = resizePty || null;
@@ -427,6 +431,19 @@ class RemoteServer {
     return { port: info.port, tokenGated: info.tokenGated === true };
   }
 
+  // This box's wirescope, for a peer that wants to FORWARD to it (t443) — the
+  // same validate-or-null shape as _webHost, and null for the same reason: a
+  // consumer that cannot learn the port must get no forward, never a guessed
+  // 7800. Wirescope carries no token of its own, so there is no gate field to
+  // report; the forward's reachability IS the boundary.
+  _wirescope() {
+    if (!this._getWirescopeInfo) return null;
+    let info;
+    try { info = this._getWirescopeInfo(); } catch { return null; }
+    if (!info || !Number.isInteger(info.port) || info.port <= 0 || info.port > 65535) return null;
+    return { port: info.port };
+  }
+
   // Operator-auth gate — runs before ANY routing (viewer page, every /api/*, and
   // the SSE stream: transcripts are sensitive, read-only is not harmless).
   // Returns true to proceed; on refusal it has already written the response.
@@ -525,6 +542,10 @@ class RemoteServer {
         // `tokenGated` says a token is REQUIRED, never what it is. The token itself is
         // deliberately NOT advertised: hello is open on the loopback-no-token deployment.
         webHost: this._webHost(),
+        // Present-and-null on every version that has the field at all, so a
+        // consumer distinguishes "this box has no wirescope" from "this box is
+        // too old to say" — both mean no forward, but only one is a bug report.
+        wirescope: this._wirescope(),
       });
     }
     // Read side: raw PTY stream with best-effort scrollback replay. The

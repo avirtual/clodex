@@ -143,6 +143,12 @@ function createPeerWiring(deps) {
     if (getWebTunnelManager && getWebTunnelManager()) {
       getWebTunnelManager().sync((s.peers || []).filter((p) => !p.disabled));
     }
+    // And the companion wirescope forwards on the same list, so a peer that is
+    // removed, disabled or re-pointed does not leave one open behind the web
+    // view it belongs to (t443). Same laziness: never constructed here.
+    if (wirescopeTunnelManager) {
+      try { wirescopeTunnelManager.sync((s.peers || []).filter((p) => !p.disabled)); } catch {}
+    }
     resolvePeerUrls();
     // Prune persisted attachments + visibility selections for peers that no
     // longer exist in settings.
@@ -220,6 +226,104 @@ function createPeerWiring(deps) {
   // from the peer's hello, not something the supervisor could know.
   const webPopAllowed = new Set();
 
+  // ---- The companion wirescope forward (t443) --------------------------------
+  // A SECOND forward, to the box's own wirescope, raised with the web view and
+  // torn down with it. It exists so the dashboard links inside that page resolve:
+  // the page is served BY the box, so its links are built against the box's
+  // loopback wirescope, which the operator's browser cannot reach. Without this
+  // the browser resolves them against ITSELF, where a local wirescope is usually
+  // listening on 7800 — the operator's own dashboard showing a foreign session
+  // id, which is worse than a broken link because it looks right.
+  //
+  // SUBORDINATE, in the strong sense: it must never be the reason the web view
+  // fails. Every call into it is wrapped, its failures are not surfaced, and a
+  // box with no wirescope (CLODEX_WIRESCOPE=off is a supported deploy option) is
+  // a normal quiet case — the web frontend opens and simply has no link.
+  //
+  // Deliberately NOT the same manager instance as the web view's: the web
+  // manager's state is broadcast on `peer-web-tunnel`, which the renderer reads
+  // as the ↗ affordance's phase. A second tunnel emitting on that channel under
+  // the same peer id would drive the button from the wrong forward.
+  let wirescopeTunnelManager = null;
+  function ensureWirescopeTunnelManager() {
+    if (wirescopeTunnelManager) return wirescopeTunnelManager;
+    const { WebTunnelManager } = require('./web-tunnel');
+    // Same policy as the web forward, and for the same reason (web-tunnel.js
+    // header, inversion 1): the consumer is a browser tab holding a dead string,
+    // so the local port is pinned and never re-picked on respawn.
+    wirescopeTunnelManager = new WebTunnelManager({
+      onState: (id, status) => {
+        // Logged, never broadcast and never popped — see above. A give-up here
+        // costs the link and nothing else, so it is info, not an error.
+        if (status && status.state === 'gave-up') {
+          log.info('peer', `wirescope forward for ${id} gave up — the web view keeps working without a dashboard link`);
+        }
+      },
+    });
+    return wirescopeTunnelManager;
+  }
+
+  // Raise the wirescope forward for one peer, and answer with the LOCAL port the
+  // page should use — or null, which every caller must treat as "no link".
+  //
+  // Called BEFORE the web forward on purpose. Both managers pick their pinned
+  // port through the same one-shot `net.createServer().listen(0)`, so opening
+  // this one first means its port is picked first; the web view's own pop is
+  // additionally behind a spawn and a TCP probe. The null branch is still real
+  // (a peer with no wirescope in its hello, a refused transport) and is what
+  // makes this safe when the ordering ever stops holding.
+  function openPeerWirescope(id, rec, dest) {
+    const key = String(id);
+    const conn = getPeerManager() && getPeerManager().get(key);
+    const st = conn ? conn.status() : null;
+    const wirescope = st && st.wirescope;
+    // No field in the hello (a peer too old to send it) and an explicit null
+    // (wirescope off on the box) are the SAME answer here: no forward. The port
+    // is never defaulted to 7800 — see peer-client's normalization.
+    if (!wirescope || !Number.isInteger(wirescope.port)) return null;
+    try {
+      const res = ensureWirescopeTunnelManager().open({
+        id: key, sshHost: dest.sshHost, remotePort: wirescope.port,
+        ...(dest.cloud ? { [dest.cloud.kind]: dest.cloud.block } : {}),
+      });
+      if (!res || !res.ok) return null;
+      const port = wirescopeLocalPort(key);
+      if (port) log.info('peer', `wirescope forward for ${key}: 127.0.0.1:${port} → ${wirescope.port}`);
+      return port;
+    } catch (e) {
+      log.info('peer', `wirescope forward for ${key} not raised: ${e.message}`);
+      return null;
+    }
+  }
+
+  // The pinned local port, read from the supervisor rather than remembered here.
+  // NOT gated on `state === 'up'`, which is what `url()` gates on: the two
+  // forwards race, and the page URL can only be composed once. The pin is what
+  // makes that safe — the port is this forward's for as long as it lives, so a
+  // tab holding it starts working the moment the forward does. The failure this
+  // trades for is a link at a dead port on our OWN loopback: visibly broken,
+  // never a confidently-wrong dashboard.
+  function wirescopeLocalPort(id) {
+    if (!wirescopeTunnelManager) return null;
+    const st = wirescopeTunnelManager.statusFor(String(id));
+    const port = st && st.localPort;
+    return Number.isInteger(port) && port > 0 ? port : null;
+  }
+
+  function closePeerWirescope(id) {
+    if (!wirescopeTunnelManager) return;
+    try { wirescopeTunnelManager.close(String(id)); } catch {}
+  }
+
+  // The page URL the operator's browser is sent to. `?wirescope=` carries a PORT,
+  // not a base: the forward is on our loopback by construction, so the page can
+  // only ever compose 127.0.0.1:<port> from it and a value arriving from anywhere
+  // else cannot re-point dashboard links at another origin.
+  function pageUrl(url, port) {
+    if (!port) return url;
+    return `${url}${url.includes('?') ? '&' : '?'}wirescope=${port}`;
+  }
+
   function ensureWebTunnelManager() {
     if (getWebTunnelManager()) return getWebTunnelManager();
     const { WebTunnelManager } = require('./web-tunnel');
@@ -245,7 +349,13 @@ function createPeerWiring(deps) {
             log.info('peer', status.ready === false
               ? `web view up for ${id} → ${status.url} (port never confirmed — opening anyway)`
               : `web view up for ${id} → ${status.url}`);
-            try { openExternal(status.url); } catch (e) { log.error('peer', `web view open failed: ${e.message}`); }
+            // The page URL is the ONLY channel into a tab the BOX served, so the
+            // wirescope port rides it here — read at pop time, since the forward
+            // was raised moments ago and may only just have picked its port.
+            // Logged as the bare URL above: the param is plumbing, and the
+            // operator's line should stay the address they can paste.
+            try { openExternal(pageUrl(status.url, wirescopeLocalPort(id))); }
+            catch (e) { log.error('peer', `web view open failed: ${e.message}`); }
           } else {
             log.info('peer', `web view up for ${id} → ${status.url} (token required — not opened)`);
           }
@@ -286,6 +396,12 @@ function createPeerWiring(deps) {
     // Decided BEFORE the tunnel starts, so the once-per-tunnel firstUp emit can
     // never race ahead of the decision and pop a 401 at the operator.
     if (tokenGated) webPopAllowed.delete(key); else webPopAllowed.add(key);
+    // The companion forward, raised BEFORE the web one so its pinned port exists
+    // when the pop composes the URL. Skipped for a token-gated box: no pop means
+    // no URL is ever composed, so a forward for it would be one nothing can use
+    // — and the gating decision stays where t30b put it rather than being
+    // re-derived here.
+    if (!tokenGated) openPeerWirescope(key, rec, dest);
     const res = ensureWebTunnelManager().open({
       id: key, sshHost: dest.sshHost, remotePort: webHost.port,
       ...(dest.cloud ? { [dest.cloud.kind]: dest.cloud.block } : {}),
@@ -297,6 +413,10 @@ function createPeerWiring(deps) {
 
   function closePeerWeb(id) {
     webPopAllowed.delete(String(id));
+    // Subordinate to the web view in BOTH directions: the companion forward goes
+    // when the view goes. Unconditionally, before the early return — a web
+    // manager that was never built does not imply the wirescope one wasn't.
+    closePeerWirescope(id);
     if (!getWebTunnelManager()) return { ok: true };
     return getWebTunnelManager().close(String(id));
   }
@@ -304,6 +424,15 @@ function createPeerWiring(deps) {
   return {
     forgetPeerAttached, forgetPeerControlled, rememberPeerControlled,
     syncPeerManager, resolvePeerUrls, openPeerWeb, closePeerWeb,
+    // App shutdown. The companion forwards are ssh/vendor CHILD processes with
+    // no persistence record behind them, so a quit that skipped this would
+    // orphan one holding a local port — the same reason the web manager is
+    // stopped there. Kept private otherwise: nothing outside opens or reads it.
+    stopPeerWirescopeTunnels: () => {
+      if (!wirescopeTunnelManager) return;
+      try { wirescopeTunnelManager.stopAll(); } catch {}
+      wirescopeTunnelManager = null;
+    },
   };
 }
 

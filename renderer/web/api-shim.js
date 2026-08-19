@@ -25,6 +25,16 @@ const { API_CONTRACT } = require('../../api-contract');
 const PARAMS = new URLSearchParams(location.search);
 const TOKEN = PARAMS.get('token') || null;
 const WORKSPACE = PARAMS.get('workspace') || 'default';
+// A local port-forward to the BOX'S wirescope, put here by the viewer's own
+// Clodex when it opened this page through a peer tunnel (t443). A PORT, not a
+// base: the forward is on the viewer's loopback by construction, so this can
+// only ever compose a 127.0.0.1 origin — a crafted value cannot re-point
+// dashboard links somewhere else.
+const WIRESCOPE_PORT = (() => {
+  const n = parseInt(PARAMS.get('wirescope') || '', 10);
+  return Number.isInteger(n) && n > 0 && n <= 65535 ? n : null;
+})();
+const WIRESCOPE_LOCAL_BASE = WIRESCOPE_PORT ? `http://127.0.0.1:${WIRESCOPE_PORT}` : '';
 
 let ws = null;
 let socketOpen = false;
@@ -116,11 +126,30 @@ function unreachableProxyUrl(url, proxyBase, publicBase) {
   return !publicBase && matchesProxyOrigin(url, proxyBase);
 }
 
+// Which base a wirescope link is rewritten to, and THE single source of that
+// answer (t443). Two candidates, and the LOCAL one wins whenever it exists: the
+// box's `wirescopePublicBase` is the box's own idea of where it is publicly
+// reachable, which is by construction not reachable from a viewer on the far
+// side of a tunnel (it is set for a browser on the box's own host — the compose
+// case). A local forward is a port on THIS machine that the viewer's Clodex
+// raised specifically for this page, so it is the only candidate known to
+// resolve here.
+//
+// Nothing outside this function may read `wirescopePublicBase`. The gate above
+// and the rewrite must be fed the SAME base: if the gate kept reading the raw
+// welcome field while the rewrite read the forward, a live forward would be
+// suppressed as unreachable and t442 and t443 would cancel each other out. That
+// single-reader rule is pinned by a source-level test.
+function wirescopeBase(info) {
+  return WIRESCOPE_LOCAL_BASE || (info && info.wirescopePublicBase) || '';
+}
+
 // ── synthetic host channels + local event fan-out.
 function dispatchEvent(channel, args) {
   if (channel === 'open-external') {
     const proxyBase = welcomeInfo && welcomeInfo.proxyBase;
-    const publicBase = welcomeInfo && welcomeInfo.wirescopePublicBase;
+    // ONE base, feeding both the gate and the rewrite — see wirescopeBase.
+    const publicBase = wirescopeBase(welcomeInfo);
     if (unreachableProxyUrl(args[0], proxyBase, publicBase)) {
       toast("The wirescope dashboard runs on the box's loopback — this browser has no route to it.");
       return;
@@ -456,4 +485,4 @@ function emit(channel, ...args) { dispatchEvent(channel, args); }
 // answer would come from the very bundle whose freshness is in question.
 function appVersion() { return (welcomeInfo && welcomeInfo.appVersion) || null; }
 
-module.exports = { start, emit, toast, invoke, rewriteExternalUrl, unreachableProxyUrl, appVersion };
+module.exports = { start, emit, toast, invoke, rewriteExternalUrl, unreachableProxyUrl, wirescopeBase, appVersion };
