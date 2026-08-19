@@ -13,13 +13,16 @@ blocks a release.
 
 ## Unreleased
 
-- Assigning a ticket from the tickets board now refuses it, rather than
-  dispatching it, when its spec names no `tasks/…` artifact directory — the same
+- Dispatching a ticket from the tickets board now refuses it, rather than
+  sending it, when its spec names no `tasks/…` artifact directory — the same
   refusal `[agent:task assign]` already makes, naming the same fix. Such a ticket
   has nowhere for the review step to write its diff, so it used to be accepted,
-  worked all the way through, and only then rejected at verify. Boards with no
-  team are unaffected, and re-assigning a ticket that already owns a worktree
-  still goes through, so a stuck seat can still be re-sent its spec.
+  worked all the way through, and only then rejected at verify. This covers both
+  ways the board dispatches: assigning an existing ticket, and opening a new one
+  with an assignee already picked. Filing a ticket with no assignee is unaffected
+  — it dispatches nothing — as are boards with no team, and re-assigning a ticket
+  that already owns a worktree still goes through, so a stuck seat can still be
+  re-sent its spec.
 
 - Agents are now told their context is heavy at 200k tokens rather than 150k,
   and a seat spawned for a single ticket is never told at all. The old threshold

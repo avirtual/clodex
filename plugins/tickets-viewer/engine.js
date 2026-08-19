@@ -900,6 +900,27 @@ function add(payload) {
     };
     const taskDir = extractTaskDir(text);
     if (taskDir) ticket.taskDir = taskDir;
+    // `add` WITH an assignee is a dispatch — deliverSpec runs below and
+    // `startedAt` is stamped above — so it is gated exactly as `assign` is, and
+    // for the same reason. Without this the gate on `assign` is a door with a
+    // second door beside it: a lead refused at assign re-files the ticket with
+    // the assignee already picked and reaches the state assign just refused.
+    //
+    // Only when an assignee was given. A backlog `add` delivers nothing and
+    // stamps no `startedAt`, so it cannot reach the verify-time refusal this
+    // prevents — and gating it would refuse the ordinary act of filing a ticket
+    // for later, which is the normal state of a board, not a degraded one.
+    //
+    // `reSend` is false rather than mapped: a ticket being CREATED owns no
+    // worktree, so there is no redelivery this could be. The solo mapping is
+    // assign's, and narrower than core's for the reason its comment gives.
+    if (who && !taskDir) {
+      const refusal = ticketTaskDirRefusal(
+        teamIndex().get(str(project)) ? {} : { solo: true }, ticket, 'assign', false);
+      // Refused from INSIDE the callback, so mutateBoard returns before the
+      // save: the ticket is not on the board and `tickets` is discarded unwritten.
+      if (refusal) return { error: refusal };
+    }
     tickets.push(ticket);
     return { result: { id: ticket.id, ticket } };
   });
