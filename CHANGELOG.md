@@ -13,6 +13,24 @@ blocks a release.
 
 ## Unreleased
 
+- The suite lock no longer costs a merge or eats a report. Two things shared one
+  cause: the lock is box-wide, so a hand verifying its own worktree holds the
+  root's lock for a whole run. An accepted ticket whose merge landed in that
+  window used to be refused permanently and downgraded to a manual `git merge` —
+  it now waits and retries (up to ten times, and never more than ten minutes) and
+  merges by itself once the run finishes, while merges for other tickets carry on
+  unblocked. Only that one transient refusal retries; a dirty tree, a moved
+  branch or a red suite still stops at once, and an exhausted wait escalates with
+  the same manual command it always gave. Separately, an agent's suite command
+  was capped at two minutes against a suite that now takes ~74 seconds plus up to
+  30 seconds of waiting for the lock, so a run that SUCCEEDED could still be
+  killed before it could report; the cap is now seven minutes. A command that
+  does hit its ceiling now says it timed out and that its work may still be
+  running, instead of arriving as an ordinary failure. And when the suite refuses
+  to start because another run holds the lock, it no longer prints a pid that has
+  already exited — the pid file lags the real holder, and that stale pid was an
+  invitation to delete a valid lock and deadlock two runs.
+
 - Clearing a role's unused `cwd` in the team-roles editor no longer leaves an
   unexplained empty box. The field stays visible and uneditable on purpose — the
   role still dispatches `standing`, so a value typed there would be saved and

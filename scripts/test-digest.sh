@@ -93,7 +93,10 @@ fi
 # concurrent runs deadlock: both sit at 0% CPU and neither finishes. That
 # failure is indistinguishable from a slow suite, and the wrong lesson —
 # "raise the timeout" — makes the next collision longer instead of impossible.
-# The suite takes ~24s; anything past this wait is a wedge, not contention.
+# The suite takes ~74s (measured 2026-08-19 at fe8e152), which is LONGER than
+# the 30s wait below — so giving up is not evidence of a wedge. It routinely
+# means an ordinary run started before us and is still going. The refusal says
+# that rather than diagnosing; see lock_refusal.
 #
 # But a timeout is NOT evidence of a second runner: until 46cd13d a SINGLE run
 # could wedge alone, because an unguarded tail `close()` in attach.test.js left
@@ -115,6 +118,57 @@ fi
 # the real lock held forever. Same split as the ticket loop's
 # CLODEX_TEST_LOCK_DIR (session-manager.js), expressed in sh.
 LOCK="$root/.test-digest.lock"
+
+# The refusal message, and it RE-READS the lock rather than reporting the pid the
+# wait loop happened to be holding in a variable.
+#
+# WHY THAT MATTERS MORE THAN IT LOOKS. The refusal was observed naming a pid that
+# was already dead while a DIFFERENT, genuinely live run held the lock: the
+# holder finished between the loop's read and the print, and the next waiter took
+# the lock and rewrote the pid file. The refusal was CORRECT — a run really was
+# in flight — but its evidence was not, and a dead pid in this message is exactly
+# the reasoning that ends in `rm -rf`-ing a valid lock and deadlocking two runs.
+#
+# So the three states are reported as three different sentences, and the one that
+# invites the wrong conclusion says so outright. Uses $LOCK and $waited from the
+# caller; no arguments, so the wait loop and a test can both call it.
+lock_refusal() {
+  # Re-read AT PRINT TIME. `now` is the pid the lock names right now, which is
+  # the only pid a reader can act on.
+  now=$(cat "$LOCK/pid" 2>/dev/null)
+  if [ ! -d "$LOCK" ]; then
+    # Released in the instant between giving up and reporting. Nothing here is
+    # wedged and there is no pid worth naming — telling the caller to re-run is
+    # the whole content of the message.
+    printf 'another suite run held the lock for the whole %ss wait and released it just as we gave up - nothing is wedged, re-run to take it\n' \
+      "$waited" 1>&2
+    return
+  fi
+  if [ -n "$now" ] && kill -0 "$now" 2>/dev/null; then
+    # `ps -o etime=` rather than a stored start time: the holder may be a run
+    # this script never launched (npm test takes the same lock), so the process
+    # table is the only source that knows when it actually began.
+    started=$(ps -o etime= -p "$now" 2>/dev/null | tr -d ' ')
+    printf 'another suite run is already going (pid %s, running %s) - waited %ss, not starting a second\n' \
+      "$now" "${started:-unknown}" "$waited" 1>&2
+    return
+  fi
+  # HELD, but its pid file does not name a live process. Reported WITHOUT
+  # presenting that pid as the holder: naming it reads as "kill this and clear
+  # the lock", and the last two times that reasoning was followed the lock was
+  # valid and held by a run the pid file simply did not name yet. A lock dir with
+  # no pid file is also this case — it is the window between mkdir and the write.
+  #
+  # THE WARNING LEADS, and the lock path is omitted entirely, because the exec
+  # dispatcher delivers only the last stderr line SLICED TO 200 CHARS. A message
+  # that opened with the path (~80 chars of tmpdir) would be cut off exactly at
+  # "Do NOT clear it" — leaving a reader with a dead pid, no warning, and the
+  # obvious wrong conclusion. Same rule the `refused, nothing measured` line
+  # above states: cause before path, on any line a cap can reach.
+  printf 'the suite lock is HELD but its pid file names no live process (pid: %s), waited %ss. Do NOT clear it: the pid file LAGS the real holder. Re-run; check ps for a live node --test first\n' \
+    "${now:-absent}" "$waited" 1>&2
+}
+
 waited=0
 while ! mkdir "$LOCK" 2>/dev/null; do
   holder=$(cat "$LOCK/pid" 2>/dev/null)
@@ -123,23 +177,18 @@ while ! mkdir "$LOCK" 2>/dev/null; do
     continue
   fi
   if [ "$waited" -ge 30 ]; then
-    # STRICTLY under the exec entry's timeoutMs (120000ms), and not merely equal
-    # to it: an equal deadline means the exec SIGKILLs this child at the instant
-    # this message would print, so the caller gets "timed out after 120000ms" —
-    # the least informative outcome — and never learns a second run was the
-    # cause. That is what shipped, and it cost three misdiagnosed timeouts.
+    # STRICTLY under the exec entry's timeoutMs, and not merely equal to it: an
+    # equal deadline means the exec SIGKILLs this child at the instant this
+    # message would print, so the caller gets "timed out" — the least
+    # informative outcome — and never learns a second run was the cause. That is
+    # what shipped, and it cost three misdiagnosed timeouts.
+    # test/test-digest-lock.test.js pins the relation against the shipped def.
     #
     # 30s also beats waiting the full cap on purpose: the caller is an agent
-    # whose turn is billed while this blocks, and a suite that runs in ~24s is
-    # either nearly done or wedged. Long enough to inherit a finishing run,
-    # short enough that the answer arrives while it is still worth having.
-    #
-    # `ps -o etime=` rather than a stored start time: the holder may be a run
-    # this script never launched (npm test takes the same lock), so the process
-    # table is the only source that knows when it actually began.
-    started=$(ps -o etime= -p "${holder:-0}" 2>/dev/null | tr -d ' ')
-    printf 'another suite run is already going (pid %s, running %s) - waited %ss, not starting a second\n' \
-      "${holder:-unknown}" "${started:-unknown}" "$waited" 1>&2
+    # whose turn is billed while this blocks, and the suite runs in ~74s, so a
+    # holder is either nearly done or wedged. Long enough to inherit a finishing
+    # run, short enough that the answer arrives while it is still worth having.
+    lock_refusal
     exit 1
   fi
   waited=$((waited + 2))

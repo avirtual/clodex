@@ -6,8 +6,18 @@
 // on 2026-08-01, and the damage was not the lost run — it was the diagnosis. A
 // wedge is indistinguishable from a slow suite, so it was read as "the suite
 // outgrew its timeout" and the exec timeout was raised 60s -> 300s. The suite
-// actually runs in ~24s. Raising the cap made the next collision LONGER instead
-// of impossible.
+// ran in ~24s at the time. Raising the cap made the next collision LONGER
+// instead of impossible.
+//
+// THAT IS NOT AN ARGUMENT AGAINST EVERY RAISE, and this file now contains a
+// subject REQUIRING a cap of at least 312000ms — read it (`the exec ceiling
+// clears a WHOLE run plus a whole lock wait`) before concluding the two
+// disagree. The 2026-08-01 raise was a cap covering for a MISSING mutex, so it
+// bought longer deadlocks. The lock now makes concurrent runs impossible, so
+// the cap no longer decides whether runs collide — only whether a run that
+// legitimately took its turn lives long enough to REPORT. Against a suite
+// measured at ~74s, the old 120s cap killed successful runs and threw their
+// digest away.
 //
 // These tests run the lock protocol against a stub command rather than the real
 // suite: a test that shells out to the whole suite would be the slowest thing in
@@ -183,7 +193,13 @@ test('lock: an interrupted run releases the lock via its trap', async () => {
 // SIGKILLs the child at the instant the script would print "another suite run is
 // already going", so the caller sees "timed out after 120000ms" and never learns
 // a second run was the cause. Three timeouts were misdiagnosed that way.
-const EXEC_TIMEOUT_MS = 120000;
+//
+// READ FROM THE SHIPPED DEF, never restated here (t440). A copy of the ceiling
+// is correct on the day it is written and silently wrong afterwards — and the
+// direction that matters is the one that cannot be seen: a def RAISED past a
+// stale copy leaves this test passing about a number nobody ships.
+const execTimeoutMs = () => JSON.parse(fs.readFileSync(
+  path.join(__dirname, '..', 'resources', 'library', 'exec', 'clodex-run-tests.json'), 'utf-8')).timeoutMs;
 
 test('lock: the script gives up waiting STRICTLY before the exec entry kills it', () => {
   const src = fs.readFileSync(SCRIPT, 'utf-8');
@@ -192,9 +208,40 @@ test('lock: the script gives up waiting STRICTLY before the exec entry kills it'
   // than skip the comparison below and leave this test asserting nothing.
   assert.ok(m, 'the script still caps its wait with a `waited" -ge <n>` guard');
   const capMs = Number(m[1]) * 1000;
-  assert.ok(capMs < EXEC_TIMEOUT_MS,
-    `the script waits up to ${capMs}ms but the exec entry kills it at ${EXEC_TIMEOUT_MS}ms — `
+  const execMs = execTimeoutMs();
+  assert.ok(typeof execMs === 'number' && execMs > 0,
+    `ENTER: the def must carry a real timeoutMs, got ${JSON.stringify(execMs)} — otherwise the `
+    + 'comparison below is against undefined and passes vacuously');
+  assert.ok(capMs < execMs,
+    `the script waits up to ${capMs}ms but the exec entry kills it at ${execMs}ms — `
     + 'equal or greater means the caller gets an uninformative timeout instead of the lock message');
+});
+
+test('lock: the exec ceiling clears a WHOLE run plus a whole lock wait, with room to grow', () => {
+  // MEASURED, not guessed (t440, 2026-08-19): the full suite runs in 73s wall at
+  // root fe8e152 and 74s from a worktree at c1e1b8e, 6000 and 6004 tests. The
+  // ceiling that shipped was 120000ms, which cleared that by 46s — and the
+  // script's own lock wait (up to 30s) is spent INSIDE it, so the real headroom
+  // was 16s and a single queued run blew the ceiling. That is how a SUCCESSFUL
+  // run lost its report: the wrapper is SIGKILLed while the suite keeps running
+  // and keeps holding the lock, and the digest, which exists only on the killed
+  // wrapper's stderr, is never delivered.
+  //
+  // So the floor asserted here is a whole run PLUS a whole lock wait, times a
+  // growth factor. At 420000ms the def tolerates roughly 4x today's wall time
+  // (~74s -> ~390s) before it can trip again, i.e. the suite quadrupling at
+  // today's cost per test. A ceiling chosen to just clear today's number trips
+  // again within weeks, because the suite grows monotonically.
+  const MEASURED_WALL_MS = 74000;
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const m = /waited" -ge (\d+)/.exec(src);
+  assert.ok(m, 'ENTER: the lock wait must be readable — it is part of the budget asserted here');
+  const floor = (MEASURED_WALL_MS + Number(m[1]) * 1000) * 3;
+  assert.ok(execTimeoutMs() >= floor,
+    `the run-tests ceiling is ${execTimeoutMs()}ms but a run (${MEASURED_WALL_MS}ms) plus a full lock `
+    + `wait (${Number(m[1]) * 1000}ms) needs at least ${floor}ms to leave any growth room — a ceiling `
+    + 'this tight kills successful runs and loses their digest, which teaches hands to use the '
+    + 'UNLOCKED `node scripts/run-tests.js` instead, and two of those deadlock');
 });
 
 test('lock: the refusal names the holder and how long it has been running', () => {
@@ -206,6 +253,103 @@ test('lock: the refusal names the holder and how long it has been running', () =
     'the refusal reports the holder pid and its elapsed run time');
   assert.match(src, /ps -o etime= -p/,
     'elapsed time comes from the process table: the holder may be an `npm test` this script never launched');
+});
+
+// ── the refusal's EVIDENCE (t440 / B2) ──────────────────────────────────────
+// The refusal was observed naming pid 37692 as the holder when that pid was
+// already dead — it was the PREVIOUS wrapper, and a different, genuinely live
+// run held the lock. The refusal was CORRECT and its evidence was not, which is
+// the worse of the two failures: a dead pid in this message is exactly the
+// reasoning that ends in `rm -rf`-ing a valid lock and deadlocking two runs.
+//
+// Driven by calling the shipped `lock_refusal` function directly rather than by
+// waiting out the real 30s loop: a subject that spent 30 real seconds per state
+// would add two minutes to the suite to exercise four printf branches. The
+// function is EXTRACTED FROM THE SHIPPED FILE by anchor, the same discipline
+// lockHarness uses, so a rename fails loudly instead of testing a paraphrase.
+function refusalFor(state) {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const start = src.indexOf('lock_refusal() {');
+  const end = src.indexOf('\n}\n', start);
+  assert.ok(start > 0 && end > start,
+    'lock_refusal() was not found in test-digest.sh — this test extracts it by anchor and that anchor has moved');
+  const fn = src.slice(start, end + 3);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-refusal-'));
+  const lock = path.join(dir, '.test-digest.lock');
+  if (state !== 'released') {
+    fs.mkdirSync(lock);
+    // OUR OWN pid for the live case: alive by construction, and no process is
+    // harmed. 999999 for the dead case — a pid that cannot exist.
+    if (state === 'live') fs.writeFileSync(path.join(lock, 'pid'), String(process.pid));
+    if (state === 'dead') fs.writeFileSync(path.join(lock, 'pid'), '999999');
+    // state 'nopid' writes nothing: the window between mkdir and the pid write.
+  }
+  const sh = path.join(dir, 'drive.sh');
+  fs.writeFileSync(sh, `#!/bin/sh\n${fn}\nLOCK="${lock}"\nwaited=30\nlock_refusal\n`, { mode: 0o755 });
+  const res = spawnSync('/bin/sh', [sh], { encoding: 'utf-8' });
+  fs.rmSync(dir, { recursive: true, force: true });
+  return (res.stderr || '').trim();
+}
+
+test('lock: a refusal against a LIVE holder names that pid and its elapsed time', () => {
+  const out = refusalFor('live');
+  // ENTER: the live branch is the one that may name a pid, and every assertion
+  // in the sibling subjects is about NOT naming one — so pin that this branch
+  // is reachable, or those could all be passing over a function that says
+  // nothing at all.
+  assert.match(out, /another suite run is already going/,
+    `the live branch must still produce the plain refusal; got ${JSON.stringify(out)}`);
+  assert.match(out, new RegExp(`pid ${process.pid}\\b`), 'and it names the live holder');
+  assert.match(out, /waited 30s/, 'and how long it waited');
+});
+
+test('lock: a HELD lock whose pid is DEAD does not present that pid as the holder', () => {
+  // The observed defect. The pid file lags the real holder — a run that just
+  // took the lock has not written its pid yet, and the file may still name the
+  // previous wrapper. Reporting it as "the holder" invites clearing a valid lock.
+  const out = refusalFor('dead');
+  assert.match(out, /HELD but its pid file names no live process/,
+    `a dead pid must be reported as evidence that does not match, not as the holder; got ${JSON.stringify(out)}`);
+  assert.ok(!/another suite run is already going \(pid 999999/.test(out),
+    'the dead pid must NOT be presented in the holder sentence');
+  assert.match(out, /Do NOT clear it/, 'and the reader is warned off the rm -rf conclusion outright');
+  assert.match(out, /999999/, 'the pid is still SHOWN — as the pid FILE\'s content, which is the actual evidence');
+});
+
+test('lock: a lock dir with no pid file yet is the same case, not an unknown holder', () => {
+  // The window between `mkdir` and `echo $$ > pid`. The old message printed
+  // "pid unknown" inside the holder sentence, which reads as a wedge.
+  const out = refusalFor('nopid');
+  assert.match(out, /HELD but its pid file names no live process/, 'reported as the lagging-evidence case');
+  assert.match(out, /pid: absent/, 'and says the file is not there rather than inventing a holder');
+  assert.ok(!/another suite run is already going/.test(out),
+    'not the holder sentence, which would claim evidence this branch does not have');
+});
+
+test('lock: a lock RELEASED in the instant we gave up says nothing is wedged', () => {
+  // The benign race, and the only one of the four where re-running is certain to
+  // work. Telling it apart from a wedge is the difference between one re-run and
+  // an investigation.
+  const out = refusalFor('released');
+  assert.match(out, /nothing is wedged, re-run to take it/,
+    `a released lock must not read as a wedge; got ${JSON.stringify(out)}`);
+  assert.ok(!/Do NOT clear it/.test(out), 'and carries no warning about a lock that is already gone');
+});
+
+test('lock: every refusal line fits the 200-char slice the exec dispatcher delivers', () => {
+  // The dispatcher replies with the LAST stderr line sliced to 200 chars. The
+  // dead-pid line is the longest and the one whose tail is load-bearing — a cut
+  // that dropped "Do NOT clear it" would leave a reader holding a dead pid, no
+  // warning, and the obvious wrong conclusion. It shipped at 204 chars while
+  // being written, which is how this subject came to exist.
+  for (const state of ['live', 'dead', 'nopid', 'released']) {
+    const out = refusalFor(state);
+    assert.ok(out.length > 0, `ENTER: the ${state} branch printed nothing — nothing is being measured`);
+    assert.ok(out.length <= 200,
+      `the ${state} refusal is ${out.length} chars and the dispatcher delivers 200 — the tail, `
+      + `which is where the actionable half lives, would be cut: ${JSON.stringify(out)}`);
+  }
 });
 
 // ── the OTHER entry point ───────────────────────────────────────────────────
