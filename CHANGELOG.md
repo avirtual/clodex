@@ -17,8 +17,8 @@ blocks a release.
   cause: the lock is box-wide, so a hand verifying its own worktree holds the
   root's lock for a whole run. An accepted ticket whose merge landed in that
   window used to be refused permanently and downgraded to a manual `git merge` —
-  it now waits and retries (up to ten times over ten minutes) and merges by
-  itself once the run finishes, while merges for other tickets carry on
+  it now waits and retries (up to ten times, and never more than ten minutes) and
+  merges by itself once the run finishes, while merges for other tickets carry on
   unblocked. Only that one transient refusal retries; a dirty tree, a moved
   branch or a red suite still stops at once, and an exhausted wait escalates with
   the same manual command it always gave. Separately, an agent's suite command

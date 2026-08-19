@@ -6,8 +6,18 @@
 // on 2026-08-01, and the damage was not the lost run — it was the diagnosis. A
 // wedge is indistinguishable from a slow suite, so it was read as "the suite
 // outgrew its timeout" and the exec timeout was raised 60s -> 300s. The suite
-// actually runs in ~24s. Raising the cap made the next collision LONGER instead
-// of impossible.
+// ran in ~24s at the time. Raising the cap made the next collision LONGER
+// instead of impossible.
+//
+// THAT IS NOT AN ARGUMENT AGAINST EVERY RAISE, and this file now contains a
+// subject REQUIRING a cap of at least 312000ms — read it (`the exec ceiling
+// clears a WHOLE run plus a whole lock wait`) before concluding the two
+// disagree. The 2026-08-01 raise was a cap covering for a MISSING mutex, so it
+// bought longer deadlocks. The lock now makes concurrent runs impossible, so
+// the cap no longer decides whether runs collide — only whether a run that
+// legitimately took its turn lives long enough to REPORT. Against a suite
+// measured at ~74s, the old 120s cap killed successful runs and threw their
+// digest away.
 //
 // These tests run the lock protocol against a stub command rather than the real
 // suite: a test that shells out to the whole suite would be the slowest thing in

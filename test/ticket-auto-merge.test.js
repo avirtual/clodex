@@ -1034,6 +1034,111 @@ test('a merge WAITS rather than dying when a LIVE pid holds the root suite lock'
   assert.deepStrictEqual(f.esc(), [], 'the retry merged, so nothing escalated');
   assert.match(f.masterLog(), /Merge t1:/, 'and the branch really did land on master');
   assert.strictEqual(f.landed().length, 1, 'announced exactly once');
+  assert.ok(!('mergeWaiting' in f.one()), 'and the waiting stamp is gone once it landed');
+});
+
+// ── the deferred merge's trace on the board ────────────────────────────────
+// A deferred merge holds its whole retry state in ONE unref'd setTimeout for up
+// to ten minutes. loopStep is already deleted by the time a merge runs, so
+// ticketInFlight is false and the stall sweep never revisits the ticket — a
+// crash or an [agent:reboot] in that window would drop the merge with nothing on
+// the record and no DM, which is strictly worse than the terminal refusal this
+// ticket replaced. `mergeWaiting` is that record, and it is a SEPARATE field
+// from mergeError on purpose: mergeError reads as "needs a human", and a merge
+// that is going to happen by itself must not send the lead looking.
+
+test('a deferred merge leaves a WAITING trace on the board, distinct from an error', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  plantLock(repo);
+  assert.ok(!('mergeWaiting' in f.one()), 'ENTER: the record starts with no stamp');
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.strictEqual(r.scheduled.length, 1, 'ENTER: this pass really did defer');
+  assert.strictEqual(f.one().mergeWaiting, 'suite-in-flight',
+    'the wait survives the process, so a crash mid-wait leaves evidence rather than silence');
+  assert.ok(!('mergeError' in f.one()),
+    'and it is NOT the needs-a-human field — a merge that will happen by itself must not read as one that will not');
+});
+
+test('a retry that hits a DIFFERENT terminal arm does not leave the WAITING stamp behind', async () => {
+  // THE INVARIANT, and the whole risk of the field. A retry re-enters
+  // _autoMergeTicket from the top and can reach a terminal arm that is not
+  // suite-in-flight at all — here the root checkout has moved off master between
+  // the defer and the retry. Clearing only on the green path would leave this
+  // ticket stamped as waiting forever, and a ticket that looks eternally pending
+  // is its own bug — the exact kind the field was added to prevent.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  plantLock(repo);
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  assert.strictEqual(f.one().mergeWaiting, 'suite-in-flight', 'ENTER: the stamp really is on the board');
+
+  // The lock clears, but the tree has moved on: the retry now fails at on-master.
+  clearLock(repo);
+  git(repo.dir, ['checkout', '-q', '-b', 'somewhere-else']);
+  assert.strictEqual(await r.drain(), 1, 'the retry ran');
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: it really did take a different arm');
+  assert.match(esc[0].body, /merge: on-master/, 'ENTER: specifically the on-master arm, not suite-in-flight');
+  assert.ok(!('mergeWaiting' in f.one()),
+    'the waiting stamp must be GONE — otherwise the board shows a ticket pending on a merge that already failed');
+  assert.strictEqual(f.one().mergeError, 'on-master', 'and the real failure is stamped in its place');
+});
+
+test('an exhausted retry clears the WAITING stamp as it escalates', async () => {
+  // The other arm reachable only through a defer: exhaustion. It stamps
+  // mergeError, and the waiting stamp must not survive alongside it — a ticket
+  // reading as both waiting and failed describes two different states of the
+  // world at once.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  plantLock(repo);
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  assert.strictEqual(f.one().mergeWaiting, 'suite-in-flight', 'ENTER: it deferred and stamped');
+  await r.drain();
+
+  assert.strictEqual(f.esc().length, 1, 'ENTER: the retries really were exhausted');
+  assert.ok(!('mergeWaiting' in f.one()), 'the waiting stamp is cleared on the way out');
+  assert.strictEqual(f.one().mergeError, 'suite-in-flight', 'and the failure is stamped instead');
+});
+
+test('a ticket reopened during the wait leaves no WAITING stamp behind either', async () => {
+  // The SILENT exits are the ones a per-arm clear forgets, because they return
+  // without saying anything: a `task reject`/`cancel` landing in the wait
+  // reopens the ticket, and the retry then returns early at the state check.
+  // Nothing escalates and nothing merges — and nothing must be left claiming a
+  // merge is pending on a ticket that is open again.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  plantLock(repo);
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  assert.strictEqual(f.one().mergeWaiting, 'suite-in-flight', 'ENTER: it deferred and stamped');
+
+  // Reopened in the gap, exactly as a reject would.
+  const rec = f.tstore.load(f.team.root);
+  rec.find((t) => t.id === 't1').state = 'open';
+  f.tstore.save(f.team.root, rec);
+  clearLock(repo);
+  assert.strictEqual(await r.drain(), 1, 'the retry ran and returned early');
+
+  assert.deepStrictEqual(f.esc(), [], 'ENTER: a reopened ticket is silent, not an escalation');
+  assert.ok(!/Merge t1:/.test(f.masterLog()), 'ENTER: and nothing was merged');
+  assert.ok(!('mergeWaiting' in f.one()),
+    'the stamp is cleared even on the silent path — a finally, not a rule applied per arm');
 });
 
 test('an exhausted retry escalates with the manual merge command intact', async () => {
@@ -1077,6 +1182,22 @@ test('an exhausted retry escalates with the manual merge command intact', async 
   // just to assert a literal is a way to get the assertion itself wrong.
   assert.ok(esc[0].body.includes(`git -C ${repo.dir} merge --no-ff tl-1`),
     'the exact hand-merge command is spelled out, root and branch included');
+
+  // THE MESSAGE REPORTS, IT DOES NOT DIAGNOSE. The loop cannot tell one wedged
+  // run from several legitimate ones back to back — and it holds evidence
+  // AGAINST the wedge reading, since `holder` came from _suiteLockHolder, which
+  // returns null for a dead pid. Asserting a wedge over a pid verified alive is
+  // the reasoning that ends in clearing a valid lock and deadlocking two runs,
+  // which is the same failure scripts/test-digest.sh's refusal was rewritten to
+  // refuse. Fixing it there and reopening it here would defend the script's
+  // message and leave the loop's open, aimed at the same reader.
+  assert.ok(!/wedged or abandoned/.test(esc[0].body),
+    'the escalation must not diagnose a wedge it never observed');
+  assert.match(esc[0].body, /held on every sample/, 'it reports what it actually saw');
+  assert.match(esc[0].body, /one wedged run or several legitimate ones/,
+    'and names BOTH readings, so the lead is not steered to the destructive one');
+  assert.match(esc[0].body, /do not clear the lock by hand/i,
+    'and says outright not to clear the lock — the action this message could otherwise invite');
 });
 
 test('the TOTAL wait bounds the retry even when the attempt count has not run out', async () => {

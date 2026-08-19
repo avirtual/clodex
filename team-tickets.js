@@ -63,8 +63,9 @@ const TICKET_SUITE_LOCK_WAIT_MS = 20 * 60 * 1000;
 // a queued run as `did not finish within 900000ms (killed)`: a wedge report for
 // a run that was only waiting its turn. test/test-digest-lock.test.js pins the
 // same relation for the other entry point, where the inversion cost three
-// misdiagnosed timeouts. The margin is the run itself: the suite takes ~24s,
-// and exceeding 15m of RUNNING means a wedge, not a slow suite.
+// misdiagnosed timeouts. The margin is the run itself: the suite takes ~74s
+// (measured 2026-08-19 at fe8e152), and exceeding 15m of RUNNING means a wedge,
+// not a slow suite.
 const TICKET_SUITE_TIMEOUT_MS = TICKET_SUITE_LOCK_WAIT_MS + 15 * 60 * 1000;
 
 // The suite-in-flight retry (t440). BOUNDED IN BOTH DIRECTIONS, and the two
@@ -74,16 +75,20 @@ const TICKET_SUITE_TIMEOUT_MS = TICKET_SUITE_LOCK_WAIT_MS + 15 * 60 * 1000;
 // stretch to hours, and a deadline alone lets a fast lock flap spin the timer
 // hundreds of times.
 //
-// The numbers are sized against ONE suite run, which is ~81s of test time plus
-// startup: a delay well under it would burn attempts inside a single run without
-// ever outliving it, and a delay near it would usually sample the lock just as
-// the next run takes it. 30s samples a ~100s run three times.
+// The numbers are sized against ONE suite run: 73s wall at master fe8e152, 74s
+// from a worktree at c1e1b8e, measured 2026-08-19 (scripts/test-digest.sh and
+// test/test-digest-lock.test.js carry the same measurement). A delay well under
+// that would burn attempts inside a single run without ever outliving it, and a
+// delay near it would usually sample the lock just as the next run takes it —
+// 30s samples a ~74s run about three times.
 // 10 attempts x 30s covers ~5 minutes of continuous contention — three
 // back-to-back suite runs — which is the realistic shape here (a hand verifying
 // its worktree takes the ROOT's lock, so a team of hands serializes through it).
-// Past that the holder is not contention, and the escalation is the honest
-// answer. The 10-minute deadline is the one that bites when the retries are
-// themselves delayed behind other merges in the chain.
+// Past that, waiting longer is unlikely to help and the escalation is the honest
+// answer — which is NOT the same as concluding the lock is wedged, and the
+// escalation deliberately does not say so. The 10-minute deadline is the one
+// that bites when the retries are themselves delayed behind other merges in the
+// chain.
 const MERGE_RETRY_DELAY_MS = 30 * 1000;
 const MERGE_RETRY_MAX_ATTEMPTS = 10;
 const MERGE_RETRY_MAX_WAIT_MS = 10 * 60 * 1000;
@@ -1081,11 +1086,59 @@ function createTicketMethods(deps, shared) {
       }
     },
 
+    // The DEFERRED merge's trace on the board, and deliberately NOT mergeError.
+    //
+    // Why it needs one at all: by the time a merge runs, _landVerdictOnTicket has
+    // already deleted `loopStep`, so ticketInFlight is false and the stall sweep
+    // never looks at this ticket again. A deferred merge holds its entire retry
+    // state in ONE unref'd setTimeout closure for up to ten minutes — a crash or
+    // an [agent:reboot] in that window drops the merge with nothing on the record
+    // and no DM, which is strictly worse than the terminal refusal this replaced,
+    // since that one at least stamped and escalated.
+    //
+    // Why a SEPARATE field: mergeError reads as "this ticket needs a human". A
+    // ticket waiting its turn does not, and stamping it there would send the lead
+    // to look at a merge that is going to happen by itself.
+    _stampMergeWaiting(team, ticketId, why) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec) return;
+        if (!why) { if (!('mergeWaiting' in rec)) return; delete rec.mergeWaiting; }
+        else rec.mergeWaiting = why;
+        rec.lastActivityAt = Date.now();
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `merge waiting stamp for ${ticketId} failed: ${e.message}`);
+      }
+    },
+
     // `retry` is the suite-in-flight retry's carried state, `{ attempt, since }`,
     // and it is a PARAMETER rather than instance state on purpose: two tickets
     // can be waiting on the same lock at once, and a single field on the manager
     // would have one of them inherit the other's attempt count and deadline.
     async _autoMergeTicket(team, ticketId, landedOn, verdictText, retry = null) {
+      // THE mergeWaiting INVARIANT: set on the defer arm, false on EVERY other
+      // exit from this function.
+      //
+      // Held in a `finally` rather than by clearing at each exit, because the
+      // exits are not only the ones that are easy to remember. A retry re-enters
+      // from the top and can reach a DIFFERENT terminal arm than the one that
+      // deferred — dirty tree, moved branch, red suite, exhaustion — and can also
+      // take a SILENT return (the ticket was reopened in the gap, or has no
+      // branch), or throw. Every one of those would otherwise leave the stamp
+      // behind, and a ticket that looks eternally pending is its own bug, of
+      // exactly the kind this field was added to prevent. Clearing at each exit
+      // is a rule someone must re-apply to every arm added later; a finally is
+      // the same rule enforced by control flow.
+      //
+      // Costs one ticketsStore load per merge, and no save unless the field is
+      // actually there — _stampMergeWaiting returns early when it is absent.
+      //
+      // Attached to the EXISTING try/catch below rather than an outer one: the
+      // whole body already runs inside it, so this needs no new block and no
+      // reindent of 300 lines whose template literals are byte-sensitive.
+      let deferred = false;
       const fail = (step, evidence, tried) => {
         // Stamped BEFORE the DM, because the DM is the arm that can fail. An
         // undelivered escalation is otherwise lost outright: _landVerdictOnTicket
@@ -1210,7 +1263,7 @@ function createTicketMethods(deps, shared) {
           // CONSTRUCTION: the suite lock is box-wide (scripts/test-digest.sh
           // locks the ROOT even when it measures a worktree), so any hand
           // verifying its own branch holds it for the length of a run, and the
-          // merge is refused for a reason that resolves itself in ~100s.
+          // merge is refused for a reason that resolves itself in ~74s.
           //
           // SCHEDULED, NOT SLEPT, and that distinction is the ticket. The retry
           // runs OUTSIDE this call: _autoMergeTicket returns, its link in
@@ -1240,15 +1293,34 @@ function createTicketMethods(deps, shared) {
             }, MERGE_RETRY_DELAY_MS);
             // NOT stamped as a merge error: the board's mergeError field is read
             // as "this ticket needs a human", and a ticket that is merely waiting
-            // its turn does not. The exhausted arm below stamps it.
+            // its turn does not. The exhausted arm below stamps that one.
+            //
+            // But it IS stamped as WAITING, because the whole retry state lives
+            // in the timer closure above and a crash or a reboot in the next ten
+            // minutes would otherwise drop the merge with nothing on the board
+            // and no DM. `deferred` is what exempts this arm from the finally's
+            // clear — set BEFORE the stamp so an exception between the two
+            // cannot leave the field set with the flag false.
+            deferred = true;
+            this._stampMergeWaiting(team, ticketId, 'suite-in-flight');
             return;
           }
           // EXHAUSTED. The escalation is the old one WORD FOR WORD, including the
           // manual merge command, plus what was waited — a retry that gave up
           // quietly would be worse than the terminal refusal it replaced, since
           // the lead would be waiting on a mechanism that had already stopped.
+          //
+          // WHAT IT MUST NOT SAY IS WHY. This message reports that every sample
+          // found the lock held; it does NOT diagnose a wedge. The loop cannot
+          // tell one wedged run from several legitimate ones back to back, and
+          // it holds evidence AGAINST the wedge reading: `holder` comes from
+          // _suiteLockHolder, which returns null for a dead pid, so the pid
+          // printed here was verified alive. Naming a wedge over a live pid is
+          // the same reasoning scripts/test-digest.sh's refusal was rewritten to
+          // refuse — it is what ends in clearing a valid lock and deadlocking
+          // two runs.
           fail('suite-in-flight', `a test suite is already running in the root checkout ${team.root} (pid ${holder}) — merging now would rewrite the files under it`,
-            `nothing was merged, and the loop will NOT retry — it already retried ${attempt} time${attempt === 1 ? '' : 's'} over ${Math.round(waited / 1000)}s and the lock was held every time, so this is a wedged or abandoned lock rather than a suite that is nearly done. To land it by hand: \`git -C ${team.root} merge --no-ff ${branch}\`, then run the suite in ${team.root}. Otherwise re-review the ticket.`);
+            `nothing was merged, and the loop will NOT retry — it already retried ${attempt} time${attempt === 1 ? '' : 's'} over ${Math.round(waited / 1000)}s and the lock was held on every sample. That can be one wedged run or several legitimate ones back to back, so check \`ps\` for a live \`node --test\` before concluding anything, and do not clear the lock by hand. To land it by hand: \`git -C ${team.root} merge --no-ff ${branch}\`, then run the suite in ${team.root}. Otherwise re-review the ticket.`);
           return;
         }
 
@@ -1420,6 +1492,11 @@ function createTicketMethods(deps, shared) {
           merged && merged.ok && merged.sha
             ? `the merge commit ${merged.sha} IS on ${MERGE_TARGET_BRANCH} and was NOT verified — \`git -C ${team.root} revert -m 1 ${merged.sha}\` undoes it`
             : 'nothing was merged');
+      } finally {
+        // Only the defer arm leaves it set. This runs on that arm too — where
+        // `deferred` is true and the stamp must SURVIVE — so the clear is
+        // conditional, not unconditional.
+        if (!deferred) this._stampMergeWaiting(team, ticketId, null);
       }
     },
 

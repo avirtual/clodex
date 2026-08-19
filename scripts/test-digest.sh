@@ -93,7 +93,10 @@ fi
 # concurrent runs deadlock: both sit at 0% CPU and neither finishes. That
 # failure is indistinguishable from a slow suite, and the wrong lesson —
 # "raise the timeout" — makes the next collision longer instead of impossible.
-# The suite takes ~24s; anything past this wait is a wedge, not contention.
+# The suite takes ~74s (measured 2026-08-19 at fe8e152), which is LONGER than
+# the 30s wait below — so giving up is not evidence of a wedge. It routinely
+# means an ordinary run started before us and is still going. The refusal says
+# that rather than diagnosing; see lock_refusal.
 #
 # But a timeout is NOT evidence of a second runner: until 46cd13d a SINGLE run
 # could wedge alone, because an unguarded tail `close()` in attach.test.js left
