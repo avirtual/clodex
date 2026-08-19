@@ -272,3 +272,87 @@ test('appVersion is null before a welcome, and exposes nothing else from the fra
     assert.ok(!Object.keys(shim).some((k) => /welcome/i.test(k)), 'welcomeInfo is not exported');
   } finally { restore(); }
 });
+
+// ── t442: a wirescope link the browser cannot resolve must not be OFFERED.
+// Only the container flavors set CLODEX_WIRESCOPE_PUBLIC_URL; the ssh installer
+// never does, so publicBase is routinely empty. A proxyBase-origin url opened
+// then resolves against the VIEWER's machine — usually its own wirescope on the
+// same port — and renders a foreign sessionId. The gate lives in the shim, the
+// one place that knows publicBase.
+
+// Collect toast text without leaving the toast's 5s removal timer dangling: the
+// stub is installed only around the synchronous dispatch, so `tick`'s real
+// setTimeout is untouched.
+function dispatchCapturingToasts(ws, frame) {
+  const realSetTimeout = global.setTimeout;
+  global.setTimeout = () => 0;
+  try { ws.onmessage({ data: JSON.stringify(frame) }); } finally { global.setTimeout = realSetTimeout; }
+}
+function toastTexts(node, out = []) {
+  for (const c of node.children || []) {
+    if (String(c.className).includes('clx-toast') && c.textContent) out.push(c.textContent);
+    toastTexts(c, out);
+  }
+  return out;
+}
+async function welcomed(shim, { proxyBase, wirescopePublicBase }) {
+  shim.start();
+  const ws = FakeWS.last;
+  ws.onopen();
+  ws.onmessage({ data: JSON.stringify({ t: 'welcome', workspaceId: 'w1', home: '/h', proxyBase, wirescopePublicBase }) });
+  await tick();
+  return ws;
+}
+
+test('unreachableProxyUrl keys on origin-match AND an empty publicBase, never on publicBase alone', () => {
+  const { shim, restore } = loadShim();
+  try {
+    const { unreachableProxyUrl } = shim;
+    const proxy = 'http://127.0.0.1:7800';
+    // The defect case: the box advertises no public base, so this url would
+    // resolve against the viewer's own loopback.
+    assert.equal(unreachableProxyUrl('http://127.0.0.1:7800/_session?session=abc', proxy, ''), true);
+    assert.equal(unreachableProxyUrl('http://127.0.0.1:7800/_session', proxy, undefined), true);
+    // A public base exists → rewritable, so not suppressed.
+    assert.equal(unreachableProxyUrl('http://127.0.0.1:7800/_session', proxy, 'http://localhost:7811'), false);
+    // The regression to guard: a foreign origin is NEVER suppressed, empty
+    // publicBase or not. Gating on publicBase alone would swallow these.
+    assert.equal(unreachableProxyUrl('https://github.com/avirtual/clodex/releases', proxy, ''), false);
+    assert.equal(unreachableProxyUrl('https://example.com/x', proxy, ''), false);
+    // A different loopback PORT is a different origin — not the box's proxy.
+    assert.equal(unreachableProxyUrl('http://127.0.0.1:9999/x', proxy, ''), false);
+    // Desktop / no proxyBase at all, and unparseable urls: nothing to suppress.
+    assert.equal(unreachableProxyUrl('http://127.0.0.1:7800/x', '', ''), false);
+    assert.equal(unreachableProxyUrl('not a url', proxy, ''), false);
+    assert.equal(unreachableProxyUrl('', proxy, ''), false);
+  } finally { restore(); }
+});
+
+test('open-external SUPPRESSES a proxyBase url when there is no public base, and says why', async () => {
+  const { shim, restore } = loadShim();
+  try {
+    const opened = [];
+    global.window.open = (url) => { opened.push(url); };
+    const ws = await welcomed(shim, { proxyBase: 'http://127.0.0.1:7800', wirescopePublicBase: '' });
+    dispatchCapturingToasts(ws, { t: 'event', channel: 'open-external', args: ['http://127.0.0.1:7800/_session?session=abc'] });
+    assert.deepEqual(opened, [], 'the unresolvable wirescope link is not opened at all');
+    const toasts = toastTexts(global.document.body);
+    // ENTER: the suppressed click must SAY something — a silent no-op reads as a
+    // broken button, which is what this assertion is really pinning.
+    assert.equal(toasts.length, 1, `exactly one toast explains the suppression (got ${JSON.stringify(toasts)})`);
+    assert.match(toasts[0], /wirescope/i);
+    assert.match(toasts[0], /loopback|no route/i);
+  } finally { restore(); }
+});
+
+test('open-external still opens a NON-proxyBase url untouched when there is no public base', async () => {
+  const { shim, restore } = loadShim();
+  try {
+    const opened = [];
+    global.window.open = (url) => { opened.push(url); };
+    const ws = await welcomed(shim, { proxyBase: 'http://127.0.0.1:7800', wirescopePublicBase: '' });
+    dispatchCapturingToasts(ws, { t: 'event', channel: 'open-external', args: ['https://github.com/avirtual/clodex/releases'] });
+    assert.deepEqual(opened, ['https://github.com/avirtual/clodex/releases'], 'a github link opens exactly as before');
+    assert.deepEqual(toastTexts(global.document.body), [], 'and nothing is toasted at it');
+  } finally { restore(); }
+});
