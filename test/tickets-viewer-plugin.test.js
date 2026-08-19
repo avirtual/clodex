@@ -34,6 +34,10 @@ const viewerEngine = require('../plugins/tickets-viewer/engine');
 const {
   DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, VIEWER_ACTOR,
   setClodexHomeForTest, projectDirFor,
+  // Read here so the t435 cases can assert their OWN precondition — whether a
+  // team names the project — through the engine's index rather than through a
+  // second copy of the hashing a test could get wrong.
+  teamIndex,
   // Read from the engine on purpose, so the delivery assertions below pin the
   // SHAPE (the close line rides every dispatch) and not the wording. The wording
   // is pinned once, against core's copy, in tickets-viewer-path-parity.test.js —
@@ -1249,6 +1253,117 @@ test('tickets-viewer: assign STAMPS the dispatch it performs, and never restates
     // work FIRST started, so a re-assignment must not restate it. Without the
     // guard every re-send would reset the clock §4/§5 measure from.
     assert.equal(byId.t2.startedAt, now - 40 * HOUR, 'an already-started ticket keeps its ORIGINAL start');
+  } finally { cleanup(); }
+});
+
+// ── assign makes the same dispatch-time refusal the intent verbs make (t435) ─
+//
+// t431 gated `_taskStart` and `_taskAssign` on the ticket having a task dir,
+// because a ticket whose spec names no `tasks/…` path has nowhere for the review
+// step to write its diff and dies at VERIFY — after the hand has done the whole
+// job. On t429 that cost two no-op rounds. The viewer's assign is the other
+// dispatch path, so until this gate it was the one remaining door into that
+// state: the same act, typed as an intent, refused; clicked on the board,
+// allowed. The three tests below are the door and its two exemptions, and all
+// three are needed — the first alone passes against a viewer that refuses
+// everything.
+
+test('tickets-viewer: assign REFUSES a task-dir-less ticket on a team board, writing nothing (t435)', async () => {
+  const { host, home, teams, sessions, injected, cleanup } = boot();
+  try {
+    // A TEAM board, because a project no team names is the viewer's solo
+    // equivalent and is exempt by design — see the next test.
+    const teamDir = mkTeam(teams, 'gated');
+    const key = keyOfTeam(teamDir);
+    const now = Date.now();
+    // No `taskDir` key: the shape `add` writes when extractTaskDir found nothing
+    // in the spec. No worktree and no startedAt either, so neither exemption can
+    // be what the refusal is measured against.
+    writeTickets(teamDir, [ticket('t1', {
+      assignee: 'old-hand', spec: 'do the thing', startedAt: null,
+      nudgedAt: now - HOUR, lastActivityAt: now - HOUR,
+    })]);
+    addSession(sessions, 'new-hand');
+    assertWritesLandInFixture(home, key);
+
+    const before = onDisk(home, key)[0];
+    assert.equal('taskDir' in before, false, 'ENTER: the fixture ticket really has no task dir');
+    assert.ok(teamIndex().get(key), 'ENTER: a team names this project, so the solo carve-out is not in play');
+
+    const res = await host.dispatch('tickets-viewer', 'assign',
+      [{ project: key, id: 't1', assignee: 'new-hand' }], 'desktop');
+
+    assert.equal(res.ok, false, 'the assign is refused');
+    assert.match(res.error, /^ticket t1 has no task dir, so nothing was assigned/);
+    assert.match(res.error, /\[agent:task respec t1\]/,
+      'and names the fix — a refusal the lead cannot act on is a worse failure than the gap');
+
+    // "Nothing was changed" is a promise about DISK, and the return value cannot
+    // keep it: mutateBoard refuses before the save only if the gate sits inside
+    // the mutate callback. Asserted field by field against the record as filed,
+    // because a gate placed one line late still returns this exact string having
+    // already re-pointed the assignee and cleared the park.
+    assert.deepEqual(onDisk(home, key)[0], before, 'not one byte of the record moved');
+    assert.deepEqual(injected, [], 'and no seat was told to start work that would die at verify');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: a SOLO board assigns a task-dir-less ticket as before (t435)', async () => {
+  const { host, home, teams, sessions, injected, cleanup } = boot();
+  try {
+    // The carve-out core spells `team.solo`, which is set only by _soloContext,
+    // in memory, and never written to a manifest — so the viewer can never read
+    // it. Its observable equivalent is that NO team names this project: a solo
+    // ticket mints no worktree and gets no loop step, so it cannot reach the
+    // verify-time refusal, and gating it would be pure cost on a shipped path.
+    const key = mkProject(home, '/solo/no-task-dir');
+    writeTicketsAt(home, key, [ticket('t1', { assignee: 'old-hand', spec: 'do the thing', startedAt: null })]);
+    addSession(sessions, 'new-hand');
+    assertWritesLandInFixture(home, key);
+
+    assert.equal('taskDir' in onDisk(home, key)[0], false,
+      'ENTER: task-dir-less, so this passes because of the carve-out and not because the gate had nothing to refuse');
+    assert.deepEqual(fs.readdirSync(teams), [], 'ENTER: no team exists, which IS the solo case here');
+
+    const res = await host.dispatch('tickets-viewer', 'assign',
+      [{ project: key, id: 't1', assignee: 'new-hand' }], 'desktop');
+
+    assert.equal(res.ok, true, res.error);
+    assert.equal(res.delivered, true, 'the spec still reaches the seat');
+    assert.equal(onDisk(home, key)[0].assignee, 'new-hand', 'and the board still moved');
+    assert.equal(injected.length, 1, 'exactly the one delivery');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: a re-send to a ticket that owns a TREE is exempt from the gate (t435)', async () => {
+  const { host, home, teams, sessions, injected, cleanup } = boot();
+  try {
+    // Core's re-send test is `ownSeat || the ticket's tree`. The viewer has no
+    // `ownSeat` — that is read off persisted records the plugin cannot see — so
+    // this half is the whole of the viewer's exemption, and it is NARROWER than
+    // core's on purpose. The tree is the work: the cost this gate avoids was
+    // already paid when the tree was minted, and refusing here would strand the
+    // redelivery a respawned or stuck seat recovers through.
+    const teamDir = mkTeam(teams, 'resend');
+    const key = keyOfTeam(teamDir);
+    writeTickets(teamDir, [ticket('t1', {
+      assignee: 'old-hand', spec: 'do the thing',
+      worktree: { path: '/tmp/tree-t1', branch: 't1' },
+    })]);
+    addSession(sessions, 'new-hand');
+    assertWritesLandInFixture(home, key);
+
+    assert.equal('taskDir' in onDisk(home, key)[0], false,
+      'ENTER: still task-dir-less, so only the re-send exemption can be letting this through');
+    assert.ok(teamIndex().get(key), 'ENTER: and a team names it, so the solo carve-out is not what passes it');
+
+    const res = await host.dispatch('tickets-viewer', 'assign',
+      [{ project: key, id: 't1', assignee: 'new-hand' }], 'desktop');
+
+    assert.equal(res.ok, true, res.error);
+    assert.equal(res.delivered, true, 'the redelivery a stuck seat recovers through still lands');
+    assert.equal(onDisk(home, key)[0].assignee, 'new-hand');
+    assert.equal(injected.length, 1);
   } finally { cleanup(); }
 });
 

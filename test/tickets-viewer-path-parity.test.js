@@ -252,3 +252,79 @@ test('viewer ticketStarted agrees with core tickets-store', () => {
   assert.strictEqual(viewer.ticketStarted({ startedAt: null }), false,
     'an explicit null is a ticket filed and never dispatched');
 });
+
+// ── the dispatch-time task-dir gate (t435) ──────────────────────────────────
+//
+// The sixth copy, and the first that REFUSES rather than computes. t431 put this
+// gate on both intent verbs (`_taskStart`, `_taskAssign`); the viewer's assign is
+// the other dispatch path, so without a copy here a lead who CLICKS assign gets
+// the pre-t431 behaviour — the hand does the whole job and dies at verify — while
+// the same action typed as an intent is refused. Two doors into one state, one
+// of them open, is the gap this closes.
+//
+// Its drift is silent in the expensive direction: a copy that stopped refusing
+// leaves no error anywhere, it just spends two no-op rounds. The SENTENCE is
+// pinned byte-for-byte for the same reason the close line is — the wording
+// carries the fix instruction (`respec`), and a paraphrase that dropped it would
+// pass a shape check while leaving the lead with a refusal they cannot act on.
+//
+// Reachable from here because the method uses no `this`: the mixin is built with
+// stub deps purely to get at the function.
+const coreTaskDirRefusal = require('../team-tickets')
+  .createTicketMethods({}, {})._ticketTaskDirRefusal;
+
+test('viewer task-dir refusal agrees with core team-tickets, byte for byte', () => {
+  const cases = [
+    // [team, ticket, verb, reSend]
+    [{}, { id: 't1' }, 'assign', false],                       // THE refusal
+    [{}, { id: 't1', taskDir: 'tasks/x' }, 'assign', false],   // has one → allowed
+    [{}, { id: 't1', taskDir: '' }, 'assign', false],          // empty is not one
+    [{ solo: true }, { id: 't1' }, 'assign', false],           // solo carve-out
+    [{ solo: false }, { id: 't1' }, 'assign', false],          // explicitly not solo
+    [null, { id: 't1' }, 'assign', false],                     // no team object at all
+    [{}, { id: 't1' }, 'assign', true],                        // re-send exemption
+    [{ solo: true }, { id: 't1' }, 'assign', true],            // both exemptions at once
+    // The verb decides one word of the sentence ("started" vs "assigned"), so a
+    // copy that hardcoded either still agrees on half the table.
+    [{}, { id: 't1' }, 'start', false],
+    [{}, { id: 't99' }, 'assign', false],                      // the id is interpolated twice
+  ];
+
+  // ENTER: the loop is the reduction, and every exemption row returns null — a
+  // table that somehow lost the one REFUSING row would be satisfied by a copy
+  // that returns null unconditionally, which is precisely the regression.
+  assert.ok(cases.some(([team, t, , reSend]) => !t.taskDir && !(team && team.solo) && !reSend),
+    'the table must reach the case that actually refuses');
+
+  for (const [team, ticket, verb, reSend] of cases) {
+    assert.strictEqual(
+      viewer.ticketTaskDirRefusal(team, ticket, verb, reSend),
+      coreTaskDirRefusal(team, ticket, verb, reSend),
+      `diverged on ${JSON.stringify({ team, ticket, verb, reSend })}`);
+  }
+
+  // The anchors, so two copies that drifted TOGETHER still fail here. Equality
+  // above is satisfied by any pair of identically-wrong functions — including the
+  // pair where both stopped refusing.
+  const line = viewer.ticketTaskDirRefusal({}, { id: 't7' }, 'assign', false);
+  assert.strictEqual(line, coreTaskDirRefusal({}, { id: 't7' }, 'assign', false));
+  assert.match(line, /^ticket t7 has no task dir, so nothing was assigned/,
+    'names the ticket and says outright that nothing happened');
+  assert.match(line, /its spec names no `tasks\/…` path on any line/,
+    'says WHY, in terms of the spec the lead can go and fix');
+  assert.match(line, /the review step has nowhere to write its diff/,
+    'and what it costs — the reason this is refused at dispatch rather than at verify');
+  assert.match(line, /Nothing was changed\./,
+    'the promise the placement above every write is what makes true');
+  assert.match(line, /\[agent:task respec t7\]/,
+    'the fix instruction, with the id filled in — respec and NOT reject, since the ticket is still open');
+
+  // And the exemptions said outright, so a copy that refuses everything fails
+  // here rather than passing a table where the exempt rows are merely equal.
+  assert.strictEqual(viewer.ticketTaskDirRefusal({ solo: true }, { id: 't7' }, 'assign', false), null,
+    'a solo board mints no worktree and gets no loop step, so it never reaches the cost this prevents');
+  assert.strictEqual(viewer.ticketTaskDirRefusal({}, { id: 't7' }, 'assign', true), null,
+    'a re-send is a redelivery, which is how a respawned or stuck seat recovers');
+  assert.strictEqual(viewer.ticketTaskDirRefusal({}, { id: 't7', taskDir: 'tasks/x' }, 'assign', false), null,
+    'a ticket that HAS a task dir is the ordinary case and must pass through');
+});
