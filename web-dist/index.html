@@ -27190,7 +27190,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 clear.addEventListener("click", () => {
                   input.value = "";
                   field.classList.remove("stale");
-                  why.remove();
+                  why.textContent = "cleared \u2014 not used while standing";
+                  why.title = `${f} is removed when you Save. The box stays inert because the role still dispatches standing \u2014 switch dispatch to spawn/worktree to set a new one.`;
                   clear.remove();
                   if (typeof onClear === "function") onClear(f);
                 });

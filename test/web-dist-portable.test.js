@@ -3,12 +3,13 @@
 //
 // esbuild writes a source-marker comment naming each file it inlines, and the
 // name is RELATIVE TO THE BUILD'S WORKING DIRECTORY, after symlinks are
-// resolved. Two ways that leaked the build machine into the bundle: building
-// from a git worktree — which is exactly where a delegated hand does its work —
-// escaped through the loop's `node_modules` symlink and wrote
+// resolved. What leaked the build machine into the bundle: building from a git
+// worktree — which is exactly where a delegated hand does its work — escaped
+// through the loop's `node_modules` symlink and wrote
 // `../wb-wrap-ui/node_modules/@xterm/...`, pointing back at the original
-// checkout; and invoking the build from a subdirectory moved every marker with
-// the cwd.
+// checkout. A subdirectory build moves every marker with the cwd too, but only a
+// direct `node build/build-web.js` could reach it: `npm run build:web` re-roots
+// cwd to the package directory, so the documented invocation never was exposed.
 //
 // Both are now closed AT THE BUILD, not by convention: build/build-web.js pins
 // `absWorkingDir: ROOT` + `preserveSymlinks: true` on both esbuild calls, so the
@@ -111,6 +112,46 @@ test('the detector separates the shipped defect from a correct build', () => {
     + 'bundle and be disabled within a week');
 });
 
+// Every `esbuild.build({...})` call, delimited by BRACE BALANCE rather than by a
+// closing `\n  })` at one exact indentation. The old shape-match tied this pin to
+// the formatting of the file it guards: reindent build-web.js, or nest a call one
+// level deeper, and it failed for a reason unrelated to the property — or worse,
+// matched nothing and passed vacuously.
+function esbuildCalls(src) {
+  const out = [];
+  const OPEN = 'esbuild.build({';
+  for (let i = src.indexOf(OPEN); i !== -1; i = src.indexOf(OPEN, i + 1)) {
+    let depth = 0;
+    for (let j = i + OPEN.length - 1; j < src.length; j++) {
+      const c = src[j];
+      if (c === '{') depth++;
+      else if (c === '}') {
+        depth--;
+        if (depth === 0) { out.push(src.slice(i, j + 1)); break; }
+      }
+    }
+  }
+  return out;
+}
+
+test('the esbuild-call extractor survives reformatting and still sees each call', () => {
+  // Guards the guard: the test below is green on the real file either way, so
+  // only this can say the extractor still SEPARATES a call that carries the
+  // options from one that lost them — and that it no longer keys on indentation.
+  const reindented = 'const js = await esbuild.build({\n      absWorkingDir: ROOT,\n'
+    + '      preserveSymlinks: true,\n      alias: { os: shim },\n});';
+  const found = esbuildCalls(reindented);
+  assert.strictEqual(found.length, 1,
+    'the extractor lost a call to reformatting — the defect the shape-match had');
+  assert.match(found[0], /preserveSymlinks: true/,
+    'and it captures the whole call body, including a NESTED object literal');
+
+  assert.strictEqual(esbuildCalls('esbuild.build({ a: 1 })\nesbuild.build({ b: 2 })').length, 2,
+    'two single-line calls are two calls');
+  assert.deepStrictEqual(esbuildCalls('const x = 1;'), [],
+    'and a file with no esbuild call yields none, which the count assertion catches');
+});
+
 test('build-web pins the two esbuild options that keep the bundle portable', () => {
   // The tests above read the COMMITTED bundle, so they cannot see this
   // regression: drop the options, rebuild from the repo root, and the bundle is
@@ -118,19 +159,22 @@ test('build-web pins the two esbuild options that keep the bundle portable', () 
   // hand who builds from a worktree and gets sent back over a file they built
   // correctly. That is the loop this ticket closed, so pin the cause.
   //
-  // Both options, both esbuild calls. Measured from a worktree: with only
-  // `preserveSymlinks` a subdirectory build writes `../node_modules/`, and with
-  // only `absWorkingDir` the symlink escape is untouched. Neither is redundant.
+  // Why each option matters is on the options themselves in build/build-web.js.
   const src = fs.readFileSync(path.join(ROOT, 'build', 'build-web.js'), 'utf8');
-  const calls = src.match(/esbuild\.build\(\{[\s\S]*?\n  \}\)/g) || [];
-  assert.strictEqual(calls.length, 2,
-    'build/build-web.js no longer has exactly two esbuild.build calls — this pin '
-    + 'matched them by shape, so re-derive it rather than deleting it');
+  const calls = esbuildCalls(src);
+  // A pin that matches nothing passes VACUOUSLY — the loop below is
+  // `[].every(...)`, which is true. So the count is asserted first, and as a
+  // floor rather than an equality: a third esbuild call is a legitimate change
+  // that must not fail here, while it must still be covered by the loop.
+  assert.ok(calls.length >= 2,
+    `expected at least the two esbuild.build calls in build/build-web.js, found ${calls.length} `
+    + '— the extractor stopped matching them, so every assertion below is vacuous');
   for (const call of calls) {
     assert.match(call, /absWorkingDir:\s*ROOT/,
       'an esbuild.build call in build/build-web.js lost `absWorkingDir: ROOT`, so its '
-      + 'source markers move with the invocation cwd and a build from a subdirectory '
-      + 'embeds the build machine in the shipped bundle');
+      + 'source markers move with the invocation cwd and a DIRECT `node build/build-web.js` '
+      + 'from a subdirectory embeds the build machine in the shipped bundle (`npm run '
+      + 'build:web` re-roots cwd, so it is unaffected)');
     assert.match(call, /preserveSymlinks:\s*true/,
       'an esbuild.build call in build/build-web.js lost `preserveSymlinks: true`, so it '
       + 'resolves through the ticket loop\'s worktree `node_modules` symlink and writes '

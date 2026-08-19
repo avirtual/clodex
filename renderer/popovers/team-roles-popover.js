@@ -363,7 +363,13 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
             // visible-empty-inert says "gone, and this is where it was". It comes
             // back editable on the next active dispatch, which rebuilds it `edit`.
             field.classList.remove('stale');
-            why.remove();
+            // Retexted, NOT removed. The input above stays disabled, so dropping
+            // the note would leave an empty uneditable box with nothing saying
+            // why — the cleared state has to explain ITSELF rather than inherit
+            // an explanation from the stale state it just left. `f` is a literal
+            // from the loop above, not an agent-written value.
+            why.textContent = 'cleared — not used while standing';
+            why.title = `${f} is removed when you Save. The box stays inert because the role still dispatches standing — switch dispatch to spawn/worktree to set a new one.`;
             clear.remove();
             // The state side has to hear about this too. `stale` vs `hidden` is
             // decided from what is STORED, so a caller that keeps its own stored

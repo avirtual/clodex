@@ -88,15 +88,22 @@ async function main() {
     child_process: path.join(WEB, 'child_process-shim.js'),
   };
 
-  // Both flags are load-bearing, and each is dead without the other — esbuild
-  // names every inlined module RELATIVE TO THE BUILD'S WORKING DIRECTORY, after
-  // resolving symlinks. The ticket loop plants `node_modules` in each worktree
-  // as a symlink to the root checkout, so without `preserveSymlinks` esbuild
-  // escapes through it and writes `../wb-wrap-ui/node_modules/...`; without
-  // `absWorkingDir` the markers move with the invocation cwd, so building from
-  // a subdirectory writes `../node_modules/...`. Measured: dropping either one
-  // reintroduces a prefixed marker. Pinned by test/web-dist-portable.test.js,
-  // which exists because that defect shipped twice.
+  // Both flags stay, for different reasons — esbuild names every inlined module
+  // RELATIVE TO THE BUILD'S WORKING DIRECTORY, after resolving symlinks.
+  //
+  // `preserveSymlinks`: the ticket loop plants `node_modules` in each worktree as
+  // a symlink to the root checkout, so without it esbuild escapes through the
+  // link and writes `../wb-wrap-ui/node_modules/...` — reachable from the
+  // ordinary `npm run build:web`, and the form that actually shipped twice.
+  //
+  // `absWorkingDir`: pins the marker root to ROOT rather than the invocation cwd.
+  // Only a DIRECT `node build/build-web.js` from a subdirectory ever reached the
+  // defect — `npm run build:web` re-roots cwd to the package directory, so the
+  // documented invocation was never exposed. It stays because it is what makes
+  // the bundle byte-identical however it is invoked, which is the property the
+  // test checks; it is not load-bearing against the shipped bug.
+  //
+  // Pinned by test/web-dist-portable.test.js.
   const js = await esbuild.build({
     entryPoints: [path.join(WEB, 'boot.js')],
     absWorkingDir: ROOT,
