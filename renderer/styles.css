@@ -1324,9 +1324,6 @@ html, body {
    uneditable, unexplained, and indistinguishable from an ordinary empty field. */
 .team-role-field input:disabled { opacity: 0.55; }
 .team-role-stale-note { color: var(--warn); font-size: 10px; }
-/* Post-Clear the note stays but stops warning: --warn says "a stored value is
-   sitting here unused", and after a Clear there is no value to warn about. */
-.team-role-stale-note.cleared { color: var(--text-dim); }
 .team-role-stale-clear { align-self: flex-start; margin-top: 2px; }
 
 /* B4: the dispatch segmented control. Native radios styled as segments — the

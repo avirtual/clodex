@@ -537,6 +537,15 @@ test('r3 nit2: Clear leaves the stale cwd INERT — the role is still standing',
   assert.ok(!/field\.remove\(\)|input\.remove\(\)/.test(src),
     'and the field is not removed either — inert beats vanishing under the cursor');
 
+  // r4: the note is RETEXTED, not removed. Dropping it left an empty, disabled,
+  // unexplained box — the field kept its inertness and lost the only thing that
+  // said why. The input above is still disabled at this point, so a note that
+  // deletes itself here is a state that explains nothing.
+  assert.ok(!/why\.remove\(\)/.test(src),
+    'the Clear removed the note, leaving an empty disabled box with nothing saying why it is inert');
+  assert.match(src, /why\.textContent =/,
+    'the Clear must retext the note in place — that is what keeps the cleared state self-explaining');
+
   // The other half of "inert": the field was disabled when rendered stale, so
   // saying nothing in the handler is what keeps it that way. If the render side
   // ever stopped disabling, the absence above would assert nothing.

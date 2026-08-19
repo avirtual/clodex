@@ -368,7 +368,6 @@ function initTeamRolesPopover({ promptText, openSessionDialog } = {}) {
             // why — the cleared state has to explain ITSELF rather than inherit
             // an explanation from the stale state it just left. `f` is a literal
             // from the loop above, not an agent-written value.
-            why.classList.add('cleared');
             why.textContent = 'cleared — not used while standing';
             why.title = `${f} is removed when you Save. The box stays inert because the role still dispatches standing — switch dispatch to spawn/worktree to set a new one.`;
             clear.remove();

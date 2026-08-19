@@ -3,10 +3,9 @@
 // keyed on a class the Clear handler removes.
 //
 // The state: a role dispatching `standing` renders its stored cwd stale —
-// visible, disabled, with a note. Clear blanks the input and drops `.stale`
-// (with its note's warn colour), but deliberately LEAVES THE INPUT DISABLED,
-// because the role is still standing and a re-enabled box would invite a value
-// Save persists invisibly. So there is a live state — empty, uneditable — that
+// visible, disabled, with a note. Clear blanks the input and drops `.stale`, but
+// deliberately LEAVES THE INPUT DISABLED, because the role is still standing and
+// a re-enabled box would invite a value Save persists invisibly. So there is a live state — empty, uneditable — that
 // `.team-role-field.stale input` no longer covers. Without a rule keyed on
 // `disabled` it renders at full opacity: indistinguishable from an ordinary
 // empty field the operator can type into.

@@ -172,8 +172,9 @@ test('build-web pins the two esbuild options that keep the bundle portable', () 
   for (const call of calls) {
     assert.match(call, /absWorkingDir:\s*ROOT/,
       'an esbuild.build call in build/build-web.js lost `absWorkingDir: ROOT`, so its '
-      + 'source markers move with the invocation cwd and a build from a subdirectory '
-      + 'embeds the build machine in the shipped bundle');
+      + 'source markers move with the invocation cwd and a DIRECT `node build/build-web.js` '
+      + 'from a subdirectory embeds the build machine in the shipped bundle (`npm run '
+      + 'build:web` re-roots cwd, so it is unaffected)');
     assert.match(call, /preserveSymlinks:\s*true/,
       'an esbuild.build call in build/build-web.js lost `preserveSymlinks: true`, so it '
       + 'resolves through the ticket loop\'s worktree `node_modules` symlink and writes '
