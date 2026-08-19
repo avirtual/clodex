@@ -451,3 +451,97 @@ test('open-external still opens a NON-proxyBase url untouched when there is no p
     assert.deepEqual(toastTexts(global.document.body), [], 'and nothing is toasted at it');
   } finally { restore(); }
 });
+
+// ── t442 × t443: the two halves composed ─────────────────────────────────────
+// t442 suppresses a dashboard link the browser cannot resolve; t443 makes one
+// resolvable by forwarding the box's wirescope. They meet on a single line of
+// dispatchEvent, and the failure mode of getting that meeting wrong is silent:
+// if the GATE keeps reading the raw `wirescopePublicBase` while the REWRITE
+// reads the forward, then a live forward is still judged unreachable and
+// suppressed — each ticket works in isolation and together they do nothing.
+// These pin the composition, not either half.
+
+test('t442×t443: with a live forward the link is REWRITTEN and opened, never suppressed', async () => {
+  // THE combination assertion. The box publishes no public base (the ssh
+  // installer case t442 was written for), so t442 alone would suppress this
+  // click. The forward makes it resolvable, so it must open — at the local port.
+  const { shim, restore } = loadShim({ search: '?workspace=w1&wirescope=45501' });
+  try {
+    const opened = [];
+    global.window.open = (url) => { opened.push(url); };
+    const ws = await welcomed(shim, { proxyBase: 'http://127.0.0.1:7800', wirescopePublicBase: '' });
+    dispatchCapturingToasts(ws, { t: 'event', channel: 'open-external', args: ['http://127.0.0.1:7800/_session?session=abc'] });
+    assert.deepEqual(opened, ['http://127.0.0.1:45501/_session?session=abc'],
+      'the forward resolves the link — suppressing it here would cancel t443 out entirely');
+    assert.deepEqual(toastTexts(global.document.body), [],
+      'and nothing is toasted: there is a route, so the "no route" message would be a lie');
+  } finally { restore(); }
+});
+
+test('t442×t443: with NO forward and no public base, t442`s fail-safe still holds', async () => {
+  // The other side of the same line. t443 must not have weakened the gate: with
+  // neither candidate base, the link is still suppressed with its explanation.
+  const { shim, restore } = loadShim({ search: '?workspace=w1' });
+  try {
+    const opened = [];
+    global.window.open = (url) => { opened.push(url); };
+    const ws = await welcomed(shim, { proxyBase: 'http://127.0.0.1:7800', wirescopePublicBase: '' });
+    dispatchCapturingToasts(ws, { t: 'event', channel: 'open-external', args: ['http://127.0.0.1:7800/_session'] });
+    assert.deepEqual(opened, [], 'still suppressed');
+    assert.equal(toastTexts(global.document.body).length, 1, 'still explained');
+  } finally { restore(); }
+});
+
+test('t442×t443: a REFUSED wirescope param falls back to suppression, not to a bad port', async () => {
+  // The two rules meeting at their edges: a malformed param yields no local base,
+  // and with no public base either the gate must catch the link. The failure this
+  // rules out is a param that is bad enough to reject but still non-empty enough
+  // to look like a route.
+  for (const bad of ['0', '99999', 'abc', '7800abc', 'http://evil.example']) {
+    const { shim, restore } = loadShim({ search: `?wirescope=${encodeURIComponent(bad)}` });
+    try {
+      const opened = [];
+      global.window.open = (url) => { opened.push(url); };
+      const ws = await welcomed(shim, { proxyBase: 'http://127.0.0.1:7800', wirescopePublicBase: '' });
+      dispatchCapturingToasts(ws, { t: 'event', channel: 'open-external', args: ['http://127.0.0.1:7800/_session'] });
+      assert.deepEqual(opened, [], `${JSON.stringify(bad)}: suppressed rather than opened at a junk port`);
+    } finally { restore(); }
+  }
+});
+
+test('t442×t443: the forward also wins over a box-published base, and is not suppressed', async () => {
+  // The compose case reached through a tunnel: the box DOES publish a base, but
+  // it names a host only reachable from the box's own machine. The forward wins,
+  // and the gate must not fire on either value.
+  const { shim, restore } = loadShim({ search: '?wirescope=45501' });
+  try {
+    const opened = [];
+    global.window.open = (url) => { opened.push(url); };
+    const ws = await welcomed(shim, { proxyBase: 'http://127.0.0.1:7800', wirescopePublicBase: 'http://localhost:7811' });
+    dispatchCapturingToasts(ws, { t: 'event', channel: 'open-external', args: ['http://127.0.0.1:7800/_timeline?s=1'] });
+    assert.deepEqual(opened, ['http://127.0.0.1:45501/_timeline?s=1'], 'the local forward wins');
+    assert.deepEqual(toastTexts(global.document.body), []);
+  } finally { restore(); }
+});
+
+test('STRUCTURAL: only wirescopeBase reads wirescopePublicBase, so the gate and the rewrite cannot diverge', () => {
+  // A source-level guard, because the bug it prevents is invisible at runtime
+  // until someone opens a tunnelled dashboard link: two readers of the same
+  // welcome field drifting apart re-creates the "suppressed despite a live
+  // forward" state, and every other test here would still pass. Pinning the
+  // single-reader rule is what makes the composition structural rather than
+  // merely correct today.
+  const src = fs.readFileSync(SHIM, 'utf8');
+  const code = src.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  const readers = code.match(/wirescopePublicBase/g) || [];
+  assert.equal(readers.length, 1,
+    `wirescopePublicBase must be read in exactly one place (wirescopeBase); found ${readers.length}`);
+  assert.match(code, /function wirescopeBase\(info\)[\s\S]{0,160}wirescopePublicBase/,
+    'and that one place is wirescopeBase');
+  // And dispatchEvent must feed ONE computed base to both consumers, rather than
+  // calling wirescopeBase twice or passing different values.
+  const dispatch = code.slice(code.indexOf('function dispatchEvent'), code.indexOf('function onMessage'));
+  assert.match(dispatch, /const publicBase = wirescopeBase\(welcomeInfo\)/, 'the base is computed once');
+  assert.match(dispatch, /unreachableProxyUrl\(args\[0\], proxyBase, publicBase\)/, 'the gate is fed it');
+  assert.match(dispatch, /rewriteExternalUrl\(args\[0\], proxyBase, publicBase\)/, 'and so is the rewrite');
+});

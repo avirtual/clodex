@@ -158,6 +158,15 @@ That local base **wins over** the welcome frame's `wirescopePublicBase` — the
 box's own idea of where it is publicly reachable is by construction not
 reachable from a viewer on the far side of a tunnel.
 
+`wirescopeBase()` is the SINGLE reader of that welcome field, and the base it
+returns feeds BOTH t442's reachability gate (`unreachableProxyUrl`, which
+suppresses a dashboard link with no base to rewrite to) and the rewrite itself.
+That is not tidiness: if the gate read the raw welcome field while the rewrite
+read the forward, a live forward would still be judged unreachable and
+suppressed — the two tickets would cancel out, silently, in the one state they
+were both built for. A source-level test in `test/api-shim.test.js` pins the
+single-reader rule.
+
 ## 4. Settings reconciliation (peer-wiring.js)
 
 `syncPeerManager` lazily constructs both managers, then reconciles from

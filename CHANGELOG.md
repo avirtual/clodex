@@ -13,15 +13,14 @@ blocks a release.
 
 ## Unreleased
 
-- Wirescope dashboard links now resolve when you open a peer box's web frontend
-  through the ↗ tunnel. They used to point at `127.0.0.1:7800`, which your
-  browser resolved against your OWN machine — where a local wirescope is usually
-  listening on exactly that port, so you got your own dashboard showing a
-  stranger's session id rather than a visibly broken link. Opening the web view
-  now also forwards that box's wirescope and tells the page where it landed.
-  Nothing to configure, and nothing to lose: a box with no wirescope (or one on
-  a version that predates this) simply has no dashboard link, and the web
-  frontend itself opens either way.
+- Wirescope dashboard links now WORK when you open a peer box's web frontend
+  through the ↗ tunnel, rather than merely being suppressed as unreachable (see
+  the entry below, which stops them landing on the wrong machine). Opening the
+  web view now also forwards that box's wirescope and tells the page where it
+  landed, so the link resolves to the box's dashboard through the tunnel.
+  Nothing to configure, and nothing to lose: a box with no wirescope — or one
+  running a version that predates this — simply has no dashboard link, exactly
+  as before, and the web frontend itself opens either way.
 
 - A lead can no longer spawn a duplicate reviewer into the ticket loop's blind
   window. Closing a ticket stamps it for verification, and the loop spawns its
