@@ -600,6 +600,39 @@ function createTicketMethods(deps, shared) {
         reply(`error: only the team lead (${team.lead}) can request a review`);
         return;
       }
+
+      // SCOPED TO `!reviewTicket`, and that scope is the whole correctness of this
+      // guard. The ticket loop reaches this same handler with `opts.ticketId`, for a
+      // ticket that is in `verify` BY DEFINITION — that is the step it is spawned
+      // from. A board read that did not check `reviewTicket` first would refuse the
+      // very spawn this exists to protect, and every ticket would stall at review
+      // permanently.
+      //
+      // What it closes: `task done` stamps `loopStep: 'verify'` and the loop mints
+      // its reviewer 75-90s later (measured: 74s, 76s, 81s). In that gap the ticket
+      // LOOKS unreviewed and is not, so a bare `[agent:team-review]` spawns a
+      // second, unattached reviewer whose verdict lands nowhere.
+      //
+      // Only `verify`. A `review` ticket already HAS its seat on the roster, so a
+      // bare call there is visibly redundant; `verify` is the blind window.
+      //
+      // Fails OPEN on an unreadable board: team-review is the documented escape
+      // hatch for when the loop CANNOT spawn a reviewer, so refusing it on a board
+      // that cannot be read would remove the hatch in exactly the broken state it
+      // exists for.
+      if (!reviewTicket) {
+        let inVerify = [];
+        try {
+          inVerify = ticketsStore.load(team.root)
+            .filter((t) => t && t.loopStep === 'verify')
+            .map((t) => t.id);
+        } catch { inVerify = []; }
+        if (inVerify.length) {
+          const many = inVerify.length > 1;
+          reply(`error: ${many ? 'tickets' : 'ticket'} ${inVerify.join(', ')} ${many ? 'are' : 'is'} in the loop's verify step — the loop spawns its OWN reviewer for ${many ? 'each' : 'it'} within about 75-90 seconds of \`task done\`, and it looks unreviewed until then. A review requested here is not attached to ${many ? 'any of them' : 'it'}: its verdict lands nowhere and it re-reads the same diff. Wait for the loop's reviewer. To send an ALREADY-reviewed ticket back for another round, that is [agent:task reject <id>] with the must-fixes, not a second reviewer; no reviewer spawned`);
+          return;
+        }
+      }
       const def = team.roles && team.roles.reviewer;
       if (!def) { reply(`error: team "${team.name}" has no "reviewer" role to spawn`); return; }
 

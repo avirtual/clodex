@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- A lead can no longer spawn a duplicate reviewer into the ticket loop's blind
+  window. Closing a ticket stamps it for verification, and the loop spawns its
+  own reviewer 75-90 seconds later; in that gap the ticket looks unreviewed and
+  is not. A bare `[agent:team-review]` fired there spawned a second reviewer
+  that re-read the whole diff and reported to nobody, because only the loop's
+  call carries the ticket id a verdict routes back through. It is now refused,
+  naming the tickets in verify and pointing at `[agent:task reject <id>]` for
+  the case it gets used for — another round on an already-reviewed ticket. The
+  loop's own reviewer is unaffected.
+
 ## 5.13.0 — 2026-08-19 — the ticket loop stops losing work to its own machinery
 
 - The suite lock no longer costs a merge or eats a report. Two things shared one
