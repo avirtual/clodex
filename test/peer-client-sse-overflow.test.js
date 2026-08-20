@@ -71,6 +71,20 @@ function waitFor(label, pred, ms = 5000) {
   });
 }
 
+// Connecting refetches the session list TWICE: once from _helloLoop's wasOffline
+// branch, once from the events stream's onOpen. The tests below measure DELTAS in
+// that counter, so the gate must not release while either is still in flight —
+// the server registers the stream before the client's onOpen fires, so "the
+// stream is open" does not mean connect is finished. Waiting on the count waits
+// on the causal event; a settle delay cannot work here, because the second fetch
+// is a socket round trip with no bound.
+//
+// The two directions are NOT symmetric, and the assertion below covers the
+// dangerous one. A connect that fetches FEWER times fails loudly by label,
+// because the gate never releases. A connect that fetches MORE would slip past a
+// `>=` gate with the extra still on the wire, so the count is pinned exactly.
+const CONNECT_SESSION_FETCHES = 2;
+
 async function withStream(fn, connOpts = {}) {
   const { server, state } = overflowServer();
   const port = await listen(server);
@@ -85,6 +99,11 @@ async function withStream(fn, connOpts = {}) {
   conn.start();
   try {
     await waitFor('the events stream to open', () => conn.online && state.streams.length === 1);
+    await waitFor(`all ${CONNECT_SESSION_FETCHES} connect-time session refetches to land`,
+      () => state.sessionFetches >= CONNECT_SESSION_FETCHES);
+    assert.strictEqual(state.sessionFetches, CONNECT_SESSION_FETCHES,
+      'the connect fetch count moved — bump CONNECT_SESSION_FETCHES, or every delta below is measured '
+      + 'against a baseline that is still moving');
     await fn(state.streams[0], emits, state, conn);
   } finally {
     conn.stop();

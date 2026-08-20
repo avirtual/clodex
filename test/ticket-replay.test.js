@@ -2409,6 +2409,13 @@ test('t448: an arm that THROWS still releases the drain`s in-flight flag', async
     // returns the whole buffer after a timeout — and t2's ORIGINAL dispatch text
     // is already in there from the `collided` fixture, so a whole-buffer match on
     // PAINT THE FRAME passes whether or not this drain ever wrote.
+    //
+    // The first drain's redelivery is still MID-UNIT here — its Ctrl-U has landed
+    // and its text has not — so a baseline taken now is an offset into someone
+    // else's write. Both assertions below then measure the wrong window: the
+    // growth check is satisfied by that unit finishing itself, and the slice
+    // starts inside it rather than at the second redelivery.
+    await writeComplete(app, 'team-hand');
     const before2 = app.seen('team-hand');
     fireOwed(app, s);
     const after = await settled(app, 'team-hand', /REPLAY[\s\S]*PAINT THE FRAME/);
