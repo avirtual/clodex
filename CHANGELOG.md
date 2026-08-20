@@ -17,9 +17,11 @@ blocks a release.
   reasoning. A one-item REWORK whose finding was traced through five indented
   sub-bullets was announced as "6 must-fixes", sending the lead hunting five
   findings that did not exist. Items are now counted at the shallowest
-  indentation the section actually uses, so sub-bullets belong to their item and
-  a verdict indented as a whole still counts all of its items. The merge gate
-  itself was never affected — it only ever asked whether the count was zero.
+  indentation the section itself uses, so sub-bullets belong to the item above
+  them while genuine siblings still count separately — measured across the
+  recorded verdicts, ten of them had been overcounted, one by eight to one. The
+  merge gate itself was never affected: it only ever asked whether the count was
+  zero.
 
 - The agent protocol reference now says that *every* body-carrying intent
   captures greedily, and names them. It previously listed only two of the

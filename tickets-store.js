@@ -243,9 +243,16 @@ function extractMustFix(verdictText) {
     }
     if (inSection) body.push(line);
   }
-  const out = body.join('\n').trim();
-  if (!out) return null;
-  return /^(?:none|n\/a|-+|—)\.?$/i.test(out) ? null : out;
+  // Leading BLANK LINES and trailing space go; the first item's own indentation
+  // stays. A bare `.trim()` de-indents the first line ONLY, which silently
+  // mutilates the shape `countMustFix` reads: item 1 arrives at column 0 while
+  // its true siblings keep their indent, so a relative-depth count demotes every
+  // sibling to a sub-bullet and collapses a multi-item verdict to 1. Measured
+  // over the live verdict corpus: 28 of 151 files, every one an undercount.
+  // The placeholder tests below run on `.trim()` so their rules stay byte-exact.
+  const out = body.join('\n').replace(/^(?:[ \t]*\r?\n)+/, '').replace(/\s+$/, '');
+  if (!out.trim()) return null;
+  return /^(?:none|n\/a|-+|—)\.?$/i.test(out.trim()) ? null : out;
 }
 
 // How many must-fixes, for a notification that must state a NUMBER without
@@ -264,6 +271,12 @@ function extractMustFix(verdictText) {
 // list marker, and an unguarded floor of 1 then announces `ACCEPT … 1 must-fix`.
 // A verdict that contradicts its own count is the false premise this
 // notification exists to stop, so the placeholder is re-tested here, wrapped.
+// A must-fix list item: the marker spellings the reviewer template asks for.
+// Hoisted beside the placeholder regexes because it is the same family of
+// verdict-shape literal, and the capture is the indentation `countMustFix`
+// measures depth with.
+const MUSTFIX_ITEM_RE = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+\S/;
+
 const MUSTFIX_PLACEHOLDER_RE = /^[\s(\[]*(?:none|n\/a|nothing|-+|—)[\s.)\]]*$/i;
 
 // The first-line form drops the dash arms. A body whose whole content is `---`
@@ -352,7 +365,7 @@ function countMustFix(mustFixText) {
   // entirely. Overcounting is merely noisy; undercounting hides work.
   const widths = [];
   for (const line of lines) {
-    const m = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+\S/.exec(line);
+    const m = MUSTFIX_ITEM_RE.exec(line);
     // CommonMark's tab stop, so a tab-indented item and a space-indented one
     // are comparable at all — raw character counts make one tab shallower than
     // two spaces and pick the sub-bullets as the top level.

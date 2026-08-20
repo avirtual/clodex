@@ -1244,6 +1244,79 @@ test('countMustFix: the t451 fix did not disturb the placeholder or floor rules 
   }
 });
 
+// ── t451 r1 MF2: the count must be pinned through the COMPOSITION ──────────
+// Every unit test above hands `countMustFix` a hand-written blob. Production
+// runs `countMustFix(extractMustFix(text))`, and the two pre-existing composing
+// tests are placeholder cases that return 0 before the item loop is ever
+// reached — so a defect in how the two functions FIT was invisible to the whole
+// file. It shipped one: `extractMustFix` used to end `.trim()`, which de-indents
+// the FIRST item only, and a relative-depth count then read that mutilated line
+// as the top level and demoted its true siblings to sub-bullets. Measured over
+// the live verdict corpus, that collapsed 28 of 151 files to "1 must-fix".
+//
+// These fixtures carry the corpus's real line prefixes verbatim — the `  1. `
+// top level and t450's five `     - ` sub-bullets, indentation and markers
+// byte-for-byte from the two named files. Only the long prose inside each item
+// is elided, which no part of the counter reads.
+const CORPUS_T445_THREE_ITEMS = [
+  '- **VERDICT**: REWORK',
+  '',
+  '- **MUST-FIX**:',
+  '  1. **The tracked browser bundle was never rebuilt — the fix ships to nobody.**',
+  '  2. **A workspace switch silently disarms the whole gate.**',
+  '  3. **The `claimed` exemption is broader than the argument that justifies it**',
+  '',
+  '- **NITS**:',
+  '  - `renderer/index.html:1092` still has `href="#"`.',
+].join('\n');
+
+const CORPUS_T450_ONE_NESTED_ITEM = [
+  '- **VERDICT**: REWORK',
+  '',
+  '- **MUST-FIX**:',
+  '  1. `test/ticket-replay.test.js:2108` — `const beforeLead` is a moving baseline.',
+  '     - `:2110` `deepStrictEqual(s._specOwed || [], [])` — passes;',
+  '     - `:2113` `settled(app,\'lead\',/ESCALATED/)` — does not assert;',
+  '     - `:2114` `leadSaw.length > beforeLead.length` — the only real gate;',
+  '     - `:2116` `assert.match(leadSaw, /t1/)` — matched against the WHOLE buffer;',
+  '     - `:2117` `app.seen(\'team-hand\') === beforeSeat` — passes;',
+  '     So in the mid-unit interleaving the escalation test goes vacuously green.',
+  '',
+  '- **NITS**:',
+  '  1. `test/ticket-replay.test.js:1672` — same shape as the MUST-FIX.',
+].join('\n');
+
+test('countMustFix over extractMustFix: three sibling items count as THREE (t451)', () => {
+  const body = extractMustFix(CORPUS_T445_THREE_ITEMS);
+
+  // ENTER: the composition really produced the multi-line blob, and — the part
+  // the shipped defect turned on — the FIRST item still carries its own
+  // indentation. A `.trim()`ing extractMustFix reaches here with item 1 at
+  // column 0 and its siblings at 2, which is what made the count 1.
+  assert.ok(String(body).split('\n').length > 1, 'ENTER: the extracted body is multi-line');
+  assert.match(String(body), /^ {2}1\. /, 'ENTER: item 1 kept its indentation — a bare .trim() would strip it and re-arm the collapse');
+  assert.ok(/^ {2}3\. /m.test(String(body)), 'ENTER: the third sibling is in the body at the same depth');
+
+  assert.strictEqual(countMustFix(body), 3,
+    'three siblings at one depth are three must-fixes — this is the count the .trim() collapsed to 1');
+});
+
+test('countMustFix over extractMustFix: one item with five sub-bullets counts as ONE (t451)', () => {
+  const body = extractMustFix(CORPUS_T450_ONE_NESTED_ITEM);
+
+  // ENTER: the sub-bullets survived extraction and are indented past the item.
+  // Flatten them and this fixture stops measuring nesting at all.
+  assert.ok(String(body).split('\n').length > 5, 'ENTER: the extracted body is the multi-line blob');
+  assert.match(String(body), /^ {2}1\. /, 'ENTER: the single item kept its indentation');
+  assert.strictEqual((String(body).match(/^ {5}- /gm) || []).length, 5,
+    'ENTER: all five sub-bullets are in the body, deeper than the item');
+
+  // The live incident: this notified as "6 must-fixes" and sent the lead
+  // hunting five findings that did not exist.
+  assert.strictEqual(countMustFix(body), 1,
+    'a must-fix that shows its trace is one must-fix, not one per line of trace');
+});
+
 // ── t404: the delivering line survives markdown emphasis ───────────────────
 // The incident this file's §2 machinery exists for was defeated one layer
 // EARLIER than any assertion above reaches: a reviewer wrote a correct REWORK
