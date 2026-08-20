@@ -716,6 +716,15 @@ test('the SECOND accept — the one that merges — is what finally collects it'
     assert.strictEqual(f.one('t1').closedOut, true, 'ENTER: this accept closed the ticket out');
     assert.strictEqual(f.store.get(before.id), null, 'and NOW the reminder is collected');
     assert.match(f.replies.join('\n'), /1 bound reminder\(s\) cancelled/);
+
+    // t314. This is the only fixture on the accept path running REAL git rather
+    // than a stub, which makes it the live witness for what the reply may claim:
+    // `pending` carries a real commit that was really merged. The record has no
+    // baseSha, so the count falls back to a merge-base that for a fast-forwarded
+    // branch is the tip itself — 0 commits for work that landed. Asserting only
+    // the reminder let a reply saying "NOTHING was merged" pass here green.
+    assert.ok(!/NOTHING was merged/.test(f.replies.join('\n')),
+      'the accept that MERGED real work must not report that nothing was merged');
   } finally { f.cleanup(); }
 });
 

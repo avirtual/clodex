@@ -21,8 +21,13 @@ blocks a release.
   merged. The accept reply now counts the branch first and says "branch X has 0
   commits beyond Y, so NOTHING was merged", matching the wording the review loop
   already uses for the same condition. The cleanup itself is unchanged — an empty
-  branch has nothing to lose — and a count that cannot be obtained is reported as
-  unknown rather than guessed either way.
+  branch has nothing to lose — and the ticket is no longer *recorded* as merged
+  either.
+
+  The count only settles it when it was measured against the branch's recorded
+  fork point. Where none was recorded, an empty branch and one already merged
+  count the same, and accept now reports that as unknown rather than picking a
+  side — as it does when the count cannot be run at all.
 
 - The agent protocol reference now says that *every* body-carrying intent
   captures greedily, and names them. It previously listed only two of the

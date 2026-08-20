@@ -5911,10 +5911,6 @@ function createTicketMethods(deps, shared) {
         return;
       }
 
-      // Merged: the four steps. Stamp FIRST — destroy() drops the record the
-      // session id lives in, so after it the link is unrecoverable.
-      if (seatName) this._stampTicketRevival(team, seatName, { accepted: true, mergedInto: m.base });
-
       // How many commits the branch actually carries — for the REPLY ONLY. The
       // teardown above and below is unconditional and must stay that way: an
       // empty branch has nothing to lose, and refusing to clean it up leaves
@@ -5934,6 +5930,30 @@ function createTicketMethods(deps, shared) {
         || (ticket.worktree && ticket.worktree.baseSha) || null;
       const c = await gitWorktree.commitsOnBranch(team.root, branch, baseSha)
         .catch((e) => ({ ok: false, count: null, error: e.message }));
+
+      // Whether the count means what "0 commits" would suggest. A count is only
+      // evidence of an EMPTY branch when it was measured against the recorded
+      // FORK POINT. With no baseSha — a supported shape, since createWorktree
+      // deliberately records none for a pre-existing branch — commitsOnBranch
+      // falls back to merge-base(defaultBranch, branch), and for a branch already
+      // fast-forwarded into master that merge base IS the branch tip, so the
+      // count is 0 for work that genuinely landed.
+      //
+      // Zero-against-a-fallback therefore cannot tell "never committed" from
+      // "committed and already merged". Those need opposite sentences, so the
+      // undecidable case gets its own rather than borrowing either.
+      const measured = c.ok && baseSha && c.base === String(baseSha).trim();
+
+      // Stamp before the teardown — destroy() drops the record the session id
+      // lives in, so after it the link is unrecoverable. `mergedInto` records
+      // only a merge that can be shown: a demonstrably empty branch is an
+      // ancestor of master without anything landing, so writing m.base there
+      // stores the same false claim this ticket removes from the reply.
+      if (seatName) {
+        this._stampTicketRevival(team, seatName,
+          { accepted: true, mergedInto: (measured && c.count === 0) ? null : m.base });
+      }
+
       let removed = null;
       if (seatName && (this.sessions.has(seatName) || rec)) {
         const r = await this.destroy(seatName).catch((e) => ({ ok: false, error: e.message }));
@@ -5947,24 +5967,33 @@ function createTicketMethods(deps, shared) {
             : `${seatName} retired`);
       }
       parts.push(del.ok ? `branch ${branch} deleted` : `branch ${branch} could NOT be deleted (${del.error})`);
-      // Three outcomes, one teardown. A count that could not be OBTAINED is its
-      // own case, not the empty one: reporting "0 commits, nothing was merged"
-      // off a failed count states as fact the thing that could not be measured.
+      // FOUR outcomes, one teardown. Each claims only what its evidence supports:
       //
-      // The empty-branch wording is t309's, deliberately — the loop's verify step
-      // already reports "branch X has 0 commits beyond Y" for this exact
-      // condition, and a second vocabulary for one condition makes them read as
-      // two different findings.
+      //   !c.ok                  the count could not be run at all
+      //   0 against the FORK     genuinely empty — t309's wording, deliberately
+      //                          reused: the loop's verify step already reports
+      //                          "branch X has 0 commits beyond Y" for this exact
+      //                          condition, and a second vocabulary for one
+      //                          condition reads as two different findings
+      //   0 against a FALLBACK   undecidable — empty and already-fast-forwarded
+      //                          are the same count, so neither sentence is safe
+      //   count > 0              work landed
+      //
+      // The third is not pedantry: it was reached with a real branch whose commit
+      // had been merged, and calling it empty is the mirror image of the phantom
+      // merge — a true merge reported as nothing.
       //
       // `c.base`, not `baseSha`: commitsOnBranch falls through to a merge-base
       // when the mint-time SHA was rebased or gc'd, and naming a base it did not
       // measure against is the same class of false report as the phantom merge.
       const outcome = !c.ok
         ? `accepted — branch ${branch} is an ancestor of ${m.base}, but its commit count could NOT be obtained (${c.error || 'unknown error'}), so whether it carried any work is UNKNOWN`
-        : c.count === 0
+        : c.count === 0 && measured
           ? `accepted — branch ${branch} has 0 commits beyond ${c.base}, so NOTHING was merged; it was torn down as empty`
-          : `accepted — merged into ${m.base}`;
-      // Terminal on all three: the seat is retired and the branch deleted either
+          : c.count === 0
+            ? `accepted — branch ${branch} is an ancestor of ${m.base}, but with no recorded fork point its commits could only be counted against ${c.base}, where an empty branch and one already merged both count 0 — so whether it carried any work is UNKNOWN`
+            : `accepted — merged into ${m.base}`;
+      // Terminal on all four: the seat is retired and the branch deleted either
       // way, so nothing here invites a second accept and a bound reminder has
       // done its job. An empty branch is finished work too — there is no tree
       // left to come back to.
