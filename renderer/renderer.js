@@ -5051,8 +5051,9 @@ function applySandboxRunning(running, ports = null) {
     // The live url deliberately does NOT go in `href` (t445): the click handler
     // routes through openExternal so the browser frontend can refuse a link that
     // points at the box's loopback, and a real href hands cmd-click and
-    // middle-click a path straight around that gate. The address is already on
-    // the ports line above for anyone who wants to read it.
+    // middle-click a path straight around that gate. `title` carries the address
+    // instead, for anyone who wants to read or copy it — the ports line above
+    // shows the port number, not a url.
     sbOpenLink.title = sandboxOpenUrl(effectiveWebPort());
     sbOpenRow.classList.remove('hidden');
   } else {

@@ -321,3 +321,33 @@ test('File keeps its Plugins… item — the top-level menu is absent exactly wh
   const rows = await Promise.resolve(file.items());
   assert.ok(rows.some((r) => r.label === 'Plugins…'), 'the always-available route survives');
 });
+
+// ── t445: a workspace switch must not disarm the loopback gate ───────────────
+
+test('t445: navQuery carries via=tunnel and wirescope across a workspace switch', () => {
+  const { navQuery } = require('../renderer/web/menubar');
+  const prev = global.location;
+  try {
+    global.location = { search: '?workspace=w1&token=sekret&wirescope=45501&via=tunnel' };
+    const p = new URLSearchParams(navQuery('w2'));
+    assert.equal(p.get('workspace'), 'w2', 'the switch takes effect');
+    // The two params whose loss is silent and lasting: the shim reads both at
+    // module-eval, so a switch that drops them disarms the t445 gate and t443's
+    // forward for the rest of the tab's life.
+    assert.equal(p.get('via'), 'tunnel', 'the tunnel mark survives — else every box link opens locally again');
+    assert.equal(p.get('wirescope'), '45501', 'and so does the forwarded port');
+    assert.equal(p.get('token'), 'sekret', 'the token still rides too');
+  } finally { global.location = prev; }
+});
+
+test('t445: navQuery on an ordinary local tab adds nothing it was not given', () => {
+  const { navQuery } = require('../renderer/web/menubar');
+  const prev = global.location;
+  try {
+    global.location = { search: '?workspace=w1' };
+    const p = new URLSearchParams(navQuery('w2'));
+    assert.equal(p.get('workspace'), 'w2');
+    assert.equal(p.get('via'), null, 'a tab on the box does not acquire a tunnel mark by navigating');
+    assert.equal([...p.keys()].length, 1, 'and gains no other params');
+  } finally { global.location = prev; }
+});

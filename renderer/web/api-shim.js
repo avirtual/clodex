@@ -194,6 +194,14 @@ function isLoopbackHost(hostname) {
 // discriminator has to be explicit — `peer-wiring.js` marks the tunnelled tab it
 // opens (`pageUrl`), and this reads that mark. Anything unmarked and non-loopback
 // is plainly a remote viewer.
+//
+// DELIBERATE behaviour change, not an oversight: a browser ON the box that
+// reached the page by LAN name or IP (`http://box.local:7890`) is judged remote,
+// so its loopback links now toast instead of opening — they would have worked.
+// Accepted because the alternative is unanswerable from in here: that tab is
+// byte-for-byte identical to one opened from another machine at the same
+// address, and guessing "local" for both restores the defect for every real
+// remote viewer. This errs toward a suppressed link that says why.
 function browserSharesEngineHost() {
   return isLoopbackHost(location.hostname) && !VIA_TUNNEL;
 }
@@ -225,15 +233,22 @@ function dispatchEvent(channel, args) {
       return;
     }
     const url = rewriteExternalUrl(args[0], proxyBase, publicBase);
-    // A dashboard link that the rewrite claimed is EXEMPT from the broad rule
-    // below, and must be: its target is `wirescopeBase`'s answer, which for a
-    // tunnelled tab is a 127.0.0.1 forward raised on THIS machine for THIS page
-    // — loopback, and correct. Re-judging it here would suppress exactly the
-    // links t443 made work, and would make this a SECOND authority on whether a
-    // dashboard link resolves. There is one authority; this defers to it.
-    // (Reaching here with an origin match implies a non-empty base — the gate
-    // above already returned for the empty case.)
-    const claimed = matchesProxyOrigin(args[0], proxyBase);
+    // EXEMPT from the broad rule below: a dashboard link rewritten to OUR OWN
+    // forward. That target is a 127.0.0.1 port raised on THIS machine for THIS
+    // page, so it is loopback and correct, and re-judging it would suppress
+    // exactly the links t443 made work.
+    //
+    // The exemption is keyed on the LOCAL forward specifically, never on the
+    // origin match alone. `wirescopeBase` has a second candidate — the box's
+    // advertised `wirescopePublicBase` — and that one is routinely loopback too
+    // (`CLODEX_WIRESCOPE_PUBLIC_URL=http://localhost:7811` is the ordinary
+    // compose value). Exempting on the match alone would let a rewrite to THAT
+    // base skip the rule and open the viewer's own wirescope on a foreign
+    // session id: the exact bug class this rule exists for, tunnelled through
+    // the hole the rule carved. A box-advertised base has to face the rule like
+    // any other url, and is refused unless the browser really is on the box.
+    const claimed = !!WIRESCOPE_LOCAL_BASE && publicBase === WIRESCOPE_LOCAL_BASE
+      && matchesProxyOrigin(args[0], proxyBase);
     if (!claimed && refuseExternalUrl(url, browserSharesEngineHost())) {
       toast(`That link points at the box's own machine (${args[0]}), which this browser can't reach.`);
       return;

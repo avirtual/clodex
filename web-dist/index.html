@@ -6955,7 +6955,7 @@ body {
         </div>
         <p class="hint-text" id="sandbox-auth-hint">Seeds the sandbox with your Claude subscription auth (<code>CLAUDE_CODE_OAUTH_TOKEN</code>). Stored locally at mode 0600, applied on the next Start. Or leave empty and run <code>claude login</code> inside a sandbox bash session.</p>
       </div>
-      <div id="sandbox-open-row" class="sandbox-row hidden"><a id="sandbox-open-link" href="#">Open in browser →</a></div>
+      <div id="sandbox-open-row" class="sandbox-row hidden"><a id="sandbox-open-link" role="button" tabindex="0">Open in browser →</a></div>
       <div class="dialog-actions">
         <!-- Both start disabled: pessimistic until the open probe confirms docker
              is up (Task 13 defect #2 — the probe can take seconds when down). -->
@@ -7411,6 +7411,7 @@ body {
         return n > 0 && n <= 65535 ? n : null;
       })();
       var WIRESCOPE_LOCAL_BASE = WIRESCOPE_PORT ? `http://127.0.0.1:${WIRESCOPE_PORT}` : "";
+      var VIA_TUNNEL = PARAMS.get("via") === "tunnel";
       var ws = null;
       var socketOpen = false;
       var everWelcomed = false;
@@ -7484,6 +7485,24 @@ body {
       function wirescopeBase(info) {
         return WIRESCOPE_LOCAL_BASE || info && info.wirescopePublicBase || "";
       }
+      function isLoopbackHost(hostname) {
+        const h = String(hostname || "").replace(/^\[|\]$/g, "");
+        if (h === "localhost" || h === "::1" || h === "0:0:0:0:0:0:0:1") return true;
+        return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+      }
+      function browserSharesEngineHost() {
+        return isLoopbackHost(location.hostname) && !VIA_TUNNEL;
+      }
+      function refuseExternalUrl(url, onEngineHost) {
+        let u;
+        try {
+          u = new URL(String(url));
+        } catch {
+          return true;
+        }
+        if (u.protocol !== "http:" && u.protocol !== "https:") return true;
+        return isLoopbackHost(u.hostname) && !onEngineHost;
+      }
       function dispatchEvent(channel, args) {
         if (channel === "open-external") {
           const proxyBase = welcomeInfo && welcomeInfo.proxyBase;
@@ -7493,6 +7512,11 @@ body {
             return;
           }
           const url = rewriteExternalUrl(args[0], proxyBase, publicBase);
+          const claimed = !!WIRESCOPE_LOCAL_BASE && publicBase === WIRESCOPE_LOCAL_BASE && matchesProxyOrigin(args[0], proxyBase);
+          if (!claimed && refuseExternalUrl(url, browserSharesEngineHost())) {
+            toast(`That link points at the box's own machine (${args[0]}), which this browser can't reach.`);
+            return;
+          }
           try {
             window.open(url, "_blank", "noopener,noreferrer");
           } catch {
@@ -7861,7 +7885,19 @@ body {
       function appVersion() {
         return welcomeInfo && welcomeInfo.appVersion || null;
       }
-      module.exports = { start, emit, toast, invoke, rewriteExternalUrl, unreachableProxyUrl, wirescopeBase, appVersion };
+      module.exports = {
+        start,
+        emit,
+        toast,
+        invoke,
+        rewriteExternalUrl,
+        unreachableProxyUrl,
+        wirescopeBase,
+        appVersion,
+        isLoopbackHost,
+        browserSharesEngineHost,
+        refuseExternalUrl
+      };
     }
   });
 
@@ -8111,12 +8147,13 @@ body {
           }
         };
       }
-      function tokenQuery() {
+      function navQuery(id) {
         try {
-          const t = new URLSearchParams(location.search).get("token");
-          return t ? `&token=${encodeURIComponent(t)}` : "";
+          const p = new URLSearchParams(location.search);
+          p.set("workspace", id);
+          return `?${p.toString()}`;
         } catch {
-          return "";
+          return `?workspace=${encodeURIComponent(id)}`;
         }
       }
       function injectStyle() {
@@ -8127,7 +8164,7 @@ body {
       function mount(shim2) {
         injectStyle();
         const nav = (id) => {
-          location.assign(`?workspace=${encodeURIComponent(id)}${tokenQuery()}`);
+          location.assign(navQuery(id));
         };
         const newWorkspace = async () => {
           try {
@@ -8341,7 +8378,7 @@ body {
           });
         }
       }
-      module.exports = { mount, buildMenus, buildPluginsMenu, buildTeamsMenu, BAR_H, THEMES };
+      module.exports = { mount, buildMenus, buildPluginsMenu, buildTeamsMenu, navQuery, BAR_H, THEMES };
     }
   });
 
@@ -35442,7 +35479,7 @@ ${res.stderr}` : "");
           sbPortsLine.classList.add("hidden");
         }
         if (running) {
-          sbOpenLink.href = sandboxOpenUrl(effectiveWebPort());
+          sbOpenLink.title = sandboxOpenUrl(effectiveWebPort());
           sbOpenRow.classList.remove("hidden");
         } else {
           sbOpenRow.classList.add("hidden");
