@@ -2114,6 +2114,20 @@ function createTicketMethods(deps, shared) {
       // direction without changing REPLACE-not-stack first.
       const prior = s._specUnconfirmed;
       const retried = !!(prior && prior.ticketId === ticketId && prior.kind === kind && prior.retried);
+      // A prior latch for a DIFFERENT ticket is not a stale watcher being tidied
+      // up — it is a loss that is already COMPLETE at this line, and knowable here
+      // and nowhere else. This write's leading Ctrl-U has destroyed that ticket's
+      // unsubmitted draft, and the latch that was the only thing watching for it is
+      // about to be overwritten by the assignment below. Left there, the seat is
+      // silent on a ticket it was never told about, and the only mechanism that
+      // still speaks is the stall watchdog — which reports it as a STALLED SEAT.
+      // That is the misreading _checkSpecConfirm's escalation exists to retire.
+      //
+      // So this is not a case for a second watcher: there is nothing left to
+      // observe. It is owed a redelivery, and REPLACE-not-stack above is untouched
+      // — at most one latch is ever live, so the single-composer argument and
+      // t349's `thinking` => no-latch invariant both still hold.
+      if (prior && prior.ticketId !== ticketId) this._oweDisplacedSpec(s, prior);
       clearTimeout(s._specConfirmTimer);
       // Where this seat's transcript ended when the write went out — the anchor the
       // attribution probe searches FROM. Taken here and not at the deadline because
@@ -2174,6 +2188,166 @@ function createTicketMethods(deps, shared) {
       // it also stops a 90s window from holding every test file that dispatches a
       // ticket open until node kills it.
       if (session._specConfirmTimer.unref) session._specConfirmTimer.unref();
+    },
+
+    // ── the displaced-latch queue ─────────────────────────────────────────────
+    //
+    // A queue of ONE-SHOT REDELIVERIES, drained strictly serially — deliberately
+    // not a set of parallel latches. Two redeliveries in flight reproduce the bug
+    // this fixes: the second's Ctrl-U destroys the first's draft.
+    //
+    // The budget is `retried`, the same field and the same meaning as everywhere
+    // else, read from the DISPLACED latch's own snapshot. A ticket whose one
+    // redelivery was already spent gets no second one from here — it escalates,
+    // because two writes with no turn is not a lost write and a third copy would
+    // not fix it. `_specOwedSpent` carries that bound across the replacement: the
+    // redelivery arms a FRESH latch whose `retried` is false (different ticket in
+    // the slot, so nothing carries), and without the set a seat under repeated
+    // dispatch would displace-and-redeliver the same ticket forever.
+    //
+    // The fresh latch keeping its own retry is correct rather than generous: from
+    // the SEAT's side the destroyed copy never arrived, so the redelivery is its
+    // first, the latch's retry is its second, and the escalation lands on the same
+    // two-writes-no-turn rule as an undisplaced dispatch.
+    _oweDisplacedSpec(session, prior) {
+      const key = `${prior.ticketId}:${prior.kind}`;
+      const spent = prior.retried || !!(session._specOwedSpent && session._specOwedSpent.has(key));
+      const what = prior.kind === 'redirect'
+        ? `${prior.label || 'rejection'} for ${prior.ticketId}` : `spec for ${prior.ticketId}`;
+      if (spent) {
+        let team; try { team = resolveTeam(session.cwd); } catch { team = null; }
+        log.error('intent', `${what} was displaced on ${session.name} with its redelivery budget spent — escalating`);
+        if (team) {
+          this._escalateTicket(team, prior.ticketId,
+            prior.kind === 'redirect' ? 'redirect-undelivered' : 'spec-undelivered',
+            `${session.name} never started a turn after ${what} was written, and a later dispatch to the same seat `
+            + `cleared its composer — it is not stalled on the work, it was never told`,
+            'the redelivery budget for this ticket was already spent, so no further copy was written');
+        }
+        return;
+      }
+      if (!session._specOwed) session._specOwed = [];
+      // One entry per ticket+kind: a third dispatch displacing the SAME owed
+      // ticket again describes the same single loss, and two entries would drain
+      // as two writes of one spec.
+      if (session._specOwed.some((o) => `${o.ticketId}:${o.kind}` === key)) return;
+      session._specOwed.push(prior);
+      log.warn('intent', `${what} on ${session.name} was displaced by a dispatch of ${session.name}'s next ticket — queued for redelivery`);
+      this._broadcast('ipc-message', {
+        ts: Date.now(), from: 'clodex', to: session.name,
+        kind: 'spec-displaced',
+        body: `ticket ${prior.ticketId} was written but its draft was cleared by a later dispatch — queued for redelivery`,
+      });
+      if (!session._specOwedTimer) this._armSpecOwedTimer(session);
+    },
+
+    _armSpecOwedTimer(session) {
+      session._specOwedTimer = setTimeout(() => {
+        session._specOwedTimer = null;
+        // Same hazard as _armSpecConfirmTimer's: the drain reaches real fs work
+        // through the delivery path, and a throw out of a setTimeout callback in
+        // the app's main process is an unhandled exception in the host.
+        try { this._drainOwedSpec(session); }
+        catch (e) { log.error('intent', `displaced-spec drain failed for ${session.name}: ${e.message}`); }
+      }, SPEC_CONFIRM_MS);
+      if (session._specOwedTimer.unref) session._specOwedTimer.unref();
+    },
+
+    // Exactly ONE redelivery per pass, and never while a latch is live. That pair
+    // IS the serialization: a live latch means an unconfirmed write already owns
+    // the composer, and `queued` only promises the bytes are in the ready loop —
+    // so draining a second entry behind either one puts two Ctrl-U's in flight and
+    // reproduces the collision.
+    //
+    // Waiting on a live latch is uncapped for the same reason _checkSpecConfirm's
+    // permission-dialog re-arm is: the wait is bounded in every case the latch can
+    // resolve itself (redeliver, then escalate, both of which clear it), and the
+    // one case it is not — a seat sitting on a permission dialog — is precisely
+    // the one where a write must not be attempted at all.
+    _drainOwedSpec(session) {
+      const queue = session._specOwed;
+      if (!queue || !queue.length) return;
+      if (session._dead || !this.sessions.has(session.name)) { session._specOwed = []; return; }
+      // A live latch is not the only thing that owns the composer. `queued` says
+      // the bytes are in the ready loop, not that they have been written, and the
+      // gates ahead of the write are far longer than this timer: INJECT_QUIET_MAXWAIT
+      // is 5 minutes against a 90s re-arm. So a redelivery still waiting in the
+      // gates arms NO latch yet, and a drain that tested only `_specUnconfirmed`
+      // would send a second unit in behind it — two Ctrl-U's in flight, which is
+      // the collision this whole mechanism exists to repair, reproduced by its own
+      // fix. The in-flight flag covers exactly that window and is cleared from the
+      // WRITE, where the latch takes over.
+      if (session._specUnconfirmed || session._specOwedInFlight) { this._armSpecOwedTimer(session); return; }
+      // PEEKED, not shifted. The entry is consumed only once this pass has
+      // committed to disposing of it: a transient resolveTeam failure below must
+      // leave the queue intact, because a shift there drops the ticket on the
+      // floor and hands it back to the stall watchdog — the "stalled seat"
+      // misdiagnosis this ticket exists to retire, re-created inside its own
+      // repair. _checkSpecConfirm deliberately does not consume its latch in the
+      // same situation; this matches it structurally rather than by compensation.
+      const u = queue[0];
+      const rearm = () => { if (queue.length) this._armSpecOwedTimer(session); };
+      const isRedirect = u.kind === 'redirect';
+      const step = isRedirect ? 'redirect-undelivered' : 'spec-undelivered';
+      const what = isRedirect ? `${u.label || 'rejection'} for ${u.ticketId}` : `spec for ${u.ticketId}`;
+      let team; try { team = resolveTeam(session.cwd); } catch { team = null; }
+      // Still queued, and the timer is re-armed unconditionally — the retry is the
+      // whole point of not consuming it.
+      if (!team) { this._armSpecOwedTimer(session); return; }
+      queue.shift();
+      const ticket = ticketsStore.load(team.root).find((t) => t.id === u.ticketId);
+      // The three drops, taken with _checkSpecConfirm's own tests rather than new
+      // ones that could disagree with it: closed while we waited, reassigned to a
+      // live seat that is already working it, or resolving to nobody at all.
+      if (!ticket || ticket.state !== 'open') { rearm(); return; }
+      const holder = this._ticketAssigneeSeat(team, ticket);
+      if (holder && holder !== session.name) {
+        log.info('intent', `displaced ${u.kind === 'redirect' ? 'redirect' : 'spec'} for ${u.ticketId} dropped at ${session.name}: the ticket now resolves to ${holder}`);
+        rearm();
+        return;
+      }
+      if (!holder) {
+        log.error('intent', `${what} is stranded — displaced at ${session.name} and the ticket now resolves to no live seat`);
+        this._escalateTicket(team, u.ticketId, step,
+          `${session.name} was written to and never started a turn, a later dispatch cleared its composer, `
+          + `and the ticket no longer resolves to any live seat`,
+          `the ${isRedirect ? 'rejection' : 'spec'} was injected once; no redelivery was attempted because there is nobody to deliver to`);
+        rearm();
+        return;
+      }
+      (session._specOwedSpent || (session._specOwedSpent = new Set())).add(`${u.ticketId}:${u.kind}`);
+      log.warn('intent', `redelivering ${what} to ${session.name} — its first copy was destroyed by a later dispatch`);
+      this._broadcast('ipc-message', {
+        ts: Date.now(), from: 'clodex', to: session.name,
+        kind: isRedirect ? 'redirect-unconfirmed' : 'spec-unconfirmed',
+        body: `ticket ${u.ticketId} displaced by a later dispatch — redelivering`,
+      });
+      // Cleared on EVERY disposition, not just `injected`. A parked redelivery is
+      // durable and needs no watcher, so nothing else would ever clear this — the
+      // flag would latch the drain shut for the life of the seat and strand every
+      // later owed entry in silence, which is strictly worse than the bug it
+      // guards. The flag's job is only to cover the enqueue-to-write gap.
+      session._specOwedInFlight = true;
+      const done = () => { session._specOwedInFlight = false; };
+      // Through the EXISTING replay path, not a second rendering of the same
+      // bytes: the REPLAY head is what lets the seat tell a redelivery from a
+      // fresh assignment, and a copy of the text here could drift from it.
+      const r = isRedirect
+        ? this._deliverRedirectReplay(team, ticket, session.name, u, done)
+        : this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true, true, false, done);
+      if (!r || !(r.queued || r.parked)) {
+        // A delivery that reached nobody arms no latch and fires no onWrite, so
+        // the flag has no other way home.
+        session._specOwedInFlight = false;
+        const why = (r && (r.reason || (r.held && 'held') || (r.undelivered && 'no live seat resolves')))
+          || 'unknown delivery failure';
+        log.error('intent', `redelivery of displaced ${u.ticketId} to ${session.name} reached nobody (${why}) — escalating`);
+        this._escalateTicket(team, u.ticketId, step,
+          `${session.name} never started a turn after ${what} was written, a later dispatch cleared its composer, `
+          + `and the redelivery could not be handed to a seat: ${why}`,
+          `the ${isRedirect ? 'rejection' : 'spec'} was injected once and a redelivery was attempted after it was displaced`);
+      }
+      rearm();
     },
 
     // A reviewer seat that never takes its first turn, and nothing says so.
@@ -2540,12 +2714,18 @@ function createTicketMethods(deps, shared) {
     // Re-resolves the seat rather than trusting the latch: the caller has already
     // established the ticket still resolves to this session, and resolving again
     // here would be a second answer to a settled question that could disagree.
-    _deliverRedirectReplay(team, ticket, seatName, u) {
+    // `onWrite(disposition)` mirrors _deliverTicketSpec's, for the same reason and
+    // with the same ordering guarantee: the arm goes FIRST, so a throw out of a
+    // caller's hook cannot skip the mechanism that catches an unconsumed write.
+    _deliverRedirectReplay(team, ticket, seatName, u, onWrite = null) {
       const text = this._redirectDeliveryText(ticket.id, u.label, u.reason, true);
       const r = this._gatedDeliver(seatName, u.from || 'clodex-team', text, true,
         `[ticket ${ticket.id} ${u.label} REDELIVERY] close with ${ticketCloseVerb(ticket.id)}`,
-        (disposition) => this._armSpecConfirm(seatName, ticket.id, disposition,
-          { label: u.label, reason: u.reason, from: u.from }));
+        (disposition) => {
+          this._armSpecConfirm(seatName, ticket.id, disposition,
+            { label: u.label, reason: u.reason, from: u.from });
+          if (onWrite) { try { onWrite(disposition); } catch {} }
+        });
       if (!r || r.error) return { undelivered: true };
       if (r.parked) return { parked: r.parked, reason: r.reason || null };
       if (r.held) return { held: true, reason: r.held };

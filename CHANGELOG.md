@@ -13,6 +13,21 @@ blocks a release.
 
 ## Unreleased
 
+- Dispatching a second ticket to a seat that has not yet started its first one no
+  longer loses the first ticket. The second dispatch clears the seat's composer,
+  which destroys the unsubmitted copy of the first spec, and it also displaced the
+  one watcher that would have noticed — so the seat sat silent on a ticket it had
+  never actually been told about, and the only thing that eventually spoke was the
+  stall watchdog, reporting it to the lead as a *stalled seat*. The displaced
+  ticket is now redelivered instead, marked `REPLAY` so the seat can tell it from a
+  fresh assignment. Redeliveries are drained one at a time and never while another
+  unconfirmed write is outstanding, since two at once would recreate the same
+  collision; a ticket that is displaced again after its redelivery escalates to the
+  lead rather than looping; one that closed or moved to another seat meanwhile is
+  dropped, and one whose seat is gone entirely is escalated to the lead rather
+  than dropped silently. Dispatching is unchanged from the lead's side — nothing
+  is refused, and no new step is needed.
+
 ## 5.14.0 — 2026-08-20 — wirescope through the tunnel, and links that land on the right machine
 
 - Wirescope dashboard links now WORK when you open a peer box's web frontend

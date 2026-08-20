@@ -2722,6 +2722,10 @@ test('_cleanup disarms every timer the session owns (a fired timer on a dead sea
     // so every field it omits is a leak this test promises to catch and does not.
     '_parkedDrainFallbackTimer', '_rebootNoticeRetryTimer', '_rebootNoticeFlushTimer',
     '_specConfirmTimer',
+    // t357's displaced-spec drain is a second NEW field for the same reason, and
+    // its callback redelivers a whole spec — firing on a dead seat would write a
+    // ticket body at a PTY that is gone.
+    '_specOwedTimer',
     // t388's dm latch owns a NEW field rather than borrowing _specConfirmTimer,
     // so it inherits this defence by nothing but the line that adds it.
     '_dmConfirmTimer',
