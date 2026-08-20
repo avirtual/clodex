@@ -243,9 +243,16 @@ function extractMustFix(verdictText) {
     }
     if (inSection) body.push(line);
   }
-  const out = body.join('\n').trim();
-  if (!out) return null;
-  return /^(?:none|n\/a|-+|—)\.?$/i.test(out) ? null : out;
+  // Leading BLANK LINES and trailing space go; the first item's own indentation
+  // stays. A bare `.trim()` de-indents the first line ONLY, which silently
+  // mutilates the shape `countMustFix` reads: item 1 arrives at column 0 while
+  // its true siblings keep their indent, so a relative-depth count demotes every
+  // sibling to a sub-bullet and collapses a multi-item verdict to 1. Measured
+  // over the live verdict corpus: 28 of 151 files, every one an undercount.
+  // The placeholder tests below run on `.trim()` so their rules stay byte-exact.
+  const out = body.join('\n').replace(/^(?:[ \t]*\r?\n)+/, '').replace(/\s+$/, '');
+  if (!out.trim()) return null;
+  return /^(?:none|n\/a|-+|—)\.?$/i.test(out.trim()) ? null : out;
 }
 
 // How many must-fixes, for a notification that must state a NUMBER without
@@ -264,6 +271,12 @@ function extractMustFix(verdictText) {
 // list marker, and an unguarded floor of 1 then announces `ACCEPT … 1 must-fix`.
 // A verdict that contradicts its own count is the false premise this
 // notification exists to stop, so the placeholder is re-tested here, wrapped.
+// A must-fix list item: the marker spellings the reviewer template asks for.
+// Hoisted beside the placeholder regexes because it is the same family of
+// verdict-shape literal, and the capture is the indentation `countMustFix`
+// measures depth with.
+const MUSTFIX_ITEM_RE = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+\S/;
+
 const MUSTFIX_PLACEHOLDER_RE = /^[\s(\[]*(?:none|n\/a|nothing|-+|—)[\s.)\]]*$/i;
 
 // The first-line form drops the dash arms. A body whose whole content is `---`
@@ -336,8 +349,35 @@ function countMustFix(mustFixText) {
   const firstLine = nonEmpty.length ? stripEmphasis(nonEmpty[0].trim()) : '';
   const re = nonEmpty.length > 1 ? MUSTFIX_PLACEHOLDER_WORD_RE : MUSTFIX_PLACEHOLDER_RE;
   if (re.test(firstLine)) return 0;
+  // Items are counted at the MINIMUM indentation present in the section, not at
+  // a fixed column. A must-fix that traces its mutant through indented
+  // sub-bullets is one finding, not one per bullet: a live one-item REWORK
+  // notified as "6 must-fixes" and sent the lead hunting five findings that did
+  // not exist. Sub-bullets are good reviewing, and a counter that penalises the
+  // more thorough verdict is the counter's bug, not the reviewer's.
+  //
+  // RELATIVE, because the direction worth protecting is UNDERCOUNTING.
+  // Reviewers indent inconsistently, so a verdict whose items are ALL indented
+  // is a real list; against a fixed column 0 it would match no marker at all and
+  // fall through to the bare-block floor below, announcing "1 must-fix" over
+  // three of them — an understated REWORK the lead triages as trivial, and one
+  // step from the zero that would disarm the ACCEPT-contradiction gate
+  // entirely. Overcounting is merely noisy; undercounting hides work.
+  const widths = [];
+  for (const line of lines) {
+    const m = MUSTFIX_ITEM_RE.exec(line);
+    // CommonMark's tab stop, so a tab-indented item and a space-indented one
+    // are comparable at all — raw character counts make one tab shallower than
+    // two spaces and pick the sub-bullets as the top level.
+    if (m) { let w = 0; for (const ch of m[1]) w = ch === '\t' ? w + 4 - (w % 4) : w + 1; widths.push(w); }
+  }
+  // Reduced, not `Math.min(...widths)`: this runs on the main process's verdict
+  // path and a spread of one argument per line is a stack overflow on a long
+  // blob, the same class of hazard as the bounded emphasis run above.
+  let top = Infinity;
+  for (const w of widths) if (w < top) top = w;
   let n = 0;
-  for (const line of lines) if (/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S/.test(line)) n++;
+  for (const w of widths) if (w === top) n++;
   // The floor: a bare unmarked item is one must-fix, not zero. Only reached
   // once the placeholder test above has ruled out "no items at all".
   return n > 0 ? n : (text.trim() ? 1 : 0);

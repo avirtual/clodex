@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- Review notifications now count must-fixes correctly when a reviewer nests his
+  reasoning. A one-item REWORK whose finding was traced through five indented
+  sub-bullets was announced as "6 must-fixes", sending the lead hunting five
+  findings that did not exist. Items are now counted at the shallowest
+  indentation the section itself uses, so sub-bullets belong to the item above
+  them while genuine siblings still count separately — measured across the
+  recorded verdicts, ten of them had been overcounted, one by eight to one. The
+  merge gate itself was never affected: it only ever asked whether the count was
+  zero.
+
 - The agent protocol reference now says that *every* body-carrying intent
   captures greedily, and names them. It previously listed only two of the
   thirteen, which implied the rest stopped at the end of their own line — so

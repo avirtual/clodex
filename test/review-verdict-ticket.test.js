@@ -1155,6 +1155,168 @@ test('countMustFix: bounding the run loses no spelling — the unwrap loop handl
   }
 });
 
+// ── t451: sub-bullets under a must-fix are one finding, not one each ───────
+
+// Bytes in the shape of t450's r1 verdict: ONE must-fix whose reasoning traces
+// the mutant through five indented sub-bullets. The lead's notification read
+// "6 must-fixes" and he went looking for five findings that did not exist.
+const T450_NESTED_VERDICT = [
+  '- **MF1** — the delta assertion is measured against an unstabilized baseline.',
+  '  - the fixture reads `lead.buffer` before the seat has flushed;',
+  '  - the mutant survives because the read races the flush;',
+  '  - the sibling test has the same shape one file over;',
+  '  - a stabilized read is available and already used elsewhere;',
+  '  - so the fix is to move the read, not to widen the assertion.',
+].join('\n');
+
+test('countMustFix: an item with nested sub-bullets is ONE must-fix (t451)', () => {
+  // ENTER: the sub-bullets really are in the blob and really are indented past
+  // the item. Without this the assertion below would also pass over a fixture
+  // that had lost its nesting to a stray re-indent — measuring nothing.
+  const lines = T450_NESTED_VERDICT.split('\n');
+  assert.strictEqual(lines.length, 6, 'ENTER: one item plus five sub-bullets');
+  assert.ok(/^- /.test(lines[0]), 'ENTER: the item sits at column 0');
+  assert.ok(lines.slice(1).every((l) => /^ +- /.test(l)),
+    'ENTER: every remaining line is a MARKED bullet indented past it — unmarked prose would not exercise the counter at all');
+
+  // Against the fixed-column counter this was exactly 6: the old `^[ \t]*`
+  // matched any indentation, so each sub-bullet was a top-level item.
+  assert.strictEqual(countMustFix(T450_NESTED_VERDICT), 1,
+    'a must-fix that shows its work is one must-fix, not one per line of work');
+});
+
+test('countMustFix: two top-level items still count as TWO, nesting or not (t451)', () => {
+  // The anti-widening half. A fix that counted "the first marker only", or that
+  // collapsed any list to 1, would satisfy the test above and silently disarm
+  // the ACCEPT-contradiction gate over every multi-item REWORK.
+  const cases = [
+    ['- one\n- two', 2],
+    ['- one\n  - sub of one\n- two\n  - sub of two', 2],
+    ['- one\n  - sub\n    - deeper sub\n- two', 2],
+    ['1. one\n   - sub\n2. two', 2],
+    // Three top-level with nesting between them.
+    ['- one\n  - sub\n- two\n  - sub\n- three', 3],
+    // Mixed markers at the same column are still separate items.
+    ['- one\n* two\n+ three', 3],
+  ];
+  for (const [input, expected] of cases) {
+    assert.strictEqual(countMustFix(input), expected,
+      `countMustFix(${JSON.stringify(input)}) must be ${expected}`);
+  }
+});
+
+test('countMustFix: an ALL-INDENTED list counts its items, never one or zero (t451)', () => {
+  // The direction that matters. Counting at a fixed column 0 would match no
+  // marker in any of these, fall through to the bare-block floor, and announce
+  // "1 must-fix" over three — an understated REWORK, and one step from the zero
+  // that disarms the gate. Undercounting hides work; overcounting only annoys.
+  const cases = [
+    ['  - one\n  - two\n  - three', 3],
+    ['    - one\n    - two', 2],
+    ['\t- one\n\t- two', 2],
+    // Indented items WITH their own nesting: still counted at the shallowest
+    // depth present, not at zero.
+    ['  - one\n    - sub\n  - two', 2],
+    // A tab-indented item and a two-space-indented one are NOT siblings: the
+    // tab is a wider indent (CommonMark tab stop), so the spaces are the top.
+    ['  - one\n\t- deeper\n  - two', 2],
+  ];
+  for (const [input, expected] of cases) {
+    assert.strictEqual(countMustFix(input), expected,
+      `countMustFix(${JSON.stringify(input)}) must be ${expected}`);
+  }
+});
+
+test('countMustFix: the t451 fix did not disturb the placeholder or floor rules (t451)', () => {
+  // The rules this ticket was fenced off from. Re-asserted here because the
+  // item loop is what runs AFTER them, and a change to the loop that returned
+  // early or reordered the placeholder test would break them from below.
+  const cases = [
+    ['(none)\n\n  - **MF1** — traced.\n  - **MF2** — traced.', 0],
+    ['*(none)*\n\n  - **MF1** — traced.\n  - **MF2** — traced.', 0],
+    ['the guard is inverted', 1],
+    ['', 0],
+    ['---\n- the guard is inverted\n- the sweep drops the row', 2],
+  ];
+  for (const [input, expected] of cases) {
+    assert.strictEqual(countMustFix(input), expected,
+      `countMustFix(${JSON.stringify(input)}) must be ${expected}`);
+  }
+});
+
+// ── t451 r1 MF2: the count must be pinned through the COMPOSITION ──────────
+// Every unit test above hands `countMustFix` a hand-written blob. Production
+// runs `countMustFix(extractMustFix(text))`, and the two pre-existing composing
+// tests are placeholder cases that return 0 before the item loop is ever
+// reached — so a defect in how the two functions FIT was invisible to the whole
+// file. It shipped one: `extractMustFix` used to end `.trim()`, which de-indents
+// the FIRST item only, and a relative-depth count then read that mutilated line
+// as the top level and demoted its true siblings to sub-bullets. Measured over
+// the live verdict corpus, that collapsed 28 of 151 files to "1 must-fix".
+//
+// These fixtures carry the corpus's real line prefixes verbatim — the `  1. `
+// top level and t450's five `     - ` sub-bullets, indentation and markers
+// byte-for-byte from the two named files. Only the long prose inside each item
+// is elided, which no part of the counter reads.
+const CORPUS_T445_THREE_ITEMS = [
+  '- **VERDICT**: REWORK',
+  '',
+  '- **MUST-FIX**:',
+  '  1. **The tracked browser bundle was never rebuilt — the fix ships to nobody.**',
+  '  2. **A workspace switch silently disarms the whole gate.**',
+  '  3. **The `claimed` exemption is broader than the argument that justifies it**',
+  '',
+  '- **NITS**:',
+  '  - `renderer/index.html:1092` still has `href="#"`.',
+].join('\n');
+
+const CORPUS_T450_ONE_NESTED_ITEM = [
+  '- **VERDICT**: REWORK',
+  '',
+  '- **MUST-FIX**:',
+  '  1. `test/ticket-replay.test.js:2108` — `const beforeLead` is a moving baseline.',
+  '     - `:2110` `deepStrictEqual(s._specOwed || [], [])` — passes;',
+  '     - `:2113` `settled(app,\'lead\',/ESCALATED/)` — does not assert;',
+  '     - `:2114` `leadSaw.length > beforeLead.length` — the only real gate;',
+  '     - `:2116` `assert.match(leadSaw, /t1/)` — matched against the WHOLE buffer;',
+  '     - `:2117` `app.seen(\'team-hand\') === beforeSeat` — passes;',
+  '     So in the mid-unit interleaving the escalation test goes vacuously green.',
+  '',
+  '- **NITS**:',
+  '  1. `test/ticket-replay.test.js:1672` — same shape as the MUST-FIX.',
+].join('\n');
+
+test('countMustFix over extractMustFix: three sibling items count as THREE (t451)', () => {
+  const body = extractMustFix(CORPUS_T445_THREE_ITEMS);
+
+  // ENTER: the composition really produced the multi-line blob, and — the part
+  // the shipped defect turned on — the FIRST item still carries its own
+  // indentation. A `.trim()`ing extractMustFix reaches here with item 1 at
+  // column 0 and its siblings at 2, which is what made the count 1.
+  assert.ok(String(body).split('\n').length > 1, 'ENTER: the extracted body is multi-line');
+  assert.match(String(body), /^ {2}1\. /, 'ENTER: item 1 kept its indentation — a bare .trim() would strip it and re-arm the collapse');
+  assert.ok(/^ {2}3\. /m.test(String(body)), 'ENTER: the third sibling is in the body at the same depth');
+
+  assert.strictEqual(countMustFix(body), 3,
+    'three siblings at one depth are three must-fixes — this is the count the .trim() collapsed to 1');
+});
+
+test('countMustFix over extractMustFix: one item with five sub-bullets counts as ONE (t451)', () => {
+  const body = extractMustFix(CORPUS_T450_ONE_NESTED_ITEM);
+
+  // ENTER: the sub-bullets survived extraction and are indented past the item.
+  // Flatten them and this fixture stops measuring nesting at all.
+  assert.ok(String(body).split('\n').length > 5, 'ENTER: the extracted body is the multi-line blob');
+  assert.match(String(body), /^ {2}1\. /, 'ENTER: the single item kept its indentation');
+  assert.strictEqual((String(body).match(/^ {5}- /gm) || []).length, 5,
+    'ENTER: all five sub-bullets are in the body, deeper than the item');
+
+  // The live incident: this notified as "6 must-fixes" and sent the lead
+  // hunting five findings that did not exist.
+  assert.strictEqual(countMustFix(body), 1,
+    'a must-fix that shows its trace is one must-fix, not one per line of trace');
+});
+
 // ── t404: the delivering line survives markdown emphasis ───────────────────
 // The incident this file's §2 machinery exists for was defeated one layer
 // EARLIER than any assertion above reaches: a reviewer wrote a correct REWORK
