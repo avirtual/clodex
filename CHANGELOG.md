@@ -30,7 +30,8 @@ blocks a release.
   gets its own redelivery, instead of an immediate escalation on a budget spent
   long ago. An episode ends as soon as the redelivery is out of harm's way —
   either the seat visibly took it, or it was set aside for the seat's next turn
-  because the seat was busy, which nothing can overwrite. That second case counts
+  because the seat was busy or could not be interrupted, which nothing can
+  overwrite. That second case counts
   for the same reason as the first, so a ticket whose repair happened to land
   while its seat was working is not held to the earlier episode's budget forever.
   A seat that has gone silent still escalates rather than being written to a third

@@ -2860,6 +2860,19 @@ test('t449: a park that DOES clear its own latch still clears it, and releases t
     app.m._armSpecConfirm('team-hand', 't1', 'parked');
     assert.ok(s._specOwedSpent && s._specOwedSpent.has('t9:spec'),
       'and no other ticket`s budget goes with it');
+
+    // The KIND half of the key, pinned separately: every fixture above parks a
+    // spec, so a prune that hardcoded `kind: 'spec'` would pass all of them. The
+    // asymmetry is real — a parked REDIRECT must release the redirect's budget and
+    // leave a spec latch's budget alone, the same discrimination the guard below
+    // makes when it refuses to retire a spec latch on a redirect park.
+    s._specOwedSpent.add('t1:spec').add('t1:redirect');
+    app.m._armSpecConfirm('team-hand', 't1', 'parked', { label: 'rejected', reason: 'r', from: 'lead' });
+    assert.ok(!s._specOwedSpent.has('t1:redirect'),
+      'a parked redirect releases the REDIRECT budget');
+    assert.ok(s._specOwedSpent.has('t1:spec'),
+      'and not the spec budget for the same ticket: the key is ticket AND kind, and a spec the seat has still '
+      + 'never seen is bounded by its own row');
   } finally { app.stop(); }
 });
 

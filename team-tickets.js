@@ -2276,6 +2276,10 @@ function createTicketMethods(deps, shared) {
     //   receipt, attributed turn      (_emitActivity)
     //   receipt, deadline re-probe    (_checkSpecConfirm)
     //   park                          (_armSpecConfirm's non-injected branch)
+    // The park site fires for a FRESH dispatch that parks too, not only a
+    // redelivery, and that is safe rather than merely harmless: a parked arm
+    // creates no latch, so nothing is displaceable until some later INJECTED write
+    // arms one — and that write is a genuine new destroyable copy.
     // Receipt qualifies because the seat provably holds the write. A PARK qualifies
     // for a different reason and just as strongly: the bytes are a file on disk, no
     // later Ctrl-U can destroy them, and the park's own drains own them from there.
