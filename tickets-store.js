@@ -271,11 +271,16 @@ function extractMustFix(verdictText) {
 // list marker, and an unguarded floor of 1 then announces `ACCEPT … 1 must-fix`.
 // A verdict that contradicts its own count is the false premise this
 // notification exists to stop, so the placeholder is re-tested here, wrapped.
+//
 // A must-fix list item: the marker spellings the reviewer template asks for.
 // Hoisted beside the placeholder regexes because it is the same family of
 // verdict-shape literal, and the capture is the indentation `countMustFix`
 // measures depth with.
 const MUSTFIX_ITEM_RE = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+\S/;
+
+// `- - -`, `***`, `___` — a markdown horizontal rule, which the item regex
+// above cannot tell from a list item.
+const THEMATIC_BREAK_RE = /^[ \t]*(?:[-*_][ \t]*){3,}$/;
 
 const MUSTFIX_PLACEHOLDER_RE = /^[\s(\[]*(?:none|n\/a|nothing|-+|—)[\s.)\]]*$/i;
 
@@ -365,6 +370,13 @@ function countMustFix(mustFixText) {
   // entirely. Overcounting is merely noisy; undercounting hides work.
   const widths = [];
   for (const line of lines) {
+    // A thematic break is not an item. `- - -` and `* * *` satisfy the item
+    // regex (marker, space, non-space), and one sitting at column 0 above an
+    // indented list becomes the sole top level and demotes every real item —
+    // a 3-item REWORK announced as 1, the undercount direction. No verdict in
+    // the recorded corpus does this today; the guard is here because the cost
+    // of it arriving is a silently understated REWORK.
+    if (THEMATIC_BREAK_RE.test(line)) continue;
     const m = MUSTFIX_ITEM_RE.exec(line);
     // CommonMark's tab stop, so a tab-indented item and a space-indented one
     // are comparable at all — raw character counts make one tab shallower than

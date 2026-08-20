@@ -1252,7 +1252,9 @@ test('countMustFix: the t451 fix did not disturb the placeholder or floor rules 
 // file. It shipped one: `extractMustFix` used to end `.trim()`, which de-indents
 // the FIRST item only, and a relative-depth count then read that mutilated line
 // as the top level and demoted its true siblings to sub-bullets. Measured over
-// the live verdict corpus, that collapsed 28 of 151 files to "1 must-fix".
+// the live verdict corpus at the time, that collapsed 28 of ~151 files to
+// "1 must-fix" — the corpus grows with every review, so the ratio is the durable
+// half of that claim, not the denominator.
 //
 // These fixtures carry the corpus's real line prefixes verbatim — the `  1. `
 // top level and t450's five `     - ` sub-bullets, indentation and markers
