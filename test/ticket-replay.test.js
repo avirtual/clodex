@@ -2405,9 +2405,16 @@ test('t448: an arm that THROWS still releases the drain`s in-flight flag', async
     // The consequence, asserted positively rather than as a flag read: the next
     // owed entry still drains.
     app.m._armSpecConfirm = real;
+    // Baselined and sliced, like the other four. `settled` does not assert — it
+    // returns the whole buffer after a timeout — and t2's ORIGINAL dispatch text
+    // is already in there from the `collided` fixture, so a whole-buffer match on
+    // PAINT THE FRAME passes whether or not this drain ever wrote.
+    const before2 = app.seen('team-hand');
     fireOwed(app, s);
     const after = await settled(app, 'team-hand', /REPLAY[\s\S]*PAINT THE FRAME/);
-    assert.match(after, /PAINT THE FRAME/,
+    assert.ok(after.length > before2.length,
+      'ENTER: the second redelivery must be a NEW write — no growth and the match below is reading t2`s first copy');
+    assert.match(after.slice(before2.length), /PAINT THE FRAME/,
       'and the later owed entry is still delivered — stranding it would be strictly worse than the loss this '
       + 'mechanism repairs, because nothing downstream would ever report it');
   } finally { app.stop(); }

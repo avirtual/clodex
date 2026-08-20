@@ -2027,8 +2027,13 @@ function createTicketMethods(deps, shared) {
         // that hook is the drain's only in-flight release, so the drain latches
         // shut for the life of the seat. That is the outcome _drainOwedSpec's own
         // comment calls strictly worse than the bug it guards.
+        // The catch LOGS rather than swallowing: every `fire` call site guards
+        // itself, so a throw here reaches nobody. The write still lands, but no
+        // latch is armed — the spec goes out unwatched, which is the one fault
+        // mode this mechanism presupposes. It must not be invisible too.
         (disposition) => {
           try { this._armSpecConfirm(seat, ticket.id, disposition); }
+          catch (e) { log.error('intent', `spec latch arm failed for ${seat} on ${ticket.id}: ${e.message}`); }
           finally { if (onWrite) { try { onWrite(disposition, seat); } catch {} } }
         });
       if (!r || r.error) return { undelivered: true };
@@ -2319,7 +2324,17 @@ function createTicketMethods(deps, shared) {
       // positive finding (readable, not consumed) and `null` is a probe that
       // could not answer, and only a definite YES may drop a redelivery. A
       // truthy test would let an unreadable transcript swallow a real one.
-      if (this._seatTranscriptHas(session.name, u.ticketId, u.since) === true) { rearm(); return; }
+      // Logged like the holder branch below. This is the only drop taken on a
+      // HEURISTIC (a substring match that _seatTranscriptHas's own header warns can
+      // false-positive), and an owed entry can wait behind a live latch for an
+      // arbitrarily long time, accumulating transcript that may mention the ticket
+      // from a non-delivery source. A false true here re-creates the original
+      // silent loss, so it must not also be an invisible one.
+      if (this._seatTranscriptHas(session.name, u.ticketId, u.since) === true) {
+        log.info('intent', `displaced ${isRedirect ? 'redirect' : 'spec'} for ${u.ticketId} dropped at ${session.name}: its transcript shows the seat received it`);
+        rearm();
+        return;
+      }
       const holder = this._ticketAssigneeSeat(team, ticket);
       if (holder && holder !== session.name) {
         log.info('intent', `displaced ${u.kind === 'redirect' ? 'redirect' : 'spec'} for ${u.ticketId} dropped at ${session.name}: the ticket now resolves to ${holder}`);
@@ -2747,7 +2762,8 @@ function createTicketMethods(deps, shared) {
           try {
             this._armSpecConfirm(seatName, ticket.id, disposition,
               { label: u.label, reason: u.reason, from: u.from });
-          } finally { if (onWrite) { try { onWrite(disposition); } catch {} } }
+          } catch (e) { log.error('intent', `redirect latch arm failed for ${seatName} on ${ticket.id}: ${e.message}`); }
+          finally { if (onWrite) { try { onWrite(disposition); } catch {} } }
         });
       if (!r || r.error) return { undelivered: true };
       if (r.parked) return { parked: r.parked, reason: r.reason || null };
