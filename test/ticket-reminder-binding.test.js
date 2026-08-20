@@ -725,6 +725,11 @@ test('the SECOND accept — the one that merges — is what finally collects it'
     // the reminder let a reply saying "NOTHING was merged" pass here green.
     assert.ok(!/NOTHING was merged/.test(f.replies.join('\n')),
       'the accept that MERGED real work must not report that nothing was merged');
+    // WHICH honest arm, not merely a non-false one: the negative above would also
+    // pass if the reply degenerated to the count-could-not-run arm, which is a
+    // different (and here untrue) statement about the same accept.
+    assert.match(f.replies.join('\n'), /no fork point was recorded[\s\S]*UNKNOWN/,
+      'it lands on the undecidable arm, naming the missing fork point as the reason');
   } finally { f.cleanup(); }
 });
 

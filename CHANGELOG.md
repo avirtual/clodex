@@ -25,9 +25,11 @@ blocks a release.
   either.
 
   The count only settles it when it was measured against the branch's recorded
-  fork point. Where none was recorded, an empty branch and one already merged
-  count the same, and accept now reports that as unknown rather than picking a
-  side — as it does when the count cannot be run at all.
+  fork point. Where it could not be — none was recorded, or the recorded commit
+  has since been rebased or garbage-collected away — an empty branch and one
+  already merged count the same, so accept reports the outcome as unknown rather
+  than picking a side, and says which of the two reasons applies. Same for a
+  count that cannot be run at all.
 
 - The agent protocol reference now says that *every* body-carrying intent
   captures greedily, and names them. It previously listed only two of the

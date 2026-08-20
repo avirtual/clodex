@@ -6773,7 +6773,11 @@ test('task accept: a branch with ZERO commits is torn down but NOT reported as m
 // into master, that merge base IS the branch tip, so the count is 0 for work
 // that genuinely landed. Reported as "NOTHING was merged", that is a true merge
 // denied — the same false-report class, pointed the other way.
-test('task accept: 0 commits measured against a FALLBACK base is not called empty', async () => {
+// Case (b): a fork point WAS recorded, but no longer resolves — commitsOnBranch
+// drops a rebased or gc'd SHA and measures against the merge base instead. The
+// reply must name that, because it is a different repair from case (a): the
+// stamping worked, the commit it named is gone.
+test('task accept: 0 commits off a fallback because the recorded base is GONE says so', async () => {
   // The count's base (99feed) is NOT the recorded fork point (deadbeef): the
   // signature of a fallback, which is exactly what the reply may not read as empty.
   const f = mkAccept({ ok: true, merged: true, base: 'master' }, {}, { ok: true, count: 0, base: '99feed' });
@@ -6794,12 +6798,54 @@ test('task accept: 0 commits measured against a FALLBACK base is not called empt
   assert.ok(!/NOTHING was merged/.test(msg), 'a fallback-based 0 must NOT be reported as an empty branch');
   assert.ok(!/has 0 commits beyond/.test(msg), "nor borrow t309's empty-branch wording");
   assert.match(msg, /UNKNOWN/, 'it is undecidable, and the reply says so');
-  assert.match(msg, /no recorded fork point/, 'and names why it could not be decided');
+  // The record HAS a fork point, so the reply must not claim none was recorded —
+  // that misdirects the repair toward a stamping bug that is not there.
+  assert.match(msg, /recorded fork point deadbeef no longer resolves/,
+    'it names the recorded SHA and that it is gone, which is the actual condition');
+  assert.ok(!/no fork point was recorded/.test(msg), 'and must NOT say none was recorded — one was');
 
   // Teardown unchanged here too — the merge gate is what licenses it.
   assert.deepStrictEqual(f.destroyed, ['team-hand'], 'the seat is still retired');
   assert.deepStrictEqual(f.deleted, ['t1-build-the-widget'], 'and the branch deleted');
   assert.ok(f.one('t1').closedOut, 'terminal: there is no tree left to accept against a second time');
+});
+
+// Case (a): no fork point recorded at all — the shape createWorktree leaves for a
+// pre-existing branch. Same UNKNOWN verdict, different reason, different repair.
+test('task accept: 0 commits off a fallback because NO base was recorded says that instead', async () => {
+  const f = mkAccept({ ok: true, merged: true, base: 'master' }, {
+    // A record with a worktree but no baseSha — what createWorktree writes when
+    // the branch already existed. `extra` spreads after the default, so this
+    // replaces it wholesale.
+    getPersistence: () => ({
+      list: () => [],
+      get: (n) => (n === 'team-hand'
+        ? { name: n, sessionId: 'sess-abc', worktree: { path: '/wt/t1', branch: 't1-build-the-widget' } }
+        : null),
+    }),
+  }, { ok: true, count: 0, base: '99feed' });
+  openAndDone(f);
+  assert.strictEqual(f.one('t1').state, 'done', 'ENTER: the ticket is done, so accept reaches its gate');
+  f.injected.length = 0;
+
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+
+  // ENTER: the fixture really does carry no fork point, so `null` below is the
+  // record's shape and not a lookup that silently failed.
+  assert.deepStrictEqual(f.counted,
+    [{ root: '/proj', branch: 't1-build-the-widget', base: null, afterTeardown: false }],
+    'ENTER: nothing was recorded to count against, so the count was asked with null');
+
+  const msg = f.injected.join('\n');
+  assert.ok(!/NOTHING was merged/.test(msg), 'still not an empty branch');
+  assert.match(msg, /UNKNOWN/, 'still undecidable');
+  assert.match(msg, /no fork point was recorded/, 'and this time that IS the reason');
+  assert.ok(!/no longer resolves/.test(msg), 'nothing was recorded, so nothing can have stopped resolving');
+
+  assert.deepStrictEqual(f.destroyed, ['team-hand'], 'the seat is still retired');
+  assert.deepStrictEqual(f.deleted, ['t1-build-the-widget'], 'and the branch deleted');
+  assert.ok(f.one('t1').closedOut, 'terminal, like its sibling');
 });
 
 // A count that could not RUN is a THIRD case. Folding it into the empty one

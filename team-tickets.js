@@ -5949,6 +5949,13 @@ function createTicketMethods(deps, shared) {
       // only a merge that can be shown: a demonstrably empty branch is an
       // ancestor of master without anything landing, so writing m.base there
       // stores the same false claim this ticket removes from the reply.
+      //
+      // The UNDECIDABLE case still stamps m.base, deliberately, and that is why
+      // it is not written as `measured ? … : null`. Only the demonstrably-empty
+      // branch is known to have merged nothing; an unmeasured count leaves the
+      // merge gate's own answer (the branch IS an ancestor) as the best supported
+      // fact, and nulling it there would assert "not merged" from ignorance —
+      // the reply says UNKNOWN precisely because neither side is established.
       if (seatName) {
         this._stampTicketRevival(team, seatName,
           { accepted: true, mergedInto: (measured && c.count === 0) ? null : m.base });
@@ -5986,12 +5993,21 @@ function createTicketMethods(deps, shared) {
       // `c.base`, not `baseSha`: commitsOnBranch falls through to a merge-base
       // when the mint-time SHA was rebased or gc'd, and naming a base it did not
       // measure against is the same class of false report as the phantom merge.
+      // WHY the count fell back, split on the record rather than asserted. There
+      // are two ways to reach an unmeasured count and they need different
+      // remediation: no fork point was ever recorded, versus one was recorded and
+      // has since been rebased or gc'd away (commitsOnBranch drops a SHA that no
+      // longer resolves). Saying "none was recorded" about a record that plainly
+      // carries one sends the reader hunting a stamping bug that does not exist.
+      const why = baseSha
+        ? `its recorded fork point ${baseSha} no longer resolves, so its commits could only be counted against ${c.base}`
+        : `no fork point was recorded, so its commits could only be counted against ${c.base}`;
       const outcome = !c.ok
         ? `accepted — branch ${branch} is an ancestor of ${m.base}, but its commit count could NOT be obtained (${c.error || 'unknown error'}), so whether it carried any work is UNKNOWN`
         : c.count === 0 && measured
           ? `accepted — branch ${branch} has 0 commits beyond ${c.base}, so NOTHING was merged; it was torn down as empty`
           : c.count === 0
-            ? `accepted — branch ${branch} is an ancestor of ${m.base}, but with no recorded fork point its commits could only be counted against ${c.base}, where an empty branch and one already merged both count 0 — so whether it carried any work is UNKNOWN`
+            ? `accepted — branch ${branch} is an ancestor of ${m.base}, but ${why}, where an empty branch and one already merged both count 0 — so whether it carried any work is UNKNOWN`
             : `accepted — merged into ${m.base}`;
       // Terminal on all four: the seat is retired and the branch deleted either
       // way, so nothing here invites a second accept and a bound reminder has
