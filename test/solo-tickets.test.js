@@ -276,7 +276,17 @@ test('solo done: the ASSIGNEE may close, and no spec is dispatched onward', () =
   // _advanceSeat no-ops solo: t2 is open and assigned to `worker`, so a team
   // context would hand it over here. Solo must not auto-dispatch.
   assert.strictEqual(f.one('t2').state, 'open', 'the next ticket stays open');
-  assert.deepStrictEqual(f.gated.slice(before).filter((g) => /^\[ticket t2\]/.test(g.body)), [],
+  // `\b`, not `]`: the advance's delivery carries a REPLAY head, so an anchor
+  // closing on `]` cannot match the only shape this path could ever emit, and the
+  // filter empties for the wrong reason. Any head naming t2 must be caught.
+  //
+  // What this actually guards is NOT the solo early-return above it: solo
+  // synthesises `lead: session.name` (session-manager.js, `solo: true`), so the
+  // closer IS the lead and `_deliverTicketSpec` returns `{self:true}` before it
+  // can deliver. Deleting either guard alone leaves the other holding the line —
+  // measured, at this commit and at 6eee69f. Removing BOTH is what reds this, and
+  // it reds ONLY with this widened anchor.
+  assert.deepStrictEqual(f.gated.slice(before).filter((g) => /^\[ticket t2\b/.test(g.body)), [],
     'no spec auto-advanced to a session that never enrolled');
 });
 

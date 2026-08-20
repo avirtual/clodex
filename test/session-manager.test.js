@@ -7050,6 +7050,34 @@ test('t351: an unstarted ticket ahead in FIFO does not block the advance — the
     'the started close advances, skipping the unstarted candidate that sits ahead of it in FIFO order');
 });
 
+// The surviving residual, pinned so a reader can tell "deliberately left, made
+// safe by the marker" from "missed". Closing a STARTED sibling DOES free the
+// seat, so the advance correctly runs — and its head may be the very ticket the
+// seat is still working. That redelivery is intended; what makes it safe is the
+// REPLAY head, not suppression. Counting, not measuring growth: the claim is
+// "exactly one, and marked", and a growth check passes on two.
+test('t351: closing a STARTED sibling still advances, and the redelivery is marked', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'in flight' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the sibling' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
+  // ENTER: t2 is STARTED — that is the whole difference from the two absence
+  // tests above, and without it this asserts the case they already cover.
+  assert.ok(f.one('t2').startedAt != null, 'ENTER: the sibling being closed is started, so the advance is legitimate');
+  assert.ok(f.one('t1').startedAt != null, 'ENTER: and t1 is the seat`s in-flight work, which is what comes back');
+  f.gated.length = 0;
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', body: 'drop it' });
+
+  const toSeat = f.gated.filter((g) => g.target === 'team-hand' && /^\[ticket t\d+ REPLAY\]/.test(g.body));
+  assert.strictEqual(toSeat.length, 1,
+    'exactly one spec comes back — the advance is NOT suppressed on this arm, which is the deliberate residual');
+  assert.match(toSeat[0].body, /^\[ticket t1 REPLAY\]/,
+    'and it is the seat`s own in-flight ticket, marked — unmarked this is the t351 near-miss, where a hand compacts and restarts over live work');
+});
+
 // The separable half. Every ticket the advance can reach has started, and both
 // dispatch verbs deliver on start — so the advance is ALWAYS a redelivery. Left
 // unmarked it is byte-identical in shape to a fresh dispatch, and over the spill

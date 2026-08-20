@@ -2906,6 +2906,16 @@ function createTicketMethods(deps, shared) {
     // redelivers an unrelated in-flight spec to a working seat.
     // The test is on the CLOSED ticket, never on the candidate: `_openTicketsFor`
     // already carries its own `ticketStarted` term for the other direction.
+    //
+    // This does NOT cover closing a STARTED sibling: the seat is genuinely freed by
+    // that close, so the advance runs, and its head may be the ticket the seat is
+    // still mid-work on. Left deliberately, made safe by the REPLAY marking below
+    // rather than by suppression. The narrower "exclude what the seat is already
+    // working" fix is not implementable here: nothing on the record says which
+    // ticket a seat currently holds. `deliveredTo` is the only such stamp and it is
+    // written ONLY by `_replayOpenTickets`, never by start/assign/advance, so it is
+    // absent on exactly the tickets this would need to test. Adding a write for it
+    // is a lifecycle change, not a fix to this function.
     _advanceSeat(team, seatName, closed) {
       if (team && team.solo) return null;
       if (!ticketStarted(closed)) return null;
@@ -2928,7 +2938,7 @@ function createTicketMethods(deps, shared) {
       // so every ticket reachable here has already had its spec sent once. Unmarked,
       // the seat cannot tell this from a fresh dispatch, and a hand following its
       // brief compacts and starts clean over work already in flight.
-      this._deliverTicketSpec(team, next, next.spec, 'clodex-team', true, true);
+      this._deliverTicketSpec(team, next, next.spec, 'clodex-team', true /* urgent */, true /* replay */);
       log.info('intent', `seat ${seatName} advanced to ${next.id} after closing ${closed && closed.id}`);
       return next;
     },
