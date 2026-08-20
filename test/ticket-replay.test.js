@@ -1673,12 +1673,17 @@ test('t387: an undelivered rejection escalates as a REDIRECT, not as a spec and 
     fireConfirm(app, s);
     const leadSaw = await settled(app, 'lead', /ESCALATED/);
     assert.ok(leadSaw.length > beforeLead.length, 'ENTER: the escalation must be a new write to the lead');
-    assert.match(leadSaw, /redirect-undelivered/,
+    // Everything below reads the SLICE, not the whole buffer. Growth alone is not
+    // a gate — any other traffic routed to the lead satisfies it — so the slice is
+    // what makes the baseline load-bearing, and the growth check above is what
+    // guarantees the slice is non-empty (an empty one would pass the absence).
+    const escalation = leadSaw.slice(beforeLead.length);
+    assert.match(escalation, /redirect-undelivered/,
       'the step must name the REDIRECT: this is the mutant of reusing the spec-undelivered label, and it is the '
       + 'misattribution the ticket exists to retire');
-    assert.doesNotMatch(leadSaw, /spec-undelivered/,
+    assert.doesNotMatch(escalation, /spec-undelivered/,
       'and it must NOT report a spec — the spec arrived and was worked; what was lost is the rejection');
-    assert.match(leadSaw, /never saw the rejected/,
+    assert.match(escalation, /never saw the rejected/,
       'the evidence must say the seat was never told, in those terms — a lead reading a silent seat on an open '
       + 'ticket defaults to "stalled", and replacing that guess is half the value of watching this path');
     assert.strictEqual(s._specUnconfirmed, null, 'and the latch is released, so nothing re-fires behind the escalation');
@@ -2113,7 +2118,11 @@ test('t357: a displaced ticket displaced AGAIN after its redelivery escalates ra
     const leadSaw = await settled(app, 'lead', /ESCALATED/);
     assert.ok(leadSaw.length > beforeLead.length,
       'ENTER: the escalation must be a new write to the lead, not text already in its buffer');
-    assert.match(leadSaw, /t1/, 'and it must name the ticket that was lost');
+    // Matched on the SLICE, not the whole buffer. Growth alone is not a gate here:
+    // anything else routed to the lead — an ordinary `task add` reply — satisfies
+    // it, and `settled` then returns a buffer whose /t1/ came from the fixture's
+    // own earlier dispatch. The slice is what uses the baseline above.
+    assert.match(leadSaw.slice(beforeLead.length), /t1/, 'and it must name the ticket that was lost');
     assert.strictEqual(app.seen('team-hand'), beforeSeat,
       'and no third copy went to the seat: two writes with no turn is not a lost write, and a third would not '
       + 'fix it');
@@ -2409,6 +2418,13 @@ test('t448: an arm that THROWS still releases the drain`s in-flight flag', async
     // returns the whole buffer after a timeout — and t2's ORIGINAL dispatch text
     // is already in there from the `collided` fixture, so a whole-buffer match on
     // PAINT THE FRAME passes whether or not this drain ever wrote.
+    //
+    // The first drain's redelivery is still MID-UNIT here — its Ctrl-U has landed
+    // and its text has not — so a baseline taken now is an offset into someone
+    // else's write. Both assertions below then measure the wrong window: the
+    // growth check is satisfied by that unit finishing itself, and the slice
+    // starts inside it rather than at the second redelivery.
+    await writeComplete(app, 'team-hand');
     const before2 = app.seen('team-hand');
     fireOwed(app, s);
     const after = await settled(app, 'team-hand', /REPLAY[\s\S]*PAINT THE FRAME/);
