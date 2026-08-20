@@ -2165,7 +2165,13 @@ test('t357: a second owed entry is not drained behind a redelivery that is queue
   // The gate is held OPEN-ended: the queue polls a ready latch a fake PTY never
   // sets, so the first redelivery stays enqueued and unwritten for the whole test
   // — exactly the window the flag exists to cover.
-  const { app, s, lead } = await collided(world, { bootReady: true, deps: { INJECT_BOOT_MAXWAIT: 60_000 } });
+  // bootDrainSettleMs 0: with INJECT_BOOT_MAXWAIT stretched to 60s the replay
+  // one-shot is spent only by the boot drain, whose 750ms default runs against
+  // `replayPassed`'s 2s budget. Failure there would be loud rather than silent,
+  // but the window is free to remove.
+  const { app, s, lead } = await collided(world, {
+    bootReady: true, deps: { INJECT_BOOT_MAXWAIT: 60_000, bootDrainSettleMs: 0 },
+  });
   try {
     app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'GLAZE THE PANE\ntasks/pane/SPEC.md\nstep one' });
     app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't3', body: '' });
@@ -2187,6 +2193,10 @@ test('t357: a second owed entry is not drained behind a redelivery that is queue
     const before = app.seen('team-hand');
     fireOwed(app, s);
     await new Promise((r) => setTimeout(r, 40));
+    // Kept for shape, but it is NOT what pins this test: the ready gate is held
+    // open, so nothing could reach the PTY either way. The load-bearing assertion
+    // is the next one — t2 still QUEUED is what distinguishes a drain that waited
+    // from one that ran.
     assert.strictEqual(app.seen('team-hand'), before,
       'the second entry must NOT be drained behind a redelivery that has not been written: two units in flight is '
       + 'two Ctrl-U`s, and the second destroys the first`s draft — the exact defect this ticket repairs');
