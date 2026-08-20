@@ -6657,6 +6657,16 @@ test('task cancel: works on an assigned ticket (reason to assignee) and a backlo
 // `countAnswer` is what commitsOnBranch returns. It defaults to a NONZERO count
 // — the ordinary "the hand committed something" case — so a test that says
 // nothing about commits exercises the plain merged path.
+// The seat record accept reads, in ONE place. The case-(a) fixture below differs
+// from the default by exactly one field, and hand-typing a second copy is how a
+// fixture silently stops matching production: `baseSha` itself was added here
+// once, and a divergent copy would have gone on measuring the older shape.
+function mkRecord({ baseSha = 'deadbeef' } = {}) {
+  const worktree = { path: '/wt/t1', branch: 't1-build-the-widget' };
+  if (baseSha !== null) worktree.baseSha = baseSha;
+  return { name: 'team-hand', sessionId: 'sess-abc', worktree };
+}
+
 function mkAccept(mergedAnswer, extra = {}, countAnswer = { ok: true, count: 3, base: 'deadbeef' }) {
   const destroyed = [];
   const archived = [];
@@ -6666,9 +6676,7 @@ function mkAccept(mergedAnswer, extra = {}, countAnswer = { ok: true, count: 3, 
   const f = mkTasks({
     getPersistence: () => ({
       list: () => [],
-      get: (n) => (n === 'team-hand'
-        ? { name: n, sessionId: 'sess-abc', worktree: { path: '/wt/t1', branch: 't1-build-the-widget', baseSha: 'deadbeef' } }
-        : null),
+      get: (n) => (n === 'team-hand' ? mkRecord() : null),
     }),
     gitWorktree: {
       isMerged: async (root, branch) => { asked.push({ root, branch }); return mergedAnswer; },
@@ -6819,9 +6827,7 @@ test('task accept: 0 commits off a fallback because NO base was recorded says th
     // replaces it wholesale.
     getPersistence: () => ({
       list: () => [],
-      get: (n) => (n === 'team-hand'
-        ? { name: n, sessionId: 'sess-abc', worktree: { path: '/wt/t1', branch: 't1-build-the-widget' } }
-        : null),
+      get: (n) => (n === 'team-hand' ? mkRecord({ baseSha: null }) : null),
     }),
   }, { ok: true, count: 0, base: '99feed' });
   openAndDone(f);

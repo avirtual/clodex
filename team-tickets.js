@@ -5999,15 +5999,19 @@ function createTicketMethods(deps, shared) {
       // has since been rebased or gc'd away (commitsOnBranch drops a SHA that no
       // longer resolves). Saying "none was recorded" about a record that plainly
       // carries one sends the reader hunting a stamping bug that does not exist.
-      const why = baseSha
+      // A function, not a binding: on the `!c.ok` arm `c.base` is undefined, and
+      // an eagerly-built string sits one careless edit away from reporting
+      // "counted against undefined" — the same unverified claim this arm exists
+      // to remove. Called only where the count came back and fell back.
+      const why = () => (baseSha
         ? `its recorded fork point ${baseSha} no longer resolves, so its commits could only be counted against ${c.base}`
-        : `no fork point was recorded, so its commits could only be counted against ${c.base}`;
+        : `no fork point was recorded, so its commits could only be counted against ${c.base}`);
       const outcome = !c.ok
         ? `accepted — branch ${branch} is an ancestor of ${m.base}, but its commit count could NOT be obtained (${c.error || 'unknown error'}), so whether it carried any work is UNKNOWN`
         : c.count === 0 && measured
           ? `accepted — branch ${branch} has 0 commits beyond ${c.base}, so NOTHING was merged; it was torn down as empty`
           : c.count === 0
-            ? `accepted — branch ${branch} is an ancestor of ${m.base}, but ${why}, where an empty branch and one already merged both count 0 — so whether it carried any work is UNKNOWN`
+            ? `accepted — branch ${branch} is an ancestor of ${m.base}, but ${why()}, where an empty branch and one already merged both count 0 — so whether it carried any work is UNKNOWN`
             : `accepted — merged into ${m.base}`;
       // Terminal on all four: the seat is retired and the branch deleted either
       // way, so nothing here invites a second accept and a bound reminder has
