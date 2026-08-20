@@ -2889,13 +2889,27 @@ function createTicketMethods(deps, shared) {
     // Hand a seat its next open ticket when it closes one: the COMPLETION edge has no
     // other trigger, and a seat holding a queue otherwise goes idle until a human
     // pokes it.
-    // `closedId` is redundant on both current callers (each stamps its terminal state
-    // and SAVES before calling, so the state filter already excludes it) — kept
-    // because that is an ordering ACCIDENT, not a property of the helper: move the
-    // advance above the save and without it the seat is handed back what it finished.
-    _advanceSeat(team, seatName, closedId) {
+    // Takes the closed TICKET, not its id: the id alone cannot answer the started
+    // test below, and both callers hold the record already.
+    // `closed.id` is redundant as the exclusion on both current callers (each stamps
+    // its terminal state and SAVES before calling, so the state filter already
+    // excludes it) — kept because that is an ordering ACCIDENT, not a property of the
+    // helper: move the advance above the save and without it the seat is handed back
+    // what it finished.
+    //
+    // An UNSTARTED closed ticket advances nobody. The seat here is resolved from the
+    // ticket being closed, and for a backlog ticket sitting on a ROLE that resolver
+    // returns whichever seat holds the role — a seat that never had this ticket and
+    // is not freed by closing it. There is no completion edge, so the "seat went
+    // idle" argument above does not apply, and the head it would push is whatever
+    // that seat is already mid-work on. Closing an unstarted backlog ticket then
+    // redelivers an unrelated in-flight spec to a working seat.
+    // The test is on the CLOSED ticket, never on the candidate: `_openTicketsFor`
+    // already carries its own `ticketStarted` term for the other direction.
+    _advanceSeat(team, seatName, closed) {
       if (team && team.solo) return null;
-      const next = this._openTicketsFor(team, seatName, closedId)[0];
+      if (!ticketStarted(closed)) return null;
+      const next = this._openTicketsFor(team, seatName, closed && closed.id)[0];
       if (!next) return null;
       // Handing a queued ticket to a seat IS its dispatch — the only one it gets —
       // so it re-pins like the two lead-driven paths. Reloaded from the store
@@ -2908,8 +2922,14 @@ function createTicketMethods(deps, shared) {
           if (t) { t.role = next.role; t.assignee = next.assignee; ticketsStore.save(team.root, all); }
         } catch { /* best-effort: the pin is a measurement, never a reason the hand-off fails */ }
       }
-      this._deliverTicketSpec(team, next, next.spec, 'clodex-team', true);
-      log.info('intent', `seat ${seatName} advanced to ${next.id} after closing ${closedId}`);
+      // Marked as a REPLAY. The advance is the only dispatch a queued ticket gets,
+      // but it is not always its FIRST delivery: `start` and `assign` both deliver
+      // on dispatch, and `_openTicketsFor` only returns tickets that have started —
+      // so every ticket reachable here has already had its spec sent once. Unmarked,
+      // the seat cannot tell this from a fresh dispatch, and a hand following its
+      // brief compacts and starts clean over work already in flight.
+      this._deliverTicketSpec(team, next, next.spec, 'clodex-team', true, true);
+      log.info('intent', `seat ${seatName} advanced to ${next.id} after closing ${closed && closed.id}`);
       return next;
     },
 
@@ -4312,7 +4332,7 @@ function createTicketMethods(deps, shared) {
       ticketsStore.save(team.root, tickets);
       this._reconcileTickets(team);
       const doneSeat = this._ticketAssigneeSeat(team, ticket);
-      const next = doneSeat ? this._advanceSeat(team, doneSeat, ticket.id) : null;
+      const next = doneSeat ? this._advanceSeat(team, doneSeat, ticket) : null;
       const nextSuffix = next ? ` — next: ${next.id} delivered to ${doneSeat}` : '';
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: lead, body: `ticket ${ticket.id} done` });
       this._writeTicketCost(team, ticket);
@@ -5667,7 +5687,7 @@ function createTicketMethods(deps, shared) {
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (reason && seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} cancelled] ${reason}`, false);
       this._reconcileTickets(team);
-      const next = seat ? this._advanceSeat(team, seat, ticket.id) : null;
+      const next = seat ? this._advanceSeat(team, seat, ticket) : null;
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} cancelled` });
       this._writeTicketCost(team, ticket);
       log.info('intent', `task cancel ${ticket.id} by ${session.name}`);
