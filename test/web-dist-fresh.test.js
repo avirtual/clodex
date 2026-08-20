@@ -2,17 +2,28 @@
 // web-dist-fresh.test.js — the committed bundle must be what the current
 // sources build.
 //
-// THE DEFECT CLASS, closed generally. `web-dist/index.html` is TRACKED and is
-// what web-host.js serves to the browser frontend. Edit `renderer/web/*`, skip
-// `npm run build:web`, commit: the source reads fixed, the suite stays green,
-// and the change ships to NOBODY. It has happened for real.
+// WHAT THIS IS AND IS NOT. `web-dist/index.html` is TRACKED and is what
+// web-host.js serves to the browser frontend. Edit `renderer/web/*`, skip
+// `npm run build:web`, commit: the source reads fixed and the suite stays green
+// over a bundle that no longer matches it.
 //
-// The mitigation this generalises is PER-SYMBOL — ~18 hand-written assertions
-// across ~10 test files, each added after an incident, each pinning one symbol
-// someone thought to pin. Those cover their symbols and nothing else; this
-// covers every byte, so it is red for a change nobody anticipated. (The
-// per-symbol pins are left in place deliberately: they document intent at their
-// own call sites.)
+// It is NOT true that such a bundle ships. scripts/release.sh (T42) rebuilds it
+// before its dirty-tree check, so a stale bundle dirties the tree and kills the
+// release — do not re-solve that here, and do not let this file's existence
+// suggest the ship path was ever open.
+//
+// The gap is the WINDOW: that guard fires at release, this one at merge. In
+// between, the main branch carries a bundle that does not match its sources, and
+// anything served from such a checkout (the ssh-installer deploy path) serves
+// the old code while everyone believes the fix is live — which is what happened
+// on t445. So the whole value is FAIL FAST: a 0.3s check moved from ship time to
+// test time, next to the mistake.
+//
+// The mitigation this generalises was PER-SYMBOL — hand-written "symbol X is in
+// the bundle" assertions, each added after an incident. Each covered its own
+// symbol and nothing else; a byte comparison covers every symbol, including the
+// ones nobody anticipated, so those pins were removed as redundant when this
+// landed.
 //
 // WHY A FULL REBUILD IS AFFORDABLE HERE, and why it is trustworthy:
 //   - it takes ~0.3s in-process (measured; no npm, no subprocess);

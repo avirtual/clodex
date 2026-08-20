@@ -75,58 +75,42 @@ test('the view is plain strings, never markup', () => {
     'and the shape is exactly these three — a fourth key would be a sink the caller does not know how to assign');
 });
 
-// The browser frontend runs out of the committed bundle, and `npm run build:web`
-// is a manual step — so a renderer-only edit leaves web users with NEITHER
-// surface: no banner node, no row attribute, and `wterm:*` IPC is unregistered
-// on web so there is no local tab either. The peer's shell is then completely
-// unannounced on the host shape where an unattended shell is likeliest. Silent,
-// because the desktop app looks right; this is how it got here once already.
+// The three surfaces a peer's shell is announced on must EXIST in the renderer
+// sources: no banner node, no row attribute, and `wterm:*` IPC is unregistered on
+// web, so their loss leaves the shell completely unannounced on the host shape
+// where an unattended shell is likeliest. Silent, because the desktop app looks
+// right; this is how it got here once already.
 //
-// Each half asserts the renderer source FIRST, and that guard is not decoration:
-// with it removed, deleting the banner from the renderer and leaving the bundle
-// STALE passes — the bundle still carries the string the renderer no longer
-// produces, so a bundle-only pin reports a feature that exists nowhere in the
-// source. (Measured, not reasoned: the mutant is green at 10/10.) A rebuild
-// after such a deletion fails loudly instead, so it is precisely the
-// deleted-and-not-rebuilt combination the guard covers.
-const readBoth = (rel) => {
+// These were paired with "…and it is in web-dist/index.html too" pins. That half
+// is gone: test/web-dist-fresh.test.js compares the whole bundle against a fresh
+// build, which covers these strings and every other one. What remains is the
+// claim a byte comparison cannot make — a bundle matching its sources says
+// nothing about whether the sources still carry the feature.
+const readSrc = (rel) => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const ROOT = path.join(__dirname, '..');
-  return [
-    fs.readFileSync(path.join(ROOT, ...rel.split('/')), 'utf8'),
-    fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8'),
-  ];
+  return fs.readFileSync(path.join(__dirname, '..', ...rel.split('/')), 'utf8');
 };
-const STALE = 'web-dist/index.html is stale — run `npm run build:web` and commit it';
 
-test('the banner markup is in the committed web bundle, not just the renderer', () => {
-  const [rsrc, wsrc] = readBoth('renderer/index.html');
-  const NODE = 'id="served-terminal-banner"';
-  assert.ok(rsrc.includes(NODE), 'ENTER: the renderer page still has a banner node at all');
-  assert.ok(wsrc.includes(NODE),
-    `${STALE}, or a peer's shell on this box is unannounced in the browser frontend`);
+test('the renderer page carries the served-terminal banner node', () => {
+  assert.ok(readSrc('renderer/index.html').includes('id="served-terminal-banner"'),
+    "the renderer page still has a banner node at all — without it a peer's shell "
+    + 'on this box is unannounced');
 });
 
-test('the served-terminal CSS is in the committed web bundle, not just the renderer', () => {
-  const [rsrc, wsrc] = readBoth('renderer/styles.css');
+test('styles.css carries both served-terminal rules', () => {
   // Both rules matter and they fail differently. Without the `.hidden` rule the
   // banner is stuck visible and claims a shell that is not open; without the row
   // attribute's rule the per-seat glyph never renders at all.
+  const rsrc = readSrc('renderer/styles.css');
   for (const rule of ['#served-terminal-banner.hidden', '.session-item[data-served-terminal]']) {
-    assert.ok(rsrc.includes(rule), `ENTER: styles.css still carries \`${rule}\``);
-    assert.ok(wsrc.includes(rule), `${STALE} — the bundle is missing \`${rule}\``);
+    assert.ok(rsrc.includes(rule), `styles.css still carries \`${rule}\``);
   }
 });
 
-test('the banner text is in the committed web bundle, not just the renderer', () => {
-  const [rsrc, wsrc] = readBoth('renderer/lib/served-banner.js');
-  // The template literal's static prefix. esbuild does not minify here, so it
-  // survives verbatim; if a later build ever mangles it, pin the bundle's own
-  // shape rather than deleting this — the markup being present says nothing
-  // about whether the code that fills it came along.
-  const TEXT = 'A peer has a shell open on ';
-  assert.ok(rsrc.includes(TEXT), 'ENTER: the leaf still produces this text at all');
-  assert.ok(wsrc.includes(TEXT),
-    `${STALE} — the bundle has the banner node but not the code that fills it, so it stays empty`);
+test('the leaf still produces the banner text', () => {
+  // The markup being present says nothing about whether the code that fills it
+  // came along — without this the banner can render permanently empty.
+  assert.ok(readSrc('renderer/lib/served-banner.js').includes('A peer has a shell open on '),
+    'the leaf still produces this text at all');
 });

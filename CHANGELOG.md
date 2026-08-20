@@ -13,16 +13,15 @@ blocks a release.
 
 ## Unreleased
 
-- A renderer fix can no longer ship to nobody. The browser frontend is served
-  from a prebuilt bundle committed in the repo, so changing the web renderer
-  without rebuilding it left the sources reading fixed, the test suite green,
-  and the browser running the OLD code — a failure with no symptom until someone
-  went looking. The suite now rebuilds the bundle in memory and compares it,
-  byte for byte, with the committed one, and says so with the command to fix it.
-  Until now the only guard was spot-checks for a handful of individual symbols,
-  which covered the ones somebody had thought to add and nothing else. Nothing
-  changes for users running Clodex; the next release simply cannot carry a
-  browser frontend older than the desktop one.
+- A stale browser bundle is now caught by the test suite rather than at release
+  time. The browser frontend is served from a prebuilt bundle committed in the
+  repo; releasing already refused to ship a stale one, but nothing objected in
+  between, so a merged-but-unrebuilt renderer change left the sources reading
+  fixed and the suite green while a checkout of the main branch — the ssh deploy
+  path — served the old code. The suite now rebuilds the bundle in memory and
+  compares it byte for byte with the committed one, naming the command to fix
+  it. No release could ever have carried the stale bundle; this just moves the
+  same 0.3s check to where the mistake is made.
 
 - Wirescope dashboard links now WORK when you open a peer box's web frontend
   through the ↗ tunnel, rather than merely being suppressed as unreachable (see

@@ -730,53 +730,29 @@ test('t445 STRUCTURAL: the sandbox open-in-browser anchor carries no href to cli
   assert.ok(!/href=/.test(anchor), `no live href in the markup either (got ${anchor})`);
 });
 
-// ── t445: the committed bundle must carry this gate, not just the source ─────
-// `web-dist/index.html` is tracked and is what web-host.js serves, so a fix that
-// lands in `renderer/` and is never rebuilt ships to nobody — the browser keeps
-// the defect in full while the source and every unit test above say it is fixed.
-// That is exactly what happened on this ticket's first round, and it is invisible
-// from the source side: it took reading the bundle to see it.
-//
-// Each half asserts the SOURCE first. That guard is the same one served-banner
-// documents: without it, deleting the gate from the renderer and leaving the
-// bundle stale passes, because the bundle still carries a string the source no
-// longer produces — a bundle-only pin reports a feature that exists nowhere.
-const readBoth = (rel) => {
-  const ROOT = path.join(__dirname, '..');
-  return [
-    fs.readFileSync(path.join(ROOT, ...rel.split('/')), 'utf8'),
-    fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8'),
-  ];
-};
-const STALE = 'web-dist/index.html is stale — run `npm run build:web` and commit it';
+// ── t445: the gate must be present in the SOURCE the bundle is built from ────
+// These were bundle-parity pins ("the symbol is in web-dist/index.html too").
+// test/web-dist-fresh.test.js now compares the whole committed bundle against a
+// fresh build, so every such pin is implied for every symbol rather than for the
+// ones somebody remembered — the bundle halves are gone and only the source
+// claims, which a byte comparison does NOT make, are left here.
+const readSrc = (rel) => fs.readFileSync(path.join(__dirname, '..', ...rel.split('/')), 'utf8');
 
-test('t445 PARITY: the loopback gate is in the committed web bundle, not just the shim', () => {
-  const [src, bundle] = readBoth('renderer/web/api-shim.js');
+test('t445: the shim defines the loopback gate and reads the tunnel mark', () => {
+  const src = readSrc('renderer/web/api-shim.js');
   for (const sym of ['refuseExternalUrl', 'isLoopbackHost', 'browserSharesEngineHost']) {
-    assert.ok(src.includes(sym), `ENTER: the shim still defines ${sym} at all`);
-    assert.ok(bundle.includes(sym), `${STALE} — the browser frontend has no ${sym}, so the gate is not live`);
+    assert.ok(src.includes(sym), `the shim still defines ${sym} at all`);
   }
-  // The mark the gate reads. Without it in the bundle the gate is present but
-  // permanently disarmed, which is the quieter half of the same staleness.
-  assert.ok(src.includes("PARAMS.get('via')"), 'ENTER: the shim still reads the tunnel mark');
-  assert.ok(bundle.includes("get(\"via\")") || bundle.includes("get('via')"),
-    `${STALE} — the tunnel mark is never read, so every tunnelled tab judges itself local`);
+  // Without the mark the gate is present but permanently disarmed, which is the
+  // quieter half of the same failure.
+  assert.ok(src.includes("PARAMS.get('via')"), 'the shim still reads the tunnel mark');
 });
 
-test('t445 PARITY: the sandbox anchor`s href removal reached the bundle too', () => {
-  // The bundled renderer, not the shim: a stale bundle here restores the
-  // cmd-click path around the gate even when the gate itself is current.
-  const [src, bundle] = readBoth('renderer/renderer.js');
-  assert.ok(!/sbOpenLink\.href\s*=/.test(src), 'ENTER: the source still has no href assignment');
-  assert.ok(!/sbOpenLink\.href\s*=/.test(bundle),
-    `${STALE} — the bundle still assigns the href, so modifier-clicks bypass the gate`);
-});
-
-test('t445 PARITY: the workspace switch preserves the query in the bundle too', () => {
-  const [src, bundle] = readBoth('renderer/web/menubar.js');
-  assert.ok(src.includes('navQuery'), 'ENTER: the source still routes the switch through navQuery');
-  assert.ok(bundle.includes('navQuery'),
-    `${STALE} — a workspace switch still rebuilds the query and drops via=tunnel`);
+test('t445: the workspace switch routes through navQuery, preserving the query', () => {
+  const src = readSrc('renderer/web/menubar.js');
+  assert.ok(src.includes('navQuery'),
+    'the source still routes the switch through navQuery — rebuilding the query '
+    + 'drops via=tunnel');
 });
 
 test('t445 MUST-FIX 3: a rewrite to a LOOPBACK box-advertised base is refused, not exempted', async () => {
