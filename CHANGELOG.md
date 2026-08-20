@@ -28,8 +28,13 @@ blocks a release.
   Each redelivery is a one-shot, and the budget is per *episode* rather than per
   ticket: a ticket re-assigned to the same seat weeks later and displaced again
   gets its own redelivery, instead of an immediate escalation on a budget spent
-  long ago. A seat that has gone silent still escalates rather than being written
-  to a third time. A displaced ticket that closed or moved to another seat
+  long ago. An episode ends as soon as the redelivery is out of harm's way —
+  either the seat visibly took it, or it was set aside for the seat's next turn
+  because the seat was busy, which nothing can overwrite. That second case counts
+  for the same reason as the first, so a ticket whose repair happened to land
+  while its seat was working is not held to the earlier episode's budget forever.
+  A seat that has gone silent still escalates rather than being written to a third
+  time. A displaced ticket that closed or moved to another seat
   meanwhile is dropped; one whose ticket no longer resolves to any live seat is
   escalated to the lead rather than dropped silently; and one the seat turns out to
   have received after all — its transcript proves it, the activity signal having
