@@ -2907,6 +2907,10 @@ function createSessionManager(deps) {
       clearTimeout(s._rebootNoticeRetryTimer);
       clearTimeout(s._rebootNoticeFlushTimer);
       clearTimeout(s._specConfirmTimer);
+      // The displaced-spec drain owns its own timer rather than borrowing
+      // _specConfirmTimer: the two are live at the same time by construction (the
+      // drain waits for the latch to resolve), so one field could not hold both.
+      clearTimeout(s._specOwedTimer);
       clearTimeout(s._dmConfirmTimer);
       clearTimeout(s._reviewStartTimer);
       // Drops the pending debounce timer with it — a hint armed after the PTY
