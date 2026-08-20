@@ -11,17 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
-
-- A stale browser bundle is now caught by the test suite rather than at release
-  time. The browser frontend is served from a prebuilt bundle committed in the
-  repo; releasing already refused to ship a stale one, but nothing objected in
-  between, so a merged-but-unrebuilt renderer change left the sources reading
-  fixed and the suite green while a checkout of the main branch — the ssh deploy
-  path — served the old code. The suite now rebuilds the bundle in memory and
-  compares it byte for byte with the committed one, naming the command to fix
-  it. No release could ever have carried the stale bundle; this just moves the
-  same 0.3s check to where the mistake is made.
+## Unreleased — wirescope through the tunnel, and links that land on the right machine
 
 - Wirescope dashboard links now WORK when you open a peer box's web frontend
   through the ↗ tunnel, rather than merely being suppressed as unreachable (see
@@ -31,6 +21,7 @@ blocks a release.
   Nothing to configure, and nothing to lose: a box with no wirescope — or one
   running a version that predates this — simply has no dashboard link, exactly
   as before, and the web frontend itself opens either way.
+
 
 - A lead can no longer spawn a duplicate reviewer into the ticket loop's blind
   window. Closing a ticket stamps it for verification, and the loop spawns its
@@ -43,6 +34,7 @@ blocks a release.
   the case it gets used for — another round on an already-reviewed ticket. The
   loop's own reviewer is unaffected.
 
+
 - Viewing a box's Clodex in a browser no longer offers a wirescope link that
   silently lands on the WRONG machine. The dashboard link is built against the
   box's own loopback address, and unless the box publishes a reachable wirescope
@@ -52,6 +44,7 @@ blocks a release.
   Boxes installed over ssh never publish that URL, so this was the normal case
   there. Such a link is now suppressed with a short explanation instead of
   opened. Every other link (GitHub, release notes) is unaffected.
+
 
 - The same wrong-machine failure is now closed for EVERY link, not just the
   wirescope one. An audit found the sandbox "Open in browser →" links — in the
@@ -65,6 +58,17 @@ blocks a release.
   untouched: GitHub and release notes, everything you click while browsing on
   the box at `localhost`, and the tunnelled dashboard links the entries above
   just made resolvable — those address a port on YOUR machine and are meant to.
+
+- A stale browser bundle is now caught by the test suite rather than at release
+  time. The browser frontend is served from a prebuilt bundle committed in the
+  repo; releasing already refused to ship a stale one, but nothing objected in
+  between, so a merged-but-unrebuilt renderer change left the sources reading
+  fixed and the suite green while a checkout of the main branch — the ssh deploy
+  path — served the old code. The suite now rebuilds the bundle in memory and
+  compares it byte for byte with the committed one, naming the command to fix
+  it. No release could ever have carried the stale bundle; this just moves the
+  same 0.3s check to where the mistake is made.
+
 
 ## 5.13.0 — 2026-08-19 — the ticket loop stops losing work to its own machinery
 
