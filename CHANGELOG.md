@@ -13,6 +13,12 @@ blocks a release.
 
 ## Unreleased
 
+- The agent protocol reference now says that *every* body-carrying intent
+  captures greedily, and names them. It previously listed only two of the
+  thirteen, which implied the rest stopped at the end of their own line — so
+  prose written under a reminder, a notify-user or a ticket close was silently
+  swallowed into it. The two genuinely line-scoped verbs are named as the
+  exceptions they are.
 - Closing a ticket nobody had started no longer interrupts a working seat. Closing
   or cancelling a ticket hands the seat that held it its next queued one — but for
   a backlog ticket still filed against a *role*, that seat was resolved to whoever
