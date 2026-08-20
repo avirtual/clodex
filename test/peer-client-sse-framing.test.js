@@ -80,6 +80,17 @@ function waitFor(label, pred, ms = 4000) {
   });
 }
 
+// Connecting refetches the session list TWICE: once from _helloLoop's wasOffline
+// branch, once from the events stream's onOpen. The drop cases below measure a
+// DELTA in that same counter, so the gate must not release while either is still
+// in flight — the server registers the stream before the client's onOpen fires,
+// so "the stream is open" does not mean connect is finished. Waiting on the
+// count waits on the causal event; a settle delay cannot work here, because the
+// second fetch is a socket round trip with no bound. If a future connect
+// sequence fetches a different number of times this gate times out by label
+// instead of silently handing the tests a moving baseline.
+const CONNECT_SESSION_FETCHES = 2;
+
 // Bring up a box + a connected peer, hand the caller the live stream, and tear
 // everything down afterwards. `emits` collects every emit for assertions.
 async function withStream(fn) {
@@ -94,6 +105,8 @@ async function withStream(fn) {
   conn.start();
   try {
     await waitFor('the events stream to open', () => conn.online && state.streams.length === 1);
+    await waitFor(`all ${CONNECT_SESSION_FETCHES} connect-time session refetches to land`,
+      () => state.sessionFetches >= CONNECT_SESSION_FETCHES);
     await fn(state.streams[0], emits, state);
   } finally {
     conn.stop();
