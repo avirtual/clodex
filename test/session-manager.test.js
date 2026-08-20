@@ -5535,6 +5535,19 @@ const CLOSE_LINE = (id) => `CLOSE WITH: [agent:task done ${id}] <your report> �
 // The whole delivered body for an ordinary (non-worktree, non-replay) dispatch.
 const specBody = (id, spec) => `[ticket ${id}] ${CLOSE_LINE(id)}${spec}`;
 
+// t351: the ADVANCE delivers a spec the seat has already been sent once —
+// `_openTicketsFor` only yields started tickets, and both dispatch verbs deliver
+// on start — so every advance is a redelivery and carries the REPLAY head. Copied
+// from `_deliverTicketSpec` for the same reason CLOSE_LINE is: the pins below
+// assert whole bodies, so a production edit fails them until it is re-read here.
+const REPLAY_HEAD = (id) => `[ticket ${id} REPLAY] this ticket was already open and assigned to you when this process `
+  + `started, so an earlier incarnation of you may have already done some or all of it. `
+  + `BEFORE you build, edit, or commit anything: run \`git status\` and \`git log\` and check the task `
+  + `artifact. Then — if the work is DONE, close the ticket instead of redoing it; if NOTHING was `
+  + `started, do the task as specified below; if it is PARTIALLY done, do NOT restart it — report what `
+  + `you found and ask how to proceed.\n`;
+const replayBody = (id, spec) => `${REPLAY_HEAD(id)}${CLOSE_LINE(id)}${spec}`;
+
 // t353 r2. The close line put the head at 417 bytes (plain) / ~733 (worktree)
 // against MSG_SPILL_THRESHOLD's 500, so a plain dispatch spills once its spec
 // exceeds 83 chars and a worktree dispatch spills unconditionally. A spilled body
@@ -6812,8 +6825,8 @@ test('t89 done ADVANCES the seat: the next held ticket is delivered, urgently', 
   // ENTER: two deliveries — [0] the report to the lead, [1] the advance.
   assert.strictEqual(f.gated.length, 2, 'ENTER: the report AND an advance fired');
   assert.strictEqual(f.gated[0].target, 'lead', 'ENTER: [0] is the done-report');
-  assert.deepStrictEqual(f.gated[1], { target: 'team-hand', sender: 'clodex-team', body: specBody('t2', 'spec two') },
-    'the seat is handed the next ticket it holds, id-prefixed like any dispatch');
+  assert.deepStrictEqual(f.gated[1], { target: 'team-hand', sender: 'clodex-team', body: replayBody('t2', 'spec two') },
+    'the seat is handed the next ticket it holds, id-prefixed like any dispatch — and MARKED, since `start` already sent this spec once');
   assert.strictEqual(f.urgents[1], true,
     'the advance must WAKE — a seat that just closed a ticket is at a turn boundary and about to go idle, the exact state a passive dm is held for');
   assert.ok(f.injected.some((x) => /next: t2 delivered to team-hand/.test(x)), 'the closer is told what it was handed');
@@ -6845,11 +6858,15 @@ test('t89 _advanceSeat never hands back the ticket just closed, even before the 
   // advance ever ran before the terminal state was saved. Both current callers
   // save first, so no caller can reach this; the guard is what keeps that an
   // ordering detail rather than a correctness dependency.
-  assert.strictEqual(f.one('t1').state, 'open', 'ENTER: t1 is still open, so only closedId can exclude it');
-  const next = f.m._advanceSeat(f.team, 'team-hand', 't1');
+  assert.strictEqual(f.one('t1').state, 'open', 'ENTER: t1 is still open, so only the closed ticket`s id can exclude it');
+  // t351: the helper takes the closed TICKET, not its id — it must read the
+  // started-ness of what was closed, which an id cannot answer.
+  assert.ok(f.one('t1').startedAt != null,
+    'ENTER: t1 is STARTED, or the advance declines for the t351 reason and the exclusion below is never reached');
+  const next = f.m._advanceSeat(f.team, 'team-hand', f.one('t1'));
 
   assert.strictEqual(next.id, 't2', 'the closed ticket must not be handed back as the seat`s next work');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'clodex-team', body: specBody('t2', 'the genuine next') }]);
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'clodex-team', body: replayBody('t2', 'the genuine next') }]);
 });
 
 test('t89 the advance is FIFO, not id order — oldest first when the two disagree', () => {
@@ -6875,7 +6892,7 @@ test('t89 the advance is FIFO, not id order — oldest first when the two disagr
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'report' });
 
   assert.strictEqual(f.gated.length, 2, 'ENTER: the report AND an advance fired');
-  assert.strictEqual(f.gated[1].body, specBody('t3', 'minted third, but NEWER'),
+  assert.strictEqual(f.gated[1].body, replayBody('t3', 'minted third, but NEWER'),
     'FIFO means OLDEST first: t3 was opened before t2, so id order must not decide the advance');
 });
 
@@ -6901,7 +6918,7 @@ test('t89 the advance skips closed tickets and other seats` work', () => {
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'report' });
 
   assert.strictEqual(f.gated.length, 2, 'the report and exactly one advance');
-  assert.strictEqual(f.gated[1].body, specBody('t5', 'the real next one'),
+  assert.strictEqual(f.gated[1].body, replayBody('t5', 'the real next one'),
     'a cancelled ticket, another seat`s ticket and a backlog ticket are all skipped');
 });
 
@@ -6919,7 +6936,7 @@ test('t89 the advance follows the TICKET`s seat, so a lead closing over a silent
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'done', id: 't1', body: 'closing for it' });
 
   assert.strictEqual(f.gated.length, 1, 'ENTER: a lead close sends no report to itself, so [0] is the advance');
-  assert.deepStrictEqual(f.gated[0], { target: 'team-hand', sender: 'clodex-team', body: specBody('t2', 'spec two') },
+  assert.deepStrictEqual(f.gated[0], { target: 'team-hand', sender: 'clodex-team', body: replayBody('t2', 'spec two') },
     'the advance is keyed on the ticket`s assignee seat — keying it on the closer would leave the silent seat idle, which is the whole defect');
   assert.strictEqual(f.urgents[0], true);
 });
@@ -6937,9 +6954,155 @@ test('t89 cancel advances too — it frees the seat exactly as done does', () =>
 
   assert.strictEqual(f.gated.length, 2, 'ENTER: the cancellation notice AND an advance');
   assert.strictEqual(f.urgents[0], false, 'the cancellation notice itself still rides passively — stopping is not work');
-  assert.deepStrictEqual(f.gated[1], { target: 'team-hand', sender: 'clodex-team', body: specBody('t2', 'spec two') });
+  assert.deepStrictEqual(f.gated[1], { target: 'team-hand', sender: 'clodex-team', body: replayBody('t2', 'spec two') });
   assert.strictEqual(f.urgents[1], true, 'but what follows it is');
   assert.ok(f.injected.some((x) => /cancelled — next: t2 delivered to team-hand/.test(x)));
+});
+
+// ── t351: the advance must not fire on a close that freed nothing ──────────
+// `_advanceSeat` resolves its seat from the ticket BEING CLOSED. A backlog ticket
+// still sitting on its ROLE resolves to whichever seat holds that role — a seat
+// that never had the closed ticket. Closing it is not a completion edge for that
+// seat, and the head the advance would push is whatever the seat is already
+// working. So the closes below must deliver NOTHING to the working seat.
+
+test('t351: cancelling an UNSTARTED backlog ticket delivers nothing to a seat mid-work', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'in flight' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'filed for later' });
+  // ENTER: the two tickets are really in the states this test names. Without
+  // these the close below could be cancelling a started ticket, or the seat could
+  // hold no in-flight work at all — and an EMPTY delivery list is true of both.
+  assert.ok(f.one('t1').startedAt != null, 'ENTER: t1 is started, so the seat has work in flight to be interrupted');
+  assert.strictEqual(f.one('t2').startedAt, null, 'ENTER: t2 is UNSTARTED, which is the arm under test');
+  assert.strictEqual(f.one('t2').assignee, 'hand', 'ENTER: t2 is on the ROLE, so it resolves to the working seat');
+  f.gated.length = 0;
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', body: 'never mind' });
+
+  assert.deepStrictEqual(f.gated.filter((g) => /in flight/.test(g.body)), [],
+    'the seat`s own in-flight spec must not come back at it — a hand reading a fresh dispatch compacts and starts over, discarding the work');
+  assert.deepStrictEqual(f.gated.map((g) => [g.target, g.body]), [['team-hand', '[ticket t2 cancelled] never mind']],
+    'only the cancellation notice goes out');
+  assert.ok(!f.injected.some((x) => /next:/.test(x)), 'and the lead is not told a hand-off happened');
+});
+
+test('t351: a hand closing an UNSTARTED backlog ticket does not get its own work back', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'in flight' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'filed for later' });
+  assert.ok(f.one('t1').startedAt != null, 'ENTER: t1 is started — the work that must survive the close');
+  assert.strictEqual(f.one('t2').startedAt, null, 'ENTER: t2 is unstarted');
+  f.gated.length = 0;
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't2', body: 'the report' });
+
+  assert.strictEqual(f.one('t2').state, 'done', 'ENTER: the close really landed, so the absence below is the advance declining');
+  assert.deepStrictEqual(f.gated.map((g) => [g.target, g.body]), [['lead', '[ticket t2 done] the report']],
+    'the report reaches the lead and nothing is pushed back at the seat');
+});
+
+// The other direction, and the reason the fix is a GATE rather than a deletion:
+// the advance exists because the completion edge has no other trigger. Break it
+// and a seat holding a queue goes idle until a human notices.
+test('t351: the genuine advance survives — closing a STARTED ticket still hands over the next one', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'first' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'second' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
+  assert.ok(f.one('t1').startedAt != null, 'ENTER: the CLOSED ticket is started, which is what lets the advance run');
+  f.gated.length = 0;
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'report' });
+
+  assert.deepStrictEqual(f.gated.filter((g) => g.target === 'team-hand').map((g) => g.body),
+    [replayBody('t2', 'second')], 'exactly one hand-off, and it is the queued ticket');
+});
+
+// An unstarted ticket sitting at the HEAD of the FIFO must not swallow the
+// advance: it is dropped from the queue (task-start.test.js pins that term), so
+// the started ticket behind it is the head and must still arrive. The gate this
+// ticket adds is on the CLOSED ticket, and that discrimination is carried by the
+// two absence tests above — moving the gate onto the candidate leaves THIS test
+// green and reds those, which is how the two claims stay separable.
+test('t351: an unstarted ticket ahead in FIFO does not block the advance — the started one behind it still arrives', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'closing this' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'never started' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'genuinely queued' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't3', body: '' });
+  assert.strictEqual(f.one('t2').startedAt, null, 'ENTER: t2 is the unstarted candidate, and it is OLDER than t3');
+  assert.ok(f.one('t3').startedAt != null, 'ENTER: t3 is started, so it is the only legitimate head');
+  f.gated.length = 0;
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'report' });
+
+  assert.deepStrictEqual(f.gated.filter((g) => g.target === 'team-hand').map((g) => g.body),
+    [replayBody('t3', 'genuinely queued')],
+    'the started close advances, skipping the unstarted candidate that sits ahead of it in FIFO order');
+});
+
+// The surviving residual, pinned so a reader can tell "deliberately left, made
+// safe by the marker" from "missed". Closing a STARTED sibling DOES free the
+// seat, so the advance correctly runs — and its head may be the very ticket the
+// seat is still working. That redelivery is intended; what makes it safe is the
+// REPLAY head, not suppression. Counting, not measuring growth: the claim is
+// "exactly one, and marked", and a growth check passes on two.
+test('t351: closing a STARTED sibling still advances, and the redelivery is marked', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'in flight' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the sibling' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
+  // ENTER: t2 is STARTED — that is the whole difference from the two absence
+  // tests above, and without it this asserts the case they already cover.
+  assert.ok(f.one('t2').startedAt != null, 'ENTER: the sibling being closed is started, so the advance is legitimate');
+  assert.ok(f.one('t1').startedAt != null, 'ENTER: and t1 is the seat`s in-flight work, which is what comes back');
+  f.gated.length = 0;
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', body: 'drop it' });
+
+  const toSeat = f.gated.filter((g) => g.target === 'team-hand' && /^\[ticket t\d+ REPLAY\]/.test(g.body));
+  assert.strictEqual(toSeat.length, 1,
+    'exactly one spec comes back — the advance is NOT suppressed on this arm, which is the deliberate residual');
+  assert.match(toSeat[0].body, /^\[ticket t1 REPLAY\]/,
+    'and it is the seat`s own in-flight ticket, marked — unmarked this is the t351 near-miss, where a hand compacts and restarts over live work');
+});
+
+// The separable half. Every ticket the advance can reach has started, and both
+// dispatch verbs deliver on start — so the advance is ALWAYS a redelivery. Left
+// unmarked it is byte-identical in shape to a fresh dispatch, and over the spill
+// threshold the seat sees only "Message (N bytes) attached".
+test('t351: the advance is MARKED as a replay, so a seat cannot read it as a fresh dispatch', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'first' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'second' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
+  // ENTER: `start` already delivered t2's spec once. That is what makes the
+  // advance below a REdelivery rather than this ticket's first sight of it.
+  assert.strictEqual(f.gated.filter((g) => /^\[ticket t2\] /.test(g.body)).length, 1,
+    'ENTER: t2 was dispatched once, unmarked, by start');
+  f.gated.length = 0;
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', body: 'report' });
+
+  const adv = f.gated.filter((g) => g.target === 'team-hand');
+  assert.strictEqual(adv.length, 1, 'ENTER: exactly one advance, so the assertion below is about it');
+  assert.match(adv[0].body, /^\[ticket t2 REPLAY\]/,
+    'the marker is the seat`s only way to tell this from a first dispatch, and it decides whether the seat starts clean or resumes');
+  assert.match(adv[0].body, /do NOT restart it/,
+    'and the head must carry the instruction, not just the tag — the tag alone is satisfied by a body that still reads as "begin"');
 });
 
 test('t89 reject WAKES the assignee: reopening a ticket is a work assignment, not a status notice', () => {
@@ -7004,7 +7167,7 @@ test('t295: a dead seat does not take its pinned role tickets with it', () => {
   assert.strictEqual(f.one('t1').state, 'done', 'the sibling can close what it inherited');
   assert.deepStrictEqual(f.gated.map((g) => [g.target, g.body]),
     [['lead', '[ticket t1 done] inherited and finished'],
-      ['team-hand-2', specBody('t2', 'second')]],
+      ['team-hand-2', replayBody('t2', 'second')]],
     'the report goes to the lead and the NEXT ticket is actually delivered to the sibling');
   // And the advance re-pins, so the record stops naming a seat that never worked it.
   assert.strictEqual(f.one('t2').assignee, 'team-hand-2', 'the advanced ticket re-pins to its new seat');
@@ -7463,8 +7626,8 @@ test('a parked ticket is invisible to _openTicketsFor, so advance SKIPS it', () 
   f.gated.length = 0;
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'done' });
   const specs = f.gated.filter((g) => g.target === 'team-hand').map((g) => g.body);
-  assert.ok(specs.some((b) => /^\[ticket t3\]/.test(b)), 'advance jumped to t3');
-  assert.ok(!specs.some((b) => /^\[ticket t2\]/.test(b)), 'and never delivered the parked t2');
+  assert.ok(specs.some((b) => /^\[ticket t3 REPLAY\]/.test(b)), 'advance jumped to t3');
+  assert.ok(!specs.some((b) => /^\[ticket t2\b/.test(b)), 'and never delivered the parked t2');
 });
 
 test('a parked ticket is never replayed to a respawned seat', () => {

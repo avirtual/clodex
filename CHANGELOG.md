@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- Closing a ticket nobody had started no longer interrupts a working seat. Closing
+  or cancelling a ticket hands the seat that held it its next queued one — but for
+  a backlog ticket still filed against a *role*, that seat was resolved to whoever
+  currently holds the role: a hand mid-work on something else entirely. Closing an
+  unrelated backlog item then pushed that hand its own in-flight spec back, looking
+  exactly like a fresh assignment, and a hand that reads a fresh assignment starts
+  clean — discarding the work in progress. The hand-off now only fires when the
+  closed ticket had actually started, which is the only case where a seat was freed.
+
+- Every such hand-off is now marked `REPLAY`. It always redelivers a spec the seat
+  was already sent once, so unmarked it was indistinguishable from new work.
+
 - Dispatching a second ticket to a seat that has not yet started its first one no
   longer loses the first ticket. The second dispatch clears the seat's composer,
   which destroys the unsubmitted copy of the first spec, and it also displaced the
