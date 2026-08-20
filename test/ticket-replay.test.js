@@ -927,6 +927,11 @@ async function dispatched(world, opts = {}) {
   const app = boot(world, { deps: { specConfirmMs: 60_000, ...(opts.deps || {}) } });
   const lead = await app.spawn('lead');
   const s = await app.spawn('team-hand');
+  // With a long INJECT_BOOT_MAXWAIT the ready gate holds every write, including
+  // this fixture's own — a fake PTY never sends the mode-2004 byte that latches
+  // it. Sending it by hand lets the SETUP flow at a cap the test can later use to
+  // hold a write open, by dropping the latch again once the collision is built.
+  if (opts.bootReady) app.emit('team-hand', '\x1b[?2004h');
   // Spend the respawn-replay one-shot on an EMPTY board before the ticket exists.
   // Left armed it fires against t1 a few ticks later and writes a REPLAY of its
   // own, which is indistinguishable at the PTY from the redelivery under test —
@@ -2121,7 +2126,12 @@ test('t357: a displaced ticket that CLOSED while it waited is dropped, not redel
   try {
     assert.deepStrictEqual((s._specOwed || []).map((o) => o.ticketId), ['t1'],
       'ENTER: t1 must be owed — with an empty queue "nothing was redelivered" is true of every implementation');
+    // Back to IDLE, not left `thinking`. A busy seat's delivery PARKS to disk
+    // (_maybeParkDelivery) and never reaches the PTY, so a buffer assertion taken
+    // against a thinking seat holds whether or not the closed-ticket check exists
+    // — it would be measuring the park gate, not this drop.
     app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
     const all = world.tickets();
     all.find((t) => t.id === 't1').state = 'done';
     world.tstore.save(world.team.root, all);
@@ -2132,9 +2142,132 @@ test('t357: a displaced ticket that CLOSED while it waited is dropped, not redel
     assert.strictEqual(app.seen('team-hand'), before,
       'a closed ticket has nothing left to redeliver — writing its spec back to the seat would re-task it with '
       + 'work it has already finished');
+    // Belt and braces on the same claim: "nothing reached the PTY" is equally
+    // true of a delivery that went to the park instead, and that is precisely the
+    // ambiguity this helper exists for.
+    assert.strictEqual(app.parked('team-hand', /BUILD THE WIDGET/), 0,
+      'and it was not parked either — a park is a durable delivery the seat drains later, so a redelivery that '
+      + 'merely took the other route would re-task it just the same, one turn later');
     assert.deepStrictEqual(s._specOwed, [],
       'and the entry is CONSUMED rather than left queued: a drop that re-armed instead would re-run this drain '
       + 'against the same dead ticket forever');
+  } finally { app.stop(); }
+});
+
+// The drain's own serialization hole, closed by `_specOwedInFlight`. A live latch
+// is not the only thing that owns the composer: `queued` means the bytes are in
+// the ready loop, and INJECT_QUIET_MAXWAIT (5 min) is far longer than the 90s
+// re-arm — so a redelivery still waiting in the gates has armed no latch, and a
+// second drain behind it puts two Ctrl-U's in flight. That is the collision this
+// mechanism repairs, reproduced by its own fix.
+test('t357: a second owed entry is not drained behind a redelivery that is queued but unwritten', async () => {
+  const world = mkWorld();
+  // The gate is held OPEN-ended: the queue polls a ready latch a fake PTY never
+  // sets, so the first redelivery stays enqueued and unwritten for the whole test
+  // — exactly the window the flag exists to cover.
+  const { app, s, lead } = await collided(world, { bootReady: true, deps: { INJECT_BOOT_MAXWAIT: 60_000 } });
+  try {
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'GLAZE THE PANE\ntasks/pane/SPEC.md\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't3', body: '' });
+    await settled(app, 'team-hand', /GLAZE THE PANE/);
+    await writeComplete(app, 'team-hand');
+    assert.deepStrictEqual((s._specOwed || []).map((o) => o.ticketId), ['t1', 't2'],
+      'ENTER: TWO tickets must be owed — with one entry there is no second drain to refuse and this test is vacuous');
+
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+    s._bootReadySeen = false;                       // hold the write in the gates
+    fireOwed(app, s);
+    assert.strictEqual(s._specOwedInFlight, true,
+      'ENTER: the first redelivery must be IN FLIGHT — if it already wrote, the second drain below is not the '
+      + 'pre-write window under test');
+    assert.deepStrictEqual((s._specOwed || []).map((o) => o.ticketId), ['t2'],
+      'ENTER: and only the second entry may remain queued');
+
+    const before = app.seen('team-hand');
+    fireOwed(app, s);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(app.seen('team-hand'), before,
+      'the second entry must NOT be drained behind a redelivery that has not been written: two units in flight is '
+      + 'two Ctrl-U`s, and the second destroys the first`s draft — the exact defect this ticket repairs');
+    assert.deepStrictEqual((s._specOwed || []).map((o) => o.ticketId), ['t2'],
+      'and it is still QUEUED rather than discarded — a refusal that dropped it would be silent in the same way');
+    assert.ok(s._specOwedTimer, 'and re-armed, so the wait ends when the write does');
+  } finally { app.stop(); }
+});
+
+// The trap in the mitigation: onWrite fires for a PARKED disposition too. Clearing
+// the flag only on `injected` latches the drain shut for the life of the seat, and
+// every later owed entry is stranded in silence — strictly worse than the bug.
+test('t357: a PARKED redelivery still releases the drain, so later owed entries are not stranded', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await collided(world);
+  try {
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'GLAZE THE PANE\ntasks/pane/SPEC.md\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't3', body: '' });
+    await settled(app, 'team-hand', /GLAZE THE PANE/);
+    await writeComplete(app, 'team-hand');
+    assert.deepStrictEqual((s._specOwed || []).map((o) => o.ticketId), ['t1', 't2'],
+      'ENTER: two tickets owed, or there is no "later entry" to strand');
+
+    // Busy seat ⇒ the redelivery PARKS rather than injecting.
+    app.m._emitActivity('team-hand', 'thinking');
+    s._specUnconfirmed = null;
+    fireOwed(app, s);
+    for (let i = 0; i < 200 && app.parked('team-hand', /BUILD THE WIDGET/) === 0; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.strictEqual(app.parked('team-hand', /BUILD THE WIDGET/), 1,
+      'ENTER: the redelivery must really have PARKED — if it injected instead, this test never exercises the '
+      + 'parked disposition and the trap it guards goes unmeasured');
+
+    assert.strictEqual(s._specOwedInFlight, false,
+      'a parked redelivery is durable and arms no latch, so nothing else would ever clear the in-flight flag — '
+      + 'left set, it latches the drain shut for the life of the seat');
+    // The consequence, asserted positively rather than as a flag read: the NEXT
+    // owed entry still drains.
+    app.m._emitActivity('team-hand', 'idle');
+    fireOwed(app, s);
+    const after = await settled(app, 'team-hand', /REPLAY[\s\S]*PAINT THE FRAME/);
+    assert.match(after, /PAINT THE FRAME/,
+      'and the later owed entry is still delivered — stranding it would be strictly worse than the loss this '
+      + 'mechanism repairs, because nothing downstream would ever report it');
+  } finally { app.stop(); }
+});
+
+// A transient team-resolution failure must not consume the entry. The shift used
+// to sit above resolveTeam, so a throw there dropped the ticket on the floor with
+// no timer left — handing it back to the stall watchdog, which is the "stalled
+// seat" misdiagnosis this whole ticket exists to retire.
+test('t357: a transient resolveTeam failure leaves the owed ticket QUEUED, not discarded', async () => {
+  const world = mkWorld();
+  let broken = false;
+  const { app, s } = await collided(world, {
+    deps: { resolveTeam: () => { if (broken) throw new Error('transient'); return world.team; } },
+  });
+  try {
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+    assert.deepStrictEqual((s._specOwed || []).map((o) => o.ticketId), ['t1'],
+      'ENTER: t1 must be owed before the failure, or "it survived" is vacuous');
+
+    broken = true;
+    const before = app.seen('team-hand');
+    fireOwed(app, s);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(app.seen('team-hand'), before, 'nothing can be delivered without a team to resolve it');
+    assert.deepStrictEqual((s._specOwed || []).map((o) => o.ticketId), ['t1'],
+      'the entry must SURVIVE the failure: consuming it here drops the ticket silently and leaves the seat to be '
+      + 'reported as stalled on work it was never told about');
+    assert.ok(s._specOwedTimer,
+      'and the timer must be re-armed, or the surviving entry is never looked at again — queued forever is the '
+      + 'same loss with an extra step');
+
+    // And it really does recover once resolution works again — the positive half.
+    broken = false;
+    fireOwed(app, s);
+    const after = await settled(app, 'team-hand', /REPLAY[\s\S]*BUILD THE WIDGET/);
+    assert.match(after, /BUILD THE WIDGET/, 'the retry delivers what the transient failure deferred');
   } finally { app.stop(); }
 });
 

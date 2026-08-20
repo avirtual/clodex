@@ -23,9 +23,10 @@ blocks a release.
   fresh assignment. Redeliveries are drained one at a time and never while another
   unconfirmed write is outstanding, since two at once would recreate the same
   collision; a ticket that is displaced again after its redelivery escalates to the
-  lead rather than looping, and one that closed or moved to another seat meanwhile
-  is simply dropped. Dispatching is unchanged from the lead's side — nothing is
-  refused, and no new step is needed.
+  lead rather than looping; one that closed or moved to another seat meanwhile is
+  dropped, and one whose seat is gone entirely is escalated to the lead rather
+  than dropped silently. Dispatching is unchanged from the lead's side — nothing
+  is refused, and no new step is needed.
 
 ## 5.14.0 — 2026-08-20 — wirescope through the tunnel, and links that land on the right machine
 

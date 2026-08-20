@@ -2268,14 +2268,33 @@ function createTicketMethods(deps, shared) {
       const queue = session._specOwed;
       if (!queue || !queue.length) return;
       if (session._dead || !this.sessions.has(session.name)) { session._specOwed = []; return; }
-      if (session._specUnconfirmed) { this._armSpecOwedTimer(session); return; }
-      const u = queue.shift();
+      // A live latch is not the only thing that owns the composer. `queued` says
+      // the bytes are in the ready loop, not that they have been written, and the
+      // gates ahead of the write are far longer than this timer: INJECT_QUIET_MAXWAIT
+      // is 5 minutes against a 90s re-arm. So a redelivery still waiting in the
+      // gates arms NO latch yet, and a drain that tested only `_specUnconfirmed`
+      // would send a second unit in behind it — two Ctrl-U's in flight, which is
+      // the collision this whole mechanism exists to repair, reproduced by its own
+      // fix. The in-flight flag covers exactly that window and is cleared from the
+      // WRITE, where the latch takes over.
+      if (session._specUnconfirmed || session._specOwedInFlight) { this._armSpecOwedTimer(session); return; }
+      // PEEKED, not shifted. The entry is consumed only once this pass has
+      // committed to disposing of it: a transient resolveTeam failure below must
+      // leave the queue intact, because a shift there drops the ticket on the
+      // floor and hands it back to the stall watchdog — the "stalled seat"
+      // misdiagnosis this ticket exists to retire, re-created inside its own
+      // repair. _checkSpecConfirm deliberately does not consume its latch in the
+      // same situation; this matches it structurally rather than by compensation.
+      const u = queue[0];
       const rearm = () => { if (queue.length) this._armSpecOwedTimer(session); };
       const isRedirect = u.kind === 'redirect';
       const step = isRedirect ? 'redirect-undelivered' : 'spec-undelivered';
       const what = isRedirect ? `${u.label || 'rejection'} for ${u.ticketId}` : `spec for ${u.ticketId}`;
       let team; try { team = resolveTeam(session.cwd); } catch { team = null; }
-      if (!team) { rearm(); return; }
+      // Still queued, and the timer is re-armed unconditionally — the retry is the
+      // whole point of not consuming it.
+      if (!team) { this._armSpecOwedTimer(session); return; }
+      queue.shift();
       const ticket = ticketsStore.load(team.root).find((t) => t.id === u.ticketId);
       // The three drops, taken with _checkSpecConfirm's own tests rather than new
       // ones that could disagree with it: closed while we waited, reassigned to a
@@ -2303,13 +2322,23 @@ function createTicketMethods(deps, shared) {
         kind: isRedirect ? 'redirect-unconfirmed' : 'spec-unconfirmed',
         body: `ticket ${u.ticketId} displaced by a later dispatch — redelivering`,
       });
+      // Cleared on EVERY disposition, not just `injected`. A parked redelivery is
+      // durable and needs no watcher, so nothing else would ever clear this — the
+      // flag would latch the drain shut for the life of the seat and strand every
+      // later owed entry in silence, which is strictly worse than the bug it
+      // guards. The flag's job is only to cover the enqueue-to-write gap.
+      session._specOwedInFlight = true;
+      const done = () => { session._specOwedInFlight = false; };
       // Through the EXISTING replay path, not a second rendering of the same
       // bytes: the REPLAY head is what lets the seat tell a redelivery from a
       // fresh assignment, and a copy of the text here could drift from it.
       const r = isRedirect
-        ? this._deliverRedirectReplay(team, ticket, session.name, u)
-        : this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true, true);
+        ? this._deliverRedirectReplay(team, ticket, session.name, u, done)
+        : this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true, true, false, done);
       if (!r || !(r.queued || r.parked)) {
+        // A delivery that reached nobody arms no latch and fires no onWrite, so
+        // the flag has no other way home.
+        session._specOwedInFlight = false;
         const why = (r && (r.reason || (r.held && 'held') || (r.undelivered && 'no live seat resolves')))
           || 'unknown delivery failure';
         log.error('intent', `redelivery of displaced ${u.ticketId} to ${session.name} reached nobody (${why}) — escalating`);
@@ -2685,12 +2714,18 @@ function createTicketMethods(deps, shared) {
     // Re-resolves the seat rather than trusting the latch: the caller has already
     // established the ticket still resolves to this session, and resolving again
     // here would be a second answer to a settled question that could disagree.
-    _deliverRedirectReplay(team, ticket, seatName, u) {
+    // `onWrite(disposition)` mirrors _deliverTicketSpec's, for the same reason and
+    // with the same ordering guarantee: the arm goes FIRST, so a throw out of a
+    // caller's hook cannot skip the mechanism that catches an unconsumed write.
+    _deliverRedirectReplay(team, ticket, seatName, u, onWrite = null) {
       const text = this._redirectDeliveryText(ticket.id, u.label, u.reason, true);
       const r = this._gatedDeliver(seatName, u.from || 'clodex-team', text, true,
         `[ticket ${ticket.id} ${u.label} REDELIVERY] close with ${ticketCloseVerb(ticket.id)}`,
-        (disposition) => this._armSpecConfirm(seatName, ticket.id, disposition,
-          { label: u.label, reason: u.reason, from: u.from }));
+        (disposition) => {
+          this._armSpecConfirm(seatName, ticket.id, disposition,
+            { label: u.label, reason: u.reason, from: u.from });
+          if (onWrite) { try { onWrite(disposition); } catch {} }
+        });
       if (!r || r.error) return { undelivered: true };
       if (r.parked) return { parked: r.parked, reason: r.reason || null };
       if (r.held) return { held: true, reason: r.held };
