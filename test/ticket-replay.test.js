@@ -2499,6 +2499,204 @@ test('t448: an arm that throws on the REDIRECT arm still releases the drain', as
   } finally { app.stop(); }
 });
 
+// ── t447: `_specOwedSpent` is pruned on RECEIPT, so a second episode is owed its
+// own redelivery ──────────────────────────────────────────────────────────────
+//
+// The set carries the retry bound across the latch REPLACEMENT (the redelivery
+// arms a fresh latch whose `retried` is false), and t357 never removed from it —
+// so it lived as long as the seat. A ticket dispatched to one seat twice over a
+// long session therefore got ONE redelivery ever: the second genuine displacement
+// escalated on a budget spent by an episode the seat had long since consumed.
+//
+// The two receipt exits are pinned SEPARATELY below because they live in
+// different modules and only one of them is on the common path: a seat that
+// consumes its spec normally clears the latch at the turn (_emitActivity), and
+// _checkSpecConfirm's re-probe runs only when no turn did.
+
+// Drive the seat through a turn the transcript ATTRIBUTES to `ticketId` — the
+// production receipt, not a hand-cleared latch. Returns with the seat idle again.
+async function received(app, s, ticketId) {
+  app.transcript('team-hand', `{"role":"user","content":"[ticket ${ticketId}] close with [agent:task done ${ticketId}]"}\n`);
+  assert.strictEqual(app.m._seatTranscriptHas('team-hand', ticketId, s._specUnconfirmed.since), true,
+    `ENTER: the probe must answer a definite YES for ${ticketId} — anything else clears the latch through the `
+    + 'blind-spot branch instead of the receipt branch, and this fixture would be testing the wrong exit');
+  app.m._emitActivity('team-hand', 'thinking');
+  assert.strictEqual(s._specUnconfirmed, null, `ENTER: the turn must retire ${ticketId}'s latch`);
+  app.m._emitActivity('team-hand', 'idle');
+}
+
+// Poll for GROWTH past a baseline, then hand back only the new bytes. `settled`
+// cannot serve here: it returns as soon as its pattern is anywhere in the buffer,
+// and episode 2 redelivers the same ticket with the same REPLAY head as episode 1
+// — so a `settled` match would be satisfied by episode 1's bytes and return
+// before episode 2's write ever landed. Measured: it does exactly that.
+async function grownSlice(app, name, before, tries = 400) {
+  for (let i = 0; i < tries; i++) {
+    if (app.seen(name).length > before.length && app.seen(name).endsWith('\r')) return app.seen(name).slice(before.length);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.fail(`ENTER: nothing new was written to ${name}, so the slice below would be empty and match nothing`);
+}
+
+// A SECOND displacement episode for t1 at the same seat: the lead re-arms t1 (a
+// re-`assign`, long after the first episode closed) and a further dispatch
+// destroys its draft. Written through _armSpecConfirm rather than a second
+// `task start` because what is under test is the spent-key read at the
+// displacement instant, not the dispatch path that reaches it.
+function displaceAgain(app, s) {
+  app.m._armSpecConfirm('team-hand', 't1', 'injected');
+  assert.ok(s._specUnconfirmed && s._specUnconfirmed.ticketId === 't1',
+    'ENTER: t1 must hold the latch again — with the slot empty nothing is displaced below and the queue '
+    + 'assertion reads the FIRST episode`s state');
+  assert.strictEqual(s._specUnconfirmed.retried, false,
+    'ENTER: and the fresh latch`s own budget must be unspent, or the escalation under test could come from '
+    + '`retried` rather than from the spent SET this ticket is about');
+  app.m._armSpecConfirm('team-hand', 't2', 'injected');
+}
+
+test('t447: a turn that CONFIRMS the spec ends the episode, so a later displacement is owed a redelivery', async () => {
+  const world = mkWorld();
+  const { app, s } = await collided(world);
+  try {
+    // Episode 1, in full: t1 displaced, redelivered, budget spent.
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+    const before = app.seen('team-hand');
+    fireOwed(app, s);
+    const after = await settled(app, 'team-hand', /REPLAY[\s\S]*BUILD THE WIDGET/);
+    assert.ok(after.length > before.length,
+      'ENTER: episode 1`s redelivery must be a NEW write — without it nothing spends the budget and the prune '
+      + 'below has nothing to remove, making every assertion here true of the unfixed code');
+    await writeComplete(app, 'team-hand');
+    assert.ok(s._specOwedSpent && s._specOwedSpent.has('t1:spec'),
+      'ENTER: the budget must be recorded as spent, or the pruning under test is unreachable');
+    assert.ok(s._specUnconfirmed && s._specUnconfirmed.ticketId === 't1',
+      'ENTER: the redelivery must have armed a FRESH t1 latch — that latch is what the receipt below confirms');
+
+    // The seat consumes it. THIS is the end of the episode.
+    await received(app, s, 't1');
+    assert.ok(!(s._specOwedSpent && s._specOwedSpent.has('t1:spec')),
+      'a confirmed turn is proof the seat holds the spec, which closes the episode: the spent key must not '
+      + 'outlive it, or the next genuine loss of this ticket is denied the redelivery it is owed');
+
+    // Episode 2, much later: t1 is re-assigned and displaced again.
+    const beforeSeat = app.seen('team-hand');
+    const beforeLead = app.seen('lead');
+    displaceAgain(app, s);
+    assert.deepStrictEqual((s._specOwed || []).map((o) => `${o.ticketId}:${o.kind}`), ['t1:spec'],
+      'a NEW episode destroys a NEW draft, so it is owed its own redelivery — escalating here reports a loss '
+      + 'the mechanism could have repaired, on a budget that was spent by an episode the seat already consumed');
+
+    // And the queue really drains it — the entry is not merely parked in a list.
+    // Through a REAL receipt on t2, not a bare `thinking` edge: t2's latch is live
+    // and the drain refuses (correctly) while it is, and an unattributed turn does
+    // not clear it — so a fixture that skipped this would read the drain's
+    // serialization refusal as a missing redelivery.
+    await received(app, s, 't2');
+    fireOwed(app, s);
+    const fresh = await grownSlice(app, 'team-hand', beforeSeat);
+    assert.match(fresh, /REPLAY[\s\S]*BUILD THE WIDGET/,
+      'and the second episode`s redelivery reaches the PTY as a NEW write carrying t1`s spec, not just a queue '
+      + 'entry — sliced past the baseline because episode 1 put the identical text in this buffer already');
+    assert.strictEqual(app.seen('lead'), beforeLead,
+      'and the lead was not escalated to: this loss was repaired, and reporting it as unrepairable is the '
+      + 'defect under test');
+  } finally { app.stop(); }
+});
+
+test('t447: the DEADLINE re-probe ends the episode too, for a seat whose turn never cleared the latch', async () => {
+  const world = mkWorld();
+  const { app, s } = await collided(world);
+  try {
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+    const before = app.seen('team-hand');
+    fireOwed(app, s);
+    const after = await settled(app, 'team-hand', /REPLAY[\s\S]*BUILD THE WIDGET/);
+    assert.ok(after.length > before.length,
+      'ENTER: the redelivery must be a NEW write, or nothing spends the budget this test prunes');
+    await writeComplete(app, 'team-hand');
+    assert.ok(s._specOwedSpent && s._specOwedSpent.has('t1:spec'),
+      'ENTER: the budget must be spent before the re-probe, or the prune has nothing to remove');
+
+    // The wire-routed race: the seat DID consume it, but no attributable edge ever
+    // cleared the latch, so the deadline re-probe is the only exit that sees the
+    // receipt. Deliberately NOT through _emitActivity — that is the other test's
+    // line, and a fixture that touched it here would leave neither line isolated.
+    app.transcript('team-hand', '{"role":"user","content":"[ticket t1] close with [agent:task done t1]"}\n');
+    assert.strictEqual(app.m._seatTranscriptHas('team-hand', 't1', s._specUnconfirmed.since), true,
+      'ENTER: the probe must answer a definite YES — a `false` here walks into the redelivery arm and this test '
+      + 'measures the wrong exit entirely');
+    app.m._checkSpecConfirm(s);
+    assert.strictEqual(s._specUnconfirmed, null,
+      'ENTER: the re-probe must have taken its receipt exit — any other exit leaves the latch and this is not '
+      + 'the path under test');
+    assert.ok(!(s._specOwedSpent && s._specOwedSpent.has('t1:spec')),
+      'the deadline re-probe is receipt just as much as the turn is, and a seat whose activity edge raced the '
+      + 'transcript reaches its confirmation ONLY here — pruning at the other exit alone leaves this population '
+      + 'with the unpruned bug');
+
+    const beforeLead = app.seen('lead');
+    displaceAgain(app, s);
+    assert.deepStrictEqual((s._specOwed || []).map((o) => `${o.ticketId}:${o.kind}`), ['t1:spec'],
+      'so its next episode is queued for redelivery like anyone else`s');
+    assert.strictEqual(app.seen('lead'), beforeLead,
+      'and nothing was escalated on a budget the receipt released');
+  } finally { app.stop(); }
+});
+
+// The whole risk of the prune, and the reason it is keyed on RECEIPT rather than
+// on "the latch went away": `_specOwedSpent` exists to stop displace → redeliver →
+// displace → redeliver forever, and a fix that restored per-episode redelivery by
+// reopening that loop would be strictly worse than the bug — an unbounded loop
+// sprays a live composer. Two further displacement rounds with NO receipt in
+// between, which is the shape that loops if the escalation path prunes.
+test('t447: an ESCALATION does not restore the budget — repeated displacement with no receipt still terminates', async () => {
+  const world = mkWorld();
+  const { app, s } = await collided(world);
+  try {
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+    fireOwed(app, s);
+    await settled(app, 'team-hand', /REPLAY[\s\S]*BUILD THE WIDGET/);
+    await writeComplete(app, 'team-hand');
+    assert.ok(s._specOwedSpent && s._specOwedSpent.has('t1:spec'),
+      'ENTER: round 1 must have spent the budget, or the refusals below are refusals to do nothing');
+
+    // Round 2: displaced again, still no turn anywhere. Escalates — t357's bound.
+    const seatAfterOne = app.seen('team-hand');
+    app.m._armSpecConfirm('team-hand', 't2', 'injected');
+    const leadSawOne = await settled(app, 'lead', /ESCALATED/);
+    assert.match(leadSawOne, /t1/,
+      'ENTER: the first escalation must have happened and must name t1 — it is the event whose prune-or-not '
+      + 'this test is about');
+    assert.strictEqual(app.seen('team-hand'), seatAfterOne,
+      'ENTER: and no third copy went to the seat, which is the bound still holding at round 2');
+    assert.ok(s._specOwedSpent && s._specOwedSpent.has('t1:spec'),
+      'the escalation must NOT release the budget: it is the opposite of receipt — two writes produced no turn '
+      + '— and a third copy into a composer that swallowed both is what the bound exists to refuse');
+
+    // Round 3: the loop, if the prune were keyed on anything but receipt.
+    app.m._emitActivity('team-hand', 'idle');
+    displaceAgain(app, s);
+    // t1 is ABSENT and t2 is present, and the whole list is asserted rather than
+    // filtered for t1: the t2 row is this fixture's own second `_armSpecConfirm`
+    // displacing the latch round 2 left in the slot — a first, unspent episode for
+    // t2, which is exactly what SHOULD queue. Reducing it away to look at t1 alone
+    // would hide a t1 row that had merely moved.
+    assert.deepStrictEqual((s._specOwed || []).map((o) => `${o.ticketId}:${o.kind}`), ['t2:spec'],
+      'so t1 does not re-enter the queue on round 3: without a receipt the seat is silent, and requeueing on '
+      + 'every displacement is the unbounded redelivery loop that sprays a live composer');
+    const leadSawTwo = await settled(app, 'lead', /ESCALATED[\s\S]*ESCALATED/, 400);
+    assert.ok(leadSawTwo.length > leadSawOne.length,
+      'the lead hears about it a second time instead — the terminating disposition, and the only one that can '
+      + 'get a human to look at a seat that has stopped reading its composer');
+    assert.strictEqual(app.seen('team-hand'), seatAfterOne,
+      'and across BOTH further rounds not one byte reached the seat: the sequence terminates in escalations, '
+      + 'which is the property `_specOwedSpent` was added to guarantee and the prune must not weaken');
+  } finally { app.stop(); }
+});
+
 after(() => { setImmediate(() => process.exit(0)); });
 
 

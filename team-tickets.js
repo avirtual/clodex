@@ -2253,6 +2253,41 @@ function createTicketMethods(deps, shared) {
       if (!session._specOwedTimer) this._armSpecOwedTimer(session);
     },
 
+    // The other end of `_specOwedSpent`. The set must outlive the LATCH (that is
+    // its whole job — the redelivery arms a fresh latch whose `retried` is false)
+    // but it must not outlive the EPISODE, or a ticket dispatched to one seat
+    // twice over a long session gets one redelivery ever instead of one each time
+    // its draft is destroyed. Unpruned it grew for the life of the seat.
+    //
+    // Called from the two RECEIPT exits and from nowhere else — an attributed turn
+    // (_emitActivity) and the deadline re-probe (_checkSpecConfirm). Receipt is
+    // what makes the next loss a fresh episode: the seat provably holds this write,
+    // so nothing about the destroyed copy is outstanding any more.
+    //
+    // Deliberately NOT called on the escalation exits. An escalation is the
+    // opposite finding — two writes produced no turn — and restoring the budget
+    // there would let the next displacement spray a third copy at a composer that
+    // has demonstrably swallowed both, against the rule the whole latch rests on.
+    // The lead's re-dispatch after an escalation is not stranded by that: if the
+    // seat turns, this prunes and the next episode is fresh; if it stays silent,
+    // escalating again is the correct outcome.
+    //
+    // Keyed on the latch's own ticket+kind, never a wholesale clear. A turn taken
+    // over t2 is no evidence at all about the t1 draft that t2's Ctrl-U destroyed,
+    // and t1's key is the one thing bounding a ticket the seat has still never seen.
+    //
+    // At each call site this rides the latch clear rather than re-testing the probe
+    // for `=== true`, and the three-valued care the drain's drop needs is inverse in
+    // direction here: there a wrong YES SWALLOWS a real redelivery, while a generous
+    // prune at worst grants some future episode the same single budget an undisplaced
+    // dispatch already gets. It cannot reopen the loop either — a redelivery loop
+    // needs a LIVE latch to displace, and every path that prunes has just cleared one.
+    _pruneOwedSpent(session, u) {
+      if (!session._specOwedSpent || !u) return;
+      session._specOwedSpent.delete(`${u.ticketId}:${u.kind}`);
+      if (!session._specOwedSpent.size) session._specOwedSpent = null;
+    },
+
     _armSpecOwedTimer(session) {
       session._specOwedTimer = setTimeout(() => {
         session._specOwedTimer = null;
@@ -2625,6 +2660,12 @@ function createTicketMethods(deps, shared) {
       // disk, which makes this the reliable read and the edge the eager one.
       // Anchored identically, so a respawn's stale copy cannot answer for it.
       if (this._seatTranscriptHas(session.name, u.ticketId, u.since) === true) {
+        // Receipt, so the episode ENDS here too — same prune as the activity edge's
+        // (_emitActivity), for the same reason. This is the RARER of the two
+        // confirm exits: a seat that consumes its spec normally clears the latch at
+        // the turn and this timer never runs. Pruning only here would leave the fix
+        // inert in the common case.
+        this._pruneOwedSpent(session, u);
         session._specUnconfirmed = null;
         return;
       }
