@@ -2086,6 +2086,15 @@ function createTicketMethods(deps, shared) {
       if (!s || !s.agentType || s._dead) return;
       const kind = redirect ? 'redirect' : 'spec';
       if (disposition !== 'injected') {
+        // A PARK ends this ticket's displacement episode, so the redelivery budget
+        // is released here as it is at the two receipt exits. Keyed on THIS call's
+        // ticket+kind rather than on the latch cleared below, and that is the whole
+        // fix: `_drainOwedSpec` refuses to run while `_specUnconfirmed` is set, so
+        // a redelivery that parks from a busy seat or a held dm finds the slot
+        // EMPTY and the match below false. A prune placed inside that guard would
+        // cover only the fire-time divert — which arms and then clears its own
+        // latch — and would be inert for exactly the population this repairs.
+        this._pruneOwedSpent(s, { ticketId, kind });
         // A late divert can park text this already armed over — drop the latch
         // rather than leave it watching for an edge that will never come. Matched
         // on kind too: a parked REDIRECT must not silently retire a spec latch
@@ -2259,29 +2268,40 @@ function createTicketMethods(deps, shared) {
     // twice over a long session gets one redelivery ever instead of one each time
     // its draft is destroyed. Unpruned it grew for the life of the seat.
     //
-    // Called from the two RECEIPT exits and from nowhere else — an attributed turn
-    // (_emitActivity) and the deadline re-probe (_checkSpecConfirm). Receipt is
-    // what makes the next loss a fresh episode: the seat provably holds this write,
-    // so nothing about the destroyed copy is outstanding any more.
+    // THE RULE: the budget is spent on a DESTROYABLE write, and released once that
+    // write is no longer at risk. The set does not exist to prove the seat READ
+    // anything — it exists to stop a third copy entering a composer that swallowed
+    // two (_checkSpecConfirm's escalation says so in as many words). So the three
+    // release sites are the three ways a write stops being destroyable:
+    //   receipt, attributed turn      (_emitActivity)
+    //   receipt, deadline re-probe    (_checkSpecConfirm)
+    //   park                          (_armSpecConfirm's non-injected branch)
+    // Receipt qualifies because the seat provably holds the write. A PARK qualifies
+    // for a different reason and just as strongly: the bytes are a file on disk, no
+    // later Ctrl-U can destroy them, and the park's own drains own them from there.
+    // Reading the rule as "receipt and nothing else" is what left every ticket whose
+    // first repair parked escalating on a budget spent in the previous episode.
     //
     // Deliberately NOT called on the escalation exits. An escalation is the
-    // opposite finding — two writes produced no turn — and restoring the budget
-    // there would let the next displacement spray a third copy at a composer that
-    // has demonstrably swallowed both, against the rule the whole latch rests on.
+    // opposite finding — two writes produced no turn, with the second still at risk
+    // in the composer — and restoring the budget there would let the next
+    // displacement spray a third copy at a composer that has demonstrably swallowed
+    // both, against the rule the whole latch rests on.
     // The lead's re-dispatch after an escalation is not stranded by that: if the
     // seat turns, this prunes and the next episode is fresh; if it stays silent,
     // escalating again is the correct outcome.
     //
-    // Keyed on the latch's own ticket+kind, never a wholesale clear. A turn taken
-    // over t2 is no evidence at all about the t1 draft that t2's Ctrl-U destroyed,
-    // and t1's key is the one thing bounding a ticket the seat has still never seen.
+    // Keyed on ONE ticket+kind, never a wholesale clear. A turn taken over t2 is no
+    // evidence at all about the t1 draft that t2's Ctrl-U destroyed, and t1's key is
+    // the one thing bounding a ticket the seat has still never seen.
     //
-    // At each call site this rides the latch clear rather than re-testing the probe
-    // for `=== true`, and the three-valued care the drain's drop needs is inverse in
-    // direction here: there a wrong YES SWALLOWS a real redelivery, while a generous
-    // prune at worst grants some future episode the same single budget an undisplaced
-    // dispatch already gets. It cannot reopen the loop either — a redelivery loop
-    // needs a LIVE latch to displace, and every path that prunes has just cleared one.
+    // At the receipt sites this rides the latch clear rather than re-testing the
+    // probe for `=== true`, and the three-valued care the drain's drop needs is
+    // inverse in direction here: there a wrong YES SWALLOWS a real redelivery, while
+    // a generous prune at worst grants some future episode the same single budget an
+    // undisplaced dispatch already gets. It cannot reopen the loop either — a
+    // redelivery loop needs a LIVE latch to displace, and every releasing path has
+    // just cleared one or (the park) armed none at all.
     _pruneOwedSpent(session, u) {
       if (!session._specOwedSpent || !u) return;
       session._specOwedSpent.delete(`${u.ticketId}:${u.kind}`);

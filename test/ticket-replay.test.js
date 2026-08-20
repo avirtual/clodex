@@ -2707,6 +2707,162 @@ test('t447: an ESCALATION does not restore the budget — repeated displacement 
   } finally { app.stop(); }
 });
 
+// ── t449: a redelivery that PARKS releases the budget too ─────────────────────
+//
+// t447 released `_specOwedSpent` at the two RECEIPT exits and nowhere else, on
+// the reading that the set proves the seat READ the write. It does not: it exists
+// to stop a THIRD copy entering a composer that swallowed two. The rule that
+// actually justifies every release site is *the budget is spent on a DESTROYABLE
+// write and released once that write is no longer at risk* — and a PARKED copy is
+// a file on disk that no later Ctrl-U can reach, so it qualifies as squarely as a
+// receipt does, while an escalation (a second copy still sitting in the composer)
+// does not.
+//
+// Unreleased there, every ticket whose first repair parked kept its spent key for
+// the life of the seat, and a genuinely new displacement weeks later escalated on
+// a budget spent in an episode that had already been safely delivered — precisely
+// the defect t447 was opened to fix, surviving for that population.
+//
+// WHERE the release goes is the whole of the fix, and it is not where the latch is
+// cleared. `_drainOwedSpec` refuses to run while `_specUnconfirmed` is set, so a
+// redelivery that parks from a busy seat finds the latch slot EMPTY: the
+// matching-latch guard in `_armSpecConfirm`'s non-injected branch is false, and a
+// release gated on it would cover only the fire-time divert — which arms and then
+// clears its own latch — and would be inert for exactly the population above.
+// The first test asserts that empty slot directly, so the placement is pinned and
+// not merely exercised.
+
+// Drive the owed redelivery to a PARK rather than an injection, and hand back the
+// PTY baseline from just before it. Busy seat => _maybeParkDelivery/the hold verdict
+// claims the text, and the fixture proves the park positively rather than inferring
+// it from an absence of PTY bytes.
+async function parkedRedelivery(app, s) {
+  const beforeSeat = app.seen('team-hand');
+  app.m._emitActivity('team-hand', 'thinking');
+  assert.strictEqual(s._specUnconfirmed, null,
+    'ENTER: the latch slot must be EMPTY when the redelivery parks — that is the state this fix is about, and '
+    + 'with a live latch here the drain would refuse to run at all');
+  fireOwed(app, s);
+  for (let i = 0; i < 400 && app.parked('team-hand', /BUILD THE WIDGET/) === 0; i++) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.strictEqual(app.parked('team-hand', /BUILD THE WIDGET/), 1,
+    'ENTER: the redelivery must really have PARKED — injected instead, it arms a latch and ends at one of the '
+    + 'receipt exits t447 already repaired, and this test would measure that path rather than this one');
+  assert.strictEqual(app.seen('team-hand'), beforeSeat,
+    'ENTER: and not one byte of it may have reached the PTY, or it was an injection with a park beside it');
+  assert.strictEqual(s._specUnconfirmed, null,
+    'ENTER: and the park must have armed NO latch — a latch here means the slot was not empty after all, so the '
+    + 'matching-latch guard would have run and the placement under test is not the one being exercised');
+  app.m._emitActivity('team-hand', 'idle');
+  return beforeSeat;
+}
+
+test('t449: a redelivery that PARKS ends the episode, so the next displacement is owed its own redelivery', async () => {
+  const world = mkWorld();
+  const { app, s } = await collided(world);
+  try {
+    // t2's latch retired by a REAL receipt, not a hand-cleared slot: the drain
+    // reads that field, and clearing it by hand would let a fixture mistake pass
+    // for the serialization refusal.
+    await received(app, s, 't2');
+    assert.deepStrictEqual((s._specOwed || []).map((o) => `${o.ticketId}:${o.kind}`), ['t1:spec'],
+      'ENTER: t1 must be owed, or the drain below writes nothing and spends no budget');
+
+    await parkedRedelivery(app, s);
+    assert.ok(!(s._specOwedSpent && s._specOwedSpent.has('t1:spec')),
+      'a parked copy is a file the seat drains on its own and no later Ctrl-U can destroy, so the write it paid '
+      + 'for is no longer at risk and the budget must be released — held, this ticket escalates for the life of '
+      + 'the seat on a budget spent by an episode that was safely delivered');
+
+    // The second episode, much later: t1 re-assigned to the same seat and its new
+    // draft destroyed by a further dispatch. A NEW destroyable write, so a new
+    // budget.
+    const beforeLead = app.seen('lead');
+    displaceAgain(app, s);
+    assert.deepStrictEqual((s._specOwed || []).map((o) => `${o.ticketId}:${o.kind}`), ['t1:spec'],
+      'so the new loss is queued for repair like any other first episode`s — escalating here reports as '
+      + 'unrepairable a loss the mechanism is holding everything it needs to repair');
+    assert.strictEqual(app.seen('lead'), beforeLead,
+      'and the lead is not told, because there is nothing yet to tell: the CHANGELOG`s "gets its own '
+      + 'redelivery" is either true of this seat or it overclaims');
+  } finally { app.stop(); }
+});
+
+// The bound, in the direction the fix could break it: releasing a budget must not
+// let displace -> redeliver -> displace -> redeliver run without an intervening
+// real event, because an unbounded loop sprays a live composer and is strictly
+// worse than the bug. A parked redelivery arms NO latch, and a displacement needs
+// a live one — so t1 cannot re-enter the queue until something writes it into the
+// composer again, which is a genuine new dispatch and a genuine new loss.
+test('t449: the released budget cannot manufacture a redelivery — a park arms no latch to displace', async () => {
+  const world = mkWorld();
+  const { app, s } = await collided(world);
+  try {
+    await received(app, s, 't2');
+    const beforeSeat = await parkedRedelivery(app, s);
+    assert.ok(!(s._specOwedSpent && s._specOwedSpent.has('t1:spec')),
+      'ENTER: the budget must actually have been released — still spent, the refusals below are the OLD bug '
+      + 'refusing, not the bound holding');
+    assert.deepStrictEqual((s._specOwed || []).map((o) => `${o.ticketId}:${o.kind}`), [],
+      'ENTER: and the queue must be empty, or the "nothing re-enters it" assertions below read a leftover row');
+
+    // No fresh injected write of t1 anywhere, so no t1 latch exists. A further
+    // dispatch to the same seat therefore displaces nothing of t1's.
+    app.m._armSpecConfirm('team-hand', 't3', 'injected');
+    assert.deepStrictEqual((s._specOwed || []).map((o) => `${o.ticketId}:${o.kind}`), [],
+      't1 does not re-enter the queue off the back of its own release: a redelivery needs a live latch to '
+      + 'displace and the park left none, so the released budget cannot feed a second repair by itself');
+    fireOwed(app, s);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(app.seen('team-hand'), beforeSeat,
+      'and the drain writes nothing — one repair per real loss, which is the property that keeps this a repair '
+      + 'and not a spray');
+    assert.strictEqual(app.parked('team-hand', /BUILD THE WIDGET/), 1,
+      'and still exactly ONE copy of t1`s spec is outstanding for this seat, counted rather than measured: a '
+      + 'second parked file is the loop, and buffer growth cannot see one');
+  } finally { app.stop(); }
+});
+
+// The other side of the branch: where the park DOES land on a live latch of its
+// own (the fire-time divert arms 'injected' from the producer, then re-reports
+// 'parked' when the divert claims the text), the release must not cost the latch
+// its clear. Driven through _armSpecConfirm directly because the divert's window
+// is one tick wide inside the queue's critical section, and a fixture racing it
+// would be a fragile test of a property that is exact here.
+test('t449: a park that DOES clear its own latch still clears it, and releases the budget once', async () => {
+  const world = mkWorld();
+  const { app, s } = await collided(world);
+  try {
+    await received(app, s, 't2');
+    await parkedRedelivery(app, s);
+    // Rebuild the divert's state by hand: a live t1 latch, and t1's budget spent.
+    app.m._armSpecConfirm('team-hand', 't1', 'injected');
+    (s._specOwedSpent || (s._specOwedSpent = new Set())).add('t1:spec');
+    assert.ok(s._specUnconfirmed && s._specUnconfirmed.ticketId === 't1' && s._specUnconfirmed.kind === 'spec',
+      'ENTER: the matching latch must be live, or the guard under test is not entered and this duplicates the '
+      + 'empty-slot case');
+    assert.ok(s._specConfirmTimer, 'ENTER: and its timer armed, or "the timer was cleared" is vacuous');
+
+    app.m._armSpecConfirm('team-hand', 't1', 'parked');
+    assert.strictEqual(s._specUnconfirmed, null,
+      'the latch is still dropped: the text it was watching became a file, and a latch left watching for an '
+      + 'edge that can never come redelivers over a spec the seat already has');
+    assert.strictEqual(s._specConfirmTimer, null, 'and its timer with it');
+    assert.ok(!(s._specOwedSpent && s._specOwedSpent.has('t1:spec')),
+      'and the budget is released on this path too — the write became durable here exactly as it did on the '
+      + 'empty-slot path, and the two must not disagree about what a park means');
+
+    // Keyed on ONE ticket+kind, never a wholesale clear: a park of t1 says nothing
+    // about a t9 draft some earlier Ctrl-U destroyed, and that key is the only
+    // thing bounding a ticket the seat has still never seen.
+    (s._specOwedSpent || (s._specOwedSpent = new Set())).add('t9:spec');
+    app.m._armSpecConfirm('team-hand', 't1', 'parked');
+    assert.ok(s._specOwedSpent && s._specOwedSpent.has('t9:spec'),
+      'and no other ticket`s budget goes with it');
+  } finally { app.stop(); }
+});
+
 after(() => { setImmediate(() => process.exit(0)); });
 
 
