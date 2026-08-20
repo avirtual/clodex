@@ -13,6 +13,19 @@ blocks a release.
 
 ## Unreleased
 
+- A library file that stopped receiving shipped updates now says so. Clodex
+  seeds `~/.clodex/library` from the shipped defaults and deliberately never
+  overwrites a file you have edited — but it decided "edited" from a hash
+  mismatch alone, so a copy that had merely fallen behind was frozen just as
+  permanently, and silently. One shipped team-role prompt sat 8 days and 20
+  revisions stale that way, so every lead seat spawned in that window booted
+  missing rules that were already in the release. Such a file is now reported at
+  launch, naming it and how to take the shipped version. Your edits are still
+  never overwritten: a file whose bytes match no shipped revision is left
+  exactly as it is. One content-free repair was added — a file already identical
+  to the shipped bytes with a stale stamp has its stamp reconciled, which puts a
+  hand-repaired file back on the upgrade path for the next release.
+
 - Accepting a ticket whose branch carries no commits no longer reports it as
   *merged*. The merge check asks whether the branch is an ancestor of master, and
   a branch that never committed is still sitting on its base — which is an

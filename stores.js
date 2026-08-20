@@ -1378,6 +1378,10 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   //                            shippedHash !== stamp; else leave it.
   //   present, NO stamp     -> legacy: cannot prove pristine, so never
   //                            overwrite; adopt sha256(dest) instead.
+  // A dest that matches NEITHER its stamp nor the shipped bytes is STRANDED:
+  // permanently off the upgrade path. That is correct for an operator edit and
+  // wrong for a stale shipped copy, and a hash mismatch cannot tell the two
+  // apart -- so it is reported, never repaired (see the branch for why).
   // Best-effort: a failed read/copy is logged and skipped, never thrown.
   const SEED_SRC = resourcesDir || path.join(__dirname, 'resources', 'library');
   const SEED_STATE_NAME = '.seed-state.json';
@@ -1411,6 +1415,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     catch { state = {}; } // absent or corrupt -> conservative empty manifest
     if (typeof state !== 'object' || Array.isArray(state)) state = {};
     let changed = false;
+    const stranded = [];
     const stack = [''];
     while (stack.length) {
       const rel = stack.pop();
@@ -1439,14 +1444,40 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
             continue;
           }
           const destHash = sha256(fs.readFileSync(dest));
-          if (destHash === stamped && shippedHash !== stamped) {
-            atomicWriteFileSync(dest, srcBytes);
-            state[childRel] = shippedHash; changed = true;
+          if (destHash === stamped) {
+            if (shippedHash !== stamped) {
+              atomicWriteFileSync(dest, srcBytes);
+              state[childRel] = shippedHash; changed = true;
+            }
+          } else if (shippedHash !== stamped) {
+            // Diverged from the stamp AND the ship moved on: every future
+            // update to this file is withheld, silently and forever. Two
+            // causes produce this exact hash shape -- a real operator edit,
+            // and a stale shipped copy whose stamp ran ahead of it -- and
+            // overwriting on the second would destroy config on the first.
+            // Nothing here can distinguish them (the bytes are all we have,
+            // and the packaged app ships resources/ WITHOUT .git, so shipped
+            // history is unavailable exactly where operators run). So repair
+            // only the case that writes no content, and report the rest.
+            if (destHash === shippedHash) {
+              // Live already IS the shipped bytes; only the stamp lags, so
+              // converging it destroys nothing and is what puts a
+              // hand-repaired file back on the upgrade path for the NEXT ship.
+              state[childRel] = shippedHash; changed = true;
+            } else {
+              stranded.push(childRel);
+            }
           }
         } catch (e) {
           if (log) log.info?.('seed', `copy skipped ${childRel} (${e && e.message})`);
         }
       }
+    }
+    if (stranded.length) {
+      // warn, not info: a withheld upgrade was invisible for 8 days and 20
+      // shipped revisions once, and the silence WAS the bug.
+      stranded.sort();
+      if (log) log.warn?.('seed', `${stranded.length} library file(s) differ from both the shipped copy and their seed stamp, so they will never receive shipped updates: ${stranded.join(', ')}. To take the shipped version of one, delete it under ${destRoot} and relaunch.`);
     }
     if (changed) {
       try { ensureDir(destRoot); atomicWriteFileSync(statePath, JSON.stringify(state, null, 2)); }
