@@ -29,10 +29,14 @@ blocks a release.
   has since been rebased or garbage-collected away — an empty branch and one
   already merged count the same, so accept reports the outcome as unknown rather
   than picking a side, and says which of the two reasons applies. Same for a
-  count that cannot be run at all.
+  count that cannot be run at all. The team-lead prompt shipped with Clodex
+  described acceptance as a two-outcome verb, so a lead could read that unknown
+  outcome as "the branch was empty" and record a merge that really happened as
+  nothing — the same false report, made by the reader instead of the code. It
+  now briefs all four outcomes and says which one actually means empty.
 
-- Review notifications now count must-fixes correctly when a reviewer nests his
-  reasoning. A one-item REWORK whose finding was traced through five indented
+- Review notifications now count must-fixes correctly when a reviewer nests
+  their reasoning. A one-item REWORK whose finding was traced through five indented
   sub-bullets was announced as "6 must-fixes", sending the lead hunting five
   findings that did not exist. Items are now counted at the shallowest
   indentation the section itself uses, so sub-bullets belong to the item above
