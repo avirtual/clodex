@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — wirescope through the tunnel, and links that land on the right machine
+## Unreleased
+
+## 5.14.0 — 2026-08-20 — wirescope through the tunnel, and links that land on the right machine
 
 - Wirescope dashboard links now WORK when you open a peer box's web frontend
   through the ↗ tunnel, rather than merely being suppressed as unreachable (see
