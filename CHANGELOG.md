@@ -18,22 +18,26 @@ blocks a release.
   which destroys the unsubmitted copy of the first spec, and it also displaced the
   one watcher that would have noticed — so the seat sat silent on a ticket it had
   never actually been told about, and the only thing that eventually spoke was the
-  stall watchdog, reporting it to the lead as a *stalled seat*. The displaced
-  ticket is now redelivered instead, marked `REPLAY` so the seat can tell it from a
-  fresh assignment. Redeliveries are drained one at a time and never while another
-  unconfirmed write is outstanding, since two at once would recreate the same
-  collision; a ticket that is displaced again after its redelivery escalates to the
-  lead rather than looping — that one-redelivery budget is per *episode*, so a
-  ticket re-assigned to the same seat weeks later and displaced again gets its own
-  redelivery rather than an immediate escalation on a budget spent long ago, while
-  a seat that has gone silent still escalates rather than being written to a third
-  time; one that closed or moved to another seat meanwhile is dropped; one whose
-  ticket no longer resolves to any live seat is escalated to the lead rather than
-  dropped silently; and one the seat turns out to have received
-  after all — its transcript proves it, the activity signal having simply arrived
-  ahead of the CLI writing the message down — is dropped rather than sent a second
-  time. Dispatching is unchanged from the lead's side — nothing is refused, and no
-  new step is needed.
+  stall watchdog, reporting it to the lead as a *stalled seat*.
+
+  The displaced ticket is now redelivered instead, marked `REPLAY` so the seat can
+  tell it from a fresh assignment. Redeliveries are drained one at a time, and
+  never while another unconfirmed write is outstanding — two at once would recreate
+  the same collision.
+
+  Each redelivery is a one-shot, and the budget is per *episode* rather than per
+  ticket: a ticket re-assigned to the same seat weeks later and displaced again
+  gets its own redelivery, instead of an immediate escalation on a budget spent
+  long ago. A seat that has gone silent still escalates rather than being written
+  to a third time. A displaced ticket that closed or moved to another seat
+  meanwhile is dropped; one whose ticket no longer resolves to any live seat is
+  escalated to the lead rather than dropped silently; and one the seat turns out to
+  have received after all — its transcript proves it, the activity signal having
+  simply arrived ahead of the CLI writing the message down — is dropped rather than
+  sent twice.
+
+  Dispatching is unchanged from the lead's side: nothing is refused, and no new
+  step is needed.
 
 ## 5.14.0 — 2026-08-20 — wirescope through the tunnel, and links that land on the right machine
 

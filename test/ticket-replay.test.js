@@ -2516,6 +2516,9 @@ test('t448: an arm that throws on the REDIRECT arm still releases the drain', as
 // Drive the seat through a turn the transcript ATTRIBUTES to `ticketId` — the
 // production receipt, not a hand-cleared latch. Returns with the seat idle again.
 async function received(app, s, ticketId) {
+  assert.ok(s._specUnconfirmed && s._specUnconfirmed.ticketId === ticketId,
+    `ENTER: ${ticketId}'s latch must be live in the slot — without it the probe below dies on a TypeError `
+    + 'instead of naming the fixture mistake');
   app.transcript('team-hand', `{"role":"user","content":"[ticket ${ticketId}] close with [agent:task done ${ticketId}]"}\n`);
   assert.strictEqual(app.m._seatTranscriptHas('team-hand', ticketId, s._specUnconfirmed.since), true,
     `ENTER: the probe must answer a definite YES for ${ticketId} — anything else clears the latch through the `
@@ -2666,7 +2669,12 @@ test('t447: an ESCALATION does not restore the budget — repeated displacement 
     // Round 2: displaced again, still no turn anywhere. Escalates — t357's bound.
     const seatAfterOne = app.seen('team-hand');
     app.m._armSpecConfirm('team-hand', 't2', 'injected');
-    const leadSawOne = await settled(app, 'lead', /ESCALATED/);
+    await settled(app, 'lead', /ESCALATED/);
+    // `settled` returns on the unit's TEXT write; its trailing \r lands a tick
+    // later. A baseline taken here would be mid-unit, and the second-escalation
+    // check below would be satisfiable by one pending byte of the first.
+    await writeComplete(app, 'lead');
+    const leadSawOne = app.seen('lead');
     assert.match(leadSawOne, /t1/,
       'ENTER: the first escalation must have happened and must name t1 — it is the event whose prune-or-not '
       + 'this test is about');
@@ -2688,7 +2696,9 @@ test('t447: an ESCALATION does not restore the budget — repeated displacement 
       'so t1 does not re-enter the queue on round 3: without a receipt the seat is silent, and requeueing on '
       + 'every displacement is the unbounded redelivery loop that sprays a live composer');
     const leadSawTwo = await settled(app, 'lead', /ESCALATED[\s\S]*ESCALATED/, 400);
-    assert.ok(leadSawTwo.length > leadSawOne.length,
+    // Counted, not measured: growth past a baseline cannot distinguish a second
+    // escalation from trailing bytes of the first.
+    assert.strictEqual((leadSawTwo.match(/ESCALATED/g) || []).length, 2,
       'the lead hears about it a second time instead — the terminating disposition, and the only one that can '
       + 'get a human to look at a seat that has stopped reading its composer');
     assert.strictEqual(app.seen('team-hand'), seatAfterOne,
