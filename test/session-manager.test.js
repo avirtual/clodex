@@ -6654,11 +6654,15 @@ test('task cancel: works on an assigned ticket (reason to assignee) and a backlo
 // Records what accept did, so each test asserts the WHOLE set of destructive
 // actions rather than the one it happens to care about — a step firing in the
 // unmerged case is exactly the bug, and a partial assertion reads around it.
-function mkAccept(mergedAnswer, extra = {}) {
+// `countAnswer` is what commitsOnBranch returns. It defaults to a NONZERO count
+// — the ordinary "the hand committed something" case — so a test that says
+// nothing about commits exercises the plain merged path.
+function mkAccept(mergedAnswer, extra = {}, countAnswer = { ok: true, count: 3, base: 'deadbeef' }) {
   const destroyed = [];
   const archived = [];
   const deleted = [];
   const asked = [];
+  const counted = [];
   const f = mkTasks({
     getPersistence: () => ({
       list: () => [],
@@ -6668,6 +6672,12 @@ function mkAccept(mergedAnswer, extra = {}) {
     }),
     gitWorktree: {
       isMerged: async (root, branch) => { asked.push({ root, branch }); return mergedAnswer; },
+      // Records the ORDER against the teardown, not just the arguments: the count
+      // has to be taken while the branch ref still exists.
+      commitsOnBranch: async (root, branch, base) => {
+        counted.push({ root, branch, base, afterTeardown: destroyed.length > 0 || deleted.length > 0 });
+        return countAnswer;
+      },
       deleteBranch: async (root, branch) => { deleted.push(branch); return { ok: true }; },
       removeWorktree: async () => ({ ok: true }),
     },
@@ -6675,7 +6685,7 @@ function mkAccept(mergedAnswer, extra = {}) {
   });
   f.m.destroy = async (name) => { destroyed.push(name); return { ok: true, worktreeRemoved: true }; };
   f.m.archive = async (name) => { archived.push(name); };
-  return { ...f, destroyed, archived, deleted, asked };
+  return { ...f, destroyed, archived, deleted, asked, counted };
 }
 
 function openAndDone(f) {
@@ -6704,6 +6714,12 @@ test('task accept: a MERGED branch retires the seat, removes the tree and delete
   // the name carries a title slug the id cannot reconstruct.
   assert.deepStrictEqual(f.asked, [{ root: '/proj', branch: 't1-build-the-widget' }],
     'the gate is asked about the recorded branch, in the main checkout');
+  // ENTER (t314): the branch carries commits, which is what makes "merged into
+  // master" the TRUE sentence here. A fixture counting zero would take the
+  // empty-branch arm and this test would be asserting the wrong claim.
+  assert.deepStrictEqual(f.counted,
+    [{ root: '/proj', branch: 't1-build-the-widget', base: 'deadbeef', afterTeardown: false }],
+    'ENTER: the count ran and reported commits, so this really is the merged arm');
   assert.deepStrictEqual(f.destroyed, ['team-hand'], 'the seat is destroyed (tree goes with it)');
   assert.deepStrictEqual(f.archived, [], 'and not merely archived');
   assert.deepStrictEqual(f.deleted, ['t1-build-the-widget'], 'the branch ref is deleted');
@@ -6712,6 +6728,153 @@ test('task accept: a MERGED branch retires the seat, removes the tree and delete
   assert.ok(t.acceptedAt > 0);
   assert.strictEqual(t.acceptNote, 'good work');
   assert.match(f.injected.join('\n'), /accepted — merged into master/);
+});
+
+// t314. `isMerged(root, branch)` with no base asks "is the branch an ancestor of
+// the main checkout's HEAD" — and a branch that never committed is still AT its
+// base, which IS an ancestor. So the gate answers merged for a branch carrying
+// nothing, and the reply claimed a merge that never happened. Observed live on
+// t310, which was closed without a commit and accepted with "merged into master".
+//
+// The teardown is NOT the bug and is asserted to survive: an empty branch has
+// nothing to lose. Only the sentence is wrong.
+test('task accept: a branch with ZERO commits is torn down but NOT reported as merged', async () => {
+  const f = mkAccept({ ok: true, merged: true, base: 'master' }, {}, { ok: true, count: 0, base: 'deadbeef' });
+  openAndDone(f);
+  assert.strictEqual(f.one('t1').state, 'done', 'ENTER: the ticket is done, so accept reaches its gate');
+  f.injected.length = 0;
+
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+
+  // ENTER: the count was actually taken, against the RECORDED mint-time base,
+  // and taken BEFORE the teardown removed the ref it needs. Without this the
+  // wording assertions below could pass off a call that never happened.
+  assert.deepStrictEqual(f.counted,
+    [{ root: '/proj', branch: 't1-build-the-widget', base: 'deadbeef', afterTeardown: false }],
+    'ENTER: the branch is counted against its mint-time base, before anything is destroyed');
+
+  const msg = f.injected.join('\n');
+  assert.ok(!/merged into/.test(msg), 'the reply must NOT claim a merge — nothing was merged');
+  assert.match(msg, /has 0 commits beyond deadbeef/, "and reuses t309's wording for the same condition");
+  assert.match(msg, /NOTHING was merged/);
+
+  // The teardown is unchanged — this is a message fix, not a policy change.
+  assert.deepStrictEqual(f.destroyed, ['team-hand'], 'the seat is still retired');
+  assert.deepStrictEqual(f.archived, [], 'not merely archived — there is nothing to resume into');
+  assert.deepStrictEqual(f.deleted, ['t1-build-the-widget'], 'and the empty branch is still deleted');
+  assert.ok(f.one('t1').closedOut, 'terminal: an empty branch is finished work, and no accept is invited back');
+});
+
+// The MIRROR of the bug above, and the reason `measured` exists. A record with
+// no baseSha is a supported production shape — createWorktree deliberately
+// records none for a pre-existing branch — and commitsOnBranch then counts
+// against merge-base(defaultBranch, branch). For a branch already fast-forwarded
+// into master, that merge base IS the branch tip, so the count is 0 for work
+// that genuinely landed. Reported as "NOTHING was merged", that is a true merge
+// denied — the same false-report class, pointed the other way.
+// Case (b): a fork point WAS recorded, but no longer resolves — commitsOnBranch
+// drops a rebased or gc'd SHA and measures against the merge base instead. The
+// reply must name that, because it is a different repair from case (a): the
+// stamping worked, the commit it named is gone.
+test('task accept: 0 commits off a fallback because the recorded base is GONE says so', async () => {
+  // The count's base (99feed) is NOT the recorded fork point (deadbeef): the
+  // signature of a fallback, which is exactly what the reply may not read as empty.
+  const f = mkAccept({ ok: true, merged: true, base: 'master' }, {}, { ok: true, count: 0, base: '99feed' });
+  openAndDone(f);
+  assert.strictEqual(f.one('t1').state, 'done', 'ENTER: the ticket is done, so accept reaches its gate');
+  f.injected.length = 0;
+
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+
+  // ENTER: the count really was requested against the RECORDED base and came
+  // back reporting a different one — without that mismatch this measures nothing.
+  assert.deepStrictEqual(f.counted,
+    [{ root: '/proj', branch: 't1-build-the-widget', base: 'deadbeef', afterTeardown: false }],
+    'ENTER: asked against the recorded fork point, which the answer did NOT use');
+
+  const msg = f.injected.join('\n');
+  assert.ok(!/NOTHING was merged/.test(msg), 'a fallback-based 0 must NOT be reported as an empty branch');
+  assert.ok(!/has 0 commits beyond/.test(msg), "nor borrow t309's empty-branch wording");
+  assert.match(msg, /UNKNOWN/, 'it is undecidable, and the reply says so');
+  // The record HAS a fork point, so the reply must not claim none was recorded —
+  // that misdirects the repair toward a stamping bug that is not there.
+  assert.match(msg, /recorded fork point deadbeef no longer resolves/,
+    'it names the recorded SHA and that it is gone, which is the actual condition');
+  assert.ok(!/no fork point was recorded/.test(msg), 'and must NOT say none was recorded — one was');
+
+  // Teardown unchanged here too — the merge gate is what licenses it.
+  assert.deepStrictEqual(f.destroyed, ['team-hand'], 'the seat is still retired');
+  assert.deepStrictEqual(f.deleted, ['t1-build-the-widget'], 'and the branch deleted');
+  assert.ok(f.one('t1').closedOut, 'terminal: there is no tree left to accept against a second time');
+});
+
+// Case (a): no fork point recorded at all — the shape createWorktree leaves for a
+// pre-existing branch. Same UNKNOWN verdict, different reason, different repair.
+test('task accept: 0 commits off a fallback because NO base was recorded says that instead', async () => {
+  const f = mkAccept({ ok: true, merged: true, base: 'master' }, {
+    // A record with a worktree but no baseSha — what createWorktree writes when
+    // the branch already existed. `extra` spreads after the default, so this
+    // replaces it wholesale.
+    getPersistence: () => ({
+      list: () => [],
+      get: (n) => (n === 'team-hand'
+        ? { name: n, sessionId: 'sess-abc', worktree: { path: '/wt/t1', branch: 't1-build-the-widget' } }
+        : null),
+    }),
+  }, { ok: true, count: 0, base: '99feed' });
+  openAndDone(f);
+  assert.strictEqual(f.one('t1').state, 'done', 'ENTER: the ticket is done, so accept reaches its gate');
+  f.injected.length = 0;
+
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+
+  // ENTER: the fixture really does carry no fork point, so `null` below is the
+  // record's shape and not a lookup that silently failed.
+  assert.deepStrictEqual(f.counted,
+    [{ root: '/proj', branch: 't1-build-the-widget', base: null, afterTeardown: false }],
+    'ENTER: nothing was recorded to count against, so the count was asked with null');
+
+  const msg = f.injected.join('\n');
+  assert.ok(!/NOTHING was merged/.test(msg), 'still not an empty branch');
+  assert.match(msg, /UNKNOWN/, 'still undecidable');
+  assert.match(msg, /no fork point was recorded/, 'and this time that IS the reason');
+  assert.ok(!/no longer resolves/.test(msg), 'nothing was recorded, so nothing can have stopped resolving');
+
+  assert.deepStrictEqual(f.destroyed, ['team-hand'], 'the seat is still retired');
+  assert.deepStrictEqual(f.deleted, ['t1-build-the-widget'], 'and the branch deleted');
+  assert.ok(f.one('t1').closedOut, 'terminal, like its sibling');
+});
+
+// A count that could not RUN is a THIRD case. Folding it into the empty one
+// would state as fact ("0 commits, nothing merged") the very thing that could
+// not be measured — the same false-confidence bug pointed a different way.
+test('task accept: a commit count that could NOT be obtained is named, not guessed', async () => {
+  const f = mkAccept({ ok: true, merged: true, base: 'master' }, {}, { ok: false, count: null, error: 'rev-list failed' });
+  openAndDone(f);
+  assert.strictEqual(f.one('t1').state, 'done', 'ENTER: the ticket is done, so accept reaches its gate');
+  f.injected.length = 0;
+
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+
+  // ENTER: the count was actually attempted — the failure under test is the
+  // helper's, not a call that never happened.
+  assert.deepStrictEqual(f.counted,
+    [{ root: '/proj', branch: 't1-build-the-widget', base: 'deadbeef', afterTeardown: false }],
+    'ENTER: the count ran and failed, which is the case this arm reports');
+
+  const msg = f.injected.join('\n');
+  assert.match(msg, /UNKNOWN/, 'the reply says the commit count is unknown');
+  assert.match(msg, /rev-list failed/, 'and carries the reason, so the lead can act on it');
+  assert.ok(!/has 0 commits/.test(msg), 'it must NOT be reported as the empty-branch case');
+  assert.ok(!/accepted — merged into/.test(msg), 'nor as a plain merge');
+  // Teardown still runs: the MERGE gate passed, and that is what licenses it.
+  assert.deepStrictEqual(f.destroyed, ['team-hand'], 'the seat is retired on the merge fact, as before');
+  assert.deepStrictEqual(f.deleted, ['t1-build-the-widget'], 'and the branch deleted');
+  assert.ok(f.one('t1').closedOut, 'terminal: the tree is gone, so a second accept has nothing to act on');
 });
 
 // The destructive direction is the one that cannot be undone, so this is the
@@ -6797,8 +6960,35 @@ test('task accept: the revival link is stamped BEFORE teardown, so a discard can
   assert.strictEqual(stampAtDestroy.branch, 't1-build-the-widget');
   assert.strictEqual(stampAtDestroy.baseSha, 'deadbeef');
   assert.strictEqual(stampAtDestroy.worktree, '/wt/t1');
+  // t314: the count here is nonzero and measured against the recorded fork
+  // point, so a merge really is demonstrable and the stamp names it.
+  assert.strictEqual(stampAtDestroy.mergedInto, 'master', 'a demonstrable merge is recorded as one');
   // And it survives the accept, which rewrites the row.
   assert.strictEqual(f.one('t1').revival.sessionId, 'sess-abc', 'the stamp survives the acceptance write');
+});
+
+// t314. The stamp is the durable half of the same claim the reply makes, and it
+// must not outlive its evidence: an empty branch IS an ancestor of master, so a
+// stamp written off the merge gate alone records a merge that never happened —
+// exactly what the reply no longer says. No reader consumes `mergedInto` today,
+// which is why this is pinned now rather than discovered by the first one.
+test('task accept: an empty branch is NOT stamped as merged', async () => {
+  const f = mkAccept({ ok: true, merged: true, base: 'master' }, {}, { ok: true, count: 0, base: 'deadbeef' });
+  openAndDone(f);
+  let stampAtDestroy = null;
+  f.m.destroy = async () => {
+    stampAtDestroy = f.one('t1').revival || null;
+    return { ok: true, worktreeRemoved: true };
+  };
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+
+  // ENTER: the stamp was written at all, and before teardown — without this the
+  // null below could be a stamp that never happened rather than an honest one.
+  assert.ok(stampAtDestroy, 'ENTER: the stamp was persisted before teardown, as on the merged arm');
+  assert.strictEqual(stampAtDestroy.seat, 'team-hand', 'ENTER: and it is this seat\'s stamp');
+  assert.strictEqual(stampAtDestroy.mergedInto, null, 'nothing was merged, so nothing is recorded as merged');
+  assert.strictEqual(f.one('t1').revival.mergedInto, null, 'and the acceptance write does not restore the claim');
 });
 
 // ---------------------------------------------------------------------------
@@ -14311,6 +14501,7 @@ test('a non-git team root can dispatch, spawn and accept a spawn ticket end to e
       listWorktrees: boom('listWorktrees'),
       removeWorktree: boom('removeWorktree'),
       isMerged: boom('isMerged'),
+      commitsOnBranch: boom('commitsOnBranch'),
       deleteBranch: boom('deleteBranch'),
     },
   });

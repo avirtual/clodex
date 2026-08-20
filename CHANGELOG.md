@@ -13,6 +13,24 @@ blocks a release.
 
 ## Unreleased
 
+- Accepting a ticket whose branch carries no commits no longer reports it as
+  *merged*. The merge check asks whether the branch is an ancestor of master, and
+  a branch that never committed is still sitting on its base — which is an
+  ancestor — so a ticket closed with nothing committed was accepted with "merged
+  into master; seat retired, worktree removed, branch deleted". Nothing had been
+  merged. The accept reply now counts the branch first and says "branch X has 0
+  commits beyond Y, so NOTHING was merged", matching the wording the review loop
+  already uses for the same condition. The cleanup itself is unchanged — an empty
+  branch has nothing to lose — and the ticket is no longer *recorded* as merged
+  either.
+
+  The count only settles it when it was measured against the branch's recorded
+  fork point. Where it could not be — none was recorded, or the recorded commit
+  has since been rebased or garbage-collected away — an empty branch and one
+  already merged count the same, so accept reports the outcome as unknown rather
+  than picking a side, and says which of the two reasons applies. Same for a
+  count that cannot be run at all.
+
 - Review notifications now count must-fixes correctly when a reviewer nests his
   reasoning. A one-item REWORK whose finding was traced through five indented
   sub-bullets was announced as "6 must-fixes", sending the lead hunting five
