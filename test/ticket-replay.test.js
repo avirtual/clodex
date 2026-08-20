@@ -1669,6 +1669,9 @@ test('t387: an undelivered rejection escalates as a REDIRECT, not as a spec and 
     assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.retried, true,
       'ENTER: the retry must be spent, or the second window below redelivers again instead of escalating');
 
+    assert.doesNotMatch(app.seen('lead'), /ESCALATED/,
+      'ENTER: the lead must not already hold an escalation, or `settled` below returns on a pre-existing hit and '
+      + 'truncates the snapshot the slice is cut from');
     const beforeLead = app.seen('lead');
     fireConfirm(app, s);
     const leadSaw = await settled(app, 'lead', /ESCALATED/);
@@ -2122,7 +2125,13 @@ test('t357: a displaced ticket displaced AGAIN after its redelivery escalates ra
     // anything else routed to the lead — an ordinary `task add` reply — satisfies
     // it, and `settled` then returns a buffer whose /t1/ came from the fixture's
     // own earlier dispatch. The slice is what uses the baseline above.
-    assert.match(leadSaw.slice(beforeLead.length), /t1/, 'and it must name the ticket that was lost');
+    // `/t1 ESCALATED/`, not a bare `/t1/`: ordinary lead traffic carries the ticket
+    // id on its own (`ticket t1 → team-hand (not started) — …`), so a bare match
+    // over the slice would be satisfiable by a mid-unit tail of unrelated traffic.
+    // The `:2107` ENTER proves the lead held no ESCALATED before this window, so
+    // an ESCALATED inside the slice is unfakeable — which is what makes this a
+    // gate rather than a coincidence of what the fixture happens to drain.
+    assert.match(leadSaw.slice(beforeLead.length), /t1 ESCALATED/, 'and it must name the ticket that was lost');
     assert.strictEqual(app.seen('team-hand'), beforeSeat,
       'and no third copy went to the seat: two writes with no turn is not a lost write, and a third would not '
       + 'fix it');
