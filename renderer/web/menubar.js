@@ -289,11 +289,26 @@ function buildTeamsMenu(ctx) {
   };
 }
 
-function tokenQuery() {
+// The target of a workspace switch: THIS page's query with `workspace` swapped,
+// never a query rebuilt from the fields we happen to remember (t445).
+//
+// A switch is a full page load, and the shim reads its connection params at
+// module-eval — so any param dropped here is dropped for the rest of the tab's
+// life. Two ride along that a rebuild silently lost: `via=tunnel`, which is the
+// ONLY thing telling the page it is being viewed through a tunnel rather than on
+// the box (lose it and every box-loopback link opens on the viewer's machine
+// again — the t445 defect, now intermittent because it takes a workspace switch
+// to trigger), and `wirescope=<port>`, t443's forward, whose loss silently
+// downgrades dashboard links back to suppressed.
+//
+// Carrying the whole query forward is what makes that class of loss impossible
+// rather than merely fixed twice: a param added later needs no edit here.
+function navQuery(id) {
   try {
-    const t = new URLSearchParams(location.search).get('token');
-    return t ? `&token=${encodeURIComponent(t)}` : '';
-  } catch { return ''; }
+    const p = new URLSearchParams(location.search);
+    p.set('workspace', id);
+    return `?${p.toString()}`;
+  } catch { return `?workspace=${encodeURIComponent(id)}`; }
 }
 
 function injectStyle() {
@@ -305,7 +320,7 @@ function injectStyle() {
 function mount(shim) {
   injectStyle();
 
-  const nav = (id) => { location.assign(`?workspace=${encodeURIComponent(id)}${tokenQuery()}`); };
+  const nav = (id) => { location.assign(navQuery(id)); };
   // Mint the workspace ENGINE-side (workspace:new persists the record and returns
   // its id), then navigate to it — a client-side id mint would be a phantom absent
   // from workspaces.json (missing from the switcher, gone at relaunch).
@@ -481,4 +496,4 @@ function mount(shim) {
   }
 }
 
-module.exports = { mount, buildMenus, buildPluginsMenu, buildTeamsMenu, BAR_H, THEMES };
+module.exports = { mount, buildMenus, buildPluginsMenu, buildTeamsMenu, navQuery, BAR_H, THEMES };

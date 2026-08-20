@@ -41,6 +41,16 @@ const WIRESCOPE_PORT = (() => {
   return n > 0 && n <= 65535 ? n : null;
 })();
 const WIRESCOPE_LOCAL_BASE = WIRESCOPE_PORT ? `http://127.0.0.1:${WIRESCOPE_PORT}` : '';
+// Was this tab opened BY the viewer's own Clodex through a peer web-view forward
+// (t445)? Set by peer-wiring.js `pageUrl`. It exists because the page origin
+// cannot answer that question: such a tab is served from `127.0.0.1:<pinned>` on
+// the VIEWER's machine and is indistinguishable by origin from a tab opened on
+// the box itself — yet the engine's loopback links are correct in the second case
+// and wrong in the first. `?wirescope=` could not stand in for this: it is absent
+// whenever the box has no wirescope to forward, which would read as "on the box".
+// Trusted only to REFUSE links, never to compose one, so a crafted value costs a
+// viewer nothing but a suppressed link.
+const VIA_TUNNEL = PARAMS.get('via') === 'tunnel';
 
 let ws = null;
 let socketOpen = false;
@@ -150,6 +160,68 @@ function wirescopeBase(info) {
   return WIRESCOPE_LOCAL_BASE || (info && info.wirescopePublicBase) || '';
 }
 
+// ── the broad loopback rule (t445) ───────────────────────────────────────────
+// `unreachableProxyUrl` above answers a narrow question — is THIS wirescope link
+// rewritable — and its key is settled. But the defect it caught is not specific
+// to wirescope: the renderer composes loopback URLs at several sites (the
+// sandbox "open in browser" links compose `http://localhost:<webPort>` from a
+// managed box's reported ports), and every one of them is built against the
+// ENGINE's loopback while being clicked in a browser that may be somewhere else.
+// So the question is asked once, about the browser, instead of once per link.
+//
+// A loopback URL the engine composes is correct in exactly ONE topology: the
+// browser is running on the engine's own machine. Anywhere else it silently
+// re-targets the viewer's own loopback, where something plausible is usually
+// listening — the failure this whole class produces is a real-looking page that
+// is confidently wrong, never a visible error.
+
+// Loopback by NAME, matching what the composers actually emit: `localhost`
+// (sandbox-view's openUrl) and `127.0.0.1` (proxy bases, peer forwards). The
+// whole 127/8 block and IPv6 `::1` count too — a host reachable only from this
+// machine is the property, not the spelling. Hostnames are already lowercased
+// and bracket-stripped by URL parsing. `127.0.0.1.evil.com` is deliberately NOT
+// matched: it is a public DNS name, so the suffix must not be a substring test.
+function isLoopbackHost(hostname) {
+  const h = String(hostname || '').replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h === '::1' || h === '0:0:0:0:0:0:0:1') return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+}
+
+// Is this browser running on the engine's own machine? Page origin alone cannot
+// answer it: a tab opened through a peer web-view forward is served from
+// `127.0.0.1:<pinned>` on the VIEWER's machine, so it looks exactly like a tab
+// opened on the box. Those two are the cases with opposite answers, so the
+// discriminator has to be explicit — `peer-wiring.js` marks the tunnelled tab it
+// opens (`pageUrl`), and this reads that mark. Anything unmarked and non-loopback
+// is plainly a remote viewer.
+//
+// DELIBERATE behaviour change, not an oversight: a browser ON the box that
+// reached the page by LAN name or IP (`http://box.local:7890`) is judged remote,
+// so its loopback links now toast instead of opening — they would have worked.
+// Accepted because the alternative is unanswerable from in here: that tab is
+// byte-for-byte identical to one opened from another machine at the same
+// address, and guessing "local" for both restores the defect for every real
+// remote viewer. This errs toward a suppressed link that says why.
+function browserSharesEngineHost() {
+  return isLoopbackHost(location.hostname) && !VIA_TUNNEL;
+}
+
+// The rule, as a pure predicate. True → the url must not be opened.
+//   • not http/https, or unparseable → refuse. This is also where a proxyBase
+//     typed with no scheme lands: `new URL('127.0.0.1:7800/x')` throws, so the
+//     origin match above returns false and the narrow gate passes it — and
+//     `window.open` then resolves it RELATIVE to the page, producing a request to
+//     the box for a nonsense path. Refusing unparseable urls closes that.
+//   • loopback origin while the browser is elsewhere → refuse.
+// Everything else opens: github, release notes, and every loopback link when the
+// browser really is on the engine's machine.
+function refuseExternalUrl(url, onEngineHost) {
+  let u;
+  try { u = new URL(String(url)); } catch { return true; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
+  return isLoopbackHost(u.hostname) && !onEngineHost;
+}
+
 // ── synthetic host channels + local event fan-out.
 function dispatchEvent(channel, args) {
   if (channel === 'open-external') {
@@ -161,6 +233,26 @@ function dispatchEvent(channel, args) {
       return;
     }
     const url = rewriteExternalUrl(args[0], proxyBase, publicBase);
+    // EXEMPT from the broad rule below: a dashboard link rewritten to OUR OWN
+    // forward. That target is a 127.0.0.1 port raised on THIS machine for THIS
+    // page, so it is loopback and correct, and re-judging it would suppress
+    // exactly the links t443 made work.
+    //
+    // The exemption is keyed on the LOCAL forward specifically, never on the
+    // origin match alone. `wirescopeBase` has a second candidate — the box's
+    // advertised `wirescopePublicBase` — and that one is routinely loopback too
+    // (`CLODEX_WIRESCOPE_PUBLIC_URL=http://localhost:7811` is the ordinary
+    // compose value). Exempting on the match alone would let a rewrite to THAT
+    // base skip the rule and open the viewer's own wirescope on a foreign
+    // session id: the exact bug class this rule exists for, tunnelled through
+    // the hole the rule carved. A box-advertised base has to face the rule like
+    // any other url, and is refused unless the browser really is on the box.
+    const claimed = !!WIRESCOPE_LOCAL_BASE && publicBase === WIRESCOPE_LOCAL_BASE
+      && matchesProxyOrigin(args[0], proxyBase);
+    if (!claimed && refuseExternalUrl(url, browserSharesEngineHost())) {
+      toast(`That link points at the box's own machine (${args[0]}), which this browser can't reach.`);
+      return;
+    }
     try { window.open(url, '_blank', 'noopener,noreferrer'); } catch { /* popup blocked */ } return;
   }
   if (channel === 'open-path') { toast(`Can't open on this machine from the browser: ${args[0]}`); return; }
@@ -491,4 +583,7 @@ function emit(channel, ...args) { dispatchEvent(channel, args); }
 // answer would come from the very bundle whose freshness is in question.
 function appVersion() { return (welcomeInfo && welcomeInfo.appVersion) || null; }
 
-module.exports = { start, emit, toast, invoke, rewriteExternalUrl, unreachableProxyUrl, wirescopeBase, appVersion };
+module.exports = {
+  start, emit, toast, invoke, rewriteExternalUrl, unreachableProxyUrl, wirescopeBase, appVersion,
+  isLoopbackHost, browserSharesEngineHost, refuseExternalUrl,
+};

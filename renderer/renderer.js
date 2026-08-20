@@ -5048,7 +5048,13 @@ function applySandboxRunning(running, ports = null) {
     sbPortsLine.classList.add('hidden');
   }
   if (running) {
-    sbOpenLink.href = sandboxOpenUrl(effectiveWebPort());
+    // The live url deliberately does NOT go in `href` (t445): the click handler
+    // routes through openExternal so the browser frontend can refuse a link that
+    // points at the box's loopback, and a real href hands cmd-click and
+    // middle-click a path straight around that gate. `title` carries the address
+    // instead, for anyone who wants to read or copy it — the ports line above
+    // shows the port number, not a url.
+    sbOpenLink.title = sandboxOpenUrl(effectiveWebPort());
     sbOpenRow.classList.remove('hidden');
   } else {
     sbOpenRow.classList.add('hidden');
@@ -5394,7 +5400,8 @@ sbDeleteBtn.addEventListener('click', async () => {
 // Route through openExternal, not a target="_blank" anchor: the desktop has no
 // setWindowOpenHandler, so _blank would open a chromeless BrowserWindow instead
 // of the user's browser. openExternal degrades correctly on web (open-external
-// fan → shim window.open).
+// fan → shim window.open) — and on web that fan is also the gate that refuses a
+// box-loopback url, which is why the anchor carries no href to click around it.
 sbOpenLink.addEventListener('click', (e) => {
   e.preventDefault();
   window.api.openExternal(sandboxOpenUrl(effectiveWebPort()));

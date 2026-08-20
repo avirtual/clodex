@@ -113,7 +113,8 @@ test('an UNGATED peer pops the browser exactly once, at the supervisor`s live UR
     assert.equal(res.ok, true);
     assert.equal(res.tokenGated, false);
     h.emitUp('p1', 'http://127.0.0.1:45001');
-    assert.deepEqual(h.externals, ['http://127.0.0.1:45001'], 'opened once, at the URL the tunnel reported');
+    assert.deepEqual(h.externals, ['http://127.0.0.1:45001?via=tunnel'],
+      'opened once, at the URL the tunnel reported (marked tunnelled — t445)');
   } finally { h.restore(); }
 });
 
@@ -128,7 +129,7 @@ test('the pop rides firstUp ONLY — a respawn after a blip does not open a seco
     h.emitState('p1', { id: 'p1', state: 'down', url: null });
     h.emitState('p1', { id: 'p1', state: 'up', url: 'http://127.0.0.1:45001' });   // no firstUp
     h.emitState('p1', { id: 'p1', state: 'up', url: 'http://127.0.0.1:45001' });
-    assert.deepEqual(h.externals, ['http://127.0.0.1:45001'], 'still exactly one');
+    assert.deepEqual(h.externals, ['http://127.0.0.1:45001?via=tunnel'], 'still exactly one');
   } finally { h.restore(); }
 });
 
@@ -142,7 +143,7 @@ test('t37: an UNCONFIRMED pop still opens the browser, but is logged as the fall
   try {
     h.wiring.openPeerWeb('p1');
     h.emitUp('p1', 'http://127.0.0.1:45001', { ready: false });
-    assert.deepEqual(h.externals, ['http://127.0.0.1:45001'], 'the browser still opens');
+    assert.deepEqual(h.externals, ['http://127.0.0.1:45001?via=tunnel'], 'the browser still opens');
     const line = h.logs.find((l) => l.includes('45001'));
     assert.ok(line, 'the pop was logged at all');
     assert.match(line, /never confirmed/i, 'and says the port was never confirmed');
@@ -156,7 +157,7 @@ test('t37: a CONFIRMED pop is logged plainly — no scary wording on the happy p
   try {
     h.wiring.openPeerWeb('p1');
     h.emitUp('p1', 'http://127.0.0.1:45002', { ready: true });
-    assert.deepEqual(h.externals, ['http://127.0.0.1:45002']);
+    assert.deepEqual(h.externals, ['http://127.0.0.1:45002?via=tunnel']);
     const line = h.logs.find((l) => l.includes('45002'));
     assert.ok(line, 'the pop was logged');
     assert.doesNotMatch(line, /never confirmed/i, 'without the unconfirmed caveat');
@@ -191,13 +192,13 @@ test('the token decision is re-taken per open: the same peer gated, then not', (
     h.wiring.closePeerWeb('p1');
     h.wiring.openPeerWeb('p1');
     h.emitUp('p1', 'http://127.0.0.1:45002');
-    assert.deepEqual(h.externals, ['http://127.0.0.1:45002'], 'ungated now: pops');
+    assert.deepEqual(h.externals, ['http://127.0.0.1:45002?via=tunnel'], 'ungated now: pops');
 
     statuses.p1 = { webHost: { port: 8080, tokenGated: true } };    // token added again
     h.wiring.closePeerWeb('p1');
     h.wiring.openPeerWeb('p1');
     h.emitUp('p1', 'http://127.0.0.1:45003');
-    assert.deepEqual(h.externals, ['http://127.0.0.1:45002'], 'gated again: no new pop');
+    assert.deepEqual(h.externals, ['http://127.0.0.1:45002?via=tunnel'], 'gated again: no new pop');
   } finally { h.restore(); }
 });
 

@@ -335,9 +335,17 @@ function createPeerWiring(deps) {
   // not a base: the forward is on our loopback by construction, so the page can
   // only ever compose 127.0.0.1:<port> from it and a value arriving from anywhere
   // else cannot re-point dashboard links at another origin.
+  //
+  // `via=tunnel` is UNCONDITIONAL, unlike the wirescope port (t445). It tells the
+  // served page that its viewer is not on the box, which the page cannot work out
+  // for itself: this tab is served from OUR loopback, so by origin it is
+  // indistinguishable from a tab opened on the box — while the box's own loopback
+  // links are correct there and wrong here. Tying it to `port` would drop the mark
+  // for every box with no wirescope to forward, which is the common case.
   function pageUrl(url, port) {
-    if (!port) return url;
-    return `${url}${url.includes('?') ? '&' : '?'}wirescope=${port}`;
+    const sep = url.includes('?') ? '&' : '?';
+    const q = port ? `wirescope=${port}&via=tunnel` : 'via=tunnel';
+    return `${url}${sep}${q}`;
   }
 
   function ensureWebTunnelManager() {
