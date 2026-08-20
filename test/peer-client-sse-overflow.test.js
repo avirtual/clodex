@@ -140,9 +140,14 @@ test('a large WELL-FRAMED stream is never dropped, however much it carries', asy
     const frame = `event: sessions\ndata: {"pad":"${'y'.repeat(7000)}"}\n\n`;
     let bytes = '';
     while (bytes.length < 4 * TEST_LIMIT) bytes += frame;
+    // Baselined BEFORE the writes: connecting refetches the session list twice on
+    // its own, so a bare `>= 2` here is satisfied by connect traffic and this wait
+    // can resolve having observed not one of the frames it claims to be waiting for.
+    const beforeFetches = state.sessionFetches;
     for (let i = 0; i < bytes.length; i += CHUNK) stream.write(bytes.slice(i, i + CHUNK));
     // The frames are `sessions` events, so arrival is observable as refetches.
-    await waitFor('the well-framed traffic to be consumed', () => state.sessionFetches >= 2);
+    await waitFor('the well-framed traffic to be consumed',
+      () => state.sessionFetches >= beforeFetches + 2);
     await new Promise((r) => setTimeout(r, 300));   // a drop would have landed by now
     assert.strictEqual(state.eventConnects, before, 'half a megabyte of valid frames did not trip the bound');
     assert.deepStrictEqual(systemLines(emits).filter((b) => /no frame terminator/.test(b)), [],
