@@ -2584,6 +2584,10 @@ test('t447: a turn that CONFIRMS the spec ends the episode, so a later displacem
 
     // Episode 2, much later: t1 is re-assigned and displaced again.
     const beforeSeat = app.seen('team-hand');
+    // The \r terminating an earlier write to the lead can still be in flight here,
+    // and it lands before the strictEqual below — which then reads a stray tail as
+    // "the lead WAS escalated to" and reports a repaired loss as unrepairable.
+    await writeComplete(app, 'lead');
     const beforeLead = app.seen('lead');
     displaceAgain(app, s);
     assert.deepStrictEqual((s._specOwed || []).map((o) => `${o.ticketId}:${o.kind}`), ['t1:spec'],
@@ -2639,6 +2643,10 @@ test('t447: the DEADLINE re-probe ends the episode too, for a seat whose turn ne
       + 'transcript reaches its confirmation ONLY here — pruning at the other exit alone leaves this population '
       + 'with the unpruned bug');
 
+    // The \r terminating an earlier write to the lead can still be in flight here,
+    // and it lands before the strictEqual below — which then reads a stray tail as
+    // "the lead WAS escalated to" and reports a repaired loss as unrepairable.
+    await writeComplete(app, 'lead');
     const beforeLead = app.seen('lead');
     displaceAgain(app, s);
     assert.deepStrictEqual((s._specOwed || []).map((o) => `${o.ticketId}:${o.kind}`), ['t1:spec'],
@@ -2778,6 +2786,10 @@ test('t449: a redelivery that PARKS ends the episode, so the next displacement i
     // The second episode, much later: t1 re-assigned to the same seat and its new
     // draft destroyed by a further dispatch. A NEW destroyable write, so a new
     // budget.
+    // The \r terminating an earlier write to the lead can still be in flight here,
+    // and it lands before the strictEqual below — which then reads a stray tail as
+    // "the lead WAS escalated to" and reports a repaired loss as unrepairable.
+    await writeComplete(app, 'lead');
     const beforeLead = app.seen('lead');
     displaceAgain(app, s);
     assert.deepStrictEqual((s._specOwed || []).map((o) => `${o.ticketId}:${o.kind}`), ['t1:spec'],
