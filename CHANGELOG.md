@@ -43,6 +43,19 @@ blocks a release.
   there. Such a link is now suppressed with a short explanation instead of
   opened. Every other link (GitHub, release notes) is unaffected.
 
+- The same wrong-machine failure is now closed for EVERY link, not just the
+  wirescope one. An audit found the sandbox "Open in browser →" links — in the
+  Sandboxes dialog and on the peer bar — breaking identically: they address a
+  box's web UI on the box's own loopback, so clicking one in a browser opened it
+  on YOUR machine instead, where another Clodex is often listening on that very
+  port. You got a real Clodex, silently the wrong one. Rather than listing ports
+  to distrust, the browser frontend now refuses any link pointing at the machine
+  running Clodex whenever you are not sitting at that machine, and says so
+  instead of opening it. Links that were already correct still work untouched:
+  GitHub and release notes, everything you click while browsing on the box
+  itself, and the tunnelled dashboard links the entries above just made
+  resolvable — those address a port on YOUR machine and are meant to.
+
 ## 5.13.0 — 2026-08-19 — the ticket loop stops losing work to its own machinery
 
 - The suite lock no longer costs a merge or eats a report. Two things shared one

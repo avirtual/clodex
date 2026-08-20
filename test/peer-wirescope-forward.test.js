@@ -131,7 +131,7 @@ test('the page URL carries the LOCAL forwarded port, and the forward goes to the
     assert.deepEqual(h.wirescope().opened, [{ id: 'p1', sshHost: 'box', remotePort: 7800 }],
       'forwarded to the port the BOX reported for its own wirescope');
     h.emitWebUp('p1', 'http://127.0.0.1:45001');
-    assert.deepEqual(h.externals, ['http://127.0.0.1:45001?wirescope=45501'],
+    assert.deepEqual(h.externals, ['http://127.0.0.1:45001?wirescope=45501&via=tunnel'],
       'the browser is sent the web view, told where wirescope was forwarded LOCALLY');
   } finally { h.restore(); }
 });
@@ -144,7 +144,7 @@ test('the param is appended, never assumed to be the first — a URL that alread
   try {
     h.wiring.openPeerWeb('p1');
     h.emitWebUp('p1', 'http://127.0.0.1:45001/?workspace=w2');
-    assert.deepEqual(h.externals, ['http://127.0.0.1:45001/?workspace=w2&wirescope=45502']);
+    assert.deepEqual(h.externals, ['http://127.0.0.1:45001/?workspace=w2&wirescope=45502&via=tunnel']);
   } finally { h.restore(); }
 });
 
@@ -196,7 +196,8 @@ test('no wirescope on the box: the web view opens fine, and the page gets NO lin
     const res = h.wiring.openPeerWeb('p1');
     assert.equal(res.ok, true, 'the web view still opens');
     h.emitWebUp('p1', 'http://127.0.0.1:45001');
-    assert.deepEqual(h.externals, ['http://127.0.0.1:45001'], 'popped, with no wirescope param at all');
+    assert.deepEqual(h.externals, ['http://127.0.0.1:45001?via=tunnel'],
+      'popped, with no wirescope param — but still marked as tunnelled (t445)');
     assert.equal(h.mgrs.length, 1, 'and no wirescope supervisor was constructed');
   } finally { h.restore(); }
 });
@@ -209,7 +210,7 @@ test('an OLDER peer that never sends the field degrades to no forward — never 
   try {
     assert.equal(h.wiring.openPeerWeb('p1').ok, true);
     h.emitWebUp('p1', 'http://127.0.0.1:45001');
-    assert.deepEqual(h.externals, ['http://127.0.0.1:45001']);
+    assert.deepEqual(h.externals, ['http://127.0.0.1:45001?via=tunnel']);
     assert.equal(h.mgrs.length, 1, 'no forward was attempted');
     assert.ok(!h.externals[0].includes('7800'), 'and no port was invented for it');
   } finally { h.restore(); }
@@ -238,7 +239,7 @@ test('a THROWING wirescope supervisor costs the link and nothing else', () => {
     const res = h.wiring.openPeerWeb('p1');
     assert.equal(res.ok, true, 'the web view still opens');
     h.emitWebUp('p1', 'http://127.0.0.1:45001');
-    assert.deepEqual(h.externals, ['http://127.0.0.1:45001'], 'the browser still opens, without a link');
+    assert.deepEqual(h.externals, ['http://127.0.0.1:45001?via=tunnel'], 'the browser still opens, without a link');
   } finally { h.restore(); }
 });
 
@@ -401,4 +402,40 @@ test('a refused web view raises no companion forward — the refusals come first
       assert.equal(h.mgrs.length, 0, `${what}: and no forward of either kind`);
     } finally { h.restore(); }
   }
+});
+
+// ── t445: the tunnel MARK, which is not the wirescope param ──────────────────
+
+test('t445: every tunnelled pop is marked `via=tunnel`, wirescope forward or not', () => {
+  // The mark and the port are independent on purpose, and this is the assertion
+  // that keeps them so. The served page cannot tell a tunnelled tab from a tab
+  // opened on the box — both are served from a 127.0.0.1 origin — yet the box's
+  // own loopback links are correct in one and wrong in the other. If the mark
+  // rode along with `wirescope=`, every box deployed with CLODEX_WIRESCOPE=off
+  // (a supported option, and the WEB_ONLY case below) would serve a page that
+  // reads as "on the box" and re-opens the whole t445 defect for it.
+  for (const [label, status] of [['with wirescope', BOTH], ['wirescope off', WEB_ONLY], ['old peer', OLD]]) {
+    const h = makeWiring({ peers: [SSH], statuses: { p1: status }, localPort: 45501 });
+    try {
+      h.wiring.openPeerWeb('p1');
+      h.emitWebUp('p1', 'http://127.0.0.1:45001');
+      assert.equal(h.externals.length, 1, `${label}: popped`);
+      const u = new URL(h.externals[0]);
+      assert.equal(u.searchParams.get('via'), 'tunnel', `${label}: marked as tunnelled`);
+    } finally { h.restore(); }
+  }
+});
+
+test('t445: the mark survives a URL that already carries a query, alongside the port', () => {
+  // Both params must land parseable — a hand-rolled second `?` would make the
+  // page read `via` as part of the previous value and silently lose the mark.
+  const h = makeWiring({ peers: [SSH], statuses: { p1: BOTH }, localPort: 45502 });
+  try {
+    h.wiring.openPeerWeb('p1');
+    h.emitWebUp('p1', 'http://127.0.0.1:45001/?workspace=w2');
+    const u = new URL(h.externals[0]);
+    assert.equal(u.searchParams.get('workspace'), 'w2', 'the page`s own param survives');
+    assert.equal(u.searchParams.get('wirescope'), '45502');
+    assert.equal(u.searchParams.get('via'), 'tunnel');
+  } finally { h.restore(); }
 });

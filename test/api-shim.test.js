@@ -50,13 +50,16 @@ function fakeDocument() {
 }
 
 // Load the shim fresh with the browser globals it reads at module-eval time set.
-function loadShim({ search = '?workspace=w1' } = {}) {
+function loadShim({ search = '?workspace=w1', hostname = 'localhost' } = {}) {
   const prev = {
     window: global.window, document: global.document, location: global.location, WebSocket: global.WebSocket,
   };
   global.window = {};
   global.document = fakeDocument();
-  global.location = { search, protocol: 'http:', host: 'localhost:7900', reload() { global.location._reloaded = true; } };
+  // `hostname` is where the browser thinks IT is, and the t445 rule reads it —
+  // the default keeps every pre-t445 test in its original topology (a browser on
+  // the engine's own machine), where no loopback link is suppressed.
+  global.location = { search, protocol: 'http:', host: `${hostname}:7900`, hostname, reload() { global.location._reloaded = true; } };
   global.WebSocket = FakeWS;
   delete require.cache[require.resolve(SHIM)];
   const shim = require(SHIM);
@@ -544,4 +547,185 @@ test('STRUCTURAL: only wirescopeBase reads wirescopePublicBase, so the gate and 
   assert.match(dispatch, /const publicBase = wirescopeBase\(welcomeInfo\)/, 'the base is computed once');
   assert.match(dispatch, /unreachableProxyUrl\(args\[0\], proxyBase, publicBase\)/, 'the gate is fed it');
   assert.match(dispatch, /rewriteExternalUrl\(args\[0\], proxyBase, publicBase\)/, 'and so is the rewrite');
+});
+
+// ── t445: the broad loopback rule ────────────────────────────────────────────
+// t442 asked a narrow question (is THIS wirescope link rewritable) and the audit
+// that followed found the same defect at links it does not key on: the sandbox
+// "open in browser" links compose `http://localhost:<webPort>` from a managed
+// box's ports, sail past the proxy-origin match, and open the viewer's own
+// machine. Rather than widen that key — settled, and its blind spot deliberate —
+// the question is asked once about the BROWSER: a loopback url the engine
+// composed is correct only when the browser runs on the engine's machine.
+
+test('isLoopbackHost: the whole 127/8 block and ::1, and never a public name that merely looks local', () => {
+  const { shim, restore } = loadShim();
+  try {
+    const { isLoopbackHost } = shim;
+    for (const h of ['localhost', '127.0.0.1', '127.1.1.1', '127.255.255.254', '::1', '[::1]', '0:0:0:0:0:0:0:1']) {
+      assert.equal(isLoopbackHost(h), true, `${h} is loopback`);
+    }
+    // The regression a substring/suffix test would introduce: all of these are
+    // ordinary public DNS names that an attacker can point anywhere, and treating
+    // one as loopback would EXEMPT it from the rule rather than merely mislabel it.
+    for (const h of ['127.0.0.1.evil.com', 'localhost.evil.com', 'notlocalhost', 'evil-127.0.0.1.com',
+      'github.com', 'box.internal', '10.0.0.1', '0.0.0.0', '', null, undefined]) {
+      assert.equal(isLoopbackHost(h), false, `${JSON.stringify(h)} is NOT loopback`);
+    }
+  } finally { restore(); }
+});
+
+test('refuseExternalUrl: loopback is refused only OFF the engine host; public links always open', () => {
+  const { shim, restore } = loadShim();
+  try {
+    const { refuseExternalUrl } = shim;
+    const box = 'http://localhost:7810';         // sandbox "open in browser" (finding 1 + 2)
+    // Off the engine's machine: the defect case. This is the url both findings compose.
+    assert.equal(refuseExternalUrl(box, false), true);
+    assert.equal(refuseExternalUrl('http://127.0.0.1:9222/x', false), true);
+    // ON the engine's machine every one of them is correct and must still open —
+    // the trap in this rule is breaking the case that genuinely works.
+    assert.equal(refuseExternalUrl(box, true), false);
+    assert.equal(refuseExternalUrl('http://127.0.0.1:9222/x', true), false);
+    // Public links are never touched, on either side.
+    for (const on of [true, false]) {
+      assert.equal(refuseExternalUrl('https://github.com/avirtual/clodex/releases', on), false);
+      assert.equal(refuseExternalUrl('https://example.com/x', on), false);
+    }
+    // The scheme-less proxyUrl blind spot named in the ticket: `new URL` throws on
+    // it, so the ORIGIN-matching gate cannot see it and passes it through — and
+    // window.open would then resolve it RELATIVE to the box's own page. Refusing
+    // what cannot be parsed is what closes that, and it is why the predicate
+    // refuses rather than ignores on a parse failure.
+    assert.equal(refuseExternalUrl('127.0.0.1:7800/_session', true), true);
+    assert.equal(refuseExternalUrl('not a url', true), true);
+    assert.equal(refuseExternalUrl('', true), true);
+    // Non-http schemes never ride this channel.
+    assert.equal(refuseExternalUrl('file:///etc/passwd', true), true);
+    assert.equal(refuseExternalUrl('javascript:alert(1)', true), true);
+  } finally { restore(); }
+});
+
+test('browserSharesEngineHost: a tunnelled tab is loopback-served and still NOT on the engine host', () => {
+  // The distinction the whole rule rests on, and the reason page origin alone
+  // cannot carry it: both tabs below are served from a loopback origin, and they
+  // need OPPOSITE answers. Without the mark the tunnelled case — the one this
+  // ticket was filed about — reads as "on the box" and nothing is suppressed.
+  {
+    const { shim, restore } = loadShim({ hostname: 'localhost', search: '?workspace=w1' });
+    try { assert.equal(shim.browserSharesEngineHost(), true, 'a tab opened ON the box'); } finally { restore(); }
+  }
+  {
+    const { shim, restore } = loadShim({ hostname: '127.0.0.1', search: '?workspace=w1&wirescope=45501&via=tunnel' });
+    try { assert.equal(shim.browserSharesEngineHost(), false, 'the same origin, but tunnelled'); } finally { restore(); }
+  }
+  {
+    // A box reached by its real address: not loopback, so no mark is needed.
+    const { shim, restore } = loadShim({ hostname: 'box.internal', search: '?workspace=w1' });
+    try { assert.equal(shim.browserSharesEngineHost(), false, 'a remote viewer'); } finally { restore(); }
+  }
+});
+
+test('t445 finding 1+2: the sandbox open-in-browser link is SUPPRESSED with a reason on a tunnelled tab', async () => {
+  // End to end at the exact url `sandbox-view.js openUrl` composes. t442's gate
+  // keys on the proxy origin, so this url is invisible to it — before this rule
+  // it opened `localhost:7810` on the VIEWER's machine, which is a plausible port
+  // for a box that viewer also runs: a real-looking Clodex UI that is the wrong
+  // one. Note the proxyBase here is configured and rewritable, so this is not
+  // the t442 case wearing a different hat.
+  const { shim, restore } = loadShim({ hostname: '127.0.0.1', search: '?workspace=w1&via=tunnel' });
+  try {
+    const opened = [];
+    global.window.open = (url) => { opened.push(url); };
+    const ws = await welcomed(shim, { proxyBase: 'http://127.0.0.1:7800', wirescopePublicBase: '' });
+    dispatchCapturingToasts(ws, { t: 'event', channel: 'open-external', args: ['http://localhost:7810'] });
+    assert.deepEqual(opened, [], 'the box-loopback link is not opened on the viewer`s machine');
+    const toasts = toastTexts(global.document.body);
+    // ENTER: a suppressed link that says nothing reads as a dead button, which is
+    // the failure mode this assertion exists for rather than the suppression.
+    assert.equal(toasts.length, 1, `exactly one toast explains it (got ${JSON.stringify(toasts)})`);
+    assert.match(toasts[0], /can't reach|cannot reach/i);
+    assert.match(toasts[0], /localhost:7810/, 'and names the url, so the operator can still paste it');
+  } finally { restore(); }
+});
+
+test('t445: the SAME link on a tab served to the box`s own browser opens untouched', async () => {
+  // The rule's whole cost is here. On the box this url is simply correct, and a
+  // rule that suppressed it would break the ordinary local sandbox workflow to
+  // fix a remote one.
+  const { shim, restore } = loadShim({ hostname: 'localhost', search: '?workspace=w1' });
+  try {
+    const opened = [];
+    global.window.open = (url) => { opened.push(url); };
+    const ws = await welcomed(shim, { proxyBase: '', wirescopePublicBase: '' });
+    dispatchCapturingToasts(ws, { t: 'event', channel: 'open-external', args: ['http://localhost:7810'] });
+    assert.deepEqual(opened, ['http://localhost:7810'], 'opened exactly as before');
+    assert.deepEqual(toastTexts(global.document.body), [], 'and nothing is said about it');
+  } finally { restore(); }
+});
+
+test('t445 THE TRAP: a forwarded wirescope link is loopback on the VIEWER`s machine and must still open', async () => {
+  // The one loopback url that genuinely works from a tunnelled tab: t443's
+  // forward is a port on THIS machine raised for THIS page. A naive "block all
+  // loopback" rule kills it — and would silently undo t443 while every t443 test
+  // still passed, because those load the shim without a tunnel mark. This is the
+  // assertion that makes the broad rule safe to hold.
+  const { shim, restore } = loadShim({ hostname: '127.0.0.1', search: '?workspace=w1&wirescope=45501&via=tunnel' });
+  try {
+    const opened = [];
+    global.window.open = (url) => { opened.push(url); };
+    const ws = await welcomed(shim, { proxyBase: 'http://127.0.0.1:7800', wirescopePublicBase: '' });
+    dispatchCapturingToasts(ws, { t: 'event', channel: 'open-external', args: ['http://127.0.0.1:7800/_session?session=abc'] });
+    assert.deepEqual(opened, ['http://127.0.0.1:45501/_session?session=abc'],
+      'the rewrite`s target is exempt — re-judging it here would re-suppress what t443 fixed');
+    assert.deepEqual(toastTexts(global.document.body), []);
+  } finally { restore(); }
+});
+
+test('t445: github and release links are untouched on a tunnelled tab', async () => {
+  // The preserve-list from the ticket. A rule this broad is one careless
+  // predicate away from swallowing every external link in the app.
+  const { shim, restore } = loadShim({ hostname: '127.0.0.1', search: '?workspace=w1&via=tunnel' });
+  try {
+    const opened = [];
+    global.window.open = (url) => { opened.push(url); };
+    const ws = await welcomed(shim, { proxyBase: 'http://127.0.0.1:7800', wirescopePublicBase: '' });
+    for (const u of ['https://github.com/avirtual/clodex', 'https://github.com/avirtual/clodex/releases/tag/v5.13.0']) {
+      dispatchCapturingToasts(ws, { t: 'event', channel: 'open-external', args: [u] });
+    }
+    assert.deepEqual(opened, ['https://github.com/avirtual/clodex', 'https://github.com/avirtual/clodex/releases/tag/v5.13.0']);
+    assert.deepEqual(toastTexts(global.document.body), [], 'and none of them is toasted at');
+  } finally { restore(); }
+});
+
+test('t445: t442`s narrow gate still owns the unrewritable dashboard link, with ITS message', async () => {
+  // Both rules can fire on one url, and they must not race: t442 speaks first and
+  // says the specific true thing (the dashboard has no route), rather than the
+  // broad rule's generic sentence. A single toast, and it is t442's.
+  const { shim, restore } = loadShim({ hostname: '127.0.0.1', search: '?workspace=w1&via=tunnel' });
+  try {
+    const opened = [];
+    global.window.open = (url) => { opened.push(url); };
+    const ws = await welcomed(shim, { proxyBase: 'http://127.0.0.1:7800', wirescopePublicBase: '' });
+    dispatchCapturingToasts(ws, { t: 'event', channel: 'open-external', args: ['http://127.0.0.1:7800/_session'] });
+    assert.deepEqual(opened, []);
+    const toasts = toastTexts(global.document.body);
+    assert.equal(toasts.length, 1, 'one explanation, not two');
+    assert.match(toasts[0], /wirescope/i, 'and it is the specific one');
+  } finally { restore(); }
+});
+
+test('t445 STRUCTURAL: the sandbox open-in-browser anchor carries no href to click around the gate', () => {
+  // The gate lives on the openExternal fan, so a live `href` on that anchor is a
+  // path straight past it: cmd-click and middle-click never reach the click
+  // handler. This is a source guard because the failure is invisible to every
+  // test above — they all dispatch through the fan, which is exactly what a
+  // modifier-click does not do.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  assert.ok(!/sbOpenLink\.href\s*=/.test(src),
+    'sbOpenLink.href must not be assigned — route the url through openExternal instead');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  const anchor = (html.match(/<a id="sandbox-open-link"[^>]*>/) || [''])[0];
+  assert.ok(anchor, 'the anchor still exists');
+  assert.ok(!/href="http/.test(anchor), `no live href in the markup either (got ${anchor})`);
 });
