@@ -233,42 +233,33 @@ test('feeds are independent instances', () => {
   assert.strictEqual(b.cursor(), 0);
 });
 
-// The browser frontend runs its own copy of the tool row out of the committed
-// bundle, so a renderer-only change leaves web users reading bare tool names —
-// the exact state the snippet exists to end, and silent because the desktop app
-// looks right. esbuild emits this expression byte-identically, which is the only
-// reason one string gates both files. If a later edit breaks that byte-identity,
-// pin the bundle's own shape rather than deleting the gate.
-test('the tool-arg span is in the committed web bundle, not just the renderer', () => {
+// Markup and its CSS have to travel TOGETHER: the row renders unstyled if the
+// stylesheet half goes missing, which for the thinking row is load-bearing
+// rather than cosmetic (see below). Both were previously read out of the
+// committed bundle; the markup half is now covered for every symbol by
+// test/web-dist-fresh.test.js, and the CSS half is asserted here against
+// renderer/styles.css — its actual home, and a claim the byte comparison does
+// not make.
+const readRenderer = (rel) => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const ROOT = path.join(__dirname, '..');
-  const SPAN = '<span class="subagent-tool-arg">';
-  const rsrc = fs.readFileSync(path.join(ROOT, 'renderer', 'activity-tab.js'), 'utf8');
-  assert.ok(rsrc.includes(SPAN), 'ENTER: the renderer still renders a tool-arg span at all');
-  const wsrc = fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8');
-  assert.ok(wsrc.includes(SPAN),
-    'web-dist/index.html is stale — run `npm run build:web` and commit it, or the '
-    + 'browser frontend keeps showing tool names with no arguments');
-  assert.ok(wsrc.includes('.subagent-tool-arg {'),
-    'the bundle carries the markup but not its CSS — the snippet would render unstyled');
+  return fs.readFileSync(path.join(__dirname, '..', 'renderer', ...rel.split('/')), 'utf8');
+};
+
+test('the tool-arg span is rendered, and styled', () => {
+  assert.ok(readRenderer('activity-tab.js').includes('<span class="subagent-tool-arg">'),
+    'the renderer still renders a tool-arg span at all — without it the feed is '
+    + 'back to bare tool names with no arguments');
+  assert.ok(readRenderer('styles.css').includes('.subagent-tool-arg {'),
+    'the markup has no CSS — the snippet would render unstyled');
 });
 
-// Same gate, same reason, for the thinking row. Its CSS is load-bearing rather
-// than cosmetic: unstyled, the clamp is gone and a 2048-char reasoning block
-// pushes every other row out of the pane.
-test('the thinking row is in the committed web bundle, not just the renderer', () => {
-  const fs = require('node:fs');
-  const path = require('node:path');
-  const ROOT = path.join(__dirname, '..');
-  const DIV = '<div class="subagent-detail-thinking">';
-  const rsrc = fs.readFileSync(path.join(ROOT, 'renderer', 'activity-tab.js'), 'utf8');
-  assert.ok(rsrc.includes(DIV), 'ENTER: the renderer still renders a thinking row at all');
-  const wsrc = fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8');
-  assert.ok(wsrc.includes(DIV),
-    'web-dist/index.html is stale — run `npm run build:web` and commit it, or the '
-    + 'browser frontend shows no reasoning at all');
-  assert.ok(wsrc.includes('-webkit-line-clamp: 3'),
-    'the bundle carries the thinking row but not its clamp — a long block would '
-    + 'push the rest of the feed out of the pane');
+test('the thinking row is rendered, and clamped', () => {
+  assert.ok(readRenderer('activity-tab.js').includes('<div class="subagent-detail-thinking">'),
+    'the renderer still renders a thinking row at all — without it no reasoning shows');
+  // Load-bearing rather than cosmetic: unstyled, the clamp is gone and a
+  // 2048-char reasoning block pushes every other row out of the pane.
+  assert.ok(readRenderer('styles.css').includes('-webkit-line-clamp: 3'),
+    'the thinking row lost its clamp — a long block would push the rest of the '
+    + 'feed out of the pane');
 });

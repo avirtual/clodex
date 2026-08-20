@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- A stale browser bundle is now caught by the test suite rather than at release
+  time. The browser frontend is served from a prebuilt bundle committed in the
+  repo; releasing already refused to ship a stale one, but nothing objected in
+  between, so a merged-but-unrebuilt renderer change left the sources reading
+  fixed and the suite green while a checkout of the main branch — the ssh deploy
+  path — served the old code. The suite now rebuilds the bundle in memory and
+  compares it byte for byte with the committed one, naming the command to fix
+  it. No release could ever have carried the stale bundle; this just moves the
+  same 0.3s check to where the mistake is made.
+
 - Wirescope dashboard links now WORK when you open a peer box's web frontend
   through the ↗ tunnel, rather than merely being suppressed as unreachable (see
   the entry below, which stops them landing on the wrong machine). Opening the

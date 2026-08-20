@@ -655,17 +655,6 @@ test('REWORK MF2: a revoke reaches the renderer through the meta merge', async (
     'the shipped merge is the mergeMeta this test exercises — a hand-rolled per-key '
     + 'merge here, or one that skipped absent keys, would restore the stale-array bug '
     + 'with this test still green');
-
-  // The browser frontend runs its own copy of this line out of the committed
-  // bundle, so a renderer fix that never gets rebuilt leaves web users on the
-  // bug. esbuild emits THIS expression byte-identically (the spread it replaced
-  // was not: `{ ...sidebarMeta.get(name) || {}`), which is the only reason one
-  // regex can gate both. If a later edit breaks that byte-identity, pin the
-  // bundle's own shape rather than deleting the gate.
-  const wsrc = fs.readFileSync(path.join(__dirname, '..', 'web-dist', 'index.html'), 'utf8');
-  assert.match(wsrc, MERGE_LINE,
-    'web-dist/index.html is stale — run `npm run build:web` and commit it, or the '
-    + 'browser frontend keeps merging by the old spread');
 });
 
 // t196: the four keys the handler bolts on AFTER metaFor returns were in no tier,
