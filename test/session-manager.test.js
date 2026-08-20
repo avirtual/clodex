@@ -7071,11 +7071,14 @@ test('t351: closing a STARTED sibling still advances, and the redelivery is mark
 
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', body: 'drop it' });
 
-  const toSeat = f.gated.filter((g) => g.target === 'team-hand' && /^\[ticket t\d+ REPLAY\]/.test(g.body));
-  assert.strictEqual(toSeat.length, 1,
-    'exactly one spec comes back — the advance is NOT suppressed on this arm, which is the deliberate residual');
-  assert.match(toSeat[0].body, /^\[ticket t1 REPLAY\]/,
-    'and it is the seat`s own in-flight ticket, marked — unmarked this is the t351 near-miss, where a hand compacts and restarts over live work');
+  // Exhaustive rather than filtered-and-counted: a filter on the REPLAY head is
+  // blind to an EXTRA UNMARKED spec landing on the same seat, which is precisely
+  // the regression the marker exists to make visible.
+  assert.deepStrictEqual(f.gated.filter((g) => g.target === 'team-hand').map((g) => g.body),
+    ['[ticket t2 cancelled] drop it', replayBody('t1', 'in flight')],
+    'exactly one spec comes back, it is the seat`s own in-flight ticket, and it is MARKED — the advance is NOT '
+    + 'suppressed on this arm, which is the deliberate residual; unmarked this is the t351 near-miss, where a hand '
+    + 'compacts and restarts over live work');
 });
 
 // The separable half. Every ticket the advance can reach has started, and both
