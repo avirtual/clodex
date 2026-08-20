@@ -336,8 +336,35 @@ function countMustFix(mustFixText) {
   const firstLine = nonEmpty.length ? stripEmphasis(nonEmpty[0].trim()) : '';
   const re = nonEmpty.length > 1 ? MUSTFIX_PLACEHOLDER_WORD_RE : MUSTFIX_PLACEHOLDER_RE;
   if (re.test(firstLine)) return 0;
+  // Items are counted at the MINIMUM indentation present in the section, not at
+  // a fixed column. A must-fix that traces its mutant through indented
+  // sub-bullets is one finding, not one per bullet: a live one-item REWORK
+  // notified as "6 must-fixes" and sent the lead hunting five findings that did
+  // not exist. Sub-bullets are good reviewing, and a counter that penalises the
+  // more thorough verdict is the counter's bug, not the reviewer's.
+  //
+  // RELATIVE, because the direction worth protecting is UNDERCOUNTING.
+  // Reviewers indent inconsistently, so a verdict whose items are ALL indented
+  // is a real list; against a fixed column 0 it would match no marker at all and
+  // fall through to the bare-block floor below, announcing "1 must-fix" over
+  // three of them — an understated REWORK the lead triages as trivial, and one
+  // step from the zero that would disarm the ACCEPT-contradiction gate
+  // entirely. Overcounting is merely noisy; undercounting hides work.
+  const widths = [];
+  for (const line of lines) {
+    const m = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+\S/.exec(line);
+    // CommonMark's tab stop, so a tab-indented item and a space-indented one
+    // are comparable at all — raw character counts make one tab shallower than
+    // two spaces and pick the sub-bullets as the top level.
+    if (m) { let w = 0; for (const ch of m[1]) w = ch === '\t' ? w + 4 - (w % 4) : w + 1; widths.push(w); }
+  }
+  // Reduced, not `Math.min(...widths)`: this runs on the main process's verdict
+  // path and a spread of one argument per line is a stack overflow on a long
+  // blob, the same class of hazard as the bounded emphasis run above.
+  let top = Infinity;
+  for (const w of widths) if (w < top) top = w;
   let n = 0;
-  for (const line of lines) if (/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S/.test(line)) n++;
+  for (const w of widths) if (w === top) n++;
   // The floor: a bare unmarked item is one must-fix, not zero. Only reached
   // once the placeholder test above has ruled out "no items at all".
   return n > 0 ? n : (text.trim() ? 1 : 0);
