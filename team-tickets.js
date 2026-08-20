@@ -5914,6 +5914,26 @@ function createTicketMethods(deps, shared) {
       // Merged: the four steps. Stamp FIRST — destroy() drops the record the
       // session id lives in, so after it the link is unrecoverable.
       if (seatName) this._stampTicketRevival(team, seatName, { accepted: true, mergedInto: m.base });
+
+      // How many commits the branch actually carries — for the REPLY ONLY. The
+      // teardown above and below is unconditional and must stay that way: an
+      // empty branch has nothing to lose, and refusing to clean it up leaves
+      // dead trees accumulating.
+      //
+      // Counted HERE, before the teardown: destroy() removes the worktree and
+      // deleteBranch() drops the ref, and after either the count is unobtainable
+      // — moving this below them turns every reply into the unknown case.
+      //
+      // `isMerged(root, branch)` alone cannot tell "landed" from "never
+      // committed": with no base passed it asks whether the branch is an
+      // ancestor of the main checkout's HEAD, and a branch still AT its base is
+      // trivially that. So the gate says merged and the reply claimed a merge
+      // that never happened. The count is what separates them, and the ticket
+      // record already carries the mint-time base to count against.
+      const baseSha = (rec && rec.worktree && rec.worktree.baseSha)
+        || (ticket.worktree && ticket.worktree.baseSha) || null;
+      const c = await gitWorktree.commitsOnBranch(team.root, branch, baseSha)
+        .catch((e) => ({ ok: false, count: null, error: e.message }));
       let removed = null;
       if (seatName && (this.sessions.has(seatName) || rec)) {
         const r = await this.destroy(seatName).catch((e) => ({ ok: false, error: e.message }));
@@ -5927,9 +5947,28 @@ function createTicketMethods(deps, shared) {
             : `${seatName} retired`);
       }
       parts.push(del.ok ? `branch ${branch} deleted` : `branch ${branch} could NOT be deleted (${del.error})`);
-      // Terminal: merged, seat retired, branch deleted. Nothing here invites a
-      // second accept, so this is where a bound reminder has done its job.
-      finish(`ticket ${ticket.id} accepted — merged into ${m.base}; ${parts.join('; ')}.`, true);
+      // Three outcomes, one teardown. A count that could not be OBTAINED is its
+      // own case, not the empty one: reporting "0 commits, nothing was merged"
+      // off a failed count states as fact the thing that could not be measured.
+      //
+      // The empty-branch wording is t309's, deliberately — the loop's verify step
+      // already reports "branch X has 0 commits beyond Y" for this exact
+      // condition, and a second vocabulary for one condition makes them read as
+      // two different findings.
+      //
+      // `c.base`, not `baseSha`: commitsOnBranch falls through to a merge-base
+      // when the mint-time SHA was rebased or gc'd, and naming a base it did not
+      // measure against is the same class of false report as the phantom merge.
+      const outcome = !c.ok
+        ? `accepted — branch ${branch} is an ancestor of ${m.base}, but its commit count could NOT be obtained (${c.error || 'unknown error'}), so whether it carried any work is UNKNOWN`
+        : c.count === 0
+          ? `accepted — branch ${branch} has 0 commits beyond ${c.base}, so NOTHING was merged; it was torn down as empty`
+          : `accepted — merged into ${m.base}`;
+      // Terminal on all three: the seat is retired and the branch deleted either
+      // way, so nothing here invites a second accept and a bound reminder has
+      // done its job. An empty branch is finished work too — there is no tree
+      // left to come back to.
+      finish(`ticket ${ticket.id} ${outcome}; ${parts.join('; ')}.`, true);
     },
 
     // Park an ALREADY-OPEN ticket, or the unpark direction if it is parked. A

@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- Accepting a ticket whose branch carries no commits no longer reports it as
+  *merged*. The merge check asks whether the branch is an ancestor of master, and
+  a branch that never committed is still sitting on its base — which is an
+  ancestor — so a ticket closed with nothing committed was accepted with "merged
+  into master; seat retired, worktree removed, branch deleted". Nothing had been
+  merged. The accept reply now counts the branch first and says "branch X has 0
+  commits beyond Y, so NOTHING was merged", matching the wording the review loop
+  already uses for the same condition. The cleanup itself is unchanged — an empty
+  branch has nothing to lose — and a count that cannot be obtained is reported as
+  unknown rather than guessed either way.
+
 - The agent protocol reference now says that *every* body-carrying intent
   captures greedily, and names them. It previously listed only two of the
   thirteen, which implied the rest stopped at the end of their own line — so
