@@ -2281,4 +2281,217 @@ test('t357: a transient resolveTeam failure leaves the owed ticket QUEUED, not d
   } finally { app.stop(); }
 });
 
+// ── t448: the three gaps review r2 found in the displaced-spec drain ──────────
+
+// GAP 1. The drain reused _checkSpecConfirm's state and holder checks but not its
+// FIRST guard, the transcript re-probe. A wire-routed seat's `turn.started` edge
+// can beat the CLI's append: _emitActivity's probe answers `false`, the latch
+// stays armed over a spec the seat DID consume, and the seat returns to idle —
+// the idle edge never re-probes. A later dispatch then displaces that latch, and
+// the drain redelivers a spec the seat is already holding.
+test('t448: the drain re-probes the transcript, so a spec the seat already consumed is not redelivered', async () => {
+  const world = mkWorld();
+  const { app, s } = await collided(world);
+  try {
+    // The turn is taken with NO transcript, which is how the collision fixture
+    // already clears t2's latch (an unanswerable probe trusts the turn). The
+    // transcript is written AFTER, so this is the CLI catching up late — the race
+    // itself — rather than a seat that was readable all along.
+    app.m._emitActivity('team-hand', 'thinking');
+    assert.strictEqual(s._specUnconfirmed, null, 'ENTER: t2`s latch must be retired or the drain refuses to run at all');
+    app.m._emitActivity('team-hand', 'idle');
+
+    const owed = (s._specOwed || [])[0];
+    assert.ok(owed && `${owed.ticketId}:${owed.kind}` === 't1:spec',
+      'ENTER: t1 must be the owed entry — the drain reads THIS snapshot`s `since`, so a different row here would '
+      + 'anchor the probe somewhere the assertions below say nothing about');
+    app.transcript('team-hand', '{"role":"user","content":"[ticket t1] close with [agent:task done t1]"}\n');
+    assert.strictEqual(app.m._seatTranscriptHas('team-hand', 't1', owed.since), true,
+      'ENTER: the probe must answer a definite YES at the snapshot`s own anchor — `false` or `null` here and this '
+      + 'test would be asserting the absence of a redelivery the drain was never going to make');
+
+    const before = app.seen('team-hand');
+    fireOwed(app, s);
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(app.seen('team-hand'), before,
+      'a spec the transcript proves the seat consumed must NOT be redelivered: the seat is holding it and working '
+      + 'it, and a second copy arrives as a fresh-looking REPLAY of work already under way');
+    assert.strictEqual(app.parked('team-hand', /BUILD THE WIDGET/), 0,
+      'and it must not have PARKED either — a park is a durable delivery the seat drains a turn later, so '
+      + '"nothing reached the PTY" alone cannot tell a drop from a deferred duplicate');
+    assert.deepStrictEqual(s._specOwed, [],
+      'and the entry is consumed rather than left to fire again — the drop is a decision, not a deferral');
+  } finally { app.stop(); }
+});
+
+// The other side of the same guard, and the reason it is `=== true` rather than a
+// truthy test. `false` is a POSITIVE finding — transcript readable, this write not
+// in it — which is the seat that really did lose the spec. (`null`, the probe that
+// cannot answer at all, is pinned by the plain redelivery test above: that fixture
+// has no transcript, so a guard reading `!== false` would drop there instead.)
+test('t448: a readable transcript WITHOUT the marker still gets its redelivery', async () => {
+  const world = mkWorld();
+  const { app, s } = await collided(world);
+  try {
+    app.m._emitActivity('team-hand', 'thinking');
+    assert.strictEqual(s._specUnconfirmed, null, 'ENTER: t2`s latch must be retired before the drain can run');
+    app.m._emitActivity('team-hand', 'idle');
+
+    const owed = (s._specOwed || [])[0];
+    assert.ok(owed && owed.ticketId === 't1', 'ENTER: t1 must be the owed entry');
+    // A turn over something else entirely — the transcript is readable, and t1 is
+    // demonstrably not in it.
+    app.transcript('team-hand', '{"role":"user","content":"[agent:from team] roster: lead clodex"}\n');
+    assert.strictEqual(app.m._seatTranscriptHas('team-hand', 't1', owed.since), false,
+      'ENTER: the probe must answer a definite NO — an unreadable transcript would return null and exercise the '
+      + 'other branch, leaving the distinction this test exists for unmeasured');
+
+    // Sliced past a baseline, not matched against the whole buffer: t1's FIRST
+    // copy is still sitting in there from the fixture, so a whole-buffer match is
+    // true whether or not the drain redelivered anything — it would pass against a
+    // guard that dropped this entry, which is the mutant this test exists to kill.
+    const before = app.seen('team-hand');
+    fireOwed(app, s);
+    const after = await settled(app, 'team-hand', /REPLAY[\s\S]*BUILD THE WIDGET/);
+    assert.ok(after.length > before.length,
+      'ENTER: the redelivery must be a NEW write — no growth here and the match below is reading the first copy');
+    assert.match(after.slice(before.length), /BUILD THE WIDGET/,
+      'a probe that can read the transcript and does not find the spec there is the seat that genuinely lost it — '
+      + 'collapsing that with a definite YES would let a readable transcript swallow every real redelivery');
+  } finally { app.stop(); }
+});
+
+// GAP 2. The composite onWrite hook arms first and calls the caller's hook second.
+// Un-guarded, an arm that throws skips the caller's hook — and for the drain that
+// hook is the ONLY release of `_specOwedInFlight`, so the flag stays set for the
+// life of the seat and every later owed entry is stranded in silence. That is the
+// outcome _drainOwedSpec's own comment calls strictly worse than the bug it guards.
+//
+// The throw is injected AT the arm rather than at its production source
+// (`_broadcast` inside `_oweDisplacedSpec`), which would need a latch displaced at
+// the redelivery's own write instant. What is under test is the hook's ordering
+// guarantee — arm first, release always — not which call inside the arm threw.
+test('t448: an arm that THROWS still releases the drain`s in-flight flag', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await collided(world);
+  try {
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'GLAZE THE PANE\ntasks/pane/SPEC.md\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't3', body: '' });
+    await settled(app, 'team-hand', /GLAZE THE PANE/);
+    await writeComplete(app, 'team-hand');
+    assert.deepStrictEqual((s._specOwed || []).map((o) => o.ticketId), ['t1', 't2'],
+      'ENTER: TWO tickets must be owed — with one entry there is no LATER entry for a stranded flag to strand, '
+      + 'and the consequence half of this test is unreachable');
+
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+
+    const real = app.m._armSpecConfirm;
+    let armCalls = 0;
+    app.m._armSpecConfirm = () => { armCalls++; throw new Error('arm exploded'); };
+    fireOwed(app, s);
+    assert.strictEqual(s._specOwedInFlight, true,
+      'ENTER: the redelivery must actually be IN FLIGHT — the flag is set synchronously and released from the '
+      + 'write, so if it were already false here the release below would be proving nothing');
+
+    for (let i = 0; i < 400 && s._specOwedInFlight; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(armCalls > 0,
+      'ENTER: the arm must really have been reached and thrown — an unreached arm leaves the flag released for '
+      + 'the ordinary reason and this test never exercises the guard');
+    assert.strictEqual(s._specOwedInFlight, false,
+      'the in-flight flag must be released even when the arm throws: it is the drain`s only gate, and left set it '
+      + 'latches the drain shut for the life of the seat — a self-inflicted permanent stall');
+
+    // The consequence, asserted positively rather than as a flag read: the next
+    // owed entry still drains.
+    app.m._armSpecConfirm = real;
+    fireOwed(app, s);
+    const after = await settled(app, 'team-hand', /REPLAY[\s\S]*PAINT THE FRAME/);
+    assert.match(after, /PAINT THE FRAME/,
+      'and the later owed entry is still delivered — stranding it would be strictly worse than the loss this '
+      + 'mechanism repairs, because nothing downstream would ever report it');
+  } finally { app.stop(); }
+});
+
+// GAP 3. The REDIRECT arm of the drain — `_deliverRedirectReplay(..., onWrite)`,
+// the one signature round 2 changed — had no test at all. A displaced rejection
+// must reach the seat again AND release the in-flight flag on that path, or the
+// drain latches shut for the seat exactly as it would on the spec arm.
+test('t448: a displaced REDIRECT is redelivered and releases the drain', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await redirected(world);
+  try {
+    assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.kind, 'redirect',
+      'ENTER: the live latch must be the REDIRECT one — displacing a spec latch here would queue `t1:spec` and '
+      + 'every assertion below would be reading the spec arm this test does not cover');
+
+    // A second dispatch to the same seat: its leading Ctrl-U destroys the
+    // rejection's draft and its arm replaces the redirect latch.
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'PAINT THE FRAME\ntasks/frame/SPEC.md\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
+    await settled(app, 'team-hand', /PAINT THE FRAME/);
+    await writeComplete(app, 'team-hand');
+    assert.deepStrictEqual((s._specOwed || []).map((o) => `${o.ticketId}:${o.kind}`), ['t1:redirect'],
+      'ENTER: the owed entry must be the REDIRECT kind — the kind is what selects _deliverRedirectReplay over '
+      + '_deliverTicketSpec, so a `t1:spec` row here would drain through the arm that is already covered');
+
+    app.m._emitActivity('team-hand', 'thinking');
+    assert.strictEqual(s._specUnconfirmed, null, 'ENTER: t2`s latch must be retired before the drain can run');
+    app.m._emitActivity('team-hand', 'idle');
+
+    const before = app.seen('team-hand');
+    fireOwed(app, s);
+    const after = await settled(app, 'team-hand', /REDELIVERY/);
+    assert.ok(after.length > before.length,
+      'ENTER: the redelivery must be a NEW write, not a re-read of the rejection`s first copy still in the buffer');
+    assert.match(after.slice(before.length), /REDELIVERY/,
+      'a displaced rejection must reach the seat again — the seat is meanwhile working the version that was '
+      + 'rejected, and nothing else in the system can tell a swallowed redirect from a delivered one');
+    assert.match(after.slice(before.length), /FIX THE WIDGET MOUNT/,
+      'and it must carry the REASON: the reason is not persisted on the ticket record, so a rebuild that '
+      + 're-derived from the record would hand the seat an empty rejection');
+    assert.strictEqual(s._specOwedInFlight, false,
+      'and the redirect arm must release the in-flight flag exactly as the spec arm does — this is the path whose '
+      + 'signature round 2 changed, and left set the flag strands every later owed entry in silence');
+  } finally { app.stop(); }
+});
+
+// The same guard on the REDIRECT arm. `_deliverRedirectReplay` carries its own
+// copy of the composite hook, so the ordering guarantee has to be pinned on both —
+// a `finally` on one arm and a bare sequence on the other strands the flag for
+// every displaced rejection while the spec arm looks correct.
+test('t448: an arm that throws on the REDIRECT arm still releases the drain', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await redirected(world);
+  try {
+    assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.kind, 'redirect',
+      'ENTER: the live latch must be the REDIRECT one, or the entry displaced below drains through the spec arm');
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'PAINT THE FRAME\ntasks/frame/SPEC.md\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
+    await settled(app, 'team-hand', /PAINT THE FRAME/);
+    await writeComplete(app, 'team-hand');
+    assert.deepStrictEqual((s._specOwed || []).map((o) => `${o.ticketId}:${o.kind}`), ['t1:redirect'],
+      'ENTER: the owed entry must be the REDIRECT kind — a `t1:spec` row here exercises the other arm entirely');
+
+    app.m._emitActivity('team-hand', 'thinking');
+    assert.strictEqual(s._specUnconfirmed, null, 'ENTER: t2`s latch must be retired before the drain can run');
+    app.m._emitActivity('team-hand', 'idle');
+
+    let armCalls = 0;
+    app.m._armSpecConfirm = () => { armCalls++; throw new Error('arm exploded'); };
+    fireOwed(app, s);
+    assert.strictEqual(s._specOwedInFlight, true,
+      'ENTER: the redelivery must really be IN FLIGHT — already false here and the release below proves nothing');
+
+    for (let i = 0; i < 400 && s._specOwedInFlight; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(armCalls > 0,
+      'ENTER: the arm must have been reached and thrown, or the flag is released for the ordinary reason');
+    assert.strictEqual(s._specOwedInFlight, false,
+      'the redirect arm must release the in-flight flag even when the arm throws — left set it latches the drain '
+      + 'shut for the life of the seat, which is worse than the displaced rejection it was repairing');
+  } finally { app.stop(); }
+});
+
 after(() => { setImmediate(() => process.exit(0)); });
+
+
