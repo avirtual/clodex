@@ -2020,9 +2020,16 @@ function createTicketMethods(deps, shared) {
         // Both hooks ride ONE onWrite, and the arm goes first: it is the mechanism
         // that catches a write which never reaches a turn, so a throw out of a
         // caller's stamp must not be able to skip it.
+        // The `finally` is what keeps the two hooks independent in BOTH
+        // directions. The inner try already stops a caller's stamp skipping the
+        // arm; without this one an arm that throws (_broadcast inside
+        // _oweDisplacedSpec is the reachable case) skips the caller's hook — and
+        // that hook is the drain's only in-flight release, so the drain latches
+        // shut for the life of the seat. That is the outcome _drainOwedSpec's own
+        // comment calls strictly worse than the bug it guards.
         (disposition) => {
-          this._armSpecConfirm(seat, ticket.id, disposition);
-          if (onWrite) { try { onWrite(disposition, seat); } catch {} }
+          try { this._armSpecConfirm(seat, ticket.id, disposition); }
+          finally { if (onWrite) { try { onWrite(disposition, seat); } catch {} } }
         });
       if (!r || r.error) return { undelivered: true };
       if (r.parked) return { parked: r.parked, reason: r.reason || null };
@@ -2300,6 +2307,19 @@ function createTicketMethods(deps, shared) {
       // ones that could disagree with it: closed while we waited, reassigned to a
       // live seat that is already working it, or resolving to nobody at all.
       if (!ticket || ticket.state !== 'open') { rearm(); return; }
+      // The same second look at the transcript _checkSpecConfirm takes before
+      // spending a redelivery, and for the same race: a wire-routed seat's
+      // `turn.started` edge can beat the CLI's append, so the latch stays armed
+      // over a spec the seat DID consume, and the seat returns to idle without
+      // re-probing. Without this the displaced entry redelivers a spec the seat
+      // already holds. The snapshot's `since` anchors it identically, so a
+      // respawn's stale copy cannot answer for this write.
+      //
+      // `=== true` for the same reason as there, not as a style: `false` is a
+      // positive finding (readable, not consumed) and `null` is a probe that
+      // could not answer, and only a definite YES may drop a redelivery. A
+      // truthy test would let an unreadable transcript swallow a real one.
+      if (this._seatTranscriptHas(session.name, u.ticketId, u.since) === true) { rearm(); return; }
       const holder = this._ticketAssigneeSeat(team, ticket);
       if (holder && holder !== session.name) {
         log.info('intent', `displaced ${u.kind === 'redirect' ? 'redirect' : 'spec'} for ${u.ticketId} dropped at ${session.name}: the ticket now resolves to ${holder}`);
@@ -2721,10 +2741,13 @@ function createTicketMethods(deps, shared) {
       const text = this._redirectDeliveryText(ticket.id, u.label, u.reason, true);
       const r = this._gatedDeliver(seatName, u.from || 'clodex-team', text, true,
         `[ticket ${ticket.id} ${u.label} REDELIVERY] close with ${ticketCloseVerb(ticket.id)}`,
+        // Same `finally` as _deliverTicketSpec's, same reason: an arm that throws
+        // must not strand the caller's in-flight flag set forever.
         (disposition) => {
-          this._armSpecConfirm(seatName, ticket.id, disposition,
-            { label: u.label, reason: u.reason, from: u.from });
-          if (onWrite) { try { onWrite(disposition); } catch {} }
+          try {
+            this._armSpecConfirm(seatName, ticket.id, disposition,
+              { label: u.label, reason: u.reason, from: u.from });
+          } finally { if (onWrite) { try { onWrite(disposition); } catch {} } }
         });
       if (!r || r.error) return { undelivered: true };
       if (r.parked) return { parked: r.parked, reason: r.reason || null };
