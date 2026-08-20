@@ -89,6 +89,16 @@ visible rather than silently lost.
   reply says so. Merge first, then accept again. It is separate from `done` on
   purpose: `done` is the assignee reporting, and tearing its seat down there
   would kill a still-warm hand before you had read a word or sent rework.
+  **Passing the merge gate is not the same as confirming work landed, and the
+  reply distinguishes four outcomes — read which one you got.** Teardown is
+  unconditional once the gate passes, but the count behind the wording is only
+  evidence when it was measured against the ticket's recorded fork point: a
+  branch with no recorded fork point, or one whose recorded SHA was rebased or
+  gc'd away, is counted against a fallback base, and there an already
+  fast-forwarded branch and a branch that never committed both count 0. That
+  case says UNKNOWN on purpose — it is not a quieter way of saying empty, and
+  reading it as one is how a merge that really happened gets recorded as
+  nothing. Only "0 against the fork point" means demonstrably empty.
 - `[agent:task list]` — the OPEN board, then the tickets closed most recently
   (a capped handful, so it stays short), then a count of everything else it
   hid, done and cancelled separately. The board only grows, so add a filter to

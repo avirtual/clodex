@@ -1043,6 +1043,26 @@ test('seed: shipped team prompts agree on who commits, who merges, who pushes', 
     'lead prompt carries the merge-after-review step the hand defers to');
 });
 
+// t454: the accept paragraph described a two-outcome verb (merged → cleanup,
+// not merged → nothing removed), while `_taskAccept` distinguishes FOUR and the
+// two that matter to a lead are indistinguishable by count alone. A lead that
+// reads the undecidable reply as "the branch was empty" records a real merge as
+// nothing — the exact false report t314 removed from the reply, reintroduced by
+// the reader instead of the code. Pinned by MEANING: the substring "accept" was
+// present throughout, so only the four-outcome and UNKNOWN-is-not-empty claims
+// are evidence the paragraph still briefs the distinction.
+test('seed: the lead prompt briefs accept as a four-outcome verb, not a two-outcome one', () => {
+  const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
+  assert.match(lead, /four outcomes/,
+    'lead prompt says the accept reply distinguishes four outcomes');
+  assert.match(lead, /recorded fork point/,
+    'lead prompt names the fork point as what makes a count evidence');
+  assert.match(lead, /UNKNOWN/,
+    'lead prompt names the undecidable outcome by the word the reply uses');
+  assert.doesNotMatch(lead, /accept confirms the work merged/,
+    'lead prompt must not claim acceptance confirms a merge');
+});
+
 // t353: three hands in a row reported by dm and left the ticket open, one of
 // them saying it believed closing required an exec grant it lacked. Both wrong
 // beliefs are denied in the prompt now, and both denials are pinned by MEANING
