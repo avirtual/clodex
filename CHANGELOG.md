@@ -23,9 +23,13 @@ blocks a release.
   fresh assignment. Redeliveries are drained one at a time and never while another
   unconfirmed write is outstanding, since two at once would recreate the same
   collision; a ticket that is displaced again after its redelivery escalates to the
-  lead rather than looping; one that closed or moved to another seat meanwhile is
-  dropped; one whose ticket no longer resolves to any live seat is escalated to the
-  lead rather than dropped silently; and one the seat turns out to have received
+  lead rather than looping — that one-redelivery budget is per *episode*, so a
+  ticket re-assigned to the same seat weeks later and displaced again gets its own
+  redelivery rather than an immediate escalation on a budget spent long ago, while
+  a seat that has gone silent still escalates rather than being written to a third
+  time; one that closed or moved to another seat meanwhile is dropped; one whose
+  ticket no longer resolves to any live seat is escalated to the lead rather than
+  dropped silently; and one the seat turns out to have received
   after all — its transcript proves it, the activity signal having simply arrived
   ahead of the CLI writing the message down — is dropped rather than sent a second
   time. Dispatching is unchanged from the lead's side — nothing is refused, and no

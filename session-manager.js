@@ -3078,6 +3078,11 @@ function createSessionManager(deps) {
         if (has === false) {
           log.warn('inject', `${s.name} started a turn but ${u.ticketId} is absent from its transcript — not clearing the latch, the turn was something else`);
         } else {
+          // An ATTRIBUTED turn is receipt, which ends this ticket's displacement
+          // episode — the COMMON of the two receipt exits (the other is
+          // _checkSpecConfirm's deadline re-probe, reached only when no turn
+          // cleared the latch first).
+          this._pruneOwedSpent(s, u);
           s._specUnconfirmed = null;
           clearTimeout(s._specConfirmTimer);
           s._specConfirmTimer = null;
