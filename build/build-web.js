@@ -76,12 +76,16 @@ function writePluginRegistry(plugins) {
   return plugins.map((p) => p.id);
 }
 
-async function main() {
-  fs.mkdirSync(OUT, { recursive: true });
-
-  const bundled = writePluginRegistry(discoverPluginRenderers());
-  console.log(`plugin renderer halves bundled: ${bundled.length ? bundled.join(', ') : '(none)'}`);
-
+// The assembly, with NO side effect on the tree: it reads sources and RETURNS
+// the bytes. That split is what lets test/web-dist-fresh.test.js check the
+// committed bundle against a fresh build without writing anything — a test that
+// rebuilt into web-dist/ would repair the staleness it exists to report, and one
+// that reimplemented the assembly could not detect drift from this file at all.
+// Everything that writes (the registry rewrite, the output file) stays in main().
+// `logLevel` is the only knob: esbuild's 'info' chatter belongs in a build run
+// and not in a test's output. It does not touch the produced bytes, which is
+// what makes the test's build comparable to the committed one.
+async function buildBundle({ logLevel = 'silent' } = {}) {
   const alias = {
     os: path.join(WEB, 'os-shim.js'),
     crypto: path.join(WEB, 'crypto-shim.js'),
@@ -115,7 +119,7 @@ async function main() {
     target: ['chrome110', 'firefox110', 'safari16'],
     alias,
     define: { 'process.env.NODE_ENV': '"production"' },
-    logLevel: 'info',
+    logLevel,
   });
 
   const css = await esbuild.build({
@@ -125,7 +129,7 @@ async function main() {
     bundle: true,
     write: false,
     loader: { '.woff': 'dataurl', '.woff2': 'dataurl', '.ttf': 'dataurl' },
-    logLevel: 'info',
+    logLevel,
   });
 
   const jsText = js.outputFiles[0].text;
@@ -148,6 +152,17 @@ async function main() {
     html = html.replace(re, () => repl);
   }
 
+  return { html, jsText, cssText };
+}
+
+async function main() {
+  fs.mkdirSync(OUT, { recursive: true });
+
+  const bundled = writePluginRegistry(discoverPluginRenderers());
+  console.log(`plugin renderer halves bundled: ${bundled.length ? bundled.join(', ') : '(none)'}`);
+
+  const { html, jsText, cssText } = await buildBundle({ logLevel: 'info' });
+
   fs.writeFileSync(path.join(OUT, 'index.html'), html);
   console.log(`web-dist/index.html written (${(html.length / 1024).toFixed(0)} KB: ${(jsText.length / 1024).toFixed(0)} KB js + ${(cssText.length / 1024).toFixed(0)} KB css)`);
 }
@@ -155,4 +170,7 @@ async function main() {
 // Guard against a stray `</script>` inside string literals closing the inline tag.
 function inlineSafe(s) { return s.replace(/<\/script>/gi, '<\\/script>'); }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+module.exports = { buildBundle, OUT };
+
+// Only when run as a script: `require`ing this module must not launch a build.
+if (require.main === module) main().catch((err) => { console.error(err); process.exit(1); });

@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- A renderer fix can no longer ship to nobody. The browser frontend is served
+  from a prebuilt bundle committed in the repo, so changing the web renderer
+  without rebuilding it left the sources reading fixed, the test suite green,
+  and the browser running the OLD code — a failure with no symptom until someone
+  went looking. The suite now rebuilds the bundle in memory and compares it,
+  byte for byte, with the committed one, and says so with the command to fix it.
+  Until now the only guard was spot-checks for a handful of individual symbols,
+  which covered the ones somebody had thought to add and nothing else. Nothing
+  changes for users running Clodex; the next release simply cannot carry a
+  browser frontend older than the desktop one.
+
 - Wirescope dashboard links now WORK when you open a peer box's web frontend
   through the ↗ tunnel, rather than merely being suppressed as unreachable (see
   the entry below, which stops them landing on the wrong machine). Opening the
