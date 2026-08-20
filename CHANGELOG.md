@@ -49,12 +49,12 @@ blocks a release.
   box's web UI on the box's own loopback, so clicking one in a browser opened it
   on YOUR machine instead, where another Clodex is often listening on that very
   port. You got a real Clodex, silently the wrong one. Rather than listing ports
-  to distrust, the browser frontend now refuses any link pointing at the machine
-  running Clodex whenever you are not sitting at that machine, and says so
-  instead of opening it. Links that were already correct still work untouched:
-  GitHub and release notes, everything you click while browsing on the box
-  itself, and the tunnelled dashboard links the entries above just made
-  resolvable — those address a port on YOUR machine and are meant to.
+  to distrust, the browser frontend now refuses any link addressed to loopback
+  (`localhost` / `127.x`) whenever you are not browsing on the box itself, and
+  says so instead of opening it. Links that were already correct still work
+  untouched: GitHub and release notes, everything you click while browsing on
+  the box at `localhost`, and the tunnelled dashboard links the entries above
+  just made resolvable — those address a port on YOUR machine and are meant to.
 
 ## 5.13.0 — 2026-08-19 — the ticket loop stops losing work to its own machinery
 

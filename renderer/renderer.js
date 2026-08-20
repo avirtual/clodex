@@ -5406,6 +5406,12 @@ sbOpenLink.addEventListener('click', (e) => {
   e.preventDefault();
   window.api.openExternal(sandboxOpenUrl(effectiveWebPort()));
 });
+// An anchor with no href does not synthesize a click on Enter, and role="button"
+// promises Space as well — without this the control is announced as a button and
+// is keyboard-dead.
+sbOpenLink.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sbOpenLink.click(); }
+});
 
 document.getElementById('btn-sandbox-close').addEventListener('click', closeSandboxDialog);
 sandboxOverlay.addEventListener('mousedown', (e) => { if (e.target === sandboxOverlay) closeSandboxDialog(); });

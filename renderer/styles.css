@@ -2345,7 +2345,10 @@ html, body {
 .sandbox-mount-path { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
 .sandbox-mount-mode { min-width: 88px; }
 #sandbox-mounts-restart { color: var(--warn, #c88a2a); }
-#sandbox-open-link { color: var(--accent); text-decoration: none; }
+/* cursor: an anchor without href gets no implicit pointer from the UA, and this
+   one deliberately has none (t445 — a live href is a modifier-click path around
+   the loopback gate). */
+#sandbox-open-link { color: var(--accent); text-decoration: none; cursor: pointer; }
 #sandbox-open-link:hover { text-decoration: underline; }
 /* M6b P2: box list + per-box detail. Each row = status dot + label + Start/Stop;
    the selected row is highlighted and its config shows in #sandbox-detail below. */

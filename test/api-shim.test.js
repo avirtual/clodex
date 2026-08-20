@@ -727,7 +727,7 @@ test('t445 STRUCTURAL: the sandbox open-in-browser anchor carries no href to cli
   const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
   const anchor = (html.match(/<a id="sandbox-open-link"[^>]*>/) || [''])[0];
   assert.ok(anchor, 'the anchor still exists');
-  assert.ok(!/href="http/.test(anchor), `no live href in the markup either (got ${anchor})`);
+  assert.ok(!/href=/.test(anchor), `no live href in the markup either (got ${anchor})`);
 });
 
 // ── t445: the committed bundle must carry this gate, not just the source ─────

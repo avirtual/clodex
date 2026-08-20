@@ -3536,6 +3536,7 @@ body {
 #sandbox-open-link {
   color: var(--accent);
   text-decoration: none;
+  cursor: pointer;
 }
 #sandbox-open-link:hover {
   text-decoration: underline;
@@ -35828,6 +35829,12 @@ ${res.stderr}` : "");
       sbOpenLink.addEventListener("click", (e) => {
         e.preventDefault();
         window.api.openExternal(sandboxOpenUrl(effectiveWebPort()));
+      });
+      sbOpenLink.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          sbOpenLink.click();
+        }
       });
       document.getElementById("btn-sandbox-close").addEventListener("click", closeSandboxDialog);
       sandboxOverlay.addEventListener("mousedown", (e) => {
