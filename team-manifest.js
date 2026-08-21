@@ -378,6 +378,16 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // 'ignored' and 'honored' may never be merged or rendered in one line: the
     // second's text is the negation of the first's, and one sentence covering
     // both is false about half its subjects.
+    //
+    // This rides on the object `team:get` returns, so it crosses into the
+    // nodeIntegration renderer whether or not a surface reads it. `field` is
+    // safe by construction only for the two RETIRED statuses, whose names come
+    // from CUT_ROLE_FIELDS/HONORED_CUT_FIELDS; an 'unknown' field name is an
+    // arbitrary agent-authored string out of team.json. A UI consumer therefore
+    // inherits the SECURITY rule in renderer/popovers/team-roles-popover.js
+    // (never interpolate into a value="…" attribute), and a text surface that
+    // renders 'unknown' must refuse newlines — formatRoster avoids both by
+    // rendering neither.
     const droppedFields = [];
     for (const [roleName, def] of Object.entries(rolesIn)) {
       if (!ROLE_RE.test(roleName)) {
@@ -425,7 +435,12 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     // console and the roster end up disagreeing about the same key.
     const named = (st) => droppedFields
       .filter((d) => d.status === st)
-      .map((d) => (d.remedy ? `${d.role}.${d.field} (write \`${d.remedy}\` instead)` : `${d.role}.${d.field}`));
+      // Keyed on STATUS, never on `remedy`'s truthiness: an honored member whose
+      // remedy came out empty would drop the suffix here while the roster still
+      // rendered a bare "write `` instead" — the two renderings disagreeing about
+      // one key is the exact drift this single-source shape exists to prevent.
+      // test/team-role-schema-legibility.test.js holds the remedies to non-empty.
+      .map((d) => (d.status === 'honored' ? `${d.role}.${d.field} (write \`${d.remedy}\` instead)` : `${d.role}.${d.field}`));
     const dropped = named('unknown');
     const droppedCut = named('ignored');
     const droppedHonored = named('honored');
@@ -1071,7 +1086,14 @@ function leadActionLine(team) {
 // that made `reviewer.tools` read as a tool cap. 'unknown' is rendered by
 // NEITHER: that warn is version-gated because it exists for the migration and
 // not as a linter, and a hand-added key on today's schema has no business
-// appearing in every context reset forever.
+// appearing in every context reset forever. That exclusion also happens to be
+// what keeps this text SAFE: an 'unknown' field name is an arbitrary
+// agent-authored string from team.json, this roster is baked into the digest
+// re-read on every context reset, and the intent parser is `^`-anchored — so a
+// key carrying a newline and a column-1 verb would fire in the lead's context.
+// Every byte rendered here comes from ROLE_RE-constrained role names and the two
+// fixed field lists. A surface that decides to render 'unknown' must refuse
+// newlines first.
 function retiredFieldLines(team, role) {
   const all = Array.isArray(team && team.droppedFields) ? team.droppedFields : [];
   const mine = all.filter((d) => d && d.role === role);

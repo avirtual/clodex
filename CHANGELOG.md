@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- The team roster now says when a role carries a setting that does nothing. Team
+  files written against an older schema can still hold fields that were retired
+  since — `tools` on a role is the one that has actually misled someone, because
+  it reads exactly like a permission cap and enforces nothing. Those fields were
+  reported only into a log nobody watches, so the roster went on presenting the
+  role as if the setting applied. Each affected role now carries a line under its
+  own row naming the retired fields, and a role with a clean definition looks
+  exactly as it did before. Fields that are retired but still honored for
+  backwards compatibility are called out separately, with the replacement to
+  write, so that deleting one cannot be mistaken for a harmless cleanup — it
+  would change how that role dispatches.
+
 - Every agent now gets the ticket verbs in its own prompt. The `task` grammar —
   how a seat closes the ticket it was dispatched, and how it finds that ticket's
   id — reached seats only through a seeded role brief on disk, while the protocol

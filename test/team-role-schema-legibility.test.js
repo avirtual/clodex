@@ -177,5 +177,13 @@ test('legibility: the schema is exactly the five surviving fields', () => {
       `"${k}" is honored-but-not-cut: migrateRoles would never delete it, so the manifest `
       + 'could never stamp clean and would warn on every load forever');
     assert.ok(!ROLE_KEYS.has(k), `"${k}" is read by a compatibility branch, not modeled by the schema`);
+    // The remedy is RENDERED, into two surfaces that must agree: loadManifest's
+    // STILL-READ warn and the roster line under the role's row. An empty one
+    // would put a bare "write `` instead" in front of a reader whose only safe
+    // edit is a rewrite — so a member arrives here with its advice written, or
+    // it does not arrive.
+    const remedy = HONORED_CUT_FIELDS.get(k);
+    assert.ok(typeof remedy === 'string' && remedy.trim().length > 0,
+      `"${k}" is honored but names no remedy; the warn and the roster both render it verbatim`);
   }
 });

@@ -62,6 +62,11 @@ const BOTH = () => ({
     lead: { prompt: 'clodex-team-lead' },
     hand: { template: 'hand-tmpl', brief: 'the hand', ephemeral: true, worktree: true },
     reviewer: { instantiate: 'subagent', prompt: 'clodex-team-reviewer' },
+    // TWO inert keys on one role, which no other role here has. Without it the
+    // "one line per role, not one per key" assertion below is satisfied by a
+    // fixture where the two can't differ, and the plural grammar branch is never
+    // rendered at all. The live team carries exactly this shape (PRECHECK 6).
+    designer: { instantiate: 'session', ephemeral: true },
   },
 });
 
@@ -79,6 +84,8 @@ test('loadManifest carries the classification off the load, so the roster need n
     { role: 'hand', field: 'ephemeral', remedy: null, status: 'ignored' },
     { role: 'hand', field: 'worktree', status: 'honored', remedy: 'dispatch: "worktree"' },
     { role: 'reviewer', field: 'instantiate', remedy: null, status: 'ignored' },
+    { role: 'designer', field: 'instantiate', remedy: null, status: 'ignored' },
+    { role: 'designer', field: 'ephemeral', remedy: null, status: 'ignored' },
   ]);
 
   // The normalized roles still carry no retired key: this rides BESIDE the def,
@@ -99,9 +106,19 @@ test('the roster names a retired field under the role that carries it, and says 
   assert.ok(lines.some((l) => l.startsWith('- reviewer (')), 'the reviewer row is rendered');
 
   const inert = lines.filter((l) => /configures nothing/.test(l));
-  assert.strictEqual(inert.length, 2, 'one inert line per role that carries an inert key, not one per key');
+  // THREE roles carry inert keys and FOUR inert keys exist between them, so this
+  // count can only hold if the fold is per role. A fixture where every role has
+  // at most one inert key makes the two readings numerically identical.
+  assert.strictEqual(inert.length, 3, 'one inert line per role that carries an inert key, not one per key');
   assert.ok(inert.some((l) => /hand\.ephemeral/.test(l)), 'hand.ephemeral is named');
   assert.ok(inert.some((l) => /reviewer\.instantiate/.test(l)), 'reviewer.instantiate is named');
+  // Both grammar branches, which are the only conditional text in the feature.
+  // The designer line carries two keys and must read `them`; the single-key rows
+  // must read `it`. Anchored, so a line naming both words cannot satisfy either.
+  const designerLine = inert.find((l) => /designer\./.test(l));
+  assert.ok(designerLine, 'the designer row carries an inert line');
+  assert.match(designerLine, /designer\.instantiate, designer\.ephemeral — this schema does not read them$/);
+  assert.match(inert.find((l) => /hand\./.test(l)), /does not read it$/);
 
   // Under the row, not in a footnote at the bottom: a reader decides about a role
   // at its row, and a note after the decision does not change it.
