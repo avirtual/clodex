@@ -885,3 +885,244 @@ test('the helper is the only place HOLD_RECOVERY is read', () => {
   assert.match(uses[0].text, /^const HOLD_RECOVERY = \{/, 'the definition');
   assert.match(uses[1].text, /^const holdRecoveryText = /, 'and the renderer, which is the only reader');
 });
+
+// ── the phrase scan — a SECOND scanner, on the opposite axis ────────────────
+//
+// Everything above asks "did a class-derived value reach prose?", which means
+// following values through JS with regex. Five rework rounds produced five
+// levels of one composition, each fix correct and the shape reappearing one
+// level up; its blind spot grows with every JS idiom (§4 of the journal lists
+// the shapes it still passes — dotted boolean, switch arm, object map, two-hop,
+// function-returned advice).
+//
+// This scanner asks the inverted question — "does a canonical advice phrase
+// appear OUTSIDE the table?" — and never tracks a value at all, so all five of
+// those levels collapse to one shape it sees.
+//
+// BOTH SCANNERS STAY. They fail on DISJOINT cases, which is the whole reason
+// this is an addition and not a replacement:
+//   - the phrase scan catches the five taint-scan holes (pinned below);
+//   - the taint scan catches the one thing the phrase scan cannot — the table
+//     REWORDED WHOLESALE while a stale copy survives elsewhere, where the copy
+//     shares no n-gram with the new text (pinned below, both directions).
+// Deleting either one silently gives up a class of defect the other never saw.
+//
+// DELIBERATE BOUNDARY, on the record rather than as an oversight: a fresh
+// PARAPHRASE of the advice is NOT caught. That is the lesser failure and it is
+// accepted. The t345 defect was COPIED wording that later went stale — a copy
+// matches the table today, so this scan catches exactly the drift the ticket
+// exists to prevent. A paraphrase written from scratch is wrong immediately and
+// visibly to its reader, not silently divergent from a table it never quoted.
+// The blind spot is also CONSTANT, where the taint scan's grows with each idiom.
+
+const PHRASE_N = 5;
+
+// The table's own text is the source of truth. Hardcoding phrases would go
+// stale the moment an arm is edited — which is precisely the drift this file
+// exists to prevent, reintroduced in the enforcement mechanism itself.
+function holdRecoveryTableRange(lines) {
+  const start = lines.findIndex((l) => l.includes('const HOLD_RECOVERY = {'));
+  if (start < 0) return null;
+  for (let i = start; i < lines.length; i++) if (lines[i] === '};') return { start, end: i };
+  return null;
+}
+
+const adviceWords = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+
+// ASYMMETRIC, and this is the subtle part — pinned by its own subject below.
+// DERIVATION blanks `${…}` interiors AND SPLITS there: the arms embed
+// `${ticketCloseVerb(id)}`, so a gram bridging a hole would encode one caller's
+// substitution as if it were fixed wording.
+function deriveAdviceGrams(src, N = PHRASE_N) {
+  const lines = src.split('\n');
+  const range = holdRecoveryTableRange(lines);
+  const grams = new Set();
+  if (!range) return grams;
+  const table = lines.slice(range.start, range.end + 1).join('\n');
+  for (const lit of table.match(/`[^`]*`|'[^'\\]*(?:\\.[^'\\]*)*'/g) || []) {
+    for (const seg of lit.slice(1, -1).split(/\$\{[^}]*\}/)) {
+      const w = adviceWords(seg);
+      for (let i = 0; i + N <= w.length; i++) grams.add(w.slice(i, i + N).join(' '));
+    }
+  }
+  return grams;
+}
+
+// SCANNING does NOT blank `${…}` — advice can be written inside a template
+// hole, and blanking both sides makes a direct render falsely PASS.
+function scanAdvicePhrases(src, N = PHRASE_N) {
+  const lines = src.split('\n');
+  const range = holdRecoveryTableRange(lines);
+  const grams = deriveAdviceGrams(src, N);
+  const hits = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (range && i >= range.start && i <= range.end) continue;  // the table is the original, not a copy
+    const line = lines[i];
+    if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;  // comments quote the advice deliberately, at length
+    const w = adviceWords(line);
+    for (let j = 0; j + N <= w.length; j++) {
+      const g = w.slice(j, j + N).join(' ');
+      if (grams.has(g)) { hits.push({ line: i + 1, gram: g, text: line.trim() }); break; }
+    }
+  }
+  return hits;
+}
+
+const realSource = () => fs.readFileSync(path.join(__dirname, '..', 'team-tickets.js'), 'utf8');
+// Fixtures carry the REAL table, so a "copied arm" below is genuinely the
+// shipping wording rather than a phrase invented to match a scanner.
+const withRealTable = (bodyLines) => {
+  const lines = realSource().split('\n');
+  const { start, end } = holdRecoveryTableRange(lines);
+  return lines.slice(start, end + 1).concat(bodyLines).join('\n');
+};
+const COPIED_HAND = 'Fix what the check named, then close the ticket again.';
+const COPIED_SPEC = 'Re-closing alone will NOT help: the check re-reads the same spec and fails identically.';
+
+test('ENTER: the phrase scan derives real grams from the real table', () => {
+  // A scanner with an empty gram set is green on every file forever — the
+  // false-green this whole file was written against. Assert the derivation
+  // reached the table before any subject below trusts a zero from it.
+  const grams = deriveAdviceGrams(realSource());
+  assert.ok(grams.size > 100, `ENTER: grams derived from HOLD_RECOVERY (got ${grams.size})`);
+  assert.ok(grams.has('fix what the check named'),
+    'ENTER: a known phrase from the hand arm is present');
+  // No gram may bridge an interpolation: `${ticketCloseVerb(id)}` renders to a
+  // per-caller string, so a gram spanning it would pin one caller's output.
+  assert.ok(![...grams].some((g) => g.includes('ticketclosverb') || g.includes('ticketcloseverb')),
+    'no gram carries an interpolation interior');
+});
+
+for (const [shape, body] of [
+  // The five shapes §4 of the journal measured the taint scan PASSING. Each
+  // renders a copied arm; the phrase scan sees all five as one shape.
+  ['the dotted boolean one-liner', [
+    "const isSpec = ticket.verifyHold.recovery === 'spec';",
+    `reply(isSpec ? '${COPIED_SPEC}' : '${COPIED_HAND}');`,
+  ]],
+  ['a switch arm', [
+    'switch (cls) {',
+    `  case 'spec': reply('${COPIED_SPEC}'); break;`,
+    `  default: reply('${COPIED_HAND}');`,
+    '}',
+  ]],
+  ['an object map — HOLD_RECOVERY\'s own shape, copied into a local', [
+    `const ADVICE = { spec: '${COPIED_SPEC}', hand: '${COPIED_HAND}' };`,
+    'reply(ADVICE[cls]);',
+  ]],
+  ['two-hop prose', [
+    `const first = '${COPIED_HAND}';`,
+    'const second = first;',
+    'reply(second);',
+  ]],
+  ['advice returned from a function', [
+    `function adviceFor(cls) { return '${COPIED_HAND}'; }`,
+    'reply(adviceFor(cls));',
+  ]],
+]) {
+  test(`RED: the phrase scan catches ${shape}`, () => {
+    const hits = scanAdvicePhrases(withRealTable(body));
+    assert.ok(hits.length >= 1,
+      `a copied arm rendered as ${shape} must be caught (got ${hits.length})`);
+    assert.ok(hits.every((h) => h.gram.split(' ').length === PHRASE_N),
+      'ENTER: the hit is a real N-gram match, not a degenerate empty one');
+  });
+}
+
+test('RED: advice written INSIDE a template hole is caught — the derivation/scan asymmetry', () => {
+  // The harness bug this pins: blanking `${…}` on BOTH sides is the natural
+  // symmetric implementation and it makes this render falsely PASS, because the
+  // whole sentence lives inside the hole. Derivation blanks; scanning must not.
+  const body = [
+    'reply(`the ticket is held ${cls === \'spec\' ? \'' + COPIED_SPEC + '\' : \'\'}`);',
+  ];
+  const hits = scanAdvicePhrases(withRealTable(body));
+  assert.strictEqual(hits.length, 1, 'advice inside an interpolation is still a render');
+});
+
+for (const [shape, body] of [
+  ['a route read that reaches control flow only', [
+    "if (ticket.verifyHold.recovery !== 'spec') { return this._routeToHand(ticket); }",
+  ]],
+  ['an inline helper render', [
+    'reply(`it is held at "${ticket.verifyHold.step}". ${holdRecoveryText(ticket.verifyHold.recovery, id)}`);',
+  ]],
+  ['a presence read with unconditioned advice', [
+    'const held = !!ticket.verifyHold;',
+    "reply(held ? 'it is held' : 'it is open');",
+  ]],
+]) {
+  test(`GREEN: the phrase scan passes ${shape}`, () => {
+    assert.deepStrictEqual(scanAdvicePhrases(withRealTable(body)), [],
+      'legitimate usage must not be flagged — a rule that punishes correct code pumps authors into its blind spot');
+  });
+}
+
+test('GREEN: the real file has zero advice phrases outside HOLD_RECOVERY', () => {
+  const src = realSource();
+  // ENTER: the scan reached a real body, not an empty one after the exclusions.
+  const scanned = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l));
+  assert.ok(scanned.length > 3000, `ENTER: a real body was scanned (got ${scanned.length} lines)`);
+  assert.deepStrictEqual(scanAdvicePhrases(src), [],
+    'an advice phrase appears outside the table — a copied arm that will go stale when the table moves');
+});
+
+test('N=5 is the measured floor: at N=4 the real file yields four false positives', () => {
+  // Anyone lowering N sees the cost here rather than discovering it as four
+  // failures on an unrelated file. All four are ordinary ticket prose that
+  // legitimately shares four words with an arm; none is a copied sentence.
+  //
+  // Identified by GRAM rather than line number — line numbers drift, and these
+  // four moved by 26 lines between master and this branch while the statements
+  // did not change at all:
+  //   "re reads the same"      — the in-verify refusal
+  //   "close the ticket again" — the failed-checks close instruction
+  //   "and no rework round"    — the not-rejected notice
+  //   "check could not run"    — the merge-check failure
+  const src = realSource();
+  const at4 = scanAdvicePhrases(src, 4);
+  assert.strictEqual(at4.length, 4, `ENTER: the measured N=4 cost (got ${at4.length})`);
+  assert.deepStrictEqual(at4.map((h) => h.gram).sort(), [
+    'and no rework round', 'check could not run', 'close the ticket again', 're reads the same',
+  ], 'the four N=4 false positives are ordinary prose sharing four words with an arm');
+  assert.deepStrictEqual(scanAdvicePhrases(src, PHRASE_N), [], 'and N=5 clears them');
+});
+
+test('the two scanners are DISJOINT: the taint scan catches a wholesale reword the phrase scan cannot', () => {
+  // The measured reason both survive. Reword every arm so the new table shares
+  // no 5-gram with the old, and leave a stale copy of the OLD wording rendered
+  // off the class. The phrase scan derives from the NEW table and sees nothing;
+  // the taint scan sees a class-derived value selecting advice literals.
+  //
+  // This is the case that makes the phrase scan insufficient ALONE, and it is
+  // not hypothetical — rewording an arm is the ordinary way this table changes.
+  const reworded = [
+    'const HOLD_RECOVERY = {',
+    "  hand: (id) => `Amend the branch where it was faulted, then resubmit via ${ticketCloseVerb(id)}.`,",
+    "  spec: (id) => `Editing the written brief is mandatory first; resubmission by itself repeats the outcome.`,",
+    "  infra: (id) => `No branch action applies here; the machinery itself refused to execute.`,",
+    '};',
+    "const cls = ticket.verifyHold.recovery;",
+    `reply(cls === 'spec' ? '${COPIED_SPEC}' : '${COPIED_HAND}');`,
+  ].join('\n');
+  assert.deepStrictEqual(scanAdvicePhrases(reworded), [],
+    'ENTER: the phrase scan is blind here — the stale copy shares no gram with the reworded table');
+  assert.ok(scanHoldRecovery(reworded).length >= 1,
+    'the taint scan catches it, which is why deleting it would give up a real class of defect');
+});
+
+test('the two scanners are DISJOINT the other way: the phrase scan catches what the taint scan passes', () => {
+  // The converse, measured on the shape the journal recorded as a LIVE hole in
+  // the taint scan: the dotted boolean one-liner. Its bound and destructured
+  // siblings flag; this form does not. Adding a sixth taint arm for it is the
+  // move that failed five times — the phrase scan covers it on the other axis.
+  const body = [
+    "const isSpec = ticket.verifyHold.recovery === 'spec';",
+    `reply(isSpec ? '${COPIED_SPEC}' : '${COPIED_HAND}');`,
+  ];
+  const fixture = withRealTable(body);
+  assert.deepStrictEqual(scanHoldRecovery(fixture), [],
+    'ENTER: this is genuinely a taint-scan hole, not a shape it already covered');
+  assert.ok(scanAdvicePhrases(fixture).length >= 1,
+    'and the phrase scan closes it without a sixth taint arm');
+});
