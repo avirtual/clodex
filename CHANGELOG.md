@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.16.0 — 2026-08-22
+
 - A command run in an agent's terminal tab can no longer be corrupted by the
   interrupt that clears the line first. Clodex sends ^C before typing, to make
   sure the command lands on an empty prompt, and it then had to decide when the
