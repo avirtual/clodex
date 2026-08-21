@@ -47,8 +47,20 @@ const path = require('node:path');
 //   hold = ticket.verifyHold; ${hold.step}   FLAG — whole-object alias
 //   heldAt = ...verifyHold.step; ${heldAt}   FLAG — narrowed, still a render
 //   held = ...holdRecoveryText(...)          PASS — carries the recovery
-//   any read of `recovery`, however bound    FLAG unless the helper is called
+//   a RENDER of `recovery`, however bound    FLAG unless the helper is called
+//   a ROUTE read of `recovery` (branch,
+//     compare, derive a boolean)             PASS — the class exists for this
 //   a render marked `prescribes-nothing`     PASS — written claim, and counted
+//
+// ONE PREMISE, two extraction depths. Rule A and rule B differ only in how far
+// the value was carried before it reached prose; both fire on the RENDER, never
+// on the read. An earlier rule A flagged every read of the class, which was
+// wrong for the reason Q1 gives above: `_taskRespec` branches on
+// `recovery !== 'spec'` to pick a ROUTE, so the class exists precisely to be
+// branched on. That false positive was not cosmetic — the quietest way to
+// silence it was to bind the class to a local, which is the one shape the rule
+// could not see. A rule that punishes correct usage pumps authors into its own
+// blind spot, so the premise, not the arm, was the defect.
 //
 // AN EARLIER VERSION EXEMPTED THE NARROWED FACT and that was the same defect
 // this file exists to prevent, one level up. The reasoning was that `.step`
@@ -68,6 +80,14 @@ const path = require('node:path');
 // defect: the old sweep sentence read `verifyHold.step` and wrote its own
 // advice without ever touching `.recovery`. Rule B is what makes a new prose
 // reader red.
+//
+// THE COMPOSITION THIS FILE KEEPS REPRODUCING, recorded because it recurred
+// three times under three different rules: r1, an alias defeated line-local
+// matching; r2, narrowing to a field defeated an object-only rule; r3, binding
+// defeated a token-based rule. Each patch closed its instance and the shape
+// reappeared one level up. What broke the cycle was fixing a PREMISE rather
+// than adding an arm — so when this rule next misses something, check whether
+// the premise is wrong before widening a pattern.
 //
 // WHY A BINDING PRE-PASS. Both rules were once line-local on the literal token
 // `verifyHold`, which made them blind to every reader that binds the stamp to a
@@ -215,6 +235,38 @@ function scanHoldRecovery(src) {
     });
   }
 
+  // SECOND PRE-PASS: locals that derive PROSE from a recovery class. The class
+  // itself may never reach a template — `cls` picks a sentence, the sentence is
+  // rendered — so following only the class misses the render by one hop. A
+  // local initialised from an expression that both mentions a recovery alias
+  // and contains a string literal is choosing wording off the class, which is
+  // precisely what the helper exists to own.
+  //
+  // Requires a STRING LITERAL, so a derived predicate (`const isSpec = cls ===
+  // 'spec'`) does not become advice: comparing is routing, and a boolean has no
+  // wording to drift.
+  const adviceAliases = new Set();
+  if (recoveryAliases.size) {
+    let block = false;
+    lines.forEach((raw, i) => {
+      const t = raw.trim();
+      const isCmt = block || t.startsWith('//') || t.startsWith('*');
+      if (t.startsWith('/*')) block = true;
+      if (t.includes('*/')) block = false;
+      if (isCmt) return;
+      const bound = raw.match(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.*)$/);
+      if (!bound) return;
+      const [, name, rhs] = bound;
+      const stmt = statementText(i);
+      if (/holdRecoveryText\s*\(/.test(stmt)) return;
+      if (![...recoveryAliases].some((n) => new RegExp(`\\b${n}\\b`).test(stmt))) return;
+      // A bare boolean off the class is a route, not advice.
+      if (!/[`'"]/.test(stmt)) return;
+      if (/^\s*[A-Za-z_$][\w$.]*\s*[=!]==?\s*[`'"][^`'"]*[`'"]\s*;?\s*$/.test(rhs)) return;
+      adviceAliases.add(name);
+    });
+  }
+
   // TWO render shapes, and missing the second is how the narrowed defect first
   // slipped past this rule: `${name}` inside a literal, and `\`…\` + name`
   // concatenated onto one. The historical sweep sentence is written the second
@@ -226,16 +278,45 @@ function scanHoldRecovery(src) {
     return interpolated || concatenated;
   });
 
+  // The exemption must sit in the contiguous comment run IMMEDIATELY above the
+  // render it excuses — not merely somewhere in the statement. Matched against
+  // the whole statement, one marker covered every branch of the ternary it sat
+  // in, so a sibling branch could render the field unflagged under a
+  // justification written about its neighbour. An exemption that silently grows
+  // to cover lines nobody wrote it for is the audit trail failing open.
+  const markedAbove = (idx) => {
+    for (let k = idx - 1; k >= 0; k--) {
+      const t = lines[k].trim();
+      if (!t) return false;
+      if (!t.startsWith('//') && !t.startsWith('*')) return false;
+      if (t.includes('prescribes-nothing')) return true;
+    }
+    return false;
+  };
+
   lines.forEach((raw, i) => {
     const comment = isCommentLine(raw);
     if (comment) return;
     const stmt = statementText(i);
     const helper = /holdRecoveryText\s*\(/.test(stmt);
+    const exempt = markedAbove(i);
 
-    // Rule A, alias arm — `recovery` pulled off the stamp under any name.
-    if (recoveryAliases.size && !helper
-      && [...recoveryAliases].some((n) => new RegExp(`\\b${n}\\b`).test(raw))
-      && !/(?:const|let|var)\s/.test(raw)) {
+    // Rule A, alias arm — a bound `recovery` class RENDERED into prose, under
+    // any name and at any binding depth. Not merely mentioned: a bound class
+    // that only routes is legitimate, for the reason the whole design rests on.
+    if (!helper && !exempt
+      && aliasRendered(raw, recoveryAliases)) {
+      violations.push({ line: i + 1, rule: 'A', text: raw.trim() });
+      return;
+    }
+    // A class read INDIRECTLY rendered: bound, turned into a sentence on another
+    // local, and that local rendered. One hop is what the reviewer's case does
+    // (`cls` → `advice` → reply), and it is the shape three rounds of patches
+    // kept reappearing as. Tracked by following any local whose initialiser
+    // branches on a recovery alias — the prose is chosen THERE, so that local
+    // carries the advice even though the class never reaches the template.
+    if (!helper && !exempt
+      && aliasRendered(raw, adviceAliases)) {
       violations.push({ line: i + 1, rule: 'A', text: raw.trim() });
       return;
     }
@@ -249,22 +330,31 @@ function scanHoldRecovery(src) {
     // Matched on the STATEMENT so the justification can sit in a comment above
     // the render rather than crammed onto it — the exemptions worth granting are
     // the ones that need a paragraph of why.
-    if (!helper && !/prescribes-nothing/.test(stmt) && aliasRendered(raw, stampAliases)) {
+    if (!helper && !exempt && aliasRendered(raw, stampAliases)) {
       violations.push({ line: i + 1, rule: 'B', text: raw.trim() });
       return;
     }
     if (!raw.includes('verifyHold')) return;
 
-    // Rule A — a `.recovery` read must feed the renderer.
+    // Rule A, direct arm — the class read and RENDERED in one statement.
     //
-    // Skipped on a line the pre-pass already classified as a `recovery` binding:
-    // that read is reported at its RENDER instead, which is the line that has to
-    // change. Reporting both doubles every such violation and points the reader
-    // first at an assignment that is harmless until something prescribes off it.
-    const isClassifiedBinding = /(?:const|let|var)\s/.test(raw)
-      && [...recoveryAliases].some((n) => new RegExp(`\\b${n}\\b`).test(raw));
-    if (!isClassifiedBinding
-      && /verifyHold(\s*&&\s*[A-Za-z_.\s]*)?\.recovery/.test(raw) && !helper) {
+    // NOT every read. An earlier premise said "any read of `recovery`, however
+    // bound, unless the helper is called", and that was wrong in a way rule B
+    // already had right. Rule B flags RENDERS, not reads; rule A must too,
+    // because the class exists precisely to be branched on — `_taskRespec`
+    // picks a ROUTE off `recovery !== 'spec'`, and that usage is the reason the
+    // stamp carries a class rather than rendered prose at all.
+    //
+    // The false positive was not cosmetic: it fired on the legitimate route read
+    // and the quietest way out was to bind the class to a local, which is
+    // exactly the blind spot the alias arm above had to be built to catch. A
+    // rule that punishes the correct usage pumps authors into its own hole, so
+    // fixing the premise closes the hole and the pump together.
+    if (/verifyHold(\s*&&\s*[A-Za-z_.\s]*)?\.recovery/.test(raw) && !helper
+      && !exempt
+      && (/\$\{[^}]*verifyHold(\s*&&\s*[A-Za-z_.\s]*)?\.recovery/.test(raw)
+        || /[`'"][^`'"]*[`'"]\s*\+[^;]*\.recovery\b/.test(raw)
+        || /\.recovery\b[^;]*\?\s*[`'"]/.test(raw))) {
       violations.push({ line: i + 1, rule: 'A', text: raw.trim() });
       return;
     }
@@ -424,6 +514,25 @@ test('GREEN: a fact render that prescribes nothing takes an AUDITED exemption', 
   assert.deepStrictEqual(scanHoldRecovery(ok), [], 'an audited exemption is honoured');
 });
 
+test('RED: one marker does not excuse a SIBLING branch of the same statement', () => {
+  // The exemption was matched against the whole statement, so the marker on the
+  // re-entry branch also covered the ordinary-close branch beside it — where
+  // `heldAt` is null and would render "null" unflagged, under a justification
+  // written about its neighbour. An exemption that grows to cover lines nobody
+  // wrote it for is the audit trail failing open.
+  const mutant = [
+    'const heldAt = (ticket.verifyHold && ticket.verifyHold.step) || null;',
+    'reply((reentry',
+    '  // prescribes-nothing: a receipt to the seat that just cleared the hold.',
+    '  ? `re-verifying (was held at "${heldAt}")`',
+    '  : `closed (done) — was held at "${heldAt}"`) + suffix);',
+  ].join('\n');
+  const v = scanHoldRecovery(mutant);
+  assert.strictEqual(v.length, 1, 'ENTER: exactly the unexcused branch is caught');
+  assert.strictEqual(v[0].line, 5, 'the SIBLING branch, not the one the marker was written for');
+  assert.match(v[0].text, /closed \(done\)/, 'and it is the ordinary-close render');
+});
+
 test('the exemption cannot be spent silently — every marker in the source is counted', () => {
   // An escape hatch nobody counts is a rule that decays one honest-looking
   // comment at a time. ONE exemption exists today; a second must be argued for
@@ -435,6 +544,67 @@ test('the exemption cannot be spent silently — every marker in the source is c
   assert.strictEqual(marked.length, 1,
     `exactly one audited exemption is expected (found ${marked.length}: ${marked.map((m) => m.line).join(', ')})`);
   assert.match(marked[0].text, /^\/\//, 'and it is a written justification, not code');
+});
+
+// ── the RULE A PREMISE (r3 must-fix) ───────────────────────────────────────
+//
+// r3 was rejected for a hole with a deeper cause than the hole itself. Rule A's
+// premise was "any read of `recovery`, however bound, unless the helper is
+// called" — but the class exists TO BE BRANCHED ON, which is the reason Q1
+// ruled out stamping rendered prose. So rule A fired on the legitimate route
+// read, and the quietest way to silence it was to bind the class to a local,
+// landing the author in the arm that could not see bound reads.
+//
+// Third instance of one composition in this file: r1 alias defeats a line-local
+// rule, r2 narrowing defeats an object-only rule, r3 binding defeats a
+// token-based rule. Patching the arm leaves the pump running. The premise is
+// the fix: rule A flags RENDERS, exactly as rule B does.
+
+test('RED: a bound class turned into a sentence, then rendered, is caught', () => {
+  // The reviewer's case, and the shape the composition kept producing: the class
+  // never reaches the template — it picks the wording one hop earlier.
+  const mutant = [
+    'const cls = ticket.verifyHold.recovery;',
+    "const advice = cls === 'spec' ? 'reject and refile' : 'close the ticket again';",
+    'reply(`held — ${advice}`);',
+  ].join('\n');
+  const v = scanHoldRecovery(mutant);
+  assert.strictEqual(v.length, 1, 'ENTER: the indirect render is caught');
+  assert.strictEqual(v[0].rule, 'A', 'rule A — the class chose the prose');
+  assert.strictEqual(v[0].line, 3, 'reported at the render');
+});
+
+test('RED: a bound class rendered directly is caught at any binding depth', () => {
+  const mutant = [
+    'const cls = ticket.verifyHold.recovery;',
+    "reply(`do this: ${cls === 'spec' ? 'edit the spec' : 'close it again'}`);",
+  ].join('\n');
+  const v = scanHoldRecovery(mutant);
+  assert.strictEqual(v.length, 1, 'ENTER: caught');
+  assert.strictEqual(v[0].rule, 'A', 'binding is not a way out');
+});
+
+test('GREEN: a pure ROUTE read passes — direct, and this is what stops the pump', () => {
+  // The false positive that CAUSED the hole. `_taskRespec` reads the class to
+  // pick a route and renders nothing; flagging it taught authors to bind, which
+  // is the blind spot. This direction matters as much as the RED ones.
+  const ok = [
+    "if (ticket.verifyHold.recovery !== 'spec') { this._deliverSpec(team, ticket); return; }",
+    "const needsRespec = ticket.verifyHold.recovery === 'spec';",
+  ].join('\n');
+  assert.deepStrictEqual(scanHoldRecovery(ok), [],
+    'the class exists to be branched on — reading it to choose a ROUTE is the design, not a violation');
+});
+
+test('GREEN: a pure ROUTE read passes when bound to a local too', () => {
+  const ok = [
+    'const rec = ticket.verifyHold.recovery;',
+    "if (rec !== 'spec') { this._deliverSpec(team, ticket); return; }",
+    "const isSpec = rec === 'spec';",
+    'if (isSpec) return;',
+  ].join('\n');
+  assert.deepStrictEqual(scanHoldRecovery(ok), [],
+    'comparing is routing; a boolean derived from the class has no wording to drift');
 });
 
 test('GREEN: a narrowed fact cannot smuggle the recovery out', () => {
@@ -524,8 +694,14 @@ test('the stamp is read in team-tickets.js ALONE, which is what makes the scan s
   // subject goes red the moment one lands, which forces the export decision to
   // be made deliberately at that point instead of a second sentence quietly
   // appearing in a file this scan never opens.
+  //
+  // SCOPED TO NON-TEST SOURCE. Pinning an exact list that included test files
+  // meant any unrelated test merely MENTIONING the field failed here, with a
+  // message about exporting `holdRecoveryText` — the wrong diagnosis, and the
+  // kind of false alarm that gets a subject deleted rather than fixed. Tests
+  // are not readers: they cannot mislead a seat.
   const root = path.join(__dirname, '..');
-  const skip = new Set(['node_modules', '.git', 'dist', 'out', 'tasks']);
+  const skip = new Set(['node_modules', '.git', 'dist', 'out', 'tasks', 'test']);
   const found = [];
   const walk = (dir) => {
     for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -541,11 +717,8 @@ test('the stamp is read in team-tickets.js ALONE, which is what makes the scan s
   // satisfy the containment claim below while proving the opposite.
   assert.ok(found.includes('team-tickets.js'),
     `ENTER: the walk reached the producer (found: ${found.join(', ') || 'nothing'})`);
-  assert.deepStrictEqual(found.sort(), [
-    'team-tickets.js',
-    'test/hold-recovery-single-source.test.js',
-    'test/ticket-loop-verify.test.js',
-  ], 'a new reader outside team-tickets.js cannot reach holdRecoveryText — export it deliberately, then widen this scan');
+  assert.deepStrictEqual(found.sort(), ['team-tickets.js'],
+    'a new reader outside team-tickets.js cannot reach holdRecoveryText — export it deliberately, then widen this scan');
 });
 
 test('the helper is the only place HOLD_RECOVERY is read', () => {
