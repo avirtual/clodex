@@ -913,8 +913,13 @@ function createTicketMethods(deps, shared) {
 
       let promptWarn = '';
       if (reviewerSystemPrompt) {
+        // The join stays OUTSIDE the try, and moving it back in is the wrong
+        // change: the catch is scoped to a STAT error, and an unwired `path` or
+        // REGISTRY_DIR also throws there. Absorbing that skipped the whole
+        // preflight silently — it never ran under the shared review fixture, so
+        // the warning below was unreachable and unproven for two tickets.
+        const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${reviewerSystemPrompt}.md`);
         try {
-          const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${reviewerSystemPrompt}.md`);
           if (!fs.existsSync(promptFile)) {
             promptWarn = ` — WARNING: role prompt "${reviewerSystemPrompt}.md" not found under library/prompts/system, so the reviewer boots UNBRIEFED (install it, then re-review)`;
           }
