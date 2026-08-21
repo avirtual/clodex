@@ -4150,7 +4150,7 @@ test('t465 nit1: an ORDINARY close still broadcasts "done"', async () => {
   assert.strictEqual(tasks[0].msg.body, 'ticket t1 done', 'a real close still reads as one');
 });
 
-test('t465 nit2: a second `done` DURING an active re-verify says the checks are running', async () => {
+test('t465 nit2: a second `done` during a re-verify says the checks have not reported', async () => {
   // The stamp is cleared when the re-verify starts, so this bounce had no held
   // clause and no explanation — a bare "is done, not open". REFUSING is correct
   // and stays correct: two loops on one branch is what the gate prevents. Only
@@ -4178,7 +4178,13 @@ test('t465 nit2: a second `done` DURING an active re-verify says the checks are 
   const said = f.injected.join('\n');
 
   assert.match(said, /is done, not open/, 'ENTER: it still refuses, which is the correct behaviour');
-  assert.match(said, /checks are running right now/, 'and now it says WHY, instead of leaving the reader to guess');
+  assert.match(said, /checks have not reported yet/, 'and now it says WHY, instead of leaving the reader to guess');
+  // HEDGED deliberately. This state does not prove a check is RUNNING — a
+  // process that died mid-re-verify leaves the same shape — so a sentence
+  // asserting one would send that seat to wait for a result never coming.
+  assert.ok(!/running right now/.test(said),
+    'it must not assert a live check it cannot observe');
+  assert.match(said, /stall alarm/, 'so it names the alarm that does cover the dead-process case');
   assert.ok(!/held at/.test(said), 'it must not claim a hold that is not there — nothing is waiting on a human');
   assert.ok(!/undefined/.test(said), 'never "undefined" from reading the cleared stamp');
 
@@ -4186,7 +4192,7 @@ test('t465 nit2: a second `done` DURING an active re-verify says the checks are 
   for (let i = 0; i < 80 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
 });
 
-test('t465 nit2: a HELD ticket still gets its recovery, not the running-checks wording', async () => {
+test('t465 nit2: a HELD ticket still gets its recovery, not the not-yet-reported wording', async () => {
   // The discriminator. Both states are done-at-verify; only the stamp separates
   // them, and telling a held reader to "wait for the result" would strand it
   // waiting on a loop that has already stopped.
@@ -4205,7 +4211,7 @@ test('t465 nit2: a HELD ticket still gets its recovery, not the running-checks w
 
   assert.match(said, /is done, not open/, 'ENTER: this is the bounce');
   assert.match(said, /held at "verify: commits-on-branch"/, 'ENTER: and the held clause was reached');
-  assert.ok(!/checks are running/.test(said),
-    'a HELD ticket is not a running one — the loop stopped and someone owes it an action');
+  assert.ok(!/checks have not reported yet/.test(said),
+    'a HELD ticket has reported — the loop stopped and someone owes it an action');
   assert.match(said, /close the ticket again/, 'so it carries the recovery, which is what the stamp is for');
 });

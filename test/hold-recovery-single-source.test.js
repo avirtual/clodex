@@ -39,15 +39,40 @@ const path = require('node:path');
 
 // ── the scanner ────────────────────────────────────────────────────────────
 //
-// TWO rules, and the second is the one that catches the historical defect.
+// THE RULE, stated once: **rendering the STAMP OBJECT into prose requires the
+// helper; rendering a narrowly-extracted fact off it does not. Reading
+// `recovery` by any route always requires the helper.**
 //
-// Rule A: every read of `.recovery` is an argument to `holdRecoveryText`.
-// Rule B: every line interpolating `verifyHold` INSIDE a template literal
-//         belongs to a statement that calls `holdRecoveryText`.
+//   ${t.verifyHold.step} in prose            FLAG — the historical defect
+//   hold = ticket.verifyHold; ${hold.step}   FLAG — whole-object alias
+//   heldAt = ...verifyHold.step; ${heldAt}   PASS — a narrowed fact
+//   held = ...holdRecoveryText(...)          PASS — carries the recovery
+//   any read of `recovery`, however bound    FLAG unless the helper is called
 //
-// Rule A alone would have been GREEN on the original defect: the old sweep
-// sentence read `verifyHold.step` and wrote its own advice without ever
-// touching `.recovery`. Rule B is what makes a new prose reader red.
+// Rule A (the `recovery` half) alone would have been GREEN on the original
+// defect: the old sweep sentence read `verifyHold.step` and wrote its own
+// advice without ever touching `.recovery`. Rule B is what makes a new prose
+// reader red.
+//
+// WHY A BINDING PRE-PASS. Both rules were once line-local on the literal token
+// `verifyHold`, which made them blind to every reader that binds the stamp to a
+// local first — an idiom already in this file (`heldAt`, :4449, rendered at
+// :4605 on a line carrying no `verifyHold` at all). That blindness composed
+// badly: the DIRECT form of that same reply would trip rule B, so the author's
+// natural escape from the false positive was to alias — silencing the scan
+// permanently. A ratchet that teaches how to defeat it is worse than none.
+//
+// So the pre-pass CLASSIFIES each binding rather than merely collecting it.
+// Collecting alone would flag `${held}` — the correct reader — and `reentry`,
+// a boolean. Three kinds, and only one is a violation when rendered:
+//   PRESENCE  (`!!ticket.verifyHold`)         — a boolean, prescribes nothing
+//   FACT      (`...verifyHold.step`)          — narrowed, carries no recovery
+//   HELPER    (`...holdRecoveryText(...)`)    — the recovery, already rendered
+//   OBJECT    (`= ticket.verifyHold`)         — the whole stamp: FLAG on render
+//
+// The escape from a false positive here is to NARROW THE BINDING to the fact
+// field, which is the habit worth teaching, and it cannot reach `recovery`
+// without tripping rule A. There is no evasion that is not also the fix.
 //
 // A "statement" is approximated by walking back from the line to the start of
 // its expression — recovery text is built with `+` concatenation across lines
@@ -96,14 +121,80 @@ function scanHoldRecovery(src) {
     return lines.slice(lo, hi + 1).join('\n');
   };
 
+  // PRE-PASS. Every identifier bound off the stamp, classified. Runs over the
+  // whole file first because a binding may be rendered further down than it is
+  // declared — the `heldAt` case spans 150 lines.
+  const objectAliases = new Set();   // whole stamp: rendering it is a violation
+  const recoveryAliases = new Set(); // `recovery` pulled out: always a violation
+  {
+    let block = false;
+    lines.forEach((raw) => {
+      const t = raw.trim();
+      const isCmt = block || t.startsWith('//') || t.startsWith('*');
+      if (t.startsWith('/*')) block = true;
+      if (t.includes('*/')) block = false;
+      if (isCmt || !raw.includes('verifyHold')) return;
+
+      // Destructuring: `const { step, recovery } = ticket.verifyHold`. Each name
+      // is classified on its own — `recovery` is rule A's business wherever it
+      // came from, while `step` is a narrowed fact.
+      const destructured = raw.match(/(?:const|let|var)\s*\{([^}]*)\}\s*=\s*[^;]*verifyHold/);
+      if (destructured) {
+        destructured[1].split(',').forEach((part) => {
+          const name = part.split(':').pop().trim();
+          if (!name) return;
+          if (/^recovery$/.test(part.trim().split(':')[0].trim())) recoveryAliases.add(name);
+        });
+        return;
+      }
+
+      const bound = raw.match(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.*verifyHold.*)$/);
+      if (!bound) return;
+      const [, name, rhs] = bound;
+      // HELPER and PRESENCE bindings prescribe nothing on render; FACT bindings
+      // narrow to a field that carries no advice. Only a bare whole-stamp
+      // binding stays dangerous, because everything on it is reachable later.
+      if (/holdRecoveryText\s*\(/.test(rhs)) return;
+      if (/!!|===|!==/.test(rhs)) return;
+      if (/\.recovery\b/.test(rhs)) { recoveryAliases.add(name); return; }
+      if (/verifyHold\s*\.\s*[A-Za-z_$]/.test(rhs) && !/verifyHold\s*[;,)]|verifyHold\s*$/.test(rhs)) return;
+      objectAliases.add(name);
+    });
+  }
+
+  const aliasRendered = (raw, names) => [...names].some(
+    (n) => new RegExp(`\\$\\{[^}]*\\b${n}\\b`).test(raw));
+
   lines.forEach((raw, i) => {
     const comment = isCommentLine(raw);
-    if (comment || !raw.includes('verifyHold')) return;
+    if (comment) return;
     const stmt = statementText(i);
+    const helper = /holdRecoveryText\s*\(/.test(stmt);
+
+    // Rule A, alias arm — `recovery` pulled off the stamp under any name.
+    if (recoveryAliases.size && !helper
+      && [...recoveryAliases].some((n) => new RegExp(`\\b${n}\\b`).test(raw))
+      && !/(?:const|let|var)\s/.test(raw)) {
+      violations.push({ line: i + 1, rule: 'A', text: raw.trim() });
+      return;
+    }
+    // Rule B, alias arm — the whole stamp rendered into prose under a local.
+    if (!helper && aliasRendered(raw, objectAliases)) {
+      violations.push({ line: i + 1, rule: 'B', text: raw.trim() });
+      return;
+    }
+    if (!raw.includes('verifyHold')) return;
 
     // Rule A — a `.recovery` read must feed the renderer.
-    if (/verifyHold(\s*&&\s*[A-Za-z_.\s]*)?\.recovery/.test(raw)
-      && !/holdRecoveryText\s*\(/.test(stmt)) {
+    //
+    // Skipped on a line the pre-pass already classified as a `recovery` binding:
+    // that read is reported at its RENDER instead, which is the line that has to
+    // change. Reporting both doubles every such violation and points the reader
+    // first at an assignment that is harmless until something prescribes off it.
+    const isClassifiedBinding = /(?:const|let|var)\s/.test(raw)
+      && [...recoveryAliases].some((n) => new RegExp(`\\b${n}\\b`).test(raw));
+    if (!isClassifiedBinding
+      && /verifyHold(\s*&&\s*[A-Za-z_.\s]*)?\.recovery/.test(raw) && !helper) {
       violations.push({ line: i + 1, rule: 'A', text: raw.trim() });
       return;
     }
@@ -112,7 +203,7 @@ function scanHoldRecovery(src) {
     // Anchored on `${…verifyHold`, so plain reads (`if (t.verifyHold)`,
     // `delete ticket.verifyHold`, the re-entry predicate) are untouched: they
     // read the field's PRESENCE and prescribe nothing.
-    if (/\$\{[^}]*verifyHold/.test(raw) && !/holdRecoveryText\s*\(/.test(stmt)) {
+    if (/\$\{[^}]*verifyHold/.test(raw) && !helper) {
       violations.push({ line: i + 1, rule: 'B', text: raw.trim() });
     }
   });
@@ -151,6 +242,89 @@ test('RED: a reader that reads .recovery but renders it itself is caught', () =>
   const v = scanHoldRecovery(mutant);
   assert.ok(v.length >= 1, 'ENTER: caught');
   assert.strictEqual(v[0].rule, 'A', 'by rule A — it reads the class and prescribes off it');
+});
+
+// ── the ALIASED idioms (r1 must-fix) ───────────────────────────────────────
+//
+// Both of these PASSED the first version of this scan, which was line-local on
+// the literal token `verifyHold`. The idiom is not hypothetical: `heldAt`
+// (team-tickets.js:4449) is rendered at :4605 on a line carrying no
+// `verifyHold` at all, so the scan never reached it.
+//
+// What made it urgent is the composition. The DIRECT form of a step-only render
+// tripped rule B, so the author's natural escape from that false positive was to
+// bind a local — which silenced the scan for good. These subjects pin that the
+// escape no longer works.
+
+test('RED: a reader that aliases the whole stamp is caught (rule B was blind)', () => {
+  const mutant = [
+    'const hold = ticket.verifyHold;',
+    'reply(`held at "${hold.step}" — close the ticket again`);',
+  ].join('\n');
+  const v = scanHoldRecovery(mutant);
+  assert.strictEqual(v.length, 1, 'ENTER: the aliased render produced a violation');
+  assert.strictEqual(v[0].rule, 'B', 'caught by rule B, through the binding pre-pass');
+  assert.strictEqual(v[0].line, 2, 'reported at the RENDER, which is the line to fix');
+});
+
+test('RED: a reader that destructures `recovery` is caught (rule A was blind)', () => {
+  // `recovery` precedes `verifyHold` on the line, so the old `.recovery`
+  // pattern — which required the token first — could not match it.
+  const mutant = [
+    'const { step, recovery } = ticket.verifyHold;',
+    'reply(`held at "${step}"; ${recovery === "spec" ? "reject and refile" : "close it again"}`);',
+  ].join('\n');
+  const v = scanHoldRecovery(mutant);
+  assert.strictEqual(v.length, 1, 'ENTER: the destructured read produced a violation');
+  assert.strictEqual(v[0].rule, 'A', 'caught by rule A — the class was read and rendered by hand');
+  assert.strictEqual(v[0].line, 2, 'at the render, not the destructuring');
+});
+
+test('RED: renaming on destructure does not evade rule A', () => {
+  const mutant = [
+    'const { recovery: cls } = ticket.verifyHold;',
+    'reply(`do this: ${cls === "spec" ? "edit the spec" : "close it again"}`);',
+  ].join('\n');
+  const v = scanHoldRecovery(mutant);
+  assert.strictEqual(v.length, 1, 'ENTER: caught under its new name');
+  assert.strictEqual(v[0].rule, 'A', 'the class is the class whatever it is called');
+});
+
+test('GREEN: a NARROWED fact binding is not a violation — this is the intended escape', () => {
+  // `heldAt` is the real instance. A binding that keeps only `.step` carries no
+  // recovery and prescribes nothing, so rendering it later is a statement of
+  // fact. This is deliberately the cheap way out of a rule B false positive:
+  // the fix and the evasion are the same edit, which is the property the
+  // whole-object flag is chosen to produce.
+  const ok = [
+    'const heldAt = (ticket.verifyHold && ticket.verifyHold.step) || null;',
+    'reply(`re-verifying (was held at "${heldAt}")`);',
+  ].join('\n');
+  assert.deepStrictEqual(scanHoldRecovery(ok), [], 'a narrowed fact is not the stamp');
+});
+
+test('GREEN: a narrowed fact cannot smuggle the recovery out', () => {
+  // The escape must not be a hole: narrowing to `.recovery` instead of `.step`
+  // is rule A's business, and binding it does not launder it.
+  const mutant = [
+    'const cls = ticket.verifyHold.recovery;',
+    'reply(`do this: ${cls === "spec" ? "edit the spec" : "close it again"}`);',
+  ].join('\n');
+  const v = scanHoldRecovery(mutant);
+  assert.strictEqual(v.length, 1, 'ENTER: narrowing to the class is still a class read');
+  assert.strictEqual(v[0].rule, 'A', 'rule A, wherever the class came from');
+});
+
+test('GREEN: a presence boolean and a helper binding are both renderable', () => {
+  // The two bindings that would false-positive under a pre-pass that merely
+  // COLLECTED names instead of classifying them — `held` is the CORRECT reader.
+  const ok = [
+    'const reentry = ticket.state === "done" && !!ticket.verifyHold;',
+    'const held = ticket.verifyHold ? ` — ${holdRecoveryText(ticket.verifyHold.recovery, id)}` : "";',
+    'reply(`${reentry ? "re-verifying" : "done"}${held}`);',
+  ].join('\n');
+  assert.deepStrictEqual(scanHoldRecovery(ok), [],
+    'a boolean prescribes nothing and the helper has already rendered the advice');
 });
 
 test('GREEN: a correct reader calling the helper passes', () => {
@@ -206,14 +380,51 @@ test('every verifyHold recovery reader in team-tickets.js routes through holdRec
     'a reader formats its own recovery sentence instead of calling holdRecoveryText');
 });
 
+test('the stamp is read in team-tickets.js ALONE, which is what makes the scan sufficient', () => {
+  // The scan reads one file. That is only enough while the field is read in one
+  // file — and `holdRecoveryText` is NOT exported (module.exports carries
+  // ticketCloseLine, ticketCloseVerb, ticketTaskDirLine), so a reader added
+  // anywhere else literally cannot call it and would be invisible here.
+  //
+  // The obvious candidate is a viewer or plugin rendering a held row. This
+  // subject goes red the moment one lands, which forces the export decision to
+  // be made deliberately at that point instead of a second sentence quietly
+  // appearing in a file this scan never opens.
+  const root = path.join(__dirname, '..');
+  const skip = new Set(['node_modules', '.git', 'dist', 'out', 'tasks']);
+  const found = [];
+  const walk = (dir) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (skip.has(ent.name)) continue;
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) { walk(full); continue; }
+      if (!ent.name.endsWith('.js')) continue;
+      if (fs.readFileSync(full, 'utf8').includes('verifyHold')) found.push(path.relative(root, full));
+    }
+  };
+  walk(root);
+  // ENTER: the walk actually reached source. A walk that found nothing would
+  // satisfy the containment claim below while proving the opposite.
+  assert.ok(found.includes('team-tickets.js'),
+    `ENTER: the walk reached the producer (found: ${found.join(', ') || 'nothing'})`);
+  assert.deepStrictEqual(found.sort(), [
+    'team-tickets.js',
+    'test/hold-recovery-single-source.test.js',
+    'test/ticket-loop-verify.test.js',
+  ], 'a new reader outside team-tickets.js cannot reach holdRecoveryText — export it deliberately, then widen this scan');
+});
+
 test('the helper is the only place HOLD_RECOVERY is read', () => {
   // The table itself is the other way to bypass the renderer: indexing it
   // directly re-implements the fallback that `holdRecoveryText` owns, and a
   // class the table lacks would then print "undefined" instead of the hand text.
   const src = fs.readFileSync(path.join(__dirname, '..', 'team-tickets.js'), 'utf8');
+  // Matched on USE syntax (`HOLD_RECOVERY[`, `.`, ` =`) rather than on the bare
+  // name, so prose mentioning the table in a comment does not fail this — the
+  // mention is not the hazard, indexing it is.
   const uses = src.split('\n')
     .map((l, i) => ({ line: i + 1, text: l }))
-    .filter(({ text }) => /HOLD_RECOVERY/.test(text) && !text.trim().startsWith('//'));
+    .filter(({ text }) => /HOLD_RECOVERY\s*[[.=]/.test(text) && !text.trim().startsWith('//'));
   assert.strictEqual(uses.length, 2,
     `ENTER: the table's definition and its single reader (got ${uses.length}: ${uses.map((u) => u.line).join(', ')})`);
   assert.match(uses[0].text, /^const HOLD_RECOVERY = \{/, 'the definition');

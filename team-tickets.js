@@ -4460,14 +4460,21 @@ function createTicketMethods(deps, shared) {
         const held = ticket.verifyHold && ticket.verifyHold.step
           ? ` — it is held at "${ticket.verifyHold.step}". ${holdRecoveryText(ticket.verifyHold.recovery, intent.id)}`
           // The OTHER done-at-verify state, and the one with no stamp to read:
-          // the checks are RUNNING, the re-entry above having cleared the hold
-          // before starting them. Refusing is correct and must stay — two loops
-          // on one branch is what the gate prevents — but a bare "is done, not
-          // open" names nothing to wait for, and a reader told only that it
-          // cannot close goes back to `reject`, the false rejection this design
-          // removes.
+          // the re-entry above cleared the hold before starting the checks.
+          // Refusing is correct and must stay — two loops on one branch is what
+          // the gate prevents — but a bare "is done, not open" names nothing to
+          // wait for, and a reader told only that it cannot close goes back to
+          // `reject`, the false rejection this design removes.
+          //
+          // HEDGED, because this state does not prove a check is running: a
+          // process that dies mid-re-verify leaves exactly this shape, for up to
+          // the suite lock's wait. Saying "running right now" would tell that
+          // seat to wait for a result that is never coming. What is certainly
+          // true is that nothing has reported, so the sentence names the state
+          // and points at the alarm that does cover the dead-process case.
           : (ticket.state === 'done' && ticket.loopStep === 'verify'
-            ? ' — its checks are running right now; wait for the result rather than rejecting it.'
+            ? ' — it is at the verify step with no hold recorded, so its checks have not reported yet;'
+              + " wait for the result (or the watchdog's stall alarm) rather than rejecting it."
             : '');
         reply(`error: ticket ${intent.id} is ${ticket.state}, not open${held}${this._spillRejectedPayload(session, 'task done', report)}`); return;
       }
