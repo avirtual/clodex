@@ -134,10 +134,12 @@ const { findRepoRoot } = require('./project-root');
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
-// ticketCloseLine is re-exported below rather than used here: it moved with the
-// spec-delivery verbs, and test/solo-tickets.test.js imports it from this
-// module's path.
-const { createTicketMethods, ticketCloseLine } = require('./team-tickets');
+// ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
+// here: they moved with the spec-delivery verbs, and tests import them from this
+// module's path (test/solo-tickets.test.js, test/review-verdict-ticket.test.js).
+// A fixture that restated either body would drift from the real line in silence,
+// since several suites pin a delivered body byte-for-byte.
+const { createTicketMethods, ticketCloseLine, ticketTaskDirLine } = require('./team-tickets');
 
 // Process-life identity for a spawned session (ticket replay). Module-level and
 // NOT a deps seam: every value this is compared against was minted by the same
@@ -5930,4 +5932,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { createSessionManager, deniedBodyDisposition, isStaleRegistration, missingToolOnExit, nameConflict, preseedClaudeOnboarding, ticketCloseLine };
+module.exports = { createSessionManager, deniedBodyDisposition, isStaleRegistration, missingToolOnExit, nameConflict, preseedClaudeOnboarding, ticketCloseLine, ticketTaskDirLine };

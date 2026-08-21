@@ -47,14 +47,27 @@ function text(v) {
 // `ticket` is the record; `diffPath` is where the materialized diff was written.
 // Callers pass the diff path rather than the diff itself: the diff is unbounded
 // and the scope rides a system prompt, so the reviewer is pointed at the file.
-function buildReviewScope({ ticket, diffPath = null, taskDir = null } = {}) {
+// `taskDir` is the RESOLVED directory and `taskDirRule` the clause explaining a
+// relative pointer, both rendered by team-tickets `_ticketTaskDirRender` — the
+// one renderer the hand's dispatch also goes through, so the two cannot state
+// the same fact differently.
+//
+// There is deliberately NO fallback to `ticket.taskDir`. That field is the raw
+// spec string, and the reviewer's cwd is the repo — which carries a stale
+// `tasks/` whose names collide with the artifact dir's, so a relative pointer
+// rendered verbatim sends the reviewer into a real but wrong tree, silently.
+// A fallback also reintroduces it on exactly the path that must not have it:
+// when resolution is REFUSED, the raw escaping string is what would be shown.
+// Naming no task dir is the correct degradation; the caller resolves or the
+// scope says nothing.
+function buildReviewScope({ ticket, diffPath = null, taskDir = null, taskDirRule = '' } = {}) {
   const t = ticket || {};
   const id = text(t.id) || '(unknown)';
   const wt = t.worktree || {};
   const branch = text(wt.branch);
   const wtPath = text(wt.path);
   const baseSha = text(wt.baseSha);
-  const dir = text(taskDir) || text(t.taskDir);
+  const dir = text(taskDir);
   const out = [];
 
   out.push(`You are reviewing ticket ${id}.`);
@@ -82,7 +95,7 @@ function buildReviewScope({ ticket, diffPath = null, taskDir = null } = {}) {
   }
 
   if (dir) {
-    out.push(`TASK DIR: ${dir}`);
+    out.push(`TASK DIR: ${dir}${text(taskDirRule) ? taskDirRule : ''}`);
     out.push('');
   }
 

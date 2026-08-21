@@ -183,6 +183,24 @@ const ticketCloseVerb = (id) => `[agent:task done ${id}]`;
 const ticketCloseLine = (id) => `CLOSE WITH: ${ticketCloseVerb(id)} <your report> — one intent, at the end: it delivers the report to the lead AND marks the ticket done. `
   + `It is a line you emit yourself, like any [agent:…] intent — NOT an exec command, and nothing needs to be granted for it. `
   + `A dm carrying your report does NOT close the ticket: the ticket stays open, and everything downstream of the close (tree verify, review) never runs.\n`;
+// The rule a RELATIVE pointer needs and an already-placed one does not. Split
+// from the line below because the two renderers of a task dir — the hand's
+// dispatch and the reviewer's scope — frame the path differently but must state
+// the rule identically; a second wording is the divergence in new clothes.
+//
+// Three things in one clause, because each alone leaves a live failure:
+// where the path resolves (an agent resolves it against cwd, and the repo has a
+// same-named decoy), that it names the DIRECTORY of a pointer that usually ends
+// in a file, and that it may not exist yet — a hand that found it absent
+// reported it missing and worked without it, which is the whole ticket.
+const taskDirRuleClause = (raw) => ` — the spec's \`${raw}\` is relative to the PROJECT'S ARTIFACT DIR, `
+  + `not to your cwd, and a same-named directory inside the repo is NOT it. `
+  + `This is the directory itself (the pointer may name a file inside it); it may not exist yet, `
+  + `so create it rather than reading its absence as "there is no artifact".`;
+// The resolved artifact pointer. Exported for the same reason ticketCloseLine
+// is: several suites pin a delivered body byte-for-byte, and a copy of this
+// prose in a fixture drifts from the real line silently.
+const ticketTaskDirLine = (dir, raw) => `TASK DIR: ${dir}${raw ? taskDirRuleClause(raw) : ''}\n`;
 const DEFAULT_REVIEWER_TEMPLATE = 'clodex-team-reviewer';
 
 const REVIEWER_FALLBACK = {
@@ -1995,6 +2013,11 @@ function createTicketMethods(deps, shared) {
         ? `You are working in the SHARED checkout alongside other seats — you have no worktree and no branch of your own, `
           + `so do tree work only and leave committing to the lead.\n`
         : '';
+      // Rendered BESIDE the spec, never into it: `ticket.spec` is what the lead
+      // wrote and `respec` is the only thing that replaces it. Shared with the
+      // reviewer's scope through _ticketTaskDirRender — see it for why one
+      // renderer rather than two agreeing call sites.
+      const taskDirLine = this._ticketTaskDirRender(team, ticket).line;
       // Rides EVERY dispatch, replays included: a respawned seat has no memory of
       // the verb, exactly as it has none of its worktree. See ticketCloseLine.
       const closeLine = ticketCloseLine(ticket.id);
@@ -2005,7 +2028,7 @@ function createTicketMethods(deps, shared) {
       // attached", which would put the close verb behind the very turn this line
       // exists to save. The verb is safe here for the same reason as in the body:
       // `[agent:from <sender>] ` precedes the tag, so it is never at column 1.
-      const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${areaLine}${sharedLine}${closeLine}${specText}`, urgent,
+      const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${areaLine}${sharedLine}${taskDirLine}${closeLine}${specText}`, urgent,
         replay
           ? `[ticket ${ticket.id} REPLAY] close with ${ticketCloseVerb(ticket.id)}`
           : respec
@@ -5086,6 +5109,52 @@ function createTicketMethods(deps, shared) {
     // The taskDir is RESOLVED through the same confinement _writeTicketCost uses
     // and for the same reason: it is spec TEXT, an agent wrote it, and a `~` or a
     // `..` in it would otherwise be joined into a path outside the projects root.
+    // The ticket's task dir as it is SHOWN to an agent — the one renderer behind
+    // both the hand's dispatch and the reviewer's scope.
+    //
+    // ONE function, not two call sites passing the same arguments, because the
+    // invariant is that the two renderings AGREE: same directory, same rule,
+    // under the same condition. Two sites that agree today diverge the moment
+    // one is edited — which is exactly how this bug existed, with dispatch
+    // resolving the pointer while the scope passed `t.taskDir` verbatim into a
+    // reviewer whose cwd is the repo the decoy lives in.
+    //
+    // Resolution and the RULE CLAUSE are two decisions, deliberately — and the
+    // three fields exist because the two renderers need different combinations
+    // of them, while the CONTENT of each must be identical:
+    //  - `dir` resolves whenever it can. An already-absolute pointer resolves to
+    //    itself, so there is never a reason to show a reviewer the raw one. The
+    //    scope always names a task dir, so this is what it uses.
+    //  - `rule` is gated on the pointer being RELATIVE: a `~`- or `/`-prefixed
+    //    one already means the same thing to an agent as it does here, so the
+    //    clause would be telling ~100 live seats what they already know.
+    //  - `line` is the dispatch's whole rendering and is gated the SAME way,
+    //    because there it is the entire line rather than a suffix: every
+    //    dispatch already spills past the 500-byte threshold, so a redundant
+    //    line costs each of those seats a Read turn. The scope pays no such
+    //    cost — it names the dir regardless — which is why it takes `dir` and
+    //    `rule` rather than `line`.
+    // What must NOT differ is the wording, and that is why both come from here.
+    //
+    // Through _ticketDiffDest, so the confinement guarding the diff and
+    // COST.json guards this too: a second resolver could name a directory
+    // Clodex itself would refuse to write, which is worse than naming none. A
+    // refusal drops the rendering and NEVER fails the caller — neither a
+    // dispatch nor a spawn may die over a display line.
+    _ticketTaskDirRender(team, ticket) {
+      const raw = String((ticket && ticket.taskDir) || '').trim();
+      if (!raw) return { dir: null, rule: '', line: '' };
+      let dest = null;
+      try { dest = this._ticketDiffDest(team, ticket); } catch { dest = null; }
+      if (!dest || !dest.ok) return { dir: null, rule: '', line: '' };
+      const relative = !raw.startsWith('~') && !path.isAbsolute(raw);
+      return {
+        dir: dest.dir,
+        rule: relative ? taskDirRuleClause(raw) : '',
+        line: relative ? ticketTaskDirLine(dest.dir, raw) : '',
+      };
+    },
+
     _ticketDiffDest(team, ticket) {
       let taskDir = null;
       try {
@@ -5241,7 +5310,13 @@ function createTicketMethods(deps, shared) {
           'verify passed and the diff was written; no reviewer spawned');
         return;
       }
-      const scope = buildReviewScope({ ticket, diffPath });
+      // Through the SAME renderer the hand's dispatch uses. The reviewer's cwd is
+      // team.root — the repo the stale `tasks/` decoy lives in — so a raw
+      // relative pointer here lands it in the wrong tree exactly as it did the
+      // hand. buildReviewScope has no `t.taskDir` fallback by design, so a
+      // refusal here means the scope names no task dir — never the raw one.
+      const taskDirRender = this._ticketTaskDirRender(team, ticket);
+      const scope = buildReviewScope({ ticket, diffPath, taskDir: taskDirRender.dir, taskDirRule: taskDirRender.rule });
       // onReply diverts _handleTeamReview's reply away from the lead's terminal.
       // Diverted, NOT suppressed: that reply is also how every spawn refusal
       // (a broken reviewer template, an empty tool intersection) is reported, and
@@ -7027,4 +7102,4 @@ function createTicketMethods(deps, shared) {
   };
 }
 
-module.exports = { createTicketMethods, ticketCloseLine, ticketCloseVerb };
+module.exports = { createTicketMethods, ticketCloseLine, ticketCloseVerb, ticketTaskDirLine };

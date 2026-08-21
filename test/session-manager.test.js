@@ -5434,6 +5434,11 @@ test('team-review: a team with no reviewer role bounces the lead', async () => {
 // <team>-<role> convention so matchSeatRole binds them; the lead seat is `lead`
 // (team.lead).
 const ticketsMod = require('../tickets-store');
+// The two placement primitives the dispatch's TASK DIR line goes through.
+// Required rather than restated: a test that hardcoded the `<leaf>-<hash8>`
+// shape would keep passing if the shape changed under it, and pin nothing.
+const clodexPaths = require('../clodex-paths');
+const teamCost = require('../team-cost');
 
 function mkTasks(extra = {}) {
   const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-tk-'));
@@ -5502,6 +5507,10 @@ function mkTasks(extra = {}) {
   // a reason that has nothing to do with what they test. Tests that want the
   // task-dir-less case set it back to undefined themselves — the gate's own
   // tests live in task-start.test.js.
+  //
+  // t453: and stamped ALREADY-RESOLVED, for the same byte-for-byte reason. A
+  // RELATIVE pointer earns a `TASK DIR:` line in the delivered body; an absolute
+  // one does not, and resolveTaskDir maps both to the same directory.
   const handleTask = m._handleTask.bind(m);
   m._handleTask = (session, intent) => {
     const isAdd = intent && intent.type === 'task' && intent.sub === 'add';
@@ -5514,7 +5523,10 @@ function mkTasks(extra = {}) {
       // the board would resurrect state a test deliberately built: strip `taskDir`
       // from t1, file t2, and the loop silently puts t1's back.
       for (const t of ts) {
-        if (!before.has(t.id) && !t.taskDir) { t.taskDir = `tasks/${t.id}-fixture/SPEC.md`; touched = true; }
+        if (!before.has(t.id) && !t.taskDir) {
+          t.taskDir = pathReal.join(clodexPaths.projectDirFor(home, team.root), 'tasks', `${t.id}-fixture`, 'SPEC.md');
+          touched = true;
+        }
       }
       if (touched) tstore.save(team.root, ts);
     }
@@ -12934,8 +12946,16 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
       // Only the ids this `add` INTRODUCED. Stamping every task-dir-less ticket on
       // the board would resurrect state a test deliberately built: strip `taskDir`
       // from t1, file t2, and the loop silently puts t1's back.
+      // t453: stamped ALREADY-RESOLVED. The dispatch renders a `TASK DIR:` line
+      // for a RELATIVE pointer, so a relative stamp would inject that line into
+      // every body these tests pin byte-for-byte — for a reason unrelated to
+      // what any of them is about. resolveTaskDir maps both spellings to the
+      // same directory, so nothing downstream of the stamp changes.
       for (const t of ts) {
-        if (!before.has(t.id) && !t.taskDir) { t.taskDir = `tasks/${t.id}-fixture/SPEC.md`; touched = true; }
+        if (!before.has(t.id) && !t.taskDir) {
+          t.taskDir = pathReal.join(clodexPaths.projectDirFor(home, team.root), 'tasks', `${t.id}-fixture`, 'SPEC.md');
+          touched = true;
+        }
       }
       if (touched) tstore.save(team.root, ts);
     }
@@ -13245,6 +13265,253 @@ test('task start: a cwd the RESOLVER refuses (not the lexical check) yields no A
   const reply = replies.find((r) => /ticket \S+ → \S+ on /.test(r));
   assert.ok(reply, `ENTER: the spawn reply must have landed, got: ${JSON.stringify(replies)}`);
   assert.match(reply, /does not exist under the team root/, 'the lead is still told why');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// t453. The spec's task-dir pointer is ONE string read by two resolvers that
+// disagree. team-cost resolveTaskDir places a relative `tasks/<name>` under the
+// project's artifact dir; a SEAT resolves the same bytes against its cwd — the
+// repo — where a stale `tasks/` still exists. Observed live: t451's hand reported
+// the artifact missing, worked without it, then journalled into the decoy.
+// Measured on the live board, 260 of 367 taskDirs are relative and 97 of those
+// name a directory that EXISTS in the repo, so the seat's read lands in a real,
+// wrong tree rather than failing loudly.
+test('task dispatch: a RELATIVE task dir is rendered resolved, against the artifact dir and not the repo', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  let createdCwd = 'UNSET';
+  f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), {
+    type: 'task', sub: 'add', who: 'hand', id: null,
+    body: 'tasks/stale-trap/PRECHECK.md — build it\ndetail',
+  });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => createdCwd !== 'UNSET' || f.gated.length);
+
+  assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: create() must have been reached');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery to assert on');
+  const body = f.gated[0].body;
+  // ENTER: the pointer has to have been CAPTURED as the relative shape, or the
+  // line under test is suppressed by the already-absolute arm and every
+  // assertion below is about a case this test never built. The fixture stamps a
+  // relative taskDir of its own when a spec carries none, so a spec whose
+  // pointer failed to parse would look identical downstream.
+  assert.strictEqual(f.one('t1').taskDir, 'tasks/stale-trap/PRECHECK.md',
+    'ENTER: the ticket must carry the spec\'s own RELATIVE pointer');
+
+  // The resolution the main process already performs — recomputed here from the
+  // same primitive, so a change to the placement rule fails this test rather
+  // than silently teaching the seat a path Clodex would not write to. The
+  // file-shaped tail is dropped, as _ticketDiffDest drops it.
+  const want = pathReal.join(clodexPaths.projectDirFor(f.home, repo), 'tasks', 'stale-trap');
+  assert.match(body, new RegExp(`TASK DIR: ${want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `),
+    'the seat is handed the RESOLVED artifact dir, not left to resolve the relative form itself');
+  // The decoy is the whole hazard: a `tasks/…` under the repo is a real
+  // directory a hand can cd into and journal in. Asserting the absence of the
+  // WRONG resolution as well as the presence of the right one, because a line
+  // built by joining onto the wrong base would still match the regex above if
+  // the repo happened to sit under the clodex home.
+  const decoy = pathReal.join(repo, 'tasks', 'stale-trap');
+  assert.ok(!body.includes(`TASK DIR: ${decoy}`),
+    'and never the repo-relative resolution, which is the stale tree this exists to route around');
+  assert.match(body, /relative to the PROJECT'S ARTIFACT DIR/,
+    'the RULE rides with the path — a seat reading a spec Clodex did not render still has to place the next one');
+  // t453 r2 nit 3: the rendered path is a DIRECTORY while the pointer usually
+  // names a file inside it, and an absent directory is the t451 step exactly —
+  // "the dir was not there, so I proceeded without it". Both halves are stated,
+  // and both are asserted: a clause that says only one still leaves that step
+  // available.
+  assert.match(body, /may name a file inside it/,
+    'the line says the path is the directory, not the file the pointer names');
+  assert.match(body, /may not exist yet/,
+    'and that its absence is not evidence there is no artifact — the t451 failure step');
+
+  // ADDITIVE, exactly like the AREA line: the stored spec is what the lead wrote
+  // and `respec` is the only thing that replaces it. Rewriting it would destroy
+  // the provenance of the text under review.
+  assert.strictEqual(f.one('t1').spec, 'tasks/stale-trap/PRECHECK.md — build it\ndetail',
+    'the STORED spec is untouched — only the delivered body carries the resolution');
+  assert.ok(body.endsWith('tasks/stale-trap/PRECHECK.md — build it\ndetail'),
+    'and the spec text still arrives verbatim, after the location lines');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The control. Without it a TASK DIR line emitted unconditionally passes the
+// test above. It is not only redundancy that is at stake: every dispatch already
+// spills past the 500-byte threshold, so a line that tells 107 of the live
+// board's seats what they already know costs each of them a Read turn.
+test('task dispatch: an ALREADY-ABSOLUTE task dir gets no TASK DIR line — it means the same to both readers', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  // Under the FIXTURE's own clodex home, not a plausible-looking literal. A
+  // pointer naming some other home is refused by the confinement — so a test
+  // using one asserts the absence of a line that was suppressed for an entirely
+  // different reason, and stays green against a build with no gate at all. Red-
+  // proofed: with `~/.clodex/projects/p-1234abcd/…` this test passed while the
+  // relative-only gate was removed, which is precisely the control it claims
+  // to be failing to do its one job.
+  const placed = pathReal.join(clodexPaths.projectDirFor(f.home, repo), 'tasks', 'already-placed', 'SPEC.md');
+  let createdCwd = 'UNSET';
+  f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), {
+    type: 'task', sub: 'add', who: 'hand', id: null,
+    body: `${placed} — build it\ndetail`,
+  });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => createdCwd !== 'UNSET' || f.gated.length);
+
+  assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: create() must have been reached');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery to assert on');
+  // ENTER: the fixture stamps a RELATIVE taskDir onto any ticket that parsed
+  // none, which is precisely the case this test must not be in. Without this the
+  // absence below would be an absence over the wrong ticket shape.
+  assert.strictEqual(f.one('t1').taskDir, placed,
+    'ENTER: the ticket must carry the ABSOLUTE pointer, not the fixture\'s relative stamp');
+  // ENTER: and that pointer must RESOLVE — this is the whole difference between a
+  // control and a vacuous absence. If the confinement refuses it, the line is
+  // dropped by the refusal arm and the gate under test is never consulted.
+  assert.strictEqual(f.m._ticketDiffDest(f.team, f.one('t1')).ok, true,
+    'ENTER: the pointer must be one the confinement ACCEPTS, or the absence below proves nothing');
+
+  assert.doesNotMatch(f.gated[0].body, /TASK DIR: /,
+    'an absolute pointer resolves the same way in the seat as in the main process — nothing to say');
+  assert.match(f.gated[0].body, /WORK IN: /,
+    'ENTER: the dispatch itself still rendered, so the absence above is a suppression and not a dead path');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// t453 r2 nit 1: the TILDE arm's control. Without it, deleting
+// `startsWith('~')` from the gate goes green while ~100 live pointers silently
+// start carrying a redundant line — the absolute control cannot catch it,
+// because `path.isAbsolute('~/x')` is false.
+//
+// The `~` must expand to a home the confinement ACCEPTS, so `os` is overridden
+// to the fixture's own clodex home. A test using the REAL home is refused by the
+// confinement and its absence then comes from the refusal arm rather than the
+// shape gate — vacuous in exactly the way this file's absolute control once was.
+test('task dispatch: a TILDE task dir gets no TASK DIR line either — `~` is not relative', async () => {
+  const { root, repo } = mkGitRepo();
+  // `home` is minted inside mkTicketWt, so the override reads it back off the
+  // fixture rather than assuming a path — a hardcoded one would not be the home
+  // REGISTRY_DIR actually points at, and the pointer would be refused.
+  let fixtureHome = null;
+  const f = mkTicketWt(repo, {}, { os: { ...osReal, homedir: () => fixtureHome } });
+  fixtureHome = f.home;
+  const rel = pathReal.relative(f.home, pathReal.join(clodexPaths.projectDirFor(f.home, repo), 'tasks', 'tilde-placed'));
+  const tilde = `~/${rel}`;
+  let createdCwd = 'UNSET';
+  f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), {
+    type: 'task', sub: 'add', who: 'hand', id: null, body: `${tilde} — build it\ndetail`,
+  });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => createdCwd !== 'UNSET' || f.gated.length);
+
+  assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: create() must have been reached');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery to assert on');
+  // ENTER: the ticket must carry the TILDE form — the fixture stamps a resolved
+  // pointer over any ticket that parsed none, which is a different shape.
+  assert.strictEqual(f.one('t1').taskDir, tilde,
+    'ENTER: the ticket must carry the tilde pointer');
+  assert.ok(!pathReal.isAbsolute(tilde),
+    'ENTER: `~/…` is NOT absolute to path.isAbsolute — which is exactly why it needs its own gate arm');
+  // ENTER: and it must RESOLVE. A refused pointer drops the line for an
+  // unrelated reason and the absence below would prove nothing about the gate.
+  assert.strictEqual(f.m._ticketDiffDest(f.team, f.one('t1')).ok, true,
+    'ENTER: the tilde pointer must be one the confinement ACCEPTS');
+
+  assert.doesNotMatch(f.gated[0].body, /TASK DIR: /,
+    'a `~`-prefixed pointer expands the same way in the seat as in the main process — nothing to say');
+  assert.match(f.gated[0].body, /WORK IN: /,
+    'ENTER: the dispatch itself still rendered, so the absence above is a suppression, not a dead path');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The refusal arm. `taskDir` is spec TEXT an agent wrote and extractTaskDir's
+// charset admits `.` and `/`, so `tasks/../../..` parses fine and resolveTaskDir
+// THROWS on it. Two things must hold: the line is dropped (naming a directory
+// Clodex would itself refuse to write is worse than naming none), and the
+// DISPATCH still goes out — a rendering nicety must never be able to strand a
+// ticket that would otherwise have been delivered.
+test('task dispatch: a task dir the confinement REFUSES drops the line and still delivers the spec', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  let createdCwd = 'UNSET';
+  f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), {
+    type: 'task', sub: 'add', who: 'hand', id: null,
+    body: 'tasks/../../../../../../etc/pwn — build it\ndetail',
+  });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => createdCwd !== 'UNSET' || f.gated.length);
+
+  assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: create() must have been reached');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the dispatch must still have been delivered');
+  // ENTER: the escaping form has to have survived capture, and it has to be the
+  // arm that THROWS rather than the one that returns null — a pointer that never
+  // reached the resolver would make the absence below vacuous.
+  assert.strictEqual(f.one('t1').taskDir, 'tasks/../../../../../../etc/pwn',
+    'ENTER: the ticket must carry the escaping pointer');
+  assert.throws(() => teamCost.resolveTaskDir({
+    taskDir: 'tasks/../../../../../../etc/pwn',
+    projectDir: clodexPaths.projectDirFor(f.home, repo),
+    projectsRoot: pathReal.join(f.home, 'projects'),
+    homedir: osReal.homedir(),
+  }), 'ENTER: the confinement must REFUSE this pointer, or there is no refusal being handled');
+
+  assert.doesNotMatch(f.gated[0].body, /TASK DIR: /,
+    'a refused pointer names no directory — least of all one Clodex would not write to');
+  // Scoped to the RENDERED prefix, not the whole body: the spec arrives verbatim
+  // and carries the escaping string itself, so a whole-body absence would be
+  // asserting the opposite of the line below and could only ever fail.
+  const rendered = f.gated[0].body.slice(0, f.gated[0].body.indexOf(f.one('t1').spec));
+  assert.ok(rendered && !rendered.includes('etc'),
+    'nothing Clodex RENDERED mentions the escaping target — only the lead\'s own text does');
+  assert.ok(f.gated[0].body.endsWith('tasks/../../../../../../etc/pwn — build it\ndetail'),
+    'the spec still arrives — a rendering line must not be able to strand a dispatch');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// A REPLAY is the delivery that needs the pointer most: the incarnation that died
+// is the one that may never have written an artifact, and its replacement is told
+// to "check the task artifact" before it builds anything. A line that rode only
+// the first dispatch would send exactly that seat looking in its cwd — which is
+// how t451 happened.
+test('task dispatch: the TASK DIR line rides a REPLAY too, where the artifact check is the instruction', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  let createdCwd = 'UNSET';
+  f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), {
+    type: 'task', sub: 'add', who: 'hand', id: null,
+    body: 'tasks/stale-trap/PRECHECK.md — build it\ndetail',
+  });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => createdCwd !== 'UNSET' || f.gated.length);
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the first dispatch must have landed');
+  const ticket = f.one('t1');
+  assert.ok(ticket && ticket.taskDir, 'ENTER: the ticket must carry a pointer to render');
+
+  f.gated.length = 0;
+  f.m._deliverTicketSpec(f.team, ticket, ticket.spec, 'clodex-team', true, true);
+
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one REPLAY delivery to assert on');
+  const body = f.gated[0].body;
+  assert.match(body, /REPLAY\] this ticket was already open/,
+    'ENTER: the body under test must be the replay shape, not a fresh dispatch');
+  const want = pathReal.join(clodexPaths.projectDirFor(f.home, repo), 'tasks', 'stale-trap');
+  assert.match(body, new RegExp(`TASK DIR: ${want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `),
+    'the replay carries the resolved pointer — a respawned seat has no memory of it');
 
   fsReal.rmSync(root, { recursive: true, force: true });
 });

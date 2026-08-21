@@ -28,12 +28,34 @@ function ticket(over = {}) {
 }
 
 test('scope carries the ticket id, spec and task dir', () => {
-  const s = buildReviewScope({ ticket: ticket(), diffPath: '/tmp/d.diff' });
+  // t453: the task dir is PASSED, never read off the ticket. `ticket.taskDir` is
+  // the raw spec string, and the reviewer's cwd is the repo — which carries a
+  // stale `tasks/` with colliding names — so rendering it verbatim would send
+  // the reviewer into a real but wrong tree. The caller resolves it first.
+  const s = buildReviewScope({
+    ticket: ticket(), diffPath: '/tmp/d.diff', taskDir: '/home/u/.clodex/projects/p/tasks/widget',
+  });
   assert.match(s, /reviewing ticket t42\b/);
   assert.ok(s.includes('THE SPEC BODY: make the widget idempotent.'),
     'the spec body must appear verbatim');
   assert.ok(s.includes('/home/u/.clodex/projects/p/tasks/widget'),
     'the task dir must appear');
+});
+
+// The absence of a fallback is the SAFETY, so it is pinned rather than left to
+// the caller's discipline. A scope that quietly reached for `ticket.taskDir`
+// when the caller passed nothing would reintroduce the raw relative pointer on
+// exactly the path that must not have it — a REFUSED resolution.
+test('an unresolved task dir is omitted entirely — never read off the ticket record', () => {
+  const t = ticket({ taskDir: 'tasks/../../../../etc/pwn' });
+  const s = buildReviewScope({ ticket: t, diffPath: '/tmp/d.diff' });
+  assert.ok(!/TASK DIR:/.test(s),
+    'no task dir is named at all when the caller could not resolve one');
+  assert.ok(!s.includes('tasks/../../../../etc/pwn'),
+    'and the raw pointer is not rendered — the reviewer would resolve it against the repo');
+  // ENTER: the rest of the scope must still be built, or this asserts an absence
+  // over a scope that failed to render for some unrelated reason.
+  assert.match(s, /reviewing ticket t42\b/, 'ENTER: the scope itself still rendered');
 });
 
 test('scope carries the worktree in the WORK IN: shape, with the branch', () => {

@@ -13,6 +13,23 @@ blocks a release.
 
 ## Unreleased
 
+- A ticket spec that names its task dir the short way (`tasks/<name>/SPEC.md`)
+  now reaches the seat with that path already resolved. The two ends read the
+  same string differently: Clodex places it under the project's artifact dir in
+  `~/.clodex`, while an agent reading the spec resolves it against its working
+  directory — the repo. Where the repo happens to contain a directory of the
+  same name, the agent lands in a real but wrong one instead of failing, reads
+  stale notes and writes its own there. Seen live: a seat reported its briefing
+  missing, worked without it, and journalled into an abandoned copy. The
+  dispatch now carries a `TASK DIR:` line with the resolved path and the rule
+  behind it, and so does the scope handed to a reviewer — which reads the same
+  pointer from the same repo, and so had the same problem. The line also says
+  the path names a directory (the pointer usually ends in a file) and that it
+  may not exist yet, since reading its absence as "there is no artifact" is the
+  step that actually went wrong. The stored spec is untouched, so what the
+  review sees is still what was written; a path that Clodex itself would refuse
+  to write to is simply not named, and the ticket is dispatched either way.
+
 - A library file that stopped receiving shipped updates now says so. Clodex
   seeds `~/.clodex/library` from the shipped defaults and deliberately never
   overwrites a file you have edited — but it decided "edited" from a hash

@@ -24,15 +24,28 @@ const fsReal = require('node:fs');
 const pathReal = require('node:path');
 const osReal = require('node:os');
 
-const { createSessionManager, ticketCloseLine } = require('../session-manager');
+const { createSessionManager, ticketCloseLine, ticketTaskDirLine } = require('../session-manager');
 // t353: the dispatch head carries the close verb. Imported, not copied — the
 // pins in this file are ENTER/setup assertions about WHICH delivery happened,
 // not about the verb's wording. The wording is pinned once in
 // session-manager.test.js (a deliberate copy) and against the tickets-viewer
 // duplicate in tickets-viewer-path-parity.test.js; a third hand-copy here would
 // just be a third place to forget.
-const specBody = (id, spec) => `[ticket ${id}] ${ticketCloseLine(id)}${spec}`;
+// t453: a RELATIVE task-dir pointer earns a resolved `TASK DIR:` line ahead of
+// the close line, so the expected body depends on the shape of the pointer the
+// ticket ended up carrying. Built from the SHIPPED helper, never a restatement
+// of its prose — a copy here would drift from the real line silently, and these
+// bodies are pinned byte-for-byte.
+const specBody = (id, spec, taskDirLine = '') => `[ticket ${id}] ${taskDirLine}${ticketCloseLine(id)}${spec}`;
+// The resolved line a relative pointer produces, for the callers that pass one
+// in the spec text. The DIRECTORY comes from the manager's own resolver rather
+// than being recomputed here: an earlier version restated `stripFileTail`'s
+// closed extension list, which is a second implementation of the placement rule
+// living in a fixture — it agreed by luck, and would have drifted silently the
+// day that list was widened. Only the PROSE is built locally, from the shipped
+// helper, which is the part these tests actually pin.
 const ticketsMod = require('../tickets-store');
+const clodexPaths = require('../clodex-paths');
 const { extractMustFix, countMustFix } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { parseWithRegistry } = require('../intent-registry');
@@ -166,10 +179,21 @@ function openTicket(f, body = 'the spec') {
   // caller for a reason unrelated to verdict routing. A spec that already names
   // a path keeps it: several callers pass one and assert on where the verdict
   // file landed.
+  //
+  // t453: stamped ALREADY-RESOLVED, which is what keeps the byte-for-byte pin
+  // above honest. The dispatch renders a `TASK DIR:` line for a RELATIVE pointer
+  // (a seat would otherwise resolve it against its cwd and land in a stale
+  // in-repo `tasks/`), so a relative stamp here injects that line into every body
+  // these tests pin — for a reason that has nothing to do with verdict routing.
+  // resolveTaskDir maps both spellings to the SAME directory, so the verdict-file
+  // destinations asserted downstream are byte-identical either way.
   {
     const ts = f.tstore.load(f.team.root);
     const t0 = ts.find((t) => t.id === 't1');
-    if (t0 && !t0.taskDir) { t0.taskDir = 'tasks/t1-fixture/SPEC.md'; f.tstore.save(f.team.root, ts); }
+    if (t0 && !t0.taskDir) {
+      t0.taskDir = pathReal.join(clodexPaths.projectDirFor(f.home, f.team.root), 'tasks', 't1-fixture', 'SPEC.md');
+      f.tstore.save(f.team.root, ts);
+    }
   }
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', id: 't1', who: null, body: '' });
   const t = f.one('t1');
@@ -179,7 +203,14 @@ function openTicket(f, body = 'the spec') {
   // whether the VERDICT reached the lead, and a setup delivery left in the array
   // makes `gated.length === 1` true for the wrong reason on the ticket path and
   // off-by-one on the fall-through path.
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', body) }],
+  // The stamp above is already-resolved, so it renders NO line; a spec that
+  // carried its own relative pointer does render one. Read off the ticket rather
+  // than off `body`, so the two cases cannot be told apart wrongly here.
+  const rawTd = String(t.taskDir || '');
+  const tdLine = (rawTd && !rawTd.startsWith('~') && !pathReal.isAbsolute(rawTd))
+    ? ticketTaskDirLine(f.m._ticketDiffDest(f.team, t).dir, rawTd)
+    : '';
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', body, tdLine) }],
     'ENTER: start dispatched the spec exactly once');
   f.gated.length = 0;
   f.order.length = 0;
@@ -1420,4 +1451,111 @@ test('a bolded review-done inside a FENCE stays quoted (t404)', async () => {
   assert.strictEqual(f.one('t1').verdict, undefined, 'and no verdict was written');
   assert.deepStrictEqual(f.killed, [], 'the reviewer seat is untouched');
   assert.ok(f.m.sessions.get(rec.name), 'ENTER: the seat was live throughout — an absent seat would make the above vacuous');
+});
+
+// ── t453 r2 MUST-FIX: the two renderers of a task dir must AGREE ────────────
+//
+// The hand's dispatch resolved the pointer while the reviewer's scope passed
+// `t.taskDir` verbatim — and the reviewer's cwd is team.root, the repo the stale
+// `tasks/` decoy lives in. So the half that shipped first fixed the hand and
+// left the reviewer walking into exactly the tree the ticket exists to route
+// around. These pin the invariant (same dir, same rule, same condition) rather
+// than the call site, because a patched call site can diverge again.
+
+test('the reviewer scope names the RESOLVED task dir, never the raw relative pointer', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+  const t = f.one('t1');
+  // ENTER: the pointer must really be RELATIVE. Resolved, this test passes
+  // against the unfixed code — the raw and resolved strings would be equal — and
+  // pins nothing at all.
+  assert.strictEqual(t.taskDir, 'tasks/verdict-routing',
+    'ENTER: the ticket must carry a RELATIVE pointer, or there is nothing to resolve');
+
+  let scope = null;
+  f.m._handleTeamReview = (_s, body) => { scope = body; };
+  f.m._spawnTicketReview(f.team, 't1', '/tmp/d.diff');
+
+  assert.ok(scope, 'ENTER: the scope must have been built and handed to the review spawn');
+  const want = f.m._ticketDiffDest(f.team, t).dir;
+  assert.ok(scope.includes(`TASK DIR: ${want}`),
+    `the scope must name the resolved artifact dir; got: ${scope.slice(0, 400)}`);
+  // The decoy is the hazard: the reviewer's cwd IS team.root, so a raw relative
+  // pointer resolves against precisely this path. Asserting the wrong answer is
+  // absent as well as the right one present — the two are different claims.
+  assert.ok(!scope.includes(pathReal.join(f.team.root, 'tasks', 'verdict-routing')),
+    'and never the repo-relative resolution, which is the stale tree the reviewer would otherwise read');
+  assert.ok(!/TASK DIR: tasks\//.test(scope),
+    'nor the raw pointer, which is what the reviewer resolved against its own cwd');
+});
+
+test('the reviewer scope carries the SAME rule clause the hand is given, from the same renderer', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+  const t = f.one('t1');
+  let scope = null;
+  f.m._handleTeamReview = (_s, body) => { scope = body; };
+  f.m._spawnTicketReview(f.team, 't1', '/tmp/d.diff');
+  assert.ok(scope, 'ENTER: the scope must have been built');
+
+  // Not "the scope contains some rule prose" — the two renderings must be the
+  // SAME bytes. A second wording is the divergence in new clothes: it is what
+  // lets one side later say something the other does not.
+  const render = f.m._ticketTaskDirRender(f.team, t);
+  assert.ok(render.rule, 'ENTER: a relative pointer must produce a rule clause to compare');
+  assert.ok(scope.includes(render.rule),
+    'the scope states the rule in the renderer\'s own words');
+  assert.ok(render.line.includes(render.rule),
+    'and the hand\'s dispatch line states it in those same words — one renderer, one wording');
+});
+
+// The condition must match too. A `~`/absolute pointer means the same to an
+// agent as it does here, so neither side explains it — if the scope started
+// carrying a clause the dispatch withholds, the two have diverged again in
+// content even while agreeing on the directory.
+test('an already-absolute pointer gets the resolved dir in the scope but NO rule clause', async () => {
+  const f = mkVerdict();
+  openTicket(f);
+  const t = f.one('t1');
+  // ENTER: openTicket stamps an already-resolved pointer, and it must be one the
+  // confinement ACCEPTS — a refused one drops the rendering for an unrelated
+  // reason and the absence below would prove nothing.
+  assert.ok(pathReal.isAbsolute(String(t.taskDir)), 'ENTER: the pointer must be absolute');
+  assert.strictEqual(f.m._ticketDiffDest(f.team, t).ok, true,
+    'ENTER: the pointer must resolve, or the absence below is about the refusal arm');
+
+  let scope = null;
+  f.m._handleTeamReview = (_s, body) => { scope = body; };
+  f.m._spawnTicketReview(f.team, 't1', '/tmp/d.diff');
+  assert.ok(scope, 'ENTER: the scope must have been built');
+
+  assert.ok(scope.includes(`TASK DIR: ${f.m._ticketDiffDest(f.team, t).dir}`),
+    'the scope still names the dir — it always does, unlike the dispatch line');
+  assert.ok(!scope.includes('relative to the PROJECT'),
+    'but carries no rule clause, exactly as the dispatch carries no line for this shape');
+});
+
+// dest.ok is effectively guaranteed at this call site (the diff was just written
+// into that directory), but a display line must never be able to kill a spawn.
+test('a task dir the confinement REFUSES drops the scope line and still spawns the review', async () => {
+  const f = mkVerdict();
+  openTicket(f);
+  {
+    const ts = f.tstore.load(f.team.root);
+    ts.find((x) => x.id === 't1').taskDir = 'tasks/../../../../../../etc/pwn';
+    f.tstore.save(f.team.root, ts);
+  }
+  const t = f.one('t1');
+  // ENTER: this must be the arm that THROWS, not one that merely returns null.
+  assert.throws(() => f.m._ticketDiffDest(f.team, t).ok === true || (() => { throw new Error('x'); })(),
+    'ENTER: the confinement must refuse this pointer');
+
+  let scope = null;
+  f.m._handleTeamReview = (_s, body) => { scope = body; };
+  f.m._spawnTicketReview(f.team, 't1', '/tmp/d.diff');
+
+  assert.ok(scope, 'the review is still spawned — a rendering line must not be able to strand it');
+  assert.ok(!/TASK DIR: /.test(scope), 'and names no task dir at all rather than a refused one');
+  assert.ok(!scope.includes('etc/pwn') || scope.includes('SPEC'),
+    'the escaping value reaches the reviewer only inside the verbatim spec, if at all');
 });
