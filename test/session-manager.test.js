@@ -13322,12 +13322,20 @@ test('task dispatch: a RELATIVE task dir is rendered resolved, against the artif
 test('task dispatch: an ALREADY-ABSOLUTE task dir gets no TASK DIR line — it means the same to both readers', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);
+  // Under the FIXTURE's own clodex home, not a plausible-looking literal. A
+  // pointer naming some other home is refused by the confinement — so a test
+  // using one asserts the absence of a line that was suppressed for an entirely
+  // different reason, and stays green against a build with no gate at all. Red-
+  // proofed: with `~/.clodex/projects/p-1234abcd/…` this test passed while the
+  // relative-only gate was removed, which is precisely the control it claims
+  // to be failing to do its one job.
+  const placed = pathReal.join(clodexPaths.projectDirFor(f.home, repo), 'tasks', 'already-placed', 'SPEC.md');
   let createdCwd = 'UNSET';
   f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), {
     type: 'task', sub: 'add', who: 'hand', id: null,
-    body: '~/.clodex/projects/p-1234abcd/tasks/already-placed/SPEC.md — build it\ndetail',
+    body: `${placed} — build it\ndetail`,
   });
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => createdCwd !== 'UNSET' || f.gated.length);
@@ -13337,11 +13345,16 @@ test('task dispatch: an ALREADY-ABSOLUTE task dir gets no TASK DIR line — it m
   // ENTER: the fixture stamps a RELATIVE taskDir onto any ticket that parsed
   // none, which is precisely the case this test must not be in. Without this the
   // absence below would be an absence over the wrong ticket shape.
-  assert.strictEqual(f.one('t1').taskDir, '~/.clodex/projects/p-1234abcd/tasks/already-placed/SPEC.md',
-    'ENTER: the ticket must carry the TILDE pointer, not the fixture\'s relative stamp');
+  assert.strictEqual(f.one('t1').taskDir, placed,
+    'ENTER: the ticket must carry the ABSOLUTE pointer, not the fixture\'s relative stamp');
+  // ENTER: and that pointer must RESOLVE — this is the whole difference between a
+  // control and a vacuous absence. If the confinement refuses it, the line is
+  // dropped by the refusal arm and the gate under test is never consulted.
+  assert.strictEqual(f.m._ticketDiffDest(f.team, f.one('t1')).ok, true,
+    'ENTER: the pointer must be one the confinement ACCEPTS, or the absence below proves nothing');
 
   assert.doesNotMatch(f.gated[0].body, /TASK DIR: /,
-    'a `~`-prefixed pointer resolves the same way in the seat as in the main process — nothing to say');
+    'an absolute pointer resolves the same way in the seat as in the main process — nothing to say');
   assert.match(f.gated[0].body, /WORK IN: /,
     'ENTER: the dispatch itself still rendered, so the absence above is a suppression and not a dead path');
 
@@ -13383,8 +13396,12 @@ test('task dispatch: a task dir the confinement REFUSES drops the line and still
 
   assert.doesNotMatch(f.gated[0].body, /TASK DIR: /,
     'a refused pointer names no directory — least of all one Clodex would not write to');
-  assert.doesNotMatch(f.gated[0].body, /etc\/pwn/,
-    'and the escaping value must not reach the seat resolved into any path');
+  // Scoped to the RENDERED prefix, not the whole body: the spec arrives verbatim
+  // and carries the escaping string itself, so a whole-body absence would be
+  // asserting the opposite of the line below and could only ever fail.
+  const rendered = f.gated[0].body.slice(0, f.gated[0].body.indexOf(f.one('t1').spec));
+  assert.ok(rendered && !rendered.includes('etc'),
+    'nothing Clodex RENDERED mentions the escaping target — only the lead\'s own text does');
   assert.ok(f.gated[0].body.endsWith('tasks/../../../../../../etc/pwn — build it\ndetail'),
     'the spec still arrives — a rendering line must not be able to strand a dispatch');
 
