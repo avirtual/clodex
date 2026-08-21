@@ -90,6 +90,85 @@ function lastToolFrom(text) {
   return { tool: use.name, outcome: results.get(use.id) ? 'error' : 'ok' };
 }
 
+// The API error a transcript ENDS on, or null.
+//
+//   { text: 'API Error: 529 Overloaded. ...' }   the seat's last turn was an error
+//   null                                          it ended on anything else
+//
+// The alarm otherwise infers a wedge from SILENCE — flat transcript, flat tree
+// CPU — and so reports only the step. When the seat stopped on an API error the
+// transcript says so outright, in the file the probe already opened, and naming
+// the cause is the difference between "no progress for 31m" and a line the lead
+// can act on without a hand probe.
+//
+// KEYED ON `isApiErrorMessage`, NEVER on `message.model === '<synthetic>'`.
+// Measured over 400 transcripts (t389 precheck): `<synthetic>` matched 95
+// non-errors against 32 errors, and almost all the non-errors are the
+// `"No response requested."` sidechain records of perfectly healthy seats.
+// `isApiErrorMessage` under-matched zero times in the same sample. A
+// `<synthetic>` test would fire about 3x too often, mostly on seats that are
+// fine, which is the confidently-wrong field this module's header forbids.
+//
+// "ENDS on" is defined over CONVERSATIONAL records only — `assistant` and
+// `user`. Measured over ~97k transcripts: of 1088 non-sidechain error records,
+// 753 are the last conversational record, but the file almost always continues
+// with `last-prompt` (685), `system` (254) and `file-history-snapshot` (103)
+// entries. A "must be the last LINE" test would therefore report almost
+// nothing; those record types are bookkeeping, not the seat producing output.
+//
+// Sidechain records are skipped for the same reason `lastToolFrom` skips them:
+// a subagent's API error is the subagent's, and the seat's own turn may have
+// continued past it.
+//
+// The text is returned RAW — unwrapped, uncapped, newlines intact. Rendering it
+// onto one line belongs to the formatter, which owns every other one-line rule
+// in this module.
+function lastApiErrorFrom(text) {
+  if (!text) return null;
+  let last = null;
+  for (const line of String(text).split('\n')) {
+    const s = line.trim();
+    if (!s || s[0] !== '{') continue;
+    let d = null;
+    try { d = JSON.parse(s); } catch { continue; }
+    if (!d || d.isSidechain) continue;
+    if (d.type !== 'assistant' && d.type !== 'user') continue;
+    last = d;
+  }
+  if (!last || last.isApiErrorMessage !== true) return null;
+  // Same extraction as transcript.js `extractText`, which is what already
+  // surfaces these records to the watcher: an error record is an ordinary
+  // assistant record whose content is an array of text blocks. Measured: 0 of
+  // 753 ending-error records carried a string `content`, so array-only is exact
+  // rather than a gap.
+  const content = (last.message || {}).content;
+  if (!Array.isArray(content)) return null;
+  const body = content
+    .filter((b) => b && b.type === 'text' && b.text)
+    .map((b) => String(b.text))
+    .join('\n')
+    .trim();
+  // An error record with no readable text is OMITTED, not reported as an empty
+  // quote: `— its transcript ends on an API error: ""` claims a reading it does
+  // not have.
+  return body ? { text: body } : null;
+}
+
+// The error text as ONE line of alarm. Collapsed and capped, because the
+// measured texts run to 567 chars and 85 of 263 contain newlines, and the alarm
+// fires into the lead's prompt stream.
+//
+// Truncation is from the TAIL, never the head: every measured error text
+// classifies itself in its first few words ("API Error: 529 Overloaded",
+// "API Error: Fable 5's safeguards flagged"), and that classification is the
+// whole value of the field. The p90 is 421 chars, so this keeps most of them
+// whole while bounding the worst case.
+const API_ERROR_MAX = 220;
+function oneLineError(text) {
+  const flat = String(text).replace(/\s+/g, ' ').trim();
+  return flat.length > API_ERROR_MAX ? `${flat.slice(0, API_ERROR_MAX - 1)}…` : flat;
+}
+
 // One glanceable line. This fires into the lead's prompt stream, so it stays on
 // one line and leads with the ticket id.
 //
@@ -109,7 +188,20 @@ function lastToolFrom(text) {
 // write cannot recover this seat" would be an inference, and it is wrong under
 // the I/O-blocked-child case the tree-CPU probe cannot see: a wake fired there
 // queues behind a running tool and produces a turn later.
-function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits = null, dirty = null, dmLatch = null, wake = null }) {
+// `apiError` is `{text}` when the seat's transcript ENDS on an API error. It is
+// the only input here that names a CAUSE the seat itself reported, rather than
+// something this process inferred from silence or did to the seat, so it leads
+// the trailing sentences: the swallowed-dm and unanswered-wake readings are both
+// about delivery, and neither explains anything when the seat's own last turn
+// already says why it stopped.
+//
+// REPORTED, NEVER ACTED ON, and that is not a layering nicety. Measured over
+// this repo's 77 API errors: 54 are Fable safeguard refusals, terminal 53/54
+// and NOT retryable; the transient class is 11 of 77. Anything that resumed a
+// seat on "an API error was seen" would mostly burn a turn re-hitting the same
+// guard. The error text classifies itself in its own first words, so the lead
+// reads which class it is; nothing here decides.
+function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits = null, dirty = null, dmLatch = null, wake = null, apiError = null }) {
   const head = repeat > 0
     ? `[ticket ${ticketId}] STILL stalled (repeat ${repeat}): ${who} quiet ${age}`
     : `[ticket ${ticketId}] stalled: ${who} quiet ${age}`;
@@ -131,14 +223,17 @@ function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits 
   // swallowed-dm reading is about whether the seat was ever told anything, which
   // changes what an unanswered wake means.
   const woke = wake ? ` — an automated wake was injected ${wake.age} ago and produced no turn` : '';
-  if (!bits.length) return `${head}${cause}${woke}`;
+  const stopped = apiError && apiError.text
+    ? ` — its transcript ends on an API error: "${oneLineError(apiError.text)}"`
+    : '';
+  if (!bits.length) return `${head}${stopped}${cause}${woke}`;
   // The reading, not just the facts. The lead dismissed t312 by reasoning from a
   // dirty tree alone; naming which way the evidence points is what makes the
   // alarm cheaper to act on than a hand probe.
   let verdict = '';
   if (tool && tool.outcome === 'pending') verdict = ' — wedged mid-call, or a legitimately slow one';
   else if (tool && tool.outcome === 'error') verdict = ' — the last call failed; a killed turn looks like this';
-  return `${head} (${bits.join(', ')})${verdict}${cause}${woke}`;
+  return `${head} (${bits.join(', ')})${verdict}${stopped}${cause}${woke}`;
 }
 
 // A ticket whose assignee resolves to NO live seat. Not a stall — nothing is
@@ -356,7 +451,7 @@ function formatReviewSeatClause({ seat, verdict, cpuRead = true, flatFor = null,
 }
 
 module.exports = {
-  readTail, lastToolFrom, formatStallBody, formatOrphanBody,
+  readTail, lastToolFrom, lastApiErrorFrom, formatStallBody, formatOrphanBody,
   parseCpuTime, sumTreeCpuMs, classifyReviewSeat, formatReviewSeatClause, didGrow,
-  CPU_RATE_MS_PER_MIN, MIN_GAP_MS,
+  CPU_RATE_MS_PER_MIN, MIN_GAP_MS, API_ERROR_MAX,
 };

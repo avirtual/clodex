@@ -46,7 +46,7 @@ const { projectDirFor } = require('./clodex-paths');
 // probe for the real module.
 const nodePath = require('path');
 const {
-  readTail, lastToolFrom, formatStallBody, formatOrphanBody,
+  readTail, lastToolFrom, lastApiErrorFrom, formatStallBody, formatOrphanBody,
   parseCpuTime, sumTreeCpuMs, classifyReviewSeat, formatReviewSeatClause, didGrow,
 } = require('./stall-evidence');
 const { isDraftOpen } = require('./proxy-util');
@@ -6857,12 +6857,22 @@ function createTicketMethods(deps, shared) {
     // alone is what the lead reasoned from on t312 and it is identical for a seat
     // writing and a seat killed mid-write.
     async _stallEvidence(team, ticket) {
-      const out = { tool: null, commits: null, dirty: null };
+      const out = { tool: null, commits: null, dirty: null, apiError: null };
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (seat) {
         try {
           const link = pathFor(REGISTRY_DIR, seat, 'transcript');
-          out.tool = lastToolFrom(readTail(fs, fs.realpathSync(link)));
+          // ONE read feeding both readers. A second readTail would double the
+          // I/O of a 60s sweep for the same bytes, and could observe a
+          // different tail across an append — a tool outcome and a stop cause
+          // read from two different moments, presented as one reading.
+          const tail = readTail(fs, fs.realpathSync(link));
+          out.tool = lastToolFrom(tail);
+          // Measured (t389, ~97k transcripts): the error record sits at most
+          // 2957 bytes from EOF when a transcript ends on one — p90 1985 —
+          // so the existing 64KB window reaches it in every observed case and
+          // is not widened for it.
+          out.apiError = lastApiErrorFrom(tail);
         } catch { /* no transcript, codex, or unreadable — omit the field */ }
       }
       const wt = ticket.worktree || null;
@@ -7416,7 +7426,7 @@ function createTicketMethods(deps, shared) {
           }
         } else {
           this._stallProbing.add(tid);
-          let ev = { tool: null, commits: null, dirty: null };
+          let ev = { tool: null, commits: null, dirty: null, apiError: null };
           try { ev = await this._stallEvidence(team, t); } catch { /* alarm without evidence beats no alarm */ }
           finally { this._stallProbing.delete(tid); }
           // Re-read after the await: the seat may have woken while git ran, and
@@ -7504,6 +7514,11 @@ function createTicketMethods(deps, shared) {
               // that test, so the raw field would report a previous episode's
               // wake as evidence about this one.
               wake: wakeAge > 0 ? { age: humanizeAge(now - after.wakeAt) } : null,
+              // The cause the SEAT reported, when its transcript ends on an API
+              // error. Only on this arm, like the others: the orphan arm has no
+              // seat to have a transcript, and the loop-held arm names a stuck
+              // step, where the seat is not what stopped.
+              apiError: ev.apiError,
             });
         }
         this._gatedDeliver(team.lead, 'ticket-watchdog',
