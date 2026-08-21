@@ -4689,8 +4689,8 @@ function createTicketMethods(deps, shared) {
         // already succeeded — the ticket is `open`, `reworkRound` is up and
         // `loopStep` is gone — and only its DELIVERY failed. Stamping there writes
         // a `verifyHold` onto an open ticket, a state no reader is written for,
-        // and notifying the hand would tell it "the ticket was NOT rejected and no
-        // rework round was counted" when both are false — to a seat that arm was
+        // and the hold notice would assert the ticket was not rejected and no
+        // rework round counted when both are false — to a seat that arm was
         // entered precisely because it could not be reached. The lead gets the
         // escalation and that is the whole recovery.
         const cls = (String(step).startsWith('verify') && recovery !== 'reopened')
@@ -5454,11 +5454,17 @@ function createTicketMethods(deps, shared) {
         if (!ticket) return;
         const seat = this._ticketAssigneeSeat(team, ticket);
         if (!seat || seat === team.lead) return;
+        // The rework-round fact belongs to the `hand` arm rendered into this body
+        // and must NOT be restated beside it: the arm already closes with the
+        // ticket staying done and no rework round counted. What the trailing
+        // sentence carries is what the arm does NOT — the tree, the branch and the
+        // seat, which is what a held seat is actually anxious about, plus the
+        // negative form of a fact the arm states only positively.
         const body = `[ticket ${ticketId} HELD] the loop stopped at: ${step}\n\n`
           + `EVIDENCE: ${evidence}\n\n`
           + `${holdRecoveryText('hand', ticketId)}\n\n`
           + 'Nothing was torn down — your worktree, your branch and this seat are exactly as they were. '
-          + 'The ticket was NOT rejected and no rework round was counted.';
+          + 'The ticket was NOT rejected.';
         this._gatedDeliver(seat, 'ticket-loop', body, true,
           `[ticket ${ticketId} HELD] close with ${ticketCloseVerb(ticketId)}`);
       } catch (e) {

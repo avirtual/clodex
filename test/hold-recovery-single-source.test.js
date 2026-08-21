@@ -1177,24 +1177,45 @@ test('GREEN: the real file has zero advice phrases outside HOLD_RECOVERY', () =>
     'an advice phrase appears outside the table — a copied arm that will go stale when the table moves');
 });
 
-test('N=5 is the measured floor: at N=4 the real file yields four false positives', () => {
-  // Anyone lowering N sees the cost here rather than discovering it as four
-  // failures on an unrelated file. All four are ordinary ticket prose that
-  // legitimately shares four words with an arm; none is a copied sentence.
+test('N=5 is the measured floor: at N=4 the real file yields three false positives', () => {
+  // Anyone lowering N sees the cost here rather than discovering it as three
+  // failures on an unrelated file. These three are ordinary ticket prose that
+  // legitimately shares four words with an arm.
+  //
+  // THE N=4 COST IS NOT UNIFORMLY BENIGN, and this subject used to claim it was.
+  // It measured four hits and called all four ordinary prose. One of them —
+  // `and no rework round` — was a genuine copied sentence: `_notifyHandOfHold`
+  // rendered the `hand` arm and then hand-wrote "no rework round WAS counted"
+  // beside it, against the arm's own "no rework round IS counted". One word apart,
+  // which is exactly why N=5 cannot see it. t466 removed the copy, and the count
+  // fell to three as a consequence — the number was never the thing being
+  // asserted, the interpretation was.
+  //
+  // So the real lesson for anyone re-tuning N: a hit at N=4 is EVIDENCE, not
+  // noise to be tuned past. This file's own measurement found a live defect that
+  // its shipping threshold was blind to, and the finding arrived disguised as a
+  // false positive being counted.
   //
   // Identified by GRAM rather than line number — line numbers drift, and these
-  // four moved by 26 lines between master and this branch while the statements
-  // did not change at all:
+  // moved by 26 lines between master and the t465 branch while the statements did
+  // not change at all:
   //   "re reads the same"      — the in-verify refusal
   //   "close the ticket again" — the failed-checks close instruction
-  //   "and no rework round"    — the not-rejected notice
   //   "check could not run"    — the merge-check failure
   const src = realSource();
   const at4 = scanAdvicePhrases(src, 4);
-  assert.strictEqual(at4.length, 4, `ENTER: the measured N=4 cost (got ${at4.length})`);
+  // FIRST, above the count: the regression this names is a re-copied sentence,
+  // and that also breaks `at4.length === 3` — so below the count it could never
+  // fire, and the reader would get "got 4" instead of the message naming the
+  // defect. Without it at all, a recurrence would silently rejoin the
+  // "benign prose" list, which is the defect's own shape: absorbed into a number
+  // nobody re-reads.
+  assert.ok(!at4.some((h) => h.gram === 'and no rework round'),
+    'the rework-round clause is single-sourced in the hand arm — a second render has reappeared beside it');
+  assert.strictEqual(at4.length, 3, `ENTER: the measured N=4 cost (got ${at4.length})`);
   assert.deepStrictEqual(at4.map((h) => h.gram).sort(), [
-    'and no rework round', 'check could not run', 'close the ticket again', 're reads the same',
-  ], 'the four N=4 false positives are ordinary prose sharing four words with an arm');
+    'check could not run', 'close the ticket again', 're reads the same',
+  ], 'the three N=4 false positives are ordinary prose sharing four words with an arm');
   assert.deepStrictEqual(scanAdvicePhrases(src, PHRASE_N), [], 'and N=5 clears them');
 });
 
