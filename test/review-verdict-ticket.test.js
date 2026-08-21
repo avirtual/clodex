@@ -1608,8 +1608,13 @@ test('a task dir the confinement REFUSES drops the scope line and still spawns t
   // reason and make the absences below vacuous. _ticketDiffDest reports both
   // arms the same way (it catches and returns `{ok:false}`), so the throw is
   // asserted where it actually happens, against the resolver itself.
+  // Read OFF THE RECORD, never restated as a literal: a hardcoded string asserts
+  // a throw the ticket under test may not produce, so the fixture could be
+  // changed to a resolvable pointer without this ENTER noticing.
+  assert.strictEqual(t.taskDir, 'tasks/../../../../../../etc/pwn',
+    'ENTER: the ticket must carry the escaping pointer');
   assert.throws(() => teamCost.resolveTaskDir({
-    taskDir: 'tasks/../../../../../../etc/pwn',
+    taskDir: t.taskDir,
     projectDir: clodexPaths.projectDirFor(f.home, f.team.root),
     projectsRoot: pathReal.join(f.home, 'projects'),
     homedir: osReal.homedir(),
