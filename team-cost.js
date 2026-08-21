@@ -68,11 +68,10 @@ function ticketIdFromScope(scope) {
 }
 
 // A ticket's `taskDir` is the first line of an AGENT-WRITTEN spec, captured
-// verbatim by tickets-store extractTaskDir. Measured over the live store: of
-// 227 tickets carrying one, 175 are relative (`tasks/<name>`), 52 are
-// tilde-prefixed, and NONE is absolute. So a writer that trusts the field
-// mkdir -p's a literal `~` directory under the process cwd, silently, and the
-// artifact never reaches the task dir at all.
+// verbatim by tickets-store extractTaskDir — so it arrives in any shape an agent
+// wrote, relative, tilde-prefixed or absolute, and is never trusted as a path.
+// A writer that trusts the field mkdir -p's a literal `~` directory under the
+// process cwd, silently, and the artifact never reaches the task dir at all.
 //
 // Two hazards, both handled here rather than at the write:
 //  - shape: `~` must expand and a bare `tasks/…` must resolve against the
