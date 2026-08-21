@@ -3947,11 +3947,27 @@ function mkReview(extra = {}) {
       if (on === false) e.autoCompact = false; else delete e.autoCompact;
     },
   };
+  // `path` and a SEEDED registry, both real, because the preflight at
+  // _handleTeamReview's promptWarn is `path.join` + `fs.existsSync` inside a
+  // best-effort catch: with either dep missing the join throws, the catch eats
+  // it, and the whole branch is skipped. That made the preflight DEAD on this
+  // fixture — 33 swallowed TypeErrors across the suite, and no test could reach
+  // any `path` consumer (_roleCwdRel is the other one) without a per-test
+  // override. The registry carries the reviewer prompt INSTALLED, which is the
+  // production-normal state and the one that leaves the default reply shape
+  // unchanged; a test wanting the missing-prompt arm passes its own REGISTRY_DIR
+  // (four do) and `extra` below still overrides all three.
+  const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-review-fx-'));
+  const promptDir = pathReal.join(REGISTRY_DIR, 'library', 'prompts', 'system');
+  fsReal.mkdirSync(promptDir, { recursive: true });
+  fsReal.writeFileSync(pathReal.join(promptDir, `${SHIPPED_REVIEWER_TEMPLATE.systemPromptFile}.md`), 'you are the reviewer');
   const overrides = {
     resolveTeam: (cwd) => (cwd && cwd.startsWith('/proj') ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith('/proj') ? '/proj' : null),
     getPersistence: () => persistence,
     getTemplates: () => ({ list: () => templatesList }),
+    REGISTRY_DIR,
+    path: pathReal,
     ...extra,
   };
   const { m, injected } = mkPark(overrides);
@@ -3980,7 +3996,7 @@ function mkReview(extra = {}) {
   // persistence record — mirror that here so the sweep/record assertions see it.
   m.kill = async (name) => { killed.push(name); persistence.remove(name); order.push('discard'); };
   m._sendToSession = (name, channel, payload) => { contextActions.push({ name, channel, payload }); order.push('context-action'); };
-  return { m, injected, created, delivered, passive, parkedActive, gated, archived, killed, contextActions, order, persistence, acCalls, team };
+  return { m, injected, created, delivered, passive, parkedActive, gated, archived, killed, contextActions, order, persistence, acCalls, team, REGISTRY_DIR, promptDir };
 }
 
 test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inverted tools, ephemeral+reviewFor, scope delivered as an active-class park', async () => {
@@ -4503,14 +4519,6 @@ test('team-review: an empty scope is bounced, nothing spawned', async () => {
 // directory and reports a verdict, and no other line in the run says so.
 test('team-review: a role cwd the resolver refuses is NAMED in the reply, and the reviewer spawns at the team root', async () => {
   const { m, injected, created } = mkReview({
-    // mkReview does not wire `path` (mk() wires only `fs`), and _roleCwdRel calls
-    // path.isAbsolute — so without this the handler's catch turns the whole review
-    // into "error: Cannot read properties of undefined". That silent hole is why
-    // this arm went untested: every cwd on this fixture crashed before reaching it.
-    // Wired HERE rather than in mkReview: the shared fixture also reaches a
-    // path.join in the prompt preflight, where a real `path` would start resolving
-    // a file that does not exist and change replies other tests assert on.
-    path: pathReal,
     // Absolute, so the refusal is lexical and needs no directory on disk — /proj
     // is a fixture path that does not exist.
     reviewerRole: { instantiate: 'subagent', prompt: 'clodex-team-reviewer', brief: 'the reviewer',
@@ -5333,6 +5341,89 @@ test('team-review (t151): a leftover `spawnerHint` template FIELD is inert (env 
   await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(created[0][18], {}, 'the field does not become env — it is dead data');
   assert.deepStrictEqual(hints, [], 'and it drives no POST');
+});
+
+// t425. The preflight below had NEVER EXECUTED on the shared review fixture:
+// mkReview wired no `path`, so `path.join` threw and the best-effort catch ate
+// it — 33 swallowed TypeErrors across the suite, and a warning nothing could
+// reach. These three pin the branch as REACHED, not merely as passing.
+//
+// This one takes NO dep overrides at all. That is the point: it drives the
+// missing-prompt arm through the fixture every other review test uses, which is
+// only expressible now that mkReview seeds `path` + a real REGISTRY_DIR.
+test('team-review (t425): the prompt preflight RUNS on the shared fixture — no per-test dep overrides', async () => {
+  const { m, injected, created, promptDir } = mkReview();
+  // The fixture installs the prompt; remove it so the preflight has something to
+  // FIND MISSING. A warn appearing without this would mean the branch was skipped
+  // and the text came from somewhere else.
+  const installed = pathReal.join(promptDir, 'clodex-team-reviewer.md');
+  assert.ok(fsReal.existsSync(installed), 'ENTER: the fixture seeds the prompt, so removing it is what drives the arm');
+  fsReal.rmSync(installed);
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(created.length, 1, 'ENTER: the seat still spawned — the warn is advisory, never a block');
+  const confirm = injected.find((t) => /spawned team-reviewer-1/.test(t));
+  assert.ok(confirm, `ENTER: the confirm line must have landed, got: ${JSON.stringify(injected)}`);
+  // The branch RAN: only a real path.join + a real existsSync over the fixture's
+  // own registry can produce this. Under the old fixture the join threw and this
+  // was unreachable — which is what made the whole preflight dead code here.
+  assert.match(confirm, /boots UNBRIEFED/,
+    'the preflight reached its stat and reported the missing prompt');
+});
+
+// The other half of the same proof, and the one that makes the first half mean
+// something: with the file PRESENT the fixture's default reply carries no warn.
+// A preflight that threw would also produce no warn, so this pins that the
+// absence is a decision rather than a skipped branch — the arm above is what
+// separates the two.
+test('team-review (t425): the fixture default installs the prompt, so the preflight statted it and stayed quiet', async () => {
+  const { m, injected, created, promptDir } = mkReview();
+  assert.ok(fsReal.existsSync(pathReal.join(promptDir, 'clodex-team-reviewer.md')),
+    'ENTER: the seeded registry really carries the prompt the template names');
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'ENTER: one seat spawned');
+  const confirm = injected.find((t) => /spawned team-reviewer-1/.test(t));
+  assert.ok(confirm, 'ENTER: the confirm line must have landed');
+  assert.ok(!/UNBRIEFED/.test(confirm), 'no warn — the stat found the installed prompt');
+});
+
+// t425, the NON-NEGOTIABLE property of the catch: it exists so a STAT error is
+// not a spawn blocker, and narrowing it must not have cost that. Driven with an
+// fs whose existsSync THROWS — a disk that answered badly, which is the case the
+// catch was written for and the one it must keep swallowing.
+test('team-review (t425): a genuine existsSync failure is still swallowed — the reviewer spawns', async () => {
+  const { m, injected, created } = mkReview({
+    fs: { ...fsReal, existsSync: () => { throw new Error('EIO: disk said no'); } },
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(created.length, 1,
+    `ENTER: the seat spawned despite the stat throwing — a stat error is not a spawn blocker; replies: ${JSON.stringify(injected)}`);
+  const confirm = injected.find((t) => /spawned team-reviewer-1/.test(t));
+  assert.ok(confirm, 'the lead got its confirm line, not an error reply');
+  assert.ok(!/UNBRIEFED/.test(confirm), 'and no warn was invented from a stat that never answered');
+  assert.ok(!injected.some((t) => /EIO: disk said no/.test(t)), 'the stat error never reaches the lead');
+});
+
+// t425, the other side of the narrowing: a WIRING error is not a stat error and
+// must NOT be swallowed. `path` unwired is a host that failed to inject a dep —
+// with the join inside the try it vanished, taking the whole preflight with it.
+// Now it surfaces. Nothing in production leaves this unwired (engine.js passes
+// the real module); the fixture is the only place it has ever happened, and it
+// hid there for two tickets.
+test('team-review (t425): an UNWIRED path dep surfaces instead of silently skipping the preflight', async () => {
+  const { m } = mkReview({ path: undefined });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  assert.throws(
+    () => m._handleTeamReview(m.sessions.get('lead'), 'scope'),
+    /Cannot read properties of undefined \(reading 'join'\)/,
+    'the missing dep reaches someone rather than being absorbed as a best-effort stat failure');
 });
 
 // NIT 3 (unbriefed-reviewer trap): create() silently skips a missing role prompt.
