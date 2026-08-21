@@ -5414,12 +5414,22 @@ test('team-review (t425): a genuine existsSync failure is still swallowed — th
 // the real module); the fixture is the only place it has ever happened, and it
 // hid there for two tickets.
 test('team-review (t425): an UNWIRED path dep surfaces instead of silently skipping the preflight', async () => {
-  const { m } = mkReview({ path: undefined });
+  const { m, persistence } = mkReview({ path: undefined });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  assert.strictEqual(persistence.list().length, 0, 'ENTER: no seat is reserved before the call');
   assert.throws(
     () => m._handleTeamReview(m.sessions.get('lead'), 'scope'),
-    /Cannot read properties of undefined \(reading 'join'\)/,
+    // Matched on the SHAPE, not V8's sentence: the wording changed once already
+    // (`Cannot read property 'join' of undefined` before Node 16), and a pin on
+    // the exact phrasing reds on an engine bump while claiming a real defect.
+    (e) => e instanceof TypeError && /join/.test(e.message),
     'the missing dep reaches someone rather than being absorbed as a best-effort stat failure');
+  // And it costs NOTHING that has to be cleaned up. The join sits above the name
+  // reservation for exactly this reason: the only code that frees a reserved name
+  // is the deferred spawn's catch, which a synchronous throw never reaches, so a
+  // join below the upsert would strand `team-reviewer-1` on every wiring error.
+  assert.deepStrictEqual(persistence.list(), [],
+    'the throw burned no seat name — nothing survives it needing cleanup');
 });
 
 // NIT 3 (unbriefed-reviewer trap): create() silently skips a missing role prompt.

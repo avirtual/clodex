@@ -774,6 +774,14 @@ function createTicketMethods(deps, shared) {
         ? ''
         : ` — NOTE: reviewer template "${templateName}" not found in the library; spawned from built-in defaults (install it to customize)`;
       const reviewerSystemPrompt = shape.systemPromptFile;
+      // Joined HERE, above the name reservation below, and not down beside the
+      // stat that consumes it. An unwired `path` or REGISTRY_DIR throws on this
+      // line, and the only cleanup that frees a reserved name lives in the
+      // deferred spawn's catch — so computing it after the upsert would burn
+      // `team-reviewer-N` on a throw that reaches nobody but the crash log.
+      const promptFile = reviewerSystemPrompt
+        ? path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${reviewerSystemPrompt}.md`)
+        : null;
       const promptEscapeWarn = shape.promptEscaped
         ? ` — NOTE: reviewer systemPromptFile "${shape.promptEscaped}" contains a path separator or "..", which could escape library/prompts/system; ignored, using the built-in default "${REVIEWER_FALLBACK.systemPromptFile}"`
         : '';
@@ -912,13 +920,12 @@ function createTicketMethods(deps, shared) {
       });
 
       let promptWarn = '';
-      if (reviewerSystemPrompt) {
-        // The join stays OUTSIDE the try, and moving it back in is the wrong
-        // change: the catch is scoped to a STAT error, and an unwired `path` or
-        // REGISTRY_DIR also throws there. Absorbing that skipped the whole
-        // preflight silently — it never ran under the shared review fixture, so
-        // the warning below was unreachable and unproven for two tickets.
-        const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${reviewerSystemPrompt}.md`);
+      if (promptFile) {
+        // Only the STAT is guarded, and widening this back over the join is the
+        // wrong change: an unwired `path` or REGISTRY_DIR throws there too, and
+        // absorbing that skipped the whole preflight silently — it never ran
+        // under the shared review fixture, so the warning below was unreachable
+        // and unproven for two tickets.
         try {
           if (!fs.existsSync(promptFile)) {
             promptWarn = ` — WARNING: role prompt "${reviewerSystemPrompt}.md" not found under library/prompts/system, so the reviewer boots UNBRIEFED (install it, then re-review)`;
