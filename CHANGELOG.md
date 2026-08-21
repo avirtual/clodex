@@ -13,6 +13,23 @@ blocks a release.
 
 ## Unreleased
 
+- A ticket whose automatic checks fail now stays recoverable instead of going
+  quiet. When a seat closed a ticket and one of the checks that runs before the
+  review failed — nothing committed on the branch, a rebased base, a suite that
+  could not be run — Clodex told the lead and stopped there. The ticket was left
+  marked done but with nothing in flight: closing it again was refused ("is done,
+  not open"), the stall watchdog never looked at it again, and no review ever ran
+  on that branch. The only verb that moved it was **reject**, which reopens the
+  ticket and counts a rework round — recording a rejection that never happened
+  against work nobody had reviewed.
+  Such a ticket is now **held** rather than finished. Fix what the escalation
+  named and close the ticket again: the checks re-run from where they stopped and
+  the review proceeds, with the ticket never reopened and no rework round
+  invented. The board carries the held check by name, so a ticket is recoverable
+  even if the message announcing it was missed, and the watchdog re-raises it on
+  the usual schedule saying an escalation is waiting rather than reporting a
+  stuck step. Rejecting a held ticket still works and still means what it says.
+
 ## 5.15.0 — 2026-08-21 — the ticket machinery stops producing wrong results
 
 - Re-dispatching a ticket now keeps the branch it was originally given, instead
