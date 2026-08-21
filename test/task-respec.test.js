@@ -250,6 +250,64 @@ test('respec records the supersession — that it happened, and by whom', () => 
   assert.ok(t.respecs[0].at > 0 && t.respecs[1].at >= t.respecs[0].at, 'stamped in order');
 });
 
+// t392: the title alone was not enough. A respec is written as a delta against
+// the spec the seat is holding, and `ticket.spec` — the only copy of that
+// antecedent — is overwritten on the next line. The replay path delivers
+// `ticket.spec` and nothing else, so a seat replayed after a respec received a
+// delta whose antecedent existed nowhere: a well-formed, self-consistent-looking
+// document with most of the job missing and no signal it was.
+test('respec keeps the superseded BODY, not just its title', () => {
+  const f = mkRespec();
+  openPinned(f, 'first spec\ntasks/widget — the ORIGINAL BODY\nstep one\nstep two');
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'second spec\nalso do the other thing' });
+
+  const t = f.one('t1');
+  assert.strictEqual(t.respecs.length, 1, 'ENTER: the supersession was recorded at all');
+  // The whole body, byte for byte. A prefix or a title-line match would pass on a
+  // truncation, which is the failure being guarded: a partial antecedent is
+  // exactly as unusable to the replayed seat as none.
+  assert.strictEqual(t.respecs[0].spec, 'first spec\ntasks/widget — the ORIGINAL BODY\nstep one\nstep two',
+    'the superseded body is recoverable in full — this is the record the replay path had no copy of');
+  assert.strictEqual(t.spec, 'second spec\nalso do the other thing', 'and the ticket carries the NEW spec');
+});
+
+// The shape decision, pinned as a shape rather than as prose: appending to
+// `ticket.spec` was the alternative, and it is wrong here because `title`,
+// `taskDir` and the branch slug are all RE-DERIVED from the spec. An accumulated
+// document freezes the title at the first revision forever and lets extractTaskDir
+// pick a path out of a superseded one. Both derived fields are asserted, since
+// either alone would pass against half the mistake.
+test('the superseded body goes to respecs[] — never appended to the spec', () => {
+  const f = mkRespec();
+  openPinned(f, 'tasks/old-dir — the OLD title\nold body');
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'tasks/new-dir — the NEW title\nnew body' });
+
+  const t = f.one('t1');
+  assert.doesNotMatch(t.spec, /old body/, 'the spec is REPLACED, not grown — an accumulated spec corrupts everything derived from it');
+  assert.strictEqual(t.title, 'tasks/new-dir — the NEW title', 'the title tracks the current revision');
+  assert.strictEqual(t.taskDir, 'tasks/new-dir', 'and so does the artifact dir');
+  assert.strictEqual(t.respecs[0].spec, 'tasks/old-dir — the OLD title\nold body', 'the old body survives in the record instead');
+});
+
+// Repeated corrections keep EVERY antecedent, in order. A single `previousSpec`
+// field would satisfy the one-respec case above and silently lose the original on
+// the second correction — which is the ticket that most needs it, since a spec
+// corrected twice is one nobody remembers the start of.
+test('every superseded body is kept, in order, across repeated corrections', () => {
+  const f = mkRespec();
+  openPinned(f, 'revision one');
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'revision two' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', who: null, id: 't1', body: 'revision three' });
+
+  const t = f.one('t1');
+  assert.deepStrictEqual(t.respecs.map((r) => r.spec), ['revision one', 'revision two'],
+    'both antecedents, oldest first — the ORIGINAL is the one a `previousSpec` field would have dropped');
+  assert.strictEqual(t.spec, 'revision three');
+});
+
 // Same reasoning _taskAssign applies to a fresh assignment: a corrected spec is
 // changed work, so the stall clock restarts rather than counting from the
 // dispatch the hand is no longer working to.
@@ -348,6 +406,12 @@ test('a respec delivery is MARKED in the body, and tells the hand not to start o
   assert.match(body, /SUPERSEDES/, 'says the new text replaces the old');
   assert.match(body, /do NOT start over and do NOT compact/, 'countermands the hand brief`s start-clean rule');
   assert.doesNotMatch(body, /REPLAY/, 'not confused with the replay path');
+  // t392: the supersession COUNT belongs to the replay arm alone. This seat is
+  // live, holds the previous text, and is watching the transition happen — the
+  // arm above already tells it directly, and a count here would restate beside
+  // the arm what the arm just said.
+  assert.doesNotMatch(body, /REPLACED once|REPLACED \d+ times/,
+    'the count is the REPLAYED seat`s signal — this one was told directly and needs no census of its own history');
 });
 
 // The assertion that matters when the body spills: the tag is all the seat sees.

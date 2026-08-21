@@ -46,6 +46,23 @@ blocks a release.
   the ticket as the only obvious move.
   Refusing is still correct: it is what keeps two check runs off one branch.
 
+- Correcting a ticket's spec no longer throws the previous one away. **Respec**
+  replaces an open ticket's spec, and until now it recorded only the superseded
+  *title* — the previous body was kept nowhere. That mattered because corrections
+  are usually written as a delta against the spec the seat is already holding
+  ("keep everything above, but also…"), and a seat that restarts is re-sent the
+  ticket's current spec and nothing else. So a seat replayed after a correction
+  received instructions whose other half no longer existed anywhere: a
+  well-formed, complete-looking brief with most of the job missing from it, and no
+  sign anything was absent.
+  Every superseded body is now kept on the ticket, so a corrected ticket's full
+  history is recoverable. And a seat that is re-sent a corrected ticket is told
+  that the spec was replaced and how many times — with the specific warning that
+  work already in its tree which the current spec never mentions is more likely to
+  be an earlier instruction than stray work, so it is reported rather than
+  deleted. Superseded bodies stay out of the message itself and off the board's
+  data feed; the ticket list shows the correction count as it already did.
+
 ## 5.15.0 — 2026-08-21 — the ticket machinery stops producing wrong results
 
 - Re-dispatching a ticket now keeps the branch it was originally given, instead

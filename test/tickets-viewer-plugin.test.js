@@ -1156,6 +1156,43 @@ test('tickets-viewer: shape surfaces respecCount, defaulting to 0', async () => 
   } finally { cleanup(); }
 });
 
+// t392 put the full superseded BODY on each respec entry, which the test above
+// cannot speak to: its fixture entries carry a title and no spec, so they would
+// stay off the wire even if the shape shipped the array. This one writes the
+// field that now exists. The leak matters more than the old one did — a
+// superseded body is kilobytes of spec text, and crossing to a renderer that
+// draws none of it would trade this ticket's record gap for a data leak.
+test('tickets-viewer: superseded spec BODIES never cross to the renderer', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/solo/respec-bodies');
+    writeTicketsAt(home, key, [
+      ticket('t1', {
+        spec: 'the current spec',
+        respecs: [
+          { at: 1, by: 'lead', title: 'first', spec: 'SUPERSEDED-BODY-ONE and its many lines' },
+          { at: 2, by: 'lead', title: 'second', spec: 'SUPERSEDED-BODY-TWO and its many lines' },
+        ],
+      }),
+    ]);
+
+    const res = await host.dispatch('tickets-viewer', 'board', [key], 'desktop');
+    const row = res.open.find((t) => t.id === 't1');
+    // ENTER: the row reached the board carrying the CURRENT spec. Without this the
+    // absence assertions below are equally true of a row that never arrived.
+    assert.ok(row, 'the fixture reached the board');
+    assert.strictEqual(row.spec, 'the current spec', 'and the current revision does cross — that field is drawn');
+    assert.strictEqual(row.respecCount, 2, 'the count still crosses');
+
+    assert.ok(!('respecs' in row), 'the entries stay off the wire now that they carry bodies');
+    // Serialized, not just shape-checked: `shape()` is an allowlist today, but a
+    // future spread would put the bodies on the wire while `'respecs' in row`
+    // above kept passing only if the key were named exactly that.
+    assert.doesNotMatch(JSON.stringify(res), /SUPERSEDED-BODY-/,
+      'no superseded body appears anywhere in what crosses, under any key');
+  } finally { cleanup(); }
+});
+
 test('tickets-viewer: editSpec rewrites the spec AND everything derived from it', async () => {
   const { host, home, cleanup } = boot();
   try {

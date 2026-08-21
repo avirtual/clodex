@@ -2036,6 +2036,36 @@ function createTicketMethods(deps, shared) {
             + `discard only what the new spec contradicts. If work you have already done is now out of scope, `
             + `say so in your report rather than silently reverting it.\n`
           : `[ticket ${ticket.id}] `;
+      // The REPLAYED seat is the one reader storing the superseded bodies does not
+      // reach. They are on the ticket now, but a seat's only channel is this
+      // dispatch and what rides it is `ticket.spec` — the current revision alone.
+      // A respec is usually written as a delta against the spec the previous
+      // incarnation was holding, so the text below can read as the whole job while
+      // the half it was a delta against exists only in the record. Nothing else in
+      // this message can tell the seat that; the count is the signal it has no way
+      // to derive.
+      //
+      // Extends the arm's own route rather than adding a second one. The specific
+      // hazard is the one the arm's three branches do not cover: tree work matching
+      // NO part of the text below reads as stray and gets deleted, when on a
+      // superseded ticket it is the likeliest evidence of an earlier revision. That
+      // lands on the branch the arm already ends with — report it.
+      //
+      // Body only, never the pointer line: the pointer already renders the REPLAY
+      // marking, and a seat cannot act on a replay without reading the body anyway,
+      // so a second copy there would buy no turn and put the same fact in two
+      // renderers.
+      //
+      // Gated on `replay` alone. The RESPEC arm is the live seat that still holds
+      // the previous text and is being handed the transition as it happens — it is
+      // told directly, and a count would be telling it what it just watched.
+      const respecCount = Array.isArray(ticket.respecs) ? ticket.respecs.length : 0;
+      const supersededLine = (replay && respecCount)
+        ? `This ticket's spec was REPLACED ${respecCount === 1 ? 'once' : `${respecCount} times`} while it was open, and only the `
+          + `current revision is below — the earlier ones are recorded on the ticket but are NOT reproduced here, so a `
+          + `correction written as a delta reads as the whole job. Work already in the tree that the text below never `
+          + `mentions is more likely a superseded instruction than stray work: do not delete it on that basis, report it.\n`
+        : '';
       // A ticket with its own worktree: the seat's cwd is the REPO, so the tree is
       // somewhere it would not otherwise look (git puts a worktree BESIDE the repo).
       // Rides the spec on every delivery INCLUDING a replay — a respawned seat needs
@@ -2124,7 +2154,7 @@ function createTicketMethods(deps, shared) {
       // attached", which would put the close verb behind the very turn this line
       // exists to save. The verb is safe here for the same reason as in the body:
       // `[agent:from <sender>] ` precedes the tag, so it is never at column 1.
-      const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${areaLine}${sharedLine}${taskDirLine}${closeLine}${specText}`, urgent,
+      const r = this._gatedDeliver(seat, fromName, `${head}${supersededLine}${wtLine}${areaLine}${sharedLine}${taskDirLine}${closeLine}${specText}`, urgent,
         replay
           ? `[ticket ${ticket.id} REPLAY] close with ${ticketCloseVerb(ticket.id)}`
           : respec
@@ -6169,13 +6199,30 @@ function createTicketMethods(deps, shared) {
       }
       // The supersession record, so the board can show the spec CHANGED and by whom
       // — an open ticket silently rewritten into different work is the loss this
-      // verb exists to prevent. The superseded TITLE is kept, not its full text:
-      // tickets.json holds every ticket on the board and specs run to kilobytes, so
-      // retaining each one would grow the file without bound on a ticket corrected
-      // repeatedly.
+      // verb exists to prevent.
+      //
+      // The full superseded BODY is kept, not the title alone. A respec is usually
+      // written as a delta against the spec the seat is holding, and the line below
+      // is the only copy of what it was a delta against: once it is gone, a REPLAY
+      // (_replayOpenTickets, _advanceSeat — both deliver `ticket.spec` and nothing
+      // else) hands a fresh seat instructions whose antecedent does not exist. The
+      // failure is the silent kind — a well-formed, self-consistent-looking document
+      // with most of the job missing from it.
+      //
+      // Two wrong fixes, both of which look simpler:
+      // APPENDING to `ticket.spec` instead. `title`, `taskDir` and the branch slug
+      // are all RE-DERIVED from the spec (`ticketTitle`/`extractTaskDir` below,
+      // `branchSlug(titleLine(ticket.spec))` at the worktree mint), so an accumulated
+      // document freezes the title at the first revision's first line forever and
+      // lets extractTaskDir pick a path out of a revision that was superseded.
+      // CAPPING or trimming this array. Measured on the real board: 467 tickets, 32
+      // ever respecced, max 3 on any one, median spec ~2.9KB. The growth is a few
+      // hundred KB at the observed rate; a cap would drop the oldest revision, which
+      // is the one a long-running ticket's original spec lives in.
       const prevTitle = ticket.title;
+      const prevSpec = ticket.spec;
       if (!Array.isArray(ticket.respecs)) ticket.respecs = [];
-      ticket.respecs.push({ at: Date.now(), by: session.name, title: prevTitle });
+      ticket.respecs.push({ at: Date.now(), by: session.name, title: prevTitle, spec: prevSpec });
       ticket.spec = spec;
       // Derived from the spec, so both are recomputed — the same pair, from the same
       // helpers, that the board's editSpec re-derives. A stale title is the board's
