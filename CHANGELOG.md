@@ -56,11 +56,13 @@ blocks a release.
   well-formed, complete-looking brief with most of the job missing from it, and no
   sign anything was absent.
   Every superseded body is now kept on the ticket, so a corrected ticket's full
-  history is recoverable. And a seat that is re-sent a corrected ticket is told
-  that the spec was replaced and how many times — with the specific warning that
-  work already in its tree which the current spec never mentions is more likely to
-  be an earlier instruction than stray work, so it is reported rather than
-  deleted. Superseded bodies stay out of the message itself and off the board's
+  history is recoverable. And any seat handed a corrected ticket — on a restart, on
+  a **reassignment** after a seat died mid-ticket, or on its first dispatch if it
+  was corrected before anyone picked it up — is told that the spec was replaced and
+  how many times. The one exception is the seat being corrected as it works, which
+  is already told directly. The message carries a specific warning with it: work
+  already in the tree which the current spec never mentions is more likely to be an
+  earlier instruction than stray work, so it is reported rather than deleted. Superseded bodies stay out of the message itself and off the board's
   data feed; the ticket list shows the correction count as it already did.
 
 ## 5.15.0 — 2026-08-21 — the ticket machinery stops producing wrong results

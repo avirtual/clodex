@@ -406,12 +406,15 @@ test('a respec delivery is MARKED in the body, and tells the hand not to start o
   assert.match(body, /SUPERSEDES/, 'says the new text replaces the old');
   assert.match(body, /do NOT start over and do NOT compact/, 'countermands the hand brief`s start-clean rule');
   assert.doesNotMatch(body, /REPLAY/, 'not confused with the replay path');
-  // t392: the supersession COUNT belongs to the replay arm alone. This seat is
-  // live, holds the previous text, and is watching the transition happen — the
-  // arm above already tells it directly, and a count here would restate beside
-  // the arm what the arm just said.
+  // t392: this is the ONE arm the supersession clause is excluded from, and this
+  // is the assertion that guards the exclusion. The predicate is `!respec` — it
+  // rides every other dispatch, replay and first-assign alike — so the exclusion
+  // is now the only thing standing between this seat and a count restating what
+  // the arm above just told it directly. This seat is live, holds the previous
+  // text, and is watching the transition happen.
   assert.doesNotMatch(body, /REPLACED once|REPLACED \d+ times/,
-    'the count is the REPLAYED seat`s signal — this one was told directly and needs no census of its own history');
+    'the seat WATCHING the correction is told by the arm above, not by a census of its own history — this is '
+    + 'the sole exclusion from a clause that otherwise rides every dispatch');
 });
 
 // The assertion that matters when the body spills: the tag is all the seat sees.

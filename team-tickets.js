@@ -2036,35 +2036,42 @@ function createTicketMethods(deps, shared) {
             + `discard only what the new spec contradicts. If work you have already done is now out of scope, `
             + `say so in your report rather than silently reverting it.\n`
           : `[ticket ${ticket.id}] `;
-      // The REPLAYED seat is the one reader storing the superseded bodies does not
-      // reach. They are on the ticket now, but a seat's only channel is this
+      // Storing the superseded bodies fixes the RECORD; this line is what reaches
+      // the only reader that cannot consult it. A seat's sole channel is this
       // dispatch and what rides it is `ticket.spec` — the current revision alone.
-      // A respec is usually written as a delta against the spec the previous
-      // incarnation was holding, so the text below can read as the whole job while
-      // the half it was a delta against exists only in the record. Nothing else in
-      // this message can tell the seat that; the count is the signal it has no way
-      // to derive.
+      // A respec is usually written as a delta against the spec the PREVIOUS seat
+      // was holding, so the text below can read as the whole job while the half it
+      // was a delta against exists only on the ticket. The count is the signal a
+      // seat has no way to derive from anything in its hands.
       //
-      // Extends the arm's own route rather than adding a second one. The specific
-      // hazard is the one the arm's three branches do not cover: tree work matching
-      // NO part of the text below reads as stray and gets deleted, when on a
-      // superseded ticket it is the likeliest evidence of an earlier revision. That
-      // lands on the branch the arm already ends with — report it.
+      // The boundary is EVERY DISPATCH EXCEPT THE ONE THE SEAT IS WATCHING, and it
+      // must be stated as that property rather than as the name of an arm. Gated on
+      // `replay` this was too narrow by exactly the paths that matter most: assign
+      // (the documented stall remediation, run precisely when a hand died mid-ticket
+      // — which is when a respec has most likely already happened), start, and the
+      // fresh-seat spawn. Each of those hands the corrected spec to a seat that
+      // never saw a previous revision, which is this line's whole premise. Naming
+      // the arm is what hid that; `!respec` names the property.
       //
-      // Body only, never the pointer line: the pointer already renders the REPLAY
-      // marking, and a seat cannot act on a replay without reading the body anyway,
-      // so a second copy there would buy no turn and put the same fact in two
-      // renderers.
+      // The `respec` arm alone is excluded, and only because its seat is live, still
+      // holds the previous text, and is being handed the transition AS IT HAPPENS.
+      // Its own head says so directly — a count there would restate beside the arm
+      // what the arm already says.
       //
-      // Gated on `replay` alone. The RESPEC arm is the live seat that still holds
-      // the previous text and is being handed the transition as it happens — it is
-      // told directly, and a count would be telling it what it just watched.
+      // Body only, never the pointer line: the pointer already renders the arm's
+      // marking, and a seat cannot act on a dispatch without reading the body, so a
+      // second copy there would buy no turn and put one fact in two renderers.
+      //
+      // The tree sentence is conditional in wording because a first dispatch of a
+      // ticket respecced while parked reaches an EMPTY tree — the clause is true
+      // there and simply finds nothing, rather than describing work that cannot
+      // exist.
       const respecCount = Array.isArray(ticket.respecs) ? ticket.respecs.length : 0;
-      const supersededLine = (replay && respecCount)
+      const supersededLine = (!respec && respecCount)
         ? `This ticket's spec was REPLACED ${respecCount === 1 ? 'once' : `${respecCount} times`} while it was open, and only the `
           + `current revision is below — the earlier ones are recorded on the ticket but are NOT reproduced here, so a `
-          + `correction written as a delta reads as the whole job. Work already in the tree that the text below never `
-          + `mentions is more likely a superseded instruction than stray work: do not delete it on that basis, report it.\n`
+          + `correction written as a delta reads as the whole job. If work is already in the tree that the text below never `
+          + `mentions, it is more likely a superseded instruction than stray work: do not delete it on that basis, report it.\n`
         : '';
       // A ticket with its own worktree: the seat's cwd is the REPO, so the tree is
       // somewhere it would not otherwise look (git puts a worktree BESIDE the repo).
