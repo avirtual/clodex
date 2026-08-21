@@ -754,6 +754,10 @@ which is why the judgement worth testing is pushed down here.
   the screen.
 - **turn-stat.js** — which turn number is shown, shared by the statusbar and the
   sidebar hovercard so the two can never disagree.
+- **cost-by-line.js** — the cost popover's per-line attribution model. Owns the
+  scope pick (`costRun || cost`) that keeps the section rendering identically
+  with the W2 overlay on and off; distinct from turn-stat.js's `costScopes`,
+  which deliberately returns BOTH scopes for the bar to label.
 - **meta/session dialog leaves**: **args-model.js** (the Model field as a VIEW
   onto the `--model` token inside extraArgs — no separate persisted field),
   **env-edit.js** (the `KEY=value`-per-line textarea → the flat object `create()`

@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- The cost popover's "By line" breakdown is back, and its percentages are right.
+  It splits a session's estimated spend across the main line and each subagent,
+  and it was reading its total from a different accounting than the shares it
+  divided by that total — a lifetime figure over per-run rows. So the shares
+  read lower the longer the app had been running, the "Main line" row went
+  missing, and on a session with no subagents at all the whole section
+  disappeared. It now reads every figure from one place.
+
 - Handlers can no longer quietly use a feature the browser transport does not
   have. Clodex serves the same UI to the desktop app and to a browser, and the
   object a handler uses to reply to whoever called it is not identical across the

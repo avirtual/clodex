@@ -11,6 +11,7 @@
 const { esc, fmtUsd } = require('../lib/format');
 const { costStackBlock, svgCostChart } = require('../lib/render-html');
 const { COST_SPINE, COST_CONTENT } = require('../lib/constants');
+const { costByLine } = require('../lib/cost-by-line');
 
 function initCostPopover({ popoverApi, proxyState }) {
   // --- Cost-over-time popover ----------------------------------------------
@@ -47,38 +48,26 @@ function initCostPopover({ popoverApi, proxyState }) {
   }
 
   // Per-line cost attribution (wirescope v0.6.22+ cost_by_line). Sourced from the
-  // LIVE status payload — cost.usd (whole tree), cost.mainUsd (main line's own
-  // share), subagents[].estUsd (each sub's share) — not the report, so it's free
-  // (rides the poll). Answers "where did a fan-out run's cost actually go" that
-  // the single whole-tree number couldn't. Rendered only when the capability is
-  // advertised and at least one line carries a billed share (null = unbilled/
-  // pre-.22, NEVER treated as $0). Sorted by cost desc; unbilled subs listed muted.
+  // LIVE status payload, not the report, so it's free (rides the poll). Answers
+  // "where did a fan-out run's cost actually go" that the single whole-tree
+  // number couldn't. Which cost object those figures come from is the leaf's
+  // call (renderer/lib/cost-by-line.js — the scope pick is the whole reason it
+  // exists); this is the HTML for its model. Sorted by cost desc; unbilled subs
+  // listed muted.
   function renderCostByLine(p) {
-    if (!p || !p.capabilities || !p.capabilities.cost_by_line || !p.cost) return '';
-    const whole = typeof p.cost.usd === 'number' ? p.cost.usd : null;
-    const main = typeof p.cost.mainUsd === 'number' ? p.cost.mainUsd : null;
-    const subs = Array.isArray(p.subagents) ? p.subagents : [];
-    const billedSubs = subs.filter((s) => typeof s.estUsd === 'number');
-    if (main == null && !billedSubs.length) return ''; // nothing attributed yet
-    const pct = (v) => (whole && whole > 0 && typeof v === 'number') ? ` · ${Math.round((v / whole) * 100)}%` : '';
-    const rows = [];
-    if (main != null) {
-      rows.push({ label: 'Main line', usd: main, cls: 'cost-line-main' });
-    }
-    for (const s of subs) {
-      rows.push({ label: s.label || s.key, usd: (typeof s.estUsd === 'number' ? s.estUsd : null), cls: '' });
-    }
-    // Billed rows sorted high→low; unbilled (null) sink to the bottom.
-    rows.sort((a, b) => (b.usd == null ? -1 : b.usd) - (a.usd == null ? -1 : a.usd));
-    const body = rows.map((r) => {
+    const model = costByLine(p);
+    if (!model) return '';
+    const body = model.rows.map((r) => {
+      const cls = r.main ? 'cost-line-main' : '';
       if (r.usd == null) {
-        return `<div class="cost-line-row ${r.cls}"><span class="cost-line-label">${esc(r.label)}</span>`
+        return `<div class="cost-line-row ${cls}"><span class="cost-line-label">${esc(r.label)}</span>`
           + `<span class="cost-line-usd cost-line-unbilled">unbilled</span></div>`;
       }
-      return `<div class="cost-line-row ${r.cls}"><span class="cost-line-label">${esc(r.label)}</span>`
-        + `<span class="cost-line-usd">${fmtUsd(r.usd)}<span class="cost-line-pct">${pct(r.usd)}</span></span></div>`;
+      const pct = r.pct != null ? ` · ${r.pct}%` : '';
+      return `<div class="cost-line-row ${cls}"><span class="cost-line-label">${esc(r.label)}</span>`
+        + `<span class="cost-line-usd">${fmtUsd(r.usd)}<span class="cost-line-pct">${pct}</span></span></div>`;
     }).join('');
-    const totalTxt = whole != null ? fmtUsd(whole) : '';
+    const totalTxt = model.total != null ? fmtUsd(model.total) : '';
     return `<div class="cost-sec-title"><span>By line</span><span class="ctx-line-total">${totalTxt}</span></div>`
       + `<div class="cost-line-list">${body}</div>`
       + `<div class="cost-note">Whole-tree estimate split across the main line and its subagents. Shares ride the live poll (no extra fetch).</div>`;
