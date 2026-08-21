@@ -448,6 +448,73 @@ test('t392: a seat replayed after a respec is TOLD the spec was superseded', asy
   } finally { app2.stop(); }
 });
 
+// r2, the case a reading review cannot see: the clause was gated on `replay`,
+// which left the ticket's own defect live on the path most likely to meet it.
+// REASSIGNMENT is the documented stall remediation — what the lead runs when a
+// hand dies mid-ticket, which is exactly when a respec has already happened — and
+// it delivers with replay=false. The seat arriving through it never saw any
+// previous revision, so the premise of the whole fix ("a seat whose only channel
+// is the dispatch cannot know the spec was superseded") applies to it in full.
+test('t392: a seat REASSIGNED onto a respecced ticket is told the spec was superseded', async () => {
+  const world = mkWorld();
+  await assignedThenRespecced(world, 'REVISED WIDGET\ntasks/widget/SPEC.md\nalso do step two');
+
+  // A fresh process where the original seat is GONE and a sibling on the same role
+  // is live — the state the lead reassigns out of.
+  const app2 = boot(world);
+  try {
+    const lead = await app2.spawn('lead');
+    await app2.spawn('team-hand-2');
+    assert.ok(!app2.m.sessions.get('team-hand'),
+      'ENTER: the seat that held the ticket must be absent, or this is a re-send to the holder and not a reassign');
+
+    app2.m._handleTask(lead, { type: 'task', sub: 'assign', id: 't1', who: 'team-hand-2', body: '' });
+    const got = await settled(app2, 'team-hand-2', /REVISED WIDGET/);
+    assert.match(got, /REVISED WIDGET/,
+      'ENTER: the reassigned seat must have received the spec at all — every assertion below is about its text');
+    assert.doesNotMatch(got, /REPLAY|RESPEC/,
+      'ENTER: and it arrives on the ORDINARY dispatch arm — if this were marked, the old `replay` gate would '
+      + 'have covered it and this subject would prove nothing');
+
+    assert.match(got, /REPLACED once/,
+      'the reassigned seat must be told the spec was superseded: it never saw the previous revision, and a '
+      + 'correction written as a delta reads to it as the whole job');
+    assert.match(got, /do not delete it on that basis, report it/,
+      'and told what to do with tree work the current revision never mentions — the tree it inherits is the '
+      + 'previous seat`s, built against a spec this message does not contain');
+  } finally { app2.stop(); }
+});
+
+// The exclusion, driven on the same axis: `start` is a first dispatch, and a
+// ticket respecced while PARKED reaches it with a count already on the record.
+// That seat has no prior text either — it is not the seat that watched the
+// transition — so the clause rides. Its tree is empty, which is why the sentence
+// is worded to find nothing rather than to describe work that cannot exist.
+test('t392: a FIRST dispatch of a ticket respecced while parked carries the clause too', async () => {
+  const world = mkWorld();
+  const app = boot(world);
+  try {
+    const lead = await app.spawn('lead');
+    await app.spawn('team-hand');
+    app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nstep one' });
+    app.m._handleTask(lead, { type: 'task', sub: 'respec', who: null, id: 't1', body: 'REVISED BEFORE ANY SEAT SAW IT\ntasks/widget/SPEC.md\nstep two' });
+    // ENTER: the correction landed on a ticket that had NOT been dispatched, so no
+    // seat has ever held a revision of it. Without this the subject below is just
+    // the reassign case again.
+    assert.strictEqual(world.tickets().find((t) => t.id === 't1').respecs.length, 1,
+      'ENTER: the respec was recorded');
+    assert.doesNotMatch(app.seen('team-hand'), /BUILD THE WIDGET|REVISED BEFORE/,
+      'ENTER: and it was never delivered — an undispatched ticket has no seat to correct');
+
+    app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+    const got = await settled(app, 'team-hand', /REVISED BEFORE/);
+    assert.match(got, /REVISED BEFORE ANY SEAT SAW IT/, 'ENTER: the first dispatch delivered the current revision');
+    assert.match(got, /REPLACED once/,
+      'a first dispatch carries it too: this seat never saw the superseded text either, and the lead`s reply to '
+      + 'the respec said the correction was recorded — not that it had been sent to anyone');
+  } finally { app.stop(); }
+});
+
 // The mutation this pins: render the line unconditionally, or key it off
 // `Array.isArray(respecs)` rather than its length. Both pass every assertion
 // above, and both put "your spec was replaced" on the replay of a ticket that was
