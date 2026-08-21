@@ -583,7 +583,14 @@ test('an unresolvable task dir escalates BEFORE the diff is computed, not after'
   // absences, because the first draft of this message prescribed `task edit`
   // (no such verb in parseTask) and "re-run task done" (refused — the ticket is
   // already done), and this pin locked that dead end in instead of catching it.
-  assert.match(esc[0].body, /\[agent:task reject t1\]/, 'the recovery names the verb that actually reopens it');
+  // NOT `reject`. This pin asserted it until t406, and it contradicted the MF2
+  // subject below — which asserts this same arm must say "Re-closing alone will
+  // NOT help … Correct the spec", i.e. do NOT reject. Two subjects in one file
+  // prescribing opposite routes, green only because the evidence string still
+  // carried a stale `reject` the arm had already stopped recommending. What the
+  // message must name is a verb that EXISTS and terminates; which verb is the
+  // arm's call, and it is pinned there.
+  assert.match(esc[0].body, /\[agent:task done t1\]/, 'the recovery names the verb the spec arm actually prescribes');
   assert.doesNotMatch(esc[0].body, /task edit/, 'there is no `edit` verb in the task grammar');
   assert.doesNotMatch(esc[0].body, /re-run `?task done/, 'and `done` is refused on an already-done ticket');
   // The advice is EXECUTED, not pattern-matched. Two earlier versions of this
@@ -597,17 +604,26 @@ test('an unresolvable task dir escalates BEFORE the diff is computed, not after'
   assert.ok(lit, 'ENTER: the message must suggest a task intent at all');
   const parsed = parseWithRegistry(`${lit[0]} the spec names no artifact dir`);
   assert.ok(parsed && parsed.type === 'task', 'the suggested intent must actually parse');
-  assert.strictEqual(parsed.sub, 'reject', 'and it is the verb that reopens a done ticket');
+  assert.strictEqual(parsed.sub, 'done', 'and it is the verb the spec arm prescribes — re-close, after editing the spec in place');
   assert.strictEqual(parsed.id, 't1', 'carrying the ticket the escalation is about');
   assert.ok(intentEnabled('task'), 'ENTER: the task intent is enabled, so the advice is executable');
 
   // END-TO-END: the parsed intent is DRIVEN, so this pins that the recovery
   // WORKS rather than that the string looks right. The ticket is still `done`
-  // here — _escalateTicket clears loopStep only — which is exactly the state
-  // _taskReject demands, and that coupling is invisible to any string check.
-  assert.strictEqual(f.one().state, 'done', 'ENTER: escalation leaves the ticket done, which is what reject needs');
-  f.m._handleTask(f.m.sessions.get('lead'), { ...parsed, body: 'the spec names no artifact dir' });
-  assert.strictEqual(f.one().state, 'open', 'following the advice actually reopens the ticket');
+  // here — _escalateTicket clears loopStep only — and the arm's route is to
+  // correct the spec IN PLACE (editable in any state) and then re-close, which
+  // re-runs the checks from where they stopped. That coupling between the
+  // advised verb and the state the ticket is actually in is invisible to any
+  // string check, and it is the whole reason this block drives the intent.
+  assert.strictEqual(f.one().state, 'done', 'ENTER: escalation leaves the ticket done and held');
+  const held = f.one().verifyHold;
+  assert.ok(held && held.recovery === 'spec', 'ENTER: held under the SPEC class, which is the arm rendered above');
+  // The spec is corrected first — the step the arm names and the only one that
+  // changes the input the failing check re-reads. Without it the re-close is the
+  // non-terminating loop the arm exists to warn against.
+  f.tstore.save(f.team.root, [{ ...f.one(), spec: 'tasks/fixed — a title\n\nbody', taskDir: 'tasks/fixed' }]);
+  f.m._handleTask(f.m.sessions.get('lead'), { ...parsed, body: 'the spec now names its artifact dir' });
+  assert.strictEqual(f.one().taskDir, 'tasks/fixed', 'the corrected spec is what the re-close reads');
 });
 
 // The OTHER arm of the same check, and a regression the hoist introduced: a
@@ -3784,6 +3800,30 @@ test('t345 r4 MF2: the task-dir arm gets a TERMINATING recovery, not "close it a
   assert.strictEqual(nudges.length, 1, 'ENTER: the held ticket alarmed');
   assert.match(nudges[0].body, /Re-closing alone will NOT help/,
     'the alarm renders the same field — one renderer, so it cannot contradict the escalation');
+});
+
+test('t406: the task-dir EVIDENCE names the defect and leaves the route to the arm', async () => {
+  // The other half of the same message. MF2 fixed the RECOVERY arm; the evidence
+  // above it kept prescribing "reject … then re-file", so one escalation carried
+  // both "reject it" and "do NOT reject, edit in place and close again" two lines
+  // apart. A lead following the evidence counts a rework round against a hand
+  // that did not write the spec — the misattribution the arm exists to remove.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, ticketOver: { spec: 'a title with no artifact path\n\nbody', taskDir: undefined } });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const body = f.esc()[0].body;
+  assert.match(body, /names no `tasks\/…` path/, 'ENTER: this is the task-dir arm, or the assertions below are about another message');
+  assert.match(body, /Re-closing alone will NOT help/, 'ENTER: the spec arm rendered, so there IS a route to contradict');
+  // The route is the arm's, and the arm says the opposite of rejecting.
+  assert.doesNotMatch(body, /\[agent:task reject t1\]/,
+    'the evidence must not prescribe a reject the recovery arm two lines below tells the lead not to do');
+  assert.doesNotMatch(body, /re-file/,
+    'nor "re-file", which names no verb and reads as "the reject body becomes the new spec" — it does not');
 });
 
 test('t345 r4 MF2: respec KEEPS its reject-first route for a spec hold', async () => {

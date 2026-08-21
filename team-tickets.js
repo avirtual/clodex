@@ -4809,9 +4809,16 @@ function createTicketMethods(deps, shared) {
           // be suggested: there is no `edit` verb in the task grammar
           // (intent-registry parseTask), and the ticket is already `done` here,
           // which `_taskDone` refuses. `task reject` is what reopens it.
+          // The FIX belongs to the `spec` recovery arm rendered below this
+          // evidence, and must not be restated with a different route: this arm
+          // used to say "reject, then re-file" while the arm two lines down said
+          // "do NOT reject — edit the spec in place, then close again". Two
+          // contradictory instructions in one message, one of which counts a
+          // rework round against a hand that did not write the spec. Name the
+          // DEFECT here; the route is the arm's job.
           const fix = ticket.taskDir
-            ? `Fix: correct the path in the ticket's spec so it stays under the projects root.`
-            : `Its spec names no \`tasks/…\` path on any line. Fix: \`[agent:task reject ${ticket.id}] <reason>\` to reopen it, then re-file with the artifact dir in the spec.`;
+            ? `The path is named but escapes the projects root.`
+            : `Its spec names no \`tasks/…\` path on any line.`;
           fail('verify: task-dir', `ticket ${ticket.id} has no usable task dir to write the review diff into (taskDir: ${ticket.taskDir || 'none'}): ${dest.error}. ${fix}`,
             'checked the task dir BEFORE computing a diff; no diff computed, no reviewer spawned', 'spec');
           return;
