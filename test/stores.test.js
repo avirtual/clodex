@@ -972,6 +972,103 @@ test('seed reconcile: manifest is not rewritten when nothing changed', () => {
   });
 });
 
+// --- t455: a STRANDED file (matches neither its stamp nor the ship) ----------
+// The guard that preserves operator edits also silently freezes a stale shipped
+// copy: both look like "diverged". Bytes cannot tell them apart, so the shipped
+// behaviour is report-never-repair, with one content-free exception (stamp
+// convergence). A log seam that records the channel keeps the report assertable.
+function captureLog() {
+  const calls = [];
+  const rec = (level) => (chan, msg) => { calls.push({ level, chan, msg: String(msg) }); };
+  return { calls, info: rec('info'), warn: rec('warn'), error: rec('error'),
+    seedWarnings() { return this.calls.filter((c) => c.level === 'warn' && c.chan === 'seed'); } };
+}
+
+test('seed reconcile: a live file matching NO shipped revision is never overwritten', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('templates', 'reviewer.json');
+    fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V2');
+    // The measured reviewer-template shape: dest holds real operator config that
+    // equals neither the stamp (V1) nor any shipped bytes. Overwriting it would
+    // destroy the config, so this is the file the repair must refuse to touch.
+    stageDest(registryDir, rel, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+
+    initStores(userData, { registryDir, resourcesDir });
+
+    const dest = path.join(registryDir, 'library', rel);
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'OPERATOR_CONFIG',
+      'operator config preserved: never overwrite bytes matching no shipped revision');
+    assert.strictEqual(readSeedState(registryDir)[rel], sha256(Buffer.from('SHIPPED_V1')),
+      'stamp left alone too -- restamping here would silently adopt the edit as shipped');
+  });
+});
+
+test('seed reconcile: a stranded file is REPORTED, naming the file', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('templates', 'reviewer.json');
+    fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V2');
+    stageDest(registryDir, rel, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+    const log = captureLog();
+
+    initStores(userData, { log, registryDir, resourcesDir });
+
+    // ENTER: the seed warning must exist at all -- every assertion below is
+    // about its text, and an empty filter would satisfy all of them vacuously.
+    const warns = log.seedWarnings();
+    assert.strictEqual(warns.length, 1, 'exactly one seed warning for the stranded file');
+    assert.match(warns[0].msg, /reviewer\.json/, 'the report names the stranded file');
+    assert.match(warns[0].msg, /never receive shipped updates/,
+      'the report says WHAT is wrong (updates withheld), not just that bytes differ');
+  });
+});
+
+test('seed reconcile: an operator edit is NOT reported while the ship has not moved', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('templates', 'reviewer.json');
+    fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V1');
+    // Edited, but the stamp IS the shipped bytes: no update is being withheld
+    // yet, so warning here would fire on every edited file on every launch.
+    stageDest(registryDir, rel, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+    const log = captureLog();
+
+    initStores(userData, { log, registryDir, resourcesDir });
+
+    // Reaching the guarded state is the precondition -- assert it before the
+    // absence, or an unseeded/absent file would pass the absence for free.
+    const dest = path.join(registryDir, 'library', rel);
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'OPERATOR_CONFIG', 'edit still on disk');
+    assert.deepStrictEqual(log.seedWarnings(), [], 'no report: nothing is being withheld');
+  });
+});
+
+test('seed reconcile: live == shipped with a lagging stamp converges, back onto the upgrade path', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('prompts', 'system', 'lead.md');
+    fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'V2');
+    // Hand-repaired (copied shipped bytes over) but never re-stamped: diverged
+    // from the stamp, yet identical to the ship. Converging the stamp writes no
+    // content, so it is the one repair that cannot destroy an edit.
+    stageDest(registryDir, rel, 'V2', 'V1');
+    const log = captureLog();
+
+    initStores(userData, { log, registryDir, resourcesDir });
+
+    const dest = path.join(registryDir, 'library', rel);
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'V2', 'content untouched by the stamp convergence');
+    assert.strictEqual(readSeedState(registryDir)[rel], sha256(Buffer.from('V2')), 'stamp converged to the shipped hash');
+    assert.deepStrictEqual(log.seedWarnings(), [], 'converged, so nothing is stranded to report');
+
+    // The convergence is only worth anything if the NEXT ship now lands.
+    fs.writeFileSync(path.join(resourcesDir, rel), 'V3');
+    initStores(userData, { registryDir, resourcesDir });
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'V3', 'next ship upgrades it -- no longer stranded');
+  });
+});
+
 // --- T26: all three default team role prompts ship + brief the live protocols
 const TEAM_ROLE_PROMPTS = ['clodex-team-lead', 'clodex-team-hand', 'clodex-team-reviewer'];
 const REPO_SYSTEM_DIR = path.join(__dirname, '..', 'resources', 'library', 'prompts', 'system');
