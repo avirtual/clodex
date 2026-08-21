@@ -9323,6 +9323,81 @@ test('t322 the alarm carries the seat`s last tool, and never dirty on its own', 
   assert.doesNotMatch(nudges[0].body, /last tool Read/, 'the completed call before it is not the story');
 });
 
+test('t389 the alarm names the API error the seat stopped on, read from its real transcript', async () => {
+  // END TO END, because the formatter unit tests pass whether or not anything
+  // WIRES them: `_stallEvidence` must read the record off the seat's actual
+  // transcript symlink and the alarm must carry it. Same fixture shape as the
+  // t322 last-tool test one above, so the only new thing is the error record.
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+
+  const runDir = pathReal.join(f.home, 'run', 'team-hand');
+  fsReal.mkdirSync(runDir, { recursive: true });
+  const real = pathReal.join(runDir, 'real.jsonl');
+  fsReal.writeFileSync(real, [
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', id: 'x1' }] } }),
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_result', tool_use_id: 'x1', is_error: false }] } }),
+    // The real shape: an ordinary assistant record carrying the marker, then the
+    // bookkeeping entries that follow it in every measured transcript.
+    JSON.stringify({
+      type: 'assistant', isApiErrorMessage: true,
+      message: { model: '<synthetic>', content: [{ type: 'text', text: 'API Error: 529 Overloaded. This is a server-side issue, usually temporary.' }] },
+    }),
+    JSON.stringify({ type: 'last-prompt', prompt: 'continue' }),
+  ].join('\n') + '\n');
+  fsReal.symlinkSync(real, pathReal.join(runDir, 'transcript.jsonl'));
+
+  const arr = f.load();
+  arr[0].lastActivityAt = Date.now() - stallMs * 2;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+  await f.m._sweepTickets(Date.now());
+
+  const nudges = f.gated.filter((g) => /stalled/.test(g.body));
+  assert.strictEqual(nudges.length, 1, 'ENTER: the stalled ticket produced exactly one alarm');
+  assert.match(nudges[0].body, /ends on an API error: "API Error: 529 Overloaded/,
+    'the cause the seat itself reported, not just the silence the sweep measured');
+});
+
+test('t389 a transcript with NO error record leaves the alarm exactly as it was', async () => {
+  // The negative half, wired: the same fixture as the t322 last-tool alarm, and
+  // the body must carry no cause clause at all. Without this, a helper that
+  // returned a truthy value on every transcript would still pass the positive.
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+
+  const runDir = pathReal.join(f.home, 'run', 'team-hand');
+  fsReal.mkdirSync(runDir, { recursive: true });
+  const real = pathReal.join(runDir, 'real.jsonl');
+  fsReal.writeFileSync(real, [
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', id: 'x2' }] } }),
+    // The over-match bait, on the wire: <synthetic> with no marker is a healthy
+    // seat, and 95 of 127 measured <synthetic> records are exactly this.
+    JSON.stringify({ type: 'assistant', isSidechain: true, message: { model: '<synthetic>', content: [{ type: 'text', text: 'No response requested.' }] } }),
+  ].join('\n') + '\n');
+  fsReal.symlinkSync(real, pathReal.join(runDir, 'transcript.jsonl'));
+
+  const arr = f.load();
+  arr[0].lastActivityAt = Date.now() - stallMs * 2;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+  await f.m._sweepTickets(Date.now());
+
+  const nudges = f.gated.filter((g) => /stalled/.test(g.body));
+  assert.strictEqual(nudges.length, 1, 'ENTER: the alarm fired, so the absence below is about its content');
+  assert.match(nudges[0].body, /last tool Bash never returned/,
+    'ENTER: and the evidence probe really did read this transcript');
+  assert.doesNotMatch(nudges[0].body, /API error/, 'nothing stopped on an error, so nothing claims one did');
+});
+
 test('t322 an unreadable transcript drops the field rather than guessing', async () => {
   const f = mkTasks();
   const stallMs = 30 * 60 * 1000;
