@@ -26,7 +26,9 @@ blocks a release.
   pointer from the same repo, and so had the same problem. The line also says
   the path names a directory (the pointer usually ends in a file) and that it
   may not exist yet, since reading its absence as "there is no artifact" is the
-  step that actually went wrong. The stored spec is untouched, so what the
+  step that actually went wrong. Only the seat doing the work is told to create
+  it — the reviewer, which cannot write anything, is told the same fact without
+  an instruction it could not follow. The stored spec is untouched, so what the
   review sees is still what was written; a path that Clodex itself would refuse
   to write to is simply not named, and the ticket is dispatched either way.
 

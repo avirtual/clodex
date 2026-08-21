@@ -46,6 +46,9 @@ const specBody = (id, spec, taskDirLine = '') => `[ticket ${id}] ${taskDirLine}$
 // helper, which is the part these tests actually pin.
 const ticketsMod = require('../tickets-store');
 const clodexPaths = require('../clodex-paths');
+// The resolver itself, for the one ENTER that must show a REFUSAL rather than an
+// unplaceable pointer: _ticketDiffDest reports both arms as `{ok:false}`.
+const teamCost = require('../team-cost');
 const { extractMustFix, countMustFix } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { parseWithRegistry } = require('../intent-registry');
@@ -1509,6 +1512,60 @@ test('the reviewer scope carries the SAME rule clause the hand is given, from th
     'and the hand\'s dispatch line states it in those same words — one renderer, one wording');
 });
 
+// The other half of "one wording": the two seats are not the same seat. The
+// reviewer is read-only by construction (REVIEWER_TOOL_CAP is Read/Grep/Glob and
+// its scope says so in words), so an instruction to CREATE the directory is one
+// it cannot follow — while the fact the imperative rides on, that an absent dir
+// proves nothing, is exactly what a reviewer needs. Split by AUDIENCE, never by
+// wording: the fix that gave the two renderers different clause text is the
+// divergence t453 closed.
+test('the CREATE instruction reaches the hand only — the read-only reviewer gets the fact without it', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+  const t = f.one('t1');
+  let scope = null;
+  f.m._handleTeamReview = (_s, body) => { scope = body; };
+  f.m._spawnTicketReview(f.team, 't1', '/tmp/d.diff');
+  assert.ok(scope, 'ENTER: the scope must have been built');
+  const render = f.m._ticketTaskDirRender(f.team, t);
+  // ENTER: both renderings must be non-empty, or "the scope lacks the
+  // imperative" is true of a scope that renders no task dir at all.
+  assert.ok(render.rule && render.line, 'ENTER: a relative pointer must render both a rule and a line');
+  assert.ok(scope.includes(render.rule), 'ENTER: the scope must carry the rule clause under test');
+
+  assert.match(render.line, /So create it/,
+    'the dispatch tells the seat that CAN write the artifact to create the directory');
+  assert.ok(!/create it/i.test(scope),
+    'the reviewer scope carries no instruction to create anything — it has no write tool and its scope forbids editing');
+  // The half that must survive the split, in BOTH: it is the t451 failure step,
+  // and a reviewer reads absence the same way a hand does.
+  assert.match(render.rule, /absence is not evidence/,
+    'the FACT is what the shared clause states');
+  assert.match(scope, /absence is not evidence/, 'and the reviewer is told it too');
+});
+
+// The gate travels with the PROSE, not with the call sites. `ticketTaskDirLine`
+// is exported (session-manager re-exports it, and suites pin delivered bodies
+// through it), so a future caller handing it an already-absolute pointer must
+// not get a line asserting that path "is relative to the PROJECT'S ARTIFACT
+// DIR". Called directly rather than through a dispatch, because the production
+// caller passes the raw string only on the relative arm — which is exactly the
+// discipline that would stop travelling with the helper.
+test('the exported TASK DIR line gates its clause on the pointer being RELATIVE, not merely present', () => {
+  const dir = '/home/u/.clodex/projects/p-1234abcd/tasks/thing';
+  const relative = ticketTaskDirLine(dir, 'tasks/thing/SPEC.md');
+  // ENTER: the relative arm must actually render the prose, or the absences
+  // below are true of a helper that renders no clause for any input at all.
+  assert.match(relative, /relative to the PROJECT'S ARTIFACT DIR/,
+    'ENTER: a relative pointer still earns the clause');
+
+  for (const raw of ['/abs/tasks/thing/SPEC.md', '~/tasks/thing/SPEC.md']) {
+    const line = ticketTaskDirLine(dir, raw);
+    assert.strictEqual(line, `TASK DIR: ${dir}\n`,
+      `an already-placed pointer (${raw}) names the dir and explains nothing`);
+  }
+});
+
 // The condition must match too. A `~`/absolute pointer means the same to an
 // agent as it does here, so neither side explains it — if the scope started
 // carrying a clause the dispatch withholds, the two have diverged again in
@@ -1546,9 +1603,24 @@ test('a task dir the confinement REFUSES drops the scope line and still spawns t
     f.tstore.save(f.team.root, ts);
   }
   const t = f.one('t1');
-  // ENTER: this must be the arm that THROWS, not one that merely returns null.
-  assert.throws(() => f.m._ticketDiffDest(f.team, t).ok === true || (() => { throw new Error('x'); })(),
-    'ENTER: the confinement must refuse this pointer');
+  // ENTER: this must be the arm that THROWS, not one that merely returns null —
+  // a pointer that resolved to nothing would drop the line for an unrelated
+  // reason and make the absences below vacuous. _ticketDiffDest reports both
+  // arms the same way (it catches and returns `{ok:false}`), so the throw is
+  // asserted where it actually happens, against the resolver itself.
+  // Read OFF THE RECORD, never restated as a literal: a hardcoded string asserts
+  // a throw the ticket under test may not produce, so the fixture could be
+  // changed to a resolvable pointer without this ENTER noticing.
+  assert.strictEqual(t.taskDir, 'tasks/../../../../../../etc/pwn',
+    'ENTER: the ticket must carry the escaping pointer');
+  assert.throws(() => teamCost.resolveTaskDir({
+    taskDir: t.taskDir,
+    projectDir: clodexPaths.projectDirFor(f.home, f.team.root),
+    projectsRoot: pathReal.join(f.home, 'projects'),
+    homedir: osReal.homedir(),
+  }), 'ENTER: the confinement must REFUSE this pointer, not merely fail to place it');
+  assert.strictEqual(f.m._ticketDiffDest(f.team, t).ok, false,
+    'ENTER: and the caller must see that refusal as an unusable destination');
 
   let scope = null;
   f.m._handleTeamReview = (_s, body) => { scope = body; };
@@ -1556,6 +1628,14 @@ test('a task dir the confinement REFUSES drops the scope line and still spawns t
 
   assert.ok(scope, 'the review is still spawned — a rendering line must not be able to strand it');
   assert.ok(!/TASK DIR: /.test(scope), 'and names no task dir at all rather than a refused one');
-  assert.ok(!scope.includes('etc/pwn') || scope.includes('SPEC'),
-    'the escaping value reaches the reviewer only inside the verbatim spec, if at all');
+  // Scoped to the RENDERED prefix, exactly as the dispatch twin in
+  // session-manager.test.js is. The whole-scope form was `!includes('etc/pwn')
+  // || includes('SPEC')`, whose right disjunct is unconditionally true for any
+  // ticket carrying a spec — so it passed even against a scope that rendered the
+  // escaping pointer itself. The spec arrives verbatim below the slice and may
+  // legitimately carry the string.
+  const rendered = scope.slice(0, scope.indexOf('SPEC — what this ticket'));
+  assert.ok(rendered, 'ENTER: the spec section must be present, or the slice is the whole scope');
+  assert.ok(!rendered.includes('etc'),
+    'nothing Clodex RENDERED mentions the escaping target — only the lead\'s own text does');
 });

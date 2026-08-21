@@ -284,9 +284,14 @@ not by size:
   exported function, called from `engine.js` inside a catch-and-log so a failure
   degrades to a log line. COPY then mark — the source file is left in place.
 - **ticket-review-scope.js** — the reviewer's scope, built from the ticket
-  record and git ALONE (`buildReviewScope`, `VERDICT_GRAMMAR`). Zero lead prose
-  is the whole point: the measured defect it closes is every verdict costing two
-  round trips through a lead whose own verification had already happened.
+  record, git, and a caller-resolved `taskDir`/`taskDirRule` — no lead prose
+  (`buildReviewScope`, `VERDICT_GRAMMAR`). Zero lead prose is the whole point:
+  the measured defect it closes is every verdict costing two round trips through
+  a lead whose own verification had already happened. There is deliberately NO
+  fallback to `ticket.taskDir`: that field is the raw spec string and the
+  reviewer's cwd is the repo, which carries a stale `tasks/` whose names collide
+  with the artifact dir's — restoring the fallback sends a reviewer into a real
+  but wrong tree, silently, and does it precisely when resolution was REFUSED.
 - **stall-evidence.js** — the evidence a stall alarm carries, so a lead can tell
   a seat that is WRITING from a seat that is WEDGED without probing by hand. The
   failure it prevents is measured: a watchdog fired "hand quiet 30m", the lead
