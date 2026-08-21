@@ -1,12 +1,17 @@
 #!/bin/sh
-# check-syntax.sh — node --check every changed .js file (vs HEAD, plus
-# untracked) and write a ONE-LINE digest to STDERR, exit 0/1. Built for the
-# `check-syntax` exec registry entry (replyStderr: true), same contract as
-# test-digest.sh: the dispatcher returns only the LAST stderr line (200-char
-# slice), so the whole verdict lives on a single bounded line.
-#   pass: "syntax OK (4 files)"
-#   fail: "SYNTAX: renderer/renderer.js: Unexpected token ..." (first failure)
-#   none: "syntax OK (no changed .js files)"
+# check-syntax.sh — node --check every changed .js file and write a ONE-LINE
+# digest to STDERR, exit 0/1. Built for the `check-syntax` exec registry entry
+# (replyStderr: true), same contract as test-digest.sh: the dispatcher returns
+# only the LAST stderr line (200-char slice), so the whole verdict lives on a
+# single bounded line — and it names WHAT was compared, because a green that
+# does not say what it inspected is the bug this script has now had twice.
+#   dirty tree: files vs HEAD, plus untracked
+#     pass: "syntax OK (4 files vs HEAD)"
+#     fail: "SYNTAX: renderer/renderer.js: Unexpected token ..." (first failure)
+#   clean tree: files the BRANCH changed, vs its base
+#     pass: "syntax OK (3 files vs base origin/master@7f3a91c in wb-wrap-ui-t452)"
+#     none: "syntax OK (no changed .js files vs base origin/master@7f3a91c)"
+#     no base resolvable: "refused, nothing checked: ...", exit 1
 # Takes the same optional `tree` payload field as test-digest.sh; without it
 # this checks the team root.
 # Dependency-free: sh + git + node.
@@ -64,11 +69,57 @@ CLX_WORKTREES
   cd "$check" || exit 1
 fi
 
+in_tree=$( [ "$check" = "$root" ] || printf ' in %s' "${check##*/}" )
+
+# WHAT IS COMPARED AGAINST WHAT, and why a clean tree is not an empty answer.
+# A dirty tree is checked against HEAD. A CLEAN one is checked against the
+# BRANCH'S BASE, because hands are told to commit as they go — so the workflow
+# this check exists to serve ends with `git diff HEAD` empty over exactly the
+# code that still needs checking. That empty list used to take the SUCCESS path:
+# a green from a granted command that had inspected nothing, reproduced both
+# ways on one worktree (uncommitted -> SYNTAX:, exit 1; same bytes committed ->
+# "syntax OK", exit 0). The header already calls that class worse than no check
+# at all for the wrong-TREE door; this was the same green through the commit
+# door.
+#
+# "no changed .js files" is the TRUTH for a clean tree on a branch with no
+# commits and a LIE for a clean tree with commits, and only naming the base the
+# comparison used tells a reader which one they are holding.
 files=$( { git diff --name-only HEAD -- '*.js'; \
            git ls-files --others --exclude-standard -- '*.js'; } | sort -u )
+against=HEAD
 
 if [ -z "$files" ]; then
-  printf 'syntax OK (no changed .js files%s)\n' "$( [ "$check" = "$root" ] || printf ' in %s' "${check##*/}" )" 1>&2
+  # Base resolution mirrors git-worktree.js `defaultBranch`: origin/HEAD, else a
+  # local main/master, else the current branch. That last resort compares the
+  # branch against ITSELF and reports zero files — which is why the digest
+  # prints the ref it actually used rather than the word "base". A degraded base
+  # has to be readable, exactly as `commitsOnBranch` keeps its `base` field for.
+  def=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
+  if [ -z "$def" ]; then
+    for b in main master; do
+      if git rev-parse --verify --quiet "refs/heads/$b" >/dev/null 2>&1; then def=$b; break; fi
+    done
+  fi
+  if [ -z "$def" ]; then
+    cur=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    [ -n "$cur" ] && [ "$cur" != "HEAD" ] && def=$cur
+  fi
+  mb=
+  [ -n "$def" ] && mb=$(git merge-base "$def" HEAD 2>/dev/null)
+  if [ -z "$mb" ]; then
+    # No base and nothing committed to compare: we do not know what this branch
+    # changed, and saying "syntax OK" here would rebuild the false green behind
+    # a clean tree. Refuse in the same shape as the wrong-tree path.
+    printf '%.180s\n' "refused, nothing checked: clean tree and no base ref to compare against${in_tree}" 1>&2
+    exit 1
+  fi
+  against="base ${def}@$(printf '%.7s' "$mb")"
+  files=$(git diff --name-only "$mb" HEAD -- '*.js' | sort -u)
+fi
+
+if [ -z "$files" ]; then
+  printf 'syntax OK (no changed .js files vs %s%s)\n' "$against" "$in_tree" 1>&2
   exit 0
 fi
 
@@ -85,5 +136,5 @@ for f in $files; do
   n=$((n + 1))
 done
 
-printf 'syntax OK (%s files%s)\n' "$n" "$( [ "$check" = "$root" ] || printf ' in %s' "${check##*/}" )" 1>&2
+printf 'syntax OK (%s files vs %s%s)\n' "$n" "$against" "$in_tree" 1>&2
 exit 0
