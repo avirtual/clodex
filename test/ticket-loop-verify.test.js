@@ -3544,3 +3544,112 @@ test('t345: team-review is NOT refused for a HELD ticket — the escape hatch st
   assert.ok(!/in the loop's verify step/.test(said),
     'the lead is not told to wait for a reviewer the loop has already given up on');
 });
+
+// ── t345 r2: the RE-VERIFY window ──────────────────────────────────────────
+//
+// `_taskDone`'s re-entry reaches `_runTicketLoop` with `verifyHold` STILL
+// STAMPED — nothing clears it between the gate and the call, and the loop's own
+// clear is the `finally`, which runs at the END. So for the whole re-run (a full
+// suite: minutes, and up to 35 by the caps) the ticket is `loopStep: 'verify'`
+// AND `verifyHold` set. Two readers key off exactly that pair, and both read it
+// as "stopped, waiting for a human" when it means "running again".
+//
+// A stub gate is used rather than a slow suite: the window is defined by the
+// loop being INSIDE the call, and a real suite would make the test as long as
+// the window it is testing.
+
+// Hold the loop open inside the suite check, so the re-verify window can be
+// observed from outside. Returns a release fn.
+function holdInSuite(f) {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const real = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (team, ticket) => { await gate; return real(team, ticket); };
+  return release;
+}
+
+test('t345 r2: during a RE-VERIFY the team-review guard must still refuse — the blind window is real again', async () => {
+  // The loop IS going to spawn a reviewer here, which is exactly the state the
+  // guard protects. The r1 narrowing (`!t.verifyHold`) skips it, so a bare
+  // team-review is no longer refused and spawns a second, unattached reviewer
+  // whose verdict lands nowhere — the precise failure the unnarrowed guard
+  // prevented, reintroduced on the recovery path.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const release = holdInSuite(f);
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
+  // Let the re-entry reach the held suite check.
+  for (let i = 0; i < 40 && f.one().loopStep !== 'verify'; i++) await new Promise((r) => setTimeout(r, 25));
+  await new Promise((r) => setTimeout(r, 50));
+
+  const t = f.one();
+  assert.strictEqual(t.loopStep, 'verify', 'ENTER: the loop is inside the re-verify');
+  f.injected.length = 0;
+  f.m._handleTeamReview(f.seat('lead'), 'have a look at the branch');
+  const said = f.injected.join('\n');
+
+  release();
+  for (let i = 0; i < 80 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+
+  assert.match(said, /in the loop's verify step/,
+    'a RUNNING re-verify is the blind window: the loop will spawn its own reviewer, so a bare one must be refused');
+  assert.strictEqual(f.created.length, 1, 'ENTER: and the loop did go on to spawn exactly one reviewer of its own');
+});
+
+test('t345 r2: a long RE-VERIFY does not alarm the lead with "waiting for someone to act"', async () => {
+  // Someone HAS acted and the loop is running. The alarm text is false, and it is
+  // reachable: `_stampVerifyHold` and the re-entry both clear `nudgedAt`, so the
+  // episode restarts at re-entry — and a re-verify may legitimately run 35m
+  // (TICKET_SUITE_LOCK_WAIT_MS 20m + 15m running) against a 30m stall window.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const release = holdInSuite(f);
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
+  for (let i = 0; i < 40 && f.one().loopStep !== 'verify'; i++) await new Promise((r) => setTimeout(r, 25));
+  await new Promise((r) => setTimeout(r, 50));
+
+  // Age the ticket past the stall window while the loop is still inside the run.
+  const old = Date.now() - (60 * 60 * 1000);
+  f.tstore.save(f.team.root, [{ ...f.one(), lastActivityAt: old, nudgedAt: null }]);
+  f.gated.length = 0;
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
+
+  release();
+  for (let i = 0; i < 80 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+
+  // It may legitimately alarm — a re-verify CAN wedge, and silencing that would
+  // rebuild the hole this ticket closed. What it must not do is say the loop
+  // stopped and is waiting on a human, which sends the lead to act on a running
+  // loop and to re-close a ticket that is already being checked.
+  assert.strictEqual(nudges.length, 1, 'ENTER: the ticket is in flight and did alarm, so the text below was reached');
+  assert.ok(!/waiting for someone to act/.test(nudges[0].body),
+    'nobody is being waited on: the hand already acted and the loop is running');
+  assert.match(nudges[0].body, /stuck at "verify"/,
+    'a re-verify that overruns is a STUCK STEP, which is the alarm that already exists for it');
+});
+
+test('t345 r2: the re-entry reply still NAMES the check, though the stamp is already gone', async () => {
+  // The clear moved ABOVE the reply, so the field it read is deleted by the time
+  // the reply is built. Caught while moving it — unpinned, the seat would be told
+  // `re-verifying (was held at "undefined")`, naming nothing, on the one line that
+  // confirms the recovery took.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
+
+  const said = f.injected.join('\n');
+  assert.match(said, /re-verifying/, 'ENTER: the re-entry was taken, not a bounce');
+  assert.match(said, /was held at "verify: commits-on-branch"/, 'and it names the check that had held it');
+  assert.ok(!/undefined/.test(said), 'never "undefined" — that is the clear having run before the read');
+});

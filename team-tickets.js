@@ -4400,6 +4400,9 @@ function createTicketMethods(deps, shared) {
       // for one branch. The stamp is written only when the loop has stopped and
       // handed the ticket to a human, so it is the field that distinguishes them.
       const reentry = ticket.state === 'done' && ticket.loopStep === 'verify' && !!ticket.verifyHold;
+      // Read HERE because the re-stamp below deletes the field before the reply is
+      // built: reading it there prints "undefined" at the seat, naming no check.
+      const heldAt = (ticket.verifyHold && ticket.verifyHold.step) || null;
       if (ticket.state !== 'open' && !reentry) {
         const held = ticket.verifyHold && ticket.verifyHold.step
           ? ` — it is held at "${ticket.verifyHold.step}"`
@@ -4455,6 +4458,30 @@ function createTicketMethods(deps, shared) {
       const loopEligible = !!(ticket.worktree && ticket.worktree.branch && ticket.worktree.baseSha);
       if (loopEligible) {
         ticket.loopStep = 'verify';
+        // THE RE-VERIFY WINDOW. Cleared HERE, in the same write that re-stamps the
+        // step — not in `_runTicketLoop`, which is fired unawaited below and whose
+        // own clear is a `finally` that runs at the END. Either gap leaves the
+        // ticket carrying `loopStep: 'verify'` AND `verifyHold` for the whole
+        // re-run: minutes, and up to 35 by the caps (a 20m lock wait plus a 15m
+        // run) against a 30m stall window.
+        //
+        // That pair is read by two consumers as "stopped, waiting for a human"
+        // when it means "running again", and both readings are wrong in the
+        // expensive direction: the team-review guard stops refusing a bare review
+        // during the one window it exists to protect — the loop IS about to spawn
+        // its own reviewer — so a second, unattached reviewer can be spawned whose
+        // verdict lands nowhere; and the sweep tells the lead the loop is waiting
+        // for someone to act when the hand has already acted.
+        //
+        // Clearing early costs nothing this stamp was for. Its durability job is
+        // that a ticket the lead was never told about is still findable, and that
+        // rests on `ticketInFlight`, which reads `loopStep` ALONE — the stranding
+        // this ticket fixes was `loopStep` being DELETED. Here it is present, so a
+        // process that dies mid-re-verify leaves a done ticket the sweep still
+        // sees and alarms as a stuck step, which is exactly what it is. What is
+        // dropped is the PREVIOUS round's evidence, which is stale the moment the
+        // hand re-closes; and if the re-run fails, `fail()` stamps it again, fresh.
+        delete ticket.verifyHold;
         // Opening an in-flight phase is a NEW stall episode, so it spends a fresh
         // nudge — the same argument `_setLoopStep` makes, and it must be made here
         // too because this is the only stamp site the sweep cannot recover from.
@@ -4480,7 +4507,7 @@ function createTicketMethods(deps, shared) {
       this._writeTicketCost(team, ticket);
       log.info('intent', `task done ${ticket.id} by ${session.name} → ${lead}${reentry ? ' (re-entry after a verify hold)' : ''}`);
       reply((reentry
-        ? `ticket ${ticket.id} re-verifying (was held at "${ticket.verifyHold && ticket.verifyHold.step}")`
+        ? `ticket ${ticket.id} re-verifying (was held at "${heldAt}")`
         : (isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`)) + nextSuffix);
       // Fired AFTER the reply, and deliberately not awaited: this handler is
       // synchronous and the checks shell out to git, so awaiting them here would
