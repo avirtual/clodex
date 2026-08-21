@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — the ticket machinery stops producing wrong results
 
 - Re-dispatching a ticket now keeps the branch it was originally given, instead
   of working out a new name from the ticket's current wording. A ticket's branch
