@@ -35,7 +35,7 @@
 // unchanged) or through `shared`, which carries the two core-OWNED values the
 // cluster reads rather than constructs.
 
-const { nextTicketId, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, branchSlug } = require('./tickets-store');
+const { nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, branchSlug } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { buildReviewScope } = require('./ticket-review-scope');
 const { projectDirFor } = require('./clodex-paths');
@@ -3185,7 +3185,14 @@ function createTicketMethods(deps, shared) {
       // ticket that already has a seat has no other way to learn which one without
       // re-deriving it, and a second copy of this rule is how the two drift.
       if (this.sessions.has(name) || getPersistence().get(name)) return { ok: false, taken: true, name, error: `seat name "${name}" is taken` };
-      const slug = branchSlug(ticket.title);
+      // Slugged from the UNTRUNCATED first line, not from `ticket.title`: the
+      // title is capped at 80 for display, and a dispatch opens with a ~67-char
+      // task-dir path, so slugging the title left branchSlug ~13 characters and
+      // its own 40-char cap never engaged (`t460-the`, `t461-the` — identical).
+      // Still line 1 and nothing else, which is what extractTaskDir's
+      // line-by-line widening rests on. Pre-spec records carry no `spec`; the
+      // title is the only line available for those.
+      const slug = branchSlug(ticket.spec == null ? ticket.title : titleLine(ticket.spec));
       return { ok: true, name, branch: slug ? `${ticket.id}-${slug}` : String(ticket.id) };
     },
 
