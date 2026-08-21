@@ -13595,6 +13595,144 @@ test('task add: the minted branch is slugged from the UNTRUNCATED first line', a
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
+// t464: a ticket's branch is an identity minted ONCE. `_mintTicketSeat` re-derived
+// it from the ticket's CURRENT spec on every call, and two things move that spec
+// under a live ticket — the slug rule itself changed (t463), and respec/editSpec
+// rewrite the text. When _existingTicketTree rejects the recorded tree, the fresh
+// createWorktree took the RE-DERIVED name: a second branch off HEAD, with the
+// previous seat's commits left on the old one and `worktree.branch` overwritten
+// to match, so the lead's merge target and the hand's commits disagree silently.
+//
+// The fixture has to make the two names DIFFER (FACTS 31: a recorded branch that
+// happens to equal its re-derived slug passes identically with and without the
+// fix), so the spec is rewritten between the two dispatches.
+test('task assign: a re-dispatch keeps the RECORDED branch, not one re-derived from the current spec', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget\ndetail' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  const first = f.one('t1').worktree;
+  assert.ok(first && first.path, 'ENTER: the first dispatch must have made a tree');
+  assert.strictEqual(first.branch, 't1-build-the-widget', 'ENTER: the recorded branch is the one the first spec slugged to');
+  // ENTER for the baseSha half below: the first dispatch must have recorded a fork
+  // point, or "it survived" is vacuously true about a value that never existed.
+  assert.ok(first.baseSha, 'ENTER: the first dispatch must have captured a baseSha to preserve');
+
+  // The tree goes away the way an operator's `rm -rf` leaves it: still REGISTERED
+  // and printed by `git worktree list`, flagged prunable — which is precisely what
+  // _existingTicketTree rejects, dropping the re-dispatch onto the fresh-mint path
+  // where the branch NAME is taken from the mint. Without this the reuse arm runs,
+  // the recorded branch is carried by _existingTicketTree, and the defect is
+  // unreachable no matter what the mint returns.
+  fsReal.rmSync(first.path, { recursive: true, force: true });
+  const listed = await require('../git-worktree').listWorktrees(repo);
+  assert.ok(listed.worktrees.some((w) => w.branch === first.branch && w.prunable),
+    'ENTER: git must still list the tree as prunable, or the reuse arm runs and this asserts nothing');
+  f.killSeat('team-hand-1');
+
+  // The spec is REWRITTEN, which is what _taskRespec and the viewer's editSpec do
+  // to a live ticket. Line 1 now slugs somewhere else entirely.
+  const tickets = f.load();
+  const t0 = tickets.find((x) => x.id === 't1');
+  t0.spec = 'rewrite the gadget instead\ndetail';
+  t0.title = 'rewrite the gadget instead';
+  f.tstore.save(f.team.root, tickets);
+  // ENTER, and the whole point of the fixture: the two candidate names must
+  // DIFFER. If a future change to branchSlug made them agree, this test would pass
+  // with the fix reverted and prove nothing.
+  const derived = `t1-${ticketsMod.branchSlug(ticketsMod.titleLine(t0.spec))}`;
+  assert.notStrictEqual(derived, first.branch,
+    `ENTER: the re-derived name must differ from the recorded one (${derived})`);
+
+  f.gated.length = 0;
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1') || f.removed.length);
+
+  const t = f.one('t1');
+  assert.ok(t.worktree && t.worktree.path, 'ENTER: a replacement tree must have been made');
+  assert.strictEqual(t.worktree.branch, first.branch,
+    'the ticket keeps its original branch — the identity, not a view of the current title');
+  const head = require('node:child_process')
+    .execFileSync('git', ['-C', t.worktree.path, 'rev-parse', '--abbrev-ref', 'HEAD'], { stdio: 'pipe' })
+    .toString().trim();
+  assert.strictEqual(head, first.branch, 'and git actually checked THAT branch out, so the previous seat`s commits are still the ticket`s work');
+  assert.notStrictEqual(head, derived, 'not a second branch forked off HEAD under the new title');
+  // Stated on the wire too: the reply and the log name the branch the lead will
+  // merge, and a mint that returned the derived name would announce that one.
+  assert.ok(!f.gated.some((g) => g.body.includes(derived)), 'nor is the re-derived name announced anywhere in the dispatch');
+  // The SECOND axis, independent of the branch name and broken by the same arm:
+  // createWorktree resolves a fork point only for a branch it created, so reusing
+  // the recorded name returns none — and the record is overwritten wholesale, so a
+  // dropped baseSha is destroyed rather than absent.
+  assert.ok(t.worktree.baseSha, 'the fork point survives the re-dispatch — loopEligible reads it, and without it the whole verify/review/merge loop silently never runs');
+  assert.strictEqual(t.worktree.baseSha, first.baseSha, 'and it is the ORIGINAL fork point, not a new one');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// The other half of the same rule: preferring the RECORDED branch must not change
+// what a first dispatch mints, which is the case with nothing recorded to prefer.
+test('task start: a ticket with NO recorded branch still mints from the slug', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget\ndetail' });
+  // ENTER: nothing recorded, or this measures the reuse arm instead of the mint.
+  assert.strictEqual(f.one('t1').worktree, undefined, 'ENTER: an unstarted ticket carries no tree');
+
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+
+  const t = f.one('t1');
+  assert.ok(t.worktree && t.worktree.path, 'ENTER: the dispatch must have made a tree');
+  assert.strictEqual(t.worktree.branch, 't1-build-the-widget', 'the branch is slugged from the spec exactly as before');
+  const head = require('node:child_process')
+    .execFileSync('git', ['-C', t.worktree.path, 'rev-parse', '--abbrev-ref', 'HEAD'], { stdio: 'pipe' })
+    .toString().trim();
+  assert.strictEqual(head, 't1-build-the-widget', 'and that is what git checked out');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// A spawn-mode ticket has no tree by construction: _spawnTicketSeat CLEARS any
+// pointer it arrives carrying rather than reusing it. Preferring a recorded branch
+// in the mint must not resurrect one here — the mint still runs (both one-shot
+// modes need the seat NAME), so a recorded branch reaching the spawn arm would
+// contradict the mode the same way an uncleared pointer does.
+test('task assign: a spawn-mode ticket carrying a recorded branch still gets no tree', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo, { dispatch: 'spawn' });
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget\ndetail' });
+
+  // The shape a ticket has after a worktree role dispatched it and the lead re-filed
+  // it under a spawn role — the only way a spawn ticket ever carries a pointer.
+  const tickets = f.load();
+  const t0 = tickets.find((x) => x.id === 't1');
+  t0.worktree = { path: pathReal.join(root, 'stale-tree'), branch: 't1-some-older-name' };
+  f.tstore.save(f.team.root, tickets);
+  assert.ok(f.one('t1').worktree.branch, 'ENTER: the ticket must carry a recorded branch, or the mint has nothing to prefer');
+
+  f.gated.length = 0;
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
+  await until(() => f.gated.length > 0);
+
+  const t = f.one('t1');
+  assert.strictEqual(t.assignee, 'team-hand-1', 'ENTER: the spawn seat must have taken the ticket');
+  assert.strictEqual(t.worktree, undefined,
+    'the pointer is cleared — ABSENT, not null: every downstream reader tests `ticket.worktree && .path`');
+  const gwListed = await require('../git-worktree').listWorktrees(repo);
+  assert.ok(!gwListed.worktrees.some((w) => w.branch === 't1-some-older-name'),
+    'and no worktree was minted on the recorded branch — spawn mode never touches git');
+  const body = f.gated[0].body;
+  assert.ok(!/WORK IN: /.test(body), 'the spec sends the seat to the shared checkout, with no tree pointer');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
 test('task add: a role WITHOUT the opt-in keeps the old role-assigned path', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo, { dispatch: 'standing' });

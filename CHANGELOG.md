@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- Re-dispatching a ticket now keeps the branch it was originally given, instead
+  of working out a new name from the ticket's current wording. A ticket's branch
+  was re-derived from the first line of its spec every time it was dispatched, so
+  a ticket whose spec had since been edited — or one filed before the naming rule
+  last changed — got a *second* branch forked from the current tree, while the
+  work the previous seat had committed stayed behind on the first one. The ticket
+  then pointed at the new branch, so the branch you went to merge and the branch
+  holding the commits were quietly not the same. Open tickets whose spec had been
+  edited, or which predate the naming rule's last change, would have derived a
+  different name on their next dispatch.
+
 - Assigning a ticket by clicking in the tickets viewer now tells the seat where
   the ticket's artifact directory actually is, exactly as typing the assignment
   as an intent already did. The spec's `tasks/…` pointer is usually written
