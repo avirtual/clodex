@@ -13376,6 +13376,55 @@ test('task dispatch: an ALREADY-ABSOLUTE task dir gets no TASK DIR line — it m
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
+// t453 r2 nit 1: the TILDE arm's control. Without it, deleting
+// `startsWith('~')` from the gate goes green while ~100 live pointers silently
+// start carrying a redundant line — the absolute control cannot catch it,
+// because `path.isAbsolute('~/x')` is false.
+//
+// The `~` must expand to a home the confinement ACCEPTS, so `os` is overridden
+// to the fixture's own clodex home. A test using the REAL home is refused by the
+// confinement and its absence then comes from the refusal arm rather than the
+// shape gate — vacuous in exactly the way this file's absolute control once was.
+test('task dispatch: a TILDE task dir gets no TASK DIR line either — `~` is not relative', async () => {
+  const { root, repo } = mkGitRepo();
+  // `home` is minted inside mkTicketWt, so the override reads it back off the
+  // fixture rather than assuming a path — a hardcoded one would not be the home
+  // REGISTRY_DIR actually points at, and the pointer would be refused.
+  let fixtureHome = null;
+  const f = mkTicketWt(repo, {}, { os: { ...osReal, homedir: () => fixtureHome } });
+  fixtureHome = f.home;
+  const rel = pathReal.relative(f.home, pathReal.join(clodexPaths.projectDirFor(f.home, repo), 'tasks', 'tilde-placed'));
+  const tilde = `~/${rel}`;
+  let createdCwd = 'UNSET';
+  f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), {
+    type: 'task', sub: 'add', who: 'hand', id: null, body: `${tilde} — build it\ndetail`,
+  });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => createdCwd !== 'UNSET' || f.gated.length);
+
+  assert.notStrictEqual(createdCwd, 'UNSET', 'ENTER: create() must have been reached');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one delivery to assert on');
+  // ENTER: the ticket must carry the TILDE form — the fixture stamps a resolved
+  // pointer over any ticket that parsed none, which is a different shape.
+  assert.strictEqual(f.one('t1').taskDir, tilde,
+    'ENTER: the ticket must carry the tilde pointer');
+  assert.ok(!pathReal.isAbsolute(tilde),
+    'ENTER: `~/…` is NOT absolute to path.isAbsolute — which is exactly why it needs its own gate arm');
+  // ENTER: and it must RESOLVE. A refused pointer drops the line for an
+  // unrelated reason and the absence below would prove nothing about the gate.
+  assert.strictEqual(f.m._ticketDiffDest(f.team, f.one('t1')).ok, true,
+    'ENTER: the tilde pointer must be one the confinement ACCEPTS');
+
+  assert.doesNotMatch(f.gated[0].body, /TASK DIR: /,
+    'a `~`-prefixed pointer expands the same way in the seat as in the main process — nothing to say');
+  assert.match(f.gated[0].body, /WORK IN: /,
+    'ENTER: the dispatch itself still rendered, so the absence above is a suppression, not a dead path');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
 // The refusal arm. `taskDir` is spec TEXT an agent wrote and extractTaskDir's
 // charset admits `.` and `/`, so `tasks/../../..` parses fine and resolveTaskDir
 // THROWS on it. Two things must hold: the line is dropped (naming a directory
