@@ -810,6 +810,7 @@ test('seed: a missing source tree is a no-op, not a throw', () => {
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const seedStatePath = (registryDir) => path.join(registryDir, 'library', '.seed-state.json');
 const readSeedState = (registryDir) => JSON.parse(fs.readFileSync(seedStatePath(registryDir), 'utf-8'));
+const readSeedReport = (registryDir) => JSON.parse(fs.readFileSync(path.join(registryDir, 'library', '.seed-report.json'), 'utf-8'));
 
 function withSeedDirs(fn) {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
@@ -1066,6 +1067,161 @@ test('seed reconcile: live == shipped with a lagging stamp converges, back onto 
     fs.writeFileSync(path.join(resourcesDir, rel), 'V3');
     initStores(userData, { registryDir, resourcesDir });
     assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'V3', 'next ship upgrades it -- no longer stranded');
+  });
+});
+
+// --- t456: the stranded report's CADENCE and CHANNEL ------------------------
+// The measured real-world stranded file is genuine operator config that should
+// NOT be touched, so an unconditional per-launch report is a permanent nag with
+// no action that silences it. Dedupe is keyed on the SHIPPED hash: a newly
+// WITHHELD update is announced once, in the operator inbox; the steady state is
+// inbox-silent while the log keeps recording every run.
+const seedReportPath = (registryDir) => path.join(registryDir, 'library', '.seed-report.json');
+const inboxNotes = (stores) => stores.notifications.list().filter((n) => n.from === 'Clodex library');
+
+test('seed report: a newly stranded file reaches the operator inbox, naming the file', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('templates', 'reviewer.json');
+    fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V2');
+    stageDest(registryDir, rel, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+    const log = captureLog();
+
+    const stores = initStores(userData, { log, registryDir, resourcesDir });
+
+    // ENTER: the file must actually be stranded, or every assertion below is
+    // about an empty set and passes for free.
+    assert.strictEqual(log.seedWarnings().length, 1, 'the file is stranded (log warned)');
+    const notes = inboxNotes(stores);
+    assert.strictEqual(notes.length, 1, 'exactly one inbox note for the new withholding');
+    assert.match(notes[0].body, /reviewer\.json/, 'the note names the stranded file');
+    assert.strictEqual(notes[0].readAt, null, 'unread, so it badges the inbox');
+    assert.strictEqual(notes[0].workspaceId, null, 'not scoped to a workspace: this is box-wide');
+  });
+});
+
+test('seed report: the steady state is inbox-silent, while the log still records every run', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('templates', 'reviewer.json');
+    fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V2');
+    stageDest(registryDir, rel, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+
+    initStores(userData, { registryDir, resourcesDir });
+    const log = captureLog();
+    const stores = initStores(userData, { log, registryDir, resourcesDir }); // relaunch, nothing changed
+
+    assert.strictEqual(log.seedWarnings().length, 1,
+      'the log is the forensic record and restates the stranded set every run');
+    assert.strictEqual(inboxNotes(stores).length, 1,
+      'still ONE note total: the second launch must not re-nag an unchanged withholding');
+  });
+});
+
+test('seed report: a MOVED shipped hash announces again -- a new update is being withheld', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('templates', 'reviewer.json');
+    fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V2');
+    stageDest(registryDir, rel, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+
+    initStores(userData, { registryDir, resourcesDir });
+    assert.strictEqual(readSeedReport(registryDir)[rel], sha256(Buffer.from('SHIPPED_V2')),
+      'the reported shipped hash is recorded');
+
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V3'); // the ship moves on
+    const stores = initStores(userData, { registryDir, resourcesDir });
+
+    assert.strictEqual(inboxNotes(stores).length, 2,
+      'a SECOND update is now being withheld, which is a new fact and must announce');
+    assert.strictEqual(readSeedReport(registryDir)[rel], sha256(Buffer.from('SHIPPED_V3')),
+      'report state advances to the newly withheld shipped hash');
+  });
+});
+
+test('seed report: state is rebuilt from the current set, so a re-strand announces again', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('templates', 'reviewer.json');
+    fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V2');
+    stageDest(registryDir, rel, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+
+    const first = initStores(userData, { registryDir, resourcesDir });
+    assert.strictEqual(inboxNotes(first).length, 1, 'announced once');
+
+    // The operator deletes their version: the file re-seeds and is no longer
+    // stranded, so its report entry must be DROPPED rather than carried.
+    fs.rmSync(path.join(registryDir, 'library', rel));
+    const healed = initStores(userData, { registryDir, resourcesDir });
+    assert.deepStrictEqual(readSeedReport(registryDir), {},
+      'no longer stranded -> the entry is gone, not carried forward');
+    assert.strictEqual(inboxNotes(healed).length, 1, 'healing itself is not news');
+
+    // It strands AGAIN at the very same shipped hash. A merged (never-pruned)
+    // map would still hold SHIPPED_V2 here and swallow this second, real event.
+    stageDest(registryDir, rel, 'OPERATOR_CONFIG_AGAIN', 'SHIPPED_V1');
+    const restranded = initStores(userData, { registryDir, resourcesDir });
+    assert.strictEqual(inboxNotes(restranded).length, 2,
+      're-stranding at the same shipped hash is a new withholding and announces');
+  });
+});
+
+test('seed report: nothing stranded writes no report file at all', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('prompts', 'system', 'lead.md');
+    fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'V1');
+
+    const stores = initStores(userData, { registryDir, resourcesDir });
+
+    assert.strictEqual(fs.readFileSync(path.join(registryDir, 'library', rel), 'utf-8'), 'V1',
+      'ENTER: the seed ran at all');
+    assert.strictEqual(fs.existsSync(seedReportPath(registryDir)), false,
+      'the healthy case leaves no report state behind');
+    assert.deepStrictEqual(inboxNotes(stores), [], 'and does not touch the inbox');
+  });
+});
+
+test('seed report: the advice leads with "nothing to do", never a bare delete', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('templates', 'reviewer.json');
+    fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V2');
+    stageDest(registryDir, rel, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+    const log = captureLog();
+
+    const stores = initStores(userData, { log, registryDir, resourcesDir });
+
+    const warns = log.seedWarnings();
+    assert.strictEqual(warns.length, 1, 'ENTER: the report fired');
+    const notes = inboxNotes(stores);
+    assert.strictEqual(notes.length, 1, 'ENTER: the note fired');
+    // The measured instance is real operator config that must NOT be deleted, so
+    // both channels must state the no-action case, and must state it BEFORE the
+    // destructive one.
+    for (const [what, text] of [['log', warns[0].msg], ['note', notes[0].body]]) {
+      assert.match(text, /nothing needs doing/, `${what}: the no-action case is stated`);
+      assert.match(text, /copy yours aside first/, `${what}: keeping the edit is the precondition to deleting`);
+      assert.ok(text.indexOf('nothing needs doing') < text.indexOf('delete it under'),
+        `${what}: the no-action case comes BEFORE the delete, or a skimmer deletes real config`);
+    }
+  });
+});
+
+test('seed report: a corrupt report file announces rather than swallowing', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('templates', 'reviewer.json');
+    fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V2');
+    stageDest(registryDir, rel, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+    fs.writeFileSync(seedReportPath(registryDir), '{ not json ]]]');
+
+    const stores = initStores(userData, { registryDir, resourcesDir });
+
+    assert.strictEqual(inboxNotes(stores).length, 1,
+      'unreadable dedupe state degrades to announcing, never to silence');
+    assert.deepStrictEqual(readSeedReport(registryDir), { [rel]: sha256(Buffer.from('SHIPPED_V2')) },
+      'and the corrupt file is replaced with usable state');
   });
 });
 
