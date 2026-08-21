@@ -77,9 +77,12 @@ function pidAlive(pid) {
 // node-pty's kill() - and dispose()'s - is SIGHUP, which a shell whose startup
 // ran `trap '' HUP` ignores indefinitely. A survivor holds this runner's event
 // loop open, so the suite wedges at ~0% CPU AFTER the leaking test has already
-// passed, which is the most expensive failure shape there is. The generated rc
-// sources the operator's own ~/.bash_profile by design, so their trap alone is
-// enough to arm it.
+// passed, which is the most expensive failure shape there is. A trap reaches
+// this shell through the real /etc/profile, which the generated rc sources
+// unredirected, or through the scratch profile a test supplies. `$HOME` is
+// redirected here, so the developer's own ~/.bash_profile is NOT the door --
+// but it is in term-exec-keymap.test.js, which passes no env and so spawns
+// against the real one.
 //
 // Modelled on drawer-pty's endShell, with one deliberate difference: that path
 // unrefs its escalation timer because an app quit must never be held open five
@@ -88,8 +91,9 @@ function pidAlive(pid) {
 // and the escalation is therefore awaited rather than scheduled.
 async function reapPty(proc, { graceMs = 2000, stepMs = 25 } = {}) {
   if (!proc) return true;
-  // Read the pid BEFORE the kill: node-pty drops it once the child is reaped,
-  // and the escalation below is the one caller that still needs to resolve it.
+  // Read the pid up front so the escalation never depends on `proc` still being
+  // resolvable -- the same defensive shape as endShell, whose 5s deferral
+  // genuinely outlives its record.
   const pid = proc.pid;
   try { proc.kill(); } catch {}
   const deadline = Date.now() + graceMs;
