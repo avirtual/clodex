@@ -7,6 +7,8 @@ const { IPC_PROMPT, buildIpcPrompt } = require('../ipc-prompt');
 const { GATEABLE_INTENTS, PRIVILEGED_INTENTS } = require('../intent-catalog');
 const { parseIntent } = require('../intent-scanner');
 const { bodyModeFor } = require('../intent-registry');
+const fs = require('node:fs');
+const path = require('node:path');
 
 // PRIVILEGED intents (reboot) are EXCLUDED here on purpose: under the `null`
 // allowlist intentEnabled('reboot', null) is false, so IPC_PROMPT is
@@ -211,15 +213,45 @@ test('task line: add reads park as a modifier, not as the assignee', () => {
   assert.deepStrictEqual([c.who, c.park], ['hand', false]);
 });
 
-// The filter vocabulary the line names has to BE the accepted one: a seat told to
-// write a filter the verb rejects gets a bounce and learns nothing.
-test('task line: every filter token it names is accepted, and bare list carries none', () => {
+// The grammar line publishes the filter vocabulary to every seat forever, which
+// makes it a THIRD copy of a list that was already duplicated twice on purpose:
+// team-tickets.js TICKET_FILTERS and scripts/clodex-team.js:134, whose comment
+// says in terms that they must be changed together and are deliberately not
+// shared (that script is materialized as a flat basename copy and may require
+// node builtins only). The prompt is the copy nobody will think to update, so
+// the suite is the only thing holding it to the others.
+//
+// Asserting `parseIntent('[agent:task list X]').filter === 'X'` would test
+// NOTHING here: parseTask is `filter: argToks[0] || null`, so it echoes any
+// token — `xyzzy` included. Acceptance lives in TICKET_FILTERS, checked in
+// _taskList. It is not exported, so it is read at source (the precedent is
+// test/hold-recovery-single-source.test.js).
+//
+// BOTH directions, because one-directional is exactly how a single-source guard
+// stays green while a copy rots: line→list catches a filter the prompt invents,
+// list→line catches an ADDED filter the prompt never learned.
+test('task line: the filter tokens it publishes ARE TICKET_FILTERS, both directions', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'team-tickets.js'), 'utf8');
+  const m = src.match(/^const TICKET_FILTERS = \[([^\]]*)\];/m);
+  assert.ok(m, 'ENTER: TICKET_FILTERS was found at source — a failed scan must not pass as agreement');
+  const filters = m[1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  assert.ok(filters.length >= 2, `ENTER: the vocabulary parsed (got ${JSON.stringify(filters)})`);
+
   const line = IPC_PROMPT.split('\n').find((l) => /^ {2}\[agent:task list\]/.test(l));
   assert.ok(line, 'ENTER: the list line is in the literal');
-  for (const f of ['open', 'done', 'cancelled', 'all']) {
-    assert.ok(line.includes(f), 'the line names the ' + f + ' filter');
-    assert.strictEqual(parseIntent('[agent:task list ' + f + ']').filter, f);
-  }
+  // The prose names the tokens inline, so match them as words — a substring test
+  // would let `done` hide inside `[agent:task done <id>]` on the other line.
+  const named = filters.filter((f) => new RegExp(`\\b${f}\\b`).test(line));
+
+  assert.deepStrictEqual(named, filters,
+    'every accepted filter must be named on the line — an added one the prompt never learned');
+  // And nothing the line offers may be a token the verb bounces. Checked against
+  // the vocabulary rather than the parser, which accepts anything.
+  const offered = (line.match(/\b(open|done|cancelled|all|rejected|closed|parked)\b/g) || []);
+  const bogus = [...new Set(offered)].filter((t) => !filters.includes(t));
+  assert.deepStrictEqual(bogus, [],
+    'the line offers a filter _taskList rejects — a seat copying it gets a bounce');
+
   assert.strictEqual(parseIntent('[agent:task list]').filter, null,
     'bare list carries no filter (the verb defaults it to open)');
 });
