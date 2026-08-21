@@ -4,10 +4,11 @@
 // (term-marks-bash.test.js, term-exec-keymap.test.js).
 //
 // Node's test glob is `**/test/**/*.?(c|m)js`, so this file is ALSO opened as a
-// test file and reports as one passing point that executed nothing. That shape
-// is already in this suite and scripts/run-tests.js discounts it by name — see
-// its "a file that defines no tests at all" case. It is the price of keeping
-// the helper next to its callers; no filename under test/ avoids it.
+// test file and reports as one passing point that executed nothing. On a FULL
+// sweep that point is counted as an ordinary pass, so it is in the suite total;
+// scripts/run-tests.js only discounts it on a FILTERED run, where an
+// executed-nothing point would otherwise read as a green. It is the price of
+// keeping the helper next to its callers; no filename under test/ avoids it.
 
 // Is this pid still around? Signal 0 tests for existence without delivering
 // anything. node-pty reaps its own child, so a shell that has exited is gone
