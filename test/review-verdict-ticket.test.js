@@ -1543,6 +1543,18 @@ test('the CREATE instruction reaches the hand only — the read-only reviewer ge
     'ENTER: the TASK DIR line must be present, or indexOf returns -1 and this slices from the end');
   assert.ok(!/create it/i.test(taskDirLine),
     'the reviewer scope carries no instruction to create anything — it has no write tool and its scope forbids editing');
+  // ...and the same absence across the WHOLE scope, as the exact clause literal
+  // rather than a regex. The line-scoped check above cannot see the imperative
+  // reappearing in another section (a later SPEC or REPORT block), and an
+  // exact-string absence cannot false-fail on unrelated prose the way
+  // /create it/i over the whole scope would. Read off the renderer, never
+  // copied: a hardcoded literal that drifts from `taskDirCreateClause` turns
+  // this into an absence of a string nothing emits, which passes forever.
+  const createClause = render.line.slice(render.line.indexOf(render.rule) + render.rule.length).replace(/\n$/, '');
+  assert.match(createClause, /create it/i,
+    'ENTER: the derived clause must BE the imperative, or the absence below is vacuous');
+  assert.ok(!scope.includes(createClause),
+    'and it appears nowhere else in the scope either — no section may hand the read-only seat the imperative');
   // The half that must survive the split, in BOTH: it is the t451 failure step,
   // and a reviewer reads absence the same way a hand does.
   assert.match(render.rule, /absence is not evidence/,

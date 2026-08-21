@@ -102,8 +102,8 @@ function resolveTaskDir({ taskDir, projectDir, projectsRoot, homedir }) {
 }
 
 // A lead routinely writes the SPEC file as the task pointer
-// (`…/tasks/wire-off/SPEC.md`) — 51 of the live store's taskDirs carry a tail
-// past the task name and 36 end in a slash. ensureDir on those either throws
+// (`…/tasks/wire-off/SPEC.md`), and pointers routinely carry a tail past the
+// task name or a trailing slash. ensureDir on those either throws
 // (the file exists) or mints a directory named `SPEC.md`, so a file-shaped last
 // segment is dropped. Only when something remains under `tasks/`: a task dir
 // legitimately named `foo.bar` at the top level is kept, because guessing wrong
