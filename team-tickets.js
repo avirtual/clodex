@@ -4459,7 +4459,23 @@ function createTicketMethods(deps, shared) {
         // PRESENCE, not its class. Do not read a class gate into this clause.
         const held = ticket.verifyHold && ticket.verifyHold.step
           ? ` — it is held at "${ticket.verifyHold.step}". ${holdRecoveryText(ticket.verifyHold.recovery, intent.id)}`
-          : '';
+          // The OTHER done-at-verify state, and the one with no stamp to read:
+          // the re-entry above cleared the hold before starting the checks.
+          // Refusing is correct and must stay — two loops on one branch is what
+          // the gate prevents — but a bare "is done, not open" names nothing to
+          // wait for, and a reader told only that it cannot close goes back to
+          // `reject`, the false rejection this design removes.
+          //
+          // HEDGED, because this state does not prove a check is running: a
+          // process that dies mid-re-verify leaves exactly this shape, for up to
+          // the suite lock's wait. Saying "running right now" would tell that
+          // seat to wait for a result that is never coming. What is certainly
+          // true is that nothing has reported, so the sentence names the state
+          // and points at the alarm that does cover the dead-process case.
+          : (ticket.state === 'done' && ticket.loopStep === 'verify'
+            ? ' — it is at the verify step with no hold recorded, so its checks have not reported yet;'
+              + " wait for the result (or the watchdog's stall alarm) rather than rejecting it."
+            : '');
         reply(`error: ticket ${intent.id} is ${ticket.state}, not open${held}${this._spillRejectedPayload(session, 'task done', report)}`); return;
       }
       const myRole = matchSeatRole(team, session.name);
@@ -4585,10 +4601,20 @@ function createTicketMethods(deps, shared) {
       const doneSeat = reentry ? null : this._ticketAssigneeSeat(team, ticket);
       const next = doneSeat ? this._advanceSeat(team, doneSeat, ticket) : null;
       const nextSuffix = next ? ` — next: ${next.id} delivered to ${doneSeat}` : '';
-      this._broadcast('ipc-message', { type: 'task', from: session.name, to: lead, body: `ticket ${ticket.id} done` });
+      // `re-verifying` on a re-entry, matching the `reply` below. A re-entry does
+      // not close anything — the ticket was already `done` — so a second "done"
+      // on this channel is one close event rendered twice to every consumer, the
+      // same reader-disagreement class as the recovery text one field over.
+      this._broadcast('ipc-message', { type: 'task', from: session.name, to: lead, body: `ticket ${ticket.id} ${reentry ? 're-verifying' : 'done'}` });
       this._writeTicketCost(team, ticket);
       log.info('intent', `task done ${ticket.id} by ${session.name} → ${lead}${reentry ? ' (re-entry after a verify hold)' : ''}`);
       reply((reentry
+        // prescribes-nothing: names the check that HAD held this ticket, to the
+        // seat that just cleared it, after the stamp is gone. It is a receipt,
+        // not advice — there is no recovery to route through `holdRecoveryText`
+        // here, and rendering one would tell a seat to perform the action it has
+        // this moment performed. The step-naming is pinned by `t345 r2: the
+        // re-entry reply still NAMES the check`, so it cannot be dropped either.
         ? `ticket ${ticket.id} re-verifying (was held at "${heldAt}")`
         : (isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`)) + nextSuffix);
       // Fired AFTER the reply, and deliberately not awaited: this handler is

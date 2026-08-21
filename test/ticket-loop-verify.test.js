@@ -4100,3 +4100,138 @@ test('t345 r5 nit2: an UNDELIVERABLE rework does not tell the seat "no rework ro
   assert.deepStrictEqual(f.gated.filter((g) => /HELD/.test(g.body)), [],
     'and no seat is told the ticket was not rejected when it was');
 });
+
+// ── t465: two readers whose wording disagreed with the state ───────────────
+//
+// Both folded in from t345's round-3 review, and both the same class as the
+// recovery text one field over: a consumer of the loop's state describing it in
+// words that contradict what the state actually is.
+
+test('t465 nit1: a RE-ENTRY broadcasts "re-verifying", not a second "done"', async () => {
+  // The `reply` on this path already says `re-verifying (was held at …)`. The
+  // ipc-message broadcast said `done` — so every consumer of that channel saw a
+  // second close for a ticket that was never re-closed in the lifecycle sense,
+  // while the seat that fired it was correctly told otherwise.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const release = holdInSuite(f);
+  f.broadcasts.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
+  // MEASURED, and it is the STAMP that carries the guarantee, not `loopStep`:
+  // `strand()` already leaves `loopStep: 'verify'` and the escalation arm keeps
+  // it there, so asserting the step fails only if `strand` breaks. Probed either
+  // side of the call: `verifyHold` is present BEFORE it and gone after. The
+  // original spin loop never iterated; this asserts what it pretended to await,
+  // and goes red if the clearing ever moves behind an await.
+  assert.ok(!('verifyHold' in f.one()),
+    'ENTER: the re-entry cleared the stamp synchronously — there is nothing to await');
+
+  const tasks = f.broadcasts.filter((b) => b.msg && b.msg.type === 'task');
+  // ENTER: the re-entry really was taken. Without this the assertions below are
+  // all true of an empty list — the false-green shape this suite keeps hitting.
+  assert.strictEqual(tasks.length, 1, 'ENTER: exactly one task broadcast came off the re-entry');
+  assert.strictEqual(tasks[0].msg.body, 'ticket t1 re-verifying',
+    'the broadcast agrees with the reply: nothing closed here, the checks are re-running');
+  assert.ok(!/done/.test(tasks[0].msg.body),
+    'and it must not read as a close — the ticket was already done before this fired');
+
+  release();
+  for (let i = 0; i < 80 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+});
+
+test('t465 nit1: an ORDINARY close still broadcasts "done"', async () => {
+  // The other half, and the one that catches a fix applied too widely: the
+  // re-entry wording must not leak onto the first close, which IS a close.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  f.broadcasts.length = 0;
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'did it' });
+
+  const tasks = f.broadcasts.filter((b) => b.msg && b.msg.type === 'task');
+  assert.strictEqual(tasks.length, 1, 'ENTER: the close broadcast fired');
+  assert.strictEqual(tasks[0].msg.body, 'ticket t1 done', 'a real close still reads as one');
+});
+
+test('t465 nit2: a second `done` during a re-verify says the checks have not reported', async () => {
+  // The stamp is cleared when the re-verify starts, so this bounce had no held
+  // clause and no explanation — a bare "is done, not open". REFUSING is correct
+  // and stays correct: two loops on one branch is what the gate prevents. Only
+  // the wording is the defect, and a refusal that explains nothing is
+  // historically what sends the reader back to `reject`.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const release = holdInSuite(f);
+  // ENTER: without this the subject passes having never taken the re-entry — if
+  // the stamp stops being written, `reentry` is false, the handler bounces down
+  // the `state !== 'open'` path, and every assertion below still holds. Measured:
+  // removing the stamp at `team-tickets.js:5496` left this subject GREEN while
+  // its twin and eight others went red.
+  assert.ok(f.one().verifyHold, 'ENTER: the ticket is HELD before the re-entry');
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
+  // MEASURED, and it is the STAMP that carries the guarantee, not `loopStep`:
+  // `strand()` already leaves `loopStep: 'verify'` and the escalation arm keeps
+  // it there, so asserting the step fails only if `strand` breaks. Probed either
+  // side of the call: `verifyHold` is present BEFORE it and gone after. The
+  // original spin loop never iterated; this asserts what it pretended to await,
+  // and goes red if the clearing ever moves behind an await.
+  assert.ok(!('verifyHold' in f.one()),
+    'ENTER: the re-entry cleared the stamp synchronously — there is nothing to await');
+  await new Promise((r) => setTimeout(r, 50));
+
+  const t = f.one();
+  // ENTER: the state under test is the one with NO stamp and a running check.
+  // Planting it would pass against code that never reaches it.
+  assert.strictEqual(t.state, 'done', 'ENTER: still done');
+  assert.strictEqual(t.loopStep, 'verify', 'ENTER: still at verify');
+  assert.ok(!('verifyHold' in t), 'ENTER: and the stamp is GONE — the checks are running, not held');
+
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'again' });
+  const said = f.injected.join('\n');
+
+  assert.match(said, /is done, not open/, 'ENTER: it still refuses, which is the correct behaviour');
+  assert.match(said, /checks have not reported yet/, 'and now it says WHY, instead of leaving the reader to guess');
+  // HEDGED deliberately. This state does not prove a check is RUNNING — a
+  // process that died mid-re-verify leaves the same shape — so a sentence
+  // asserting one would send that seat to wait for a result never coming.
+  assert.ok(!/running right now/.test(said),
+    'it must not assert a live check it cannot observe');
+  assert.match(said, /stall alarm/, 'so it names the alarm that does cover the dead-process case');
+  assert.ok(!/held at/.test(said), 'it must not claim a hold that is not there — nothing is waiting on a human');
+  assert.ok(!/undefined/.test(said), 'never "undefined" from reading the cleared stamp');
+
+  release();
+  for (let i = 0; i < 80 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+});
+
+test('t465 nit2: a HELD ticket still gets its recovery, not the not-yet-reported wording', async () => {
+  // The discriminator. Both states are done-at-verify; only the stamp separates
+  // them, and telling a held reader to "wait for the result" would strand it
+  // waiting on a loop that has already stopped.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  // Re-entry is gated on the stamp's PRESENCE, so a held ticket re-runs rather
+  // than bouncing. Reaching the bounce needs the legacy shape the clause is
+  // written for: a stamp at a step the re-entry gate does not accept.
+  f.tstore.save(f.team.root, [{ ...f.one(), loopStep: 'review' }]);
+  f.injected.length = 0;
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'again' });
+  const said = f.injected.join('\n');
+
+  assert.match(said, /is done, not open/, 'ENTER: this is the bounce');
+  assert.match(said, /held at "verify: commits-on-branch"/, 'ENTER: and the held clause was reached');
+  assert.ok(!/checks have not reported yet/.test(said),
+    'a HELD ticket has reported — the loop stopped and someone owes it an action');
+  assert.match(said, /close the ticket again/, 'so it carries the recovery, which is what the stamp is for');
+});

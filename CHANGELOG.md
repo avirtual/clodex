@@ -37,6 +37,14 @@ blocks a release.
   the message announcing it was missed, and the watchdog re-raises it on the usual
   schedule saying an escalation is waiting rather than reporting a stuck step.
   Rejecting a held ticket still works and still means what it says.
+  Two follow-on wording fixes: closing a held ticket again no longer announces a
+  second "done" for a ticket that was never re-closed — it reads *re-verifying*,
+  matching what the seat itself is told. And a seat that closes a ticket a second
+  time while its checks are still in flight is now told that they have not
+  reported yet — and pointed at the stall alarm that covers a run which died
+  partway — rather than getting a bare "is done, not open" that left rejecting
+  the ticket as the only obvious move.
+  Refusing is still correct: it is what keeps two check runs off one branch.
 
 ## 5.15.0 — 2026-08-21 — the ticket machinery stops producing wrong results
 
