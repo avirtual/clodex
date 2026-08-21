@@ -24,8 +24,8 @@ blocks a release.
   needs doing — and mentions copying your version aside before the destructive
   option. A given withheld update is announced once and then stays quiet until a
   newer shipped version is withheld too. The first launch after this ships will
-  produce one note per already-stranded file (exactly one on a typical install);
-  that is the backlog being reported, not a new problem.
+  produce one note listing every already-stranded file (on a typical install
+  that is a single file); that is the backlog being reported, not a new problem.
 
 - A ticket's git branch is now named after what the ticket is actually about.
   The branch takes its readable half from the spec's first line, but that line
