@@ -70,7 +70,12 @@ function initCostPopover({ popoverApi, proxyState }) {
     const totalTxt = model.total != null ? fmtUsd(model.total) : '';
     return `<div class="cost-sec-title"><span>By line</span><span class="ctx-line-total">${totalTxt}</span></div>`
       + `<div class="cost-line-list">${body}</div>`
-      + `<div class="cost-note">Whole-tree estimate split across the main line and its subagents. Shares ride the live poll (no extra fetch).</div>`;
+      // "this run" is stated unconditionally, and is true in BOTH directions:
+      // the leaf picks the poll's per-registration figure under the overlay and
+      // `p.cost` — which IS that same run figure on a raw poll — without it. An
+      // unlabeled total here read as the bar's all-time one next to it, which is
+      // the confusion the three-scopes ruling exists to prevent.
+      + `<div class="cost-note">Whole-tree estimate for this run, split across the main line and its subagents. Shares ride the live poll (no extra fetch).</div>`;
   }
 
   async function openCostPopover(name, anchor) {

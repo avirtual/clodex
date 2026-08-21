@@ -19,7 +19,9 @@ blocks a release.
   divided by that total — a lifetime figure over per-run rows. So the shares
   read lower the longer the app had been running, the "Main line" row went
   missing, and on a session with no subagents at all the whole section
-  disappeared. It now reads every figure from one place.
+  disappeared. It now reads every figure from one place, and says which run
+  that figure covers — an unlabeled total next to the status bar's lifetime one
+  was the same confusion in a different spot.
 
 - Handlers can no longer quietly use a feature the browser transport does not
   have. Clodex serves the same UI to the desktop app and to a browser, and the

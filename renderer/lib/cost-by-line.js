@@ -18,16 +18,21 @@
 // which test/cost-by-line.test.js pins. Nothing displayed here comes from the
 // wire, so nothing here may vary with it.
 //
-// Fallback: with the overlay off `costRun` is absent and `p.cost` IS the poll's
-// object, the same scope again. If the poll carried no cost the overlay sets
-// `costRun = null` and the fallback lands on the wire object — but then the
-// poll had no cost figures at all, so there is nothing better to show.
+// The discriminator is `telemetrySource`, NOT `costRun || cost`. Under the
+// overlay `p.cost` is ALWAYS the wire ledger and is never a valid source here,
+// so a `||` fallback reaches it precisely when `costRun` is null — the poll
+// carried no cost — and renders a wire total under run-scoped rows, which is
+// the mix this leaf exists to remove. Overlay off, the same payload renders
+// nothing, so the fallback also broke the render-identically property it was
+// meant to preserve. `telemetrySource` is written only by `wire-telemetry.js`
+// `overlay` and stripped by `engine.js` `peerProxyView`, so it is true exactly
+// when `p.cost` is the wire's.
 //
 // null = render nothing (capability off, no cost object, or nothing attributed
 // yet). A null share is UNBILLED, never $0 (pre-0.22 wirescope / unpriced).
 function costByLine(p) {
   if (!p || !p.capabilities || !p.capabilities.cost_by_line) return null;
-  const cost = (p.costRun || p.cost);
+  const cost = p.telemetrySource === 'wire' ? p.costRun : p.cost;
   if (!cost) return null;
   const total = typeof cost.usd === 'number' ? cost.usd : null;
   const main = typeof cost.mainUsd === 'number' ? cost.mainUsd : null;

@@ -25341,7 +25341,7 @@ helper=${d.helperPath}`;
       "use strict";
       function costByLine(p) {
         if (!p || !p.capabilities || !p.capabilities.cost_by_line) return null;
-        const cost = p.costRun || p.cost;
+        const cost = p.telemetrySource === "wire" ? p.costRun : p.cost;
         if (!cost) return null;
         const total = typeof cost.usd === "number" ? cost.usd : null;
         const main = typeof cost.mainUsd === "number" ? cost.mainUsd : null;
@@ -25402,7 +25402,7 @@ helper=${d.helperPath}`;
             return `<div class="cost-line-row ${cls}"><span class="cost-line-label">${esc(r.label)}</span><span class="cost-line-usd">${fmtUsd(r.usd)}<span class="cost-line-pct">${pct}</span></span></div>`;
           }).join("");
           const totalTxt = model.total != null ? fmtUsd(model.total) : "";
-          return `<div class="cost-sec-title"><span>By line</span><span class="ctx-line-total">${totalTxt}</span></div><div class="cost-line-list">${body}</div><div class="cost-note">Whole-tree estimate split across the main line and its subagents. Shares ride the live poll (no extra fetch).</div>`;
+          return `<div class="cost-sec-title"><span>By line</span><span class="ctx-line-total">${totalTxt}</span></div><div class="cost-line-list">${body}</div><div class="cost-note">Whole-tree estimate for this run, split across the main line and its subagents. Shares ride the live poll (no extra fetch).</div>`;
         }
         async function openCostPopover(name, anchor) {
           const p = (proxyState.get(name) || {}).payload;

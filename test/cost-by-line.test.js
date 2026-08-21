@@ -19,6 +19,8 @@
 // property assertion below compares whole models, percentages included.
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 const { costByLine } = require('../renderer/lib/cost-by-line');
 const { WireTelemetry } = require('../wire-telemetry');
 
@@ -122,22 +124,53 @@ test('renders nothing when the capability is off, the cost object is missing, or
   assert.strictEqual(costByLine(poll({ cost: { usd: 2, mainUsd: null }, subagents: [{ key: 'a' }] })), null);
 });
 
-test('a cost-less poll degrades to the wire object rather than throwing', () => {
-  // overlay() sets costRun = null when the poll carried no cost, so the pick
-  // falls through to the wire ledger — which has no mainUsd and no run total,
-  // so the section simply does not render. There is nothing better to show.
-  const out = wiredTelemetry().overlay('alice', { linked: true, sessionId: 'sid-1', cost: null, capabilities: { cost_by_line: true } });
-  assert.strictEqual(out.costRun, null);
+// The case a `costRun || cost` fallback got wrong, and the reason the pick is
+// keyed on `telemetrySource` instead: falling through reaches `p.cost`, which
+// under the overlay is ALWAYS the wire ledger, and rendered a wire total over
+// run-scoped rows — the mix this leaf removes, asserted as correct. Both
+// directions are pinned because the property is symmetric: the overlay may not
+// change what this section shows, and "shows nothing" is a rendering.
+test('a cost-less poll renders nothing, with the overlay on and off alike', () => {
+  const bare = { linked: true, sessionId: 'sid-1', cost: null, capabilities: { cost_by_line: true } };
+  const out = wiredTelemetry().overlay('alice', bare);
+  assert.strictEqual(out.telemetrySource, 'wire', 'ENTER: the overlay must actually have fired');
+  assert.strictEqual(out.costRun, null, 'ENTER: a cost-less poll must leave costRun null, or this case is not the one under test');
   assert.strictEqual(costByLine(out), null);
-  // With a billed sub it renders against the only total there is.
-  const withSub = wiredTelemetry().overlay('alice', {
-    linked: true, sessionId: 'sid-1', cost: null, capabilities: { cost_by_line: true },
-    subagents: [{ key: 'a', label: 'Explore', estUsd: 0.2 }],
-  });
-  assert.deepStrictEqual(costByLine(withSub), {
-    total: 113.98,
-    rows: [{ label: 'Explore', usd: 0.2, pct: 0, main: false }],
-  });
+  assert.strictEqual(costByLine(bare), null);
+
+  // A billed subagent must not resurrect it: the wire ledger is not a total
+  // these rows can be divided by, so there is nothing to render against.
+  const withSub = { ...bare, subagents: [{ key: 'a', label: 'Explore', estUsd: 0.2 }] };
+  const onSub = wiredTelemetry().overlay('alice', withSub);
+  assert.strictEqual(onSub.cost.usd, 113.98, 'ENTER: the wire ledger must be present and non-null, or the fallback this pins against is unreachable');
+  assert.strictEqual(costByLine(onSub), null);
+  assert.strictEqual(costByLine(withSub), null);
+});
+
+// The property tests above cover the LEAF; nothing covered the WIRING. Revert
+// the popover to reading `p.cost`/`p.costRun` inline and every one of them stays
+// green while the operator sees the pre-fix numbers again, because the popover
+// is DOM-bound and untested. Two directions, because either alone is passable:
+// keeping the require while reading the payload directly, or dropping it.
+// Precedent for asserting on source shape: test/ctl-service.test.js's
+// electron-free check.
+test('the cost popover reads the model through this leaf, never the payload directly', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'popovers', 'cost-popover.js'), 'utf8');
+  assert.match(src, /require\('\.\.\/lib\/cost-by-line'\)/, 'the popover must import the leaf');
+
+  // Comments are stripped first: this file's own prose names the fields, and a
+  // scan that matched them would be unfixable by construction.
+  const code = src.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const direct = [...code.matchAll(/\bp(?:ayload)?\.(cost|costRun|subagents)\b/g)].map((m) => m[0]);
+  assert.deepStrictEqual(direct, [],
+    `cost-popover.js reads the telemetry payload's cost fields directly (${direct.join(', ')}) — `
+    + 'the scope pick is the leaf\'s job (renderer/lib/cost-by-line.js). Reading them here reintroduces '
+    + 'the overlay-scope mix in a file no test can see.');
+
+  // ENTER: the scan must be looking at a file that still HAS the section, or
+  // the absence above is trivially true of a popover that stopped rendering it.
+  assert.match(code, /renderCostByLine/, 'ENTER: the By-line renderer is gone from the popover');
+  assert.match(code, /costByLine\(/, 'ENTER: the popover no longer calls the leaf at all');
 });
 
 test('the input payload is never mutated', () => {
