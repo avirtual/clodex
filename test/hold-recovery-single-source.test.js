@@ -121,6 +121,24 @@ const path = require('node:path');
 // Both are genuinely narrower than the historical defect, which read a FIELD and
 // wrote a sentence that contradicted it. Neither can do that.
 //
+// WHERE THE COMPOSITION WOULD REAPPEAR NEXT, probed against the premise added
+// in r3 rather than waiting for a fourth rejection to find it. The prose hop is
+// ONE deep, so three shapes pass: advice assigned through a second local
+// (`b = a`), advice built in an if/else rather than an initialiser, and advice
+// returned from a function call (`pick(cls)`).
+//
+// Measured, not assumed: none occurs in team-tickets.js — all five real advice
+// sites call `holdRecoveryText` inline, and the file contains no local whose
+// wording is chosen off a recovery class at all. So one hop is the depth the
+// codebase's own idiom reaches, which is the same standard the rest of this
+// scanner is built to.
+//
+// Named here rather than chased because the honest boundary is the point: an
+// arbitrary-depth prose taint needs dataflow, not text, and each extra hop
+// bought by a regex costs false-positive surface on a rule whose whole value is
+// that authors trust it. If a reader ever DOES build advice through two hops,
+// this comment is the record that it was a known edge, not an oversight.
+//
 // WHAT THIS STILL DOES NOT SEE, measured rather than assumed. The pre-pass is
 // one level deep and text-based, so three shapes get through: an alias of an
 // alias (`h2 = h`), a nested destructure (`const { verifyHold: { recovery } }
