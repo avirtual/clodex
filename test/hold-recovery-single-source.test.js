@@ -1264,3 +1264,54 @@ test('the two scanners are DISJOINT the other way: the phrase scan catches what 
   assert.ok(scanAdvicePhrases(fixture).length >= 1,
     'and the phrase scan closes it without a sixth taint arm');
 });
+
+// ── the LEAD-facing reassurance, a second single-sourced literal ────────────
+// Same class as HOLD_RECOVERY, different sentence, and it is the SPLIT one:
+// `_notifyLeadOfLoopRejection` used to carry it across a string concatenation,
+// so a whole-sentence grep found ONE occurrence of a byte-identical pair and it
+// read as a single site. Measured before folding — do not re-derive: the four
+// "Nothing was torn down" sites are THREE things, not four copies, and two of
+// them are excluded on purpose by the subjects below.
+
+test('the lead-facing reassurance has exactly ONE source', () => {
+  const src = realSource();
+  const lit = 'Nothing was torn down — the worktree, the branch and the seat are exactly as they were.';
+  const body = src.split('\n')
+    .filter((l) => !COMMENT_LINE.test(l))
+    .join('\n');
+  assert.ok(body.includes(`const NOTHING_TORN_DOWN = '${lit}'`),
+    'ENTER: the constant is where this subject thinks it is, or every count below is about nothing');
+  const renders = body.split(lit).length - 1;
+  assert.strictEqual(renders, 1, `the sentence is written once (found ${renders}) — the other readers render NOTHING_TORN_DOWN`);
+  // Both readers still reach it. Without this, deleting a call site keeps the
+  // count at 1 and this subject goes green over a notice that lost its
+  // reassurance entirely.
+  const uses = body.split('NOTHING_TORN_DOWN').length - 1;
+  assert.strictEqual(uses, 3, `one definition and two renders (found ${uses} mentions)`);
+});
+
+test('the HAND-facing reassurance is deliberately NOT the same literal: person is the message', () => {
+  const src = realSource();
+  // Second person, and that is the whole reason it is separate — a held seat is
+  // asking about ITS OWN tree. Folding it into the lead's third-person sentence
+  // would be a "duplication" fix that removes information.
+  assert.match(src, /Nothing was torn down — your worktree, your branch and this seat are exactly as they were\./,
+    'the hand is addressed in the second person');
+  assert.ok(!/your worktree[\s\S]{0,120}const NOTHING_TORN_DOWN/.test(src),
+    'and it is not rendered from the lead-facing constant');
+});
+
+test('the MERGED notice states the opposite tense and keeps its intent off column 1', () => {
+  const src = realSource();
+  // Not "nothing was torn down and nothing will be" but "not YET — here is the
+  // verb that will". Different claim, so it is not a copy to fold away.
+  const line = src.split('\n').find((l) => l.includes('Nothing was torn down: the worktree'));
+  assert.ok(line, 'ENTER: the merge notice still carries its own sentence');
+  assert.match(line, /\[agent:task accept \$\{ticketId\}\]/,
+    'ENTER: the ready-to-fire verb really is on this line, or the check below is vacuous');
+  const rendered = line.slice(line.indexOf('Nothing was torn down'));
+  assert.ok(!rendered.startsWith('[agent:'),
+    'the verb never opens the line — IntentScanner is ^-anchored and the lead would auto-accept on receipt');
+  assert.ok(rendered.indexOf('[agent:task accept') > 'Nothing was torn down: '.length - 1,
+    'prose precedes it, which is the entire reason it is inert');
+});

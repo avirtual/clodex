@@ -230,6 +230,20 @@ const HOLD_RECOVERY = {
     + `Once the cause is cleared, ${ticketCloseVerb(id)} <your report> re-runs the checks from here.`,
 };
 const holdRecoveryText = (cls, id) => (HOLD_RECOVERY[cls] || HOLD_RECOVERY.hand)(id);
+// The LEAD-facing reassurance, shared by the loop's rejection and escalation
+// notices. Third person, because the lead does not own the tree.
+//
+// Deliberately NOT shared with two neighbours that read like copies of it:
+//   - `_notifyHandOfHold`'s is second person ("YOUR worktree … THIS seat"), and
+//     the person is the message — a held seat is asking about its own tree.
+//   - `_notifyMergeLanded`'s states the opposite tense: not "nothing was torn
+//     down and nothing will be", but "not yet, and here is the verb that will".
+//     It also ends with a ready-to-fire `[agent:task accept <id>]`, inert ONLY
+//     because prose precedes it on its line — IntentScanner is ^-anchored, so a
+//     reflow moving it to column 1 makes the LEAD auto-accept on receipt and
+//     destroy a worktree. Rendering it through a shared helper puts that line's
+//     column at a caller's mercy. Pinned by ticket-auto-merge.test.js.
+const NOTHING_TORN_DOWN = 'Nothing was torn down — the worktree, the branch and the seat are exactly as they were.';
 const ticketCloseLine = (id) => `CLOSE WITH: ${ticketCloseVerb(id)} <your report> — one intent, at the end: it delivers the report to the lead AND marks the ticket done. `
   + `It is a line you emit yourself, like any [agent:…] intent — NOT an exec command, and nothing needs to be granted for it. `
   + `A dm carrying your report does NOT close the ticket: the ticket stays open, and everything downstream of the close (tree verify, review) never runs.\n`;
@@ -5348,8 +5362,7 @@ function createTicketMethods(deps, shared) {
           `WHY: ${firstLine || 'the test suite failed on the branch'}`,
           '',
           'The rework reached the seat and the ticket is open again; the failing test names are on'
-          + ' the record and in the seat\'s copy. Nothing was torn down — the worktree, the branch'
-          + ' and the seat are exactly as they were.',
+          + ` the record and in the seat's copy. ${NOTHING_TORN_DOWN}`,
         ].join('\n');
         const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticket.id} REJECTED] round ${round} → ${seat}`);
         if (r && r.error) {
@@ -5824,7 +5837,7 @@ function createTicketMethods(deps, shared) {
           `EVIDENCE: ${evidence}`,
           `ALREADY TRIED: ${tried}`,
           '',
-          'Nothing was torn down — the worktree, the branch and the seat are exactly as they were.',
+          NOTHING_TORN_DOWN,
           // The ROUTE. Without it this message names a failure and no way out, and
           // the only verb the reader has been taught for a `done` ticket is
           // `reject` — the false rejection this ticket exists to remove. The
