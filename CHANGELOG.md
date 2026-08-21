@@ -13,6 +13,27 @@ blocks a release.
 
 ## Unreleased
 
+- Every agent now gets the ticket verbs in its own prompt. The `task` grammar —
+  how a seat closes the ticket it was dispatched, and how it finds that ticket's
+  id — reached seats only through a seeded role brief on disk, while the protocol
+  prompt itself documented every other verb. That was fragile in a way nobody
+  could see: a seeded file can silently freeze behind the copy Clodex ships, and
+  this one did, for three days. During that window the grammar for closing a
+  ticket was one stale file away from being unreachable, and the near-miss
+  bounce — which lists `task` as a valid verb — would have gone on advertising a
+  verb the seat had never been taught. It cost a real seat a confused round over
+  how to close its own ticket.
+  The prompt now carries the two lines a non-lead seat actually needs: `task done`
+  with the three things that got that seat stuck (the report is the body, it is
+  required, and a dm carrying the report does *not* close the ticket — it reaches
+  the lead looking identical while the ticket stays open), and `task list`, which
+  is how a seat finds its id. The lead's dispatch verbs are named with their
+  argument shapes only, so a seat does not invent a spelling for them; the full
+  protocol stays in the lead's brief.
+  Unlike the other verbs, this one cannot be switched off — the ticket verbs are
+  not part of the per-seat intent allowlist, so the grammar reaches every seat
+  regardless of how narrowly it was scoped.
+
 - A ticket whose automatic checks fail now stays recoverable instead of going
   quiet. When a seat closed a ticket and one of the checks that runs before the
   review failed — nothing committed on the branch, a rebased base, a suite that
