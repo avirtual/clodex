@@ -156,6 +156,8 @@ test('the SERVING side vets geometry too, with the same bounds', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf8');
   const handler = src.split("p.startsWith('/api/wterm-resize/')")[1];
   assert.ok(handler, 'ENTER: found the serving wterm-resize handler');
+  assert.ok(handler.includes("p.startsWith('/api/wterm-close/')"),
+    'ENTER: the NEXT handler must be present, or indexOf returns -1 and the slice is the whole handler minus one character');
   const body = handler.slice(0, handler.indexOf("p.startsWith('/api/wterm-close/')"));
   assert.ok(body.length > 0, 'ENTER: isolated the handler body, not the whole file');
   assert.match(body, /bad dimensions/, 'the serving side refuses on its own');
