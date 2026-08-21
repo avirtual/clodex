@@ -914,6 +914,13 @@ test('the helper is the only place HOLD_RECOVERY is read', () => {
 // exists to prevent. A paraphrase written from scratch is wrong immediately and
 // visibly to its reader, not silently divergent from a table it never quoted.
 // The blind spot is also CONSTANT, where the taint scan's grows with each idiom.
+//
+// SECOND DELIBERATE BOUNDARY, same standing: the scan is LINE-LOCAL. A copied
+// arm wrapped so that no single line carries PHRASE_N consecutive advice words
+// is invisible to it. Joining the file into one string instead would bridge
+// unrelated statements and manufacture false positives on a rule whose entire
+// value is that authors trust it. Recorded here so the next reader finds it as
+// a known boundary rather than rediscovering it as a hole.
 
 const PHRASE_N = 5;
 
@@ -938,8 +945,21 @@ function deriveAdviceGrams(src, N = PHRASE_N) {
   const range = holdRecoveryTableRange(lines);
   const grams = new Set();
   if (!range) return grams;
-  const table = lines.slice(range.start, range.end + 1).join('\n');
-  for (const lit of table.match(/`[^`]*`|'[^'\\]*(?:\\.[^'\\]*)*'/g) || []) {
+  // COMMENT LINES ARE STRIPPED, mirroring the scan side. Measured: keeping them
+  // yielded 180 grams of which only 68 came from the arms — 62% was comment
+  // prose, because the single-quote alternative runs across newlines from any
+  // apostrophe in a comment. Appending one `doesn't` to the comment above the
+  // hand arm took the set 180 -> 129 and DELETED THE WHOLE INFRA ARM, while a
+  // `grams.size > 100` guard stayed green — a guard surviving the loss of what
+  // it guards, which is this file's own defect class rebuilt in its enforcement.
+  const table = lines.slice(range.start, range.end + 1)
+    .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  // The backtick alternative honours \` : the spec arm contains an escaped
+  // backtick (\`tasks/…\` line first), and a naive /`[^`]*`/ terminates there,
+  // yielding NO grams for that sentence — a copy of it would be invisible.
+  // NOTE: "…" literals are not matched. An arm rewritten with double quotes
+  // would contribute nothing; add the alternative if that ever happens.
+  for (const lit of table.match(/`(?:[^`\\]|\\.)*`|'[^'\\]*(?:\\.[^'\\]*)*'/g) || []) {
     for (const seg of lit.slice(1, -1).split(/\$\{[^}]*\}/)) {
       const w = adviceWords(seg);
       for (let i = 0; i + N <= w.length; i++) grams.add(w.slice(i, i + N).join(' '));
@@ -984,9 +1004,24 @@ test('ENTER: the phrase scan derives real grams from the real table', () => {
   // false-green this whole file was written against. Assert the derivation
   // reached the table before any subject below trusts a zero from it.
   const grams = deriveAdviceGrams(realSource());
-  assert.ok(grams.size > 100, `ENTER: grams derived from HOLD_RECOVERY (got ${grams.size})`);
-  assert.ok(grams.has('fix what the check named'),
-    'ENTER: a known phrase from the hand arm is present');
+  // PER-ARM, not a threshold. A count cannot detect a PARTIALLY derived set:
+  // losing one arm entirely left 129 grams, which any round-number threshold
+  // happily passes. Each arm is asserted by its own gram, so losing any one of
+  // the three goes red naming which.
+  assert.ok(grams.has('fix what the check named'), 'ENTER: the hand arm');
+  assert.ok(grams.has('re closing alone will not'), 'ENTER: the spec arm');
+  assert.ok(grams.has('this is not something the'), 'ENTER: the infra arm');
+  // Advice-only band. The upper bound is the real guard: it goes red if comment
+  // prose starts leaking back into the derivation, which is how the arms got
+  // swamped in the first place.
+  assert.ok(grams.size > 40 && grams.size < 120,
+    `ENTER: advice-only gram count (${grams.size})`);
+  // NIT 4: the span must be the table, not the rest of the file. `};` is matched
+  // exactly, so a reformat of the closing brace would silently widen or narrow
+  // this; fail loudly instead.
+  const range = holdRecoveryTableRange(realSource().split('\n'));
+  assert.ok(range && range.end - range.start < 40,
+    `ENTER: the span is the table itself (got ${range ? range.end - range.start : 'none'} lines)`);
   // No gram may bridge an interpolation: `${ticketCloseVerb(id)}` renders to a
   // per-caller string, so a gram spanning it would pin one caller's output.
   assert.ok(![...grams].some((g) => g.includes('ticketclosverb') || g.includes('ticketcloseverb')),
@@ -1024,8 +1059,11 @@ for (const [shape, body] of [
     const hits = scanAdvicePhrases(withRealTable(body));
     assert.ok(hits.length >= 1,
       `a copied arm rendered as ${shape} must be caught (got ${hits.length})`);
-    assert.ok(hits.every((h) => h.gram.split(' ').length === PHRASE_N),
-      'ENTER: the hit is a real N-gram match, not a degenerate empty one');
+    // Grams are built by joining N tokens and `adviceWords` cannot emit a token
+    // containing a space, so asserting the width back cannot fail. Assert the
+    // hit is a gram the TABLE actually produced — that bites.
+    assert.ok(deriveAdviceGrams(withRealTable(body)).has(hits[0].gram),
+      'ENTER: the hit is a gram the real table produced, not an artefact');
   });
 }
 
@@ -1105,10 +1143,17 @@ test('the two scanners are DISJOINT: the taint scan catches a wholesale reword t
     "const cls = ticket.verifyHold.recovery;",
     `reply(cls === 'spec' ? '${COPIED_SPEC}' : '${COPIED_HAND}');`,
   ].join('\n');
+  // The blindness must come from the REWORD, not from an empty gram set — an
+  // empty set makes the scan vacuously blind to everything and the claim
+  // meaningless.
+  assert.ok(deriveAdviceGrams(reworded).size > 0,
+    'ENTER: the reworded table still yields grams, so the blindness is real');
   assert.deepStrictEqual(scanAdvicePhrases(reworded), [],
     'ENTER: the phrase scan is blind here — the stale copy shares no gram with the reworded table');
-  assert.ok(scanHoldRecovery(reworded).length >= 1,
-    'the taint scan catches it, which is why deleting it would give up a real class of defect');
+  const caught = scanHoldRecovery(reworded);
+  assert.strictEqual(caught.length, 1, `the taint scan catches it (got ${caught.length})`);
+  assert.strictEqual(caught[0].line, 7, 'on the render line, not the read');
+  assert.match(caught[0].rule, /^[AB]$/, 'under a named rule, which is why deleting it gives up a real class');
 });
 
 test('the two scanners are DISJOINT the other way: the phrase scan catches what the taint scan passes', () => {
