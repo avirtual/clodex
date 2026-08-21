@@ -48,9 +48,19 @@ const path = require('node:path');
 //   heldAt = ...verifyHold.step; ${heldAt}   FLAG — narrowed, still a render
 //   held = ...holdRecoveryText(...)          PASS — carries the recovery
 //   a RENDER of `recovery`, however bound    FLAG unless the helper is called
-//   a ROUTE read of `recovery` (branch,
-//     compare, derive a boolean)             PASS — the class exists for this
+//   a ROUTE read of `recovery` — one that
+//     reaches control flow ONLY               PASS — the class exists for this
+//   a class-derived value that SELECTS
+//     between advice literals                 FLAG — boolean or string alike
 //   a render marked `prescribes-nothing`     PASS — written claim, and counted
+//
+// DISCRIMINATE BY USE, NEVER BY TYPE. An r3 carve-out exempted a derived
+// BOOLEAN ("comparing is routing, a boolean has no wording to drift") — true of
+// the value, false of the statement, and `reply(isSpec ? 'reject and refile' :
+// 'close the ticket again')` is three lines from the class to two hand-written
+// sentences that do not move when HOLD_RECOVERY does. The carve-out was deleted
+// rather than narrowed: every local derived from the class is tracked, and what
+// separates a route from a render is where the value GOES.
 //
 // ONE PREMISE, two extraction depths. Rule A and rule B differ only in how far
 // the value was carried before it reached prose; both fire on the RENDER, never
@@ -260,10 +270,24 @@ function scanHoldRecovery(src) {
   // and contains a string literal is choosing wording off the class, which is
   // precisely what the helper exists to own.
   //
-  // Requires a STRING LITERAL, so a derived predicate (`const isSpec = cls ===
-  // 'spec'`) does not become advice: comparing is routing, and a boolean has no
-  // wording to drift.
-  const adviceAliases = new Set();
+  // NOT gated on the derived value's TYPE. An earlier version required a string
+  // literal in the initialiser, reasoning that "a boolean has no wording to
+  // drift" — true of the VALUE and false of the STATEMENT, the identical error
+  // as `.step` carrying no advice while the prose around it does. It let this
+  // through in three lines:
+  //
+  //   const { recovery } = ticket.verifyHold;
+  //   const isSpec = recovery === 'spec';
+  //   reply(isSpec ? 'reject and refile' : 'close the ticket again');
+  //
+  // Those two literals are hand-written advice selected on the class, and they
+  // do not move when HOLD_RECOVERY's wording does — the exact drift this file
+  // exists to prevent. So the carve-out is DELETED rather than narrowed: every
+  // local derived from the class is tracked, and the discrimination happens at
+  // the USE, which is this rule's whole premise. Control flow passes, renders
+  // flag, boolean or not.
+  const classDerived = new Set();
+  const derivedBindingLines = new Set();
   if (recoveryAliases.size) {
     let block = false;
     lines.forEach((raw, i) => {
@@ -277,11 +301,29 @@ function scanHoldRecovery(src) {
       const [, name, rhs] = bound;
       const stmt = statementText(i);
       if (/holdRecoveryText\s*\(/.test(stmt)) return;
-      if (![...recoveryAliases].some((n) => new RegExp(`\\b${n}\\b`).test(stmt))) return;
-      // A bare boolean off the class is a route, not advice.
-      if (!/[`'"]/.test(stmt)) return;
-      if (/^\s*[A-Za-z_$][\w$.]*\s*[=!]==?\s*[`'"][^`'"]*[`'"]\s*;?\s*$/.test(rhs)) return;
-      adviceAliases.add(name);
+      if (![...recoveryAliases].some((n) => new RegExp(`\\b${n}\\b`).test(rhs))) return;
+      // What the local CARRIES decides whether it is tracked, and the test is
+      // the same one applied everywhere else here: does it hold PROSE.
+      //
+      //   const advice = cls === 'spec' ? 'reject' : 'close again'   → tracked
+      //   const isSpec = cls === 'spec'                              → tracked
+      //   const id     = recovery ? ticket.id : null                 → NOT
+      //
+      // The third is the one that matters. Tracking any local that merely
+      // mentions the class made every later render of a common name like `id` a
+      // violation — 45 on the real file, a scanner nobody can use. So a local
+      // carrying DATA off another object is not advice; a comparison against
+      // the class is, because the boolean it yields exists to pick a sentence,
+      // and where it actually goes is judged at the USE.
+      const comparesClass = [...recoveryAliases].some(
+        (n) => new RegExp(`\\b${n}\\b\\s*[=!]==?`).test(rhs));
+      const carriesLiteral = /[`'"]/.test(rhs) && !/\b[A-Za-z_$][\w$]*\.[A-Za-z_$]/.test(rhs);
+      if (!comparesClass && !carriesLiteral) return;
+      classDerived.add(name);
+      // Reported at the RENDER, never here: a binding is harmless until
+      // something prescribes off it, and flagging both points the reader at the
+      // assignment first. Same reason the recovery binding itself is skipped.
+      derivedBindingLines.add(i);
     });
   }
 
@@ -289,11 +331,18 @@ function scanHoldRecovery(src) {
   // slipped past this rule: `${name}` inside a literal, and `\`…\` + name`
   // concatenated onto one. The historical sweep sentence is written the second
   // way, so an interpolation-only test reads the exact defect as clean.
+  //
+  // THIRD shape: the value SELECTS between prose literals (`x ? 'a' : 'b'`).
+  // The name never enters a template, so interpolation and concatenation both
+  // miss it — yet the sentence the reader receives is chosen right there. This
+  // is what a boolean derived from the class actually does, and why type is the
+  // wrong thing to discriminate on.
   const aliasRendered = (raw, names) => [...names].some((n) => {
     const interpolated = new RegExp(`\\$\\{[^}]*\\b${n}\\b`).test(raw);
     const concatenated = new RegExp('[`\'"][^`\'"]*[`\'"]\\s*\\+[^;]*\\b' + n + '\\b').test(raw)
       || new RegExp(`\\b${n}\\b\\s*\\+\\s*[\`'"]`).test(raw);
-    return interpolated || concatenated;
+    const selectsProse = new RegExp(`\\b${n}\\b[^;?]*\\?\\s*[\`'"]`).test(raw);
+    return interpolated || concatenated || selectsProse;
   });
 
   // The exemption must sit in the contiguous comment run IMMEDIATELY above the
@@ -322,7 +371,12 @@ function scanHoldRecovery(src) {
     // Rule A, alias arm — a bound `recovery` class RENDERED into prose, under
     // any name and at any binding depth. Not merely mentioned: a bound class
     // that only routes is legitimate, for the reason the whole design rests on.
-    if (!helper && !exempt
+    //
+    // A line that BINDS a derived local is skipped here too: selecting prose in
+    // an initialiser is reported once, at the render that delivers it. Both
+    // lines are the same violation, and naming the assignment first sends the
+    // reader to the harmless half.
+    if (!helper && !exempt && !derivedBindingLines.has(i)
       && aliasRendered(raw, recoveryAliases)) {
       violations.push({ line: i + 1, rule: 'A', text: raw.trim() });
       return;
@@ -334,7 +388,7 @@ function scanHoldRecovery(src) {
     // branches on a recovery alias — the prose is chosen THERE, so that local
     // carries the advice even though the class never reaches the template.
     if (!helper && !exempt
-      && aliasRendered(raw, adviceAliases)) {
+      && !derivedBindingLines.has(i) && aliasRendered(raw, classDerived)) {
       violations.push({ line: i + 1, rule: 'A', text: raw.trim() });
       return;
     }
@@ -622,7 +676,63 @@ test('GREEN: a pure ROUTE read passes when bound to a local too', () => {
     'if (isSpec) return;',
   ].join('\n');
   assert.deepStrictEqual(scanHoldRecovery(ok), [],
-    'comparing is routing; a boolean derived from the class has no wording to drift');
+    'comparing is routing: these reads reach control flow only, and a value that never '
+    + 'meets prose cannot disagree with HOLD_RECOVERY. NOT because it is a boolean — a '
+    + 'boolean that SELECTS between advice literals is a render, and flags.');
+});
+
+test('RED: a boolean derived from the class, SELECTING advice literals, is caught', () => {
+  // The r3 carve-out, and the fourth instance of this file's recurring shape —
+  // this time inside an exemption written in the same commit that fixed the
+  // previous one. The scanner required a string literal in the initialiser,
+  // reasoning that a boolean "has no wording to drift": true of the VALUE,
+  // false of the STATEMENT, identical to `.step` carrying no advice while the
+  // prose around it does.
+  //
+  // These two literals are hand-written advice chosen on the class, and they do
+  // not move when HOLD_RECOVERY's wording does. Three lines to the drift this
+  // whole file exists to prevent.
+  const mutant = [
+    'const { recovery } = ticket.verifyHold;',
+    "const isSpec = recovery === 'spec';",
+    "reply(isSpec ? 'reject and refile' : 'close the ticket again');",
+  ].join('\n');
+  const v = scanHoldRecovery(mutant);
+  assert.strictEqual(v.length, 1, 'ENTER: caught exactly once');
+  assert.strictEqual(v[0].rule, 'A', 'rule A — the class selected the prose');
+  assert.strictEqual(v[0].line, 3, 'at the render, not the comparison');
+});
+
+test('GREEN: a local carrying DATA off the class does not become advice', () => {
+  // Found by mutating the real file rather than by reasoning. The first fix for
+  // the boolean hole tracked every local whose statement mentioned the class,
+  // which swept up `const id = recovery ? ticket.id : null` — and from then on
+  // EVERY later render of a common name like `id` was a violation: 45 of them
+  // on team-tickets.js, a scanner nobody could use and everybody would delete.
+  //
+  // The discriminator is what the local CARRIES. A comparison against the class
+  // yields a value that exists to pick a sentence; a field off another object
+  // is data, and rendering the ticket id prescribes nothing.
+  const ok = [
+    'const { recovery } = ticket.verifyHold;',
+    'const id = recovery ? ticket.id : null;',
+    'reply(`close with ${ticketCloseVerb(id)}`);',
+  ].join('\n');
+  assert.deepStrictEqual(scanHoldRecovery(ok), [],
+    'a data-carrying local is not advice — tracking it makes the rule unusable');
+});
+
+test('GREEN: the same boolean used only for CONTROL FLOW still passes', () => {
+  // The other half, and the reason the fix DELETES a special case rather than
+  // adding one: discrimination happens at the USE, which is rule A's premise.
+  // A class-derived value that reaches only `if`/`return` prescribes nothing.
+  const ok = [
+    'const { recovery } = ticket.verifyHold;',
+    "const isSpec = recovery === 'spec';",
+    'if (isSpec) return this._respecRoute(ticket);',
+  ].join('\n');
+  assert.deepStrictEqual(scanHoldRecovery(ok), [],
+    'routing on the class is the design — it is why a class is stamped rather than prose');
 });
 
 test('GREEN: a narrowed fact cannot smuggle the recovery out', () => {
