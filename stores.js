@@ -1477,7 +1477,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
       // warn, not info: a withheld upgrade was invisible for 8 days and 20
       // shipped revisions once, and the silence WAS the bug.
       stranded.sort();
-      if (log) log.warn?.('seed', `${stranded.length} library file(s) differ from both the shipped copy and their seed stamp, so they will never receive shipped updates: ${stranded.join(', ')}. To take the shipped version of one, delete it under ${destRoot} and relaunch.`);
+      if (log) log.warn?.('seed', `${stranded.length} library file(s) differ from both the shipped copy and their seed stamp, so they will never receive shipped updates: ${stranded.join(', ')}. To take the shipped version of one, copy it aside if you want to keep your version, then delete it under ${destRoot} and relaunch.`);
     }
     if (changed) {
       try { ensureDir(destRoot); atomicWriteFileSync(statePath, JSON.stringify(state, null, 2)); }
