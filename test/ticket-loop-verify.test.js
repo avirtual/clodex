@@ -4169,6 +4169,12 @@ test('t465 nit2: a second `done` during a re-verify says the checks have not rep
   await strand(f);
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const release = holdInSuite(f);
+  // ENTER: without this the subject passes having never taken the re-entry — if
+  // the stamp stops being written, `reentry` is false, the handler bounces down
+  // the `state !== 'open'` path, and every assertion below still holds. Measured:
+  // removing the stamp at `team-tickets.js:5496` left this subject GREEN while
+  // its twin and eight others went red.
+  assert.ok(f.one().verifyHold, 'ENTER: the ticket is HELD before the re-entry');
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
   // MEASURED, and it is the STAMP that carries the guarantee, not `loopStep`:
   // `strand()` already leaves `loopStep: 'verify'` and the escalation arm keeps

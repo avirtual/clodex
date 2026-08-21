@@ -825,7 +825,7 @@ test('every verifyHold recovery reader in team-tickets.js routes through holdRec
   // ENTER: the scan reached the readers. Asserted because every claim below is
   // an ABSENCE — a scan that matched nothing (a rename, a moved field) would
   // satisfy `deepStrictEqual(v, [])` while proving nothing at all.
-  const readers = src.split('\n').filter((l) => /\$\{[^}]*verifyHold/.test(l) && !l.trim().startsWith('//'));
+  const readers = src.split('\n').filter((l) => /\$\{[^}]*verifyHold/.test(l) && !COMMENT_LINE.test(l));
   assert.ok(readers.length >= 5,
     `ENTER: the real readers were found (got ${readers.length}) — a zero here means the scan went blind`);
   assert.deepStrictEqual(scanHoldRecovery(src), [],
@@ -1052,23 +1052,34 @@ test('ENTER: the phrase scan derives real grams from the real table', () => {
   assert.ok(commentGrams.size > 0,
     `ENTER: the table's comments really were gram-bearing (got ${commentGrams.size})`);
   const leaked = [...commentGrams].filter((g) => grams.has(g));
+  // Two causes, and the next reader must not be sent after only the first: a
+  // table comment that quotes an arm verbatim (>= PHRASE_N words) intersects
+  // legitimately and is not the r5 defect.
   assert.deepStrictEqual(leaked, [],
-    'comment prose leaked into the advice set — the r5 defect returning');
+    'either comment prose leaked into the derivation, or a table comment now quotes an arm verbatim; check which');
   // Loose sanity only, no longer the guard.
   assert.ok(grams.size > 40 && grams.size < 120,
     `ENTER: advice-only gram count (${grams.size})`);
   // NIT 4: the span must be the table, not the rest of the file. `};` is matched
   // exactly, so a reformat of the closing brace would silently widen or narrow
   // this; fail loudly instead.
-  const range = holdRecoveryTableRange(realSource().split('\n'));
+  const lines = realSource().split('\n');
+  const range = holdRecoveryTableRange(lines);
   assert.ok(range && range.end - range.start < 40,
     `ENTER: the span is the table itself (got ${range ? range.end - range.start : 'none'} lines)`);
-  // NIT 4: the "…" limitation, enforced rather than advisory. An arm rewritten
-  // with double quotes would contribute ZERO grams and every guard above would
-  // still pass, so it goes red here instead.
-  const tableText = realSource().split('\n').slice(range.start, range.end + 1).join('\n');
-  assert.ok(!/:\s*\(id\)\s*=>\s*"/.test(tableText),
-    'an arm uses a "…" literal, which TABLE_LITERAL does not match — add the alternative');
+  // The "…" limitation, enforced rather than advisory. Matching only the HEAD
+  // literal (`: (id) => "`) was too narrow: the arms are multi-line
+  // concatenations, so a rewritten CONTINUATION (`+ "That re-runs…"`) yields zero
+  // grams and passes the head check, the per-arm ENTERs (all keyed on
+  // first-line grams) and the band (73 minus one continuation is still inside
+  // it). Assert over the whole non-comment span instead.
+  //
+  // Comment lines are filtered because two of them legitimately carry a double
+  // quote (`team-tickets.js` "correcting the record of a closed ticket…"), and
+  // a comment contributes no grams either way.
+  assert.ok(!/"/.test(lines.slice(range.start, range.end + 1)
+    .filter((l) => !COMMENT_LINE.test(l)).join('\n')),
+  'an arm uses a "…" literal, which TABLE_LITERAL does not match — add the alternative');
   // No gram may bridge an interpolation: `${ticketCloseVerb(id)}` renders to a
   // per-caller string, so a gram spanning it would pin one caller's output.
   assert.ok(![...grams].some((g) => g.includes('ticketclosverb') || g.includes('ticketcloseverb')),
@@ -1112,10 +1123,19 @@ for (const [shape, body] of [
     // in different directions: the gram must come from the REAL table (not a
     // fixture whose range drifted), and the hit must land on the copied render
     // (not on scaffolding).
+    // Not a tautology (different input strings), but narrower than it reads:
+    // `withRealTable` slices with the same `holdRecoveryTableRange`, so fixture
+    // and real table are byte-identical and drift together. It bites on exactly
+    // one class — a fixture builder that stops carrying the real wording.
     assert.ok(deriveAdviceGrams(realSource()).has(hits[0].gram),
-      'ENTER: the gram comes from the REAL table, not a fixture whose range drifted');
-    assert.ok(body.some((l) => l.trim() === hits[0].text),
-      'the hit is on the copied render, not on scaffolding');
+      'ENTER: the gram comes from the REAL table, not a fixture whose range drifted'
+      + " — this guards the FIXTURE's provenance, not the scanner");
+    // The fixture is table + body only and the scan already skips the table
+    // range and comment lines, so "it is a body line" is true of every possible
+    // hit — it could not discriminate the render from the sibling
+    // `const isSpec = …`. Assert the copied SENTENCE itself.
+    assert.ok(hits[0].text.includes(COPIED_HAND) || hits[0].text.includes(COPIED_SPEC),
+      'the hit is on the copied sentence itself');
   });
 }
 
