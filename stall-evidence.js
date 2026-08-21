@@ -120,6 +120,12 @@ function lastToolFrom(text) {
 // a subagent's API error is the subagent's, and the seat's own turn may have
 // continued past it.
 //
+// Unlike `lastToolFrom` this filters on `d.type`, so a record WITHOUT one is
+// invisible here (fail-safe: omission). The consequence is for test authors — a
+// fixture built only from tool_use/tool_result helpers that omit `type` is
+// vacuously error-free, and would pass an absence assertion for a reason
+// unrelated to what it claims to pin.
+//
 // The text is returned RAW — unwrapped, uncapped, newlines intact. Rendering it
 // onto one line belongs to the formatter, which owns every other one-line rule
 // in this module.
@@ -163,9 +169,20 @@ function lastApiErrorFrom(text) {
 // "API Error: Fable 5's safeguards flagged"), and that classification is the
 // whole value of the field. The p90 is 421 chars, so this keeps most of them
 // whole while bounding the worst case.
+//
+// This bounds the CLAUSE, not the body. `formatStallBody`'s own one-line test
+// pins a ~220-char body for the shapes that carry no error, and a full-length
+// clause plus head and bits exceeds that — deliberately: a truncated cause is
+// worth less than a slightly longer alarm, and the glanceable contract that
+// actually matters is the single LINE, which the collapse above guarantees.
 const API_ERROR_MAX = 220;
 function oneLineError(text) {
-  const flat = String(text).replace(/\s+/g, ' ').trim();
+  // Double quotes are neutralised, not escaped: the formatter renders this
+  // inside "…", so an embedded quote closes it early and the rest of the
+  // message reads as alarm prose rather than as the seat's text. No measured
+  // error text contains one today, which is exactly why the render must not
+  // depend on that continuing to hold.
+  const flat = String(text).replace(/\s+/g, ' ').replace(/"/g, "'").trim();
   return flat.length > API_ERROR_MAX ? `${flat.slice(0, API_ERROR_MAX - 1)}…` : flat;
 }
 

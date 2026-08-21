@@ -830,6 +830,20 @@ test('t389: the clause rides a BARE stall body too — the shape it matters most
   assert.match(bare, /ends on an API error/, 'and the cause is still named');
 });
 
+test('t389: an embedded quote cannot break out of the rendered clause', () => {
+  // The clause renders inside "…", so a double quote in the seat's own error
+  // text would close it early and the remainder would read as the alarm's
+  // prose rather than as the quoted message. No measured text contains one,
+  // which is why this is pinned rather than left to that continuing to hold.
+  const body = formatStallBody({
+    ticketId: 't1', who: 'hand', age: '31m',
+    apiError: { text: 'API Error: model "opus-5" is unavailable' },
+  });
+  const quotes = (body.match(/"/g) || []).length;
+  assert.strictEqual(quotes, 2, `exactly the clause's own pair of quotes (body: ${body})`);
+  assert.match(body, /model 'opus-5' is unavailable/, 'and the text still reads, with the quote neutralised');
+});
+
 test('t389: the alarm REPORTS the error and never grades it', () => {
   // Measured over this repo's 77 API errors: 54 are Fable safeguard refusals,
   // terminal 53/54; the transient class is 11 of 77. A retry verdict on "an API

@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- A stalled-ticket alarm now says when the seat stopped on an API error, and
+  which error it was. The watchdog could only ever infer a stall from silence —
+  a seat that has written nothing and is burning no CPU — so it reported the
+  step it was stuck at and left you to open the session and find out why. When
+  the seat's own transcript ends on an API error, that is a cause it reported
+  itself, and the alarm now quotes it. The error text says which kind it is:
+  an overloaded server usually clears on its own, a refusal or an exhausted
+  balance will not. Clodex deliberately does not act on this — it tells you and
+  stops, because most of these are not the retryable kind, and the automated
+  wake a wedged seat already gets is unchanged.
+
 - The cost popover's "By line" breakdown is back, and its percentages are right.
   It splits a session's estimated spend across the main line and each subagent,
   and it was reading its total from a different accounting than the shares it

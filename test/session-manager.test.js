@@ -9381,7 +9381,12 @@ test('t389 a transcript with NO error record leaves the alarm exactly as it was'
     JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', id: 'x2' }] } }),
     // The over-match bait, on the wire: <synthetic> with no marker is a healthy
     // seat, and 95 of 127 measured <synthetic> records are exactly this.
-    JSON.stringify({ type: 'assistant', isSidechain: true, message: { model: '<synthetic>', content: [{ type: 'text', text: 'No response requested.' }] } }),
+    //
+    // NOT `isSidechain` — that would make this vacuous. The sidechain skip runs
+    // BEFORE the keying discriminator, so a sidechain bait is suppressed by a
+    // rule that has nothing to do with what this test claims to pin, and a
+    // <synthetic>-keyed helper would still pass here.
+    JSON.stringify({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text: 'No response requested.' }] } }),
   ].join('\n') + '\n');
   fsReal.symlinkSync(real, pathReal.join(runDir, 'transcript.jsonl'));
 
