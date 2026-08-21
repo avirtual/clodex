@@ -1171,7 +1171,7 @@ for (const [shape, body] of [
 test('GREEN: the real file has zero advice phrases outside HOLD_RECOVERY', () => {
   const src = realSource();
   // ENTER: the scan reached a real body, not an empty one after the exclusions.
-  const scanned = src.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l));
+  const scanned = src.split('\n').filter((l) => !COMMENT_LINE.test(l));
   assert.ok(scanned.length > 3000, `ENTER: a real body was scanned (got ${scanned.length} lines)`);
   assert.deepStrictEqual(scanAdvicePhrases(src), [],
     'an advice phrase appears outside the table — a copied arm that will go stale when the table moves');
