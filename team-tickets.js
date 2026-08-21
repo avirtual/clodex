@@ -3206,6 +3206,11 @@ function createTicketMethods(deps, shared) {
       // argument as the baseSha carried through on reuse in _existingTicketTree.
       // The recorded name is NOT vetted here: createWorktree validates it
       // downstream against its own charset rule, which is the only check it gets.
+      // A LOCKED recorded tree now refuses (git will not check one branch out
+      // twice) where it used to fork a second branch. That refusal is the wanted
+      // outcome, not a gap to route around: it leaves the ticket pinned to the
+      // branch holding its commits. Falling back to the derived name here would
+      // restore exactly the split this prevents.
       const recorded = ticket.worktree && ticket.worktree.branch;
       return { ok: true, name, branch: recorded || (slug ? `${ticket.id}-${slug}` : String(ticket.id)) };
     },
