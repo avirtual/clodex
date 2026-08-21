@@ -183,6 +183,11 @@ const ticketCloseVerb = (id) => `[agent:task done ${id}]`;
 const ticketCloseLine = (id) => `CLOSE WITH: ${ticketCloseVerb(id)} <your report> — one intent, at the end: it delivers the report to the lead AND marks the ticket done. `
   + `It is a line you emit yourself, like any [agent:…] intent — NOT an exec command, and nothing needs to be granted for it. `
   + `A dm carrying your report does NOT close the ticket: the ticket stays open, and everything downstream of the close (tree verify, review) never runs.\n`;
+// The resolved artifact pointer. Exported for the same reason ticketCloseLine
+// is: several suites pin a delivered body byte-for-byte, and a copy of this
+// prose in a fixture drifts from the real line silently.
+const ticketTaskDirLine = (dir, raw) => `TASK DIR: ${dir} — the spec's \`${raw}\` is relative to the PROJECT'S ARTIFACT DIR, `
+  + `not to your cwd. A same-named directory inside the repo is not it.\n`;
 const DEFAULT_REVIEWER_TEMPLATE = 'clodex-team-reviewer';
 
 const REVIEWER_FALLBACK = {
@@ -2018,8 +2023,7 @@ function createTicketMethods(deps, shared) {
         ? this._ticketDiffDest(team, ticket)
         : null;
       const taskDirLine = (taskDirDest && taskDirDest.ok)
-        ? `TASK DIR: ${taskDirDest.dir} — the spec's \`${rawTaskDir}\` is relative to the PROJECT'S ARTIFACT DIR, `
-          + `not to your cwd. A same-named directory inside the repo is not it.\n`
+        ? ticketTaskDirLine(taskDirDest.dir, rawTaskDir)
         : '';
       // Rides EVERY dispatch, replays included: a respawned seat has no memory of
       // the verb, exactly as it has none of its worktree. See ticketCloseLine.
@@ -7053,4 +7057,4 @@ function createTicketMethods(deps, shared) {
   };
 }
 
-module.exports = { createTicketMethods, ticketCloseLine, ticketCloseVerb };
+module.exports = { createTicketMethods, ticketCloseLine, ticketCloseVerb, ticketTaskDirLine };

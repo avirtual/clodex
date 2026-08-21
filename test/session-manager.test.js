@@ -5507,6 +5507,10 @@ function mkTasks(extra = {}) {
   // a reason that has nothing to do with what they test. Tests that want the
   // task-dir-less case set it back to undefined themselves — the gate's own
   // tests live in task-start.test.js.
+  //
+  // t453: and stamped ALREADY-RESOLVED, for the same byte-for-byte reason. A
+  // RELATIVE pointer earns a `TASK DIR:` line in the delivered body; an absolute
+  // one does not, and resolveTaskDir maps both to the same directory.
   const handleTask = m._handleTask.bind(m);
   m._handleTask = (session, intent) => {
     const isAdd = intent && intent.type === 'task' && intent.sub === 'add';
@@ -5519,7 +5523,10 @@ function mkTasks(extra = {}) {
       // the board would resurrect state a test deliberately built: strip `taskDir`
       // from t1, file t2, and the loop silently puts t1's back.
       for (const t of ts) {
-        if (!before.has(t.id) && !t.taskDir) { t.taskDir = `tasks/${t.id}-fixture/SPEC.md`; touched = true; }
+        if (!before.has(t.id) && !t.taskDir) {
+          t.taskDir = pathReal.join(clodexPaths.projectDirFor(home, team.root), 'tasks', `${t.id}-fixture`, 'SPEC.md');
+          touched = true;
+        }
       }
       if (touched) tstore.save(team.root, ts);
     }
@@ -12939,8 +12946,16 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
       // Only the ids this `add` INTRODUCED. Stamping every task-dir-less ticket on
       // the board would resurrect state a test deliberately built: strip `taskDir`
       // from t1, file t2, and the loop silently puts t1's back.
+      // t453: stamped ALREADY-RESOLVED. The dispatch renders a `TASK DIR:` line
+      // for a RELATIVE pointer, so a relative stamp would inject that line into
+      // every body these tests pin byte-for-byte — for a reason unrelated to
+      // what any of them is about. resolveTaskDir maps both spellings to the
+      // same directory, so nothing downstream of the stamp changes.
       for (const t of ts) {
-        if (!before.has(t.id) && !t.taskDir) { t.taskDir = `tasks/${t.id}-fixture/SPEC.md`; touched = true; }
+        if (!before.has(t.id) && !t.taskDir) {
+          t.taskDir = pathReal.join(clodexPaths.projectDirFor(home, team.root), 'tasks', `${t.id}-fixture`, 'SPEC.md');
+          touched = true;
+        }
       }
       if (touched) tstore.save(team.root, ts);
     }

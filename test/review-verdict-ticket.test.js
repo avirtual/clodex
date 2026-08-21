@@ -24,15 +24,29 @@ const fsReal = require('node:fs');
 const pathReal = require('node:path');
 const osReal = require('node:os');
 
-const { createSessionManager, ticketCloseLine } = require('../session-manager');
+const { createSessionManager, ticketCloseLine, ticketTaskDirLine } = require('../session-manager');
 // t353: the dispatch head carries the close verb. Imported, not copied — the
 // pins in this file are ENTER/setup assertions about WHICH delivery happened,
 // not about the verb's wording. The wording is pinned once in
 // session-manager.test.js (a deliberate copy) and against the tickets-viewer
 // duplicate in tickets-viewer-path-parity.test.js; a third hand-copy here would
 // just be a third place to forget.
-const specBody = (id, spec) => `[ticket ${id}] ${ticketCloseLine(id)}${spec}`;
+// t453: a RELATIVE task-dir pointer earns a resolved `TASK DIR:` line ahead of
+// the close line, so the expected body depends on the shape of the pointer the
+// ticket ended up carrying. Built from the SHIPPED helper, never a restatement
+// of its prose — a copy here would drift from the real line silently, and these
+// bodies are pinned byte-for-byte.
+const specBody = (id, spec, taskDirLine = '') => `[ticket ${id}] ${taskDirLine}${ticketCloseLine(id)}${spec}`;
+// The resolved line a relative pointer produces, for the callers that pass one
+// in the spec text. Resolution is recomputed from the same primitive the
+// dispatch uses rather than hardcoded, so a change to the placement rule fails
+// these tests instead of silently agreeing with itself.
+const relTaskDirLine = (f, raw) => ticketTaskDirLine(
+  pathReal.join(clodexPaths.projectDirFor(f.home, f.team.root), 'tasks', raw.replace(/^tasks\//, '').replace(/\/[^/]*\.(md|json|txt|log|patch|diff)$/i, '')),
+  raw,
+);
 const ticketsMod = require('../tickets-store');
+const clodexPaths = require('../clodex-paths');
 const { extractMustFix, countMustFix } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { parseWithRegistry } = require('../intent-registry');
@@ -166,10 +180,21 @@ function openTicket(f, body = 'the spec') {
   // caller for a reason unrelated to verdict routing. A spec that already names
   // a path keeps it: several callers pass one and assert on where the verdict
   // file landed.
+  //
+  // t453: stamped ALREADY-RESOLVED, which is what keeps the byte-for-byte pin
+  // above honest. The dispatch renders a `TASK DIR:` line for a RELATIVE pointer
+  // (a seat would otherwise resolve it against its cwd and land in a stale
+  // in-repo `tasks/`), so a relative stamp here injects that line into every body
+  // these tests pin — for a reason that has nothing to do with verdict routing.
+  // resolveTaskDir maps both spellings to the SAME directory, so the verdict-file
+  // destinations asserted downstream are byte-identical either way.
   {
     const ts = f.tstore.load(f.team.root);
     const t0 = ts.find((t) => t.id === 't1');
-    if (t0 && !t0.taskDir) { t0.taskDir = 'tasks/t1-fixture/SPEC.md'; f.tstore.save(f.team.root, ts); }
+    if (t0 && !t0.taskDir) {
+      t0.taskDir = pathReal.join(clodexPaths.projectDirFor(f.home, f.team.root), 'tasks', 't1-fixture', 'SPEC.md');
+      f.tstore.save(f.team.root, ts);
+    }
   }
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', id: 't1', who: null, body: '' });
   const t = f.one('t1');
@@ -179,7 +204,12 @@ function openTicket(f, body = 'the spec') {
   // whether the VERDICT reached the lead, and a setup delivery left in the array
   // makes `gated.length === 1` true for the wrong reason on the ticket path and
   // off-by-one on the fall-through path.
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', body) }],
+  // The stamp above is already-resolved, so it renders NO line; a spec that
+  // carried its own relative pointer does render one. Read off the ticket rather
+  // than off `body`, so the two cases cannot be told apart wrongly here.
+  const rawTd = String(t.taskDir || '');
+  const tdLine = (rawTd && !rawTd.startsWith('~') && !pathReal.isAbsolute(rawTd)) ? relTaskDirLine(f, rawTd) : '';
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', body, tdLine) }],
     'ENTER: start dispatched the spec exactly once');
   f.gated.length = 0;
   f.order.length = 0;
