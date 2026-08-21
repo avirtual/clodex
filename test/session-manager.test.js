@@ -3947,16 +3947,12 @@ function mkReview(extra = {}) {
       if (on === false) e.autoCompact = false; else delete e.autoCompact;
     },
   };
-  // `path` and a SEEDED registry, both real, because the preflight at
-  // _handleTeamReview's promptWarn is `path.join` + `fs.existsSync` inside a
-  // best-effort catch: with either dep missing the join throws, the catch eats
-  // it, and the whole branch is skipped. That made the preflight DEAD on this
-  // fixture — 33 swallowed TypeErrors across the suite, and no test could reach
-  // any `path` consumer (_roleCwdRel is the other one) without a per-test
-  // override. The registry carries the reviewer prompt INSTALLED, which is the
-  // production-normal state and the one that leaves the default reply shape
-  // unchanged; a test wanting the missing-prompt arm passes its own REGISTRY_DIR
-  // (four do) and `extra` below still overrides all three.
+  // Both real, and the SEED is half the fix: the promptWarn preflight is
+  // path.join + existsSync, so wiring `path` without a registry only swaps which
+  // TypeError is thrown. Unwire either and the branch silently stops running —
+  // it did, for two tickets, taking every `path` consumer (_roleCwdRel) with it.
+  // The prompt is INSTALLED because that leaves the default reply shape
+  // unchanged; `extra` still overrides all three, as four tests rely on.
   const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-review-fx-'));
   const promptDir = pathReal.join(REGISTRY_DIR, 'library', 'prompts', 'system');
   fsReal.mkdirSync(promptDir, { recursive: true });
