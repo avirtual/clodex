@@ -4457,9 +4457,18 @@ function createTicketMethods(deps, shared) {
         // class this code stamps today, `spec` included, satisfies the re-entry
         // gate above and re-runs rather than bouncing: the gate tests the stamp's
         // PRESENCE, not its class. Do not read a class gate into this clause.
+        // The OTHER done-at-verify state, and the one with no stamp to read: the
+        // checks are RUNNING (the re-entry above cleared the hold before starting
+        // them). Refusing is correct and must stay — two loops on one branch is
+        // what the gate exists to prevent — but a bare "is done, not open" names
+        // nothing to wait for, and a reader who is told only that they cannot
+        // close goes back to `reject`, which is the false rejection this design
+        // removes. Same class as the held clause: say which state it is in.
         const held = ticket.verifyHold && ticket.verifyHold.step
           ? ` — it is held at "${ticket.verifyHold.step}". ${holdRecoveryText(ticket.verifyHold.recovery, intent.id)}`
-          : '';
+          : (ticket.state === 'done' && ticket.loopStep === 'verify'
+            ? ' — its checks are running right now; wait for the result rather than rejecting it.'
+            : '');
         reply(`error: ticket ${intent.id} is ${ticket.state}, not open${held}${this._spillRejectedPayload(session, 'task done', report)}`); return;
       }
       const myRole = matchSeatRole(team, session.name);
@@ -4585,7 +4594,11 @@ function createTicketMethods(deps, shared) {
       const doneSeat = reentry ? null : this._ticketAssigneeSeat(team, ticket);
       const next = doneSeat ? this._advanceSeat(team, doneSeat, ticket) : null;
       const nextSuffix = next ? ` — next: ${next.id} delivered to ${doneSeat}` : '';
-      this._broadcast('ipc-message', { type: 'task', from: session.name, to: lead, body: `ticket ${ticket.id} done` });
+      // `re-verifying` on a re-entry, matching the `reply` below. A re-entry does
+      // not close anything — the ticket was already `done` — so a second "done"
+      // on this channel is one close event rendered twice to every consumer, the
+      // same reader-disagreement class as the recovery text one field over.
+      this._broadcast('ipc-message', { type: 'task', from: session.name, to: lead, body: `ticket ${ticket.id} ${reentry ? 're-verifying' : 'done'}` });
       this._writeTicketCost(team, ticket);
       log.info('intent', `task done ${ticket.id} by ${session.name} → ${lead}${reentry ? ' (re-entry after a verify hold)' : ''}`);
       reply((reentry
