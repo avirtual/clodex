@@ -4462,8 +4462,16 @@ function createTicketMethods(deps, shared) {
         // step — not in `_runTicketLoop`, which is fired unawaited below and whose
         // own clear is a `finally` that runs at the END. Either gap leaves the
         // ticket carrying `loopStep: 'verify'` AND `verifyHold` for the whole
-        // re-run: minutes, and up to 35 by the caps (a 20m lock wait plus a 15m
-        // run) against a 30m stall window.
+        // re-run.
+        //
+        // THE NUMBER THAT MAKES THIS NOT A CORNER CASE, and it is derived rather
+        // than guessed: `TICKET_SUITE_TIMEOUT_MS` is `TICKET_SUITE_LOCK_WAIT_MS`
+        // (20m) + 15m = 35m, against `TICKET_STALL_MS` of 30m. The false window
+        // OUTLASTS THE STALL WINDOW, so the wrong alarm below is not a race that
+        // needs an unlucky interleaving — it fires in ordinary operation whenever
+        // the suite queues behind the box-wide lock. Both constants are named
+        // here so a future edit to either one re-derives this rather than
+        // rediscovering it from a confusing alarm.
         //
         // That pair is read by two consumers as "stopped, waiting for a human"
         // when it means "running again", and both readings are wrong in the
