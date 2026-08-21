@@ -13318,6 +13318,15 @@ test('task dispatch: a RELATIVE task dir is rendered resolved, against the artif
     'and never the repo-relative resolution, which is the stale tree this exists to route around');
   assert.match(body, /relative to the PROJECT'S ARTIFACT DIR/,
     'the RULE rides with the path — a seat reading a spec Clodex did not render still has to place the next one');
+  // t453 r2 nit 3: the rendered path is a DIRECTORY while the pointer usually
+  // names a file inside it, and an absent directory is the t451 step exactly —
+  // "the dir was not there, so I proceeded without it". Both halves are stated,
+  // and both are asserted: a clause that says only one still leaves that step
+  // available.
+  assert.match(body, /may name a file inside it/,
+    'the line says the path is the directory, not the file the pointer names');
+  assert.match(body, /may not exist yet/,
+    'and that its absence is not evidence there is no artifact — the t451 failure step');
 
   // ADDITIVE, exactly like the AREA line: the stored spec is what the lead wrote
   // and `respec` is the only thing that replaces it. Rewriting it would destroy
