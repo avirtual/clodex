@@ -19,8 +19,11 @@
 //   ESC ] 133 ; D ; <exit>   BEL   command finished, with its status
 // The command rides base64 on the C mark because a command line legitimately
 // contains `;` and BEL-adjacent bytes, and a raw one would end its own mark.
-// A is parsed but carries nothing; it exists so the abandon case below can be
-// told apart from a command that is simply still running.
+// A carries no payload of its own; the parser classifies it by the D that
+// immediately precedes it (one precmd emits both), which is what lets a
+// consumer tell an interrupt's prompt from a redraw. It also exists so the
+// abandon case below can be told apart from a command that is simply still
+// running.
 //
 // Electron-free and stream-shaped by construction: it is fed PTY chunks and
 // emits records. That is also what makes it testable without a shell.
@@ -45,6 +48,13 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
   let capturing = false;
   let command = '';
   let out = '';
+  // The exit status of the D mark most recently parsed, or null when the last
+  // thing seen was not a D. Read only to classify the A that follows it: the
+  // shim emits D then A from ONE precmd, so a D still standing when an A
+  // arrives is that A's own status. Cleared on every other mark so a `130` can
+  // never be carried across an unrelated prompt and make a later A look like an
+  // interrupt's.
+  let lastExit = null;
 
   function emit(exitCode) {
     const rec = { command, exitCode, output: out };
@@ -55,7 +65,17 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
   }
 
   function text(chunk) {
-    if (!capturing || !chunk) return;
+    if (!chunk) return;
+    // OUTPUT BETWEEN A D AND AN A BREAKS THE PAIR. Our own shim prints both from
+    // one precmd with nothing in between (verified in term-shim.js for both
+    // shells, and measured on real zsh and bash: zero bytes between them), so
+    // this never fires for us. It fires when a SECOND, independently sequenced
+    // OSC 133 stream shares the terminal — iTerm2's or VSCode's shell
+    // integration running alongside ours — where an unrelated A could otherwise
+    // inherit our D's status. Cleared before the capture guard below, because
+    // the interrupt case is exactly the one where nothing is being captured.
+    lastExit = null;
+    if (!capturing) return;
     out += chunk;
     // Keep the TAIL, not the head: a build's last lines are where the error is,
     // and the head is the part the operator already watched scroll past.
@@ -92,13 +112,24 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
           }
           // Announced on EVERY A, including the ones above that report nothing:
           // this says "a prompt was drawn", which is a fact about the shell and
-          // not about any command. drawer-pty's exec() uses it as the positive
-          // acknowledgement that its ^C was PROCESSED — the one thing a
-          // byte-counting timer cannot establish, since bytes already in flight
-          // when the signal was written look identical to a reply to it.
-          // Fired after the abandon so a consumer settling a record sees it
-          // settled before it is told the prompt is back.
-          if (onPrompt) { try { onPrompt(); } catch {} }
+          // not about any command. Fired after the abandon so a consumer
+          // settling a record sees it settled before it is told the prompt is
+          // back.
+          //
+          // `interrupted` reports ONE fact and no more: the last command to
+          // finish exited 128+SIGINT. A consumer waiting on a ^C needs it
+          // because a bare "a prompt was drawn" cannot distinguish a redraw from
+          // a reply — and typing on a redraw puts the command on a line the
+          // interrupt is about to kill, splitting it across the boundary so the
+          // tail runs as a shorter command that is still valid.
+          //
+          // It is NOT "this prompt is your interrupt's". `$?` is latched, so the
+          // shim re-emits D;130 on every prompt cycle until a command runs
+          // (measured: ^C then three bare Enters all report 130). A consumer
+          // must treat this as a filter with a timeout behind it, never as
+          // proof — drawer-pty's exec() keeps its clocks for exactly that.
+          if (onPrompt) { try { onPrompt({ interrupted: lastExit === 130 }); } catch {} }
+          lastExit = null;
         } else if (body === 'C' || body.startsWith('C;')) {
           let cmd = '';
           try { cmd = Buffer.from(body.slice(2), 'base64').toString('utf8'); } catch { cmd = ''; }
@@ -107,15 +138,20 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
           command = cmd;
           capturing = true;
           out = '';
+          lastExit = null;
         } else if (body === 'D' || body.startsWith('D;')) {
           // D without a preceding C is the shell's FIRST prompt (precmd runs
           // before any command has been typed) and every prompt redraw after an
           // abandoned line. Nothing ran, so there is nothing to report.
-          if (capturing) {
-            const raw = body.slice(2);
-            const n = Number(raw);
-            emit(raw !== '' && Number.isFinite(n) ? n : null);
-          }
+          const raw = body.slice(2);
+          const n = Number(raw);
+          const parsed = raw !== '' && Number.isFinite(n) ? n : null;
+          // Recorded OUTSIDE the capturing branch, because the interrupt case is
+          // precisely the one where nothing is captured: a ^C on an idle prompt
+          // still emits D;130, and gating this on `capturing` would drop the
+          // only status that can identify the A about to follow.
+          lastExit = parsed;
+          if (capturing) emit(parsed);
         }
       }
       const rest = s.slice(last);

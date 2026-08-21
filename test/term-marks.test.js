@@ -309,3 +309,38 @@ test('engine passes `assumed` on the asked path only, and never on the firehose'
   assert.ok(!/did not report which command ran/.test(src),
     'the discard-the-answer fallback must not return');
 });
+
+// ── the interrupt flag on onPrompt ──────────────────────────────────────────
+// `interrupted` says ONE thing: the last command to finish exited 128+SIGINT.
+// drawer-pty's exec() uses it to tell a prompt that followed an interrupt from
+// one that is only a redraw. It is deliberately NOT a claim about WHOSE
+// interrupt — `$?` is latched and the shim re-emits the pair every prompt cycle
+// until a command runs — so these pin the pairing rule and nothing stronger.
+
+test('onPrompt reports interrupted only for the A its own D;130 precedes', () => {
+  const seen = [];
+  const p = createMarkParser({ onPrompt: (i) => seen.push(i && i.interrupted) });
+
+  p.feed(`${D(130)}${A}`);
+  p.feed(`${D(0)}${A}`);
+  p.feed(A);
+  assert.deepStrictEqual(seen, [true, false, false],
+    'the interrupt status belongs to one A: not the next prompt, not a bare redraw');
+});
+
+test('output between a D and an A breaks the pair', () => {
+  // Our own shim prints both from one precmd with nothing in between, verified
+  // in term-shim.js for both shells and measured on real zsh and bash at zero
+  // bytes between them — so this never fires for us. It fires when a SECOND,
+  // independently sequenced OSC 133 stream shares the terminal (iTerm2's or
+  // VSCode's shell integration), where an unrelated A would otherwise inherit
+  // our D's status and release a command early.
+  const seen = [];
+  const p = createMarkParser({ onPrompt: (i) => seen.push(i && i.interrupted) });
+
+  p.feed(D(130));
+  p.feed('output from another integration\r\n');
+  p.feed(A);
+  assert.deepStrictEqual(seen, [false],
+    'an A separated from the D by output is not that D`s prompt');
+});

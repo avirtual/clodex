@@ -66,47 +66,46 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // How long to wait for a shell that answers the ^C with NOTHING AT ALL before
   // typing anyway — ^C on an empty line under a prompt that does not redraw —
   // where waiting forever would be a command that never runs and an agent that
-  // never hears back. It is armed only while the shell has stayed silent; once
-  // any byte arrives, ABANDON_QUIET_MS governs instead. A shell that speaks at
-  // T+240ms would otherwise be typed over by this deadline at T+250ms, which is
-  // the very race the quiet window exists to close.
+  // never hears back. It is armed only while the shell has stayed SILENT: the
+  // first byte makes it inert for good, and the cap below governs from there.
   const ABANDON_ACK_MS = 250;
-  // The shell must stop TALKING, not merely start. SIGINT makes bash discard
-  // its pending input, and that discard outlasts the first byte of the answer:
-  // bytes already in flight when the signal landed (a prior command's echo, an
-  // OSC 7 cwd report) arrive during the flush and look exactly like an answer to
-  // it. Typing then loses characters from the MIDDLE of the command and the
-  // truncation still RUNS — measured against real bash at 6 failures in 280
-  // under concurrency, producing `bash: et: command not found` from `echo`, and
-  // `rm -rf ./buil` is a valid command rather than an error.
+  // The ceiling on the whole abandon handshake, and — for a shell that speaks
+  // without ever marking an interrupt — the ONLY thing that types. Bytes do not
+  // release the command at all (see `arm`), so this is where a talking shell
+  // ends up rather than a last resort it rarely reaches.
   //
-  // What this window CANNOT do is tell whether the flush has started at all. Its
-  // input is "bytes arrived", and bytes that predate our ^C are indistinguishable
-  // from a reply to it — so under load the window can elapse over pre-^C output
-  // while the signal is still queued, type, and have SIGINT eat the head of the
-  // command afterwards. That is the swallowed FIRST byte (`cho a; echo b`), as
-  // opposed to the middle-of-command loss above. The prompt mark below is the
-  // signal that closes it; this window remains for shells that never send one.
-  const ABANDON_QUIET_MS = 60;
-  // The ceiling on the whole abandon handshake. It cannot reopen the flush race
-  // the quiet window closes: the SIGINT discard is milliseconds, and the loss
-  // was measured inside the first ~60ms. What it bounds is the opposite failure
-  // — a shell that never goes quiet, where waiting for silence is waiting
-  // forever.
+  // It cannot be read as evidence the interrupt landed, and it does not claim to
+  // be: it is the bound on the opposite failure, a command that never runs and
+  // an agent that never hears back. That is why it is a full second rather than
+  // a tuned window — a value chosen to be LATER than any plausible flush, not
+  // one chosen to track it.
   const ABANDON_MAX_MS = 1000;
-  // THE PRIMARY SIGNAL: an OSC 133 A seen after the ^C went out. A prompt mark
-  // is drawn by the shell's own precmd, so unlike "some bytes arrived" it is
-  // evidence about the SHELL's state — the line editor is ready — rather than
-  // about the wire. That is what the three clocks above can only estimate.
+  // THE PRIMARY SIGNAL: an OSC 133 A reporting exit 130, seen after the ^C went
+  // out. A prompt mark is drawn by the shell's own precmd, so unlike "some bytes
+  // arrived" it is evidence about the SHELL's state — the line editor is ready —
+  // rather than about the wire. That is what the three clocks above can only
+  // estimate.
   //
-  // It NARROWS the race rather than closing it, and the difference matters to
-  // anyone tempted to delete the clocks: an A already in flight when the ^C was
-  // written is indistinguishable from one caused by it, so a prompt redraw from
-  // the previous command can still ack a signal the shell has not processed.
-  // What it removes is the far larger window where ANY byte — an OSC 7 cwd
-  // report, a partial echo — counted as the answer. A sound proof needs a token
-  // that cannot predate the signal: the tty driver's own ECHOCTL echo of the ^C
-  // is one, already in the stream and unread here.
+  // WHAT THE STATUS ACTUALLY PROVES, stated exactly: the last command to finish
+  // exited 128+SIGINT. That is strictly stronger than "a prompt was drawn" — a
+  // plain redraw carries no such status — and it is why this is worth having.
+  //
+  // IT IS NOT PROOF THAT THE INTERRUPT IS OURS, and must not be read as one.
+  // `$?` is LATCHED: it survives every prompt cycle until a command actually
+  // runs, so after any interrupt the shim re-emits D;130 then A on each empty
+  // Enter, indefinitely. Measured on real zsh and bash — ^C, then three bare
+  // Enters, all four reporting 130; only running `true` clears it to 0. Two
+  // residual windows follow, and NEITHER is closed here:
+  //
+  //   (a) STALE LATCH — an earlier interrupt left `$?` at 130, and any prompt
+  //       cycle inside our race window (the operator pressing Enter is enough)
+  //       re-reports it as if it were the reply to our ^C.
+  //   (b) IN-FLIGHT — a D;130 A pair generated BEFORE our write but delivered to
+  //       feed() after it, which is indistinguishable on arrival.
+  //
+  // THE CLOCKS ARE THE ONLY THING STANDING BEHIND BOTH. Since bytes no longer
+  // release the command, deleting them leaves nothing but a signal that can
+  // lie — an unrecoverable trade, not a cleanup.
   //
   // It is not a new requirement on the shell: exec() already refuses unless
   // `rec.shimmed && rec.marks`. THE CLOCKS ARE STILL THE BACKSTOP, and the
@@ -114,7 +113,9 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // aborts before the hooks install (`set -u` against an unset expansion), and a
   // profile that clobbers `precmd_functions` / `PROMPT_COMMAND` after ours is
   // prepended. Either leaves a shell that was born `shimmed` and emits no A;
-  // mark-only, every exec on one of those hangs to EXEC_TIMEOUT.
+  // mark-only, every exec on one of those hangs to EXEC_TIMEOUT. Narrowing the
+  // mark to a 130 widens that set — a shell whose ^C reports no status now falls
+  // back too — which costs latency and never correctness.
   //
   // `shopt -u promptvars` is NOT one of them, though it looks like it should be:
   // it suppresses PS0 expansion, and PS0 carries the C mark — A comes from
@@ -224,23 +225,21 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         // Abandonment has no passive consumer — a command the operator Ctrl-C'd
         // is not news to report, it is only news to whoever was waiting on it.
         onAbandon: (c) => { settle(rec, { status: 'abandoned', record: c }); },
-        // The prompt is back, so a pending exec's ^C has been PROCESSED and its
-        // command is safe to type. Distinct from the raw-byte arm below, which
-        // cannot tell our signal's reply from output that predates it.
-        onPrompt: () => { if (rec.execPromptAck) rec.execPromptAck(); },
+        // The prompt is back. The flag is forwarded rather than dropped because
+        // exec() needs what it reports: the last command to finish exited
+        // 128+SIGINT. That filters out a bare redraw, which carries no such
+        // status — it does NOT say whose interrupt it was. See the constants
+        // block for the two residuals that leaves open.
+        onPrompt: (info) => { if (rec.execPromptAck) rec.execPromptAck(info); },
       })
       : null;
     ptys.set(key, rec);
 
     proc.onData((data) => {
-      // The shell has spoken, so its post-SIGINT input flush is behind us and the
-      // command is safe to type. Runs BEFORE the mark parser is fed: this is a
-      // raw-byte acknowledgement and must not depend on marks, which a shell
-      // spawned without the shim never emits at all.
-      // The shell has spoken, so it is answering the abandon — but the SIGINT
-      // input flush is not over until it stops. Each byte RESTARTS the quiet
-      // window rather than releasing the command, so the write lands after the
-      // flush and the prompt redraw instead of inside them.
+      // The shell has spoken. That retires the silence deadline and NOTHING
+      // else: bytes cannot say whether the interrupt has been processed, so they
+      // never release a pending command. Runs BEFORE the mark parser is fed only
+      // so a shell that emits no marks still leaves the deadline behind.
       if (rec.execArm) rec.execArm();
       if (rec.marks) { try { rec.marks.feed(data); } catch {} }
       rec.scrollback += data;
@@ -486,9 +485,9 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       const typeCommand = () => {
         if (armed) return;
         armed = true;
-        // Released here, not on the first byte: the quiet window re-arms on
-        // every byte, so an arm left in place would schedule a timer per byte
-        // for the life of the shell.
+        // Hygiene: the arm no longer schedules anything, so leaving it wired
+        // would cost a flag write per byte rather than a timer, but a finished
+        // exec should not stay attached to a shell that outlives it.
         if (rec.execArm === arm) rec.execArm = null;
         // Hygiene, not a correctness guard — `armed` above already makes a
         // stale ack a no-op, so do not read this as what prevents a double
@@ -509,49 +508,75 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         }
       };
       // Two clocks, and they are not interchangeable. The SILENCE deadline
-      // covers a shell that never answers; the QUIET window covers one that
-      // does. `spoke` is what hands ownership from the first to the second, and
-      // it is a FLAG rather than a cancelled handle because the deadline must
-      // stay inert even where the handle cannot be cleared — the timer seam is
-      // injected, so a caller's fake may return something clearTimeout ignores,
-      // and a silence deadline that still fired mid-answer would type into the
-      // flush this split exists to avoid.
+      // covers a shell that never answers at all; the CAP covers one that does.
+      // `spoke` hands ownership from the first to the second — a shell that has
+      // said anything is no longer silent, so it waits out the cap instead.
+      //
+      // A FLAG rather than a cancelled handle because the deadline must stay
+      // inert even where the handle cannot be cleared: the timer seam is
+      // injected, so a caller's fake may return something clearTimeout ignores.
+      // A silence deadline that still fired after the shell had spoken would
+      // type on a schedule that no longer describes it.
       let spoke = false;
-      // Counted, not just flagged: the window must restart on EVERY byte, and
-      // `typeCommand` is idempotent, so without this the first byte's timer
-      // would win and type 60ms into an answer still arriving. A timer types
-      // only if no byte landed after it was armed.
-      let gen = 0;
-      // Declared before any timer is scheduled: `typeCommand` closes over this
-      // to release the arm, and the seam is injected — a fake that runs its
-      // callback synchronously on registration would hit the temporal dead zone.
-      const arm = () => {
-        spoke = true;
-        // Once the command is out, further bytes must not keep scheduling: the
-        // arm is released in typeCommand, but the cap can win while a chatty
-        // shell is still mid-answer, and a timer per data chunk for the life of
-        // that shell is an unbounded leak.
-        if (armed) return;
-        const mine = ++gen;
-        later(() => { if (gen === mine) typeCommand(); }, ABANDON_QUIET_MS);
-      };
-      // The fast, correct path: a prompt mark after the ^C means the interrupt
-      // is processed and nothing is left to discard, so the command goes out
-      // immediately instead of waiting out a window that is only estimating
-      // this. Whichever fires first — mark or clock — wins, and typeCommand is
-      // idempotent, so the losers are no-ops.
-      const promptAck = () => { typeCommand(); };
+      // BYTES DO NOT RELEASE THE COMMAND. They only mark the shell as having
+      // spoken, which retires the silence deadline above and hands the schedule
+      // to the cap.
+      //
+      // This is the whole of the second fix, and it is a deletion rather than a
+      // new mechanism: what used to be here was a 60ms quiet window that typed
+      // once the shell stopped talking. It could not work, at any value. ^C is
+      // consumed by the tty line discipline as a SIGNAL to the foreground
+      // process group, delivered asynchronously with respect to the byte stream,
+      // so a shell can emit a complete, quiet, line-editor-ready prompt while
+      // the interrupt is still pending — measured in the captured failure, where
+      // the first paint ends with bracketed paste ON (zle entered) and the
+      // interrupt's own D;130 arrives two lines LATER. "Quiet for 60ms" is a
+      // fact about the wire, and the question is about a signal.
+      //
+      // That window is what typed in the captured failure: no prompt mark had
+      // been seen at all when the command went out (the first A in the capture
+      // postdates our echoed first byte), the 250ms deadline was already inert,
+      // and the cap was still 900ms away. Idle, the gap from first byte to
+      // D;130 measures 0-1ms and never reaches 60; under full-suite load it
+      // crosses, which is the ~1-in-132 rate this ticket chased.
+      //
+      // Nothing types EARLIER than before as a result: the release that was
+      // removed was the earliest of the three, and the two that remain — the
+      // interrupt-marked prompt and the cap — are unchanged. A shell that both
+      // speaks and never marks an interrupt now waits out the cap instead of the
+      // window, which is later and correct rather than sooner and hopeful.
+      const arm = () => { spoke = true; };
+      // The fast path, and it turns on WHICH prompt mark this is: one reporting
+      // that the last command exited 128+SIGINT. A plain redraw carries no such
+      // status, so it no longer releases the command — which is the difference
+      // between this and typing onto a line the interrupt is about to kill.
+      //
+      // It is a FILTER, not a proof of ownership. `$?` is latched, so a stale
+      // 130 from an earlier interrupt re-reports on any later prompt cycle, and
+      // a pair generated before our write can still arrive after it. Both are
+      // left open deliberately: closing them means forfeiting the fast path
+      // whenever a 130 is ambiguous — paying the silence deadline on every exec
+      // that follows an interrupt — to buy a window the clocks already cover.
+      // See the constants above for the full statement.
+      //
+      // Counting is still wrong, for its own reason: the number of redraws is
+      // theme-dependent and unbounded, so no N is safe.
+      //
+      // Whichever fires first — a qualifying mark or a clock — wins, and
+      // typeCommand is idempotent, so the losers are no-ops. A shell whose ^C
+      // never reports a status simply never takes this path and falls back to
+      // the clocks: later, not wrong.
+      const promptAck = (info) => { if (info && info.interrupted) typeCommand(); };
       rec.execPromptAck = promptAck;
       later(() => { if (!spoke) typeCommand(); }, ABANDON_ACK_MS);
-      // The command is typed EVENTUALLY, whatever the shell does. The quiet
-      // window restarts on every byte, so a shell emitting at gaps under it
-      // would otherwise never be interrupted — and that is reachable, not
-      // theoretical: isBusy() is false while a BACKGROUND job writes to the tty,
-      // so exec() is accepted, the ^C is delivered, and without this cap nothing
-      // would ever be typed and the waiter would hang to EXEC_TIMEOUT reporting
-      // a timeout for a command that never ran. Unconditional because every
-      // other path here is conditional on the shell behaving; typeCommand is
-      // idempotent, so this is a no-op whenever one of them already won.
+      // The command is typed EVENTUALLY, whatever the shell does, and this now
+      // carries every shell that speaks without ever marking an interrupt —
+      // including a BACKGROUND job writing to the tty, which leaves isBusy()
+      // false so exec() is accepted and the ^C delivered. Without this cap those
+      // would hang to EXEC_TIMEOUT, reporting a timeout for a command that never
+      // ran. Unconditional because every other path here is conditional on the
+      // shell behaving; typeCommand is idempotent, so this is a no-op whenever
+      // one of them already won.
       later(typeCommand, ABANDON_MAX_MS);
       rec.execArm = arm;
 
