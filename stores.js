@@ -1511,8 +1511,11 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
 
     if (stranded.length) {
       const rels = stranded.map((s) => s.rel);
-      const it = rels.length > 1 ? 'them' : 'it';
-      const fixIt = `If you edited ${it} deliberately, nothing needs doing. To take the shipped version instead, copy yours aside first, then delete ${it} under ${destRoot} and relaunch.`;
+      // Takes the count because the two channels carry different SETS: the log
+      // restates every stranded file, the note lists only the fresh ones. A
+      // single string built from `rels` says "them" in a note listing one file.
+      const advice = (n) => `If you edited ${n > 1 ? 'them' : 'it'} deliberately, nothing needs doing. To take the shipped version instead, copy yours aside first, then delete ${n > 1 ? 'them' : 'it'} under ${destRoot} and relaunch.`;
+      const fixIt = advice(rels.length);
       // warn, not info: a withheld upgrade was invisible for 8 days and 20
       // shipped revisions once, and the silence WAS the bug.
       if (log) log.warn?.('seed', `${stranded.length} library file(s) differ from both the shipped copy and their seed stamp, so they will never receive shipped updates: ${rels.join(', ')}. ${fixIt}`);
@@ -1530,7 +1533,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           const rec = notifications.add({
             from: SEED_REPORT_FROM,
             workspaceId: null,
-            body: `A shipped update is being withheld from ${fresh.length} file(s) in your Clodex library, because each differs from both the shipped copy and the version Clodex last wrote there:\n\n${fresh.map((s) => s.rel).join('\n')}\n\n${fixIt}`,
+            body: `A shipped update is being withheld from ${fresh.length} file(s) in your Clodex library, because each differs from both the shipped copy and the version Clodex last wrote there:\n\n${fresh.map((s) => s.rel).join('\n')}\n\n${advice(fresh.length)}`,
           });
           delivered = !!(rec && notifications.list().some((n) => n.id === rec.id));
         } catch (e) { if (log) log.info?.('seed', `inbox note skipped (${e && e.message})`); }

@@ -1343,6 +1343,43 @@ test('seed report: with SEVERAL stranded files the advice is plural throughout',
   });
 });
 
+// The two channels carry different SETS -- the log restates every stranded file,
+// the note lists only the fresh ones -- so a single advice string built from the
+// whole set over-pluralises the note. The all-fresh cases above cannot see it,
+// because there the two counts are equal.
+test('seed report: a MIXED run pluralises each channel by its own count', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const relA = path.join('templates', 'reviewer.json');
+    const relB = path.join('prompts', 'system', 'lead.md');
+    fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+    fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, relA), 'SHIPPED_V2');
+    fs.writeFileSync(path.join(resourcesDir, relB), 'SHIPPED_V2');
+    stageDest(registryDir, relA, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+    stageDest(registryDir, relB, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+    // A is already announced at the CURRENT shipped hash, so only B is fresh.
+    fs.writeFileSync(seedReportPath(registryDir),
+      JSON.stringify({ [relA]: sha256(Buffer.from('SHIPPED_V2')) }));
+    const log = captureLog();
+
+    const stores = initStores(userData, { log, registryDir, resourcesDir });
+
+    const notes = inboxNotes(stores);
+    assert.strictEqual(notes.length, 1, 'ENTER: one note');
+    assert.match(notes[0].body, /\bb?lead\.md/, 'ENTER: the note lists ONLY the fresh file');
+    assert.doesNotMatch(notes[0].body, /reviewer\.json/,
+      'ENTER: the already-announced file is absent, or this is not a mixed run');
+    assert.match(notes[0].body, /edited it deliberately/,
+      'the note lists one file, so it says "it" -- not "them" from the whole stranded set');
+    assert.match(notes[0].body, /delete it under/, 'both sites follow the note\'s own count');
+
+    const warns = log.seedWarnings();
+    assert.strictEqual(warns.length, 1, 'ENTER: one report line');
+    assert.match(warns[0].msg, /edited them deliberately/,
+      'the log restates BOTH stranded files, so it stays plural -- the two channels differ');
+  });
+});
+
 // --- T26: all three default team role prompts ship + brief the live protocols
 const TEAM_ROLE_PROMPTS = ['clodex-team-lead', 'clodex-team-hand', 'clodex-team-reviewer'];
 const REPO_SYSTEM_DIR = path.join(__dirname, '..', 'resources', 'library', 'prompts', 'system');
