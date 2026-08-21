@@ -913,15 +913,11 @@ function createTicketMethods(deps, shared) {
 
       let promptWarn = '';
       if (reviewerSystemPrompt) {
-        // The join is OUTSIDE the try on purpose. The catch below exists for a
-        // STAT error — a disk that answered badly — and it must keep swallowing
-        // that. It was also swallowing a WIRING error: an unwired `path` or
-        // REGISTRY_DIR makes the join throw, and the catch turned that into a
-        // silently skipped preflight. This branch never executed under the shared
-        // review fixture for exactly that reason (33 swallowed TypeErrors across
-        // the suite), so the warning it computes was untestable and unproven.
-        // A missing dep is a wiring bug in the host, not a condition to degrade
-        // past: it must reach someone, and the handler's own error reply is who.
+        // The join stays OUTSIDE the try, and moving it back in is the wrong
+        // change: the catch is scoped to a STAT error, and an unwired `path` or
+        // REGISTRY_DIR also throws there. Absorbing that skipped the whole
+        // preflight silently — it never ran under the shared review fixture, so
+        // the warning below was unreachable and unproven for two tickets.
         const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${reviewerSystemPrompt}.md`);
         try {
           if (!fs.existsSync(promptFile)) {
