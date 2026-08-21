@@ -19,8 +19,11 @@
 //   ESC ] 133 ; D ; <exit>   BEL   command finished, with its status
 // The command rides base64 on the C mark because a command line legitimately
 // contains `;` and BEL-adjacent bytes, and a raw one would end its own mark.
-// A is parsed but carries nothing; it exists so the abandon case below can be
-// told apart from a command that is simply still running.
+// A carries no payload of its own; the parser classifies it by the D that
+// immediately precedes it (one precmd emits both), which is what lets a
+// consumer tell an interrupt's prompt from a redraw. It also exists so the
+// abandon case below can be told apart from a command that is simply still
+// running.
 //
 // Electron-free and stream-shaped by construction: it is fed PTY chunks and
 // emits records. That is also what makes it testable without a shell.
@@ -45,6 +48,13 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
   let capturing = false;
   let command = '';
   let out = '';
+  // The exit status of the D mark most recently parsed, or null when the last
+  // thing seen was not a D. Read only to classify the A that follows it: the
+  // shim emits D then A from ONE precmd, so a D still standing when an A
+  // arrives is that A's own status. Cleared on every other mark so a `130` can
+  // never be carried across an unrelated prompt and make a later A look like an
+  // interrupt's.
+  let lastExit = null;
 
   function emit(exitCode) {
     const rec = { command, exitCode, output: out };
@@ -92,13 +102,24 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
           }
           // Announced on EVERY A, including the ones above that report nothing:
           // this says "a prompt was drawn", which is a fact about the shell and
-          // not about any command. drawer-pty's exec() uses it as the positive
-          // acknowledgement that its ^C was PROCESSED — the one thing a
-          // byte-counting timer cannot establish, since bytes already in flight
-          // when the signal was written look identical to a reply to it.
-          // Fired after the abandon so a consumer settling a record sees it
-          // settled before it is told the prompt is back.
-          if (onPrompt) { try { onPrompt(); } catch {} }
+          // not about any command. Fired after the abandon so a consumer
+          // settling a record sees it settled before it is told the prompt is
+          // back.
+          //
+          // THE ARGUMENT CARRIES THE IDENTITY, and the announcement is useless
+          // to exec() without it. A bare "a prompt was drawn" cannot say WHICH
+          // prompt: an A already in flight when a ^C was written is
+          // indistinguishable from one caused by it, so a consumer treating any
+          // A as the acknowledgement types onto a line the interrupt is about to
+          // kill — the command is then SPLIT across the ^C boundary and the tail
+          // runs on the fresh prompt as a truncated command that is still valid.
+          // `interrupted` is true only for an A whose own precmd reported
+          // 128+SIGINT, which is emitted BY the interrupt handler and therefore
+          // cannot predate the interrupt. Measured on real zsh and bash: every
+          // ^C at a prompt emits D;130 then A, and no async prompt redraw
+          // (SIGWINCH, zle reset-prompt) emits either mark at all.
+          if (onPrompt) { try { onPrompt({ interrupted: lastExit === 130 }); } catch {} }
+          lastExit = null;
         } else if (body === 'C' || body.startsWith('C;')) {
           let cmd = '';
           try { cmd = Buffer.from(body.slice(2), 'base64').toString('utf8'); } catch { cmd = ''; }
@@ -107,15 +128,20 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
           command = cmd;
           capturing = true;
           out = '';
+          lastExit = null;
         } else if (body === 'D' || body.startsWith('D;')) {
           // D without a preceding C is the shell's FIRST prompt (precmd runs
           // before any command has been typed) and every prompt redraw after an
           // abandoned line. Nothing ran, so there is nothing to report.
-          if (capturing) {
-            const raw = body.slice(2);
-            const n = Number(raw);
-            emit(raw !== '' && Number.isFinite(n) ? n : null);
-          }
+          const raw = body.slice(2);
+          const n = Number(raw);
+          const parsed = raw !== '' && Number.isFinite(n) ? n : null;
+          // Recorded OUTSIDE the capturing branch, because the interrupt case is
+          // precisely the one where nothing is captured: a ^C on an idle prompt
+          // still emits D;130, and gating this on `capturing` would drop the
+          // only status that can identify the A about to follow.
+          lastExit = parsed;
+          if (capturing) emit(parsed);
         }
       }
       const rest = s.slice(last);

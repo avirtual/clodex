@@ -84,6 +84,18 @@ const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 const A = `${ESC}]133;A${BEL}`;
 const C = (cmd) => `${ESC}]133;C;${b64(cmd)}${BEL}`;
 const D = (code) => `${ESC}]133;D;${code}${BEL}`;
+// What a REAL shell emits when a ^C is processed at its prompt, in this order
+// and from one precmd: the status first, then the prompt. Measured on zsh and
+// bash, in both keymaps, on an empty line and on a half-typed one — 8 rows, all
+// `D;130` then `A`, never a bare A. 130 is 128+SIGINT, written by the interrupt
+// handler, which is what makes it impossible for this mark to predate the
+// signal it acknowledges.
+//
+// Kept distinct from `A` throughout this file rather than folded into it: `A`
+// alone is a prompt redraw, which is exactly the mark that must NOT release a
+// command, so a helper that quietly emitted both would delete the distinction
+// these tests exist to pin.
+const INTR = `${D(130)}${A}`;
 
 function fakePty() {
   const spawned = [];
@@ -367,12 +379,93 @@ test('a prompt mark types the command — the byte window alone cannot tell the 
   assert.deepStrictEqual(proc.written, [CTRL_C],
     'ENTER: still held back on raw bytes alone — the window has not elapsed');
 
-  // The prompt mark is the shell's own precmd speaking: the interrupt has been
-  // processed and the line editor is ready. It types WITHOUT waiting out the
-  // window, which is the point — the window was only ever estimating this.
-  proc.emit(A);
+  // The interrupt's own prompt mark: precmd reporting 130, then the prompt. The
+  // interrupt has been processed and the line editor is ready, so it types
+  // WITHOUT waiting out the window — the window was only ever estimating this.
+  proc.emit(INTR);
   assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
     'the mark is a positive acknowledgement and types immediately');
+});
+
+// ── the ack's IDENTITY ──────────────────────────────────────────────────────
+// The mark that releases the command has to be OUR interrupt's, and the three
+// tests below are the falsification: each delivers an A that cannot be shown to
+// postdate the ^C and asserts nothing is typed.
+//
+// The failure they encode was captured whole (a 1-in-132 red in the keymap file,
+// preserved beside this ticket): the shell executed `cho TERMEXEC_RAN` and the
+// prompt before it exited 130. Nothing was swallowed and nothing was doubled —
+// the command was SPLIT across the interrupt boundary. `e` echoed onto the old
+// line, the ^C then killed that line, and the remainder ran on the fresh prompt
+// as a shorter command that was still valid. A truncated `rm -rf ./buil` runs
+// too, which is why this is pinned rather than tuned.
+//
+// Why a status and not a count. The number of prompt redraws before a shell
+// processes an interrupt is set by the operator's theme and is unbounded — a
+// segment waiting on a network call can redraw arbitrarily late. So "ignore the
+// first N" cannot be made safe at any N. 130 is 128+SIGINT, written by the
+// interrupt handler itself, so an A carrying it cannot exist before the
+// interrupt ran; and an arbitrarily LATE redraw still carries no 130, because a
+// redraw runs no interrupt handler no matter when it arrives.
+
+test('a bare prompt mark does not type — a redraw is not our interrupt', () => {
+  // The async prompt redraw. The operator's theme repaints (a git or cloud
+  // segment resolving, a SIGWINCH), which emits a prompt mark of its own while
+  // our ^C is still queued in the pty and unprocessed. Releasing on it types
+  // onto the line the interrupt is about to kill.
+  const { w, spawn } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+  const proc = spawn.spawned[0];
+
+  proc.emit(A);
+  assert.deepStrictEqual(proc.written, [CTRL_C],
+    'a prompt mark carrying no interrupt status is not evidence our ^C was processed');
+});
+
+test('a prompt mark whose status is NOT an interrupt does not type', () => {
+  // The same shape with the status present and wrong: the previous command
+  // finished normally and its precmd drew a prompt while our signal was still
+  // in flight. `D;0` says a command ended well — it says nothing about a SIGINT,
+  // and treating any D+A pair as the acknowledgement would readmit the whole
+  // race under a longer name.
+  const { w, spawn } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+  const proc = spawn.spawned[0];
+
+  proc.emit(`${D(0)}${A}`);
+  assert.deepStrictEqual(proc.written, [CTRL_C],
+    'only 128+SIGINT identifies the prompt our ^C caused');
+
+  // And the real one still works afterwards — the guard rejects the impostor
+  // without wedging the exec, which would trade a rare corruption for a hang.
+  proc.emit(INTR);
+  assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
+    'the interrupt mark that follows still releases the command');
+});
+
+test('an interrupt status does not carry across an intervening prompt', () => {
+  // The status is only good for the A that belongs to it. A `130` left standing
+  // would make the NEXT unrelated redraw look like an interrupt's — the same
+  // defect one prompt later, and the one a naive "remember we saw 130" would
+  // introduce. Both marks arrive here in one read, which is how a real shell
+  // sends them: measured 30/30 prompt cycles on zsh and bash, D and A never
+  // split across reads.
+  const { w, spawn } = mk();
+  w.spawn('ws-1', 'alice', {});
+  const proc = spawn.spawned[0];
+
+  // An interrupt BEFORE our exec — the operator's own ^C, its 130 already in
+  // the stream when we write ours.
+  proc.emit(INTR);
+  w.exec('ws-1', 'alice', 'ls');
+  assert.deepStrictEqual(proc.written, [CTRL_C],
+    'ENTER: our signal is out and nothing is typed yet — the stale 130 predates it');
+
+  proc.emit(A);
+  assert.deepStrictEqual(proc.written, [CTRL_C],
+    'the earlier interrupt does not vouch for this prompt');
 });
 
 test('the command is typed exactly once when the mark AND the clocks both fire', () => {
@@ -384,7 +477,7 @@ test('the command is typed exactly once when the mark AND the clocks both fire',
   w.exec('ws-1', 'alice', 'ls');
   const proc = spawn.spawned[0];
 
-  proc.emit(A);
+  proc.emit(INTR);
   assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`], 'ENTER: the mark typed it');
 
   quietElapse(timers);
@@ -461,7 +554,7 @@ test('a prompt mark types the SECOND command once, not the first one again', () 
   w.exec('ws-1', 'alice', 'first');
   const proc = spawn.spawned[0];
 
-  proc.emit(A);
+  proc.emit(INTR);
   assert.deepStrictEqual(proc.written, [CTRL_C, `first${CR}`], 'ENTER: the first command went out');
   // Settle it so the seat is free, then start a second command.
   proc.emit(C('first'));
@@ -471,7 +564,7 @@ test('a prompt mark types the SECOND command once, not the first one again', () 
 
   // A prompt mark now belongs to the SECOND command's handshake only. If the
   // first exec's ack were still wired, this would type `second` twice.
-  proc.emit(A);
+  proc.emit(INTR);
   assert.deepStrictEqual(proc.written, [CTRL_C, `second${CR}`],
     'exactly one copy — the first exec released its ack when it typed');
 });

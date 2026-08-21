@@ -94,19 +94,21 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // — a shell that never goes quiet, where waiting for silence is waiting
   // forever.
   const ABANDON_MAX_MS = 1000;
-  // THE PRIMARY SIGNAL: an OSC 133 A seen after the ^C went out. A prompt mark
-  // is drawn by the shell's own precmd, so unlike "some bytes arrived" it is
-  // evidence about the SHELL's state — the line editor is ready — rather than
-  // about the wire. That is what the three clocks above can only estimate.
+  // THE PRIMARY SIGNAL: an OSC 133 A reporting exit 130, seen after the ^C went
+  // out. A prompt mark is drawn by the shell's own precmd, so unlike "some bytes
+  // arrived" it is evidence about the SHELL's state — the line editor is ready —
+  // rather than about the wire. That is what the three clocks above can only
+  // estimate.
   //
-  // It NARROWS the race rather than closing it, and the difference matters to
-  // anyone tempted to delete the clocks: an A already in flight when the ^C was
-  // written is indistinguishable from one caused by it, so a prompt redraw from
-  // the previous command can still ack a signal the shell has not processed.
-  // What it removes is the far larger window where ANY byte — an OSC 7 cwd
-  // report, a partial echo — counted as the answer. A sound proof needs a token
-  // that cannot predate the signal: the tty driver's own ECHOCTL echo of the ^C
-  // is one, already in the stream and unread here.
+  // THE STATUS IS WHAT MAKES IT SOUND, and an A alone is not enough: one already
+  // in flight when the ^C was written is indistinguishable from one caused by
+  // it, so accepting any A lets a prompt redraw ack a signal the shell has not
+  // processed. 130 is 128+SIGINT and is written by the interrupt handler, so a
+  // mark carrying it cannot predate the interrupt — the token that cannot come
+  // early, which this needed and "a prompt was drawn" never was. Measured on
+  // real zsh and bash, both keymaps, empty line and half-typed: every ^C at a
+  // prompt emits D;130 then A, and no async redraw (SIGWINCH, zle reset-prompt)
+  // emits either mark.
   //
   // It is not a new requirement on the shell: exec() already refuses unless
   // `rec.shimmed && rec.marks`. THE CLOCKS ARE STILL THE BACKSTOP, and the
@@ -114,7 +116,9 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // aborts before the hooks install (`set -u` against an unset expansion), and a
   // profile that clobbers `precmd_functions` / `PROMPT_COMMAND` after ours is
   // prepended. Either leaves a shell that was born `shimmed` and emits no A;
-  // mark-only, every exec on one of those hangs to EXEC_TIMEOUT.
+  // mark-only, every exec on one of those hangs to EXEC_TIMEOUT. Narrowing the
+  // mark to a 130 widens that set — a shell whose ^C reports no status now falls
+  // back too — which costs latency and never correctness.
   //
   // `shopt -u promptvars` is NOT one of them, though it looks like it should be:
   // it suppresses PS0 expansion, and PS0 carries the C mark — A comes from
@@ -224,10 +228,12 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         // Abandonment has no passive consumer — a command the operator Ctrl-C'd
         // is not news to report, it is only news to whoever was waiting on it.
         onAbandon: (c) => { settle(rec, { status: 'abandoned', record: c }); },
-        // The prompt is back, so a pending exec's ^C has been PROCESSED and its
-        // command is safe to type. Distinct from the raw-byte arm below, which
-        // cannot tell our signal's reply from output that predates it.
-        onPrompt: () => { if (rec.execPromptAck) rec.execPromptAck(); },
+        // The prompt is back. The FLAG is forwarded rather than dropped because
+        // it is the only part that says whose prompt this is: an A alone cannot
+        // distinguish one caused by our ^C from one already in flight when we
+        // wrote it, and acting on the latter types onto a line the interrupt
+        // then kills.
+        onPrompt: (info) => { if (rec.execPromptAck) rec.execPromptAck(info); },
       })
       : null;
     ptys.set(key, rec);
@@ -535,12 +541,26 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         const mine = ++gen;
         later(() => { if (gen === mine) typeCommand(); }, ABANDON_QUIET_MS);
       };
-      // The fast, correct path: a prompt mark after the ^C means the interrupt
-      // is processed and nothing is left to discard, so the command goes out
-      // immediately instead of waiting out a window that is only estimating
-      // this. Whichever fires first — mark or clock — wins, and typeCommand is
-      // idempotent, so the losers are no-ops.
-      const promptAck = () => { typeCommand(); };
+      // The fast, correct path, and it turns on WHICH prompt mark this is. An A
+      // whose precmd reported 130 is the interrupt's own: 128+SIGINT is written
+      // by the handler, so that mark cannot predate the signal it acknowledges
+      // and nothing is left to discard when it arrives. Any other A — a redraw,
+      // a prompt from before our write, the tail of an unrelated command — is
+      // NOT evidence about our ^C, and releasing on one types onto a line the
+      // interrupt is about to kill, splitting the command across the boundary.
+      //
+      // This is a causal test, not a count: "ignore the first N" cannot work
+      // because the number of redraws is theme-dependent and unbounded, and an
+      // arbitrarily late redraw fails this test for the same reason an early one
+      // does — it carries no 130, having run no interrupt handler, whenever it
+      // arrives. Whichever fires first — a qualifying mark or a clock — wins,
+      // and typeCommand is idempotent, so the losers are no-ops.
+      //
+      // A shell whose ^C never produces a 130 (a profile that clobbers the
+      // precmd hook after ours is installed) simply never takes this path and
+      // falls back to the clocks below, which is what it had before marks
+      // existed: later, not wrong.
+      const promptAck = (info) => { if (info && info.interrupted) typeCommand(); };
       rec.execPromptAck = promptAck;
       later(() => { if (!spoke) typeCommand(); }, ABANDON_ACK_MS);
       // The command is typed EVENTUALLY, whatever the shell does. The quiet
