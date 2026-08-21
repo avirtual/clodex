@@ -13,6 +13,19 @@ blocks a release.
 
 ## Unreleased
 
+- A command run in an agent's terminal tab can no longer be corrupted by the
+  interrupt that clears the line first. Clodex sends ^C before typing, to make
+  sure the command lands on an empty prompt, and it then had to decide when the
+  shell had finished reacting. It guessed from the output: any bytes arriving,
+  followed by a brief pause, counted as the shell being ready. Under load that
+  pause elapsed while the interrupt was still in flight, so the command was
+  typed onto the line the shell was about to discard — and what survived was a
+  truncated command that still ran (`cho: command not found`), which is worse
+  than failing outright. Clodex now waits for the shell's own prompt to report
+  that the last command exited on an interrupt, and raw output no longer
+  releases the command at all. A shell that never reports one still gets its
+  command, on the existing one-second backstop: later, not wrong.
+
 - A stalled-ticket alarm now says when the seat stopped on an API error, and
   which error it was. The watchdog could only ever infer a stall from silence —
   a seat that has written nothing and is burning no CPU — so it reported the

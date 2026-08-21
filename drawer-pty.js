@@ -83,7 +83,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // THE PRIMARY SIGNAL: an OSC 133 A reporting exit 130, seen after the ^C went
   // out. A prompt mark is drawn by the shell's own precmd, so unlike "some bytes
   // arrived" it is evidence about the SHELL's state — the line editor is ready —
-  // rather than about the wire. That is what the three clocks above can only
+  // rather than about the wire. That is what the two clocks above can only
   // estimate.
   //
   // WHAT THE STATUS ACTUALLY PROVES, stated exactly: the last command to finish
@@ -468,9 +468,10 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         // anything sharing this write can be swallowed with it — measured at 3
         // failures in 72 under load, and what came out was `cho: command not
         // found`, i.e. a TRUNCATED command that still runs. That is worse than
-        // the keymap bug this replaced, which at least failed loudly. The shell
-        // emitting anything at all is the acknowledgement that its flush is
-        // done; a timer would be a guess about a machine under unknown load.
+        // the keymap bug this replaced, which at least failed loudly. What
+        // acknowledges this signal is a prompt reporting an interrupt status —
+        // bytes alone are NOT evidence the flush is done, however many arrive.
+        // See the constants block and `promptAck`.
         rec.proc.write(ABANDON_LINE);
       } catch (e) {
         rec.pending = null;
