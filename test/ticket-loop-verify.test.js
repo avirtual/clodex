@@ -4120,11 +4120,14 @@ test('t465 nit1: a RE-ENTRY broadcasts "re-verifying", not a second "done"', asy
   const release = holdInSuite(f);
   f.broadcasts.length = 0;
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
-  // MEASURED VACUOUS, kept as a no-op guard rather than a spin: `loopStep` is
-  // already `verify` and the stamp already cleared when control reaches here, so
-  // this never iterates. It read as a synchronisation it is not — the hazard is a
-  // later edit building on a guarantee that was never here. Asserted, not awaited.
-  assert.strictEqual(f.one().loopStep, 'verify', 'ENTER: the verify step was already reached synchronously');
+  // MEASURED, and it is the STAMP that carries the guarantee, not `loopStep`:
+  // `strand()` already leaves `loopStep: 'verify'` and the escalation arm keeps
+  // it there, so asserting the step fails only if `strand` breaks. Probed either
+  // side of the call: `verifyHold` is present BEFORE it and gone after. The
+  // original spin loop never iterated; this asserts what it pretended to await,
+  // and goes red if the clearing ever moves behind an await.
+  assert.ok(!('verifyHold' in f.one()),
+    'ENTER: the re-entry cleared the stamp synchronously — there is nothing to await');
 
   const tasks = f.broadcasts.filter((b) => b.msg && b.msg.type === 'task');
   // ENTER: the re-entry really was taken. Without this the assertions below are
@@ -4167,11 +4170,14 @@ test('t465 nit2: a second `done` during a re-verify says the checks have not rep
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const release = holdInSuite(f);
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
-  // MEASURED VACUOUS, kept as a no-op guard rather than a spin: `loopStep` is
-  // already `verify` and the stamp already cleared when control reaches here, so
-  // this never iterates. It read as a synchronisation it is not — the hazard is a
-  // later edit building on a guarantee that was never here. Asserted, not awaited.
-  assert.strictEqual(f.one().loopStep, 'verify', 'ENTER: the verify step was already reached synchronously');
+  // MEASURED, and it is the STAMP that carries the guarantee, not `loopStep`:
+  // `strand()` already leaves `loopStep: 'verify'` and the escalation arm keeps
+  // it there, so asserting the step fails only if `strand` breaks. Probed either
+  // side of the call: `verifyHold` is present BEFORE it and gone after. The
+  // original spin loop never iterated; this asserts what it pretended to await,
+  // and goes red if the clearing ever moves behind an await.
+  assert.ok(!('verifyHold' in f.one()),
+    'ENTER: the re-entry cleared the stamp synchronously — there is nothing to await');
   await new Promise((r) => setTimeout(r, 50));
 
   const t = f.one();

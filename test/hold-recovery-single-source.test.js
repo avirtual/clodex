@@ -924,6 +924,32 @@ test('the helper is the only place HOLD_RECOVERY is read', () => {
 
 const PHRASE_N = 5;
 
+// ONE definition each, used by every reader below. This file's whole subject is
+// two readers of one fact drifting apart; two byte-identical copies of a regex
+// agree only until someone edits one. Divergence is made impossible, not merely
+// absent.
+const COMMENT_LINE = /^\s*(\/\/|\*|\/\*)/;
+// Honours \` : the spec arm contains an escaped backtick (\`tasks/…\` line
+// first), and a naive /`[^`]*`/ terminates there, yielding NO grams for that
+// sentence — a copy of it would be invisible. Pinned by its own ENTER below.
+// NOTE: "…" literals are deliberately NOT matched, and the ENTER asserts no arm
+// uses them, so the limitation is enforced rather than advisory.
+const TABLE_LITERAL = /`(?:[^`\\]|\\.)*`|'[^'\\]*(?:\\.[^'\\]*)*'/g;
+
+// The one place grams are built. Shared so the advice set and the comment set
+// below are produced by identical code — a comparison between two sets built by
+// two copies of a builder would prove nothing about the builder.
+function gramsFromText(text, N = PHRASE_N) {
+  const grams = new Set();
+  for (const lit of text.match(TABLE_LITERAL) || []) {
+    for (const seg of lit.slice(1, -1).split(/\$\{[^}]*\}/)) {
+      const w = adviceWords(seg);
+      for (let i = 0; i + N <= w.length; i++) grams.add(w.slice(i, i + N).join(' '));
+    }
+  }
+  return grams;
+}
+
 // The table's own text is the source of truth. Hardcoding phrases would go
 // stale the moment an arm is edited — which is precisely the drift this file
 // exists to prevent, reintroduced in the enforcement mechanism itself.
@@ -953,19 +979,19 @@ function deriveAdviceGrams(src, N = PHRASE_N) {
   // `grams.size > 100` guard stayed green — a guard surviving the loss of what
   // it guards, which is this file's own defect class rebuilt in its enforcement.
   const table = lines.slice(range.start, range.end + 1)
-    .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
-  // The backtick alternative honours \` : the spec arm contains an escaped
-  // backtick (\`tasks/…\` line first), and a naive /`[^`]*`/ terminates there,
-  // yielding NO grams for that sentence — a copy of it would be invisible.
-  // NOTE: "…" literals are not matched. An arm rewritten with double quotes
-  // would contribute nothing; add the alternative if that ever happens.
-  for (const lit of table.match(/`(?:[^`\\]|\\.)*`|'[^'\\]*(?:\\.[^'\\]*)*'/g) || []) {
-    for (const seg of lit.slice(1, -1).split(/\$\{[^}]*\}/)) {
-      const w = adviceWords(seg);
-      for (let i = 0; i + N <= w.length; i++) grams.add(w.slice(i, i + N).join(' '));
-    }
-  }
+    .filter((l) => !COMMENT_LINE.test(l)).join('\n');
+  for (const g of gramsFromText(table, N)) grams.add(g);
   return grams;
+}
+
+// The comment lines of the same span, built by the SAME builder. Not advice —
+// this set exists only to be asserted ABSENT from the advice set.
+function deriveTableCommentGrams(src, N = PHRASE_N) {
+  const lines = src.split('\n');
+  const range = holdRecoveryTableRange(lines);
+  if (!range) return new Set();
+  return gramsFromText(lines.slice(range.start, range.end + 1)
+    .filter((l) => COMMENT_LINE.test(l)).join('\n'), N);
 }
 
 // SCANNING does NOT blank `${…}` — advice can be written inside a template
@@ -978,7 +1004,7 @@ function scanAdvicePhrases(src, N = PHRASE_N) {
   for (let i = 0; i < lines.length; i++) {
     if (range && i >= range.start && i <= range.end) continue;  // the table is the original, not a copy
     const line = lines[i];
-    if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;  // comments quote the advice deliberately, at length
+    if (COMMENT_LINE.test(line)) continue;  // comments quote the advice deliberately, at length
     const w = adviceWords(line);
     for (let j = 0; j + N <= w.length; j++) {
       const g = w.slice(j, j + N).join(' ');
@@ -1011,9 +1037,24 @@ test('ENTER: the phrase scan derives real grams from the real table', () => {
   assert.ok(grams.has('fix what the check named'), 'ENTER: the hand arm');
   assert.ok(grams.has('re closing alone will not'), 'ENTER: the spec arm');
   assert.ok(grams.has('this is not something the'), 'ENTER: the infra arm');
-  // Advice-only band. The upper bound is the real guard: it goes red if comment
-  // prose starts leaking back into the derivation, which is how the arms got
-  // swamped in the first place.
+  // MUST-FIX: the escaped-backtick sentence. Reverting the \` handling takes the
+  // set 73 -> 68 as a STRICT SUBSET, so every other guard here — all three arms,
+  // the band, all four N=4 grams — still passes and the revert is silent. This
+  // recovered sentence IS that entire 68 -> 73, and it is the one thing that
+  // goes red on it. It is also what a trailing apostrophe-bearing comment on the
+  // spec arm's line would swallow, leaving the first-sentence grams intact.
+  assert.ok(grams.has('correct the spec s tasks'),
+    "ENTER: the spec arm's ESCAPED-BACKTICK sentence — the whole reason TABLE_LITERAL honours \\`");
+  // THE INVARIANT ITSELF: no comment prose is in the advice set. The band below
+  // is a proxy for this and drifts with arm count; this states it directly and
+  // also catches a residual from a trailing comment on an arm line.
+  const commentGrams = deriveTableCommentGrams(realSource());
+  assert.ok(commentGrams.size > 0,
+    `ENTER: the table's comments really were gram-bearing (got ${commentGrams.size})`);
+  const leaked = [...commentGrams].filter((g) => grams.has(g));
+  assert.deepStrictEqual(leaked, [],
+    'comment prose leaked into the advice set — the r5 defect returning');
+  // Loose sanity only, no longer the guard.
   assert.ok(grams.size > 40 && grams.size < 120,
     `ENTER: advice-only gram count (${grams.size})`);
   // NIT 4: the span must be the table, not the rest of the file. `};` is matched
@@ -1022,6 +1063,12 @@ test('ENTER: the phrase scan derives real grams from the real table', () => {
   const range = holdRecoveryTableRange(realSource().split('\n'));
   assert.ok(range && range.end - range.start < 40,
     `ENTER: the span is the table itself (got ${range ? range.end - range.start : 'none'} lines)`);
+  // NIT 4: the "…" limitation, enforced rather than advisory. An arm rewritten
+  // with double quotes would contribute ZERO grams and every guard above would
+  // still pass, so it goes red here instead.
+  const tableText = realSource().split('\n').slice(range.start, range.end + 1).join('\n');
+  assert.ok(!/:\s*\(id\)\s*=>\s*"/.test(tableText),
+    'an arm uses a "…" literal, which TABLE_LITERAL does not match — add the alternative');
   // No gram may bridge an interpolation: `${ticketCloseVerb(id)}` renders to a
   // per-caller string, so a gram spanning it would pin one caller's output.
   assert.ok(![...grams].some((g) => g.includes('ticketclosverb') || g.includes('ticketcloseverb')),
@@ -1059,11 +1106,16 @@ for (const [shape, body] of [
     const hits = scanAdvicePhrases(withRealTable(body));
     assert.ok(hits.length >= 1,
       `a copied arm rendered as ${shape} must be caught (got ${hits.length})`);
-    // Grams are built by joining N tokens and `adviceWords` cannot emit a token
-    // containing a space, so asserting the width back cannot fail. Assert the
-    // hit is a gram the TABLE actually produced — that bites.
-    assert.ok(deriveAdviceGrams(withRealTable(body)).has(hits[0].gram),
-      'ENTER: the hit is a gram the real table produced, not an artefact');
+    // `scanAdvicePhrases` derives its grams from the SAME string in the same
+    // tick, so re-deriving from that string and asking `has` is `grams.has(g)`
+    // asked twice — true by construction for any non-empty hits. These two bite
+    // in different directions: the gram must come from the REAL table (not a
+    // fixture whose range drifted), and the hit must land on the copied render
+    // (not on scaffolding).
+    assert.ok(deriveAdviceGrams(realSource()).has(hits[0].gram),
+      'ENTER: the gram comes from the REAL table, not a fixture whose range drifted');
+    assert.ok(body.some((l) => l.trim() === hits[0].text),
+      'the hit is on the copied render, not on scaffolding');
   });
 }
 
