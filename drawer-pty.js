@@ -225,11 +225,11 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         // Abandonment has no passive consumer — a command the operator Ctrl-C'd
         // is not news to report, it is only news to whoever was waiting on it.
         onAbandon: (c) => { settle(rec, { status: 'abandoned', record: c }); },
-        // The prompt is back. The FLAG is forwarded rather than dropped because
-        // it is the only part that says whose prompt this is: an A alone cannot
-        // distinguish one caused by our ^C from one already in flight when we
-        // wrote it, and acting on the latter types onto a line the interrupt
-        // then kills.
+        // The prompt is back. The flag is forwarded rather than dropped because
+        // exec() needs what it reports: the last command to finish exited
+        // 128+SIGINT. That filters out a bare redraw, which carries no such
+        // status — it does NOT say whose interrupt it was. See the constants
+        // block for the two residuals that leaves open.
         onPrompt: (info) => { if (rec.execPromptAck) rec.execPromptAck(info); },
       })
       : null;
@@ -508,13 +508,15 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         }
       };
       // Two clocks, and they are not interchangeable. The SILENCE deadline
-      // covers a shell that never answers; the QUIET window covers one that
-      // does. `spoke` is what hands ownership from the first to the second, and
-      // it is a FLAG rather than a cancelled handle because the deadline must
-      // stay inert even where the handle cannot be cleared — the timer seam is
-      // injected, so a caller's fake may return something clearTimeout ignores,
-      // and a silence deadline that still fired mid-answer would type into the
-      // flush this split exists to avoid.
+      // covers a shell that never answers at all; the CAP covers one that does.
+      // `spoke` hands ownership from the first to the second — a shell that has
+      // said anything is no longer silent, so it waits out the cap instead.
+      //
+      // A FLAG rather than a cancelled handle because the deadline must stay
+      // inert even where the handle cannot be cleared: the timer seam is
+      // injected, so a caller's fake may return something clearTimeout ignores.
+      // A silence deadline that still fired after the shell had spoken would
+      // type on a schedule that no longer describes it.
       let spoke = false;
       // BYTES DO NOT RELEASE THE COMMAND. They only mark the shell as having
       // spoken, which retires the silence deadline above and hands the schedule

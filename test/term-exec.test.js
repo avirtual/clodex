@@ -38,18 +38,6 @@ const LF = String.fromCharCode(0x0a);
 const ESC = String.fromCharCode(0x1b);
 const BEL = String.fromCharCode(0x07);
 
-// A real shell answers the abandon signal, and drawer-pty types the command only
-// once it has EVIDENCE THE INTERRUPT WAS PROCESSED. The fake emits nothing on
-// its own, so tests drive that acknowledgement here. Deliberately NOT automatic
-// inside `write()`: a fixture that acked itself would make the two-write split
-// untestable, and the split is the whole fix.
-//
-// Bytes are not that evidence and this helper does not pretend they are — it
-// emits the marks a real shell sends. A ^C consumed by the tty line discipline
-// is delivered to the foreground process group asynchronously with respect to
-// the byte stream, so a shell can print a whole quiet prompt with the interrupt
-// still pending; only the shell's own report of 128+SIGINT releases the command.
-// That report is a FILTER and not a proof of ownership — see INTR.
 // Read from the source, not hand-copied. A duplicated literal that drifts from
 // the product's would leak a stale value into `execTimers`, surfacing as an
 // unrelated wrong-timer failure somewhere downstream.
@@ -88,10 +76,15 @@ const D = (code) => `${ESC}]133;D;${code}${BEL}`;
 // these tests exist to pin.
 const INTR = `${D(130)}${A}`;
 // The whole acknowledgement a real shell gives: some output, then the interrupt
-// reporting itself. Defined here rather than beside the other helpers because it
-// is built from INTR — and it emits the bytes too, so a test using it still
-// exercises the path where the shell has spoken (which retires the silence
-// deadline) as well as the one that actually releases the command.
+// reporting itself. The fake emits nothing on its own, so tests drive it from
+// here — deliberately NOT automatic inside `write()`, since a fixture that acked
+// itself would make the two-write split untestable, and the split is the fix.
+//
+// It emits the bytes as well as the marks, so a test using it exercises both
+// halves: the bytes retire the silence deadline, and only the 128+SIGINT report
+// releases the command. Bytes alone are not evidence — a ^C is delivered to the
+// foreground process group asynchronously with respect to the byte stream, so a
+// shell can print a whole quiet prompt with the interrupt still pending.
 const ackAbandon = (proc) => {
   proc.emit(`${CR}${LF}$ `);
   proc.emit(INTR);
@@ -312,15 +305,16 @@ test('the command is not typed until the shell has answered the abandon', () => 
 
   ackAbandon(spawn.spawned[0]);
   assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`],
-    'the shell spoke, so the command follows as its own write');
+    'the shell reported its interrupt, so the command follows as its own write');
   assert.deepStrictEqual(results, [], 'and typing it settles nothing on its own');
 });
 
-// The three tests below pin the QUIET WINDOW specifically. The tests around
-// them pass against an arm that types on the first byte, so without these a
-// revert to that would be caught by nothing but a ~1-in-280 real-shell flake.
+// The three tests below pin BYTES RELEASE NOTHING. The tests around them pass
+// against an arm that types on the first byte, or on a quiet window after it, so
+// without these a revert to either would be caught by nothing but a rare
+// real-shell flake.
 
-test('a first byte is not the end of the flush — the command waits for quiet', () => {
+test('a first byte is not evidence — the command is not typed on shell output', () => {
   // The bytes that arrive first are the ones ALREADY IN FLIGHT when the ^C
   // landed: a prior command's echo, an OSC 7 cwd report. They are not an answer
   // to the signal, and typing on them puts the command inside the input discard,
@@ -383,23 +377,24 @@ test('NO amount of shell output releases the command — bytes arm no timer', ()
 // on load or timing: the interleaving is driven through the injected timer seam,
 // so it either holds on every run or fails on every run.
 //
-// The defect: `execArm` is fed by RAW BYTES, which cannot distinguish output
-// caused by our ^C from output already in flight when we wrote it. Under load
-// the quiet window elapses over pre-^C bytes while the signal is still queued,
-// the command is typed, and THEN SIGINT lands and discards it — taking the head
-// of the command with it. `cho a; echo b` from `echo a; echo b`.
-test('a prompt mark types the command — the byte window alone cannot tell the flush started', () => {
+// The defect it records: `execArm` was fed by RAW BYTES, which cannot
+// distinguish output caused by our ^C from output already in flight when we
+// wrote it. Under load the quiet window elapsed over pre-^C bytes while the
+// signal was still queued, the command was typed, and THEN SIGINT landed and
+// discarded it — taking the head of the command with it. `cho a; echo b` from
+// `echo a; echo b`. Bytes now release nothing, so this pins the mark path.
+test('a prompt mark types the command — raw bytes never do', () => {
   const { w, spawn } = mk();
   w.spawn('ws-1', 'alice', {});
   w.exec('ws-1', 'alice', 'ls');
   const proc = spawn.spawned[0];
 
   // Pre-^C output: a prior command's tail, still in flight when the signal was
-  // written. Under the byte-only handshake this armed the window and, 60ms
-  // later, typed into a shell that had not yet processed the interrupt.
+  // written. Under the byte-only handshake this armed a window and, 60ms later,
+  // typed into a shell that had not yet processed the interrupt.
   proc.emit(`${CR}${LF}`);
   assert.deepStrictEqual(proc.written, [CTRL_C],
-    'ENTER: still held back on raw bytes alone — the window has not elapsed');
+    'ENTER: still held back — raw bytes are not evidence about the signal');
 
   // The interrupt's own prompt mark: precmd reporting 130, then the prompt. The
   // interrupt has been processed and the line editor is ready, so it types
@@ -466,7 +461,7 @@ test('a prompt mark whose status is NOT an interrupt does not type', () => {
 
   proc.emit(`${D(0)}${A}`);
   assert.deepStrictEqual(proc.written, [CTRL_C],
-    'only 128+SIGINT identifies the prompt our ^C caused');
+    'a prompt reporting a clean exit is filtered out — only 128+SIGINT passes');
 
   // And the real one still works afterwards — the guard rejects the impostor
   // without wedging the exec, which would trade a rare corruption for a hang.
@@ -642,12 +637,12 @@ test('a prompt mark types the SECOND command once, not the first one again', () 
     'exactly one copy — the first exec released its ack when it typed');
 });
 
-test('a shell that never goes quiet still gets its command, on the cap', () => {
+test('a shell that talks without pause still gets its command, on the cap', () => {
   // Reachable without any misbehaviour: isBusy() is false while a BACKGROUND
-  // job writes to the tty, so exec() is accepted and the ^C is delivered. With
-  // only a restarting window the command would never be typed at all and the
-  // waiter would hang to EXEC_TIMEOUT, reporting a timeout for a command that
-  // never ran.
+  // job writes to the tty, so exec() is accepted and the ^C is delivered. This
+  // shell emits no interrupt mark and never stops talking, so the cap is the
+  // only thing that types; without it the waiter would hang to EXEC_TIMEOUT,
+  // reporting a timeout for a command that never ran.
   const { w, spawn, timers } = mk();
   w.spawn('ws-1', 'alice', {});
   w.exec('ws-1', 'alice', 'ls');
@@ -662,8 +657,13 @@ test('a shell that never goes quiet still gets its command, on the cap', () => {
   assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`],
     'the cap types it regardless of how chatty the shell is');
 
-  // A chatty shell must not schedule a window per data chunk for the rest of
-  // its life once the command is already out.
+  // A STRUCTURAL GUARD, and it passes vacuously today: `arm()` cannot schedule
+  // anything, so no byte could arm a timer whether the command is out or not.
+  // Kept as the tripwire for the byte-arm returning — a reintroduced per-chunk
+  // window would fire here even if it were careful about the already-typed case.
+  // The line that actually holds the property is the timer-count assertion in
+  // 'NO amount of shell output releases the command', which checks it while the
+  // command is still PENDING and is where a real regression would land first.
   const before = timers.length;
   spawn.spawned[0].emit('more chatter');
   assert.strictEqual(timers.length, before, 'no further timers are armed after the command is typed');
@@ -671,8 +671,9 @@ test('a shell that never goes quiet still gets its command, on the cap', () => {
 
 test('the silence deadline is inert once the shell has spoken', () => {
   // Both clocks are armed up front, so the 250ms deadline is still in the list
-  // after an answer arrives. Firing mid-answer would type into the flush — the
-  // exact race the quiet window exists to close.
+  // after an answer arrives. It covers a shell that says NOTHING; one that has
+  // spoken is no longer that shell, and firing anyway would type on a schedule
+  // that no longer describes it.
   const { w, spawn, timers } = mk();
   w.spawn('ws-1', 'alice', {});
   w.exec('ws-1', 'alice', 'ls');
@@ -682,7 +683,7 @@ test('the silence deadline is inert once the shell has spoken', () => {
   assert.strictEqual(silence.length, 1, 'ENTER: the silence deadline was armed');
   silence[0].fn();
   assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C],
-    'the deadline handed ownership to the quiet window and types nothing itself');
+    'the deadline handed ownership to the cap and types nothing itself');
 });
 
 test('a shell that answers nothing still gets its command, on the fallback', () => {
