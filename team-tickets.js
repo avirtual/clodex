@@ -4457,15 +4457,15 @@ function createTicketMethods(deps, shared) {
         // class this code stamps today, `spec` included, satisfies the re-entry
         // gate above and re-runs rather than bouncing: the gate tests the stamp's
         // PRESENCE, not its class. Do not read a class gate into this clause.
-        // The OTHER done-at-verify state, and the one with no stamp to read: the
-        // checks are RUNNING (the re-entry above cleared the hold before starting
-        // them). Refusing is correct and must stay — two loops on one branch is
-        // what the gate exists to prevent — but a bare "is done, not open" names
-        // nothing to wait for, and a reader who is told only that they cannot
-        // close goes back to `reject`, which is the false rejection this design
-        // removes. Same class as the held clause: say which state it is in.
         const held = ticket.verifyHold && ticket.verifyHold.step
           ? ` — it is held at "${ticket.verifyHold.step}". ${holdRecoveryText(ticket.verifyHold.recovery, intent.id)}`
+          // The OTHER done-at-verify state, and the one with no stamp to read:
+          // the checks are RUNNING, the re-entry above having cleared the hold
+          // before starting them. Refusing is correct and must stay — two loops
+          // on one branch is what the gate prevents — but a bare "is done, not
+          // open" names nothing to wait for, and a reader told only that it
+          // cannot close goes back to `reject`, the false rejection this design
+          // removes.
           : (ticket.state === 'done' && ticket.loopStep === 'verify'
             ? ' — its checks are running right now; wait for the result rather than rejecting it.'
             : '');
