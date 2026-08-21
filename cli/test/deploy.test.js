@@ -126,7 +126,18 @@ test('installer: agent-clis step installs claude+codex the native way, best-effo
   assert.match(s, /command -v codex >\/dev\/null 2>&1/);
   // Best-effort: NEVER fails the deploy, NEVER needs sudo — no `fail`/`need_sudo`
   // between the step marker and its ok.
+  // Both ENTERs, and they are complementary — the downstream here is TWO
+  // ABSENCE assertions, which pass over an empty string. A missing START gives
+  // `slice(-1, M)` = empty and the ordered-anchor form cannot see it (`M > -1`
+  // is true), so the length check is the one that catches that mode — which is
+  // unreachable today, since the `assert.match(s, /step agent-clis/)` above
+  // fails loud first. Defence-in-depth against that line being removed; the
+  // mode the ordered-anchor guard actually catches here is a missing END, which
+  // runs the slice into the tail and picks up an unrelated `need_sudo`.
+  assert.ok(s.indexOf('ok agent-clis') > s.indexOf('step agent-clis'),
+    'ENTER: both anchors, in order');
   const seg = s.slice(s.indexOf('step agent-clis'), s.indexOf('ok agent-clis'));
+  assert.ok(seg.length > 0, 'ENTER: the agent-clis step body was found — absences must not pass over nothing');
   assert.doesNotMatch(seg, /\bfail agent-clis\b/);
   assert.doesNotMatch(seg, /need_sudo/);
 });
@@ -139,6 +150,11 @@ test('installer: source step ::logs the deployed ref@sha (a log marker, not a ne
   assert.match(s, /DEPLOYED_SHA="\$\(git -C "\$SRC_DIR" rev-parse --short HEAD/);
   assert.match(s, /echo "::log deployed \$BRANCH@\$DEPLOYED_SHA"/);
   // It sits in the source step, before its ok, so the trail shows what landed.
+  // A missing END anchor gives the whole tail of the installer, and the match
+  // below then finds the ::log line outside the source step — the location
+  // claim this test exists to make.
+  assert.ok(s.indexOf('ok source') > s.indexOf('step source'),
+    'ENTER: both anchors, in order');
   const seg = s.slice(s.indexOf('step source'), s.indexOf('ok source'));
   assert.match(seg, /::log deployed \$BRANCH@\$DEPLOYED_SHA/);
   // parseMarker treats it as a log line (no orphan step in the GUI checklist).

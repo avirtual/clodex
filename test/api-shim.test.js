@@ -543,6 +543,11 @@ test('STRUCTURAL: only wirescopeBase reads wirescopePublicBase, so the gate and 
     'and that one place is wirescopeBase');
   // And dispatchEvent must feed ONE computed base to both consumers, rather than
   // calling wirescopeBase twice or passing different values.
+  // A missing END anchor gives `slice(N, -1)` — the whole tail of the shim —
+  // and all three matches below then find their targets anywhere in the file,
+  // which is exactly the single-computation claim this test makes.
+  assert.ok(code.indexOf('function onMessage') > code.indexOf('function dispatchEvent'),
+    'ENTER: both anchors, in order');
   const dispatch = code.slice(code.indexOf('function dispatchEvent'), code.indexOf('function onMessage'));
   assert.match(dispatch, /const publicBase = wirescopeBase\(welcomeInfo\)/, 'the base is computed once');
   assert.match(dispatch, /unreachableProxyUrl\(args\[0\], proxyBase, publicBase\)/, 'the gate is fed it');
