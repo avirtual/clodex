@@ -398,6 +398,106 @@ test('exactly one delivery per incarnation — a re-entered replay in the SAME p
   } finally { app2.stop(); }
 });
 
+// ── t392: the replay of a ticket whose spec was REPLACED ───────────────────
+// Driven end to end rather than asserted on the record: the defect is what the
+// REPLACEMENT SEAT RECEIVES, and every field this ticket adds is invisible to it
+// unless the delivery path renders one. Process 1 dispatches, then the lead
+// respecs; process 2 is the seat that comes back holding only what the record
+// can tell it.
+async function assignedThenRespecced(world, newSpec) {
+  const app = boot(world);
+  const lead = await app.spawn('lead');
+  await app.spawn('team-hand');
+  app.m._handleTask(lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'BUILD THE WIDGET\ntasks/widget/SPEC.md\nstep one' });
+  app.m._handleTask(lead, { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await settled(app, 'team-hand');
+  await stamped(world);
+  app.m._handleTask(lead, { type: 'task', sub: 'respec', who: null, id: 't1', body: newSpec });
+  // ENTER: the LIVE seat must have been handed the correction in this process. If
+  // the respec never delivered, the second process below would be replaying a
+  // spec no seat ever held and the test would pass while exercising the ordinary
+  // replay path — the one that was never broken.
+  await settled(app, 'team-hand', /RESPEC/);
+  assert.match(app.seen('team-hand'), /RESPEC/,
+    'ENTER: the respec must have reached the live seat, or nothing below is about a supersession');
+  assert.strictEqual(world.tickets().find((t) => t.id === 't1').respecs.length, 1,
+    'ENTER: and it must have been RECORDED, or the replay has nothing to count');
+  app.stop();
+}
+
+test('t392: a seat replayed after a respec is TOLD the spec was superseded', async () => {
+  const world = mkWorld();
+  await assignedThenRespecced(world, 'REVISED WIDGET\ntasks/widget/SPEC.md\nalso do step two');
+
+  const app2 = boot(world);
+  try {
+    await app2.spawn('team-hand');
+    const got = await settled(app2, 'team-hand');
+    assert.match(got, /REVISED WIDGET/, 'ENTER: the current revision is what replays');
+    assert.match(got, /REPLACED once/,
+      'the replayed seat must be told the spec was superseded and how often — it holds a delta whose antecedent '
+      + 'is not in the message, and nothing else here can tell it that');
+    assert.match(got, /do not delete it on that basis, report it/,
+      'and told what to DO with tree work the current revision never mentions: on a superseded ticket that is '
+      + 'evidence of an earlier instruction, not stray work');
+    // The record now holds the old body; this asserts it did NOT quietly become
+    // part of the dispatch. Growing every replay by a full superseded spec is a
+    // different change from the one this ticket makes, and one nobody asked for.
+    assert.doesNotMatch(got, /step one/,
+      'the superseded BODY itself stays out of the message — the seat is told it exists, not handed it');
+  } finally { app2.stop(); }
+});
+
+// The mutation this pins: render the line unconditionally, or key it off
+// `Array.isArray(respecs)` rather than its length. Both pass every assertion
+// above, and both put "your spec was replaced" on the replay of a ticket that was
+// never corrected — which makes a hand hunt for a revision that does not exist.
+test('t392: an uncorrected ticket replays with no supersession clause', async () => {
+  const world = mkWorld();
+  await assigned(world);
+
+  const app2 = boot(world);
+  try {
+    await app2.spawn('team-hand');
+    const got = await settled(app2, 'team-hand');
+    assert.match(got, /BUILD THE WIDGET/, 'ENTER: the replay happened at all, so the absence below is not vacuous');
+    assert.match(got, /REPLAY/, 'ENTER: and it is the replay arm — the arm that carries the clause');
+    assert.doesNotMatch(got, /REPLACED/,
+      'a ticket that was never respecced must not claim it was: the clause is keyed on the COUNT, not on the '
+      + 'array existing');
+  } finally { app2.stop(); }
+});
+
+// The count is the seat's only measure of how far the ticket has drifted from
+// what an earlier incarnation was working to, so it must track rather than being
+// a boolean wearing a number. Pinned with the singular/plural pair, because "1
+// times" is the shape a bare interpolation produces.
+test('t392: the supersession clause counts the corrections', async () => {
+  const world = mkWorld();
+  await assignedThenRespecced(world, 'REVISED ONCE\nstep two');
+  // A second correction, from a fresh process — the same door a lead uses after a
+  // restart, and it must accumulate rather than reset.
+  const app1b = boot(world);
+  try {
+    const lead = await app1b.spawn('lead');
+    await app1b.spawn('team-hand');
+    app1b.m._handleTask(lead, { type: 'task', sub: 'respec', who: null, id: 't1', body: 'REVISED TWICE\nstep three' });
+    assert.strictEqual(world.tickets().find((t) => t.id === 't1').respecs.length, 2,
+      'ENTER: two corrections on the record, or the plural below is asserting the singular case');
+  } finally { app1b.stop(); }
+
+  const app2 = boot(world);
+  try {
+    await app2.spawn('team-hand');
+    const got = await settled(app2, 'team-hand');
+    assert.match(got, /REVISED TWICE/, 'ENTER: the latest revision is what replays');
+    // The plural half only. The singular is pinned where a count of 1 actually
+    // exists (the first t392 test asserts "REPLACED once"); a "not 1 times"
+    // assertion here could never fail, since the count in this fixture is 2.
+    assert.match(got, /REPLACED 2 times/, 'the count TRACKS — it is not a boolean wearing a number');
+  } finally { app2.stop(); }
+});
+
 test('a closed ticket is never replayed', async () => {
   const world = mkWorld();
   await assigned(world);
