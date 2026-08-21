@@ -433,6 +433,48 @@ test('sender token answers isDestroyed, so an isDestroyed-guarded stream deliver
   } finally { host.close(); }
 });
 
+// The FORWARD direction of the two-method contract (docs/renderer-events.md §C):
+// the web adapter must SUPPLY both, so a handler written against the desktop host
+// finds them here too. Asserted on the whole key set rather than per-method — a
+// per-method check reads clean over a token that lost the OTHER one, which is the
+// regression shape this contract exists to catch.
+//
+// Only the web half is assertable, and deliberately so: main.js passes Electron's
+// own event through untouched, so `e.sender` on the desktop is a real WebContents
+// that no code of ours can shrink and no test under plain node can construct
+// (`require('electron')` returns the path string). The desktop side is pinned by
+// Electron's API, not by us.
+test('the web adapter supplies exactly the contracted sender shape', async () => {
+  let captured = null;
+  const registerHandlers = (deps) => {
+    deps.handle('capture', (e) => { captured = e.sender; return { ok: true }; });
+  };
+  const { host, port } = await startHost({ registerHandlers });
+  try {
+    const c = connect(port);
+    await helloWelcome(c, { workspaceId: 'default' });
+    c.send({ t: 'invoke', id: 1, channel: 'capture', args: [] });
+    await c.until((m) => m.t === 'reply' && m.id === 1);
+
+    assert.ok(captured, 'ENTER: handler never ran, so no sender was captured');
+
+    const methods = Object.keys(captured).filter((k) => typeof captured[k] === 'function').sort();
+    assert.deepStrictEqual(
+      methods, ['isDestroyed', 'send'],
+      'the web sender token must carry exactly the contracted methods — adding one here '
+      + 'without adding it to the docs and to what the desktop WebContents already answers '
+      + 'lets a handler compile against a method only ONE host has',
+    );
+
+    // `conn` is the adapter's own workspace-resolution field, not contract. It is
+    // asserted to be a NON-function so the key-set check above stays a statement
+    // about the method set; a handler reading it would break on the desktop.
+    assert.equal(typeof captured.conn, 'object', 'conn is the adapter-private workspace field');
+
+    c.close();
+  } finally { host.close(); }
+});
+
 test('sender token reports isDestroyed once its socket is gone', async () => {
   // The CONTROL. A token answering `false` unconditionally would satisfy the
   // test above while making the guard meaningless — the point of isDestroyed is
