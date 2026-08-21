@@ -25335,12 +25335,40 @@ helper=${d.helperPath}`;
     }
   });
 
+  // renderer/lib/cost-by-line.js
+  var require_cost_by_line = __commonJS({
+    "renderer/lib/cost-by-line.js"(exports, module) {
+      "use strict";
+      function costByLine(p) {
+        if (!p || !p.capabilities || !p.capabilities.cost_by_line) return null;
+        const cost = p.costRun || p.cost;
+        if (!cost) return null;
+        const total = typeof cost.usd === "number" ? cost.usd : null;
+        const main = typeof cost.mainUsd === "number" ? cost.mainUsd : null;
+        const subs = Array.isArray(p.subagents) ? p.subagents : [];
+        const billedSubs = subs.filter((s) => typeof s.estUsd === "number");
+        if (main == null && !billedSubs.length) return null;
+        const pct = (v) => total && total > 0 && typeof v === "number" ? Math.round(v / total * 100) : null;
+        const rows = [];
+        if (main != null) rows.push({ label: "Main line", usd: main, pct: pct(main), main: true });
+        for (const s of subs) {
+          const usd = typeof s.estUsd === "number" ? s.estUsd : null;
+          rows.push({ label: s.label || s.key, usd, pct: pct(usd), main: false });
+        }
+        rows.sort((a, b) => (b.usd == null ? -1 : b.usd) - (a.usd == null ? -1 : a.usd));
+        return { total, rows };
+      }
+      module.exports = { costByLine };
+    }
+  });
+
   // renderer/popovers/cost-popover.js
   var require_cost_popover = __commonJS({
     "renderer/popovers/cost-popover.js"(exports, module) {
       var { esc, fmtUsd } = require_format();
       var { costStackBlock, svgCostChart } = require_render_html();
       var { COST_SPINE, COST_CONTENT } = require_constants();
+      var { costByLine } = require_cost_by_line();
       function initCostPopover({ popoverApi, proxyState }) {
         const costPopover = document.getElementById("cost-popover");
         const costPopoverName = document.getElementById("cost-popover-name");
@@ -25363,28 +25391,17 @@ helper=${d.helperPath}`;
           return `<div class="cost-head"><b>${fmtUsd(total)}</b> over <b>${s.count != null ? s.count : reqs.length}</b> requests \xB7 main line</div>` + costStackBlock("Cost by type", "", COST_SPINE, st, total) + `<div class="cost-sec-title"><span>Cumulative cost \xB7 req 1 \u2192 ${reqs.length}</span></div><div class="cost-chart">${svgCostChart(reqs, COST_SPINE)}</div>` + costStackBlock("What read pays to carry", ' <span class="ctx-est">~est</span>', COST_CONTENT, cc, ccTotal) + `<div class="cost-note">Preamble = system + tools + agents + skills + CLAUDE.md, the fixed tax trimmed via \u{1F6E0} / \u{1F9E9} / \u{1F916}. Conversation (incl. tool results) is the tail that grows with session depth.</div>` + link;
         }
         function renderCostByLine(p) {
-          if (!p || !p.capabilities || !p.capabilities.cost_by_line || !p.cost) return "";
-          const whole = typeof p.cost.usd === "number" ? p.cost.usd : null;
-          const main = typeof p.cost.mainUsd === "number" ? p.cost.mainUsd : null;
-          const subs = Array.isArray(p.subagents) ? p.subagents : [];
-          const billedSubs = subs.filter((s) => typeof s.estUsd === "number");
-          if (main == null && !billedSubs.length) return "";
-          const pct = (v) => whole && whole > 0 && typeof v === "number" ? ` \xB7 ${Math.round(v / whole * 100)}%` : "";
-          const rows = [];
-          if (main != null) {
-            rows.push({ label: "Main line", usd: main, cls: "cost-line-main" });
-          }
-          for (const s of subs) {
-            rows.push({ label: s.label || s.key, usd: typeof s.estUsd === "number" ? s.estUsd : null, cls: "" });
-          }
-          rows.sort((a, b) => (b.usd == null ? -1 : b.usd) - (a.usd == null ? -1 : a.usd));
-          const body = rows.map((r) => {
+          const model = costByLine(p);
+          if (!model) return "";
+          const body = model.rows.map((r) => {
+            const cls = r.main ? "cost-line-main" : "";
             if (r.usd == null) {
-              return `<div class="cost-line-row ${r.cls}"><span class="cost-line-label">${esc(r.label)}</span><span class="cost-line-usd cost-line-unbilled">unbilled</span></div>`;
+              return `<div class="cost-line-row ${cls}"><span class="cost-line-label">${esc(r.label)}</span><span class="cost-line-usd cost-line-unbilled">unbilled</span></div>`;
             }
-            return `<div class="cost-line-row ${r.cls}"><span class="cost-line-label">${esc(r.label)}</span><span class="cost-line-usd">${fmtUsd(r.usd)}<span class="cost-line-pct">${pct(r.usd)}</span></span></div>`;
+            const pct = r.pct != null ? ` \xB7 ${r.pct}%` : "";
+            return `<div class="cost-line-row ${cls}"><span class="cost-line-label">${esc(r.label)}</span><span class="cost-line-usd">${fmtUsd(r.usd)}<span class="cost-line-pct">${pct}</span></span></div>`;
           }).join("");
-          const totalTxt = whole != null ? fmtUsd(whole) : "";
+          const totalTxt = model.total != null ? fmtUsd(model.total) : "";
           return `<div class="cost-sec-title"><span>By line</span><span class="ctx-line-total">${totalTxt}</span></div><div class="cost-line-list">${body}</div><div class="cost-note">Whole-tree estimate split across the main line and its subagents. Shares ride the live poll (no extra fetch).</div>`;
         }
         async function openCostPopover(name, anchor) {
