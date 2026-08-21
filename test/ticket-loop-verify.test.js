@@ -665,7 +665,11 @@ test('a spec naming its task dir on a LATER line reaches the reviewer', async ()
   assert.strictEqual(f.diffFile().length, 1, 'and its diff was written');
 });
 
-test('escalation tears nothing down and clears the loop hold', async () => {
+test('escalation tears nothing down, and HOLDS the ticket for the recovery', async () => {
+  // t345 overturned the second half of this subject. It used to assert the hold
+  // was RELEASED — `!('loopStep' in t)` — which is precisely the stranding: the
+  // ticket fell out of flight, the sweep stopped seeing it, and `task done`
+  // bounced. The tear-nothing-down half is unchanged and still the point.
   const repo = mkRepo();
   const f = mkLoop({ repo });
   f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
@@ -678,7 +682,7 @@ test('escalation tears nothing down and clears the loop hold', async () => {
     'the worktree record is untouched by an escalation');
   assert.ok(f.m.sessions.has('team-hand'), 'the hand seat survives an escalation');
   assert.strictEqual(t.state, 'done', 'the escalation does not reopen or cancel the ticket');
-  assert.ok(!('loopStep' in t), 'the loop no longer holds a ticket it handed to a human');
+  assert.strictEqual(t.loopStep, 'verify', 'the hold stays: a human owes this ticket an action');
   assert.match(f.esc()[0].body, /Nothing was torn down/);
 });
 
@@ -727,7 +731,12 @@ test('a HELD delivery that never parked also keeps the hold', async () => {
   assert.strictEqual(f.one().loopStep, 'verify', 'a held-but-unparked escalation reached nobody');
 });
 
-test('a PARKED escalation is durable, so it does release the hold', async () => {
+test('a PARKED escalation counts as REACHED, and is stamped like any other', async () => {
+  // The delivery classification this subject exists for is unchanged: a park is a
+  // written file the seat drains, so it counts as reached where a bare `held`
+  // does not. What changed with t345 is what "reached" DOES on a verify arm — it
+  // no longer releases the hold, so the observable is the stamp rather than the
+  // absence of `loopStep`. Asserting the release here would re-pin the stranding.
   const repo = mkRepo();
   const f = mkLoop({ repo });
   f.m._gatedDeliver = (target, sender, body) => { f.gated.push({ target, sender, body }); return { parked: 'park-1' }; };
@@ -735,7 +744,9 @@ test('a PARKED escalation is durable, so it does release the hold', async () => 
 
   await f.m._runTicketLoop(f.team, 't1');
 
-  assert.ok(!('loopStep' in f.one()), 'a park is a written file the seat drains — the lead will get it');
+  const t = f.one();
+  assert.strictEqual(t.loopStep, 'verify', 'the hold stays — the recovery runs from here');
+  assert.ok(t.verifyHold, 'and the board carries the escalation the park will deliver');
 });
 
 test('closing a ticket that was already nudged starts a fresh stall episode', async () => {
@@ -946,11 +957,16 @@ test('the UNBRIEFED escalation KEEPS the hold, because the seat can still answer
     'in-flight is the property that actually matters: it is what lets a verdict land');
 });
 
-test('an escalation with no live seat behind it still RELEASES the hold', async () => {
-  // The converse of the test above, and the reason keepHold is an opt-in rather
-  // than the default: a verify-stage failure spawns nobody, so nothing can ever
-  // land a verdict on that ticket. Holding it there would leave the sweep
-  // nudging the lead about a loop that has already reported and stopped.
+test('a verify escalation with no live seat behind it is HELD, not finished', async () => {
+  // OVERTURNED BY t345, and this subject's original reasoning is the defect
+  // stated as an intention: "nothing can ever land a verdict on that ticket, so
+  // holding it would leave the sweep nudging about a loop that has stopped."
+  // The premise was right and the conclusion inverted — a verify failure is
+  // something a HUMAN can fix, so the ticket is not finished; it is waiting. The
+  // sweep nudging about it is the desired behaviour, not the cost.
+  //
+  // The reviewer-less arm above still releases, and that distinction survives:
+  // there, nobody can ever act. Here the hand commits and closes again.
   const repo = mkRepo();
   const f = mkLoop({ repo });   // no commit on the branch: CHECK 1 fails
   f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
@@ -960,9 +976,8 @@ test('an escalation with no live seat behind it still RELEASES the hold', async 
 
   assert.strictEqual(f.esc().length, 1, 'ENTER: the verify arm escalated');
   const t = f.one();
-  assert.ok(!('loopStep' in t) || t.loopStep == null,
-    'a delivered escalation with nothing left running releases the hold');
-  assert.strictEqual(ticketInFlight(t), false, 'the ticket is finished with the lead');
+  assert.strictEqual(t.loopStep, 'verify', 'a delivered verify escalation keeps the hold');
+  assert.strictEqual(ticketInFlight(t), true, 'the ticket is waiting on a human, which is in flight');
 });
 
 test('the nudge for a loop-held ticket names the STEP, not the finished hand', async () => {
@@ -3267,4 +3282,821 @@ test('t384 r3: a too-short gap does not CLEAR a wedge confirmation either', asyn
   await sweepAt(f, t0 + 60_000, 50_000);   // 30s past the new baseline: wedged, confirmed
   assert.strictEqual(nudgesOf(f).length, 1,
     'the confirmation survives the short gaps, so the alarm still eventually fires');
+});
+
+// ── t345: a verify escalation is a HOLD, not an exit ───────────────────────
+//
+// Every verify arm funnelled through `fail()` and, on SUCCESSFUL delivery,
+// deleted `loopStep`. That left `state=done` with nothing in flight: `task done`
+// bounced ("is done, not open"), the stall sweep skipped it forever, and the only
+// verb that moved it was `task reject` — which increments `reworkRound` and
+// records a rejection that did not happen.
+//
+// The asymmetry was inside ONE function: the suite-RED arm calls
+// `_rejectTicketFromLoop` and reaches the hand, while `commits-on-branch` called
+// `fail()` and stranded. Both are "the hand must do something more".
+//
+// These subjects assert the RE-ENTRY, not merely the state field. A ticket that
+// transitions correctly but never spawns a review is the same defect wearing a
+// different label, so every recovery subject below asserts `created.length`.
+
+// The stranded shape, built the way the loop builds it: a real 0-commit branch
+// through the real verify path, never by writing the fields by hand. A fixture
+// that planted `verifyHold` itself would pass against code that never sets it.
+async function strand(f) {
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+}
+
+test('t345: a DELIVERED verify escalation keeps the ticket in flight', async () => {
+  const repo = mkRepo();   // zero commits on tl-1 — CHECK 1 fails
+  const f = mkLoop({ repo });
+
+  await strand(f);
+
+  assert.strictEqual(f.esc().length, 1, 'ENTER: the verify arm escalated, and it was DELIVERED');
+  const t = f.one();
+  assert.strictEqual(t.state, 'done', 'the ticket is not reopened — no rejection happened');
+  // The assertion that must fail before the fix: the delivered arm used to
+  // `_setLoopStep(..., null)` here, and the ticket fell out of flight.
+  assert.strictEqual(t.loopStep, 'verify', 'the hold stays at the step that failed');
+  assert.strictEqual(ticketInFlight(t), true,
+    'in-flight is the property that matters: it is what the sweep and the re-entry both read');
+});
+
+test('t345: the escalation is STAMPED on the record, not only DMed', async () => {
+  // The _stampMergeError precedent: the DM is the arm that can fail, so the board
+  // must carry what the message may not. Stamped BEFORE the delivery for that
+  // reason — a stamp written after a throw in the DM is a stamp never written.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+
+  const t = f.one();
+  assert.ok(t.verifyHold, 'ENTER: the hold is recorded');
+  assert.strictEqual(t.verifyHold.step, 'verify: commits-on-branch', 'it names the check that failed');
+  assert.match(t.verifyHold.evidence, /0 commits beyond/, 'and carries the evidence, so the board does not lie');
+  assert.ok(t.verifyHold.at > 0, 'and when');
+});
+
+test('t345: task done RE-ENTERS the loop on a held ticket and REACHES A REVIEWER', async () => {
+  // THE SUBJECT. Not "the state changed" — the whole point is that the review
+  // actually happens. A recovery that transitions correctly and spawns nothing is
+  // the same defect with a new label.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  assert.strictEqual(f.created.length, 0, 'ENTER: nothing was spawned on the red check');
+
+  // The hand fixes exactly what the escalation named, and closes again.
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'committed it this time' });
+  for (let i = 0; i < 40 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+
+  assert.strictEqual(f.created.length, 1, 'the re-entry reached an actual reviewer spawn');
+  const t = f.one();
+  assert.strictEqual(t.loopStep, 'review', 'and the ticket advanced past verify');
+  assert.strictEqual(t.state, 'done', 'it was never reopened — no fake rejection');
+  assert.strictEqual(Number(t.reworkRound) || 0, 0, 'and no rework round was invented');
+  assert.ok(!('verifyHold' in t), 'the hold is cleared once the loop moves past it');
+});
+
+test('t345: the re-entry replaces the report, so the reviewer reads the CURRENT one', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'ROUND TWO REPORT' });
+  for (let i = 0; i < 40 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+
+  assert.strictEqual(f.one().report, 'ROUND TWO REPORT', 'the record carries the report that describes the tree being reviewed');
+});
+
+test('t345: a re-entry that STILL fails re-escalates and re-holds, not strands', async () => {
+  // The second round must not be worse than the first: the hand may fix the wrong
+  // thing, and a hold that survives only one round is the same stranding delayed.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  // Nothing committed — the same check fails again.
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'I think it is fine now' });
+  for (let i = 0; i < 40 && f.esc().length < 2; i++) await new Promise((r) => setTimeout(r, 25));
+
+  assert.strictEqual(f.esc().length, 2, 'ENTER: the second attempt escalated too');
+  const t = f.one();
+  assert.strictEqual(t.loopStep, 'verify', 'and the hold is still there for a third attempt');
+  assert.ok(t.verifyHold, 'still stamped');
+});
+
+test('t345: the hold is CLEARED when a later run goes green — the finally, not the fail arm', async () => {
+  // Aimed at the `finally` specifically, which is why it strands FIRST. Asserting
+  // "a clean run carries no stamp" on a ticket that never failed a check is
+  // nearly vacuous: there is nothing to clear, so it passes against code with no
+  // clear at all. The stamp has to EXIST before the green run for this to be a
+  // test of the clearing.
+  //
+  // A stamp surviving a green run is not cosmetic: the sweep reads it, so the
+  // ticket would alarm "escalated, waiting for someone to act" while its review
+  // is out — an alarm about a check that has already passed.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  assert.ok(f.one().verifyHold, 'ENTER: the stamp is on the record before the green run');
+
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  f.tstore.save(f.team.root, [{ ...f.one(), loopStep: 'verify' }]);
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 1, 'ENTER: this run went green and reached a reviewer');
+  assert.ok(!('verifyHold' in f.one()), 'the stamp is gone — nobody owes this ticket a check any more');
+});
+
+test('t345: a reject on a held ticket still works, and clears the hold', async () => {
+  // The lead's escape hatch is not removed — a genuine "this needs rework" is
+  // still a rejection. It must not leave the stamp behind: a reopened ticket
+  // carrying a verify hold would re-alarm about a check that is no longer pending.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'do it differently' });
+
+  const t = f.one();
+  assert.strictEqual(t.state, 'open', 'ENTER: the reject reopened it');
+  assert.ok(!('verifyHold' in t), 'and took the hold with it');
+});
+
+test('t345: an accept on a held ticket clears the hold too', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  // Awaited DIRECTLY, not driven through `_handleTask`: accept is the one task
+  // verb that is async, and the sync handler fires it unawaited. Reading the
+  // record straight after the handler returns reads it BEFORE the accept has
+  // written — a fixture that asserts on a state the code has not reached yet.
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, () => {});
+
+  const t = f.one();
+  assert.ok(!('verifyHold' in t), 'an accepted ticket owes nobody a verify');
+  assert.ok(!('loopStep' in t) || t.loopStep == null, 'and is not held');
+});
+
+test('t345: the sweep re-alarms a held ticket, SAYING it is an escalation', async () => {
+  // It must not read as a stall: they have different recoveries, and the sweep
+  // already documents that an unmarked repeat invites the lead to re-answer what
+  // it already answered.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  const old = Date.now() - (60 * 60 * 1000);
+  f.tstore.save(f.team.root, [{ ...f.one(), lastActivityAt: old, nudgedAt: null }]);
+  f.gated.length = 0;
+  await f.m._sweepTeamTickets(f.team, Date.now());
+
+  const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
+  assert.strictEqual(nudges.length, 1, 'ENTER: the held ticket was re-surfaced at all');
+  assert.match(nudges[0].body, /escalated/i, 'the alarm says an escalation is outstanding');
+  assert.match(nudges[0].body, /commits-on-branch/, 'and names the check, off the stamp');
+  assert.ok(!/loop is stuck at/.test(nudges[0].body),
+    'and does NOT read as a dead step — the loop is not stuck, a human owes it an action');
+});
+
+test('t345: an ORDINARY closed ticket stays silent — the hold did not widen the sweep', async () => {
+  // The discriminator the whole design turns on. A fix that re-alarms on every
+  // done ticket satisfies every subject above and destroys the board.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const old = Date.now() - (60 * 60 * 1000);
+  f.tstore.save(f.team.root, [
+    { ...f.one(), id: 'held', state: 'done', loopStep: 'verify', verifyHold: { step: 'verify: commits-on-branch', at: old, evidence: 'e' }, lastActivityAt: old, nudgedAt: null },
+    { ...f.one(), id: 'finished', state: 'done', lastActivityAt: old, nudgedAt: null },
+  ]);
+
+  await f.m._sweepTeamTickets(f.team, Date.now());
+
+  const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
+  assert.strictEqual(nudges.length, 1, 'exactly one — the finished ticket is not swept');
+  assert.match(nudges[0].body, /\[ticket held\]/, 'ENTER: and it is the held one');
+});
+
+test('t345: respec still refuses a held ticket, but routes to the RE-CLOSE, not a reject', async () => {
+  // `respec` is gated to `open` and stays that way — it is not an exit from this
+  // defect. But its standing advice ("reject it first") is exactly the false
+  // rejection this ticket removes, so on a held ticket it must name the real route.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', id: 't1', who: null, body: 'a corrected spec' });
+
+  const said = f.injected.join('\n');
+  assert.match(said, /is done/, 'ENTER: it still refused — respec did not become an exit');
+  assert.ok(!/reject it first/.test(said), 'and does not prescribe a rejection that did not happen');
+  assert.match(said, /verify: commits-on-branch/, 'it names what the ticket is actually waiting on');
+});
+
+test('t345: team-review still refuses while a check is RUNNING — the blind window is untouched', async () => {
+  // The anti-widening half of the pair below. The guard exists because a ticket
+  // at `verify` looks unreviewed for a whole suite run, and a bare team-review in
+  // that window spawns a second, unattached reviewer. Narrowing it to skip HELD
+  // tickets must not open that window for running ones.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  f.m._handleTeamReview(f.seat('lead'), 'have a look at the branch');
+
+  const said = f.injected.join('\n');
+  assert.match(said, /in the loop's verify step/, 'a running check still refuses a second reviewer');
+  assert.strictEqual(f.created.length, 0, 'ENTER: and nothing was spawned');
+});
+
+test('t345: team-review is NOT refused for a HELD ticket — the escape hatch stays open', async () => {
+  // The guard tells the lead to wait for the loop's own reviewer. On a held
+  // ticket that reviewer is never coming: the loop ran a check, it failed, and it
+  // stopped. Refusing here would close the documented escape hatch in exactly the
+  // broken state it exists for, and the advice would be false as well.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  // Held at the TASK-DIR check, so the branch itself is reviewable — the case
+  // where a lead plausibly wants a review anyway. Built through the real loop.
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', taskDir: null, report: 'r', reportedBy: 'team-hand' }]);
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+  assert.ok(f.one().verifyHold, 'ENTER: the ticket really is held');
+  f.injected.length = 0;
+
+  f.m._handleTeamReview(f.seat('lead'), 'have a look at the branch');
+
+  const said = f.injected.join('\n');
+  assert.ok(!/in the loop's verify step/.test(said),
+    'the lead is not told to wait for a reviewer the loop has already given up on');
+});
+
+// ── t345 r2: the RE-VERIFY window ──────────────────────────────────────────
+//
+// `_taskDone`'s re-entry reaches `_runTicketLoop` with `verifyHold` STILL
+// STAMPED — nothing clears it between the gate and the call, and the loop's own
+// clear is the `finally`, which runs at the END. So for the whole re-run (a full
+// suite: minutes, and up to 35 by the caps) the ticket is `loopStep: 'verify'`
+// AND `verifyHold` set. Two readers key off exactly that pair, and both read it
+// as "stopped, waiting for a human" when it means "running again".
+//
+// A stub gate is used rather than a slow suite: the window is defined by the
+// loop being INSIDE the call, and a real suite would make the test as long as
+// the window it is testing.
+
+// Hold the loop open inside the suite check, so the re-verify window can be
+// observed from outside. Returns a release fn.
+function holdInSuite(f) {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const real = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (team, ticket) => { await gate; return real(team, ticket); };
+  return release;
+}
+
+test('t345 r2: during a RE-VERIFY the team-review guard must still refuse — the blind window is real again', async () => {
+  // The loop IS going to spawn a reviewer here, which is exactly the state the
+  // guard protects. The r1 narrowing (`!t.verifyHold`) skips it, so a bare
+  // team-review is no longer refused and spawns a second, unattached reviewer
+  // whose verdict lands nowhere — the precise failure the unnarrowed guard
+  // prevented, reintroduced on the recovery path.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const release = holdInSuite(f);
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
+  // Let the re-entry reach the held suite check.
+  for (let i = 0; i < 40 && f.one().loopStep !== 'verify'; i++) await new Promise((r) => setTimeout(r, 25));
+  await new Promise((r) => setTimeout(r, 50));
+
+  const t = f.one();
+  assert.strictEqual(t.loopStep, 'verify', 'ENTER: the loop is inside the re-verify');
+  f.injected.length = 0;
+  f.m._handleTeamReview(f.seat('lead'), 'have a look at the branch');
+  const said = f.injected.join('\n');
+
+  release();
+  for (let i = 0; i < 80 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+
+  assert.match(said, /in the loop's verify step/,
+    'a RUNNING re-verify is the blind window: the loop will spawn its own reviewer, so a bare one must be refused');
+  assert.strictEqual(f.created.length, 1, 'ENTER: and the loop did go on to spawn exactly one reviewer of its own');
+});
+
+test('t345 r2: a re-verify that OVERRUNS alarms as a stuck step, not as "waiting for someone to act"', async () => {
+  // Someone HAS acted and the loop is running, so the held wording would be false.
+  // Reachable because a re-verify may legitimately run 35m
+  // (TICKET_SUITE_LOCK_WAIT_MS 20m + 15m running) against a 30m stall window.
+  //
+  // THE AGE BELOW IS PLANTED, AND THAT IS THE POINT OF THIS SUBJECT — it forces
+  // the sweep past its window to inspect the WORDING of an alarm that has been
+  // decided on. Read as a claim about the ordinary path it would be a trap, and
+  // was one: while `lastActivityAt` was left at the first close, EVERY re-entry
+  // alarmed immediately and this subject asserted the body of the alarm that
+  // should never have fired. That the ordinary path raises NOTHING is a separate
+  // claim, pinned by `t345 r5 MF1` with a real age and no planting. Keep both:
+  // this one owns "if it does alarm, it says the right thing".
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const release = holdInSuite(f);
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
+  for (let i = 0; i < 40 && f.one().loopStep !== 'verify'; i++) await new Promise((r) => setTimeout(r, 25));
+  await new Promise((r) => setTimeout(r, 50));
+
+  // Simulating a suite that has been running longer than the stall window.
+  const old = Date.now() - (60 * 60 * 1000);
+  f.tstore.save(f.team.root, [{ ...f.one(), lastActivityAt: old, nudgedAt: null }]);
+  f.gated.length = 0;
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
+
+  release();
+  for (let i = 0; i < 80 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+
+  // It may legitimately alarm — a re-verify CAN wedge, and silencing that would
+  // rebuild the hole this ticket closed. What it must not do is say the loop
+  // stopped and is waiting on a human, which sends the lead to act on a running
+  // loop and to re-close a ticket that is already being checked.
+  assert.strictEqual(nudges.length, 1, 'ENTER: the ticket is in flight and did alarm, so the text below was reached');
+  assert.ok(!/waiting for someone to act/.test(nudges[0].body),
+    'nobody is being waited on: the hand already acted and the loop is running');
+  assert.match(nudges[0].body, /stuck at "verify"/,
+    'a re-verify that overruns is a STUCK STEP, which is the alarm that already exists for it');
+});
+
+test('t345 r2: the re-entry reply still NAMES the check, though the stamp is already gone', async () => {
+  // The clear moved ABOVE the reply, so the field it read is deleted by the time
+  // the reply is built. Caught while moving it — unpinned, the seat would be told
+  // `re-verifying (was held at "undefined")`, naming nothing, on the one line that
+  // confirms the recovery took.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
+
+  const said = f.injected.join('\n');
+  assert.match(said, /re-verifying/, 'ENTER: the re-entry was taken, not a bounce');
+  assert.match(said, /was held at "verify: commits-on-branch"/, 'and it names the check that had held it');
+  assert.ok(!/undefined/.test(said), 'never "undefined" — that is the clear having run before the read');
+});
+
+// ── t345 r4: the recovery must REACH the actor who performs it ─────────────
+//
+// Reviewer round 1. The state machine was right and the recovery it created was
+// never delivered: `_escalateTicket` reaches `team.lead` alone with a body naming
+// the step, the evidence and no route, so the only verb the reader had been
+// taught for a `done` ticket was `reject` — the false rejection this ticket
+// removes. All three must-fixes are one class: a CONSUMER of `verifyHold`
+// disagreeing with its producer in a state the field can hold.
+//
+// The fix is one field. `fail()` knows which arm it is, so it stamps the
+// RECOVERY CLASS, and the four readers — escalation body, hand notice, sweep
+// alarm, `task done` bounce, `respec` route — all render it through
+// HOLD_RECOVERY. These subjects assert they AGREE, which is the property; each
+// having its own correct sentence is how they drifted in the first place.
+
+test('t345 r4 MF1: the HAND is told, not only the lead, and told what to do', async () => {
+  const repo = mkRepo();   // zero commits: a class (a) hold, the hand's to fix
+  const f = mkLoop({ repo });
+
+  await strand(f);
+
+  const toHand = f.gated.filter((g) => g.target === 'team-hand');
+  assert.strictEqual(toHand.length, 1, 'ENTER: the seat that owns the branch was told exactly once');
+  assert.match(toHand[0].body, /HELD/, 'and told it is HELD, not rejected');
+  assert.match(toHand[0].body, /0 commits beyond/, 'with the evidence it has to act on');
+  assert.match(toHand[0].body, /close the ticket again/, 'and the route');
+  assert.ok(!/rework round/.test(toHand[0].body) || /no rework round was counted/.test(toHand[0].body),
+    'and it must not read as a rejection — no rework round happened');
+  // The lead is still told: this ADDS a reader, it does not move the escalation.
+  assert.strictEqual(f.esc().length, 1, 'the lead still gets its escalation');
+});
+
+test('t345 r4 MF1: the tag carries the close verb, mirroring the reject path', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+
+  const i = f.gated.findIndex((g) => g.target === 'team-hand');
+  assert.ok(i >= 0, 'ENTER: the hand was delivered to');
+  assert.match(f.tags[i], /close with \[agent:task done t1\]/,
+    'the tag names the verb, exactly as _rejectTicketFromLoop does — a spilled body is read by its tag alone');
+});
+
+test('t345 r4 MF1: the ESCALATION body carries the route too', async () => {
+  // The lead is the one holding a `done` ticket whose only taught verb is
+  // `reject`. Before this, the route existed only in the sweep body 30 minutes
+  // later — so the recovery was undiscoverable at the moment it became available.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+
+  assert.match(f.esc()[0].body, /RECOVERY:/, 'ENTER: the escalation names a route at all');
+  assert.match(f.esc()[0].body, /close the ticket again/, 'and it is the re-close, for a hand-fixable check');
+});
+
+test('t345 r4 MF1: an INFRA hold does not send the hand to re-commit', async () => {
+  // Only class (a) reaches the seat. An infra failure is not something a commit
+  // fixes, and telling the hand to fix it invites the wrong action — worse than
+  // the silence it replaces.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'crash' });   // the suite could not RUN
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.esc().length, 1, 'ENTER: it escalated, and as an infra hold');
+  assert.strictEqual(f.one().verifyHold.recovery, 'infra', 'ENTER: classified infra, not hand');
+  assert.deepStrictEqual(f.gated.filter((g) => g.target === 'team-hand'), [],
+    'the hand is not asked to fix a runner that would not start');
+  assert.match(f.esc()[0].body, /could not RUN/, 'and the lead is told what kind of failure it is');
+});
+
+test('t345 r4 MF2: the task-dir arm gets a TERMINATING recovery, not "close it again"', async () => {
+  // THE SHARPEST of the three. Re-closing re-reads the same `ticket.taskDir`,
+  // fails identically, re-stamps and alarms again — forever. The old single
+  // sentence prescribed exactly that, and contradicted, two lines below, the
+  // evidence it had just quoted.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, ticketOver: { spec: 'a title with no artifact path\n\nbody', taskDir: undefined } });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const t = f.one();
+  assert.strictEqual(t.verifyHold.recovery, 'spec', 'ENTER: classified as a SPEC hold');
+  assert.match(f.esc()[0].body, /Re-closing alone will NOT help/,
+    'the route must not be the one that cannot terminate');
+  assert.match(f.esc()[0].body, /Correct the spec/, 'it names what actually has to change');
+  // And the sweep must say the SAME thing, not its own sentence.
+  const old = Date.now() - (60 * 60 * 1000);
+  f.tstore.save(f.team.root, [{ ...f.one(), lastActivityAt: old, nudgedAt: null }]);
+  f.gated.length = 0;
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
+  assert.strictEqual(nudges.length, 1, 'ENTER: the held ticket alarmed');
+  assert.match(nudges[0].body, /Re-closing alone will NOT help/,
+    'the alarm renders the same field — one renderer, so it cannot contradict the escalation');
+});
+
+test('t345 r4 MF2: respec KEEPS its reject-first route for a spec hold', async () => {
+  // The r1 change hid the correct advice behind `!verifyHold`, on precisely the
+  // ticket where respec IS the fix. The gate is the CLASS, not the presence.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, ticketOver: { spec: 'a title with no artifact path\n\nbody', taskDir: undefined } });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.one().verifyHold.recovery, 'spec', 'ENTER: a spec hold');
+  f.injected.length = 0;
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', id: 't1', who: null, body: 'a corrected spec' });
+
+  const said = f.injected.join('\n');
+  assert.match(said, /reject it first/, 'for a SPEC hold, reject-then-respec is the route and must be named');
+});
+
+test('t345 r4 MF2: respec does NOT prescribe a rejection for a hand hold', async () => {
+  // The r1 property, preserved: on a hand-fixable hold a rejection is the false
+  // rejection this ticket removes.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', id: 't1', who: null, body: 'a corrected spec' });
+
+  const said = f.injected.join('\n');
+  assert.match(said, /is done/, 'ENTER: respec still refuses — it did not become an exit');
+  assert.ok(!/reject it first/.test(said), 'and does not prescribe a rejection that did not happen');
+});
+
+test('t345 r4 MF3: a REVIEW-step throw is not stamped, so its recovery is not refused', async () => {
+  // `fail()` is also the catch-all's exit, where `atStep` may be 'review'. A hold
+  // stamped there leaves `loopStep:'review'` + `verifyHold`, which the re-entry
+  // gate refuses while the sweep says to close the ticket again — an alarm whose
+  // named recovery the handler bounces.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  f.m._spawnTicketReview = () => { throw new Error('spawn exploded'); };
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const t = f.one();
+  assert.strictEqual(f.esc().length, 1, 'ENTER: the catch-all escalated');
+  assert.match(f.esc()[0].body, /stopped at: review/, 'ENTER: and it is the REVIEW-step throw');
+  assert.ok(!('verifyHold' in t), 'no verify hold is stamped for a step that is not a verify step');
+  assert.strictEqual(t.loopStep, 'review', 'the hold stays at review, which is where the loop died');
+});
+
+test('t345 r4 MF3: the review-step throw KEEPS the hold — pinning the keepHold widening', async () => {
+  // Called out as a behaviour change from released code with no subject of its
+  // own: `keepHold: true` now reaches the review catch-all. It is the right
+  // behaviour — a reviewer seat may still be live and land a verdict — but it was
+  // unpinned, so nothing would have caught a revert.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  f.m._spawnTicketReview = () => { throw new Error('spawn exploded'); };
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const t = f.one();
+  assert.strictEqual(t.loopStep, 'review', 'ENTER: the hold was kept');
+  assert.strictEqual(ticketInFlight(t), true,
+    'in-flight is what lets a live reviewer still land its verdict, and what keeps the sweep watching');
+});
+
+test('t345 r4 MF3: a review-step hold alarms as a STUCK STEP, not as an escalation', async () => {
+  // The other half: with no stamp the sweep must fall through to the pre-existing
+  // "stuck at review" body, which is accurate there — the loop really did die.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const old = Date.now() - (60 * 60 * 1000);
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'review', lastActivityAt: old, nudgedAt: null }]);
+
+  await f.m._sweepTeamTickets(f.team, Date.now());
+
+  const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
+  assert.strictEqual(nudges.length, 1, 'ENTER: it alarmed');
+  assert.match(nudges[0].body, /stuck at "review"/, 'the accurate body for a dead review step');
+  assert.ok(!/RECOVERY:/.test(nudges[0].body), 'and it does not prescribe a re-close the handler would refuse');
+});
+
+test('t345 r4 nit1: the alarm names a close verb that _taskDone ACCEPTS', async () => {
+  // `[agent:task done <id>]` with no report is refused at `:4382` ("done needs a
+  // report"), so a lead copying the alarm verbatim got a bounce. Asserted by
+  // EXECUTING the prescribed verb through the real handler, not by matching text.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  const old = Date.now() - (60 * 60 * 1000);
+  f.tstore.save(f.team.root, [{ ...f.one(), lastActivityAt: old, nudgedAt: null }]);
+  f.gated.length = 0;
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  const body = f.gated.filter((g) => g.sender === 'ticket-watchdog')[0].body;
+
+  assert.match(body, /\[agent:task done t1\] <your report>/,
+    'ENTER: the alarm prescribes the verb WITH a report placeholder');
+  // And the real parser+handler accept what it prescribes.
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'the report' });
+  const said = f.injected.join('\n');
+  assert.ok(!/needs a report/.test(said), 'the prescribed shape is not refused by the handler');
+  assert.match(said, /re-verifying/, 'it is accepted as the re-entry');
+});
+
+test('t345 r4 nit3: a huge evidence string is TRUNCATED on the record, not on the DM', async () => {
+  // `tickets.json` holds every ticket on the board and is rewritten on every
+  // ticket write; a runner error is unbounded. The precedent this stamp follows
+  // keeps the step only. The lead still gets the full text in the escalation.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const huge = 'x'.repeat(5000);
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify' }]);
+  f.m._stampVerifyHold(f.team, 't1', { step: 'verify: suite', at: Date.now(), evidence: huge, recovery: 'infra' });
+
+  const stored = f.one().verifyHold.evidence;
+  assert.ok(stored.length < 500, `the record keeps a bounded string, got ${stored.length}`);
+  assert.match(stored, /^x+…$/, 'and marks that it was cut');
+});
+
+test('t345 r4 nit2: a re-close does not move the ticket\'s recorded close time', async () => {
+  // `_writeTicketCost` and the board both read closedAt/closedBy. A re-entry is
+  // the same close being re-verified, so moving them forward would report a close
+  // that happened after work the hand did before it.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  // Driven through the REAL handler, not `strand()`: that helper writes the
+  // `done` record directly, so no close ever ran and `closedAt` was never
+  // stamped — the ENTER guard below caught exactly that, which is what it is for.
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'nothing committed yet' });
+  for (let i = 0; i < 40 && !f.one().verifyHold; i++) await new Promise((r) => setTimeout(r, 25));
+  const first = f.one();
+  assert.ok(first.closedAt, 'ENTER: the first close stamped a time');
+  assert.ok(first.verifyHold, 'ENTER: and the ticket is held, so the next close is a RE-entry');
+  await new Promise((r) => setTimeout(r, 25));
+
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed' });
+  for (let i = 0; i < 40 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+
+  assert.strictEqual(f.one().closedAt, first.closedAt, 'the close time is the FIRST close, not the re-close');
+  assert.strictEqual(f.one().closedBy, first.closedBy, 'and so is the closer');
+});
+
+test('t345 r4: a LEGACY hold with no recovery class still renders a route everywhere', async () => {
+  // The state the field can hold that no arm produces any more: a ticket stamped
+  // by the r1/r2 code, sitting on a real board across the upgrade that adds the
+  // class. `recovery` is `undefined` there, and every reader renders it —
+  // `holdRecoveryText` falls back rather than printing "undefined" or throwing.
+  //
+  // This is the class of state the reviewer found three of, so it is asserted for
+  // ALL FOUR readers rather than the one that happened to be convenient.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const old = Date.now() - (60 * 60 * 1000);
+  f.tstore.save(f.team.root, [{
+    ...f.one(),
+    state: 'done',
+    loopStep: 'verify',
+    // No `recovery` key at all — exactly what the previous version wrote.
+    verifyHold: { step: 'verify: commits-on-branch', at: old, evidence: '0 commits beyond base' },
+    lastActivityAt: old,
+    nudgedAt: null,
+  }]);
+
+  // READER 1: the sweep alarm.
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
+  assert.strictEqual(nudges.length, 1, 'ENTER: the legacy-held ticket alarmed');
+  assert.match(nudges[0].body, /RECOVERY:/, 'the alarm still names a route');
+  assert.ok(!/undefined/.test(nudges[0].body), 'and never prints undefined');
+
+  // READER 2: the respec route.
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', id: 't1', who: null, body: 'x' });
+  assert.ok(!/undefined/.test(f.injected.join('\n')), 'respec renders it too');
+
+  // READER 3: the re-entry, which must still work on a legacy stamp.
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed' });
+  for (let i = 0; i < 40 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+  assert.strictEqual(f.created.length, 1, 'a legacy hold is still re-enterable, and reaches a reviewer');
+
+  // READER 4: the bounce, on a ticket that is held but NOT re-closable.
+  const f2 = mkLoop({ repo: mkRepo() });
+  f2.tstore.save(f2.team.root, [{
+    ...f2.one(), state: 'done', loopStep: 'review',
+    verifyHold: { step: 'verify: task-dir', at: old, evidence: 'e' },
+  }]);
+  f2.injected.length = 0;
+  f2.m._handleTask(f2.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'r' });
+  const bounced = f2.injected.join('\n');
+  assert.match(bounced, /is held at/, 'ENTER: it bounced as held');
+  assert.ok(!/undefined/.test(bounced), 'and the bounce names a route rather than undefined');
+});
+
+// ── t345 r5: a gate on one write, and the fields written beside it ─────────
+//
+// Review round 2. Both defects are r4's OWN changes reintroducing the class r4
+// was fixing — but one level out: the readers that broke are not readers of
+// `verifyHold` (which was swept exhaustively) but of `closedAt` and of the
+// `recovery` ARGUMENT, two things the r4 gates newly repurposed.
+//
+// The rule, worth stating where the next reader of this file will find it: a
+// gate added to one write must be checked against every field written NEAR it.
+// MF1 is a line that used to be fresh because of a line that got guarded; MF2 is
+// an argument that used to be inert because of a branch that got added.
+
+test('t345 r5 MF1: a re-entry re-times the stall clock, so the recovered ticket does NOT alarm', async () => {
+  // THE HONEST FORM of the subject this replaces. The r2 alarm-wording subject
+  // PLANTS `lastActivityAt: old` by hand to force an alarm — so it asserts the
+  // body of exactly the alarm that should never have fired, and could never have
+  // caught this. Here the age is REAL: it comes from a first close that genuinely
+  // happened long ago, and the re-close runs through the real handler.
+  //
+  // A `spec` or `infra` hold routinely waits longer than the stall window, so
+  // this is the ordinary path, not a corner: the hand acts, and 60 seconds later
+  // the lead is told the loop has made "no progress for 2h".
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  // A real first close, which stamps `closedAt` for real.
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'nothing committed yet' });
+  for (let i = 0; i < 40 && !f.one().verifyHold; i++) await new Promise((r) => setTimeout(r, 25));
+  assert.ok(f.one().verifyHold, 'ENTER: the ticket is held');
+
+  // Age that close past the stall window — the ticket sat waiting for a human,
+  // which is what a held ticket DOES.
+  const twoHoursAgo = Date.now() - (2 * 60 * 60 * 1000);
+  f.tstore.save(f.team.root, [{ ...f.one(), closedAt: twoHoursAgo, lastActivityAt: twoHoursAgo, nudgedAt: null }]);
+
+  // The hand acts. Hold the loop inside the suite so the sweep observes a
+  // genuinely-running re-verify rather than a finished one.
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const release = holdInSuite(f);
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'committed it' });
+  for (let i = 0; i < 40 && f.one().loopStep !== 'verify'; i++) await new Promise((r) => setTimeout(r, 25));
+  await new Promise((r) => setTimeout(r, 50));
+  assert.strictEqual(f.one().loopStep, 'verify', 'ENTER: the re-verify is running');
+  assert.ok(!('verifyHold' in f.one()), 'ENTER: and the hold was cleared by the re-entry');
+
+  f.gated.length = 0;
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
+
+  release();
+  for (let i = 0; i < 80 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+
+  assert.deepStrictEqual(nudges.map((n) => n.body), [],
+    'a loop that started seconds ago must raise NOTHING — the re-entry is a new stall episode and has to re-time `last`, not only clear `nudgedAt`');
+  assert.strictEqual(f.created.length, 1, 'ENTER: and the re-verify really did go on to reach a reviewer');
+});
+
+test('t345 r5 MF2: a REVIEW-step throw prescribes NO recovery in the escalation body', async () => {
+  // MF3's failure mode relocated from the sweep into the escalation. The stamp is
+  // correctly skipped, but the escalation still carried `recovery: 'infra'` — so
+  // the lead was told to `task done` a ticket that is `done` + `loopStep:'review'`
+  // with no stamp, where `reentry` is false and the handler bounces with no held
+  // clause and no alternative. Straight back to `reject`.
+  //
+  // The r4 subject asserted `!/RECOVERY:/` on the SWEEP body, so the escalation
+  // body was unpinned — the gap this closes.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  f.m._spawnTicketReview = () => { throw new Error('spawn exploded'); };
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const body = f.esc()[0].body;
+  assert.match(body, /stopped at: review/, 'ENTER: it is the review-step throw');
+  assert.ok(!/RECOVERY:/.test(body),
+    'no route may be prescribed here: the ticket has no verifyHold, so the re-entry gate refuses the verb this would name');
+  assert.ok(!/could not RUN/.test(body),
+    'and the infra sentence is factually wrong here — verify passed and the diff was written');
+});
+
+test('t345 r5 MF2: a VERIFY-step throw still DOES carry its recovery', async () => {
+  // The other side of the same gate: the catch-all is shared, and narrowing it to
+  // silence the review case must not silence the verify case, which is a genuine
+  // infra hold with a genuine route.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  // Throw INSIDE verify, before the record advances to `review`.
+  f.m._runTicketSuite = () => { throw new Error('suite exploded'); };
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const body = f.esc()[0].body;
+  assert.match(body, /stopped at: verify/, 'ENTER: the throw is at a verify step');
+  assert.match(body, /RECOVERY:/, 'a verify-step throw IS a hold, and keeps its route');
+  assert.strictEqual(f.one().verifyHold.recovery, 'infra', 'and is stamped infra');
+});
+
+test('t345 r5 nit2: an UNDELIVERABLE rework does not tell the seat "no rework round was counted"', async () => {
+  // This arm is reached BECAUSE the reject succeeded and only its delivery
+  // failed: the ticket is `open`, `reworkRound` is up, `loopStep` is gone. The
+  // hand notice would say the opposite of all three — to a seat that could not be
+  // reached anyway — and the stamp would write a `verifyHold` onto an open ticket,
+  // a state no reader is written for.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  // No seat holds the role, so _rejectTicketFromLoop cannot deliver.
+  f.m.sessions.delete('team-hand');
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.esc().length, 1, 'ENTER: the lead was told, which is the whole recovery here');
+  assert.match(f.esc()[0].body, /rework could not be sent back/, 'ENTER: and it is THIS arm');
+  const t = f.one();
+  assert.ok(!('verifyHold' in t), 'no hold is stamped on a ticket the reject already reopened');
+  assert.deepStrictEqual(f.gated.filter((g) => /HELD/.test(g.body)), [],
+    'and no seat is told the ticket was not rejected when it was');
 });
