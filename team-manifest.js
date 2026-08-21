@@ -364,16 +364,21 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`team.json roles must include a "lead" role (${file})`);
     }
     const roles = {};
-    const dropped = [];
-    // Split from `dropped` because the two warn under DIFFERENT conditions (see
-    // the version gate below), not merely with different wording. A cut field
-    // once had meaning and still READS as policy — `tools: ["Read"]` on a role
-    // is the measured case: it looks like a capability restriction, enforces
-    // nothing, and cost a reader a full round before this warned.
-    const droppedCut = [];
-    // Third population, not a special case of the second: a key that is still
-    // READ cannot share a line whose text is "this enforces nothing".
-    const droppedHonored = [];
+    // The classification as DATA, built once and rendered twice: the three warn
+    // lines below are DERIVED from it, and formatRoster reads it off the
+    // returned manifest. A surface that re-decided `honored` for itself is the
+    // drift this shape exists to prevent — `reviewer.tools` read as an enforced
+    // capability cap for hours while the warn beside it said otherwise, because
+    // the only consumer of the classification was a console nobody watches.
+    //
+    // Three statuses, matching the three warns and for their reasons:
+    //   'unknown' — a key this schema never modelled (version-gated warn)
+    //   'ignored' — a retired key that configures nothing
+    //   'honored' — retired but STILL READ here, so deleting it changes behaviour
+    // 'ignored' and 'honored' may never be merged or rendered in one line: the
+    // second's text is the negation of the first's, and one sentence covering
+    // both is false about half its subjects.
+    const droppedFields = [];
     for (const [roleName, def] of Object.entries(rolesIn)) {
       if (!ROLE_RE.test(roleName)) {
         throw new Error(`role name "${roleName}" must match ${ROLE_RE} (${file})`);
@@ -399,17 +404,31 @@ function createTeamManifest({ fs, clodexHome } = {}) {
           delete without[k];
           honored = JSON.stringify(normalizeRoleDef(roleName, without, file)) !== JSON.stringify(normalized);
         }
+        // The remedy rides with the OCCURRENCE, not with the message: one line
+        // may name several keys, and a single hardcoded "write X instead" is
+        // wrong the moment the map holds two entries.
         if (honored) {
-          // The remedy rides with the occurrence, not with the message: one line
-          // may name several keys, and a single hardcoded "write X instead" is
-          // wrong the moment the map holds two entries.
-          droppedHonored.push(`${roleName}.${k} (write \`${HONORED_CUT_FIELDS.get(k)}\` instead)`);
+          droppedFields.push({
+            role: roleName, field: k, status: 'honored', remedy: HONORED_CUT_FIELDS.get(k),
+          });
           continue;
         }
-        (CUT_ROLE_FIELDS.includes(k) ? droppedCut : dropped).push(`${roleName}.${k}`);
+        droppedFields.push({
+          role: roleName, field: k, remedy: null,
+          status: CUT_ROLE_FIELDS.includes(k) ? 'ignored' : 'unknown',
+        });
       }
       roles[roleName] = normalized;
     }
+    // The warn lines are a RENDERING of the classification above, never a second
+    // pass over the defs: a warn that decided membership for itself is how the
+    // console and the roster end up disagreeing about the same key.
+    const named = (st) => droppedFields
+      .filter((d) => d.status === st)
+      .map((d) => (d.remedy ? `${d.role}.${d.field} (write \`${d.remedy}\` instead)` : `${d.role}.${d.field}`));
+    const dropped = named('unknown');
+    const droppedCut = named('ignored');
+    const droppedHonored = named('honored');
     // Absent reads as 1, not as current: a file written before the version
     // existed IS a version-1 file, and defaulting to current would let a stale
     // manifest claim a schema it was never checked against.
@@ -475,7 +494,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const watchdogMs = (typeof rawWatchdog === 'number' && Number.isFinite(rawWatchdog) && rawWatchdog > 0)
       ? Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, rawWatchdog))
       : null;
-    return { name, root: path.resolve(root), lead, roles, file, watchdogMs, version };
+    return { name, root: path.resolve(root), lead, roles, file, watchdogMs, version, droppedFields };
   }
 
   function containsPath(root, cwd) {
@@ -1038,6 +1057,38 @@ function leadActionLine(team) {
   return parts.length ? parts.join(' ') : null;
 }
 
+// The retired keys a role carries, as the lines to print UNDER its roster row.
+// Reads loadManifest's classification; decides nothing about membership itself.
+//
+// A CONTINUATION line rather than a column, because the roster row is already
+// dense and this must never push `tmpl`/brief/live off the end — and because a
+// role with a clean def then renders byte-identically to before by construction,
+// not by a formatting coincidence someone can break.
+//
+// The two statuses never share a line: 'ignored' says the field configures
+// nothing, 'honored' says deleting it changes behaviour. One sentence covering
+// both would repeat, in the surface the lead actually reads, the exact falsehood
+// that made `reviewer.tools` read as a tool cap. 'unknown' is rendered by
+// NEITHER: that warn is version-gated because it exists for the migration and
+// not as a linter, and a hand-added key on today's schema has no business
+// appearing in every context reset forever.
+function retiredFieldLines(team, role) {
+  const all = Array.isArray(team && team.droppedFields) ? team.droppedFields : [];
+  const mine = all.filter((d) => d && d.role === role);
+  const lines = [];
+  const inert = mine.filter((d) => d.status === 'ignored').map((d) => d.field);
+  if (inert.length) {
+    lines.push(`  retired, configures nothing: ${inert.map((f) => `${role}.${f}`).join(', ')} — this schema does not read ${inert.length > 1 ? 'them' : 'it'}`);
+  }
+  for (const d of mine.filter((x) => x.status === 'honored')) {
+    // Per occurrence, not folded: the remedy is per-key (HONORED_CUT_FIELDS maps
+    // each to its own replacement), so a joined line would carry one key's advice
+    // over another key's occurrence.
+    lines.push(`  retired but STILL READ here: ${role}.${d.field} — deleting it CHANGES BEHAVIOUR; write \`${d.remedy}\` instead`);
+  }
+  return lines;
+}
+
 /**
  * `liveSeats` entries are `{ name, label }`; bare strings are accepted as a
  * label-less form. The label is never computed here — team-manifest is a pure
@@ -1083,6 +1134,10 @@ function formatRoster(team, liveSeats = [], { seat = null } = {}) {
       ? ` · live: ${live.join(', ')}`
       : ' · no live seat — role definition only, not addressable';
     lines.push(`- ${role} (${cls}${tmpl})${brief}${liveStr}`);
+    // Under the row it belongs to, so the field is read while the reader is
+    // reasoning about THAT role — a footnote at the bottom is read after the
+    // decision it exists to change.
+    for (const l of retiredFieldLines(team, role)) lines.push(l);
   }
   // A live seat off the naming convention is still warm and still DM-able;
   // dropping it defeats the point of a listing of who is live.
