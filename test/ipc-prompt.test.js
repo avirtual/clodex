@@ -7,6 +7,8 @@ const { IPC_PROMPT, buildIpcPrompt } = require('../ipc-prompt');
 const { GATEABLE_INTENTS, PRIVILEGED_INTENTS } = require('../intent-catalog');
 const { parseIntent } = require('../intent-scanner');
 const { bodyModeFor } = require('../intent-registry');
+const fs = require('node:fs');
+const path = require('node:path');
 
 // PRIVILEGED intents (reboot) are EXCLUDED here on purpose: under the `null`
 // allowlist intentEnabled('reboot', null) is false, so IPC_PROMPT is
@@ -135,6 +137,125 @@ test('a narrow seat (dm+who+name only) documents exactly those intents', () => {
   }
   assert.ok(!/\nMEMORY:\n/.test(p), 'MEMORY section gated with memory');
 });
+
+// ── task: an UNGATEABLE verb, so it must be in BOTH copies ───────────────────
+// The defect these pin (t355): ipc-prompt.js shipped a grammar section for every
+// verb EXCEPT task, while intent-registry's CORE_VALID_INTENT_NAMES lists it — so
+// the near-miss bounce advertised a verb whose grammar reached seats only through
+// a SEEDED role brief, and a seeded file can silently freeze (this one did, for
+// three days). The grammar for a core verb must not depend on a file outside the
+// prompt.
+
+// The byte-pins above already fail if the two copies diverge in any way that
+// changes the assembled string. This subject fails for the REASON: it reads the
+// two sides separately — the literal directly, and GRAMMAR_LINES through the
+// empty-allowlist build, which contains no piece of IPC_PROMPT's authored text —
+// so "present in one, absent or reworded in the other" is named here rather than
+// arriving as an unreadable multi-kilobyte string diff.
+test('task grammar lives in BOTH the literal and GRAMMAR_LINES, byte-identical', () => {
+  const lines = IPC_PROMPT.split('\n').filter((l) => /^ {2}\[agent:task /.test(l));
+  assert.ok(lines.length > 0, 'ENTER: the literal carries the task grammar at all (it shipped with none)');
+  // buildIpcPrompt([]) renders GRAMMAR_LINES for a seat with EVERY gateable verb
+  // denied. task is not gateable, so its row survives that — and nothing authored
+  // into the literal alone can reach this string.
+  const fullyGated = buildIpcPrompt([]);
+  for (const line of lines) {
+    assert.ok(fullyGated.includes(line),
+      'the literal task line is missing or reworded in GRAMMAR_LINES:\n' + line);
+  }
+  const fromRows = fullyGated.split('\n').filter((l) => /^ {2}\[agent:task /.test(l));
+  assert.deepStrictEqual(fromRows, lines, 'the two copies must be the same lines in the same order');
+});
+
+// task is NOT in GATEABLE_INTENTS, and intentEnabled opens with
+// `if (!GATEABLE_TYPES.has(type)) return true`. So there is no allowlist that
+// removes this line — including `[]`, which denies everything gateable. A future
+// edit that "tidies" task into the catalog would silently make a seat's only
+// documented way to close its ticket revocable, and this is where that shows up.
+test('task grammar is ungateable: it renders for a seat with every gateable verb denied', () => {
+  const empty = buildIpcPrompt([]);
+  assert.ok(/\n {2}\[agent:task done <id>\]/.test(empty), 'task done line present for a fully-gated seat');
+  assert.ok(!/\n {2}\[agent:dm /.test(empty), 'ENTER: the seat really is gated — dm is gone');
+});
+
+// A grammar line that disagrees with the parse teaches an emission that does
+// nothing; the term row's comment records exactly that failure. The generic
+// "every rendered grammar line parses" test covers the FORMS at the head of each
+// line. These pin the claims the task lines make in PROSE, which no form check
+// reaches: the greedy body, its terminator, and the sub-verb shapes.
+test('task line: the body modes it claims match bodyModeFor', () => {
+  const taskLines = IPC_PROMPT.split('\n').filter((l) => /^ {2}\[agent:task /.test(l)).join('\n');
+  assert.ok(/greedy/.test(taskLines), 'ENTER: the task lines are the ones making a greedy claim');
+  for (const sub of ['add', 'done', 'reject', 'respec', 'cancel', 'accept']) {
+    assert.strictEqual(bodyModeFor(parseIntent('[agent:task ' + sub + ' t1] body text')), 'greedy',
+      sub + ' is documented as body-carrying');
+  }
+  for (const form of ['[agent:task assign t1 hand]', '[agent:task list]', '[agent:task list all]',
+    '[agent:task park t1]', '[agent:task start t1]']) {
+    assert.strictEqual(bodyModeFor(parseIntent(form)), 'none',
+      form + ' is documented as taking no body');
+  }
+});
+
+// The line tells a seat that `add` takes an optional assignee token and a
+// position-free `park` modifier. parseTask filters `park` out of the positionals
+// precisely so `add park hand` is not read as a ticket for a seat named "park",
+// and a line that got this backwards would teach the misfile the parser avoids.
+test('task line: add reads park as a modifier, not as the assignee', () => {
+  const line = IPC_PROMPT.split('\n').find((l) => / {2}\[agent:task /.test(l) && /park/.test(l));
+  assert.ok(line, 'ENTER: the literal documents park at all — the claim below is what it makes');
+  assert.ok(/modifier/.test(line), 'and it calls park a modifier, not an assignee');
+  const a = parseIntent('[agent:task add park hand] the spec');
+  assert.deepStrictEqual([a.who, a.park], ['hand', true]);
+  const b = parseIntent('[agent:task add hand park] the spec');
+  assert.deepStrictEqual([b.who, b.park], ['hand', true], 'position-free, as the line says');
+  const c = parseIntent('[agent:task add hand] the spec');
+  assert.deepStrictEqual([c.who, c.park], ['hand', false]);
+});
+
+// The grammar line publishes the filter vocabulary to every seat forever, which
+// makes it a THIRD copy of a list that was already duplicated twice on purpose:
+// team-tickets.js TICKET_FILTERS and scripts/clodex-team.js:134, whose comment
+// says in terms that they must be changed together and are deliberately not
+// shared (that script is materialized as a flat basename copy and may require
+// node builtins only). The prompt is the copy nobody will think to update, so
+// the suite is the only thing holding it to the others.
+//
+// Asserting `parseIntent('[agent:task list X]').filter === 'X'` would test
+// NOTHING here: parseTask is `filter: argToks[0] || null`, so it echoes any
+// token — `xyzzy` included. Acceptance lives in TICKET_FILTERS, checked in
+// _taskList. It is not exported, so it is read at source (the precedent is
+// test/hold-recovery-single-source.test.js).
+//
+// BOTH directions, because one-directional is exactly how a single-source guard
+// stays green while a copy rots: line→list catches a filter the prompt invents,
+// list→line catches an ADDED filter the prompt never learned.
+test('task line: the filter tokens it publishes ARE TICKET_FILTERS, both directions', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'team-tickets.js'), 'utf8');
+  const m = src.match(/^const TICKET_FILTERS = \[([^\]]*)\];/m);
+  assert.ok(m, 'ENTER: TICKET_FILTERS was found at source — a failed scan must not pass as agreement');
+  const filters = m[1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  assert.ok(filters.length >= 2, `ENTER: the vocabulary parsed (got ${JSON.stringify(filters)})`);
+
+  const line = IPC_PROMPT.split('\n').find((l) => /^ {2}\[agent:task list\]/.test(l));
+  assert.ok(line, 'ENTER: the list line is in the literal');
+  // The prose names the tokens inline, so match them as words — a substring test
+  // would let `done` hide inside `[agent:task done <id>]` on the other line.
+  const named = filters.filter((f) => new RegExp(`\\b${f}\\b`).test(line));
+
+  assert.deepStrictEqual(named, filters,
+    'every accepted filter must be named on the line — an added one the prompt never learned');
+  // And nothing the line offers may be a token the verb bounces. Checked against
+  // the vocabulary rather than the parser, which accepts anything.
+  const offered = (line.match(/\b(open|done|cancelled|all|rejected|closed|parked)\b/g) || []);
+  const bogus = [...new Set(offered)].filter((t) => !filters.includes(t));
+  assert.deepStrictEqual(bogus, [],
+    'the line offers a filter _taskList rejects — a seat copying it gets a bounce');
+
+  assert.strictEqual(parseIntent('[agent:task list]').filter, null,
+    'bare list carries no filter (the verb defaults it to open)');
+});
+
 
 // ── reboot: privileged grammar line renders only for an explicit grant ────────
 // Since reboot is excluded from ALL_GATEABLE (above), the fork-drift byte-pin no

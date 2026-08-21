@@ -10466,6 +10466,29 @@ test('[agent:end]: bare at top level (no open body) is silently spent', () => {
   assert.deepStrictEqual(m._extractIntents('prose\n[agent:end]\nmore prose'), []);
 });
 
+// The task grammar line (t355) tells a seat its report body is closed by a bare
+// [agent:end], the way dm's is. That claim is only true because `task done` is a
+// greedy row and `end` is the generic boundary — nothing in the ticket path
+// special-cases it. Pinned here so the documented shape and the scanner cannot
+// drift apart: a seat that trusts the line and writes prose after its report
+// would otherwise ship that prose to the lead inside the report.
+test('[agent:end]: closes a task done report body — the shape the grammar line documents', () => {
+  const m = mkExtract();
+  const out = m._extractIntents(
+    '[agent:task done t42] the report\nsecond line\n[agent:end]\nNow I talk to my operator.');
+  assert.deepStrictEqual(out.map((x) => x.type), ['task'], 'end emits nothing; the prose is not an intent');
+  assert.strictEqual(out[0].sub, 'done');
+  assert.strictEqual(out[0].id, 't42');
+  assert.strictEqual(out[0].body, 'the report\nsecond line');
+});
+
+// The contrast that makes the terminator worth documenting on the line at all.
+test('[agent:end]: without it a task report swallows the trailing prose (greedy)', () => {
+  const m = mkExtract();
+  const out = m._extractIntents('[agent:task done t42] the report\nNow I talk to my operator.');
+  assert.strictEqual(out[0].body, 'the report\nNow I talk to my operator.');
+});
+
 // --- term exec is LINE-SCOPED (t233) ---
 // The live incident: a seat emitted the correct `[agent:term exec] <cmd>` form
 // and kept writing prose underneath. Greedy capture pulled the prose into the
