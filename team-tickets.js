@@ -1995,6 +1995,32 @@ function createTicketMethods(deps, shared) {
         ? `You are working in the SHARED checkout alongside other seats — you have no worktree and no branch of your own, `
           + `so do tree work only and leave committing to the lead.\n`
         : '';
+      // The artifact pointer, RESOLVED — the same string, read by two resolvers
+      // that disagree. The main process resolves a relative `tasks/<name>`
+      // against the project's artifact dir; a SEAT resolves it against its cwd,
+      // the repo. Measured on the live board: 260 of 367 taskDirs are relative,
+      // and 97 of those name a directory that also EXISTS in the repo, so the
+      // seat's read lands in a real, stale tree rather than failing.
+      //
+      // Rendered BESIDE the spec, never into it: `ticket.spec` is what the lead
+      // wrote and `respec` is the only thing that replaces it.
+      //
+      // Through _ticketDiffDest, which is the confinement the diff and COST.json
+      // writes already go through. A second resolver here could name a directory
+      // Clodex itself would refuse to write, which is worse than naming none —
+      // and a refusal must not fail the dispatch, so the line just drops.
+      //
+      // Relative only: a `~`- or `/`-prefixed pointer already means the same
+      // thing to both readers, and every dispatch spills, so a line that told
+      // 107 seats what they knew would cost each of them a Read turn.
+      const rawTaskDir = String((ticket && ticket.taskDir) || '').trim();
+      const taskDirDest = (rawTaskDir && !rawTaskDir.startsWith('~') && !path.isAbsolute(rawTaskDir))
+        ? this._ticketDiffDest(team, ticket)
+        : null;
+      const taskDirLine = (taskDirDest && taskDirDest.ok)
+        ? `TASK DIR: ${taskDirDest.dir} — the spec's \`${rawTaskDir}\` is relative to the PROJECT'S ARTIFACT DIR, `
+          + `not to your cwd. A same-named directory inside the repo is not it.\n`
+        : '';
       // Rides EVERY dispatch, replays included: a respawned seat has no memory of
       // the verb, exactly as it has none of its worktree. See ticketCloseLine.
       const closeLine = ticketCloseLine(ticket.id);
@@ -2005,7 +2031,7 @@ function createTicketMethods(deps, shared) {
       // attached", which would put the close verb behind the very turn this line
       // exists to save. The verb is safe here for the same reason as in the body:
       // `[agent:from <sender>] ` precedes the tag, so it is never at column 1.
-      const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${areaLine}${sharedLine}${closeLine}${specText}`, urgent,
+      const r = this._gatedDeliver(seat, fromName, `${head}${wtLine}${areaLine}${sharedLine}${taskDirLine}${closeLine}${specText}`, urgent,
         replay
           ? `[ticket ${ticket.id} REPLAY] close with ${ticketCloseVerb(ticket.id)}`
           : respec
