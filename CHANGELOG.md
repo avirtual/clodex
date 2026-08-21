@@ -13,6 +13,20 @@ blocks a release.
 
 ## Unreleased
 
+- When Clodex cannot give one of your library files a shipped update, it now
+  tells you in the inbox instead of only in a log file nobody opens — but only
+  once per withheld update, not on every launch. A library file you have edited
+  yourself stops receiving shipped updates, which is the correct behaviour (your
+  edit is preserved) and worth knowing about; the previous release reported it
+  as a log line on every single launch, and the advice it gave was to delete the
+  file, which for a file that is genuinely your own config destroys it. The note
+  now leads with the case that applies to most people — you edited it, nothing
+  needs doing — and mentions copying your version aside before the destructive
+  option. A given withheld update is announced once and then stays quiet until a
+  newer shipped version is withheld too. The first launch after this ships will
+  produce one note per already-stranded file (exactly one on a typical install);
+  that is the backlog being reported, not a new problem.
+
 - A ticket's git branch is now named after what the ticket is actually about.
   The branch takes its readable half from the spec's first line, but that line
   was being read from the ticket's list-summary title, which is cut at 80

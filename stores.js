@@ -1385,6 +1385,16 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
   // Best-effort: a failed read/copy is logged and skipped, never thrown.
   const SEED_SRC = resourcesDir || path.join(__dirname, 'resources', 'library');
   const SEED_STATE_NAME = '.seed-state.json';
+  // Sibling of .seed-state.json, deliberately NOT a reserved key inside it:
+  // .seed-state.json is documented as a flat relPath -> hash map, and a reserved
+  // key would have to be skipped by every present and future consumer of it. The
+  // walk iterates SEED_SRC, so a file existing only under destRoot is never
+  // visited and needs no skip.
+  const SEED_REPORT_NAME = '.seed-report.json';
+  // Cannot collide with a session name (the name grammar has no space), so the
+  // inbox drawer's path links resolve as an ordinary miss rather than against
+  // some unrelated live seat.
+  const SEED_REPORT_FROM = 'Clodex library';
   const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
   function seedLibraryDefaults() {
     const destRoot = path.join(registryDir, 'library');
@@ -1465,7 +1475,7 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
               // hand-repaired file back on the upgrade path for the NEXT ship.
               state[childRel] = shippedHash; changed = true;
             } else {
-              stranded.push(childRel);
+              stranded.push({ rel: childRel, shippedHash });
             }
           }
         } catch (e) {
@@ -1473,11 +1483,53 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         }
       }
     }
+    stranded.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+    // Two channels, two cadences, because the two failure modes are opposite.
+    // The log is the forensic record and is cheap, so it restates the whole
+    // stranded set every run. The operator inbox INTERRUPTS, and the steady
+    // state here is a file that is correct to leave alone -- the measured
+    // real-world instance is genuine operator config needing no action -- so it
+    // fires only when a shipped update is withheld that was not withheld
+    // before. Keying that on the SHIPPED hash (not on the file's presence in
+    // the set) is what makes it fire again when the ship next moves.
+    const reportPath = path.join(destRoot, SEED_REPORT_NAME);
+    let reported = {};
+    try { reported = JSON.parse(fs.readFileSync(reportPath, 'utf-8')) || {}; }
+    catch { reported = {}; } // absent or corrupt -> announce, never swallow
+    if (typeof reported !== 'object' || Array.isArray(reported)) reported = {};
+    // Rebuilt from the CURRENT stranded set, never merged into what was read: a
+    // file that stops being stranded must LOSE its entry, or stranding again
+    // later at the same shipped hash would be silently never announced.
+    const nextReport = {};
+    for (const s of stranded) nextReport[s.rel] = s.shippedHash;
+
     if (stranded.length) {
+      const rels = stranded.map((s) => s.rel);
+      const fixIt = `If you edited ${rels.length > 1 ? 'them' : 'it'} deliberately, nothing needs doing. To take the shipped version instead, copy yours aside first, then delete it under ${destRoot} and relaunch.`;
       // warn, not info: a withheld upgrade was invisible for 8 days and 20
       // shipped revisions once, and the silence WAS the bug.
-      stranded.sort();
-      if (log) log.warn?.('seed', `${stranded.length} library file(s) differ from both the shipped copy and their seed stamp, so they will never receive shipped updates: ${stranded.join(', ')}. To take the shipped version of one, copy it aside if you want to keep your version, then delete it under ${destRoot} and relaunch.`);
+      if (log) log.warn?.('seed', `${stranded.length} library file(s) differ from both the shipped copy and their seed stamp, so they will never receive shipped updates: ${rels.join(', ')}. ${fixIt}`);
+      const fresh = stranded.filter((s) => reported[s.rel] !== s.shippedHash);
+      if (fresh.length && notifications) {
+        // Best-effort like every other write here: an unwritable inbox must not
+        // take down store construction.
+        try {
+          notifications.add({
+            from: SEED_REPORT_FROM,
+            workspaceId: null,
+            body: `A shipped update is being withheld from ${fresh.length} file(s) in your Clodex library, because each differs from both the shipped copy and the version Clodex last wrote there:\n\n${fresh.map((s) => s.rel).join('\n')}\n\n${fixIt}`,
+          });
+        } catch (e) { if (log) log.info?.('seed', `inbox note skipped (${e && e.message})`); }
+      }
+    }
+    // Write only on a real change, so the healthy case (nothing stranded, no
+    // report file) never creates one.
+    const reportKeys = Object.keys(nextReport);
+    const reportSame = reportKeys.length === Object.keys(reported).length
+      && reportKeys.every((k) => reported[k] === nextReport[k]);
+    if (!reportSame) {
+      try { ensureDir(destRoot); atomicWriteFileSync(reportPath, JSON.stringify(nextReport, null, 2)); }
+      catch (e) { if (log) log.info?.('seed', `report state write skipped (${e && e.message})`); }
     }
     if (changed) {
       try { ensureDir(destRoot); atomicWriteFileSync(statePath, JSON.stringify(state, null, 2)); }
