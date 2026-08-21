@@ -3193,7 +3193,19 @@ function createTicketMethods(deps, shared) {
       // line-by-line widening rests on. Pre-spec records carry no `spec`; the
       // title is the only line available for those.
       const slug = branchSlug(ticket.spec == null ? ticket.title : titleLine(ticket.spec));
-      return { ok: true, name, branch: slug ? `${ticket.id}-${slug}` : String(ticket.id) };
+      // A recorded branch WINS over the derived one: a branch is an identity
+      // minted once, not a view of the ticket's current first line. Re-deriving
+      // here is safe only while the slug's inputs never move, and they move two
+      // ways — the slug rule itself changed (t463), and `_taskRespec` / the
+      // viewer's `editSpec` rewrite the spec TEXT. When _existingTicketTree
+      // rejects the recorded tree (prunable, locked, no .git, held), the fresh
+      // createWorktree below takes THIS name, so a re-derived one forks a second
+      // branch off HEAD and the previous seat's commits stop being reachable as
+      // the ticket's work — with `worktree.branch` overwritten to match, so the
+      // lead's merge target and the hand's commits disagree silently. Same
+      // argument as the baseSha carried through on reuse in _existingTicketTree.
+      const recorded = ticket.worktree && ticket.worktree.branch;
+      return { ok: true, name, branch: recorded || (slug ? `${ticket.id}-${slug}` : String(ticket.id)) };
     },
 
     // What Delete Session… costs, for the two refusals that offer it as the way
