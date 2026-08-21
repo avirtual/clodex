@@ -5457,8 +5457,14 @@ function createTicketMethods(deps, shared) {
         const body = `[ticket ${ticketId} HELD] the loop stopped at: ${step}\n\n`
           + `EVIDENCE: ${evidence}\n\n`
           + `${holdRecoveryText('hand', ticketId)}\n\n`
+          // The rework-round fact belongs to the `hand` arm rendered two lines up
+          // and must NOT be restated here: the arm already closes with "the ticket
+          // stays done and no rework round is counted". What survives is what the
+          // arm does NOT carry — the tree, the branch and the seat are what a held
+          // seat is actually anxious about, and "NOT rejected" is the negative the
+          // arm only states positively.
           + 'Nothing was torn down — your worktree, your branch and this seat are exactly as they were. '
-          + 'The ticket was NOT rejected and no rework round was counted.';
+          + 'The ticket was NOT rejected.';
         this._gatedDeliver(seat, 'ticket-loop', body, true,
           `[ticket ${ticketId} HELD] close with ${ticketCloseVerb(ticketId)}`);
       } catch (e) {

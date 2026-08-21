@@ -3688,7 +3688,11 @@ test('t345 r4 MF1: the HAND is told, not only the lead, and told what to do', as
   assert.match(toHand[0].body, /HELD/, 'and told it is HELD, not rejected');
   assert.match(toHand[0].body, /0 commits beyond/, 'with the evidence it has to act on');
   assert.match(toHand[0].body, /close the ticket again/, 'and the route');
-  assert.ok(!/rework round/.test(toHand[0].body) || /no rework round was counted/.test(toHand[0].body),
+  // Both tenses: the notice used to hand-write "was counted" beside the helper
+  // call, and t466 removed that copy — the fact now reaches the seat only through
+  // the `hand` arm, which says "is counted". Pinning one tense pins WHICH of the
+  // two sources spoke, which is the opposite of what this asserts.
+  assert.ok(!/rework round/.test(toHand[0].body) || /no rework round (is|was) counted/.test(toHand[0].body),
     'and it must not read as a rejection — no rework round happened');
   // The lead is still told: this ADDS a reader, it does not move the escalation.
   assert.strictEqual(f.esc().length, 1, 'the lead still gets its escalation');
