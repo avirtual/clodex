@@ -253,6 +253,136 @@ function confine(root, name) {
   return dir;
 }
 
+// Core's path-confine.js companion, copied whole for the same §12/§4 reason as
+// `confine` above. Split out rather than folded into the caller because
+// `confineUnder` needs the FATAL form: a segment that escapes must abort the
+// walk, not return a null the loop would then resolve against.
+function confineOrThrow(root, name, label = 'name') {
+  const dir = confine(root, name);
+  if (dir === null) throw new Error(`invalid ${label}: ${name}`);
+  return dir;
+}
+
+/**
+ * Core's team-cost `confineUnder` + `stripFileTail` + `resolveTaskDir`, copied
+ * WHOLE under §4 and pinned against core in test/tickets-viewer-path-parity.test.js.
+ *
+ * Whole, and not a narrowed "good enough" version, because `taskDir` is spec
+ * TEXT an agent wrote: a `~` or a `..` in it joins into a path outside the
+ * projects root, and the viewer renders it into a dispatch that a hand then cds
+ * into. A reimplementation that handled the shapes seen so far is how a
+ * traversal gets in.
+ */
+
+// path-confine admits ONE segment; a task dir is `tasks/<name>[/…]`. Walking the
+// relative path segment by segment gives exact subtree containment out of the
+// existing primitive: a target outside the root produces leading `..` segments,
+// and each one fails the direct-child test at the step that introduces it. An
+// empty relative path is the root ITSELF, which is not a task dir.
+function confineUnder(root, target) {
+  const base = path.resolve(root);
+  const rel = path.relative(base, path.resolve(target));
+  if (!rel) throw new Error(`invalid taskDir: ${base} is not a task dir`);
+  let cur = base;
+  for (const seg of rel.split(path.sep)) cur = confineOrThrow(cur, seg, 'taskDir segment');
+  return cur;
+}
+
+// The extension list is CLOSED, not "any short alnum tail": a dir named
+// `round.2` or `v2.beta` is a directory, and eating its last level names a
+// directory one level up where nothing looks for it. Widen it by adding an
+// extension, never by loosening it back to a charset.
+const FILE_TAIL_RE = /\.(?:md|json|txt|log|patch|diff)$/i;
+function stripFileTail(p) {
+  const parts = p.split(path.sep);
+  const i = parts.lastIndexOf('tasks');
+  if (i < 0 || parts.length - i < 3) return p;
+  if (!FILE_TAIL_RE.test(parts[parts.length - 1])) return p;
+  return parts.slice(0, -1).join(path.sep);
+}
+
+function resolveTaskDir({ taskDir, projectDir, projectsRoot: root, homedir }) {
+  const raw = String(taskDir == null ? '' : taskDir).trim();
+  if (!raw) return null;
+  let abs;
+  if (raw === '~' || raw.startsWith('~/')) {
+    if (!homedir) return null;
+    abs = path.join(homedir, raw.slice(1));
+  } else if (path.isAbsolute(raw)) {
+    abs = raw;
+  } else {
+    if (!projectDir) return null;
+    abs = path.join(projectDir, raw);
+  }
+  abs = stripFileTail(path.resolve(abs));
+  if (!root) return null;
+  return confineUnder(root, abs);
+}
+
+/**
+ * Core's team-tickets `taskDirRuleClause` / `taskDirCreateClause` /
+ * `ticketTaskDirLine`, copied under §4 and pinned byte-for-byte against core's
+ * exported `ticketTaskDirLine` in test/tickets-viewer-path-parity.test.js.
+ *
+ * The WORDING is the deliverable, exactly as it is for the close line: 260 of
+ * the live board's 368 pointers are relative, the repo carries a gitignored
+ * `tasks/` decoy that many of them collide with by name, and this clause is the
+ * only thing that stops a hand resolving the pointer against its cwd. A
+ * paraphrase would pass a shape check while teaching a viewer-dispatched seat a
+ * different rule from an intent-dispatched one.
+ */
+const taskDirRelative = (raw) => !!raw && !raw.startsWith('~') && !path.isAbsolute(raw);
+
+const taskDirRuleClause = (raw) => (taskDirRelative(raw)
+  ? ` — the spec's \`${raw}\` is relative to the PROJECT'S ARTIFACT DIR, `
+    + `not to your cwd, and a same-named directory inside the repo is NOT it. `
+    + `This is the directory itself (the pointer may name a file inside it); it may not exist yet, `
+    + `and its absence is not evidence that there is no artifact.`
+  : '');
+const taskDirCreateClause = ` So create it rather than working without one.`;
+const ticketTaskDirLine = (dir, raw) => {
+  const rule = taskDirRuleClause(raw);
+  return `TASK DIR: ${dir}${rule}${rule ? taskDirCreateClause : ''}\n`;
+};
+
+/**
+ * The viewer's half of core's `_ticketTaskDirRender(...).line` — the whole
+ * rendering, or ''.
+ *
+ * Only `.line` is copied, not the three-field render: the viewer has one
+ * renderer (the dispatch), never the reviewer's scope, and `dir`/`rule` exist
+ * in core solely for that second reader.
+ *
+ * The outer `rule ?` guard is NOT a redundant recomputation of the clause
+ * inside `ticketTaskDirLine` — it is what suppresses the WHOLE line for a `~`-
+ * or `/`-prefixed pointer. Core gates the same way and for the same reason:
+ * every dispatch already spills past the 500-byte threshold, so a line telling
+ * a seat what an absolute path already means costs it a Read turn and says
+ * nothing.
+ *
+ * Best effort, like the delivery it rides in: a taskDir that refuses
+ * confinement drops the line and never throws. A dispatch must not die over a
+ * display line.
+ */
+function ticketTaskDirLineFor(projectDir, ticket) {
+  const raw = String((ticket && ticket.taskDir) || '').trim();
+  if (!raw) return '';
+  let dir = null;
+  try {
+    dir = resolveTaskDir({
+      taskDir: raw,
+      projectDir,
+      projectsRoot: projectsRoot(),
+      homedir: os.homedir(),
+    });
+  } catch (_) {
+    return '';
+  }
+  if (!dir) return '';
+  const rule = taskDirRuleClause(raw);
+  return rule ? ticketTaskDirLine(dir, raw) : '';
+}
+
 // Core's TICKET_STALL_MS and its per-team override, mirrored from
 // session-manager's _sweepTickets. Re-derived rather than guessed: a board that
 // called a ticket stalled on a different threshold than the one that nudges the
@@ -838,8 +968,24 @@ function findOpen(tickets, id) {
  * line is that it rides EVERY dispatch. §4's copied-utility pattern applies —
  * the plugin cannot require core — so the literal is duplicated here and pinned
  * against core's in test/tickets-viewer-path-parity.test.js.
+ *
+ * The TASK DIR line rides on the same terms and for a sharper reason: without it
+ * a hand resolves the spec's relative `tasks/…` pointer against its CWD, and
+ * this repo carries a gitignored `tasks/` decoy that many live pointers collide
+ * with by name. That failure is silent — the hand finds a directory, reads the
+ * wrong artifacts, and reports success.
+ *
+ * ORDER matters and matches core's `${taskDirLine}${closeLine}${specText}`:
+ * the close line lands at column 1 either way, which is safe because
+ * `CLOSE WITH: ` precedes the verb (see the closeLine copy's header) — but a
+ * reflow that put the task dir AFTER the close line would diverge from core for
+ * no reason, and the parity test compares the composed body.
+ *
+ * `projectKey` is what resolves a relative pointer, so it is required rather
+ * than optional: a defaulted-away key would silently render nothing for exactly
+ * the 70% of pointers this exists to serve.
  */
-function deliverSpec(name, ticket) {
+function deliverSpec(name, ticket, projectKey) {
   if (!name || !host || !host.sessions) return false;
   let handle;
   try {
@@ -848,8 +994,13 @@ function deliverSpec(name, ticket) {
     return false;
   }
   if (!handle || !handle.isAlive()) return false;
+  // Resolved from the project dir the board was READ from, not from a cwd: that
+  // directory is `<clodexHome>/projects/<key>`, which is byte-identical to core's
+  // `projectDirFor(REGISTRY_DIR, team.root)` — the same hash under the same root.
+  const loc = resolveProject(str(projectKey));
+  const taskDirLine = loc.ok ? ticketTaskDirLineFor(loc.dir, ticket) : '';
   try {
-    handle.inject(`[ticket ${ticket.id}] ${closeLine(ticket.id)}${str(ticket.spec)}`, { parkable: true });
+    handle.inject(`[ticket ${ticket.id}] ${taskDirLine}${closeLine(ticket.id)}${str(ticket.spec)}`, { parkable: true });
     return true;
   } catch (e) {
     host.log.error(`could not deliver ${ticket.id} to ${name}`, e);
@@ -937,7 +1088,7 @@ function add(payload) {
     return { result: { id: ticket.id, ticket } };
   });
   if (!res.ok) return res;
-  if (who) delivered = deliverSpec(who, res.ticket);
+  if (who) delivered = deliverSpec(who, res.ticket, project);
   return { ok: true, id: res.id, delivered };
 }
 
@@ -1035,7 +1186,7 @@ function assign(payload) {
     return { result: { ticket: t } };
   });
   if (!res.ok) return res;
-  return { ok: true, delivered: deliverSpec(who, res.ticket) };
+  return { ok: true, delivered: deliverSpec(who, res.ticket, project) };
 }
 
 /**
@@ -1122,6 +1273,8 @@ module.exports._internals = {
   board, teams, projects, teamsRoot, projectsRoot, teamIndex, projectRootFor,
   clodexHome, projectDirFor, nextTicketId, ticketTitle, extractTaskDir, ticketStarted,
   atomicWriteFileSync, resolveProject, ticketTaskDirRefusal,
+  confineOrThrow, confineUnder, stripFileTail, resolveTaskDir,
+  taskDirRuleClause, ticketTaskDirLine, ticketTaskDirLineFor,
   add, editSpec, assign, closeTicket, sessions,
   VIEWER_ACTOR, closeLine,
   DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, RECENT_DONE_MS, RECENT_DONE_CAP,

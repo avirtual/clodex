@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- Assigning a ticket by clicking in the tickets viewer now tells the seat where
+  the ticket's artifact directory actually is, exactly as typing the assignment
+  as an intent already did. The spec's `tasks/…` pointer is usually written
+  relative to the project's artifact directory, but an agent resolves a relative
+  path against its own working directory — and this repo contains a directory of
+  the same name, so the seat found one, read another ticket's files, and got on
+  with the job. Both ways of assigning now deliver the same resolved path and
+  the same explanation of it, and the two wordings are pinned against each other
+  so they cannot drift apart again.
+
 - When Clodex cannot give one of your library files a shipped update, it now
   tells you in the inbox instead of only in a log file nobody opens — but only
   once per withheld update, not on every launch. A library file you have edited
