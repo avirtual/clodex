@@ -1,6 +1,7 @@
 'use strict';
 
-// The reviewer's scope, built from the ticket record and git alone.
+// The reviewer's scope, built from the ticket record, git, and a
+// caller-resolved `taskDir`/`taskDirRule`.
 //
 // ZERO lead prose is the whole point: the measured defect this closes is that
 // every verdict made two round trips through a lead whose own verification had

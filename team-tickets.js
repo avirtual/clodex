@@ -5184,6 +5184,11 @@ function createTicketMethods(deps, shared) {
     //    redundant line costs each of those seats a Read turn. The scope pays no
     //    such cost — it names the dir regardless — which is why it takes `dir`
     //    and `rule` rather than `line`.
+    //    The `rule ?` guard below looks like it duplicates the clause computed
+    //    inside ticketTaskDirLine, and must stay: the helper self-gates only the
+    //    clause, so without the outer guard a `~`/absolute pointer still emits a
+    //    bare `TASK DIR: <dir>` line to EVERY dispatch. The guard is what
+    //    suppresses the whole line, not a redundant recomputation.
     // What must NOT differ is the wording of the fact, and that is why both come
     // from here. `line` additionally carries "so create it", which `rule` must
     // not: the scope's reader is a read-only seat.
