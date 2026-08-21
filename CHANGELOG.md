@@ -22,13 +22,21 @@ blocks a release.
   on that branch. The only verb that moved it was **reject**, which reopens the
   ticket and counts a rework round — recording a rejection that never happened
   against work nobody had reviewed.
-  Such a ticket is now **held** rather than finished. Fix what the escalation
-  named and close the ticket again: the checks re-run from where they stopped and
-  the review proceeds, with the ticket never reopened and no rework round
-  invented. The board carries the held check by name, so a ticket is recoverable
-  even if the message announcing it was missed, and the watchdog re-raises it on
-  the usual schedule saying an escalation is waiting rather than reporting a
-  stuck step. Rejecting a held ticket still works and still means what it says.
+  Such a ticket is now **held** rather than finished, and every message about it
+  says who can clear it and how. For a check the branch can satisfy — nothing
+  committed, an empty diff — the seat that owns the branch is told directly, as it
+  already was for a failing test suite, and closing the ticket again re-runs the
+  checks from where they stopped: the ticket is never reopened and no rework round
+  is counted. For a check that no amount of re-closing can satisfy, such as a spec
+  naming an artifact directory that cannot be resolved, the message says so and
+  names what has to change instead of prescribing a retry that would fail
+  identically every time. For a check that could not run at all — a busy test
+  lock, a runner that would not start — nobody is asked to fix a branch that was
+  never at fault.
+  The board carries the held check by name, so a ticket stays recoverable even if
+  the message announcing it was missed, and the watchdog re-raises it on the usual
+  schedule saying an escalation is waiting rather than reporting a stuck step.
+  Rejecting a held ticket still works and still means what it says.
 
 ## 5.15.0 — 2026-08-21 — the ticket machinery stops producing wrong results
 
