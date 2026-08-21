@@ -13617,6 +13617,9 @@ test('task assign: a re-dispatch keeps the RECORDED branch, not one re-derived f
   const first = f.one('t1').worktree;
   assert.ok(first && first.path, 'ENTER: the first dispatch must have made a tree');
   assert.strictEqual(first.branch, 't1-build-the-widget', 'ENTER: the recorded branch is the one the first spec slugged to');
+  // ENTER for the baseSha half below: the first dispatch must have recorded a fork
+  // point, or "it survived" is vacuously true about a value that never existed.
+  assert.ok(first.baseSha, 'ENTER: the first dispatch must have captured a baseSha to preserve');
 
   // The tree goes away the way an operator's `rm -rf` leaves it: still REGISTERED
   // and printed by `git worktree list`, flagged prunable — which is precisely what
@@ -13660,6 +13663,12 @@ test('task assign: a re-dispatch keeps the RECORDED branch, not one re-derived f
   // Stated on the wire too: the reply and the log name the branch the lead will
   // merge, and a mint that returned the derived name would announce that one.
   assert.ok(!f.gated.some((g) => g.body.includes(derived)), 'nor is the re-derived name announced anywhere in the dispatch');
+  // The SECOND axis, independent of the branch name and broken by the same arm:
+  // createWorktree resolves a fork point only for a branch it created, so reusing
+  // the recorded name returns none — and the record is overwritten wholesale, so a
+  // dropped baseSha is destroyed rather than absent.
+  assert.ok(t.worktree.baseSha, 'the fork point survives the re-dispatch — loopEligible reads it, and without it the whole verify/review/merge loop silently never runs');
+  assert.strictEqual(t.worktree.baseSha, first.baseSha, 'and it is the ORIGINAL fork point, not a new one');
 
   fsReal.rmSync(root, { recursive: true, force: true });
 });

@@ -3204,6 +3204,8 @@ function createTicketMethods(deps, shared) {
       // the ticket's work — with `worktree.branch` overwritten to match, so the
       // lead's merge target and the hand's commits disagree silently. Same
       // argument as the baseSha carried through on reuse in _existingTicketTree.
+      // The recorded name is NOT vetted here: createWorktree validates it
+      // downstream against its own charset rule, which is the only check it gets.
       const recorded = ticket.worktree && ticket.worktree.branch;
       return { ok: true, name, branch: recorded || (slug ? `${ticket.id}-${slug}` : String(ticket.id)) };
     },
@@ -3861,7 +3863,25 @@ function createTicketMethods(deps, shared) {
             // baseSha is the fork point, captured HERE because it is unrecoverable
             // later: the ref this forked from is 'HEAD', which has moved by the time
             // the ticket closes and counts its commits against it.
-            wt = { path: r.path, branch: r.branch, ...(r.baseSha ? { baseSha: r.baseSha } : {}) };
+            //
+            // On a re-dispatch createWorktree returns NO baseSha: it resolves one
+            // only for a branch it CREATED (`if (!exists)`), and the recorded branch
+            // this arm now re-checks-out already exists. The previous fork point is
+            // therefore the only one there will ever be, and `rec.worktree = wt`
+            // below overwrites the record WHOLESALE — so failing to carry it here
+            // destroys it rather than merely omitting it, and `loopEligible`
+            // (`branch && baseSha`) goes false: no verify, no suite run, no reviewer,
+            // no auto-merge, and no watchdog visibility, all silently. Same argument
+            // as the carry-through in _existingTicketTree, on the arm that reuses the
+            // BRANCH rather than the tree.
+            //
+            // Guarded on the branch matching: createWorktree disambiguates the PATH
+            // with a numeric suffix, never the branch, so a first dispatch whose name
+            // collided must not inherit an unrelated ticket's fork point.
+            const prior = (ticket.worktree && ticket.worktree.branch === r.branch)
+              ? ticket.worktree.baseSha : null;
+            const keep = r.baseSha || prior || null;
+            wt = { path: r.path, branch: r.branch, ...(keep ? { baseSha: keep } : {}) };
           }
           // Recorded on the TICKET, which is what _deliverTicketSpec reads to tell
           // the seat where to work. On the ticket rather than only on the session
