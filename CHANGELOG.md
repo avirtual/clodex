@@ -17,12 +17,13 @@ blocks a release.
   The branch takes its readable half from the spec's first line, but that line
   was being read from the ticket's list-summary title, which is cut at 80
   characters — and a dispatch opens with a ~67-character artifact path, so only
-  a dozen characters of the actual sentence survived to be slugged. The last six
-  tickets filed here minted `t458-t`, `t460-the` and `t461-the`, two of them
-  identical, so the name distinguished nothing and `git branch --list` was the
+  a dozen characters of the actual sentence survived to be slugged. Every one of
+  the last eleven tickets filed here was affected: three separate pairs collided
+  outright (two `t`, two `the-s`, two `the`) and one lost its readable half
+  entirely, so the name distinguished nothing and `git branch --list` was the
   only way to find out what a branch held. The slug now reads the whole first
   line and does its own word-boundary cut at 40 characters, which is what it was
-  built to do; the same six become names like
+  built to do; those become names like
   `t462-the-two-anchor-slice-unguarded-at-four`. The summary column is
   unchanged, existing branches are untouched, and the artifact path is still
   read off that same line.

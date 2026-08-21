@@ -185,10 +185,10 @@ test('extractTaskDir: the earliest line wins, and abs beats rel only WITHIN a li
 
 // The regression this widening could plausibly cause, and the reason the fix is
 // line-by-line inside extractTaskDir rather than anywhere near the title.
-// branchSlug is called ONLY on ticket.title (session-manager `_mintTicketSeat`),
-// and the title is the first NON-EMPTY line — so a path found on line 3 must be
-// invisible to the slug. If it ever is not, a hand's worktree, its branch and
-// the lead's merge target stop agreeing, silently.
+// The slug sees line 1 and nothing else: it runs on `titleLine`, the first
+// NON-EMPTY line, so a path found on line 3 must be invisible to it. If it ever
+// is not, a hand's worktree, its branch and the lead's merge target stop
+// agreeing, silently.
 test('branchSlug: a tasks/ path on a LATER line does not reach the branch name', () => {
   const spec = [
     't321 — trim the output buffer',
@@ -203,8 +203,13 @@ test('branchSlug: a tasks/ path on a LATER line does not reach the branch name',
     'ENTER: the later-line path must be the one extractTaskDir now finds');
   assert.strictEqual(ticketTitle(spec), 't321 — trim the output buffer',
     'ENTER: the title must still be line 1');
+  assert.strictEqual(branchSlug(titleLine(spec)), 'trim-the-output-buffer',
+    'the branch is slugged from line 1 alone — no path, no line-3 words');
+  // The composition production used before t463. Kept beside the live one so a
+  // reader cannot mistake the old path for the shipped one, and so the guard
+  // holds for both.
   assert.strictEqual(branchSlug(ticketTitle(spec)), 'trim-the-output-buffer',
-    'the branch is slugged from the title alone — no path, no line-3 words');
+    'and the pre-t463 composition agrees, since line 1 is under the 80-char cut');
 });
 
 // The three branch names below were MINTED, not invented: each is what the
