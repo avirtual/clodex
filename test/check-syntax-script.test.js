@@ -279,6 +279,98 @@ test('check-syntax: with no trunk at all, a self-comparison is refused rather th
   }
 });
 
+// MUST-FIX 1. The base comparison used to sit behind `if [ -z "$files" ]`, so it
+// only ran on a fully CLEAN tree. Any unrelated dirty .js file sent the run down
+// the vs-HEAD path and the committed error was never opened. Hands are told to
+// commit as they go, so a dirty tree is the workflow's COMMON state — this was
+// the larger half of the bug, not an edge of it.
+test('check-syntax: a committed error is caught even when the tree is dirty', () => {
+  withFixture(({ wt, check }) => {
+    fs.writeFileSync(path.join(wt, 'broken.js'), BROKEN_JS);
+    git(wt, ['add', 'broken.js']);
+    git(wt, ['commit', '-qm', 'commit the breakage']);
+    fs.writeFileSync(path.join(wt, 'notes.js'), GOOD_JS);   // unrelated, uncommitted
+
+    // ENTER: both halves must be non-empty, or this collapses into a case
+    // already covered — a clean tree, or a purely uncommitted error.
+    assert.strictEqual(git(wt, ['status', '--porcelain']).trim(), '?? notes.js',
+      'ENTER: the tree must be dirty with an UNRELATED file');
+    assert.strictEqual(git(wt, ['diff', '--name-only', 'master', 'HEAD', '--', '*.js']).trim(),
+      'broken.js', 'ENTER: the branch must carry the error as a commit');
+
+    const r = check(wt);
+    assert.match(r.digest, /^SYNTAX: broken\.js: /,
+      'the committed error must be opened even though the worktree half was non-empty');
+    assert.strictEqual(r.status, 1);
+  });
+});
+
+test('check-syntax: the digest reports one union, naming both halves', () => {
+  withFixture(({ wt, check }) => {
+    fs.writeFileSync(path.join(wt, 'committed.js'), GOOD_JS);
+    git(wt, ['add', 'committed.js']);
+    git(wt, ['commit', '-qm', 'committed work']);
+    fs.writeFileSync(path.join(wt, 'dirty.js'), GOOD_JS);
+
+    const r = check(wt);
+    assert.strictEqual(r.status, 0);
+    const m = r.digest.match(/^syntax OK \((\d+) files vs base (\S+)@\S+ \+worktree/);
+    assert.ok(m, `digest must name a count, a base and the worktree half, got: ${r.digest}`);
+    // 2 = one from each half. A count of 1 would mean a half was dropped, which
+    // is exactly the regression this pins.
+    assert.strictEqual(m[1], '2', 'both halves of the union must be counted');
+    assert.strictEqual(m[2], 'master');
+  });
+});
+
+// MUST-FIX 2. The discriminator that matters is whether the COMPARISON is
+// vacuous, not which arm produced the base ref. Keying on the arm let this
+// through on the default, no-payload invocation: on trunk, `def=master` comes
+// from the local-trunk loop, the merge base IS HEAD, and the diff is empty over
+// a trunk that may hold a real syntax error.
+test('check-syntax: on the trunk itself, a vacuous comparison is never reported as a check result', () => {
+  withFixture(({ repo }) => {
+    // The error goes on the trunk checkout, committed, tree left clean.
+    fs.writeFileSync(path.join(repo, 'trunkbroken.js'), BROKEN_JS);
+    git(repo, ['add', 'trunkbroken.js']);
+    git(repo, ['commit', '-qm', 'a real syntax error on master']);
+
+    // ENTER: on the trunk, clean, with the error committed — and the base the
+    // script will resolve is the branch we are standing on.
+    assert.strictEqual(git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']).trim(), 'master');
+    assert.strictEqual(git(repo, ['status', '--porcelain']).trim(), '', 'ENTER: tree must be clean');
+
+    // The DEFAULT invocation: no payload field at all, the documented path.
+    const r = runScript(path.join(repo, 'scripts', 'check-syntax.sh'), repo, {});
+    assert.doesNotMatch(r.digest, /syntax OK/,
+      'a comparison that read nothing must not be worded as a pass — this is the false green');
+    assert.match(r.digest, /^nothing to compare: on trunk master/);
+  });
+});
+
+// NIT (a). `for f in $files` word-splits, so a tracked path containing a space
+// became two nonexistent paths, silently skipped by the -f guard — a false green
+// per affected file. Pre-existing, but the union surfaces far more paths than the
+// worktree diff ever did, so the blast radius grew.
+test('check-syntax: a path containing a space is checked, not split into two missing ones', () => {
+  withFixture(({ wt, check }) => {
+    fs.writeFileSync(path.join(wt, 'my file.js'), BROKEN_JS);
+    git(wt, ['add', 'my file.js']);
+    git(wt, ['commit', '-qm', 'a spaced path']);
+
+    // ENTER: the path must genuinely contain a space and be the ONLY candidate,
+    // or a neighbouring file could raise the error instead and the test would
+    // pass without ever exercising the split.
+    const changed = git(wt, ['diff', '--name-only', 'master', 'HEAD', '--', '*.js']).trim();
+    assert.strictEqual(changed, 'my file.js', 'ENTER: exactly one candidate, containing a space');
+    assert.strictEqual(git(wt, ['status', '--porcelain']).trim(), '', 'ENTER: tree must be clean');
+
+    const r = check(wt);
+    assert.strictEqual(r.status, 1, `the spaced path must be opened, got: ${r.digest}`);
+    assert.match(r.digest, /^SYNTAX: my file\.js: /);
+  });
+});
+
 test('check-syntax: the digest is a single bounded line in every state', () => {
   withFixture(({ wt, check }) => {
     const states = [];
