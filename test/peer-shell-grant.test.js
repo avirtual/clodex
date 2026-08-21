@@ -362,9 +362,10 @@ test('the ON indicator is visible WITHOUT opening a dialog', () => {
 
 test('the checkbox lives with the other box-wide serving settings', () => {
   const html = readRenderer('index.html');
-  // The existing ENTER below does not carry this: `prefs-remote-enabled` lives
-  // elsewhere in index.html, so it still passes when a missing END anchor turns
-  // the slice into the whole tail and the match finds the control anywhere.
+  // The existing ENTER below does not carry this: `prefs-remote-enabled` sits
+  // inside the phone group, so it is inside any superset of that region too — a
+  // missing END anchor turns the slice into the whole tail and the `includes`
+  // still passes, while the match then finds the control anywhere in the file.
   assert.ok(html.indexOf('data-group="discovery"') > html.indexOf('data-group="phone"'),
     'ENTER: both anchors, in order');
   const phone = html.slice(html.indexOf('data-group="phone"'), html.indexOf('data-group="discovery"'));

@@ -129,7 +129,11 @@ test('installer: agent-clis step installs claude+codex the native way, best-effo
   // Both ENTERs, and they are complementary — the downstream here is TWO
   // ABSENCE assertions, which pass over an empty string. A missing START gives
   // `slice(-1, M)` = empty and the ordered-anchor form cannot see it (`M > -1`
-  // is true), so the length check is the one that catches that mode.
+  // is true), so the length check is the one that catches that mode — which is
+  // unreachable today, since the `assert.match(s, /step agent-clis/)` above
+  // fails loud first. Defence-in-depth against that line being removed; the
+  // mode the ordered-anchor guard actually catches here is a missing END, which
+  // runs the slice into the tail and picks up an unrelated `need_sudo`.
   assert.ok(s.indexOf('ok agent-clis') > s.indexOf('step agent-clis'),
     'ENTER: both anchors, in order');
   const seg = s.slice(s.indexOf('step agent-clis'), s.indexOf('ok agent-clis'));
