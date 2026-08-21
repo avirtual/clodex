@@ -131,6 +131,26 @@ const path = require('node:path');
 // Both are genuinely narrower than the historical defect, which read a FIELD and
 // wrote a sentence that contradicted it. Neither can do that.
 //
+// ADVERSARIAL PROBE OF THE r4 PREMISE, run BEFORE shipping it — because the r3
+// carve-out was written in the same commit that fixed r2's, and stating the
+// lesson did not stop me repeating it. Two shapes select prose on the class and
+// still pass:
+//
+//   1. `switch (cls) { case 'spec': reply('reject'); … }` — no binding, no
+//      literal in an initialiser; the selection is the control structure.
+//   2. `const M = { spec: 'reject', hand: 'close again' }; reply(M[cls]);`
+//
+// The SECOND is the more likely of the two, and worth saying plainly: it is
+// exactly `HOLD_RECOVERY`'s own shape. The correct construct here IS an object
+// literal keyed by class, so an author copying the pattern into a local table
+// writes the defect while imitating the fix. If a violation ever lands, look
+// for a second table before looking for a stray sentence.
+//
+// Neither occurs today (both `switch` statements in team-tickets.js key on
+// `intent.sub`; the only class-keyed table is HOLD_RECOVERY itself). Left
+// uncovered for the depth reason below, and named so it is a known edge rather
+// than a discovery.
+//
 // WHERE THE COMPOSITION WOULD REAPPEAR NEXT, probed against the premise added
 // in r3 rather than waiting for a fourth rejection to find it. The prose hop is
 // ONE deep, so three shapes pass: advice assigned through a second local
