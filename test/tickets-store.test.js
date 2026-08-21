@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, branchSlug } = require('../tickets-store');
+const { createTicketsStore, nextTicketId, titleLine, ticketTitle, extractTaskDir, branchSlug } = require('../tickets-store');
 const { projectDirFor } = require('../clodex-paths');
 
 function tmpHome() {
@@ -112,6 +112,22 @@ test('ticketTitle: first non-empty line, trimmed and capped; empty → (untitled
   assert.strictEqual(ticketTitle(''), '(untitled)');
   const long = 'x'.repeat(200);
   assert.ok(ticketTitle(long).length <= 80 && ticketTitle(long).endsWith('…'));
+});
+
+test('titleLine: the same line ticketTitle reads, but UNCAPPED', () => {
+  assert.strictEqual(titleLine('  build the widget\nmore detail'), 'build the widget');
+  assert.strictEqual(titleLine('\n\n   second-first line'), 'second-first line');
+  // The empty answer is '' and not '(untitled)': the placeholder is a display
+  // string, and slugging it would mint `tN-untitled` where the caller's
+  // empty-slug fallback mints the readable `tN`.
+  assert.strictEqual(titleLine('   \n  '), '');
+  assert.strictEqual(titleLine(''), '');
+  assert.strictEqual(titleLine(null), '');
+  assert.strictEqual(titleLine(undefined), '');
+  // The whole point: no cap, where ticketTitle cuts at 80.
+  const long = `${'x'.repeat(200)}\nsecond`;
+  assert.strictEqual(titleLine(long), 'x'.repeat(200));
+  assert.strictEqual(ticketTitle(long).length, 78, 'ENTER: the title still caps, so the two genuinely differ');
 });
 
 test('extractTaskDir: captures a tasks/<dir> path on ANY line of the spec', () => {
@@ -234,6 +250,40 @@ test('branchSlug: a long title truncates on a word boundary, not mid-word', () =
   // character cap still applies rather than emptying the slug.
   assert.strictEqual(branchSlug('x'.repeat(80)), 'x'.repeat(40));
   assert.strictEqual(branchSlug(`${'y'.repeat(45)} tail`), 'y'.repeat(40));
+});
+
+// The defect fixed in t463, in the two shapes it took. Both first lines below
+// are real dispatches, and both branch names in the ENTER assertions were
+// MINTED — `t462-the-two-a` and `t460-the`. The cause is the ORDER: ticketTitle
+// cuts at 80, a dispatch opens with a ~67-char task-dir path, so branchSlug was
+// handed ~13 characters of prose and its own 40-char cap could never engage.
+test('branchSlug: slugged from the UNTRUNCATED first line, so the 40-char cap engages', () => {
+  const t462 = '~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/anchor-slice-guards/ — the two-anchor slice, unguarded at four sites';
+  const t460 = '~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/census-rot-and-scope-nits/ — the deleted census survives in two test comments';
+
+  // ENTER: the fixtures must actually reproduce the defect, or everything below
+  // pins the fix over specs it never touched. These are what shipped.
+  assert.strictEqual(branchSlug(ticketTitle(t462)), 'the-two-a', 'ENTER: t462 minted this');
+  assert.strictEqual(branchSlug(ticketTitle(t460)), 'the', 'ENTER: t460 minted this');
+
+  assert.strictEqual(branchSlug(titleLine(t462)), 'the-two-anchor-slice-unguarded-at-four');
+  assert.strictEqual(branchSlug(titleLine(t460)), 'the-deleted-census-survives-in-two-test');
+
+  // The cap DOING THE WORK is the fix's signature — "the cap never engages" was
+  // the defect. Both slugs are cut, so both are shorter than the full slug of
+  // the same line and neither ends mid-word or on a separator.
+  for (const line of [t462, t460]) {
+    const slug = branchSlug(titleLine(line));
+    assert.ok(slug.length <= 40 && slug.length > 35, `cap engaged, not a remnant: ${slug}`);
+    assert.ok(!slug.endsWith('-'), 'word-boundary cut leaves no dangling separator');
+    assert.ok(line.toLowerCase().replace(/[^a-z0-9]+/g, '-').includes(slug),
+      'the cut slug is a prefix-shaped piece of the same line, not a different string');
+  }
+
+  // Unbounded input is the price of dropping the 80-char cap, and the existing
+  // word-boundary cap is what pays it — no new limit belongs in this path.
+  assert.strictEqual(branchSlug(titleLine(`${'word '.repeat(200)}\nsecond line`)),
+    Array(8).fill('word').join('-'));
 });
 
 test('branchSlug: a title that is ONLY an id or a task dir slugs to empty, not to junk', () => {

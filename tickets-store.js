@@ -79,15 +79,27 @@ function nextTicketId(tickets) {
   return `t${max + 1}`;
 }
 
-// The ticket TITLE = the first non-empty line of the spec text, trimmed and
-// capped (the list summary column). Empty spec → '(untitled)'.
-function ticketTitle(specText) {
+// The spec's first non-empty line, trimmed and UNCAPPED — '' when there is none.
+// Split out from ticketTitle because the two consumers want different strings:
+// the title is a display column and is capped at 80, while `branchSlug` must
+// see the whole line or its own 40-char word-boundary cap never engages (a
+// dispatch opens with a ~67-char task-dir path, so the 80-char cut left ~13
+// characters of prose and every branch minted since t453 was junk).
+function titleLine(specText) {
   const lines = String(specText == null ? '' : specText).split('\n');
   for (const line of lines) {
     const t = line.trim();
-    if (t) return t.length > 80 ? `${t.slice(0, 77)}…` : t;
+    if (t) return t;
   }
-  return '(untitled)';
+  return '';
+}
+
+// The ticket TITLE = the first non-empty line of the spec text, trimmed and
+// capped (the list summary column). Empty spec → '(untitled)'.
+function ticketTitle(specText) {
+  const t = titleLine(specText);
+  if (!t) return '(untitled)';
+  return t.length > 80 ? `${t.slice(0, 77)}…` : t;
 }
 
 // Optional artifact link: the task dir named ANYWHERE in the spec text, captured
@@ -115,8 +127,10 @@ const TASK_DIR_REL_RE = /tasks\/[A-Za-z0-9._/-]+/;
 //
 // The first line's OTHER two consumers are unaffected by construction, and that
 // is what makes this widening safe: `ticketTitle` reads line 1 itself, and
-// `branchSlug` is only ever called on that title — so nothing downstream of the
-// slug can see a path this function found on line 3.
+// `branchSlug` sees line 1 and nothing else (it is called on `titleLine`, the
+// same line the title comes from, untruncated) — so nothing downstream of the
+// slug can see a path this function found on line 3. Handing the slug any
+// multi-line input would break that.
 function extractTaskDir(specText) {
   const lines = String(specText == null ? '' : specText).split('\n');
   for (const line of lines) {
@@ -477,4 +491,4 @@ function ticketTerminalReason(ticket) {
 
 const ticketTerminal = (ticket) => ticketTerminalReason(ticket) !== null;
 
-module.exports = { createTicketsStore, nextTicketId, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, ticketTerminal, ticketTerminalReason, branchSlug, TICKETS_FILE };
+module.exports = { createTicketsStore, nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, ticketTerminal, ticketTerminalReason, branchSlug, TICKETS_FILE };

@@ -13557,6 +13557,44 @@ test('task add: the minted branch carries the REAL ticket id and no id from the 
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
+// The t463 defect at the WIRING level: _mintTicketSeat slugged `ticket.title`,
+// which is capped at 80 for display, so a dispatch opening with a ~67-char
+// task-dir path left ~13 characters of prose and minted `t460-the`. The branch
+// git checks out must come from the untruncated line.
+test('task add: the minted branch is slugged from the UNTRUNCATED first line', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  let createdName = null;
+  f.m.create = async (...args) => { createdName = args[0]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  const line1 = '~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/anchor-slice-guards/ — the two-anchor slice, unguarded at four sites';
+  f.m._handleTask(f.m.sessions.get('lead'), {
+    type: 'task', sub: 'add', who: 'hand', id: null, body: `${line1}\ndetail`,
+  });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => createdName || f.gated.length);
+  assert.strictEqual(createdName, 'team-hand-1', 'ENTER: the seat must have spawned, or nothing below was reached');
+
+  // ENTER: the stored title must be the TRUNCATED one, or the fixture does not
+  // reproduce the defect — the whole bug is that this string was the slug input.
+  const stored = f.one('t1');
+  assert.ok(stored.title.endsWith('…') && stored.title.length === 78,
+    `ENTER: the title must be cut at 80 for this fixture: ${stored.title}`);
+
+  const wtPath = f.worktreeSet.length ? f.worktreeSet[0].wt.path : null;
+  assert.ok(wtPath, 'ENTER: a worktree must have been created');
+  const head = require('node:child_process')
+    .execFileSync('git', ['-C', wtPath, 'rev-parse', '--abbrev-ref', 'HEAD'], { stdio: 'pipe' })
+    .toString().trim();
+  assert.strictEqual(head, 't1-the-two-anchor-slice-unguarded-at-four',
+    'the branch carries the line\'s words, cut by branchSlug\'s own 40-char cap');
+  // The pointer still comes off that same line: the fix changes what the slug
+  // is handed, not the line.
+  assert.strictEqual(stored.taskDir, '~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/anchor-slice-guards/');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
 test('task add: a role WITHOUT the opt-in keeps the old role-assigned path', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo, { dispatch: 'standing' });
