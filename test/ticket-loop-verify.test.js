@@ -3599,11 +3599,19 @@ test('t345 r2: during a RE-VERIFY the team-review guard must still refuse — th
   assert.strictEqual(f.created.length, 1, 'ENTER: and the loop did go on to spawn exactly one reviewer of its own');
 });
 
-test('t345 r2: a long RE-VERIFY does not alarm the lead with "waiting for someone to act"', async () => {
-  // Someone HAS acted and the loop is running. The alarm text is false, and it is
-  // reachable: `_stampVerifyHold` and the re-entry both clear `nudgedAt`, so the
-  // episode restarts at re-entry — and a re-verify may legitimately run 35m
+test('t345 r2: a re-verify that OVERRUNS alarms as a stuck step, not as "waiting for someone to act"', async () => {
+  // Someone HAS acted and the loop is running, so the held wording would be false.
+  // Reachable because a re-verify may legitimately run 35m
   // (TICKET_SUITE_LOCK_WAIT_MS 20m + 15m running) against a 30m stall window.
+  //
+  // THE AGE BELOW IS PLANTED, AND THAT IS THE POINT OF THIS SUBJECT — it forces
+  // the sweep past its window to inspect the WORDING of an alarm that has been
+  // decided on. Read as a claim about the ordinary path it would be a trap, and
+  // was one: while `lastActivityAt` was left at the first close, EVERY re-entry
+  // alarmed immediately and this subject asserted the body of the alarm that
+  // should never have fired. That the ordinary path raises NOTHING is a separate
+  // claim, pinned by `t345 r5 MF1` with a real age and no planting. Keep both:
+  // this one owns "if it does alarm, it says the right thing".
   const repo = mkRepo();
   const f = mkLoop({ repo });
 
@@ -3614,7 +3622,7 @@ test('t345 r2: a long RE-VERIFY does not alarm the lead with "waiting for someon
   for (let i = 0; i < 40 && f.one().loopStep !== 'verify'; i++) await new Promise((r) => setTimeout(r, 25));
   await new Promise((r) => setTimeout(r, 50));
 
-  // Age the ticket past the stall window while the loop is still inside the run.
+  // Simulating a suite that has been running longer than the stall window.
   const old = Date.now() - (60 * 60 * 1000);
   f.tstore.save(f.team.root, [{ ...f.one(), lastActivityAt: old, nudgedAt: null }]);
   f.gated.length = 0;
@@ -3964,4 +3972,131 @@ test('t345 r4: a LEGACY hold with no recovery class still renders a route everyw
   const bounced = f2.injected.join('\n');
   assert.match(bounced, /is held at/, 'ENTER: it bounced as held');
   assert.ok(!/undefined/.test(bounced), 'and the bounce names a route rather than undefined');
+});
+
+// ── t345 r5: a gate on one write, and the fields written beside it ─────────
+//
+// Review round 2. Both defects are r4's OWN changes reintroducing the class r4
+// was fixing — but one level out: the readers that broke are not readers of
+// `verifyHold` (which was swept exhaustively) but of `closedAt` and of the
+// `recovery` ARGUMENT, two things the r4 gates newly repurposed.
+//
+// The rule, worth stating where the next reader of this file will find it: a
+// gate added to one write must be checked against every field written NEAR it.
+// MF1 is a line that used to be fresh because of a line that got guarded; MF2 is
+// an argument that used to be inert because of a branch that got added.
+
+test('t345 r5 MF1: a re-entry re-times the stall clock, so the recovered ticket does NOT alarm', async () => {
+  // THE HONEST FORM of the subject this replaces. The r2 alarm-wording subject
+  // PLANTS `lastActivityAt: old` by hand to force an alarm — so it asserts the
+  // body of exactly the alarm that should never have fired, and could never have
+  // caught this. Here the age is REAL: it comes from a first close that genuinely
+  // happened long ago, and the re-close runs through the real handler.
+  //
+  // A `spec` or `infra` hold routinely waits longer than the stall window, so
+  // this is the ordinary path, not a corner: the hand acts, and 60 seconds later
+  // the lead is told the loop has made "no progress for 2h".
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  // A real first close, which stamps `closedAt` for real.
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'nothing committed yet' });
+  for (let i = 0; i < 40 && !f.one().verifyHold; i++) await new Promise((r) => setTimeout(r, 25));
+  assert.ok(f.one().verifyHold, 'ENTER: the ticket is held');
+
+  // Age that close past the stall window — the ticket sat waiting for a human,
+  // which is what a held ticket DOES.
+  const twoHoursAgo = Date.now() - (2 * 60 * 60 * 1000);
+  f.tstore.save(f.team.root, [{ ...f.one(), closedAt: twoHoursAgo, lastActivityAt: twoHoursAgo, nudgedAt: null }]);
+
+  // The hand acts. Hold the loop inside the suite so the sweep observes a
+  // genuinely-running re-verify rather than a finished one.
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const release = holdInSuite(f);
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'committed it' });
+  for (let i = 0; i < 40 && f.one().loopStep !== 'verify'; i++) await new Promise((r) => setTimeout(r, 25));
+  await new Promise((r) => setTimeout(r, 50));
+  assert.strictEqual(f.one().loopStep, 'verify', 'ENTER: the re-verify is running');
+  assert.ok(!('verifyHold' in f.one()), 'ENTER: and the hold was cleared by the re-entry');
+
+  f.gated.length = 0;
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
+
+  release();
+  for (let i = 0; i < 80 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+
+  assert.deepStrictEqual(nudges.map((n) => n.body), [],
+    'a loop that started seconds ago must raise NOTHING — the re-entry is a new stall episode and has to re-time `last`, not only clear `nudgedAt`');
+  assert.strictEqual(f.created.length, 1, 'ENTER: and the re-verify really did go on to reach a reviewer');
+});
+
+test('t345 r5 MF2: a REVIEW-step throw prescribes NO recovery in the escalation body', async () => {
+  // MF3's failure mode relocated from the sweep into the escalation. The stamp is
+  // correctly skipped, but the escalation still carried `recovery: 'infra'` — so
+  // the lead was told to `task done` a ticket that is `done` + `loopStep:'review'`
+  // with no stamp, where `reentry` is false and the handler bounces with no held
+  // clause and no alternative. Straight back to `reject`.
+  //
+  // The r4 subject asserted `!/RECOVERY:/` on the SWEEP body, so the escalation
+  // body was unpinned — the gap this closes.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  f.m._spawnTicketReview = () => { throw new Error('spawn exploded'); };
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const body = f.esc()[0].body;
+  assert.match(body, /stopped at: review/, 'ENTER: it is the review-step throw');
+  assert.ok(!/RECOVERY:/.test(body),
+    'no route may be prescribed here: the ticket has no verifyHold, so the re-entry gate refuses the verb this would name');
+  assert.ok(!/could not RUN/.test(body),
+    'and the infra sentence is factually wrong here — verify passed and the diff was written');
+});
+
+test('t345 r5 MF2: a VERIFY-step throw still DOES carry its recovery', async () => {
+  // The other side of the same gate: the catch-all is shared, and narrowing it to
+  // silence the review case must not silence the verify case, which is a genuine
+  // infra hold with a genuine route.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  // Throw INSIDE verify, before the record advances to `review`.
+  f.m._runTicketSuite = () => { throw new Error('suite exploded'); };
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const body = f.esc()[0].body;
+  assert.match(body, /stopped at: verify/, 'ENTER: the throw is at a verify step');
+  assert.match(body, /RECOVERY:/, 'a verify-step throw IS a hold, and keeps its route');
+  assert.strictEqual(f.one().verifyHold.recovery, 'infra', 'and is stamped infra');
+});
+
+test('t345 r5 nit2: an UNDELIVERABLE rework does not tell the seat "no rework round was counted"', async () => {
+  // This arm is reached BECAUSE the reject succeeded and only its delivery
+  // failed: the ticket is `open`, `reworkRound` is up, `loopStep` is gone. The
+  // hand notice would say the opposite of all three — to a seat that could not be
+  // reached anyway — and the stamp would write a `verifyHold` onto an open ticket,
+  // a state no reader is written for.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  // No seat holds the role, so _rejectTicketFromLoop cannot deliver.
+  f.m.sessions.delete('team-hand');
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.esc().length, 1, 'ENTER: the lead was told, which is the whole recovery here');
+  assert.match(f.esc()[0].body, /rework could not be sent back/, 'ENTER: and it is THIS arm');
+  const t = f.one();
+  assert.ok(!('verifyHold' in t), 'no hold is stamped on a ticket the reject already reopened');
+  assert.deepStrictEqual(f.gated.filter((g) => /HELD/.test(g.body)), [],
+    'and no seat is told the ticket was not rejected when it was');
 });

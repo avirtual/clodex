@@ -4449,10 +4449,14 @@ function createTicketMethods(deps, shared) {
       const heldAt = (ticket.verifyHold && ticket.verifyHold.step) || null;
       if (ticket.state !== 'open' && !reentry) {
         // The bounce is the fourth reader of the stamp, and it carries the route
-        // for the same reason the escalation does: this is the message a hand gets
-        // when it tries the recovery on a ticket whose hold is NOT the re-closable
-        // kind (a `spec` hold, or one stamped at the review step), and a refusal
-        // that names no alternative is where the reader goes back to `reject`.
+        // for the same reason the escalation does: a refusal that names no
+        // alternative is where the reader goes back to `reject`.
+        //
+        // Reachable only from a record the CURRENT arms do not produce — a legacy
+        // stamp, or one written at a non-`verify` step before that was gated. Every
+        // class this code stamps today, `spec` included, satisfies the re-entry
+        // gate above and re-runs rather than bouncing: the gate tests the stamp's
+        // PRESENCE, not its class. Do not read a class gate into this clause.
         const held = ticket.verifyHold && ticket.verifyHold.step
           ? ` — it is held at "${ticket.verifyHold.step}". ${holdRecoveryText(ticket.verifyHold.recovery, intent.id)}`
           : '';
@@ -4502,7 +4506,19 @@ function createTicketMethods(deps, shared) {
       // cold reviewer cannot reconstruct.
       ticket.report = report;
       ticket.reportedBy = session.name;
-      ticket.lastActivityAt = ticket.closedAt;
+      // NOT `closedAt` on a re-entry, which is the FIRST close and may be hours
+      // old: a held ticket waits for a human, and a `spec` or `infra` hold
+      // routinely waits longer than `TICKET_STALL_MS`. Re-timing here is the same
+      // claim the `nudgedAt` clear below makes — "opening an in-flight phase is a
+      // NEW stall episode" — and clearing the nudge without moving the clock is
+      // only half of it: the sweep reads `now - lastActivityAt`, so the very next
+      // sweep would alarm "stuck at verify, no progress for 2h" about a loop that
+      // started seconds ago. Nothing else refreshes it until `_setLoopStep`
+      // reaches `review` minutes later.
+      //
+      // This is the field the r4 `closedAt` guard broke by proximity: it used to
+      // be fresh only because the line it reads ran unconditionally.
+      ticket.lastActivityAt = reentry ? Date.now() : ticket.closedAt;
       // The loop only runs on a ticket that has its own tree: every check below
       // it (commits on the branch, base still an ancestor, a diff) is a question
       // about a branch, and a ticket worked in the shared checkout has none. Those
@@ -4636,13 +4652,31 @@ function createTicketMethods(deps, shared) {
       // accurate there: the loop really did die mid-review.
       const fail = (step, evidence, tried, recovery) => {
         held = true;
-        if (String(step).startsWith('verify')) {
+        // ONE predicate for the stamp AND the message, deliberately a single
+        // binding rather than the same test written twice. They must agree: a
+        // recovery prescribed without a stamp names a `task done` the re-entry
+        // gate refuses — `reentry` requires the stamp — so the reader is told to
+        // run a verb that bounces with no alternative, which is where they go
+        // back to `reject`. That is this ticket's own defect, re-entering through
+        // the message layer.
+        // `reopened` is the arm that is NOT a hold at all: the rework reject
+        // already succeeded — the ticket is `open`, `reworkRound` is up and
+        // `loopStep` is gone — and only its DELIVERY failed. Stamping there writes
+        // a `verifyHold` onto an open ticket, a state no reader is written for,
+        // and notifying the hand would tell it "the ticket was NOT rejected and no
+        // rework round was counted" when both are false — to a seat that arm was
+        // entered precisely because it could not be reached. The lead gets the
+        // escalation and that is the whole recovery.
+        const cls = (String(step).startsWith('verify') && recovery !== 'reopened')
+          ? (recovery || 'hand')
+          : null;
+        if (cls) {
           this._stampVerifyHold(team, ticketId, {
-            step, at: Date.now(), evidence: String(evidence), recovery: recovery || 'hand',
+            step, at: Date.now(), evidence: String(evidence), recovery: cls,
           });
         }
         this._escalateTicket(team, ticketId, step, evidence, tried,
-          { keepHold: true, recovery: recovery ? holdRecoveryText(recovery, ticketId) : null });
+          { keepHold: true, recovery: cls ? holdRecoveryText(cls, ticketId) : null });
         // MF1: the LEAD is not the only party who can act. The suite-red arm this
         // ticket was framed against reaches the SEAT — urgent, tagged with the
         // close verb — and a hand-fixable check is the same situation: the branch
@@ -4653,7 +4687,11 @@ function createTicketMethods(deps, shared) {
         // have (respec is lead-only), and an `infra` hold names a box problem no
         // commit fixes — sending either to the seat invites exactly the wrong
         // action, which is worse than the silence it replaces.
-        if (recovery === 'hand') this._notifyHandOfHold(team, ticketId, step, evidence);
+        // `cls`, not `recovery` — the THIRD reader of the same predicate. Reading
+        // the raw argument here would notify the hand for a review-step throw
+        // classified `hand` by a future arm, telling a seat to re-close a ticket
+        // that has no stamp and would bounce.
+        if (cls === 'hand') this._notifyHandOfHold(team, ticketId, step, evidence);
       };
       // Tracks the step the RECORD is actually at, for the catch-all alone: an
       // unexpected throw after the record advanced to `review` would otherwise
@@ -4861,7 +4899,7 @@ function createTicketMethods(deps, shared) {
               // saying so when it does not is the same requirement mirrored,
               // because silence here is indistinguishable from nobody having
               // thought to look — and this is the arm with no other reader.
-              + `${kept.ok ? ` Full output preserved at ${kept.path}.` : ` The failing output could not be preserved (${kept.error}).`}`, 'hand');
+              + `${kept.ok ? ` Full output preserved at ${kept.path}.` : ` The failing output could not be preserved (${kept.error}).`}`, 'reopened');
           }
           return;
         }
@@ -5360,8 +5398,17 @@ function createTicketMethods(deps, shared) {
     // awaits git between reads, which is a wide enough window for another writer
     // (a verdict, a cancel) to land in, and saving a stale array would silently
     // revert it.
-    // The HAND's copy of a hand-fixable hold, mirroring `_rejectTicketFromLoop`'s
-    // delivery: the seat, urgent, tagged with the close verb, spec-confirm armed.
+    // The HAND's copy of a hand-fixable hold: the seat, urgent, tagged with the
+    // close verb — `_rejectTicketFromLoop`'s delivery MINUS the spec-confirm latch.
+    //
+    // FIRE-AND-FORGET, and the missing latch is deliberate rather than an
+    // oversight. `_checkSpecConfirm` and `_drainOwedSpec` both drop an unconfirmed
+    // entry unconditionally on a ticket that is not `open`, and a hold keeps the
+    // ticket `done` — that is the whole design. So arming the latch here is inert:
+    // it can never redeliver and never escalate, and writing it would leave a
+    // reader believing this notice is guaranteed when it is not. The reject path
+    // it otherwise mirrors REOPENS the ticket first, which is exactly why the
+    // latch works there and cannot here.
     //
     // Best-effort by construction, and that is the whole reason it is a separate
     // function rather than a branch inside `fail()`. The lead's escalation and the
@@ -5387,9 +5434,7 @@ function createTicketMethods(deps, shared) {
           + 'Nothing was torn down — your worktree, your branch and this seat are exactly as they were. '
           + 'The ticket was NOT rejected and no rework round was counted.';
         this._gatedDeliver(seat, 'ticket-loop', body, true,
-          `[ticket ${ticketId} HELD] close with ${ticketCloseVerb(ticketId)}`,
-          (disposition) => this._armSpecConfirm(seat, ticketId, disposition,
-            { label: 'HELD', reason: body, from: 'ticket-loop' }));
+          `[ticket ${ticketId} HELD] close with ${ticketCloseVerb(ticketId)}`);
       } catch (e) {
         log.error('ticket', `hold notice for ${ticketId} did not reach the hand: ${e.message}`);
       }
