@@ -982,8 +982,10 @@ function findOpen(tickets, id) {
  * no reason, and the parity test compares the composed body.
  *
  * `projectKey` is what resolves a relative pointer, so it is required rather
- * than optional: a defaulted-away key would silently render nothing for exactly
- * the 70% of pointers this exists to serve.
+ * than optional: a defaulted-away key would silently render nothing for the
+ * relative pointers this exists to serve, which are most of them. Nothing
+ * ENFORCES the argument — a call site that forgets it takes the `!loc.ok` arm
+ * below, which is why that arm logs rather than returning quietly.
  */
 function deliverSpec(name, ticket, projectKey) {
   if (!name || !host || !host.sessions) return false;
@@ -998,6 +1000,13 @@ function deliverSpec(name, ticket, projectKey) {
   // directory is `<clodexHome>/projects/<key>`, which is byte-identical to core's
   // `projectDirFor(REGISTRY_DIR, team.root)` — the same hash under the same root.
   const loc = resolveProject(str(projectKey));
+  // Unreachable from either live caller: `add` and `assign` both refuse on
+  // `!loc.ok` before delivering, with this same key. It is here for the fourth
+  // call site that forgets the argument — nothing enforces it, and the only
+  // other symptom would be a dispatch silently missing its TASK DIR line, which
+  // reads as the pre-t458 shape rather than as a bug. Deliberately untested: a
+  // fixture reaching it would have to invent the caller that does not exist.
+  if (!loc.ok) host.log.error(`no project dir for ${ticket.id} — the dispatch carries no TASK DIR line`);
   const taskDirLine = loc.ok ? ticketTaskDirLineFor(loc.dir, ticket) : '';
   try {
     handle.inject(`[ticket ${ticket.id}] ${taskDirLine}${closeLine(ticket.id)}${str(ticket.spec)}`, { parkable: true });

@@ -360,9 +360,14 @@ const { ticketTaskDirLine: coreTaskDirLine } = require('../session-manager');
 // test: two roots would make every comparison below one between two trees.
 //
 // Shaped as a real `~/.clodex` (home + a `.clodex` leaf) rather than a bare temp
-// dir, because one of the rows IS a `~/…` pointer: with an unrelated homedir it
-// would escape the projects root and refuse, and the row that exists to exercise
-// the empty-clause gate would instead be exercising the refusal path.
+// dir, for the resolveTaskDir test BELOW and only that one: it is the single
+// place `homedir` is wired (see the `env` it builds), so it is the only place a
+// `~/…` row resolves INSIDE the projects root instead of escaping it and
+// refusing. The dispatch-parity test further down passes no homedir, so both
+// halves there see the real `os.homedir()` and its `~` row agrees by REFUSING —
+// which is agreement for the wrong reason, and not what pins the gate. What
+// pins the empty-clause gate there is the ABSOLUTE row, which resolves and must
+// still render '' (asserted outright at the end of that test).
 const PARITY_HOMEDIR = path.join(os.tmpdir(), 'parity-taskdir-home');
 const PARITY_CLODEX = path.join(PARITY_HOMEDIR, '.clodex');
 const PARITY_PROJECTS = path.join(PARITY_CLODEX, 'projects');
