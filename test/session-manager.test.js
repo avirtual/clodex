@@ -9040,7 +9040,7 @@ test('t400 a wedged-confirmed REVIEW seat is never written to by the sweep', asy
 // Scanned from SOURCE rather than driven through eleven handlers: the property
 // is "no site anywhere clears the stamp without moving the clock", and a
 // behavioural test can only cover the sites someone remembered to write.
-test('t400 all ELEVEN `nudgedAt = null` sites also move lastActivityAt, so `wakeAt` needs no clearing site', () => {
+test('t400 all TWELVE `nudgedAt = null` sites also move lastActivityAt, so `wakeAt` needs no clearing site', () => {
   const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'team-tickets.js'), 'utf-8');
   const lines = src.split('\n');
   const sites = [];
@@ -9056,8 +9056,12 @@ test('t400 all ELEVEN `nudgedAt = null` sites also move lastActivityAt, so `wake
     if (line.trim().startsWith('//')) return;
     if (/\.nudgedAt\s*=\s*null\s*;/.test(line)) sites.push(i + 1);
   });
-  assert.strictEqual(sites.length, 11,
-    `ENTER: exactly ELEVEN clearing sites (found ${sites.length} at ${sites.join(', ')}). A different count means a `
+  // TWELFTH site added by t345, and audited here as this ratchet requires: it is
+  // `_stampVerifyHold`'s escalation arm, which stamps `lastActivityAt` on the line
+  // immediately above the clear (a new escalation is a new stall episode, so the
+  // ladder must time from the moment the lead was told).
+  assert.strictEqual(sites.length, 12,
+    `ENTER: exactly TWELVE clearing sites (found ${sites.length} at ${sites.join(', ')}). A different count means a `
     + 'site was added or removed, and the new one has NOT been audited — that is what this test is for');
   // Scoped to the ENCLOSING METHOD, not a fixed line count. A fixed window has to
   // be tuned to the widest real gap (23 lines, at the `_taskDone` loop-eligible
