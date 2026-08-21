@@ -544,7 +544,12 @@ app.whenReady().then(() => {
 
   // ipc-handlers.js holds no electron require — the electron-backed transport and
   // GUI seams are passed from here. No BrowserWindow crosses the boundary; `e` is
-  // an opaque sender token only this adapter unwraps.
+  // an opaque sender token only this adapter unwraps, and a handler may use it
+  // through exactly two methods, `send` and `isDestroyed`
+  // (docs/renderer-events.md §C). The pass-through below is why the desktop side
+  // of that cannot be tested: `e.sender` is Electron's own WebContents, which no
+  // code of ours shrinks. Widening the set means widening web-host.js's token in
+  // the same commit, or the two hosts diverge on whatever was added.
   const { registerIpcHandlers } = require('./ipc-handlers');
   registerIpcHandlers({
     ...engine,
