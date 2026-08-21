@@ -1202,7 +1202,16 @@ test('seed report: the advice leads with "nothing to do", never a bare delete', 
     for (const [what, text] of [['log', warns[0].msg], ['note', notes[0].body]]) {
       assert.match(text, /nothing needs doing/, `${what}: the no-action case is stated`);
       assert.match(text, /copy yours aside first/, `${what}: keeping the edit is the precondition to deleting`);
-      assert.ok(text.indexOf('nothing needs doing') < text.indexOf('delete it under'),
+      // Both anchors are located BEFORE they are compared. An absent end anchor
+      // yields -1, and `i < -1` is false so the comparison would still fail --
+      // but it would fail claiming the order is wrong when the sentence is
+      // simply missing, which is a different defect. Asserting the find makes
+      // the two legible apart. The pronoun tracks the file count, so it is
+      // matched either way rather than pinned to the singular.
+      const noAction = text.search(/nothing needs doing/);
+      const destructive = text.search(/delete (it|them) under/);
+      assert.ok(destructive >= 0, `${what}: the delete instruction is present at all`);
+      assert.ok(noAction >= 0 && noAction < destructive,
         `${what}: the no-action case comes BEFORE the delete, or a skimmer deletes real config`);
     }
   });
@@ -1222,6 +1231,115 @@ test('seed report: a corrupt report file announces rather than swallowing', () =
       'unreadable dedupe state degrades to announcing, never to silence');
     assert.deepStrictEqual(readSeedReport(registryDir), { [rel]: sha256(Buffer.from('SHIPPED_V2')) },
       'and the corrupt file is replaced with usable state');
+  });
+});
+
+// --- t456 r2: an announcement is banked only if the note reached disk --------
+// notifications._save swallows a write failure and add() returns the record
+// regardless, so the return value cannot witness delivery. If the hash were
+// banked anyway, an unwritable inbox would lose the note AND go quiet until the
+// ship next moves -- a new silent path inside the mechanism built to end a
+// silence.
+
+test('seed report: an undelivered note is NOT banked, and the next launch retries', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('templates', 'reviewer.json');
+    fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V2');
+    stageDest(registryDir, rel, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+
+    // The inbox cannot be written: a DIRECTORY where notifications.json goes,
+    // which makes the real write throw exactly where a full disk or a bad mode
+    // would, rather than stubbing the store and testing the stub.
+    fs.mkdirSync(path.join(userData, 'notifications.json'), { recursive: true });
+
+    const first = initStores(userData, { registryDir, resourcesDir });
+    // ENTER: the write really did fail -- if a note somehow landed, the whole
+    // premise of this test is gone and the assertions below prove nothing.
+    assert.deepStrictEqual(first.notifications.list(), [], 'ENTER: the note could not be stored');
+    assert.strictEqual(fs.existsSync(seedReportPath(registryDir)), false,
+      'nothing announced, so nothing is banked -- no report state is written at all');
+
+    // Inbox works again on the next launch; the announcement must still happen.
+    fs.rmdirSync(path.join(userData, 'notifications.json'));
+    const second = initStores(userData, { registryDir, resourcesDir });
+    assert.strictEqual(inboxNotes(second).length, 1,
+      'the retry delivers the note that the failed launch never banked');
+    assert.strictEqual(readSeedReport(registryDir)[rel], sha256(Buffer.from('SHIPPED_V2')),
+      'and only now is the hash recorded as announced');
+  });
+});
+
+test('seed report: a failed note does not discard the PREVIOUS token', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('templates', 'reviewer.json');
+    fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V2');
+    stageDest(registryDir, rel, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+
+    initStores(userData, { registryDir, resourcesDir }); // announces V2, banks it
+    assert.strictEqual(readSeedReport(registryDir)[rel], sha256(Buffer.from('SHIPPED_V2')),
+      'ENTER: V2 is banked before the ship moves');
+
+    // The ship moves AND the inbox breaks: the V3 note fails, so V3 must not be
+    // banked -- but the V2 token must survive, or a recovered launch re-announces
+    // V2, which the operator already saw.
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V3');
+    const userDataFile = path.join(userData, 'notifications.json');
+    fs.rmSync(userDataFile, { force: true });
+    fs.mkdirSync(userDataFile, { recursive: true });
+
+    initStores(userData, { registryDir, resourcesDir });
+    assert.strictEqual(readSeedReport(registryDir)[rel], sha256(Buffer.from('SHIPPED_V2')),
+      'the undelivered V3 is not banked, and the delivered V2 is not lost');
+  });
+});
+
+test('seed report: a failed note is itself logged, never silent', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('templates', 'reviewer.json');
+    fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V2');
+    stageDest(registryDir, rel, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+    fs.mkdirSync(path.join(userData, 'notifications.json'), { recursive: true });
+    const log = captureLog();
+
+    initStores(userData, { log, registryDir, resourcesDir });
+
+    const warns = log.seedWarnings();
+    assert.strictEqual(warns.length, 2, 'the stranded report AND the delivery failure both warn');
+    assert.ok(warns.some((w) => /not written/.test(w.msg)),
+      'the lost note leaves a trace: the log is the only channel left when the inbox is the thing that broke');
+  });
+});
+
+test('seed report: with SEVERAL stranded files the advice is plural throughout', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    // Every other row here strands ONE file, where the singular pronoun is
+    // correct either way -- so a half-applied plural ("edited them ... delete
+    // it") reads fine in all of them. Two files is the smallest case that can
+    // tell the two apart.
+    const relA = path.join('templates', 'reviewer.json');
+    const relB = path.join('prompts', 'system', 'lead.md');
+    fs.mkdirSync(path.join(resourcesDir, 'templates'), { recursive: true });
+    fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, relA), 'SHIPPED_V2');
+    fs.writeFileSync(path.join(resourcesDir, relB), 'SHIPPED_V2');
+    stageDest(registryDir, relA, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+    stageDest(registryDir, relB, 'OPERATOR_CONFIG', 'SHIPPED_V1');
+    const log = captureLog();
+
+    const stores = initStores(userData, { log, registryDir, resourcesDir });
+
+    const warns = log.seedWarnings();
+    assert.strictEqual(warns.length, 1, 'ENTER: one report covering both files');
+    const notes = inboxNotes(stores);
+    assert.strictEqual(notes.length, 1, 'ENTER: ONE note listing both, not one note each');
+    for (const [what, text] of [['log', warns[0].msg], ['note', notes[0].body]]) {
+      assert.match(text, /edited them deliberately/, `${what}: plural subject`);
+      assert.match(text, /delete them under/, `${what}: plural object too -- the switch must be applied at BOTH sites`);
+      assert.doesNotMatch(text, /delete it under/, `${what}: no singular left behind`);
+    }
   });
 });
 

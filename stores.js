@@ -1492,6 +1492,12 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
     // fires only when a shipped update is withheld that was not withheld
     // before. Keying that on the SHIPPED hash (not on the file's presence in
     // the set) is what makes it fire again when the ship next moves.
+    // Scope coupling, deliberate and worth knowing: this dedupe token lives
+    // under registryDir while the inbox it gates lives under userData. Two
+    // hosts pointed at different CLODEX_DATA_DIRs therefore share the token but
+    // not the channel, so the second one records an announcement the operator
+    // never saw. Defaults put both on the same path, so this is a note, not a
+    // move -- the file's location is settled.
     const reportPath = path.join(destRoot, SEED_REPORT_NAME);
     let reported = {};
     try { reported = JSON.parse(fs.readFileSync(reportPath, 'utf-8')) || {}; }
@@ -1505,21 +1511,38 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
 
     if (stranded.length) {
       const rels = stranded.map((s) => s.rel);
-      const fixIt = `If you edited ${rels.length > 1 ? 'them' : 'it'} deliberately, nothing needs doing. To take the shipped version instead, copy yours aside first, then delete it under ${destRoot} and relaunch.`;
+      const it = rels.length > 1 ? 'them' : 'it';
+      const fixIt = `If you edited ${it} deliberately, nothing needs doing. To take the shipped version instead, copy yours aside first, then delete ${it} under ${destRoot} and relaunch.`;
       // warn, not info: a withheld upgrade was invisible for 8 days and 20
       // shipped revisions once, and the silence WAS the bug.
       if (log) log.warn?.('seed', `${stranded.length} library file(s) differ from both the shipped copy and their seed stamp, so they will never receive shipped updates: ${rels.join(', ')}. ${fixIt}`);
       const fresh = stranded.filter((s) => reported[s.rel] !== s.shippedHash);
       if (fresh.length && notifications) {
-        // Best-effort like every other write here: an unwritable inbox must not
-        // take down store construction.
+        // Recording a hash as announced is a promise that the operator was
+        // told, and only a note that survived to disk keeps it. `add` cannot
+        // report the failure that matters -- `_save` swallows a write error and
+        // `add` returns the record regardless -- so read the record back rather
+        // than trusting the return. On any doubt the hash is NOT advanced, so
+        // the next launch retries: the same "announce, never swallow" direction
+        // the corrupt-state read above takes, for the same reason.
+        let delivered = false;
         try {
-          notifications.add({
+          const rec = notifications.add({
             from: SEED_REPORT_FROM,
             workspaceId: null,
             body: `A shipped update is being withheld from ${fresh.length} file(s) in your Clodex library, because each differs from both the shipped copy and the version Clodex last wrote there:\n\n${fresh.map((s) => s.rel).join('\n')}\n\n${fixIt}`,
           });
+          delivered = !!(rec && notifications.list().some((n) => n.id === rec.id));
         } catch (e) { if (log) log.info?.('seed', `inbox note skipped (${e && e.message})`); }
+        if (!delivered) {
+          if (log) log.warn?.('seed', 'the inbox note was not written, so the report state is left for the next launch to retry');
+          // Carry the PREVIOUS token forward (or drop the key when there was
+          // none), so an undelivered announcement is never banked.
+          for (const s of fresh) {
+            if (reported[s.rel] === undefined) delete nextReport[s.rel];
+            else nextReport[s.rel] = reported[s.rel];
+          }
+        }
       }
     }
     // Write only on a real change, so the healthy case (nothing stranded, no
