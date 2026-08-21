@@ -86,15 +86,26 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // rather than about the wire. That is what the three clocks above can only
   // estimate.
   //
-  // THE STATUS IS WHAT MAKES IT SOUND, and an A alone is not enough: one already
-  // in flight when the ^C was written is indistinguishable from one caused by
-  // it, so accepting any A lets a prompt redraw ack a signal the shell has not
-  // processed. 130 is 128+SIGINT and is written by the interrupt handler, so a
-  // mark carrying it cannot predate the interrupt — the token that cannot come
-  // early, which this needed and "a prompt was drawn" never was. Measured on
-  // real zsh and bash, both keymaps, empty line and half-typed: every ^C at a
-  // prompt emits D;130 then A, and no async redraw (SIGWINCH, zle reset-prompt)
-  // emits either mark.
+  // WHAT THE STATUS ACTUALLY PROVES, stated exactly: the last command to finish
+  // exited 128+SIGINT. That is strictly stronger than "a prompt was drawn" — a
+  // plain redraw carries no such status — and it is why this is worth having.
+  //
+  // IT IS NOT PROOF THAT THE INTERRUPT IS OURS, and must not be read as one.
+  // `$?` is LATCHED: it survives every prompt cycle until a command actually
+  // runs, so after any interrupt the shim re-emits D;130 then A on each empty
+  // Enter, indefinitely. Measured on real zsh and bash — ^C, then three bare
+  // Enters, all four reporting 130; only running `true` clears it to 0. Two
+  // residual windows follow, and NEITHER is closed here:
+  //
+  //   (a) STALE LATCH — an earlier interrupt left `$?` at 130, and any prompt
+  //       cycle inside our race window (the operator pressing Enter is enough)
+  //       re-reports it as if it were the reply to our ^C.
+  //   (b) IN-FLIGHT — a D;130 A pair generated BEFORE our write but delivered to
+  //       feed() after it, which is indistinguishable on arrival.
+  //
+  // THE CLOCKS ARE THE ONLY THING STANDING BEHIND BOTH. Since bytes no longer
+  // release the command, deleting them leaves nothing but a signal that can
+  // lie — an unrecoverable trade, not a cleanup.
   //
   // It is not a new requirement on the shell: exec() already refuses unless
   // `rec.shimmed && rec.marks`. THE CLOCKS ARE STILL THE BACKSTOP, and the
@@ -533,25 +544,26 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       // speaks and never marks an interrupt now waits out the cap instead of the
       // window, which is later and correct rather than sooner and hopeful.
       const arm = () => { spoke = true; };
-      // The fast, correct path, and it turns on WHICH prompt mark this is. An A
-      // whose precmd reported 130 is the interrupt's own: 128+SIGINT is written
-      // by the handler, so that mark cannot predate the signal it acknowledges
-      // and nothing is left to discard when it arrives. Any other A — a redraw,
-      // a prompt from before our write, the tail of an unrelated command — is
-      // NOT evidence about our ^C, and releasing on one types onto a line the
-      // interrupt is about to kill, splitting the command across the boundary.
+      // The fast path, and it turns on WHICH prompt mark this is: one reporting
+      // that the last command exited 128+SIGINT. A plain redraw carries no such
+      // status, so it no longer releases the command — which is the difference
+      // between this and typing onto a line the interrupt is about to kill.
       //
-      // This is a causal test, not a count: "ignore the first N" cannot work
-      // because the number of redraws is theme-dependent and unbounded, and an
-      // arbitrarily late redraw fails this test for the same reason an early one
-      // does — it carries no 130, having run no interrupt handler, whenever it
-      // arrives. Whichever fires first — a qualifying mark or a clock — wins,
-      // and typeCommand is idempotent, so the losers are no-ops.
+      // It is a FILTER, not a proof of ownership. `$?` is latched, so a stale
+      // 130 from an earlier interrupt re-reports on any later prompt cycle, and
+      // a pair generated before our write can still arrive after it. Both are
+      // left open deliberately: closing them means forfeiting the fast path
+      // whenever a 130 is ambiguous — paying the silence deadline on every exec
+      // that follows an interrupt — to buy a window the clocks already cover.
+      // See the constants above for the full statement.
       //
-      // A shell whose ^C never produces a 130 (a profile that clobbers the
-      // precmd hook after ours is installed) simply never takes this path and
-      // falls back to the clocks below, which is what it had before marks
-      // existed: later, not wrong.
+      // Counting is still wrong, for its own reason: the number of redraws is
+      // theme-dependent and unbounded, so no N is safe.
+      //
+      // Whichever fires first — a qualifying mark or a clock — wins, and
+      // typeCommand is idempotent, so the losers are no-ops. A shell whose ^C
+      // never reports a status simply never takes this path and falls back to
+      // the clocks: later, not wrong.
       const promptAck = (info) => { if (info && info.interrupted) typeCommand(); };
       rec.execPromptAck = promptAck;
       later(() => { if (!spoke) typeCommand(); }, ABANDON_ACK_MS);

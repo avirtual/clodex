@@ -65,7 +65,17 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
   }
 
   function text(chunk) {
-    if (!capturing || !chunk) return;
+    if (!chunk) return;
+    // OUTPUT BETWEEN A D AND AN A BREAKS THE PAIR. Our own shim prints both from
+    // one precmd with nothing in between (verified in term-shim.js for both
+    // shells, and measured on real zsh and bash: zero bytes between them), so
+    // this never fires for us. It fires when a SECOND, independently sequenced
+    // OSC 133 stream shares the terminal — iTerm2's or VSCode's shell
+    // integration running alongside ours — where an unrelated A could otherwise
+    // inherit our D's status. Cleared before the capture guard below, because
+    // the interrupt case is exactly the one where nothing is being captured.
+    lastExit = null;
+    if (!capturing) return;
     out += chunk;
     // Keep the TAIL, not the head: a build's last lines are where the error is,
     // and the head is the part the operator already watched scroll past.
@@ -106,18 +116,18 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
           // settling a record sees it settled before it is told the prompt is
           // back.
           //
-          // THE ARGUMENT CARRIES THE IDENTITY, and the announcement is useless
-          // to exec() without it. A bare "a prompt was drawn" cannot say WHICH
-          // prompt: an A already in flight when a ^C was written is
-          // indistinguishable from one caused by it, so a consumer treating any
-          // A as the acknowledgement types onto a line the interrupt is about to
-          // kill — the command is then SPLIT across the ^C boundary and the tail
-          // runs on the fresh prompt as a truncated command that is still valid.
-          // `interrupted` is true only for an A whose own precmd reported
-          // 128+SIGINT, which is emitted BY the interrupt handler and therefore
-          // cannot predate the interrupt. Measured on real zsh and bash: every
-          // ^C at a prompt emits D;130 then A, and no async prompt redraw
-          // (SIGWINCH, zle reset-prompt) emits either mark at all.
+          // `interrupted` reports ONE fact and no more: the last command to
+          // finish exited 128+SIGINT. A consumer waiting on a ^C needs it
+          // because a bare "a prompt was drawn" cannot distinguish a redraw from
+          // a reply — and typing on a redraw puts the command on a line the
+          // interrupt is about to kill, splitting it across the boundary so the
+          // tail runs as a shorter command that is still valid.
+          //
+          // It is NOT "this prompt is your interrupt's". `$?` is latched, so the
+          // shim re-emits D;130 on every prompt cycle until a command runs
+          // (measured: ^C then three bare Enters all report 130). A consumer
+          // must treat this as a filter with a timeout behind it, never as
+          // proof — drawer-pty's exec() keeps its clocks for exactly that.
           if (onPrompt) { try { onPrompt({ interrupted: lastExit === 130 }); } catch {} }
           lastExit = null;
         } else if (body === 'C' || body.startsWith('C;')) {

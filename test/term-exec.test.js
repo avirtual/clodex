@@ -45,10 +45,11 @@ const BEL = String.fromCharCode(0x07);
 // untestable, and the split is the whole fix.
 //
 // Bytes are not that evidence and this helper does not pretend they are — it
-// emits the interrupt's own marks. A ^C consumed by the tty line discipline is
-// delivered to the foreground process group asynchronously with respect to the
-// byte stream, so a shell can print a whole quiet prompt with the interrupt
-// still pending; only the shell's own report of 128+SIGINT settles it.
+// emits the marks a real shell sends. A ^C consumed by the tty line discipline
+// is delivered to the foreground process group asynchronously with respect to
+// the byte stream, so a shell can print a whole quiet prompt with the interrupt
+// still pending; only the shell's own report of 128+SIGINT releases the command.
+// That report is a FILTER and not a proof of ownership — see INTR.
 // Read from the source, not hand-copied. A duplicated literal that drifts from
 // the product's would leak a stale value into `execTimers`, surfacing as an
 // unrelated wrong-timer failure somewhere downstream.
@@ -72,9 +73,14 @@ const D = (code) => `${ESC}]133;D;${code}${BEL}`;
 // What a REAL shell emits when a ^C is processed at its prompt, in this order
 // and from one precmd: the status first, then the prompt. Measured on zsh and
 // bash, in both keymaps, on an empty line and on a half-typed one — 8 rows, all
-// `D;130` then `A`, never a bare A. 130 is 128+SIGINT, written by the interrupt
-// handler, which is what makes it impossible for this mark to predate the
-// signal it acknowledges.
+// `D;130` then `A`, never a bare A.
+//
+// WHAT IT PROVES IS NARROW: the last command to finish exited 128+SIGINT. It
+// does NOT identify WHOSE interrupt. `$?` is latched and the shim re-emits this
+// pair on every prompt cycle until a command actually runs — measured, a ^C
+// followed by three bare Enters reports 130 all four times, and only running a
+// command clears it. So a stale pair can arrive inside our race window, and the
+// clocks are what stands behind that. Pinned as a known limitation below.
 //
 // Kept distinct from `A` throughout this file rather than folded into it: `A`
 // alone is a prompt redraw, which is exactly the mark that must NOT release a
@@ -419,17 +425,17 @@ test('a prompt mark types the command — the byte window alone cannot tell the 
 // Why a status and not a count. The number of prompt redraws before a shell
 // processes an interrupt is set by the operator's theme and is unbounded — a
 // segment waiting on a network call can redraw arbitrarily late. So "ignore the
-// first N" cannot be made safe at any N. 130 is 128+SIGINT, written by the
-// interrupt handler itself, so an A carrying it cannot exist before the
-// interrupt ran; and an arbitrarily LATE redraw still carries no 130, because a
-// redraw runs no interrupt handler no matter when it arrives.
+// first N" cannot be made safe at any N. A status is not a proof of ownership
+// either (see INTR), but it is a fact the shell reports about itself rather than
+// a number we guessed, and what it filters out is every prompt that is only a
+// redraw.
 
 test('a bare prompt mark does not type — a redraw is not our interrupt', () => {
   // The async prompt redraw. The operator's theme repaints (a git or cloud
   // segment resolving, a SIGWINCH), which emits a prompt mark of its own while
   // our ^C is still queued in the pty and unprocessed. Releasing on it types
   // onto the line the interrupt is about to kill.
-  const { w, spawn } = mk();
+  const { w, spawn, timers } = mk();
   w.spawn('ws-1', 'alice', {});
   w.exec('ws-1', 'alice', 'ls');
   const proc = spawn.spawned[0];
@@ -437,6 +443,14 @@ test('a bare prompt mark does not type — a redraw is not our interrupt', () =>
   proc.emit(A);
   assert.deepStrictEqual(proc.written, [CTRL_C],
     'a prompt mark carrying no interrupt status is not evidence our ^C was processed');
+
+  // Rejecting the impostor must not WEDGE the exec: a guard that refuses the
+  // mark and then never types trades a rare corruption for a permanent hang,
+  // which is worse. The cap is what carries it, and asserting that here is what
+  // makes this test about a filter rather than about a refusal.
+  timers.filter((t) => t.ms === MAX_MS)[0].fn();
+  assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
+    'the command still goes out on the cap — rejected, not wedged');
 });
 
 test('a prompt mark whose status is NOT an interrupt does not type', () => {
@@ -459,6 +473,43 @@ test('a prompt mark whose status is NOT an interrupt does not type', () => {
   proc.emit(INTR);
   assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
     'the interrupt mark that follows still releases the command');
+});
+
+// KNOWN LIMITATION, PINNED DELIBERATELY. This test asserts the CURRENT
+// behaviour, and that behaviour is a race we chose not to close — read it as a
+// record of the gap, not as a property worth preserving.
+//
+// `$?` is latched: after any interrupt the shim re-emits `D;130` then `A` on
+// every prompt cycle until a command actually runs. Measured on real zsh and
+// bash — a ^C followed by three bare Enters reports 130 all four times, and
+// only running `true` clears it to 0. So a pair that has nothing to do with our
+// ^C can arrive after we write it (the operator pressing Enter is enough) and
+// releases the command exactly as the real acknowledgement would.
+//
+// Nothing in this file distinguished those two cases before, and that absence is
+// what let "a token that cannot predate the signal" stand in the prose for two
+// rounds. The claim was only ever measured in the direction ^C -> 130; it was
+// never measured 130 -> ^C.
+//
+// NOT closed on purpose: the only fix that would work is refusing the fast path
+// whenever a 130 is ambiguous, which means paying the silence deadline on every
+// exec that follows an interrupt, to buy a window the clocks already backstop.
+// A shim-side nonce could close it properly; that is a larger change than this
+// ticket, and the clocks make it a latency question rather than a correctness
+// one.
+test('a STALE interrupt status still releases the command — the residual race', () => {
+  const { w, spawn } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'ls');
+  const proc = spawn.spawned[0];
+  assert.deepStrictEqual(proc.written, [CTRL_C],
+    'ENTER: our ^C is out and unprocessed — nothing typed yet');
+
+  // A prompt cycle that is NOT our interrupt's: the latch re-reporting an older
+  // 130. Indistinguishable from the real reply on arrival, which is the point.
+  proc.emit(INTR);
+  assert.deepStrictEqual(proc.written, [CTRL_C, `ls${CR}`],
+    'the stale pair releases the command — the residual window this fix does NOT close');
 });
 
 test('an interrupt status does not carry across an intervening prompt', () => {
