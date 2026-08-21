@@ -62,8 +62,9 @@ blocks a release.
   how many times. The one exception is the seat being corrected as it works, which
   is already told directly. The message carries a specific warning with it: work
   already in the tree which the current spec never mentions is more likely to be an
-  earlier instruction than stray work, so it is reported rather than deleted. Superseded bodies stay out of the message itself and off the board's
-  data feed; the ticket list shows the correction count as it already did.
+  earlier instruction than stray work, so it is reported rather than deleted.
+  Superseded bodies stay out of the message itself and off the board's data feed;
+  the ticket list shows the correction count as it already did.
 
 ## 5.15.0 — 2026-08-21 — the ticket machinery stops producing wrong results
 
