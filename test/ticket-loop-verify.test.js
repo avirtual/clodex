@@ -665,7 +665,11 @@ test('a spec naming its task dir on a LATER line reaches the reviewer', async ()
   assert.strictEqual(f.diffFile().length, 1, 'and its diff was written');
 });
 
-test('escalation tears nothing down and clears the loop hold', async () => {
+test('escalation tears nothing down, and HOLDS the ticket for the recovery', async () => {
+  // t345 overturned the second half of this subject. It used to assert the hold
+  // was RELEASED — `!('loopStep' in t)` — which is precisely the stranding: the
+  // ticket fell out of flight, the sweep stopped seeing it, and `task done`
+  // bounced. The tear-nothing-down half is unchanged and still the point.
   const repo = mkRepo();
   const f = mkLoop({ repo });
   f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
@@ -678,7 +682,7 @@ test('escalation tears nothing down and clears the loop hold', async () => {
     'the worktree record is untouched by an escalation');
   assert.ok(f.m.sessions.has('team-hand'), 'the hand seat survives an escalation');
   assert.strictEqual(t.state, 'done', 'the escalation does not reopen or cancel the ticket');
-  assert.ok(!('loopStep' in t), 'the loop no longer holds a ticket it handed to a human');
+  assert.strictEqual(t.loopStep, 'verify', 'the hold stays: a human owes this ticket an action');
   assert.match(f.esc()[0].body, /Nothing was torn down/);
 });
 
@@ -727,7 +731,12 @@ test('a HELD delivery that never parked also keeps the hold', async () => {
   assert.strictEqual(f.one().loopStep, 'verify', 'a held-but-unparked escalation reached nobody');
 });
 
-test('a PARKED escalation is durable, so it does release the hold', async () => {
+test('a PARKED escalation counts as REACHED, and is stamped like any other', async () => {
+  // The delivery classification this subject exists for is unchanged: a park is a
+  // written file the seat drains, so it counts as reached where a bare `held`
+  // does not. What changed with t345 is what "reached" DOES on a verify arm — it
+  // no longer releases the hold, so the observable is the stamp rather than the
+  // absence of `loopStep`. Asserting the release here would re-pin the stranding.
   const repo = mkRepo();
   const f = mkLoop({ repo });
   f.m._gatedDeliver = (target, sender, body) => { f.gated.push({ target, sender, body }); return { parked: 'park-1' }; };
@@ -735,7 +744,9 @@ test('a PARKED escalation is durable, so it does release the hold', async () => 
 
   await f.m._runTicketLoop(f.team, 't1');
 
-  assert.ok(!('loopStep' in f.one()), 'a park is a written file the seat drains — the lead will get it');
+  const t = f.one();
+  assert.strictEqual(t.loopStep, 'verify', 'the hold stays — the recovery runs from here');
+  assert.ok(t.verifyHold, 'and the board carries the escalation the park will deliver');
 });
 
 test('closing a ticket that was already nudged starts a fresh stall episode', async () => {
@@ -946,11 +957,16 @@ test('the UNBRIEFED escalation KEEPS the hold, because the seat can still answer
     'in-flight is the property that actually matters: it is what lets a verdict land');
 });
 
-test('an escalation with no live seat behind it still RELEASES the hold', async () => {
-  // The converse of the test above, and the reason keepHold is an opt-in rather
-  // than the default: a verify-stage failure spawns nobody, so nothing can ever
-  // land a verdict on that ticket. Holding it there would leave the sweep
-  // nudging the lead about a loop that has already reported and stopped.
+test('a verify escalation with no live seat behind it is HELD, not finished', async () => {
+  // OVERTURNED BY t345, and this subject's original reasoning is the defect
+  // stated as an intention: "nothing can ever land a verdict on that ticket, so
+  // holding it would leave the sweep nudging about a loop that has stopped."
+  // The premise was right and the conclusion inverted — a verify failure is
+  // something a HUMAN can fix, so the ticket is not finished; it is waiting. The
+  // sweep nudging about it is the desired behaviour, not the cost.
+  //
+  // The reviewer-less arm above still releases, and that distinction survives:
+  // there, nobody can ever act. Here the hand commits and closes again.
   const repo = mkRepo();
   const f = mkLoop({ repo });   // no commit on the branch: CHECK 1 fails
   f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
@@ -960,9 +976,8 @@ test('an escalation with no live seat behind it still RELEASES the hold', async 
 
   assert.strictEqual(f.esc().length, 1, 'ENTER: the verify arm escalated');
   const t = f.one();
-  assert.ok(!('loopStep' in t) || t.loopStep == null,
-    'a delivered escalation with nothing left running releases the hold');
-  assert.strictEqual(ticketInFlight(t), false, 'the ticket is finished with the lead');
+  assert.strictEqual(t.loopStep, 'verify', 'a delivered verify escalation keeps the hold');
+  assert.strictEqual(ticketInFlight(t), true, 'the ticket is waiting on a human, which is in flight');
 });
 
 test('the nudge for a loop-held ticket names the STEP, not the finished hand', async () => {
@@ -3378,17 +3393,29 @@ test('t345: a re-entry that STILL fails re-escalates and re-holds, not strands',
   assert.ok(t.verifyHold, 'still stamped');
 });
 
-test('t345: the hold is CLEARED on the green path, so a clean run carries no stamp', async () => {
+test('t345: the hold is CLEARED when a later run goes green — the finally, not the fail arm', async () => {
+  // Aimed at the `finally` specifically, which is why it strands FIRST. Asserting
+  // "a clean run carries no stamp" on a ticket that never failed a check is
+  // nearly vacuous: there is nothing to clear, so it passes against code with no
+  // clear at all. The stamp has to EXIST before the green run for this to be a
+  // test of the clearing.
+  //
+  // A stamp surviving a green run is not cosmetic: the sweep reads it, so the
+  // ticket would alarm "escalated, waiting for someone to act" while its review
+  // is out — an alarm about a check that has already passed.
   const repo = mkRepo();
-  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const f = mkLoop({ repo });
-  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
 
+  await strand(f);
+  assert.ok(f.one().verifyHold, 'ENTER: the stamp is on the record before the green run');
+
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  f.tstore.save(f.team.root, [{ ...f.one(), loopStep: 'verify' }]);
   await f.m._runTicketLoop(f.team, 't1');
   await new Promise((r) => setImmediate(r));
 
-  assert.strictEqual(f.created.length, 1, 'ENTER: this is the green path, a reviewer was spawned');
-  assert.ok(!('verifyHold' in f.one()), 'a ticket that never failed a check carries no hold');
+  assert.strictEqual(f.created.length, 1, 'ENTER: this run went green and reached a reviewer');
+  assert.ok(!('verifyHold' in f.one()), 'the stamp is gone — nobody owes this ticket a check any more');
 });
 
 test('t345: a reject on a held ticket still works, and clears the hold', async () => {
@@ -3411,7 +3438,11 @@ test('t345: an accept on a held ticket clears the hold too', async () => {
   const f = mkLoop({ repo });
 
   await strand(f);
-  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'accept', id: 't1', who: null, body: '' });
+  // Awaited DIRECTLY, not driven through `_handleTask`: accept is the one task
+  // verb that is async, and the sync handler fires it unawaited. Reading the
+  // record straight after the handler returns reads it BEFORE the accept has
+  // written — a fixture that asserts on a state the code has not reached yet.
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, () => {});
 
   const t = f.one();
   assert.ok(!('verifyHold' in t), 'an accepted ticket owes nobody a verify');

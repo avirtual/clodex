@@ -4376,7 +4376,29 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task done', report)}`); return; }
-      if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open${this._spillRejectedPayload(session, 'task done', report)}`); return; }
+      // RE-ENTRY, the recovery from a verify escalation (t345). The ticket is
+      // already `done` and still held at `verify` with a `verifyHold` on the
+      // record: the loop told the lead a check failed and stopped there. Closing
+      // again is how the hand says the condition is fixed, and it re-runs the
+      // checks from where they stopped rather than changing the ticket's state.
+      //
+      // NOT a reopen, and that is the whole point: `reject` was the only verb
+      // that moved a stranded ticket, and it bumps `reworkRound` and records a
+      // rejection that never happened. Here nothing failed review — a check did
+      // not pass, and the fix is to satisfy it.
+      //
+      // Gated on `verifyHold`, not on `loopStep === 'verify'` alone: a ticket
+      // whose checks are RUNNING is also done-and-at-verify, and re-entering
+      // there would put two loops on one ticket, racing to spawn two reviewers
+      // for one branch. The stamp is written only when the loop has stopped and
+      // handed the ticket to a human, so it is the field that distinguishes them.
+      const reentry = ticket.state === 'done' && ticket.loopStep === 'verify' && !!ticket.verifyHold;
+      if (ticket.state !== 'open' && !reentry) {
+        const held = ticket.verifyHold && ticket.verifyHold.step
+          ? ` — it is held at "${ticket.verifyHold.step}"`
+          : '';
+        reply(`error: ticket ${intent.id} is ${ticket.state}, not open${held}${this._spillRejectedPayload(session, 'task done', report)}`); return;
+      }
       const myRole = matchSeatRole(team, session.name);
       // The degraded pin resolves through `_ticketAssigneeSeat`, so a seat that
       // replaced a dead one under the same role can close what it inherited —
@@ -4439,13 +4461,20 @@ function createTicketMethods(deps, shared) {
       }
       ticketsStore.save(team.root, tickets);
       this._reconcileTickets(team);
-      const doneSeat = this._ticketAssigneeSeat(team, ticket);
+      // NOT on a re-entry: the advance already ran on the first close and handed
+      // this seat its next ticket. Running it again re-delivers that ticket's spec
+      // to a seat that is holding it — an urgent duplicate dispatch, arriving as a
+      // second copy of work already in flight, which is the exact confusion the
+      // replay marker exists to prevent one layer down.
+      const doneSeat = reentry ? null : this._ticketAssigneeSeat(team, ticket);
       const next = doneSeat ? this._advanceSeat(team, doneSeat, ticket) : null;
       const nextSuffix = next ? ` — next: ${next.id} delivered to ${doneSeat}` : '';
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: lead, body: `ticket ${ticket.id} done` });
       this._writeTicketCost(team, ticket);
-      log.info('intent', `task done ${ticket.id} by ${session.name} → ${lead}`);
-      reply((isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`) + nextSuffix);
+      log.info('intent', `task done ${ticket.id} by ${session.name} → ${lead}${reentry ? ' (re-entry after a verify hold)' : ''}`);
+      reply((reentry
+        ? `ticket ${ticket.id} re-verifying (was held at "${ticket.verifyHold && ticket.verifyHold.step}")`
+        : (isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`)) + nextSuffix);
       // Fired AFTER the reply, and deliberately not awaited: this handler is
       // synchronous and the checks shell out to git, so awaiting them here would
       // hold the intent handler open across several subprocesses and delay the
@@ -4461,7 +4490,37 @@ function createTicketMethods(deps, shared) {
     // removes. It tears NOTHING down on any arm: the tree, the branch and the
     // seat are exactly what the lead looks at first.
     async _runTicketLoop(team, ticketId) {
-      const fail = (step, evidence, tried) => this._escalateTicket(team, ticketId, step, evidence, tried);
+      // THE verifyHold INVARIANT, the shape `_autoMergeTicket` states for
+      // `mergeWaiting`: set on the fail arms, cleared on EVERY other exit, and
+      // held in a `finally` rather than by clearing at each one. The exits are not
+      // only the ones easy to remember — the green path spawns a review, four
+      // guards return silently on a ticket that moved under the checks, the
+      // suite-red arm rejects, and the catch-all throws. A stamp left behind on
+      // any of them is a ticket that alarms forever about a check that passed.
+      let held = false;
+      // A verify escalation is a HOLD, not an exit. Before t345 a DELIVERED one
+      // deleted `loopStep`, which left `state=done` with nothing in flight: the
+      // stall sweep skipped it forever (ticketInFlight is false), `task done`
+      // bounced as "is done, not open", and the ONLY verb that moved it was
+      // `task reject` — which bumps `reworkRound` and records a rejection nobody
+      // made. The asymmetry was inside this function: the suite-red arm below
+      // rejects and reaches the hand, these arms stranded.
+      //
+      // `keepHold` already meant "something can still act on this ticket" — it
+      // was introduced for a live reviewer whose verdict may land. A pending
+      // escalation is the same claim about a different actor, so this extends
+      // that axis rather than opening a second one. The ticket stays `done` and
+      // stays at `verify`; `_taskDone` re-enters the loop from here once the
+      // condition the escalation named is fixed.
+      //
+      // STAMPED BEFORE the DM, for the reason `_stampMergeError`'s call site
+      // gives: the delivery is the arm that can fail, and the board must carry
+      // what the message may not.
+      const fail = (step, evidence, tried) => {
+        held = true;
+        this._stampVerifyHold(team, ticketId, { step, at: Date.now(), evidence: String(evidence) });
+        this._escalateTicket(team, ticketId, step, evidence, tried, { keepHold: true });
+      };
       // Tracks the step the RECORD is actually at, for the catch-all alone: an
       // unexpected throw after the record advanced to `review` would otherwise
       // report `verify`, sending the lead to look at the wrong half of the loop
@@ -4682,6 +4741,15 @@ function createTicketMethods(deps, shared) {
         // a worse way to learn about it than being told the exception.
         fail(atStep, `the loop threw: ${e && e.message ? e.message : String(e)}`,
           atStep === 'review' ? 'verify passed and the diff was written; the throw came at or after the review spawn' : 'no reviewer spawned');
+      } finally {
+        // Every exit that is NOT a fail arm: the green path that spawned a
+        // review, the four guards that return silently on a ticket which moved
+        // under the checks, and the suite-red arm that rejected. A hold surviving
+        // any of them makes the sweep alarm about a check that has since passed —
+        // and `fail` itself re-stamps, so a second round is not cleared by its own
+        // predecessor's stamp. Costs one load per run and no save unless the field
+        // is actually there.
+        if (!held) this._stampVerifyHold(team, ticketId, null);
       }
     },
 
@@ -5158,6 +5226,40 @@ function createTicketMethods(deps, shared) {
     // awaits git between reads, which is a wide enough window for another writer
     // (a verdict, a cancel) to land in, and saving a stale array would silently
     // revert it.
+    // The board's copy of a verify escalation — `_stampMergeError`'s counterpart
+    // for the loop's own checks, and for the same reason its header gives: the DM
+    // is the arm that can fail, and a lead that never read it has nothing else to
+    // find the ticket by. The record carries what the message may not.
+    //
+    // SEPARATE from `loopStep`, which stays at `verify`. The step says where the
+    // loop is; this says a human owes it an action. Collapsing them would make
+    // every consumer of `loopStep` — the board's rendering, the verdict landing,
+    // the sweep's stamp — unable to tell a running check from a waiting one.
+    //
+    // Cleared by passing null, which is a no-op when the field is absent: the
+    // loop's `finally` calls this on every green exit, and a save per clean run
+    // for a key that is not there would be a write on the whole happy path.
+    _stampVerifyHold(team, ticketId, hold) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec) return;
+        if (!hold) { if (!('verifyHold' in rec)) return; delete rec.verifyHold; }
+        else {
+          rec.verifyHold = hold;
+          // A NEW escalation is a new stall episode, the same argument
+          // `_setLoopStep` makes: the ladder must time from the moment the lead
+          // was told, and a `nudgedAt` left over from the stall that preceded the
+          // close would put this episode's first alarm on a rung it never climbed.
+          rec.lastActivityAt = Date.now();
+          rec.nudgedAt = null;
+        }
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `verify hold stamp for ${ticketId} failed: ${e.message}`);
+      }
+    },
+
     _setLoopStep(team, ticketId, step) {
       try {
         const tickets = ticketsStore.load(team.root);
@@ -5725,6 +5827,11 @@ function createTicketMethods(deps, shared) {
       // stale step would otherwise let a late verdict land on a ticket the lead
       // has already sent back.
       delete ticket.loopStep;
+      // The verify hold goes with it. A reopened ticket owes nobody the check the
+      // stamp names — the lead just decided the work needs rework, which supersedes
+      // it — and a stamp outliving the hold would alarm about a pending escalation
+      // on a ticket that is being worked, in a body that tells the hand to re-close.
+      delete ticket.verifyHold;
       ticketsStore.save(team.root, tickets);
       const seat = this._ticketAssigneeSeat(team, ticket);
       // Same rework reasoning as the loop's reject. This call passed NO tag before,
@@ -5765,7 +5872,17 @@ function createTicketMethods(deps, shared) {
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task respec', spec)}`); return; }
       if (ticket.state !== 'open') {
-        const route = ticket.state === 'done' ? ` — reject it first ([agent:task reject ${intent.id}]), then respec` : '';
+        // Still gated to `open` — respec DELIVERS, and re-dispatching a closed
+        // ticket restarts work on it without reopening it. t345 changes only the
+        // ADVICE, and only on a held ticket: "reject it first" is the false
+        // rejection that ticket removes, and prescribing it here would route the
+        // lead straight back into it. A held ticket is waiting on a check, so the
+        // honest answer names the check rather than a verb that misrecords why.
+        const route = ticket.state === 'done'
+          ? (ticket.verifyHold
+            ? ` — it is held at "${ticket.verifyHold.step}", waiting for that check to be satisfied and the ticket closed again; reject it only if the work genuinely needs rework`
+            : ` — reject it first ([agent:task reject ${intent.id}]), then respec`)
+          : '';
         reply(`error: respec replaces the spec of an OPEN ticket; ${intent.id} is ${ticket.state}${route}${this._spillRejectedPayload(session, 'task respec', spec)}`);
         return;
       }
@@ -5980,6 +6097,12 @@ function createTicketMethods(deps, shared) {
         // asked for. Cleared, a late verdict cannot be placed and correctly
         // falls through to the lead in FULL, who is the one who can act on it.
         delete ticket.loopStep;
+        // The verify hold goes with it, on BOTH writes for the same reason. The
+        // lead accepting a ticket held at a failed check is the lead overruling
+        // that check — it is a decision, and it ends the wait. Left behind, the
+        // sweep would keep alarming that someone owes an action on work that has
+        // been accepted and whose tree is gone.
+        delete ticket.verifyHold;
         // Re-read: the teardown below stamped revival onto its own copy.
         const fresh = ticketsStore.load(team.root);
         const row = fresh.find((t) => t.id === ticket.id);
@@ -5990,6 +6113,7 @@ function createTicketMethods(deps, shared) {
           if (note) row.acceptNote = note;
           row.lastActivityAt = ticket.lastActivityAt;
           delete row.loopStep;
+          delete row.verifyHold;
           ticketsStore.save(team.root, fresh);
         } else {
           ticketsStore.save(team.root, tickets);
@@ -6902,6 +7026,26 @@ function createTicketMethods(deps, shared) {
             if (seatInfo && (seatInfo.verdict === 'moving' || seatInfo.verdict === 'unknown')) continue;
           }
           const head = repeat > 0 ? `[ticket ${tid}] STILL stalled (repeat ${repeat}): ` : `[ticket ${tid}] stalled: `;
+          // A HELD ticket is not a stuck one, and saying so is the difference
+          // between two different recoveries. The loop did not die here: it ran a
+          // check, the check failed, and it told the lead — the ticket is waiting
+          // on a human to act. "The loop is stuck" sends the lead to look for a
+          // dead step, which is the unmarked-repeat hazard this sweep already
+          // documents, one class out: an alarm that misnames what is wrong invites
+          // exactly the wrong first move.
+          //
+          // Named off the STAMP rather than off `loopStep`, which reads `verify`
+          // on a running check and a held one alike. The stamp exists only in the
+          // second case, so it is what separates them — and it carries the check
+          // by name, so the alarm re-states what the DM said in case that DM is
+          // the one that was never read.
+          if (t.verifyHold) {
+            body = `${head}the loop ESCALATED at "${t.verifyHold.step}" and is waiting for someone to act — ${humanizeAge(now - last)} ago, and nothing has moved since.`
+              + `\n\nEVIDENCE: ${t.verifyHold.evidence}`
+              + `\n\nThis is NOT a stalled step — the tree, the branch and the seat are as they were. `
+              + `The hand fixes what the check named and closes the ticket again ([agent:task done ${tid}]), which re-runs the checks from here. `
+              + `Reject it only if the work genuinely needs rework.`;
+          } else {
           body = `${head}the ticket loop is stuck at "${t.loopStep}" — no progress for ${humanizeAge(now - last)} (the hand already reported; nothing was torn down)`
             + formatReviewSeatClause({
               seat: seatInfo && seatInfo.seat, verdict: seatInfo && seatInfo.verdict,
@@ -6915,6 +7059,7 @@ function createTicketMethods(deps, shared) {
               // it is handed a self-consistent pair — so the mismatch lives here.
               age: seatInfo && seatInfo.flatFor != null ? humanizeAge(seatInfo.flatFor) : null,
             });
+          }
         } else {
           this._stallProbing.add(tid);
           let ev = { tool: null, commits: null, dirty: null };
