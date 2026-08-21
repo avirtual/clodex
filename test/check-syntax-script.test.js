@@ -224,16 +224,21 @@ test('check-syntax: a clean tree on a branch with NO commits is the one truthful
   });
 });
 
-// THE LAST RESORT, and the one green in this script that is worth distrusting.
-// With no local main/master and no origin/HEAD, the base degrades to the current
-// branch — which compares the branch to ITSELF and therefore reports zero files
-// on a clean tree. That is a green over nothing, the shape this whole script was
-// fixed for. What keeps it honest is that the digest names the base it used, so
-// a reader sees `vs base feat@…` — the branch's own name — rather than a bare
-// "syntax OK". This test exists to keep that arm reachable and that wording
-// intact; the wording IS the mitigation, so a build that dropped the base from
-// the digest here would be indistinguishable from the original bug.
-test('check-syntax: with no trunk at all, the base degrades to the branch and SAYS so', () => {
+// THE SELF-COMPARISON ARM, converted from a green to a refusal.
+//
+// `defaultBranch` ends by falling back to the CURRENT branch. Inherited here
+// that base compares the branch to itself: the merge base is HEAD, the file list
+// is empty, and the script returned exit 0 over a branch containing a real
+// syntax error — reproduced with a committed `function (((broken {` reporting
+// `syntax OK (no changed .js files vs base feat@85d9420)`. Naming the ref did
+// not repair it; it asked a reader to notice the base was the branch's own name
+// and infer the comparison was vacuous.
+//
+// So this test INJECTS the broken bytes rather than asserting on a clean tree.
+// A clean-tree version would pass against a script that simply reported zero
+// files, which is the very behaviour being rejected — the point is that a branch
+// with a genuine error must not come back green.
+test('check-syntax: with no trunk at all, a self-comparison is refused rather than reported green', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-check-syntax-notrunk-'));
   try {
     const repo = path.join(dir, 'repo');
@@ -246,25 +251,29 @@ test('check-syntax: with no trunk at all, the base degrades to the branch and SA
     git(repo, ['commit', '-qm', 'init']);
     const wt = path.join(dir, 'wt-feat');
     git(repo, ['worktree', 'add', '-q', '-b', 'feat', wt, 'dev']);
-    fs.writeFileSync(path.join(wt, 'mine.js'), GOOD_JS);
-    git(wt, ['add', 'mine.js']);
-    git(wt, ['commit', '-qm', 'my work']);
+    fs.writeFileSync(path.join(wt, 'broken.js'), BROKEN_JS);
+    git(wt, ['add', 'broken.js']);
+    git(wt, ['commit', '-qm', 'a real syntax error, committed']);
 
-    // ENTER: neither a local main/master nor an origin/HEAD may exist, or the
-    // run never reaches the last resort and this asserts about another arm.
+    // ENTER: no local main/master and no origin/HEAD, or the run never reaches
+    // this arm; and a clean tree carrying a real error, or a refusal here would
+    // prove nothing about the green it replaced.
     const heads = git(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/']).trim().split('\n');
     assert.ok(!heads.includes('main') && !heads.includes('master'), 'ENTER: no local trunk');
     assert.strictEqual(
       spawnSync('git', ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], { cwd: repo }).status !== 0,
       true, 'ENTER: no origin/HEAD either');
     assert.strictEqual(git(wt, ['status', '--porcelain']).trim(), '', 'ENTER: tree must be clean');
+    assert.strictEqual(git(wt, ['rev-parse', 'HEAD']).trim(), git(wt, ['rev-parse', 'feat']).trim(),
+      'ENTER: the error must be committed on the branch');
 
     const r = runScript(path.join(repo, 'scripts', 'check-syntax.sh'), repo, { tree: wt });
-    assert.strictEqual(r.status, 0);
-    // The degraded answer, stated in full rather than matched loosely: it is a
-    // zero, and it must carry the branch's own name as the base.
-    assert.match(r.digest, /^syntax OK \(no changed \.js files vs base feat@[0-9a-f]{7}/,
-      `a self-comparison must name the branch as its base, got: ${r.digest}`);
+    assert.strictEqual(r.status, 1, `a vacuous comparison must not exit 0, got: ${r.digest}`);
+    assert.match(r.digest, /^refused, nothing checked: no base ref other than the branch itself/);
+    // The two refusals must stay DISTINGUISHABLE: the remediation differs, so a
+    // shared wording would send the operator to the wrong fix.
+    assert.doesNotMatch(r.digest, /clean tree and no base ref/,
+      'this must not reuse the no-base wording — different cause, different fix');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

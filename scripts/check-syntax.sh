@@ -11,7 +11,9 @@
 #   clean tree: files the BRANCH changed, vs its base
 #     pass: "syntax OK (3 files vs base master@7f3a91c in wb-wrap-ui-t452)"
 #     none: "syntax OK (no changed .js files vs base master@7f3a91c)"
-#     no base resolvable: "refused, nothing checked: ...", exit 1
+#     no base resolvable, or none but the branch itself:
+#           "refused, nothing checked: ...", exit 1 — a comparison that could
+#           not be made is never reported as a pass
 # Takes the same optional `tree` payload field as test-digest.sh; without it
 # this checks the team root.
 # Dependency-free: sh + git + node.
@@ -103,18 +105,34 @@ if [ -z "$files" ]; then
   # its green stops being a claim about the branch: a slower form of the false
   # green this script was fixed for.
   #
-  # The last resort compares the branch against ITSELF and reports zero files —
-  # which is why the digest prints the ref it actually used rather than the word
-  # "base". A degraded base has to be readable, exactly as `commitsOnBranch`
-  # keeps its `base` field for.
+  # There is deliberately NO last-resort fallback to the current branch, which is
+  # where `defaultBranch` ends. That base compares the branch to ITSELF: the
+  # merge base is HEAD, the file list is empty, and the digest returns exit 0
+  # over a branch that may contain a real syntax error — reproduced on a repo
+  # with no local trunk and no origin/HEAD, carrying a committed
+  # `function (((broken {`, which reported `syntax OK (no changed .js files vs
+  # base feat@85d9420)`. That is this script's own bug one door further in, and
+  # naming the ref does not repair it: it asks a reader to notice the base is the
+  # branch's own name and infer the comparison was vacuous. When nothing could be
+  # compared, refuse — the same principle as the no-base path below.
+  # Unborn HEAD (no commit yet) is its OWN case: there is no base and no branch
+  # commit either, so the "other than the branch itself" wording below would
+  # misdescribe it and point at the wrong fix. Checked first for that reason.
+  if ! git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+    printf '%.180s\n' "refused, nothing checked: clean tree and no base ref to compare against${in_tree}" 1>&2
+    exit 1
+  fi
   def=
   for b in main master; do
     if git rev-parse --verify --quiet "refs/heads/$b" >/dev/null 2>&1; then def=$b; break; fi
   done
   [ -n "$def" ] || def=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
   if [ -z "$def" ]; then
-    cur=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-    [ -n "$cur" ] && [ "$cur" != "HEAD" ] && def=$cur
+    # Distinct from the no-base message: the remediation differs (no base ref at
+    # all vs. one that degenerated to the branch), and a shared wording would
+    # send the operator to the wrong fix.
+    printf '%.180s\n' "refused, nothing checked: no base ref other than the branch itself${in_tree}" 1>&2
+    exit 1
   fi
   mb=
   [ -n "$def" ] && mb=$(git merge-base "$def" HEAD 2>/dev/null)
