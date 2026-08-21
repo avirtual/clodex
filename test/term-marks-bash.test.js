@@ -25,6 +25,7 @@ const path = require('node:path');
 const { buildTermShim, bashSupport } = require('../term-shim');
 const { createDrawerPtys } = require('../drawer-pty');
 const { createMarkParser, formatCommand } = require('../term-marks');
+const { pidAlive, reapPty } = require('./lib/pty-reap');
 
 // A bash too old for PS0 cannot be shimmed at all, so it is not a machine this
 // property can be measured on. Resolved through bashSupport rather than a
@@ -62,51 +63,6 @@ function waitFor(pred, ms = SETTLE_MS) {
     };
     tick();
   });
-}
-
-// Is this pid still around? Signal 0 tests for existence without delivering
-// anything. node-pty reaps its own child, so a shell that has exited is gone
-// here rather than lingering as a zombie that would read as alive forever.
-function pidAlive(pid) {
-  if (!pid) return false;
-  try { process.kill(pid, 0); return true; } catch { return false; }
-}
-
-// End one pty and do not return until it is actually gone.
-//
-// node-pty's kill() - and dispose()'s - is SIGHUP, which a shell whose startup
-// ran `trap '' HUP` ignores indefinitely. A survivor holds this runner's event
-// loop open, so the suite wedges at ~0% CPU AFTER the leaking test has already
-// passed, which is the most expensive failure shape there is. A trap reaches
-// this shell through the real /etc/profile, which the generated rc sources
-// unredirected, or through the scratch profile a test supplies. `$HOME` is
-// redirected here, so the developer's own ~/.bash_profile is NOT the door --
-// but it is in term-exec-keymap.test.js, which passes no env and so spawns
-// against the real one.
-//
-// Modelled on drawer-pty's endShell, with one deliberate difference: that path
-// unrefs its escalation timer because an app quit must never be held open five
-// seconds for a shell that is already dead. Here the opposite is required - the
-// next test spawns its own shell, so this one has to be gone BEFORE we return,
-// and the escalation is therefore awaited rather than scheduled.
-async function reapPty(proc, { graceMs = 2000, stepMs = 25 } = {}) {
-  if (!proc) return true;
-  // Read the pid up front so the escalation never depends on `proc` still being
-  // resolvable -- the same defensive shape as endShell, whose 5s deferral
-  // genuinely outlives its record.
-  const pid = proc.pid;
-  try { proc.kill(); } catch {}
-  const deadline = Date.now() + graceMs;
-  while (Date.now() < deadline) {
-    if (!pidAlive(pid)) return true;
-    await new Promise((r) => setTimeout(r, stepMs));
-  }
-  try { process.kill(pid, 'SIGKILL'); } catch {}
-  for (let i = 0; i < 40; i++) {
-    if (!pidAlive(pid)) return true;
-    await new Promise((r) => setTimeout(r, stepMs));
-  }
-  return !pidAlive(pid);
 }
 
 // One shimmed bash, wired the way engine.js wires the real thing.

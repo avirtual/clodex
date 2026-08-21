@@ -29,6 +29,11 @@ const { createMarkParser } = require('../term-marks');
 // stripper, not a local regex — a private one here could drift into passing
 // over escapes the product still shows the operator.
 const { stripAnsi } = require('../cli/src/output');
+// The real-shell teardown. node-pty kill() is SIGHUP and this file spawns
+// against the operator's REAL $HOME (no `env` below), so their own profile is
+// the door a `trap '' HUP` comes through -- measured surviving on both shells
+// this file drives.
+const { pidAlive, reapPty } = require('./lib/pty-reap');
 
 // A shell missing from a machine is not a failure of this property. Nothing is
 // skipped for being slow or flaky — a keymap answer does not vary run to run.
@@ -93,7 +98,7 @@ const MARK = ['TERMEXEC', 'RAN'].join('_');
 // 0 in 450 split.
 const KEYMAP_MARK = ['KEYMAP', 'SET'].join('_');
 
-async function runCase({ shellPath, keymapCmd, prefill }) {
+async function runCase({ shellPath, keymapCmd, prefill, armHup, graceMs }) {
   const out = { s: '' };
   let proc = null;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-keymap-'));
@@ -139,6 +144,29 @@ async function runCase({ shellPath, keymapCmd, prefill }) {
     const ready = await waitFor(() => out.s, (s) => s.includes(KEYMAP_MARK));
     assert.ok(ready, `shell reached ${keymapCmd}`);
 
+    // A shell that IGNORES SIGHUP, for the teardown's own regression test at
+    // the foot of this file. Armed by TYPING it rather than through a profile:
+    // this file spawns against the operator's real $HOME by design (runCase
+    // passes no `env`), and a test that wrote a profile there would be editing
+    // the developer's own dotfiles in order to measure itself.
+    if (armHup) {
+      out.s = '';
+      proc.write(`trap '' HUP; trap; echo TRAP''_LISTED\r`);
+      const listed = await waitFor(() => out.s, (s) => s.includes('TRAP_LISTED'));
+      assert.ok(listed, `the shell answered the trap listing\n--- output ---\n${out.s}`);
+      // ENTER: the trap has to be INSTALLED, not merely typed. An unarmed shell
+      // dies on the first HUP and would then pass against the very teardown this
+      // exists to reject. Bare `trap` lists in both shells this file drives; they
+      // spell the signal differently (zsh `HUP`, bash `SIGHUP`), and the ECHO of
+      // the typed line cannot satisfy this because it carries no `--`.
+      assert.match(stripAnsi(out.s), /SIG_IGN|trap -- '' (SIG)?HUP/,
+        `ENTER: the shell really is ignoring HUP\n--- trap ---\n${out.s}`);
+      // ENTER: without a live pid there is nothing for the teardown to reap, and
+      // 'the process is not alive' is trivially true of a shell that never
+      // spawned - exactly the shape that passes while measuring nothing.
+      assert.ok(pidAlive(proc.pid), 'ENTER: the shell is running before teardown');
+    }
+
     // A draft the operator walked away from. Left with the cursor moved back
     // into it: `^U` alone passes a cursor-at-end probe under vi mode (viins
     // binds it to the BACKWARD-only vi-kill-line) and loses the tail here.
@@ -169,10 +197,10 @@ async function runCase({ shellPath, keymapCmd, prefill }) {
     // the marker too, on a "command not found" line.
     const ran = await waitFor(() => out.s, (s) =>
       stripAnsi(s).split(/\r?\n/).some((l) => l.trim() === MARK));
-    return { ran, out: out.s };
+    return { ran, out: out.s, pid: proc && proc.pid };
   } finally {
     try { ptys.dispose(); } catch {}
-    try { if (proc) proc.kill(); } catch {}
+    try { await reapPty(proc, { graceMs }); } catch {}
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 }
@@ -217,6 +245,44 @@ for (const [name, shellPath, keymaps] of SHELLS) {
         });
     }
   }
+}
+
+// The teardown's own regression test, and the reason it reaps rather than
+// kills. node-pty's kill() is SIGHUP; a shell ignoring it survives, holds this
+// runner's event loop open, and the suite wedges at ~0% CPU AFTER this file has
+// already passed. This file is the more exposed of the two that spawn real
+// shells: it passes no `env` to createDrawerPtys, so drawer-pty falls back to
+// process.env and the generated rc sources the operator's genuine $HOME
+// profile. Latent, not live -- it needs a developer who traps HUP.
+//
+// Run for EVERY shell this file drives, because the two do not answer alike:
+// `trap -p HUP` is a bashism zsh does not implement, and the bare `trap` both
+// accept spells the signal `HUP` in zsh and `SIGHUP` in bash. Measured: both
+// survive a SIGHUP once armed, so the property is not bash-only.
+for (const [name, shellPath, keymaps] of SHELLS) {
+  test(`a ${name} that ignores SIGHUP is still gone once the teardown returns`,
+    { skip: !pty ? 'node-pty unavailable' : false, timeout: 90000 }, async () => {
+      let pid = null;
+      try {
+        // graceMs is 150 rather than the 2000 default: this shell is DESIGNED
+        // never to die on HUP, so the grace is time the suite pays on every
+        // green run to wait for something that cannot happen. A cooperative
+        // shell dies in milliseconds, and 150ms is still six poll steps.
+        ({ pid } = await runCase({
+          shellPath, keymapCmd: keymaps.emacs, prefill: '', armHup: true, graceMs: 150,
+        }));
+        // The ENTER guards live inside runCase's arming block: by here the
+        // shell has been proven alive AND proven to be ignoring HUP.
+        assert.ok(pid, 'ENTER: runCase reported a pid to observe');
+        assert.strictEqual(pidAlive(pid), false,
+          `the teardown escalated past SIGHUP and reaped pid ${pid}; `
+          + 'a survivor here holds the runner open and wedges the whole suite');
+      } finally {
+        // Belt and braces: if the assertion above failed, the survivor is still
+        // running and would outlive this process as an orphan.
+        if (pid && pidAlive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+      }
+    });
 }
 
 // A machine with neither shell would otherwise report a green file that
