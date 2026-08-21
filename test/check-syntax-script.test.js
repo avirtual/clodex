@@ -348,6 +348,41 @@ test('check-syntax: on the trunk itself, a vacuous comparison is never reported 
   });
 });
 
+// The trunk's UNPUSHED backlog is a real diff, and skipping it was the same
+// false green one door further in. On trunk the local ref cannot be a base
+// (merge-base is HEAD), but `origin/<trunk>` can: this repo pushes only at
+// release, so "trunk is ahead of its tracking ref" is the normal state and the
+// window holds real work — 47 commits when this was written. Measured then: a
+// committed error in that backlog read `syntax OK` on every dirty-tree run.
+test('check-syntax: on the trunk, commits not yet pushed are still checked against the tracking ref', () => {
+  withFixture(({ repo, dir }) => {
+    // A bare "remote" the fixture can push to, so origin/master exists and then
+    // falls behind — the shape of a repo between releases.
+    const remote = path.join(dir, 'remote.git');
+    git(repo, ['init', '-q', '--bare', remote]);
+    git(repo, ['remote', 'add', 'origin', remote]);
+    git(repo, ['push', '-q', 'origin', 'master']);
+
+    // The error is committed to trunk AFTER the push, so it lives only in the
+    // unpushed window.
+    fs.writeFileSync(path.join(repo, 'unpushed.js'), BROKEN_JS);
+    git(repo, ['add', 'unpushed.js']);
+    git(repo, ['commit', '-qm', 'a syntax error that has not been pushed']);
+
+    // ENTER: on trunk, the tracking ref exists and is genuinely behind — without
+    // this the test could pass against a repo where there was nothing to check.
+    assert.strictEqual(git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']).trim(), 'master');
+    assert.strictEqual(
+      git(repo, ['rev-list', '--count', 'origin/master..master']).trim(), '1',
+      'ENTER: trunk must be ahead of its tracking ref');
+
+    const r = runScript(path.join(repo, 'scripts', 'check-syntax.sh'), repo, {});
+    assert.match(r.digest, /^SYNTAX: unpushed\.js:/,
+      'a committed-but-unpushed trunk error must be opened, not skipped as vacuous');
+    assert.strictEqual(r.status, 1);
+  });
+});
+
 // NIT (a). `for f in $files` word-splits, so a tracked path containing a space
 // became two nonexistent paths, silently skipped by the -f guard — a false green
 // per affected file. Pre-existing, but the union surfaces far more paths than the

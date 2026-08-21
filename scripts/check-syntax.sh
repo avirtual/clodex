@@ -91,7 +91,7 @@ in_tree=$( [ "$check" = "$root" ] || printf ' in %s' "${check##*/}" )
 unborn=0
 git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || unborn=1
 
-wt_files=$( { [ "$unborn" = "1" ] || git diff --name-only HEAD -- '*.js'; \
+wt_files=$( { [ "$unborn" = "1" ] || git -c core.quotePath=false diff --name-only HEAD -- '*.js'; \
               git ls-files --others --exclude-standard -- '*.js'; } 2>/dev/null | sort -u )
 
 # THE BASE. Precedence is local main/master, then origin/HEAD — deliberately NOT
@@ -129,13 +129,26 @@ else
     # produced `def`: keying on the arm let this through on the default, no-payload
     # invocation, where `def=master` comes from the local-trunk loop and the
     # checkout is master. A ref name must not decide whether the check happens.
-    note="no base: on trunk $def"
+    #
+    # But the tracking ref rescues most of it: commits on trunk that are not yet
+    # pushed ARE a diff, against `origin/<trunk>`. Without this the trunk's
+    # unpushed backlog is unopened on every dirty-tree run — 47 commits here, and
+    # this repo pushes only at release, so that window is the normal state, not a
+    # brief one. Only a trunk with no tracking ref is genuinely base-less.
+    mb=$(git rev-parse --verify --quiet "refs/remotes/origin/$def" >/dev/null 2>&1 \
+           && git merge-base "origin/$def" HEAD 2>/dev/null)
+    if [ -n "$mb" ]; then
+      base_files=$(git -c core.quotePath=false diff --name-only "$mb" HEAD -- '*.js' 2>/dev/null)
+      scope="base origin/${def}@$(printf '%.7s' "$mb") +worktree"
+    else
+      note="no base: on trunk $def"
+    fi
   else
     mb=$(git merge-base "$def" HEAD 2>/dev/null)
     if [ -z "$mb" ]; then
       note="no merge base with $def"
     else
-      base_files=$(git diff --name-only "$mb" HEAD -- '*.js' 2>/dev/null)
+      base_files=$(git -c core.quotePath=false diff --name-only "$mb" HEAD -- '*.js' 2>/dev/null)
       scope="base ${def}@$(printf '%.7s' "$mb") +worktree"
     fi
   fi
@@ -159,7 +172,7 @@ if [ -z "$files" ]; then
         exit 1 ;;
     esac
   fi
-  printf 'syntax OK (no changed .js files vs %s%s)\n' "$scope" "$in_tree" 1>&2
+  printf '%.180s\n' "$(printf 'syntax OK (no changed .js files vs %s%s)' "$scope" "$in_tree")" 1>&2
   exit 0
 fi
 
@@ -185,5 +198,5 @@ done <<CLX_FILES
 $files
 CLX_FILES
 
-printf 'syntax OK (%s files vs %s%s)\n' "$n" "$scope" "$in_tree" 1>&2
+printf '%.180s\n' "$(printf 'syntax OK (%s files vs %s%s)' "$n" "$scope" "$in_tree")" 1>&2
 exit 0
