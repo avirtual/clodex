@@ -64,6 +64,47 @@ function waitFor(pred, ms = SETTLE_MS) {
   });
 }
 
+// Is this pid still around? Signal 0 tests for existence without delivering
+// anything. node-pty reaps its own child, so a shell that has exited is gone
+// here rather than lingering as a zombie that would read as alive forever.
+function pidAlive(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+// End one pty and do not return until it is actually gone.
+//
+// node-pty's kill() - and dispose()'s - is SIGHUP, which a shell whose startup
+// ran `trap '' HUP` ignores indefinitely. A survivor holds this runner's event
+// loop open, so the suite wedges at ~0% CPU AFTER the leaking test has already
+// passed, which is the most expensive failure shape there is. The generated rc
+// sources the operator's own ~/.bash_profile by design, so their trap alone is
+// enough to arm it.
+//
+// Modelled on drawer-pty's endShell, with one deliberate difference: that path
+// unrefs its escalation timer because an app quit must never be held open five
+// seconds for a shell that is already dead. Here the opposite is required - the
+// next test spawns its own shell, so this one has to be gone BEFORE we return,
+// and the escalation is therefore awaited rather than scheduled.
+async function reapPty(proc, { graceMs = 2000, stepMs = 25 } = {}) {
+  if (!proc) return true;
+  // Read the pid BEFORE the kill: node-pty drops it once the child is reaped,
+  // and the escalation below is the one caller that still needs to resolve it.
+  const pid = proc.pid;
+  try { proc.kill(); } catch {}
+  const deadline = Date.now() + graceMs;
+  while (Date.now() < deadline) {
+    if (!pidAlive(pid)) return true;
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+  try { process.kill(pid, 'SIGKILL'); } catch {}
+  for (let i = 0; i < 40; i++) {
+    if (!pidAlive(pid)) return true;
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+  return !pidAlive(pid);
+}
+
 // One shimmed bash, wired the way engine.js wires the real thing.
 //
 // HOME is redirected to a scratch dir, which is what makes this hermetic: the
@@ -131,7 +172,7 @@ async function withShell(run, { profile, env: envOver } = {}) {
     return await run({ exec, ptys, results, passive, dir, raw: () => raw, proc: () => proc });
   } finally {
     try { ptys.dispose(); } catch {}
-    try { if (proc) proc.kill(); } catch {}
+    try { await reapPty(proc); } catch {}
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 }
@@ -428,6 +469,48 @@ test('/etc/profile is really sourced, not merely named', opts, async () => {
     assert.match(res.record.output, /HAS=yes/,
       'PATH started as /nonexistent, so only /etc/profile could have put /usr/bin back');
   }, { env: { PATH: '/nonexistent' } });
+});
+
+// The teardown's own regression test, and the reason reapPty escalates.
+//
+// A shell that ignores HUP survives node-pty's kill() forever. Before the
+// escalation existed this did not fail loudly - the leaking test PASSED and the
+// survivor held the runner's event loop open, so the suite hung at ~0% CPU with
+// every assertion already green. `timeout` at the top of this file cannot catch
+// that: it is per-test, and this test is not the one that would hang.
+//
+// So the property is asserted directly on the pid instead of on the runner's
+// exit, which keeps it bounded and observable: withShell has returned, so its
+// finally has run to completion, so the shell it spawned must be gone.
+//
+// This test cleans up its own subject unconditionally. A regression test for a
+// process leak that leaks a process when it fails is worse than no test.
+test('a shell that ignores SIGHUP is still gone once the teardown returns', opts, async () => {
+  let pid = null;
+  try {
+    await withShell(async ({ exec, proc }) => {
+      pid = proc() && proc().pid;
+      // ENTER: without a live pid there is nothing to observe below, and
+      // "the process is not alive" is trivially true of a shell that never
+      // spawned - exactly the shape that passes while measuring nothing.
+      assert.ok(pid && pidAlive(pid), 'ENTER: the shell is running before teardown');
+      // ENTER: the trap has to be INSTALLED, not merely written to the
+      // profile. A typo'd or unsourced profile would leave a plain shell that
+      // dies on the first HUP, and this test would then pass against the very
+      // teardown it exists to reject.
+      const res = await exec('trap -p HUP');
+      assert.match(res.record.output, /SIG_IGN|trap -- '' SIGHUP/,
+        `ENTER: the shell really is ignoring HUP\n--- trap -p ---\n${res.record.output}`);
+    }, { profile: "trap '' HUP\n" });
+
+    assert.strictEqual(pidAlive(pid), false,
+      `the teardown escalated past SIGHUP and reaped pid ${pid}; ` +
+      'a survivor here holds the runner open and wedges the whole suite');
+  } finally {
+    // Belt and braces: if the assertion above failed, the survivor is still
+    // running and would outlive this process as an orphan.
+    if (pid && pidAlive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+  }
 });
 
 // A machine with no usable bash would otherwise report a green file that
