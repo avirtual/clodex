@@ -329,23 +329,24 @@ test('the sweep compares paths canonically — /tmp vs /private/tmp is one tree'
   assert.strictEqual(tc.orphanedCheckouts({ worktrees, records }).orphaned, 1);
 });
 
-// resolveTaskDir — measured against the live store, of 227 tickets carrying a
-// taskDir NONE is absolute: 175 are relative and 52 tilde-prefixed. A writer
-// that trusts the field mkdir -p's a literal `~` under the process cwd without
-// throwing, so the artifact silently never lands anywhere anyone looks.
+// resolveTaskDir — the field arrives in whatever shape the agent that wrote the
+// ticket used: relative, tilde-prefixed and absolute pointers all occur in the
+// live store, so it is resolved and confined, never trusted. A writer that
+// trusts it mkdir -p's a literal `~` under the process cwd without throwing, so
+// the artifact silently never lands anywhere anyone looks.
 const RESOLVE_ENV = {
   projectDir: '/home/u/.clodex/projects/wb-wrap-ui-5bc8ce0a',
   projectsRoot: '/home/u/.clodex/projects',
   homedir: '/home/u',
 };
 
-test('resolveTaskDir places the two shapes real tickets actually have', () => {
-  // Tilde — 52 of the live store. path.join would treat `~` as a directory name.
+test('resolveTaskDir places the shapes real tickets actually have', () => {
+  // Tilde — path.join would treat `~` as a directory name.
   assert.strictEqual(
     tc.resolveTaskDir({ taskDir: '~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/phase0-measure', ...RESOLVE_ENV }),
     '/home/u/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/phase0-measure');
-  // Bare relative — 175 of them. Resolved against the PROJECT dir, never cwd:
-  // against cwd this writes into the user's own repo, which Clodex never does.
+  // Bare relative — resolved against the PROJECT dir, never cwd: against cwd this
+  // writes into the user's own repo, which Clodex never does.
   assert.strictEqual(
     tc.resolveTaskDir({ taskDir: 'tasks/phase0-measure', ...RESOLVE_ENV }),
     '/home/u/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/phase0-measure');

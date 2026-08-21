@@ -165,11 +165,11 @@ test('create() mints from the record label, and both spawn paths seed it before 
     'wireLabel must be in ALWAYS_PRESERVE, or every restart un-attributes the seat');
 });
 
-// The taskDir shapes REAL tickets carry. Measured over the live store: of 227
-// tickets with a taskDir, 175 are relative and 52 tilde-prefixed — ZERO are
-// absolute. A fixture passing an mkdtemp path (as this one first did) tests a
-// shape that does not occur, and passes over a writer that mkdir -p's a literal
-// `~` under the process cwd.
+// The taskDir shapes REAL tickets carry: relative and tilde-prefixed pointers
+// dominate the live store, so the field arrives in whatever shape the writing
+// agent used and is resolved, never trusted. A fixture passing an mkdtemp path
+// (as this one first did) tests the shape that is LEAST like what tickets carry,
+// and passes over a writer that mkdir -p's a literal `~` under the process cwd.
 //
 // The resolution target is derived the way the CODE derives it — same
 // clodex-paths function, same injected registry root — rather than hardcoded: a

@@ -1535,7 +1535,13 @@ test('the CREATE instruction reaches the hand only — the read-only reviewer ge
 
   assert.match(render.line, /So create it/,
     'the dispatch tells the seat that CAN write the artifact to create the directory');
-  assert.ok(!/create it/i.test(scope),
+  // Scoped to the TASK DIR: line rather than the whole scope: the property is
+  // about THIS line's wording, and a whole-scope match breaks on unrelated future
+  // prose that happens to contain the words.
+  const taskDirLine = scope.slice(scope.indexOf('TASK DIR:')).split('\n\n')[0];
+  assert.ok(taskDirLine.startsWith('TASK DIR:'),
+    'ENTER: the TASK DIR line must be present, or indexOf returns -1 and this slices from the end');
+  assert.ok(!/create it/i.test(taskDirLine),
     'the reviewer scope carries no instruction to create anything — it has no write tool and its scope forbids editing');
   // The half that must survive the split, in BOTH: it is the t451 failure step,
   // and a reviewer reads absence the same way a hand does.
@@ -1634,8 +1640,9 @@ test('a task dir the confinement REFUSES drops the scope line and still spawns t
   // ticket carrying a spec — so it passed even against a scope that rendered the
   // escaping pointer itself. The spec arrives verbatim below the slice and may
   // legitimately carry the string.
+  assert.ok(scope.includes('SPEC — what this ticket'),
+    'ENTER: the spec section must be present, or indexOf returns -1 and the slice is the whole scope minus one character');
   const rendered = scope.slice(0, scope.indexOf('SPEC — what this ticket'));
-  assert.ok(rendered, 'ENTER: the spec section must be present, or the slice is the whole scope');
   assert.ok(!rendered.includes('etc'),
     'nothing Clodex RENDERED mentions the escaping target — only the lead\'s own text does');
 });

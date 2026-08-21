@@ -13472,8 +13472,10 @@ test('task dispatch: a task dir the confinement REFUSES drops the line and still
   // Scoped to the RENDERED prefix, not the whole body: the spec arrives verbatim
   // and carries the escaping string itself, so a whole-body absence would be
   // asserting the opposite of the line below and could only ever fail.
+  assert.ok(f.gated[0].body.includes(f.one('t1').spec),
+    'ENTER: the spec must be present in the body, or indexOf returns -1 and the slice is the whole body minus one character');
   const rendered = f.gated[0].body.slice(0, f.gated[0].body.indexOf(f.one('t1').spec));
-  assert.ok(rendered && !rendered.includes('etc'),
+  assert.ok(!rendered.includes('etc'),
     'nothing Clodex RENDERED mentions the escaping target — only the lead\'s own text does');
   assert.ok(f.gated[0].body.endsWith('tasks/../../../../../../etc/pwn — build it\ndetail'),
     'the spec still arrives — a rendering line must not be able to strand a dispatch');
