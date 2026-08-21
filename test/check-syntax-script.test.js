@@ -123,6 +123,95 @@ test('check-syntax: a clean tree with good commits reports the files the BRANCH 
   });
 });
 
+// BASE PRECEDENCE, and why it is not a detail. The base decides what the digest
+// is a claim ABOUT. Preferring `origin/HEAD` (as git-worktree.js `defaultBranch`
+// does, for the different question of where a branch forks FROM) measured 14
+// changed files on a branch that changed 1, because origin/master sat 42 commits
+// behind local master — 13 files already merged and already checked. That gap
+// grows without bound between releases, so a green drifts from "this branch is
+// clean" toward "the repo is clean". `isMerged` rejects `defaultBranch` for this
+// same reason: the base has to be the branch the operator actually merges into.
+test('check-syntax: the base is the LOCAL master, not a stale origin/HEAD', () => {
+  withFixture(({ repo, wt, check }) => {
+    // A stale remote: origin/master (and origin/HEAD) pinned at the seed commit
+    // while local master moves on, which is this repo's steady state between
+    // releases.
+    const staleSha = git(repo, ['rev-parse', 'HEAD']).trim();
+    git(repo, ['update-ref', 'refs/remotes/origin/master', staleSha]);
+    git(repo, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/master']);
+
+    // Local master advances by a file that is NOT this branch's work.
+    fs.writeFileSync(path.join(repo, 'already-merged.js'), GOOD_JS);
+    git(repo, ['add', 'already-merged.js']);
+    git(repo, ['commit', '-qm', 'someone else, already merged']);
+
+    // The branch does its own single-file work on top.
+    git(wt, ['merge', '-q', 'master']);
+    fs.writeFileSync(path.join(wt, 'mine.js'), GOOD_JS);
+    git(wt, ['add', 'mine.js']);
+    git(wt, ['commit', '-qm', 'my work']);
+
+    // ENTER: the two bases must genuinely DISAGREE, or this test pins nothing —
+    // it would pass under either precedence.
+    assert.strictEqual(git(wt, ['status', '--porcelain']).trim(), '', 'ENTER: tree must be clean');
+    const viaLocal = git(wt, ['diff', '--name-only', 'master', 'HEAD', '--', '*.js']).trim();
+    const viaRemote = git(wt, ['diff', '--name-only', 'origin/master', 'HEAD', '--', '*.js']).trim();
+    assert.strictEqual(viaLocal, 'mine.js', 'ENTER: local master must see exactly the branch work');
+    assert.strictEqual(viaRemote.split('\n').sort().join(','), 'already-merged.js,mine.js',
+      'ENTER: the stale remote must see MORE — otherwise the bases agree and nothing is pinned');
+
+    const r = check(wt);
+    assert.strictEqual(r.status, 0);
+    const m = r.digest.match(/^syntax OK \((\d+) files vs base (\S+)@/);
+    assert.ok(m, `digest must name a count and a base, got: ${r.digest}`);
+    assert.strictEqual(m[1], '1', 'only the branch\'s own file may be counted, not already-merged work');
+    assert.strictEqual(m[2], 'master', 'the base named must be the LOCAL branch, not origin/master');
+  });
+});
+
+// The FALLBACK arm of that precedence, which the fixture above cannot reach: it
+// always has a local master, so a build that deleted the origin/HEAD fallback
+// outright stayed green across every other test here. A repo whose trunk lives
+// only on the remote is the case that distinguishes "prefer local" from "ignore
+// the remote", and only this test enters it.
+test('check-syntax: with no local main/master, the base falls back to origin/HEAD', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-check-syntax-remote-'));
+  try {
+    const repo = path.join(dir, 'repo');
+    fs.mkdirSync(repo);
+    git(repo, ['init', '-q', '-b', 'dev']);
+    fs.mkdirSync(path.join(repo, 'scripts'));
+    fs.copyFileSync(SCRIPT, path.join(repo, 'scripts', 'check-syntax.sh'));
+    fs.writeFileSync(path.join(repo, 'seed.js'), GOOD_JS);
+    git(repo, ['add', '-A']);
+    git(repo, ['commit', '-qm', 'init']);
+    const trunk = git(repo, ['rev-parse', 'HEAD']).trim();
+    git(repo, ['update-ref', 'refs/remotes/origin/trunk', trunk]);
+    git(repo, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk']);
+
+    const wt = path.join(dir, 'wt-feat');
+    git(repo, ['worktree', 'add', '-q', '-b', 'feat', wt, 'dev']);
+    fs.writeFileSync(path.join(wt, 'mine.js'), GOOD_JS);
+    git(wt, ['add', 'mine.js']);
+    git(wt, ['commit', '-qm', 'my work']);
+
+    // ENTER: no local main/master may exist, or this never reaches the fallback.
+    const heads = git(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/']).trim().split('\n');
+    assert.ok(!heads.includes('main') && !heads.includes('master'),
+      `ENTER: no local main/master, got: ${heads.join(',')}`);
+    assert.strictEqual(git(wt, ['status', '--porcelain']).trim(), '', 'ENTER: tree must be clean');
+
+    const r = runScript(path.join(repo, 'scripts', 'check-syntax.sh'), repo, { tree: wt });
+    assert.strictEqual(r.status, 0, `expected a green, got: ${r.lines.join(' | ')}`);
+    const m = r.digest.match(/^syntax OK \((\d+) files vs base (\S+)@/);
+    assert.ok(m, `digest must name a count and a base, got: ${r.digest}`);
+    assert.strictEqual(m[1], '1');
+    assert.strictEqual(m[2], 'origin/trunk', 'the remote trunk must be named as the base actually used');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('check-syntax: a clean tree on a branch with NO commits is the one truthful empty answer', () => {
   withFixture(({ wt, check }) => {
     assert.strictEqual(git(wt, ['rev-list', '--count', 'master..feat']).trim(), '0',
@@ -133,6 +222,52 @@ test('check-syntax: a clean tree on a branch with NO commits is the one truthful
     assert.match(r.digest, /^syntax OK \(no changed \.js files vs base master@[0-9a-f]{7}/,
       'empty is truthful here, but it must still say what it compared against');
   });
+});
+
+// THE LAST RESORT, and the one green in this script that is worth distrusting.
+// With no local main/master and no origin/HEAD, the base degrades to the current
+// branch — which compares the branch to ITSELF and therefore reports zero files
+// on a clean tree. That is a green over nothing, the shape this whole script was
+// fixed for. What keeps it honest is that the digest names the base it used, so
+// a reader sees `vs base feat@…` — the branch's own name — rather than a bare
+// "syntax OK". This test exists to keep that arm reachable and that wording
+// intact; the wording IS the mitigation, so a build that dropped the base from
+// the digest here would be indistinguishable from the original bug.
+test('check-syntax: with no trunk at all, the base degrades to the branch and SAYS so', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-check-syntax-notrunk-'));
+  try {
+    const repo = path.join(dir, 'repo');
+    fs.mkdirSync(repo);
+    git(repo, ['init', '-q', '-b', 'dev']);
+    fs.mkdirSync(path.join(repo, 'scripts'));
+    fs.copyFileSync(SCRIPT, path.join(repo, 'scripts', 'check-syntax.sh'));
+    fs.writeFileSync(path.join(repo, 'seed.js'), GOOD_JS);
+    git(repo, ['add', '-A']);
+    git(repo, ['commit', '-qm', 'init']);
+    const wt = path.join(dir, 'wt-feat');
+    git(repo, ['worktree', 'add', '-q', '-b', 'feat', wt, 'dev']);
+    fs.writeFileSync(path.join(wt, 'mine.js'), GOOD_JS);
+    git(wt, ['add', 'mine.js']);
+    git(wt, ['commit', '-qm', 'my work']);
+
+    // ENTER: neither a local main/master nor an origin/HEAD may exist, or the
+    // run never reaches the last resort and this asserts about another arm.
+    const heads = git(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/']).trim().split('\n');
+    assert.ok(!heads.includes('main') && !heads.includes('master'), 'ENTER: no local trunk');
+    assert.strictEqual(
+      spawnSync('git', ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], { cwd: repo }).status !== 0,
+      true, 'ENTER: no origin/HEAD either');
+    assert.strictEqual(git(wt, ['status', '--porcelain']).trim(), '', 'ENTER: tree must be clean');
+
+    const r = runScript(path.join(repo, 'scripts', 'check-syntax.sh'), repo, { tree: wt });
+    assert.strictEqual(r.status, 0);
+    // The degraded answer, stated in full rather than matched loosely: it is a
+    // zero, and it must carry the branch's own name as the base.
+    assert.match(r.digest, /^syntax OK \(no changed \.js files vs base feat@[0-9a-f]{7}/,
+      `a self-comparison must name the branch as its base, got: ${r.digest}`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('check-syntax: the digest is a single bounded line in every state', () => {

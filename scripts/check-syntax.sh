@@ -9,8 +9,8 @@
 #     pass: "syntax OK (4 files vs HEAD)"
 #     fail: "SYNTAX: renderer/renderer.js: Unexpected token ..." (first failure)
 #   clean tree: files the BRANCH changed, vs its base
-#     pass: "syntax OK (3 files vs base origin/master@7f3a91c in wb-wrap-ui-t452)"
-#     none: "syntax OK (no changed .js files vs base origin/master@7f3a91c)"
+#     pass: "syntax OK (3 files vs base master@7f3a91c in wb-wrap-ui-t452)"
+#     none: "syntax OK (no changed .js files vs base master@7f3a91c)"
 #     no base resolvable: "refused, nothing checked: ...", exit 1
 # Takes the same optional `tree` payload field as test-digest.sh; without it
 # this checks the team root.
@@ -90,17 +90,28 @@ files=$( { git diff --name-only HEAD -- '*.js'; \
 against=HEAD
 
 if [ -z "$files" ]; then
-  # Base resolution mirrors git-worktree.js `defaultBranch`: origin/HEAD, else a
-  # local main/master, else the current branch. That last resort compares the
-  # branch against ITSELF and reports zero files — which is why the digest
-  # prints the ref it actually used rather than the word "base". A degraded base
-  # has to be readable, exactly as `commitsOnBranch` keeps its `base` field for.
-  def=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
-  if [ -z "$def" ]; then
-    for b in main master; do
-      if git rev-parse --verify --quiet "refs/heads/$b" >/dev/null 2>&1; then def=$b; break; fi
-    done
-  fi
+  # BASE PRECEDENCE: local main/master FIRST, then origin/HEAD, then the current
+  # branch. Deliberately NOT git-worktree.js `defaultBranch`, whose origin/HEAD
+  # preference answers a different question — that one picks where a new branch
+  # FORKS FROM. The question here is what this branch CHANGED, and `isMerged`
+  # settles that one the other way for the same reason it states: the base must
+  # be the branch the operator actually merges into, not a ref this repo may
+  # rarely push to. Measured on this repo: origin/master sat 42 commits behind
+  # local master, so origin/HEAD reported 14 changed files where the branch had
+  # 1 — 13 already merged and already checked. That gap grows without bound
+  # between releases, so the digest drifts toward checking the whole repo and
+  # its green stops being a claim about the branch: a slower form of the false
+  # green this script was fixed for.
+  #
+  # The last resort compares the branch against ITSELF and reports zero files —
+  # which is why the digest prints the ref it actually used rather than the word
+  # "base". A degraded base has to be readable, exactly as `commitsOnBranch`
+  # keeps its `base` field for.
+  def=
+  for b in main master; do
+    if git rev-parse --verify --quiet "refs/heads/$b" >/dev/null 2>&1; then def=$b; break; fi
+  done
+  [ -n "$def" ] || def=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
   if [ -z "$def" ]; then
     cur=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
     [ -n "$cur" ] && [ "$cur" != "HEAD" ] && def=$cur
