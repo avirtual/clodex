@@ -359,9 +359,9 @@ test('resolveTaskDir places the shapes real tickets actually have', () => {
 });
 
 test('resolveTaskDir drops a file-shaped tail — a lead names the SPEC, not the dir', () => {
-  // 51 live taskDirs carry a tail past the task name and 36 end in a slash;
-  // many name a file. ensureDir on those either throws or mints a directory
-  // called SPEC.md, and COST.json lands inside it.
+  // Live taskDirs routinely carry a tail past the task name or a trailing
+  // slash, and many name a file. ensureDir on those either throws or mints a
+  // directory called SPEC.md, and COST.json lands inside it.
   const want = '/home/u/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/wire-off';
   assert.strictEqual(tc.resolveTaskDir({ taskDir: '~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/wire-off/SPEC.md', ...RESOLVE_ENV }), want);
   assert.strictEqual(tc.resolveTaskDir({ taskDir: 'tasks/wire-off/SPEC.md', ...RESOLVE_ENV }), want);

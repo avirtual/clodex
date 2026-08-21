@@ -343,6 +343,12 @@ const readRenderer = (f) => require('node:fs').readFileSync(require('node:path')
 
 test('the ON indicator is visible WITHOUT opening a dialog', () => {
   const html = readRenderer('index.html');
+  // Both anchors, checked BEFORE the slice: a missing END gives `slice(N, -1)`
+  // — the whole tail of index.html — and the positive match below then finds
+  // the chip anywhere in the file, which is the one thing this test claims it
+  // does not do.
+  assert.ok(html.indexOf('<div id="sidebar-filterbar"') > html.indexOf('<div id="sidebar-header"'),
+    'ENTER: both anchors, in order');
   const header = html.slice(html.indexOf('<div id="sidebar-header"'), html.indexOf('<div id="sidebar-filterbar"'));
   assert.ok(header.length > 0, 'ENTER: the sidebar header markup was found');
   assert.match(header, /id="shell-share-chip"/,
