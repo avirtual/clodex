@@ -104,13 +104,15 @@ that made the call; no window map involved.
 a host adapter must supply both, and a handler must reach for neither more. The
 second half is the one that bites, because the window-handle contract above is a
 FIVE-method object reached through the same `e`-shaped ergonomics — a handler
-that borrows `.isFocused()` from it type-checks in a reader's head and throws at
-runtime on the web host, which is exactly how `peer-deploy-line` lost a
-15-minute deploy's output. `test/sender-token-contract.test.js` scans
-ipc-handlers.js for that; `test/web-host.test.js` pins the web adapter supplies
-both. The electron adapter is not pinned by us and cannot be: main.js passes
-Electron's own event through untouched, so `e.sender` there is a real
-`WebContents` no code of ours can shrink.
+that borrows a window-handle method from it type-checks in a reader's head and
+throws at runtime on the web host. Historically that method was `isDestroyed`,
+which is why it is in the set at all: the borrow came first and the token was
+widened to answer it, after `peer-deploy-line` lost a 15-minute deploy's output.
+`test/sender-token-contract.test.js` scans ipc-handlers.js for that;
+`test/web-host.test.js` pins that the web adapter supplies both. The electron
+adapter is not pinned by us and cannot be: main.js passes Electron's own event
+through untouched, so `e.sender` there is a real `WebContents` no code of ours
+can shrink.
 
 The web host also hangs a `conn` field on its token (web-host.js) to resolve a
 connection's workspace. That is adapter-private and NOT part of the contract:

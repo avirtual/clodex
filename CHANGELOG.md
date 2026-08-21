@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- Handlers can no longer quietly use a feature the browser transport does not
+  have. Clodex serves the same UI to the desktop app and to a browser, and the
+  object a handler uses to reply to whoever called it is not identical across the
+  two — a handler written against the desktop one could call something the
+  browser side lacked, throw, and have the failure swallowed. That is what once
+  made a fifteen-minute remote deploy report success while streaming none of its
+  progress to a browser tab. The two supported methods are now written down in
+  one place, and a test fails the build if a handler reaches past them or if the
+  browser transport stops providing one.
+
 - The team roster now says when a role carries a setting that does nothing. Team
   files written against an older schema can still hold fields that were retired
   since — `tools` on a role is the one that has actually misled someone, because
