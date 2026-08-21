@@ -328,3 +328,174 @@ test('viewer task-dir refusal agrees with core team-tickets, byte for byte', () 
   assert.strictEqual(viewer.ticketTaskDirRefusal({}, { id: 't7', taskDir: 'tasks/x' }, 'assign', false), null,
     'a ticket that HAS a task dir is the ordinary case and must pass through');
 });
+
+// ── the dispatch's TASK DIR line (t458) ─────────────────────────────────────
+//
+// The seventh copy, and the one whose drift is the most expensive: the viewer's
+// `deliverSpec` is a THIRD renderer of a dispatch body, and until t458 it
+// carried no TASK DIR line at all. 260 of the live board's 368 pointers are
+// relative and ~37% of those collide by name with a directory in the repo's
+// gitignored `tasks/` decoy, so a viewer-dispatched hand resolved its pointer
+// against its CWD, FOUND a directory, and read another ticket's artifacts.
+//
+// Same false-green class as projectDirFor, and strictly worse than a diverged
+// `confine`: nothing throws, nothing renders empty, and the hand reports success
+// over the wrong tree.
+//
+// Three things are pinned, because each fails independently:
+//   - `resolveTaskDir` — WHICH directory, and that an escaping pointer still
+//     refuses on both sides (confinement is the security half of this copy).
+//   - `ticketTaskDirLine` — the WORDING. A paraphrase names the same directory
+//     and teaches a different rule.
+//   - `ticketTaskDirLineFor` against core's `_ticketTaskDirRender().line` — the
+//     GATE. Both halves can be byte-identical while the viewer renders under a
+//     different condition, or never renders at all.
+const coreCost = require('../team-cost');
+const { ticketTaskDirLine: coreTaskDirLine } = require('../session-manager');
+
+// Core takes REGISTRY_DIR through deps and DESTRUCTURES it at factory time, so
+// it must hold its final value before createTicketMethods runs — a getter over a
+// box rebound per test would be read once and never again. The fixture home is
+// therefore module-scope, and the viewer is pointed at the SAME one inside each
+// test: two roots would make every comparison below one between two trees.
+//
+// Shaped as a real `~/.clodex` (home + a `.clodex` leaf) rather than a bare temp
+// dir, because one of the rows IS a `~/…` pointer: with an unrelated homedir it
+// would escape the projects root and refuse, and the row that exists to exercise
+// the empty-clause gate would instead be exercising the refusal path.
+const PARITY_HOMEDIR = path.join(os.tmpdir(), 'parity-taskdir-home');
+const PARITY_CLODEX = path.join(PARITY_HOMEDIR, '.clodex');
+const PARITY_PROJECTS = path.join(PARITY_CLODEX, 'projects');
+const PARITY_TEAM_ROOT = '/Users/someone/projects/wb-wrap-ui';
+const PARITY_PROJECT_DIR = core.projectDirFor(PARITY_CLODEX, PARITY_TEAM_ROOT);
+
+const coreTicketMethods = require('../team-tickets').createTicketMethods(
+  // The three deps `_ticketDiffDest` reads. The mixin uses no `this` on this
+  // path, so stub deps are enough to reach the method.
+  { REGISTRY_DIR: PARITY_CLODEX, path, os }, {});
+
+// The shapes real tickets carry, plus the one that must be REFUSED. The `~` and
+// absolute rows are here because they are where the rule clause is EMPTY: a copy
+// that dropped the gate agrees on the directory and disagrees on the line.
+const TASK_DIR_CASES = [
+  'tasks/viewer-deliver-spec-taskdir',
+  'tasks/wire-off/SPEC.md',                    // file tail dropped
+  'tasks/wire-off/',                           // a trailing slash is not a segment
+  'tasks/v1.2',                                // a dotted DIRECTORY is kept whole
+  'tasks/audit/specs/P4.md',                   // nested, tail dropped
+  '~/.clodex/projects/p-1234abcd/tasks/x',     // already placed — no rule clause
+  path.join(PARITY_PROJECT_DIR, 'tasks', 'x'), // absolute — no rule clause either
+  'tasks/../../../../etc/passwd',              // escapes: must refuse on both sides
+  '',                                          // no pointer at all
+];
+
+test('viewer resolveTaskDir agrees with core team-cost, refusals included', () => {
+  const env = { projectDir: PARITY_PROJECT_DIR, projectsRoot: PARITY_PROJECTS, homedir: PARITY_HOMEDIR };
+
+  // ENTER: the table is the reduction, and most rows RESOLVE. A table that lost
+  // the escaping row would be satisfied by a pair of copies that both stopped
+  // confining, which is exactly the security half of this copy.
+  assert.ok(TASK_DIR_CASES.some((raw) => raw.includes('..')),
+    'the table must reach the pointer that escapes the projects root');
+
+  let threw = 0;
+  for (const raw of TASK_DIR_CASES) {
+    let mine; let theirs; let myErr = null; let theirErr = null;
+    try { mine = viewer.resolveTaskDir({ taskDir: raw, ...env }); } catch (e) { myErr = e.message; }
+    try { theirs = coreCost.resolveTaskDir({ taskDir: raw, ...env }); } catch (e) { theirErr = e.message; }
+    assert.strictEqual(myErr, theirErr, `refusal diverged on ${JSON.stringify(raw)}`);
+    assert.strictEqual(mine, theirs, `resolution diverged on ${JSON.stringify(raw)}`);
+    if (myErr) threw += 1;
+  }
+  // Equality alone is satisfied by two copies that refuse EVERYTHING, which is
+  // the drift that would silently strip the line from every dispatch.
+  assert.strictEqual(threw, 1, 'exactly the escaping row refused');
+
+  // The anchor, so two copies that drifted together still fail: a relative
+  // pointer lands under the PROJECT dir and nowhere else.
+  assert.strictEqual(
+    viewer.resolveTaskDir({ taskDir: 'tasks/wire-off/SPEC.md', ...env }),
+    path.join(PARITY_PROJECT_DIR, 'tasks', 'wire-off'),
+    'a relative pointer resolves under the project artifact dir, with the spec file dropped');
+});
+
+test('viewer ticketTaskDirLine agrees with core team-tickets byte for byte', () => {
+  const dir = path.join(PARITY_PROJECT_DIR, 'tasks', 'thing');
+
+  // ENTER: both a relative raw (clause rendered) and an already-placed one
+  // (clause empty) must be in the set — the gate lives inside the helper, so a
+  // table of only relative pointers is satisfied by a copy with no gate at all.
+  assert.ok(TASK_DIR_CASES.some((raw) => raw && !raw.startsWith('~') && !path.isAbsolute(raw)),
+    'the table must reach a relative pointer, which is what renders the clause');
+  assert.ok(TASK_DIR_CASES.some((raw) => raw.startsWith('~') || path.isAbsolute(raw)),
+    'and an already-placed one, which is what must NOT');
+
+  for (const raw of TASK_DIR_CASES) {
+    assert.strictEqual(viewer.ticketTaskDirLine(dir, raw), coreTaskDirLine(dir, raw),
+      `diverged on ${JSON.stringify(raw)}`);
+  }
+
+  // The wording anchors, so two copies that drifted TOGETHER still fail here.
+  // Each sentence answers a way a hand has actually gone wrong.
+  const line = viewer.ticketTaskDirLine(dir, 'tasks/thing/SPEC.md');
+  assert.strictEqual(line, coreTaskDirLine(dir, 'tasks/thing/SPEC.md'));
+  assert.ok(line.startsWith(`TASK DIR: ${dir}`),
+    'the RESOLVED directory, first — nothing for the seat to assemble');
+  assert.match(line, /relative to the PROJECT'S ARTIFACT DIR/,
+    'says what the raw pointer is relative TO — resolving it against cwd is the whole defect');
+  assert.match(line, /a same-named directory inside the repo is NOT it/,
+    "names the decoy by shape — a hand that finds one reads another ticket's artifacts and reports success");
+  assert.match(line, /the pointer may name a file inside it/,
+    'the pointer usually ends in SPEC.md, and this line names the DIRECTORY');
+  assert.match(line, /its absence is not evidence that there is no artifact/,
+    'a hand that found it missing worked without one — that is the reported failure');
+  assert.match(line, /So create it rather than working without one\./,
+    'the dispatch-only half: this seat can WRITE, unlike the reviewer the clause is shared with');
+  assert.ok(line.endsWith('\n'), 'ends the line, or the close line runs on into it');
+
+  // And the gate said outright, so a copy that renders the clause
+  // unconditionally fails here rather than passing a table where the placed rows
+  // merely agree.
+  for (const raw of ['~/.clodex/projects/p/tasks/x', '/tmp/elsewhere/tasks/x']) {
+    assert.strictEqual(viewer.ticketTaskDirLine(dir, raw), `TASK DIR: ${dir}\n`,
+      'an already-placed pointer means to an agent what it means here, so it earns no prose');
+  }
+});
+
+test('the viewer dispatch renders the same TASK DIR line core does, under the same gate', () => {
+  viewer.setClodexHomeForTest(PARITY_CLODEX);
+  try {
+    const team = { root: PARITY_TEAM_ROOT };
+    const coreLine = (raw) => coreTicketMethods._ticketTaskDirRender(team, { id: 't1', taskDir: raw }).line;
+
+    // ENTER: the comparison is only interesting on rows core actually RENDERS.
+    // Without this, a viewer that returned '' for every input would agree with
+    // core on every row in the table — the exact pre-t458 behaviour.
+    const rendered = TASK_DIR_CASES.filter((raw) => coreLine(raw));
+    assert.ok(rendered.length >= 2, `the table must reach rows core renders (got ${rendered.length})`);
+
+    for (const raw of TASK_DIR_CASES) {
+      assert.strictEqual(
+        viewer.ticketTaskDirLineFor(PARITY_PROJECT_DIR, { id: 't1', taskDir: raw }),
+        coreLine(raw),
+        `dispatch rendering diverged on ${JSON.stringify(raw)}`);
+    }
+
+    // A record with no `taskDir` KEY at all — the legacy shape, and the one an
+    // unguarded read crashes on rather than skips.
+    assert.strictEqual(viewer.ticketTaskDirLineFor(PARITY_PROJECT_DIR, { id: 't1' }), '');
+    assert.strictEqual(viewer.ticketTaskDirLineFor(PARITY_PROJECT_DIR, null), '');
+
+    // The suppressions said outright, so a copy that renders a bare
+    // `TASK DIR: <dir>` line into every dispatch fails here: every dispatch
+    // already spills past the 500-byte threshold, so a line that says nothing
+    // costs each of those seats a Read turn.
+    assert.strictEqual(
+      viewer.ticketTaskDirLineFor(PARITY_PROJECT_DIR, { id: 't1', taskDir: path.join(PARITY_PROJECT_DIR, 'tasks', 'x') }), '',
+      'an absolute pointer suppresses the WHOLE line, not merely the clause');
+    assert.strictEqual(viewer.ticketTaskDirLineFor(PARITY_PROJECT_DIR, { id: 't1', taskDir: '~/.clodex/projects/p/tasks/y' }), '',
+      'and so does a ~-prefixed one');
+    assert.strictEqual(viewer.ticketTaskDirLineFor(PARITY_PROJECT_DIR, { id: 't1', taskDir: 'tasks/../../../etc' }), '',
+      'a pointer that escapes confinement drops the line — a dispatch must not die over a display line');
+  } finally { viewer.setClodexHomeForTest(null); }
+});

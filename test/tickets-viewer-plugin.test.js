@@ -43,6 +43,11 @@ const {
   // is pinned once, against core's copy, in tickets-viewer-path-parity.test.js —
   // three hand-copied literals would just mean three places to forget.
   closeLine: viewerCloseLine,
+  // Same reason, for the TASK DIR line (t458). Composing the expected body from
+  // the engine's own renderer would be circular on its own, so the t458 cases
+  // below ALSO assert the line non-empty and pointing into the fixture — the
+  // agreement with core's wording is the parity file's job.
+  ticketTaskDirLineFor: viewerTaskDirLine,
 } = viewerEngine._internals;
 const HOUR = 60 * 60 * 1000;
 
@@ -1512,6 +1517,95 @@ test('tickets-viewer: a team board WITH a task dir still adds-and-dispatches (t4
     assert.equal(t.assignee, 'hand-1');
     assert.ok(t.startedAt, 'and the dispatch is stamped');
     assert.equal(injected.length, 1, 'exactly the one delivery');
+  } finally { cleanup(); }
+});
+
+// ── the dispatch carries the TASK DIR line (t458) ────────────────────
+//
+// `deliverSpec` is a THIRD renderer of a dispatch body, and it used to carry no
+// TASK DIR line: a lead who ASSIGNED BY CLICKING dispatched the pre-t453 shape
+// while the same assignment typed as an intent delivered the resolved pointer.
+// Most live pointers are relative, and the repo carries a gitignored `tasks/`
+// decoy many of them collide with by name, so the seat resolved its pointer
+// against its cwd, found a directory, and read another ticket's artifacts.
+
+test('tickets-viewer: a dispatched spec carries the RESOLVED task dir, ahead of the close line (t458)', async () => {
+  const { host, home, sessions, injected, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/solo/taskdir-line');
+    addSession(sessions, 'hand-1');
+    assertWritesLandInFixture(home, key);
+
+    const res = await host.dispatch('tickets-viewer', 'add',
+      [{ project: key, spec: 'tasks/the-work — do it', assignee: 'hand-1' }], 'desktop');
+    assert.equal(res.ok, true, res.error);
+    assert.equal(res.delivered, true, 'ENTER: the spec was delivered — there is a body to inspect');
+
+    const t = onDisk(home, key)[0];
+    assert.equal(t.taskDir, 'tasks/the-work', 'ENTER: the record carries the relative pointer this renders');
+
+    const projectDir = path.join(home, 'projects', key);
+    const line = viewerTaskDirLine(projectDir, t);
+    // The renderer is the engine's own, so pin independently that it rendered
+    // ANYTHING and that it names the fixture's project dir — without this the
+    // body comparison below is satisfied by a renderer that returns ''.
+    assert.ok(line.startsWith(`TASK DIR: ${path.join(projectDir, 'tasks', 'the-work')}`),
+      `the line must resolve the pointer under the project dir, got ${JSON.stringify(line)}`);
+
+    assert.deepEqual(injected.map((i) => i.text),
+      [`[ticket t1] ${line}${viewerCloseLine('t1')}tasks/the-work — do it`]);
+    // The ORDER, said separately: core renders taskDirLine before closeLine, and
+    // a body that carries both in the other order would satisfy a `.includes`
+    // pair while diverging from core for no reason.
+    const body = injected[0].text;
+    assert.ok(body.indexOf('TASK DIR: ') < body.indexOf('CLOSE WITH: '),
+      'the task dir precedes the close line, as core composes it');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: assign renders the task dir too, not only add (t458)', async () => {
+  const { host, home, sessions, injected, cleanup } = boot();
+  try {
+    // The OTHER dispatch path. Both call deliverSpec, and a fix threaded through
+    // one call site only would leave this one on the pre-t458 shape.
+    const key = mkProject(home, '/solo/taskdir-assign');
+    writeTicketsAt(home, key, [ticket('t1', { taskDir: 'tasks/other-work', spec: 'tasks/other-work — the work' })]);
+    addSession(sessions, 'new-hand');
+    assertWritesLandInFixture(home, key);
+
+    const res = await host.dispatch('tickets-viewer', 'assign',
+      [{ project: key, id: 't1', assignee: 'new-hand' }], 'desktop');
+    assert.equal(res.ok, true, res.error);
+    assert.equal(res.delivered, true);
+
+    const projectDir = path.join(home, 'projects', key);
+    const line = viewerTaskDirLine(projectDir, onDisk(home, key)[0]);
+    assert.ok(line.includes(path.join(projectDir, 'tasks', 'other-work')),
+      'ENTER: this ticket renders a line at all');
+    assert.deepEqual(injected.map((i) => i.text),
+      [`[ticket t1] ${line}${viewerCloseLine('t1')}tasks/other-work — the work`]);
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: an ALREADY-PLACED pointer adds no line to the dispatch (t458)', async () => {
+  const { host, home, sessions, injected, cleanup } = boot();
+  try {
+    // The gate, exercised through the real dispatch. An absolute pointer means
+    // to a seat exactly what it means here, so the whole line is suppressed —
+    // every dispatch already spills past the 500-byte threshold, and a line that
+    // says nothing costs the seat a Read turn.
+    const key = mkProject(home, '/solo/taskdir-absolute');
+    const abs = path.join(home, 'projects', key, 'tasks', 'placed');
+    const spec = `${abs} — do it`;
+    addSession(sessions, 'hand-1');
+    assertWritesLandInFixture(home, key);
+
+    const res = await host.dispatch('tickets-viewer', 'add',
+      [{ project: key, spec, assignee: 'hand-1' }], 'desktop');
+    assert.equal(res.ok, true, res.error);
+    assert.equal(onDisk(home, key)[0].taskDir, abs,
+      'ENTER: the record carries an ABSOLUTE pointer — otherwise this asserts the empty case for the wrong reason');
+    assert.deepEqual(injected.map((i) => i.text), [`[ticket t1] ${viewerCloseLine('t1')}${spec}`]);
   } finally { cleanup(); }
 });
 
