@@ -4609,6 +4609,12 @@ function createTicketMethods(deps, shared) {
       this._writeTicketCost(team, ticket);
       log.info('intent', `task done ${ticket.id} by ${session.name} → ${lead}${reentry ? ' (re-entry after a verify hold)' : ''}`);
       reply((reentry
+        // prescribes-nothing: names the check that HAD held this ticket, to the
+        // seat that just cleared it, after the stamp is gone. It is a receipt,
+        // not advice — there is no recovery to route through `holdRecoveryText`
+        // here, and rendering one would tell a seat to perform the action it has
+        // this moment performed. The step-naming is pinned by `t345 r2: the
+        // re-entry reply still NAMES the check`, so it cannot be dropped either.
         ? `ticket ${ticket.id} re-verifying (was held at "${heldAt}")`
         : (isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`)) + nextSuffix);
       // Fired AFTER the reply, and deliberately not awaited: this handler is

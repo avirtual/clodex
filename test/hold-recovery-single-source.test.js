@@ -39,15 +39,30 @@ const path = require('node:path');
 
 // ── the scanner ────────────────────────────────────────────────────────────
 //
-// THE RULE, stated once: **rendering the STAMP OBJECT into prose requires the
-// helper; rendering a narrowly-extracted fact off it does not. Reading
-// `recovery` by any route always requires the helper.**
+// THE RULE, stated once: **rendering ANYTHING off the stamp into prose requires
+// the helper — the whole object or a single field, directly or through a local.
+// The only ways out are calling the helper or an audited exemption marker.**
 //
 //   ${t.verifyHold.step} in prose            FLAG — the historical defect
 //   hold = ticket.verifyHold; ${hold.step}   FLAG — whole-object alias
-//   heldAt = ...verifyHold.step; ${heldAt}   PASS — a narrowed fact
+//   heldAt = ...verifyHold.step; ${heldAt}   FLAG — narrowed, still a render
 //   held = ...holdRecoveryText(...)          PASS — carries the recovery
 //   any read of `recovery`, however bound    FLAG unless the helper is called
+//   a render marked `prescribes-nothing`     PASS — written claim, and counted
+//
+// AN EARLIER VERSION EXEMPTED THE NARROWED FACT and that was the same defect
+// this file exists to prevent, one level up. The reasoning was that `.step`
+// "carries no advice" — true of the FIELD, false of the STATEMENT, because the
+// advice is the prose an author writes around it. The t345 sweep sentence is
+// exactly that shape, so it walked through in narrowed form; and the header
+// taught narrowing as the escape from a rule B false positive, pointing authors
+// at the one shape the scan could not see. A rule that directs its user to its
+// own blind spot is worse than no rule.
+//
+// So a genuine false positive is resolved by WRITING DOWN why, not by narrowing
+// until the scan goes quiet. One exemption exists (`:4605`, a receipt to the
+// seat that just cleared the hold) and a subject counts them, so a second
+// cannot appear in a diff nobody reads.
 //
 // Rule A (the `recovery` half) alone would have been GREEN on the original
 // defect: the old sweep sentence read `verifyHold.step` and wrote its own
@@ -64,15 +79,11 @@ const path = require('node:path');
 //
 // So the pre-pass CLASSIFIES each binding rather than merely collecting it.
 // Collecting alone would flag `${held}` — the correct reader — and `reentry`,
-// a boolean. Three kinds, and only one is a violation when rendered:
-//   PRESENCE  (`!!ticket.verifyHold`)         — a boolean, prescribes nothing
-//   FACT      (`...verifyHold.step`)          — narrowed, carries no recovery
+// a boolean. Three kinds, and only one is safe to render freely:
+//   PRESENCE  (`!!ticket.verifyHold`)         — a boolean, carries no text
 //   HELPER    (`...holdRecoveryText(...)`)    — the recovery, already rendered
-//   OBJECT    (`= ticket.verifyHold`)         — the whole stamp: FLAG on render
-//
-// The escape from a false positive here is to NARROW THE BINDING to the fact
-// field, which is the habit worth teaching, and it cannot reach `recovery`
-// without tripping rule A. There is no evasion that is not also the fix.
+//   STAMP     (`= ticket.verifyHold`, or any
+//              field narrowed off it)         — FLAG on render
 //
 // WHAT THIS STILL DOES NOT SEE, measured rather than assumed. The pre-pass is
 // one level deep and text-based, so three shapes get through: an alias of an
@@ -139,11 +150,11 @@ function scanHoldRecovery(src) {
   // PRE-PASS. Every identifier bound off the stamp, classified. Runs over the
   // whole file first because a binding may be rendered further down than it is
   // declared — the `heldAt` case spans 150 lines.
-  const objectAliases = new Set();   // whole stamp: rendering it is a violation
+  const stampAliases = new Set();    // stamp OR a fact off it: flag on render
   const recoveryAliases = new Set(); // `recovery` pulled out: always a violation
   {
     let block = false;
-    lines.forEach((raw) => {
+    lines.forEach((raw, i) => {
       const t = raw.trim();
       const isCmt = block || t.startsWith('//') || t.startsWith('*');
       if (t.startsWith('/*')) block = true;
@@ -152,13 +163,14 @@ function scanHoldRecovery(src) {
 
       // Destructuring: `const { step, recovery } = ticket.verifyHold`. Each name
       // is classified on its own — `recovery` is rule A's business wherever it
-      // came from, while `step` is a narrowed fact.
+      // came from, while `step` is a fact, which rule B still governs.
       const destructured = raw.match(/(?:const|let|var)\s*\{([^}]*)\}\s*=\s*[^;]*verifyHold/);
       if (destructured) {
         destructured[1].split(',').forEach((part) => {
           const name = part.split(':').pop().trim();
           if (!name) return;
           if (/^recovery$/.test(part.trim().split(':')[0].trim())) recoveryAliases.add(name);
+          else stampAliases.add(name);
         });
         return;
       }
@@ -166,19 +178,37 @@ function scanHoldRecovery(src) {
       const bound = raw.match(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.*verifyHold.*)$/);
       if (!bound) return;
       const [, name, rhs] = bound;
-      // HELPER and PRESENCE bindings prescribe nothing on render; FACT bindings
-      // narrow to a field that carries no advice. Only a bare whole-stamp
-      // binding stays dangerous, because everything on it is reachable later.
-      if (/holdRecoveryText\s*\(/.test(rhs)) return;
+      // Classified against the whole STATEMENT, not the line: the correct reader
+      // binds across three lines and calls the helper on the second, so a
+      // line-local test reads its first line as a bare fact and flags the one
+      // reader that is right.
+      if (/holdRecoveryText\s*\(/.test(statementText(i))) return;
+      // PRESENCE alone prescribes nothing and cannot carry a step into prose.
       if (/!!|===|!==/.test(rhs)) return;
       if (/\.recovery\b/.test(rhs)) { recoveryAliases.add(name); return; }
-      if (/verifyHold\s*\.\s*[A-Za-z_$]/.test(rhs) && !/verifyHold\s*[;,)]|verifyHold\s*$/.test(rhs)) return;
-      objectAliases.add(name);
+      // A NARROWED FACT is treated exactly like the whole stamp. The r1 version
+      // exempted it, reasoning that `.step` "carries no advice" — true of the
+      // FIELD and false of the STATEMENT, since the advice is the prose an
+      // author writes around it. That exemption reopened the t345 defect in
+      // narrowed form (`const step = t.verifyHold.step` then a hand-written
+      // "close the ticket again"), and worse, the header taught narrowing as the
+      // way out of a rule B false positive — pointing authors at the one shape
+      // the scan could not see. Renders that genuinely prescribe nothing carry
+      // an explicit marker instead, which is auditable and counted.
+      stampAliases.add(name);
     });
   }
 
-  const aliasRendered = (raw, names) => [...names].some(
-    (n) => new RegExp(`\\$\\{[^}]*\\b${n}\\b`).test(raw));
+  // TWO render shapes, and missing the second is how the narrowed defect first
+  // slipped past this rule: `${name}` inside a literal, and `\`…\` + name`
+  // concatenated onto one. The historical sweep sentence is written the second
+  // way, so an interpolation-only test reads the exact defect as clean.
+  const aliasRendered = (raw, names) => [...names].some((n) => {
+    const interpolated = new RegExp(`\\$\\{[^}]*\\b${n}\\b`).test(raw);
+    const concatenated = new RegExp('[`\'"][^`\'"]*[`\'"]\\s*\\+[^;]*\\b' + n + '\\b').test(raw)
+      || new RegExp(`\\b${n}\\b\\s*\\+\\s*[\`'"]`).test(raw);
+    return interpolated || concatenated;
+  });
 
   lines.forEach((raw, i) => {
     const comment = isCommentLine(raw);
@@ -193,8 +223,17 @@ function scanHoldRecovery(src) {
       violations.push({ line: i + 1, rule: 'A', text: raw.trim() });
       return;
     }
-    // Rule B, alias arm — the whole stamp rendered into prose under a local.
-    if (!helper && aliasRendered(raw, objectAliases)) {
+    // Rule B, alias arm — the stamp, or a fact off it, rendered under a local.
+    //
+    // The marker is the ONLY way out, and it is deliberately not a regex the
+    // rule can be widened into: an author must write the words on the line and
+    // say why, and the subject below pins how many exist, so one appearing
+    // silently fails. That is the difference between an audited exception and a
+    // rule quietly relaxed until it means nothing.
+    // Matched on the STATEMENT so the justification can sit in a comment above
+    // the render rather than crammed onto it — the exemptions worth granting are
+    // the ones that need a paragraph of why.
+    if (!helper && !/prescribes-nothing/.test(stmt) && aliasRendered(raw, stampAliases)) {
       violations.push({ line: i + 1, rule: 'B', text: raw.trim() });
       return;
     }
@@ -320,17 +359,66 @@ test('RED: `let` and `var` bindings are caught too, not just `const`', () => {
   });
 });
 
-test('GREEN: a NARROWED fact binding is not a violation — this is the intended escape', () => {
-  // `heldAt` is the real instance. A binding that keeps only `.step` carries no
-  // recovery and prescribes nothing, so rendering it later is a statement of
-  // fact. This is deliberately the cheap way out of a rule B false positive:
-  // the fix and the evasion are the same edit, which is the property the
-  // whole-object flag is chosen to produce.
+test('RED: THE NARROWED HISTORICAL DEFECT — a fact binding plus hand-written advice', () => {
+  // The r1 hole, and the reason this file was rejected a second time. r1 exempted
+  // a binding narrowed to `.step`, reasoning that the field "carries no advice".
+  // True of the FIELD, false of the STATEMENT: the advice is the prose an author
+  // writes around it. So the t345 defect walked straight through in narrowed
+  // form — and the header TAUGHT narrowing as the way out of a rule B false
+  // positive, pointing authors at the one shape the scan could not see.
+  //
+  // This is the sweep sentence t345 removed, one `const` away from the direct
+  // form the subject above catches. It must never pass again.
+  const mutant = [
+    'const step = t.verifyHold.step;',
+    'body += `\\n\\nRECOVERY: fix what the check named, then close the ticket again.` + step;',
+  ].join('\n');
+  const v = scanHoldRecovery(mutant);
+  assert.strictEqual(v.length, 1, 'ENTER: the narrowed defect is caught');
+  assert.strictEqual(v[0].rule, 'B', 'by rule B — a fact render is governed exactly like the stamp');
+  assert.strictEqual(v[0].line, 2, 'at the render, which is where the advice is written');
+});
+
+test('RED: narrowing to a fact does not launder a close instruction', () => {
+  // The second shape the lead measured, and the one an author reaches for first:
+  // bind the step, then write the sentence rule B would have caught inline.
+  const mutant = [
+    'const heldAt = ticket.verifyHold.step;',
+    'reply(`held at "${heldAt}" — close the ticket again to re-run the checks`);',
+  ].join('\n');
+  const v = scanHoldRecovery(mutant);
+  assert.strictEqual(v.length, 1, 'ENTER: caught');
+  assert.strictEqual(v[0].rule, 'B', 'the narrowed form is not a way out');
+});
+
+test('GREEN: a fact render that prescribes nothing takes an AUDITED exemption', () => {
+  // The genuine false positive (`:4605`): it names the check that HAD held the
+  // ticket, to the seat that just cleared it, after the stamp is gone. A receipt,
+  // not advice — and its step-naming is pinned by an accepted t345 subject, so it
+  // cannot be dropped, while routing it through the helper would tell a seat to
+  // perform the action it has this moment performed.
+  //
+  // The marker is a WRITTEN CLAIM, not a pattern the rule can be widened into,
+  // and the count of them is asserted below — so one appearing silently fails.
   const ok = [
     'const heldAt = (ticket.verifyHold && ticket.verifyHold.step) || null;',
+    '// prescribes-nothing: a receipt to the seat that just cleared the hold.',
     'reply(`re-verifying (was held at "${heldAt}")`);',
   ].join('\n');
-  assert.deepStrictEqual(scanHoldRecovery(ok), [], 'a narrowed fact is not the stamp');
+  assert.deepStrictEqual(scanHoldRecovery(ok), [], 'an audited exemption is honoured');
+});
+
+test('the exemption cannot be spent silently — every marker in the source is counted', () => {
+  // An escape hatch nobody counts is a rule that decays one honest-looking
+  // comment at a time. ONE exemption exists today; a second must be argued for
+  // in review rather than appear in a diff nobody reads.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'team-tickets.js'), 'utf8');
+  const marked = src.split('\n')
+    .map((l, i) => ({ line: i + 1, text: l.trim() }))
+    .filter(({ text }) => text.includes('prescribes-nothing'));
+  assert.strictEqual(marked.length, 1,
+    `exactly one audited exemption is expected (found ${marked.length}: ${marked.map((m) => m.line).join(', ')})`);
+  assert.match(marked[0].text, /^\/\//, 'and it is a written justification, not code');
 });
 
 test('GREEN: a narrowed fact cannot smuggle the recovery out', () => {
