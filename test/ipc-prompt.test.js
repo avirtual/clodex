@@ -239,15 +239,28 @@ test('task line: the filter tokens it publishes ARE TICKET_FILTERS, both directi
 
   const line = IPC_PROMPT.split('\n').find((l) => /^ {2}\[agent:task list\]/.test(l));
   assert.ok(line, 'ENTER: the list line is in the literal');
-  // The prose names the tokens inline, so match them as words — a substring test
-  // would let `done` hide inside `[agent:task done <id>]` on the other line.
-  const named = filters.filter((f) => new RegExp(`\\b${f}\\b`).test(line));
+  // Scan the FILTER CLAUSE, never the whole line. The line's second half is the
+  // lead's dispatch protocol, and it already contains the words `add`, `assign`,
+  // `start`, `park` and `cancel` for unrelated reasons — so a whole-line scan
+  // reports any of those as "named as a filter" when TICKET_FILTERS grows one.
+  // Measured: adding each of those five to TICKET_FILTERS left this subject
+  // green, while `stalled` (absent from the line) failed it. Same silent-pass
+  // class as the substring case below, in the direction that actually drifts.
+  // Bounded at the worked example: `as in [agent:task list all]` is an
+  // illustration, not the vocabulary, and its `[agent:task list …]` words are
+  // not filters being offered.
+  const clause = (line.match(/A filter token narrows it:(.*?), as in /) || [])[1];
+  assert.ok(clause, 'ENTER: the filter clause was found on the line — a failed extract must not pass as agreement');
+  // Words, not substrings: a substring test would let `done` hide inside
+  // `[agent:task done <id>]`.
+  const named = filters.filter((f) => new RegExp(`\\b${f}\\b`).test(clause));
 
   assert.deepStrictEqual(named, filters,
-    'every accepted filter must be named on the line — an added one the prompt never learned');
-  // And nothing the line offers may be a token the verb bounces. Checked against
-  // the vocabulary rather than the parser, which accepts anything.
-  const offered = (line.match(/\b(open|done|cancelled|all|rejected|closed|parked)\b/g) || []);
+    'every accepted filter must be named in the clause — an added one the prompt never learned');
+  // And nothing the clause offers may be a token the verb bounces. Reading real
+  // words out of the clause rather than probing a fixed candidate list: a
+  // hardcoded set can only catch an invented filter it happened to anticipate.
+  const offered = (clause.match(/\b[a-z]+\b/g) || []).filter((w) => !['is', 'the', 'default', 'then', 'as', 'in'].includes(w));
   const bogus = [...new Set(offered)].filter((t) => !filters.includes(t));
   assert.deepStrictEqual(bogus, [],
     'the line offers a filter _taskList rejects — a seat copying it gets a bounce');
