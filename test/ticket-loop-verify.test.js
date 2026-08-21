@@ -3913,3 +3913,55 @@ test('t345 r4 nit2: a re-close does not move the ticket\'s recorded close time',
   assert.strictEqual(f.one().closedAt, first.closedAt, 'the close time is the FIRST close, not the re-close');
   assert.strictEqual(f.one().closedBy, first.closedBy, 'and so is the closer');
 });
+
+test('t345 r4: a LEGACY hold with no recovery class still renders a route everywhere', async () => {
+  // The state the field can hold that no arm produces any more: a ticket stamped
+  // by the r1/r2 code, sitting on a real board across the upgrade that adds the
+  // class. `recovery` is `undefined` there, and every reader renders it —
+  // `holdRecoveryText` falls back rather than printing "undefined" or throwing.
+  //
+  // This is the class of state the reviewer found three of, so it is asserted for
+  // ALL FOUR readers rather than the one that happened to be convenient.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const old = Date.now() - (60 * 60 * 1000);
+  f.tstore.save(f.team.root, [{
+    ...f.one(),
+    state: 'done',
+    loopStep: 'verify',
+    // No `recovery` key at all — exactly what the previous version wrote.
+    verifyHold: { step: 'verify: commits-on-branch', at: old, evidence: '0 commits beyond base' },
+    lastActivityAt: old,
+    nudgedAt: null,
+  }]);
+
+  // READER 1: the sweep alarm.
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  const nudges = f.gated.filter((g) => g.sender === 'ticket-watchdog');
+  assert.strictEqual(nudges.length, 1, 'ENTER: the legacy-held ticket alarmed');
+  assert.match(nudges[0].body, /RECOVERY:/, 'the alarm still names a route');
+  assert.ok(!/undefined/.test(nudges[0].body), 'and never prints undefined');
+
+  // READER 2: the respec route.
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'respec', id: 't1', who: null, body: 'x' });
+  assert.ok(!/undefined/.test(f.injected.join('\n')), 'respec renders it too');
+
+  // READER 3: the re-entry, which must still work on a legacy stamp.
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed' });
+  for (let i = 0; i < 40 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+  assert.strictEqual(f.created.length, 1, 'a legacy hold is still re-enterable, and reaches a reviewer');
+
+  // READER 4: the bounce, on a ticket that is held but NOT re-closable.
+  const f2 = mkLoop({ repo: mkRepo() });
+  f2.tstore.save(f2.team.root, [{
+    ...f2.one(), state: 'done', loopStep: 'review',
+    verifyHold: { step: 'verify: task-dir', at: old, evidence: 'e' },
+  }]);
+  f2.injected.length = 0;
+  f2.m._handleTask(f2.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'r' });
+  const bounced = f2.injected.join('\n');
+  assert.match(bounced, /is held at/, 'ENTER: it bounced as held');
+  assert.ok(!/undefined/.test(bounced), 'and the bounce names a route rather than undefined');
+});
