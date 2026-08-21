@@ -200,7 +200,11 @@ async function runCase({ shellPath, keymapCmd, prefill, armHup, graceMs }) {
     return { ran, out: out.s, pid: proc && proc.pid };
   } finally {
     try { ptys.dispose(); } catch {}
-    try { await reapPty(proc, { graceMs }); } catch {}
+    // The boolean is the ONLY witness to a pid that outlived even SIGKILL: that
+    // survivor holds the runner's event loop open, so the suite wedges at ~0%
+    // CPU long after this row has passed, naming nothing. Reported rather than
+    // asserted — a throw here would mask whatever failure sent us into finally.
+    try { if (!(await reapPty(proc, { graceMs }))) console.error(`reapPty: pid ${proc && proc.pid} survived SIGKILL`); } catch {}
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 }

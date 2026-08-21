@@ -132,7 +132,9 @@ async function withShell(run, { profile, env: envOver } = {}) {
     return await run({ exec, ptys, results, passive, dir, raw: () => raw, proc: () => proc });
   } finally {
     try { ptys.dispose(); } catch {}
-    try { await reapPty(proc); } catch {}
+    // See the sibling call site in term-exec-keymap.test.js: the boolean is the
+    // only witness to a pid that outlived SIGKILL and is wedging the runner.
+    try { if (!(await reapPty(proc))) console.error(`reapPty: pid ${proc && proc.pid} survived SIGKILL`); } catch {}
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 }
