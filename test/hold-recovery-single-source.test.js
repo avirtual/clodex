@@ -74,6 +74,21 @@ const path = require('node:path');
 // field, which is the habit worth teaching, and it cannot reach `recovery`
 // without tripping rule A. There is no evasion that is not also the fix.
 //
+// WHAT THIS STILL DOES NOT SEE, measured rather than assumed. The pre-pass is
+// one level deep and text-based, so three shapes get through: an alias of an
+// alias (`h2 = h`), a nested destructure (`const { verifyHold: { recovery } }
+// = ticket`), and the stamp passed as a function ARGUMENT — the last of which
+// is a live idiom here, `_stampVerifyHold(team, ticketId, hold)`, though that
+// one is a writer and so not a reader this rule governs. None of the three
+// appears as a READER in the file today (checked: zero whole-stamp bindings
+// beyond the three classified, zero nested destructures of the field).
+//
+// Left uncovered deliberately. Closing them properly means parsing rather than
+// scanning, and each regex added to chase one costs a false-positive surface
+// on a rule whose whole value is that authors trust it. The honest boundary:
+// this catches the shapes the file's own idiom teaches, which is where the next
+// reader will actually come from. It is not a proof of absence.
+//
 // A "statement" is approximated by walking back from the line to the start of
 // its expression — recovery text is built with `+` concatenation across lines
 // (the sweep body spans four), so a line-local check would false-positive on
@@ -288,6 +303,21 @@ test('RED: renaming on destructure does not evade rule A', () => {
   const v = scanHoldRecovery(mutant);
   assert.strictEqual(v.length, 1, 'ENTER: caught under its new name');
   assert.strictEqual(v[0].rule, 'A', 'the class is the class whatever it is called');
+});
+
+test('RED: `let` and `var` bindings are caught too, not just `const`', () => {
+  // Cheap to get wrong: the pre-pass matches a declaration keyword, and a
+  // pattern written for `const` alone would leave two spellings of the same
+  // evasion open.
+  ['let', 'var'].forEach((kw) => {
+    const mutant = [
+      `${kw} hold = ticket.verifyHold;`,
+      'reply(`held at "${hold.step}" — close the ticket again`);',
+    ].join('\n');
+    const v = scanHoldRecovery(mutant);
+    assert.strictEqual(v.length, 1, `ENTER: the ${kw} binding produced a violation`);
+    assert.strictEqual(v[0].rule, 'B', `${kw} is caught by rule B like const`);
+  });
 });
 
 test('GREEN: a NARROWED fact binding is not a violation — this is the intended escape', () => {
