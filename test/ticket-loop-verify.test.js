@@ -3504,3 +3504,43 @@ test('t345: respec still refuses a held ticket, but routes to the RE-CLOSE, not 
   assert.ok(!/reject it first/.test(said), 'and does not prescribe a rejection that did not happen');
   assert.match(said, /verify: commits-on-branch/, 'it names what the ticket is actually waiting on');
 });
+
+test('t345: team-review still refuses while a check is RUNNING — the blind window is untouched', async () => {
+  // The anti-widening half of the pair below. The guard exists because a ticket
+  // at `verify` looks unreviewed for a whole suite run, and a bare team-review in
+  // that window spawns a second, unattached reviewer. Narrowing it to skip HELD
+  // tickets must not open that window for running ones.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  f.m._handleTeamReview(f.seat('lead'), 'have a look at the branch');
+
+  const said = f.injected.join('\n');
+  assert.match(said, /in the loop's verify step/, 'a running check still refuses a second reviewer');
+  assert.strictEqual(f.created.length, 0, 'ENTER: and nothing was spawned');
+});
+
+test('t345: team-review is NOT refused for a HELD ticket — the escape hatch stays open', async () => {
+  // The guard tells the lead to wait for the loop's own reviewer. On a held
+  // ticket that reviewer is never coming: the loop ran a check, it failed, and it
+  // stopped. Refusing here would close the documented escape hatch in exactly the
+  // broken state it exists for, and the advice would be false as well.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  // Held at the TASK-DIR check, so the branch itself is reviewable — the case
+  // where a lead plausibly wants a review anyway. Built through the real loop.
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', taskDir: null, report: 'r', reportedBy: 'team-hand' }]);
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+  assert.ok(f.one().verifyHold, 'ENTER: the ticket really is held');
+  f.injected.length = 0;
+
+  f.m._handleTeamReview(f.seat('lead'), 'have a look at the branch');
+
+  const said = f.injected.join('\n');
+  assert.ok(!/in the loop's verify step/.test(said),
+    'the lead is not told to wait for a reviewer the loop has already given up on');
+});

@@ -675,8 +675,15 @@ function createTicketMethods(deps, shared) {
       if (!reviewTicket) {
         let inVerify = [];
         try {
+          // A HELD ticket is at `verify` and is NOT going to produce a reviewer:
+          // the loop ran a check, the check failed, and it stopped (t345). The
+          // refusal below tells the lead to wait for a spawn that is never coming
+          // — false advice, in the one place documented as the escape hatch for
+          // when the loop cannot spawn a reviewer. `verifyHold` is what separates
+          // a check that is RUNNING from one that has stopped and handed the
+          // ticket to a human; `loopStep` alone reads the same in both.
           inVerify = ticketsStore.load(team.root)
-            .filter((t) => t && t.loopStep === 'verify')
+            .filter((t) => t && t.loopStep === 'verify' && !t.verifyHold)
             .map((t) => t.id);
         } catch { inVerify = []; }
         if (inVerify.length) {
