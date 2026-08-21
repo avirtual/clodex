@@ -13274,9 +13274,9 @@ test('task start: a cwd the RESOLVER refuses (not the lexical check) yields no A
 // project's artifact dir; a SEAT resolves the same bytes against its cwd — the
 // repo — where a stale `tasks/` still exists. Observed live: t451's hand reported
 // the artifact missing, worked without it, then journalled into the decoy.
-// Measured on the live board, 260 of 367 taskDirs are relative and 97 of those
-// name a directory that EXISTS in the repo, so the seat's read lands in a real,
-// wrong tree rather than failing loudly.
+// Most live taskDirs are relative, and a large share of those name a directory
+// that EXISTS in the repo — which is why this fails the dangerous way: the
+// seat's read lands in a real, wrong tree rather than failing loudly.
 test('task dispatch: a RELATIVE task dir is rendered resolved, against the artifact dir and not the repo', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);

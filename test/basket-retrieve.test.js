@@ -71,9 +71,9 @@ test('basket: a corrupt line does not lose the rest of the basket', () => {
 });
 
 test('basket: one message journalled per destination is ONE document', () => {
-  // Measured on the live basket: 802 ids span 2-4 worktrees, 983 of 13,926
-  // lines (7%). Left as separate documents they inflate df — duplicate mass
-  // alone pushed `self`, `load`, `tickets` and `forge` over MAX_DF_RATIO — and
+  // One broadcast is journalled once per destination worktree, so the same text
+  // recurs across ids. Left as separate documents they inflate df — duplicate
+  // mass alone pushed `self`, `load`, `tickets` and `forge` over MAX_DF_RATIO —
   // hand one exchange several independent shots at a single ranked list.
   const line = (cwd) => JSON.stringify({ id: 'bcast', text: 'we had an issue overnight. there?', cwd, ts: '2026-08-01T00:00:00Z' });
   const recs = parseBasket([

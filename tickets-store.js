@@ -261,8 +261,9 @@ function extractMustFix(verdictText) {
   // stays. A bare `.trim()` de-indents the first line ONLY, which silently
   // mutilates the shape `countMustFix` reads: item 1 arrives at column 0 while
   // its true siblings keep their indent, so a relative-depth count demotes every
-  // sibling to a sub-bullet and collapses a multi-item verdict to 1. Measured
-  // over the live verdict corpus: 28 of 151 files, every one an undercount.
+  // sibling to a sub-bullet and collapses a multi-item verdict to 1. Every
+  // instance found in the live verdict corpus was an UNDERCOUNT — the direction
+  // is the point: a verdict silently reports fewer must-fixes than it carries.
   // The placeholder tests below run on `.trim()` so their rules stay byte-exact.
   const out = body.join('\n').replace(/^(?:[ \t]*\r?\n)+/, '').replace(/\s+$/, '');
   if (!out.trim()) return null;

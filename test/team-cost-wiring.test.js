@@ -357,8 +357,9 @@ test('a closer who is not the seat the ticket was DELIVERED to resolves to nothi
   // Any role-holder may close any ticket of that role, so hand-3 closing hand-1's
   // ticket otherwise stamps hand-3's ledger `seatResolved: true`. `deliveredTo`
   // is used as a FALSIFIER only: present and disagreeing, it kills the
-  // inference; absent, it says nothing either way (it is on 31 of 255 closed
-  // tickets, so treating its absence as evidence would unknown-out most of them).
+  // inference; absent, it says nothing either way. The field is a late addition
+  // that most closed tickets predate, so treating its absence as evidence would
+  // unknown-out the ones that carry the most history.
   const rig = mkRoleRig();
   rig.m._writeTicketCost(rig.team, {
     id: 't27', role: 'hand', assignee: 'hand', state: 'done', closedBy: 'team-hand-2',
