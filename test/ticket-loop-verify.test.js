@@ -3688,12 +3688,27 @@ test('t345 r4 MF1: the HAND is told, not only the lead, and told what to do', as
   assert.match(toHand[0].body, /HELD/, 'and told it is HELD, not rejected');
   assert.match(toHand[0].body, /0 commits beyond/, 'with the evidence it has to act on');
   assert.match(toHand[0].body, /close the ticket again/, 'and the route');
-  // Both tenses: the notice used to hand-write "was counted" beside the helper
-  // call, and t466 removed that copy — the fact now reaches the seat only through
-  // the `hand` arm, which says "is counted". Pinning one tense pins WHICH of the
-  // two sources spoke, which is the opposite of what this asserts.
-  assert.ok(!/rework round/.test(toHand[0].body) || /no rework round (is|was) counted/.test(toHand[0].body),
+  // UNCONDITIONAL, and it was an implication (`!/rework round/ || …`) until t466.
+  // That form was safe only while the fact reached the seat from TWO sources:
+  // `_notifyHandOfHold` hand-wrote its own copy, which kept "rework round" in the
+  // body and forced the right branch. t466 removed the copy, so the code under
+  // test now owns the antecedent and can falsify it — reword the arm and the
+  // implication passes green while a held seat is never told it was not a
+  // rejection. That is the t345 regression returning through its own guard.
+  //
+  // The two assertions cover what the other cannot: the first fails if the ARM is
+  // reworded, the second if the LOCAL sentence is deleted. `/HELD/` above is
+  // satisfied by the header tag alone and covers neither.
+  //
+  // Yes, the first hardcodes the arm's wording into a test — this ticket's own
+  // class, one step out. Accepted: `holdRecoveryText` is deliberately unexported
+  // (t465 §6, settled), so a test cannot single-source against it. Do NOT "fix"
+  // the coupling by weakening this to a looser match: a guard that goes red on a
+  // reword is strictly better than one that goes silent on it.
+  assert.match(toHand[0].body, /no rework round (is|was) counted/,
     'and it must not read as a rejection — no rework round happened');
+  assert.match(toHand[0].body, /NOT rejected/,
+    'and told so explicitly — the arm states the positive, this is the negative');
   // The lead is still told: this ADDS a reader, it does not move the escalation.
   assert.strictEqual(f.esc().length, 1, 'the lead still gets its escalation');
 });

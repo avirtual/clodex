@@ -1204,14 +1204,18 @@ test('N=5 is the measured floor: at N=4 the real file yields three false positiv
   //   "check could not run"    — the merge-check failure
   const src = realSource();
   const at4 = scanAdvicePhrases(src, 4);
+  // FIRST, above the count: the regression this names is a re-copied sentence,
+  // and that also breaks `at4.length === 3` — so below the count it could never
+  // fire, and the reader would get "got 4" instead of the message naming the
+  // defect. Without it at all, a recurrence would silently rejoin the
+  // "benign prose" list, which is the defect's own shape: absorbed into a number
+  // nobody re-reads.
+  assert.ok(!at4.some((h) => h.gram === 'and no rework round'),
+    'the rework-round clause is single-sourced in the hand arm — a second render has reappeared beside it');
   assert.strictEqual(at4.length, 3, `ENTER: the measured N=4 cost (got ${at4.length})`);
   assert.deepStrictEqual(at4.map((h) => h.gram).sort(), [
     'check could not run', 'close the ticket again', 're reads the same',
   ], 'the three N=4 false positives are ordinary prose sharing four words with an arm');
-  // The removed one, asserted as an ABSENCE so a re-copied sentence lands here
-  // rather than silently rejoining the "benign prose" list above.
-  assert.ok(!at4.some((h) => h.gram === 'and no rework round'),
-    'the rework-round clause is single-sourced in the hand arm — a second render has reappeared beside it');
   assert.deepStrictEqual(scanAdvicePhrases(src, PHRASE_N), [], 'and N=5 clears them');
 });
 
