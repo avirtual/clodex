@@ -85,6 +85,22 @@ const path = require('node:path');
 //   STAMP     (`= ticket.verifyHold`, or any
 //              field narrowed off it)         — FLAG on render
 //
+// WHAT THE RULE DELIBERATELY PASSES, enumerated because the last two holes in
+// this file were both exemptions rather than blind spots — the shapes a rule
+// lets through are where its next defect lives, so they are written down:
+//
+//   1. A PRESENCE boolean plus hand-written advice (`if (!!hold) reply('close
+//      it again')`). Passes, and correctly: the stamp contributes no TEXT, so
+//      there is no field whose wording can drift from the record — which is the
+//      property this file defends. The advice is unconditioned prose, wrong in
+//      the same way anywhere in the codebase, and not this rule's business.
+//   2. A HELPER render with extra prose appended. Passes: the helper's sentence
+//      is present and correct, and policing what an author adds after it is the
+//      prose-matching rule rejected above as brittle.
+//
+// Both are genuinely narrower than the historical defect, which read a FIELD and
+// wrote a sentence that contradicted it. Neither can do that.
+//
 // WHAT THIS STILL DOES NOT SEE, measured rather than assumed. The pre-pass is
 // one level deep and text-based, so three shapes get through: an alias of an
 // alias (`h2 = h`), a nested destructure (`const { verifyHold: { recovery } }
