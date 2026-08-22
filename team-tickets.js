@@ -5024,15 +5024,20 @@ function createTicketMethods(deps, shared) {
         // CHECK 4 — the diff materializes, non-empty. This is also the artifact
         // the reviewer reads, so the check and the deliverable are the same
         // operation: a diff that cannot be written is a review that cannot happen.
+        //
+        // The two failure messages below QUOTE `diffText`'s argv so the lead can
+        // re-run it by hand. That is a copy, and it went stale once already when
+        // the leaf gained `--no-ext-diff` — if you change the flags in
+        // git-worktree.js's `diffText`, change them here too.
         const diff = await gitWorktree.diffText(team.root, baseSha, branch)
           .catch((e) => ({ ok: false, text: null, error: e.message }));
         if (!diff.ok) {
-          fail('verify: diff', `git diff --text ${baseSha}..${branch} failed: ${diff.error}`,
+          fail('verify: diff', `git diff --text --no-ext-diff ${baseSha}..${branch} failed: ${diff.error}`,
             `ran diffText(${baseSha}, ${branch})`, 'infra');
           return;
         }
         if (!diff.text || !diff.text.trim()) {
-          fail('verify: diff', `git diff --text ${baseSha}..${branch} is empty despite ${commits.count} commit(s) on the branch — there is nothing to review`,
+          fail('verify: diff', `git diff --text --no-ext-diff ${baseSha}..${branch} is empty despite ${commits.count} commit(s) on the branch — there is nothing to review`,
             `ran commitsOnBranch (${commits.count}) then diffText, both succeeded`, 'hand');
           return;
         }

@@ -641,6 +641,10 @@ test('a SIBLING file whose name merely ends in CHANGELOG.md is not the root file
   assert.ok(!/was CHANGED by this merge/.test(notes[0].body), 'and no change to the root file is claimed');
 });
 
+// SIBLING PIN: `--text`, the other mandatory flag in this leaf's argv, is pinned
+// in test/ticket-loop-verify.test.js ("--text keeps a NUL-containing file
+// reviewable"). Someone editing that argv greps one flag and lands on one of the
+// two subjects; each names the other so neither is edited alone.
 test('the diff leaf DEFEATS an external diff driver, so the reviewer never reads driver output', async () => {
   // The production behaviour `--no-ext-diff` buys, pinned where it can red. An
   // external driver replaces git's output with its own: the reviewer at CHECK 4
@@ -655,7 +659,11 @@ test('the diff leaf DEFEATS an external diff driver, so the reviewer never reads
   // ENTER: the driver really is honoured by git here, or the assertion below
   // passes for the trivial reason that nothing was ever suppressed.
   const prev = process.env.GIT_EXTERNAL_DIFF;
-  process.env.GIT_EXTERNAL_DIFF = '/bin/echo';
+  // Bare `echo`, not `/bin/echo`: git resolves the driver through a shell, so the
+  // absolute path assumes a filesystem layout and buys nothing. `echo` exits 0 and
+  // prints non-empty output carrying no `diff --git` header, which is the whole
+  // property needed here.
+  process.env.GIT_EXTERNAL_DIFF = 'echo';
   let raw, viaLeaf;
   try {
     raw = execFileSync('git', ['-C', repo.dir, 'diff', `${headBefore}..tl-1`], { encoding: 'utf8' });

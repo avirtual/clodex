@@ -444,6 +444,10 @@ test('the reviewer is spawned with the constructed scope, carrying the report ve
   assert.ok(prompt.includes('VERDICT'), 'the verdict grammar is in the scope');
 });
 
+// SIBLING PIN: `--no-ext-diff`, the other mandatory flag in this leaf's argv, is
+// pinned in test/ticket-auto-merge.test.js ("the diff leaf DEFEATS an external
+// diff driver"). Someone editing that argv greps one flag and lands on one of the
+// two subjects; each names the other so neither is edited alone.
 test('--text keeps a NUL-containing file reviewable instead of "Binary files differ"', async () => {
   // The spec calls --text mandatory and not style, and this is why: git decides
   // binary-ness from content, so ONE NUL byte in a source file collapses the
