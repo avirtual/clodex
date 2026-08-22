@@ -15,10 +15,10 @@ blocks a release.
 
 - The "ticket merged" note the ticket loop sends the lead no longer claims a
   CHANGELOG entry is owed when the merge already carried one. It now checks what
-  the merge actually put on master and says one of three things: the entry
-  landed, an entry is owed, or the check itself did not answer — that last one
-  reported as its own outcome rather than quietly folded into either of the
-  others.
+  the merge actually put on master and says one of three things: the merge
+  changed `CHANGELOG.md` so look before adding a second entry, an entry is owed,
+  or the check itself did not answer — that last one reported as its own outcome
+  rather than quietly folded into either of the others.
 
 - New **GitHub plugin**, off by default. It adds one read-only agent verb,
   `[agent:gh]`, that collapses the six-commands-and-two-wrong-guesses dance an

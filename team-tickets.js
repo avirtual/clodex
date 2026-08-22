@@ -1698,7 +1698,14 @@ function createTicketMethods(deps, shared) {
         if (!d || !d.ok || typeof d.text !== 'string') {
           return { known: false, error: (d && d.error) || 'git diff returned nothing readable' };
         }
-        return { known: true, touched: /^diff --git a\/CHANGELOG\.md b\/CHANGELOG\.md$/m.test(d.text) };
+        // NO `a/`/`b/` PREFIXES in the pattern: `diff.noprefix`, or a custom
+        // `diff.srcPrefix`/`dstPrefix`, makes git emit `diff --git CHANGELOG.md
+        // CHANGELOG.md`. Requiring the prefixes answers touched:false on EVERY
+        // merge under such a config — a systematic false OWED, which is the
+        // pre-t472 behaviour wearing the authority of a measurement. Still
+        // `^`-anchored on the header and still unspoofable from a hunk body,
+        // since every body line carries a `+`, `-` or space.
+        return { known: true, touched: /^diff --git [^\n]*CHANGELOG\.md$/m.test(d.text) };
       } catch (e) {
         return { known: false, error: e && e.message ? e.message : String(e) };
       }
@@ -1711,9 +1718,11 @@ function createTicketMethods(deps, shared) {
     // one the release ships without; a debt stated over an entry that landed is
     // a duplicate entry and, repeated, a line the lead stops reading.
     //
-    // `changelog` is _mergeTouchedChangelog's three-valued result, and a MISSING
-    // or malformed one reads as unknown, not as either claim — the default is
-    // the only arm a caller can reach by forgetting.
+    // `changelog` is _mergeTouchedChangelog's three-valued result. A missing one
+    // reads as unknown, and so does a malformed one: `known` alone is not enough,
+    // because `{known:true}` with no `touched` would fall through to the OWED
+    // claim — an absent measurement rendered as a measured answer. Both are the
+    // default arm, which is the only arm a caller can reach by forgetting.
     // COLUMN 1 IS THE SAFETY, the same knife-edge ticketCloseLine documents and
     // for a worse consequence: the last line carries a complete, ready-to-fire
     // `[agent:task accept <id>]`, inert only because `Nothing was torn down: `
@@ -1724,15 +1733,31 @@ function createTicketMethods(deps, shared) {
     // Keep the prefix.
     _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary, changelog }) {
       try {
-        const changelogLine = (changelog && changelog.known)
+        // Collapsed and capped BEFORE it reaches the array. git stderr is routinely
+        // multi-line, and this body's safety property is that no line starts with
+        // `[agent:` — an invariant the hazard comment below reasons about as five
+        // lines each carrying a prose prefix. A multi-line interpolation breaks
+        // that silently. git prefixes its own diagnostics (`fatal:`, `error:`), so
+        // no real stderr is known to open a line with the bad token; this closes
+        // the class instead of re-deriving that argument each time the text moves.
+        const oneLine = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 300);
+        // `touched` must be a BOOLEAN, not merely present: see the note above the
+        // method — a truthy `known` over an absent measurement is the one way an
+        // unmeasured state could reach a measured claim.
+        const measured = !!(changelog && changelog.known === true && typeof changelog.touched === 'boolean');
+        const changelogLine = measured
           ? (changelog.touched
-            ? `A CHANGELOG.md entry LANDED with the merge — the branch wrote one and it is on ${MERGE_TARGET_BRANCH} now. Nothing is owed; writing a second entry duplicates it.`
+            // What was MEASURED is that the merged range touched the file — not
+            // that the branch wrote an entry. A branch fixing a typo in
+            // CHANGELOG.md trips the same header, so the claim stops where the
+            // evidence does and the lead is told to look rather than told not to.
+            ? `CHANGELOG.md was CHANGED by this merge — the branch touched it, so an entry may already be on ${MERGE_TARGET_BRANCH}. Look before adding one, or you will write a duplicate.`
             : `A CHANGELOG.md entry is OWED — the merge carried none (the merge never writes one itself: it conflicts across every live branch).`)
           // "the check could not RUN" is HOLD_RECOVERY's infra arm verbatim, and
           // hold-recovery-single-source.test.js's phrase scan reads a shared
           // 5-gram as a copied arm. Different subject, so the wording stays
           // apart rather than the scan being widened.
-          : `CHANGELOG.md: UNKNOWN — the probe did not answer (${(changelog && changelog.error) || 'no result'}). This is neither of the other two answers: run \`git -C ${team.root} show --stat ${sha}\` before deciding, because a release shipped on the belief that an entry landed ships with no notes.`;
+          : `CHANGELOG.md: UNKNOWN — the probe did not answer (${oneLine((changelog && changelog.error) || 'no result')}). This is neither of the other two answers: run \`git -C ${team.root} show --stat ${sha}\` before deciding, because a release shipped on the belief that an entry landed ships with no notes.`;
         const body = [
           `[ticket ${ticketId} MERGED] ${branch} → ${MERGE_TARGET_BRANCH} as ${sha}`,
           '',
