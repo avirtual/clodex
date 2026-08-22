@@ -216,6 +216,11 @@ const SCANNED_MODULES = [
   // test/ticket-mixin-surface.test.js; this entry only catches the module-scope
   // half (a moved body still reaching for a coordinator const).
   'team-tickets.js',
+  // The team helper's measured layer (t474). Pure leaf: fs/path/childProcess all
+  // arrive by injection, which is what makes its findings table assertable
+  // against a fixture directory with no repo wired up. A reach for a real `fs`
+  // or a coordinator const would quietly undo that.
+  'team-measure.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction
