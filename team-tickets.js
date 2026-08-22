@@ -1698,26 +1698,40 @@ function createTicketMethods(deps, shared) {
         if (!d || !d.ok || typeof d.text !== 'string') {
           return { known: false, error: (d && d.error) || 'git diff returned nothing readable' };
         }
-        // The claim is about the ROOT CHANGELOG.md, so the pattern allows AT MOST
-        // ONE leading segment per path — git's `a/`/`b/` prefix — and no more.
-        // `[^\n]*` would read `docs/CHANGELOG.md` or `vendor/x/CHANGELOG.md` as
-        // the root file changing.
+        // A NON-EMPTY diff with no `diff --git` header at all is not evidence of
+        // anything: `GIT_EXTERNAL_DIFF`, or a configured diff driver, replaces
+        // git's output with the driver's and emits no headers. Reading that as
+        // "no CHANGELOG.md here" answers touched:false on EVERY merge under such
+        // a config and reports it as a measurement — this method's own defect,
+        // arriving through the parser instead of the claim.
         //
-        // The prefix is OPTIONAL rather than required: `diff.noprefix`, or a
-        // custom `diff.srcPrefix`/`dstPrefix`, makes git emit
-        // `diff --git CHANGELOG.md CHANGELOG.md`, and requiring the prefix
-        // answers touched:false on EVERY merge under such a config — a
-        // systematic false OWED wearing the authority of a measurement.
+        // It cannot mis-fire on a genuinely empty range: empty text means nothing
+        // changed, where OWED is the correct answer, so the guard requires text
+        // to be present before it fires.
+        if (d.text.trim() && !/^diff --git /m.test(d.text)) {
+          return { known: false, error: 'the diff carried no git headers to read' };
+        }
+        // The claim is about the ROOT CHANGELOG.md, so each path is at most ONE
+        // optional segment plus the filename. The segment REQUIRES its slash:
+        // `[^\s/]*\/?` would also eat a filename prefix, matching a sibling
+        // `OLD_CHANGELOG.md` under `diff.noprefix`.
         //
-        // RESIDUAL, stated rather than papered over: under `diff.noprefix` a
-        // nested `docs/CHANGELOG.md` has the same SHAPE as a prefixed root file
-        // and still matches. It cannot be told apart from the header alone. The
-        // error direction is the safe one — a false "look before adding one",
-        // never a false "nothing to do".
+        // That segment is optional rather than required because `diff.noprefix`,
+        // or a custom `diff.srcPrefix`/`dstPrefix`, makes git emit
+        // `diff --git CHANGELOG.md CHANGELOG.md`; requiring the prefix answers
+        // touched:false on EVERY merge under such a config — a systematic false
+        // OWED wearing the authority of a measurement.
+        //
+        // RESIDUAL, stated rather than papered over, and now exactly one shape:
+        // under `diff.noprefix` a nested `docs/CHANGELOG.md` is indistinguishable
+        // from a prefixed root file, because the two are byte-identical as
+        // headers. Undecidable from the header alone. The error direction is the
+        // safe one — a false "look before adding one", never a false "nothing to
+        // do".
         //
         // `^` stays load-bearing: every hunk-body line carries a `+`, `-` or
         // space, so a file whose CONTENT quotes a diff header cannot spoof it.
-        return { known: true, touched: /^diff --git [^\s/]*\/?CHANGELOG\.md [^\s/]*\/?CHANGELOG\.md$/m.test(d.text) };
+        return { known: true, touched: /^diff --git (?:[^\s/]+\/)?CHANGELOG\.md (?:[^\s/]+\/)?CHANGELOG\.md$/m.test(d.text) };
       } catch (e) {
         return { known: false, error: e && e.message ? e.message : String(e) };
       }
@@ -1767,7 +1781,7 @@ function createTicketMethods(deps, shared) {
             : `A CHANGELOG.md entry is OWED — the merge carried none (the merge never writes one itself: it conflicts across every live branch).`)
           // `diff --stat <sha>^1 <sha>` rather than `show --stat <sha>`: it NAMES
           // the comparison — first parent against the merge, i.e. what the merge
-          // brought to ${MERGE_TARGET_BRANCH} — instead of relying on how `git
+          // brought to master — instead of relying on how `git
           // show` chooses to render a merge commit, which is a presentation
           // default rather than a stated question. Same ground as the prefix
           // tolerance above: do not hand the lead a command whose output depends

@@ -98,6 +98,16 @@ function mkRepo() {
   return { dir, baseSha };
 }
 
+// An external diff driver, written once. `GIT_EXTERNAL_DIFF` makes git print
+// THIS script's output instead of its own, so the diff carries no `diff --git`
+// headers at all — the config the headerless-guard subject measures.
+const drvPath = (() => {
+  const p = pathReal.join(fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-extdiff-')), 'drv.sh');
+  fsReal.writeFileSync(p, '#!/bin/sh\necho "EXTERNAL DIFF DRIVER: $1 changed"\n');
+  fsReal.chmodSync(p, 0o755);
+  return p;
+})();
+
 // One commit on the ticket branch, through git, so the merge moves real content.
 function commitOnBranch(dir, branch, file, body) {
   const cur = git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
@@ -615,6 +625,97 @@ test('a NESTED CHANGELOG.md is not read as the root file changing', async () => 
   assert.strictEqual(notes.length, 1, 'ENTER: exactly one notice');
   assert.match(notes[0].body, /A CHANGELOG\.md entry is OWED/, 'the nested file does not satisfy the root claim');
   assert.ok(!/was CHANGED by this merge/.test(notes[0].body), 'and no change to the root file is claimed');
+});
+
+test('a SIBLING file whose name merely ends in CHANGELOG.md is not the root file', async () => {
+  // The suffix hole. `[^\s/]*\/?` eats a FILENAME prefix as well as a path one,
+  // so `OLD_CHANGELOG.md` under `diff.noprefix` matched the root file. The
+  // optional segment must REQUIRE its slash to be a path segment at all.
+  const { repo, ticketOver } = mkRepoWithChangelog();
+  git(repo.dir, ['config', 'diff.noprefix', 'true']);   // the config that exposes it
+  commitOnBranch(repo.dir, 'tl-1', 'OLD_CHANGELOG.md', '# Archived\n\n- an old entry\n');
+  const f = mkMerge({ repo, ticketOver });
+
+  const headBefore = git(repo.dir, ['rev-parse', 'master']);
+  const raw = git(repo.dir, ['diff', `${headBefore}..tl-1`]);
+  assert.match(raw, /^diff --git OLD_CHANGELOG\.md OLD_CHANGELOG\.md$/m,
+    'ENTER: the unprefixed sibling header is present, which is the shape that matched');
+  assert.ok(!/^diff --git \S*CHANGELOG\.md CHANGELOG\.md$/m.test(raw.replace(/^diff --git OLD_.*$/gm, '')),
+    'ENTER: and the ROOT file is untouched');
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: exactly one notice');
+  assert.match(notes[0].body, /A CHANGELOG\.md entry is OWED/, 'a sibling filename is not the root file');
+  assert.ok(!/was CHANGED by this merge/.test(notes[0].body), 'and no change to the root file is claimed');
+});
+
+test('a diff carrying NO git headers is UNKNOWN, not a measured "no CHANGELOG"', async () => {
+  // `GIT_EXTERNAL_DIFF` and configured diff drivers replace git's output with
+  // their own, emitting no `diff --git` lines. Reading that as "the root file is
+  // absent" answers OWED on every merge under such a config and calls it a
+  // measurement — this ticket's defect arriving through the parser rather than
+  // through the claim.
+  const { repo, ticketOver } = mkRepoWithChangelog();
+  commitOnBranch(repo.dir, 'tl-1', 'CHANGELOG.md', '# Changelog\n\n## Unreleased\n\n- the widget is reentrant\n');
+  const real = require('../git-worktree');
+  const f = mkMerge({
+    repo, ticketOver,
+    // Through the REAL leaf, with the driver git itself honours — the headerless
+    // text is git's own output under that config, not a string this test wrote.
+    gitOver: {
+      diffText: async (cwd, base, head) => {
+        const prev = process.env.GIT_EXTERNAL_DIFF;
+        process.env.GIT_EXTERNAL_DIFF = drvPath;
+        try { return await real.diffText(cwd, base, head); }
+        finally { if (prev === undefined) delete process.env.GIT_EXTERNAL_DIFF; else process.env.GIT_EXTERNAL_DIFF = prev; }
+      },
+    },
+  });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc(), [], 'ENTER: the merge itself still landed — only the read was unreadable');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: exactly one notice');
+  assert.match(notes[0].body, /CHANGELOG\.md: UNKNOWN/, 'a headerless diff is not evidence of absence');
+  assert.match(notes[0].body, /no git headers/, 'and the reason names the parse assumption that failed');
+  // The pairing that matters: this branch DID write the entry, so the false
+  // answer the guard prevents is specifically OWED.
+  assert.ok(!/entry is OWED/.test(notes[0].body), 'it does not report a debt it could not measure');
+  assert.ok(!/was CHANGED by this merge/.test(notes[0].body), 'nor a change it could not measure');
+});
+
+test('the headerless guard is NOT a blanket: an empty diff still reads as OWED', async () => {
+  // The subject that keeps the guard honest. An empty range means nothing
+  // changed, where OWED is the CORRECT answer — a guard firing on emptiness
+  // would turn every no-CHANGELOG merge into UNKNOWN and destroy the arm this
+  // ticket exists to make trustworthy.
+  const { repo, ticketOver } = mkRepoWithChangelog();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const real = require('../git-worktree');
+  let sawEmpty = false;
+  const f = mkMerge({
+    repo, ticketOver,
+    gitOver: {
+      diffText: async (cwd, base, head) => {
+        const r = await real.diffText(cwd, base, head);
+        // Force the empty-text case the guard must ignore, and record that it
+        // really was empty — otherwise this subject silently measures a normal diff.
+        sawEmpty = true;
+        return { ...r, text: '' };
+      },
+    },
+  });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.ok(sawEmpty, 'ENTER: the empty-text path was actually taken');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: exactly one notice');
+  assert.match(notes[0].body, /A CHANGELOG\.md entry is OWED/, 'empty means nothing changed, and OWED is correct');
+  assert.ok(!/UNKNOWN/.test(notes[0].body), 'the guard does not fire on emptiness');
 });
 
 test('a hunk body quoting a diff header cannot spoof the probe', async () => {
