@@ -1698,14 +1698,26 @@ function createTicketMethods(deps, shared) {
         if (!d || !d.ok || typeof d.text !== 'string') {
           return { known: false, error: (d && d.error) || 'git diff returned nothing readable' };
         }
-        // NO `a/`/`b/` PREFIXES in the pattern: `diff.noprefix`, or a custom
-        // `diff.srcPrefix`/`dstPrefix`, makes git emit `diff --git CHANGELOG.md
-        // CHANGELOG.md`. Requiring the prefixes answers touched:false on EVERY
-        // merge under such a config — a systematic false OWED, which is the
-        // pre-t472 behaviour wearing the authority of a measurement. Still
-        // `^`-anchored on the header and still unspoofable from a hunk body,
-        // since every body line carries a `+`, `-` or space.
-        return { known: true, touched: /^diff --git [^\n]*CHANGELOG\.md$/m.test(d.text) };
+        // The claim is about the ROOT CHANGELOG.md, so the pattern allows AT MOST
+        // ONE leading segment per path — git's `a/`/`b/` prefix — and no more.
+        // `[^\n]*` would read `docs/CHANGELOG.md` or `vendor/x/CHANGELOG.md` as
+        // the root file changing.
+        //
+        // The prefix is OPTIONAL rather than required: `diff.noprefix`, or a
+        // custom `diff.srcPrefix`/`dstPrefix`, makes git emit
+        // `diff --git CHANGELOG.md CHANGELOG.md`, and requiring the prefix
+        // answers touched:false on EVERY merge under such a config — a
+        // systematic false OWED wearing the authority of a measurement.
+        //
+        // RESIDUAL, stated rather than papered over: under `diff.noprefix` a
+        // nested `docs/CHANGELOG.md` has the same SHAPE as a prefixed root file
+        // and still matches. It cannot be told apart from the header alone. The
+        // error direction is the safe one — a false "look before adding one",
+        // never a false "nothing to do".
+        //
+        // `^` stays load-bearing: every hunk-body line carries a `+`, `-` or
+        // space, so a file whose CONTENT quotes a diff header cannot spoof it.
+        return { known: true, touched: /^diff --git [^\s/]*\/?CHANGELOG\.md [^\s/]*\/?CHANGELOG\.md$/m.test(d.text) };
       } catch (e) {
         return { known: false, error: e && e.message ? e.message : String(e) };
       }
@@ -1753,11 +1765,24 @@ function createTicketMethods(deps, shared) {
             // evidence does and the lead is told to look rather than told not to.
             ? `CHANGELOG.md was CHANGED by this merge — the branch touched it, so an entry may already be on ${MERGE_TARGET_BRANCH}. Look before adding one, or you will write a duplicate.`
             : `A CHANGELOG.md entry is OWED — the merge carried none (the merge never writes one itself: it conflicts across every live branch).`)
+          // `diff --stat <sha>^1 <sha>` rather than `show --stat <sha>`: it NAMES
+          // the comparison — first parent against the merge, i.e. what the merge
+          // brought to ${MERGE_TARGET_BRANCH} — instead of relying on how `git
+          // show` chooses to render a merge commit, which is a presentation
+          // default rather than a stated question. Same ground as the prefix
+          // tolerance above: do not hand the lead a command whose output depends
+          // on the lead's own git config.
+          //
+          // NOT because the combined diff omits paths matching a parent. That was
+          // the suggested reason and it did NOT reproduce here (git 2.52.0):
+          // `show --stat` on a real two-parent auto-merge printed the full
+          // diffstat, byte-identical to the `diff --stat` rows.
+          //
           // "the check could not RUN" is HOLD_RECOVERY's infra arm verbatim, and
           // hold-recovery-single-source.test.js's phrase scan reads a shared
           // 5-gram as a copied arm. Different subject, so the wording stays
           // apart rather than the scan being widened.
-          : `CHANGELOG.md: UNKNOWN — the probe did not answer (${oneLine((changelog && changelog.error) || 'no result')}). This is neither of the other two answers: run \`git -C ${team.root} show --stat ${sha}\` before deciding, because a release shipped on the belief that an entry landed ships with no notes.`;
+          : `CHANGELOG.md: UNKNOWN — the probe did not answer (${oneLine((changelog && changelog.error) || 'no result')}). This is neither of the other two answers: run \`git -C ${team.root} diff --stat ${sha}^1 ${sha}\` before deciding, because a release shipped on the belief that an entry landed ships with no notes.`;
         const body = [
           `[ticket ${ticketId} MERGED] ${branch} → ${MERGE_TARGET_BRANCH} as ${sha}`,
           '',

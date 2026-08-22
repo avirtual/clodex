@@ -102,6 +102,9 @@ function mkRepo() {
 function commitOnBranch(dir, branch, file, body) {
   const cur = git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
   git(dir, ['checkout', '-q', branch]);
+  // `file` may name a nested path (the nested-CHANGELOG subject), and writeFileSync
+  // does not create parents.
+  fsReal.mkdirSync(pathReal.dirname(pathReal.join(dir, file)), { recursive: true });
   fsReal.writeFileSync(pathReal.join(dir, file), body);
   git(dir, ['add', file]);
   git(dir, ['commit', '-q', '-m', `work on ${file}`]);
@@ -341,7 +344,7 @@ test('the lead is told the merge landed, and that a CHANGELOG entry is owed', as
   // claim was false — the wording is the claim, so the wording is what is pinned.
   assert.match(notes[0].body, /A CHANGELOG\.md entry is OWED/,
     'the debt is stated when the merge really carried no entry');
-  assert.ok(!/LANDED with the merge/.test(notes[0].body), 'and it does not claim one landed');
+  assert.ok(!/was CHANGED by this merge/.test(notes[0].body), 'and it does not claim the merge changed it');
 
   // The body carries a complete, ready-to-fire `[agent:task accept t1]`, inert
   // ONLY because prose precedes it on its line — IntentScanner's parse is
@@ -505,9 +508,13 @@ test('a probe that could NOT run says so, and collapses into neither other answe
   // Not a quieter way of saying either answer. A failed probe reported as
   // "an entry landed" is how a release ships with no notes; reported as "one is
   // owed" it trains the lead to ignore the line.
-  assert.ok(!/LANDED with the merge/.test(notes[0].body), 'it does not claim an entry landed');
+  assert.ok(!/was CHANGED by this merge/.test(notes[0].body), 'it does not claim the merge changed the file');
   assert.ok(!/entry is OWED/.test(notes[0].body), 'and it does not claim one is owed');
-  assert.match(notes[0].body, /show --stat/, 'and it hands the lead the command that answers it');
+  // The EXPLICIT first-parent comparison, not `git show --stat`: it names the
+  // question rather than depending on how git renders a merge commit.
+  assert.match(notes[0].body, /diff --stat \S+\^1 \S+/,
+    'and it hands the lead a command that states which comparison it makes');
+  assert.ok(!/show --stat/.test(notes[0].body), 'not the presentation-dependent form');
   assert.match(notes[0].body, /the probe did not answer/, 'and it names the failure in its own words');
 });
 
@@ -584,6 +591,32 @@ test('a repo configured with diff.noprefix is still measured correctly', async (
   assert.ok(!/entry is OWED/.test(notes[0].body), 'and does not state a debt that does not exist');
 });
 
+test('a NESTED CHANGELOG.md is not read as the root file changing', async () => {
+  // The claim is about the ROOT CHANGELOG.md. `docs/CHANGELOG.md` produces
+  // `diff --git a/docs/CHANGELOG.md b/docs/CHANGELOG.md`, which a pattern
+  // allowing any number of path segments reads as the root file — a false
+  // "look before adding one" over a file the release notes never come from.
+  const { repo, ticketOver } = mkRepoWithChangelog();
+  commitOnBranch(repo.dir, 'tl-1', 'docs/CHANGELOG.md', '# Docs changelog\n\n- a nested entry\n');
+  const f = mkMerge({ repo, ticketOver });
+
+  // ENTER: the nested header really is in the range diff, and the ROOT file
+  // really is absent from it — without both, the OWED below is true for the
+  // wrong reason and the subject pins nothing.
+  const headBefore = git(repo.dir, ['rev-parse', 'master']);
+  const raw = git(repo.dir, ['diff', `${headBefore}..tl-1`]);
+  assert.match(raw, /^diff --git a\/docs\/CHANGELOG\.md b\/docs\/CHANGELOG\.md$/m,
+    'ENTER: the nested header is present, so a segment-greedy pattern would match it');
+  assert.ok(!/^diff --git a\/CHANGELOG\.md/m.test(raw), 'ENTER: and the root file is untouched');
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: exactly one notice');
+  assert.match(notes[0].body, /A CHANGELOG\.md entry is OWED/, 'the nested file does not satisfy the root claim');
+  assert.ok(!/was CHANGED by this merge/.test(notes[0].body), 'and no change to the root file is claimed');
+});
+
 test('a hunk body quoting a diff header cannot spoof the probe', async () => {
   // The `^` anchor is load-bearing and cheap to lose. A file whose CONTENT is a
   // diff header appears in the range diff with a `+` prefix, so it can never
@@ -636,7 +669,7 @@ test('a caller that omits the probe result gets UNKNOWN, never a claim', () => {
   const notes = f.landed();
   assert.strictEqual(notes.length, 1, 'ENTER: the notice was sent');
   assert.match(notes[0].body, /CHANGELOG\.md: UNKNOWN/, 'an absent result is unknown');
-  assert.ok(!/LANDED with the merge/.test(notes[0].body) && !/entry is OWED/.test(notes[0].body),
+  assert.ok(!/was CHANGED by this merge/.test(notes[0].body) && !/entry is OWED/.test(notes[0].body),
     'and is neither claim');
   // The knife-edge holds on every arm, not just the two the older subject reached:
   // the CHANGELOG line is now built by a conditional, and a wording change on any
