@@ -66,7 +66,14 @@ function pick(findings, id) {
 // ---- the invariant that governs the whole module ---------------------------
 
 test('measure: always returns all five ids, in order, whatever the repo looks like', () => {
-  const m = measurer();
+  // Throwing git stub: no real binary needed, so this — the governing invariant —
+  // runs on every machine, and an empty tmpdir cannot accidentally measure vcs
+  // through a checkout it happens to sit inside.
+  const m = createTeamMeasure({
+    fs,
+    path,
+    childProcess: { execFileSync: () => { throw new Error('not a repository'); } },
+  });
   // An empty directory is the worst case for the rule: nothing is measurable,
   // and the array must STILL carry five findings rather than shrink.
   const bare = m.measure(fixture());
@@ -80,13 +87,19 @@ test('measure: always returns all five ids, in order, whatever the repo looks li
     assert.ok(f.claim.length > 20, `absent ${f.id} must carry an operator-readable claim`);
   }
 
-  // A fully-populated repo returns the same five ids, in the same order.
-  const rich = m.measure(gitInit(fixture({
+});
+
+test('measure: a fully-populated repo returns the same five ids, in the same order', { skip: !gitAvailable() }, () => {
+  // Split from the invariant test above: that half is the one that must hold on
+  // every machine, and calling gitInit inside it turned a git-less box from a
+  // tolerated skip into a red suite.
+  const rich = measurer().measure(gitInit(fixture({
     'package.json': JSON.stringify({ scripts: { test: 'node --test' } }),
     'package-lock.json': '{}',
     '.gitignore': 'dist/\n',
   })));
   assert.deepStrictEqual(rich.map((f) => f.id), FINDING_IDS);
+  assert.deepStrictEqual(rich.map((f) => f.status), ['measured', 'measured', 'measured', 'measured', 'measured']);
   for (const f of rich) assert.ok(STATUSES.includes(f.status), `status ${f.status} outside the enum`);
 });
 
@@ -263,14 +276,37 @@ test('vcs: a .git FILE (a worktree checkout) is still git', () => {
   });
 });
 
-test('vcs: no .git at all', () => {
-  assert.deepStrictEqual(pick(measurer().measure(fixture()), 'vcs'), {
+test('vcs: no .git at all, and none above the root either', () => {
+  // A throwing git stub is what makes this the NO-GIT-ANYWHERE arm rather than
+  // "wherever the temp dir happens to live": with the real binary, a tmpdir
+  // inside a checkout would measure through the fallback and this would be
+  // asserting a different arm than its name claims.
+  const m = createTeamMeasure({
+    fs,
+    path,
+    childProcess: { execFileSync: () => { throw new Error('not a repository'); } },
+  });
+  assert.deepStrictEqual(pick(m.measure(fixture()), 'vcs'), {
     id: 'vcs',
-    claim: 'Your hands will NOT have version control here — this project is not a git checkout, '
+    claim: 'Your hands will NOT have version control here — there is no git checkout at or above this root, '
       + 'so nothing records or undoes what they change.',
     status: 'absent',
     evidence: null,
   });
+});
+
+test('vcs: a root INSIDE a checkout with no .git of its own still measures', { skip: !gitAvailable() }, () => {
+  // The monorepo case: the operator points the helper at a package directory.
+  // Claiming "no version control" there is false for that tree, and a false
+  // claim marked measured is the failure this module exists to prevent.
+  const repo = gitInit(fixture());
+  const pkgDir = path.join(repo, 'packages', 'thing');
+  fs.mkdirSync(pkgDir, { recursive: true });
+  const vcs = pick(measurer().measure(pkgDir), 'vcs');
+  assert.strictEqual(vcs.status, 'measured');
+  assert.strictEqual(vcs.claim, 'Your hands will commit their work to git, on a branch of their own.');
+  // evidence names what was actually found, not a `.git` that is not there.
+  assert.match(vcs.evidence, /^git rev-parse --git-dir \(/, `evidence was ${vcs.evidence}`);
 });
 
 // ---- 4. worktreeSupport ----------------------------------------------------
@@ -300,14 +336,17 @@ test('worktreeSupport: a git dir with ZERO commits is absent', { skip: !gitAvail
   });
 });
 
-test('worktreeSupport: no git means no worktree, and git is never invoked', () => {
-  // childProcess is deliberately a throwing stub: worktreeSupport must
-  // short-circuit on vcs rather than shelling out in a directory that is not a repo.
-  let calls = 0;
+test('worktreeSupport: no git means no worktree, and rev-parse HEAD is never reached', () => {
+  // vcs now probes `rev-parse --git-dir` before declaring absence, so git IS
+  // invoked here. What must NOT happen is the HEAD probe: once vcs came back
+  // absent, worktreeSupport short-circuits on it rather than shelling out again.
+  const argvs = [];
   const m = createTeamMeasure({
     fs,
     path,
-    childProcess: { execFileSync: () => { calls += 1; throw new Error('must not run'); } },
+    childProcess: {
+      execFileSync: (file, args) => { argvs.push(args.join(' ')); throw new Error('not a repository'); },
+    },
   });
   assert.deepStrictEqual(pick(m.measure(fixture()), 'worktreeSupport'), {
     id: 'worktreeSupport',
@@ -316,7 +355,9 @@ test('worktreeSupport: no git means no worktree, and git is never invoked', () =
     status: 'absent',
     evidence: null,
   });
-  assert.strictEqual(calls, 0, 'git must not be invoked when there is no .git');
+  assert.ok(argvs.length > 0, 'ENTER: no git call at all — the argv assertions below are vacuous');
+  assert.ok(argvs.every((a) => a.includes('--git-dir')), `expected only the git-dir probe, got: ${argvs.join(' | ')}`);
+  assert.ok(!argvs.some((a) => a.includes('--verify HEAD')), 'HEAD must not be probed once vcs is absent');
 });
 
 // ---- 5. generatedPaths -----------------------------------------------------
@@ -405,4 +446,120 @@ test('measure: never runs the project test command', () => {
   }
   // The suite command was READ and reported, never run.
   assert.strictEqual(pick(findings, 'suite').status, 'measured');
+});
+
+// ---- nit 1: npm's scaffolded default is not a suite ------------------------
+
+test('suite: npm init\'s placeholder test script is NOT a command', () => {
+  // The exact string `npm init` writes. It declares a test script that exits 1
+  // on purpose, so reading it as a suite produces a hand running a command the
+  // project guarantees will fail — reached without guessing, which is why the
+  // never-guess rule alone does not catch it.
+  const dir = fixture({
+    'package.json': JSON.stringify({ scripts: { test: 'echo "Error: no test specified" && exit 1' } }),
+  });
+  assert.deepStrictEqual(pick(measurer().measure(dir), 'suite'), {
+    id: 'suite',
+    claim: 'Your hands will NOT have a verified suite command — nothing in this project names one, '
+      + 'so tell them how to run the tests or they will not run them.',
+    status: 'absent',
+    evidence: null,
+  });
+});
+
+test('suite: the placeholder falls THROUGH to the rest of the probe order', () => {
+  // Not merely rejected — the probe continues. A repo with the npm placeholder
+  // and a real Makefile target has a suite, and it is the Makefile's.
+  const dir = fixture({
+    'package.json': JSON.stringify({ scripts: { test: 'echo "Error: no test specified" && exit 1' } }),
+    'Makefile': 'test:\n\techo t\n',
+  });
+  assert.deepStrictEqual(pick(measurer().measure(dir), 'suite'), {
+    id: 'suite',
+    claim: 'Your hands will run the suite with `make test`, not directly.',
+    status: 'measured',
+    evidence: 'Makefile test: target',
+  });
+});
+
+// ---- nit 2: make ASSIGNMENTS are not targets ------------------------------
+
+test('suite: a `test :=` variable assignment is not a make target', () => {
+  // GNU make's simply-expanded assignment at column 0. Reading it as a target
+  // yields a confident `make test` for a Makefile that has no such rule.
+  for (const line of ['test := ./run.sh', 'test ::= x', 'test::=y', 'test ?= z', 'test += w']) {
+    const dir = fixture({ 'Makefile': `${line}\nall:\n\techo hi\n` });
+    assert.strictEqual(
+      pick(measurer().measure(dir), 'suite').status, 'absent',
+      `Makefile line "${line}" was read as a test target`
+    );
+  }
+});
+
+test('suite: real make targets still measure, including the double-colon rule', () => {
+  for (const line of ['test:', 'test:  ## run the suite', 'test: dep', 'test:: dep']) {
+    const dir = fixture({ 'Makefile': `${line}\n\techo t\n` });
+    assert.strictEqual(
+      pick(measurer().measure(dir), 'suite').evidence, 'Makefile test: target',
+      `Makefile line "${line}" was not read as a test target`
+    );
+  }
+});
+
+test('suite: `testing:` is a different target and does not count', () => {
+  const dir = fixture({ 'Makefile': 'testing:\n\techo t\n' });
+  assert.strictEqual(pick(measurer().measure(dir), 'suite').status, 'absent');
+});
+
+// ---- nit 5: the suite runner is composed with the lockfile -----------------
+
+test('suite: the JS runner follows the LOCKFILE, not a hardcoded npm', () => {
+  // `npm test` in a pnpm-lock repo runs against a dependency graph npm never
+  // installed. Both findings come from the same pass, so composing them is
+  // measurement rather than a guess.
+  for (const [file, runner] of [
+    ['package-lock.json', 'npm'],
+    ['pnpm-lock.yaml', 'pnpm'],
+    ['yarn.lock', 'yarn'],
+    ['bun.lockb', 'bun'],
+  ]) {
+    const dir = fixture({
+      'package.json': JSON.stringify({ scripts: { test: 'node --test' } }),
+      [file]: '',
+    });
+    assert.deepStrictEqual(pick(measurer().measure(dir), 'suite'), {
+      id: 'suite',
+      claim: `Your hands will run the suite with \`${runner} test\`, not directly.`,
+      status: 'measured',
+      evidence: 'package.json scripts.test',
+    }, `lockfile ${file}`);
+  }
+});
+
+test('suite: an AMBIGUOUS lockfile set falls back to npm rather than picking', () => {
+  // packageManager is absent here, so there is no measured runner to compose.
+  // The suite claim must not silently adopt one of the contenders.
+  const dir = fixture({
+    'package.json': JSON.stringify({ scripts: { test: 'node --test' } }),
+    'package-lock.json': '{}',
+    'pnpm-lock.yaml': '',
+  });
+  const findings = measurer().measure(dir);
+  assert.strictEqual(pick(findings, 'packageManager').status, 'absent');
+  assert.strictEqual(
+    pick(findings, 'suite').claim,
+    'Your hands will run the suite with `npm test`, not directly.'
+  );
+});
+
+test('suite: a NON-JS suite is unaffected by the lockfile', () => {
+  // A pnpm lockfile does not change how cargo runs its tests. The composition
+  // applies to the package.json arm only.
+  const dir = fixture({ 'Cargo.toml': '[package]\nname = "x"\n', 'pnpm-lock.yaml': '' });
+  assert.deepStrictEqual(pick(measurer().measure(dir), 'suite'), {
+    id: 'suite',
+    claim: 'Your hands will run the suite with `cargo test`, not directly.',
+    status: 'measured',
+    evidence: 'Cargo.toml',
+  });
 });

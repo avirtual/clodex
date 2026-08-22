@@ -17,7 +17,11 @@
 // Pure leaf: no requires at all. fs/path/childProcess arrive by injection, which
 // is what makes the whole findings table assertable against a fixture directory.
 //
-// childProcess is for `git rev-parse` on worktreeSupport and NOTHING else. This
+// NOT A HOT PATH. `measure()` is synchronous and shells out to `git rev-parse`
+// (execFileSync) twice; fine for a team-create or a helper run, wrong for
+// anything on a render or roster path. The consuming ticket will be tempted.
+//
+// childProcess is for `git rev-parse` on vcs/worktreeSupport and NOTHING else. This
 // module must never execute the project's own test command: running an unknown
 // repo's scripts as a side effect of DESCRIBING it is not a thing a describe
 // step may do. `suite` is `measured` when the command was FOUND, never when it
@@ -45,6 +49,11 @@ const LOCKFILES = [
 // claim is one sentence an operator reads; a 40-entry .gitignore rendered whole
 // is not one.
 const PATHS_IN_CLAIM = 5;
+
+// `npm init`'s placeholder test script, verbatim. Matched on the distinctive
+// message rather than the whole string so the `&& exit 1` tail and quoting
+// variants across npm versions still read as the placeholder they are.
+const NO_TEST_SPECIFIED = /no test specified/i;
 
 function measured(id, claim, evidence) {
   return { id, claim, status: 'measured', evidence };
@@ -85,17 +94,31 @@ function createTeamMeasure({ fs, path, childProcess } = {}) {
   // First hit wins, in the spec's order. Order is load-bearing: a polyglot repo
   // with both package.json and a Makefile gets ONE answer, deterministically,
   // rather than whichever probe the loop happened to reach first.
-  function measureSuite(root) {
+  function measureSuite(root, manager) {
     const pkg = readJson(root, 'package.json');
     const scripts = (pkg && pkg.scripts && typeof pkg.scripts === 'object') ? pkg.scripts : null;
-    if (scripts && isNonEmptyString(scripts.test)) {
-      return measured('suite', suiteClaim('npm test'), 'package.json scripts.test');
+    // npm init's scaffolded default DECLARES a test script that exits 1 on
+    // purpose. Reading it as a suite is the acceptance criterion's own failure
+    // shape reached without guessing — the project really does say this — so it
+    // falls through to the rest of the probe order and, failing that, to absent.
+    if (scripts && isNonEmptyString(scripts.test) && !NO_TEST_SPECIFIED.test(scripts.test)) {
+      // Composed with the lockfile rather than hardcoded: `npm test` in a
+      // pnpm-lock repo runs against a dependency graph npm never installed — a
+      // false claim marked `measured`, which is the one outcome this module
+      // exists to prevent. Both findings come from the same pass, so this is
+      // measurement, not a guess. JS-runner only: `make test` and friends below
+      // are unaffected by a JS package manager.
+      const runner = isNonEmptyString(manager) ? manager : 'npm';
+      return measured('suite', suiteClaim(`${runner} test`), 'package.json scripts.test');
     }
 
     const makefile = readText(root, 'Makefile');
     // Anchored at line start so `.PHONY: test` — which declares the target
-    // without defining it — does not read as the target itself.
-    if (makefile !== null && /^test[ \t]*:/m.test(makefile)) {
+    // without defining it — does not read as the target itself. The `(?!:*=)`
+    // rejects GNU make's assignments at column 0 (`test :=`, `test ::=`,
+    // `test::=`), which are variables and not targets, while keeping the
+    // legitimate double-colon rule `test:: dep`.
+    if (makefile !== null && /^test[ \t]*:(?!:*=)/m.test(makefile)) {
       return measured('suite', suiteClaim('make test'), 'Makefile test: target');
     }
 
@@ -122,7 +145,10 @@ function createTeamMeasure({ fs, path, childProcess } = {}) {
   }
 
   // ---- 2. packageManager --------------------------------------------------
-  function measurePackageManager(root) {
+  // The lockfile hits, shared by `packageManager` and by `suite`'s runner. Kept
+  // separate from the finding because a finding is exactly
+  // {id,claim,status,evidence} — the composition rides this, never an extra key.
+  function lockfileHits(root) {
     const hits = [];
     for (const [file, manager] of LOCKFILES) {
       if (!exists(root, file)) continue;
@@ -131,7 +157,10 @@ function createTeamMeasure({ fs, path, childProcess } = {}) {
       if (hits.some((h) => h.manager === manager)) continue;
       hits.push({ file, manager });
     }
+    return hits;
+  }
 
+  function measurePackageManager(hits) {
     if (hits.length === 1) {
       const { file, manager } = hits[0];
       return measured('packageManager',
@@ -158,8 +187,32 @@ function createTeamMeasure({ fs, path, childProcess } = {}) {
     let stat = null;
     try { stat = fs.statSync(path.join(root, '.git')); } catch { stat = null; }
     if (!stat) {
+      // No `.git` AT this root does not mean no git. A monorepo package the
+      // operator points the helper at is a tracked directory inside a checkout,
+      // and telling those hands "nothing records or undoes what they change" is
+      // flatly false for that tree — a false claim, which is the one thing this
+      // module may not produce. Ask git before declaring absence.
+      let gitDir = null;
+      try {
+        const out = childProcess.execFileSync('git', ['-C', root, 'rev-parse', '--git-dir'], {
+          stdio: ['ignore', 'pipe', 'ignore'],
+          encoding: 'utf8',
+          timeout: 5000,
+        });
+        gitDir = isNonEmptyString(out) && out.trim() ? out.trim() : null;
+      } catch { gitDir = null; }
+
+      if (gitDir) {
+        return measured('vcs',
+          'Your hands will commit their work to git, on a branch of their own.',
+          `git rev-parse --git-dir (${gitDir})`);
+      }
+
+      // Worded to what was actually measured: absence was established at and
+      // above this root, and the sentence says exactly that rather than
+      // overclaiming about the wider filesystem.
       return absent('vcs',
-        'Your hands will NOT have version control here — this project is not a git checkout, '
+        'Your hands will NOT have version control here — there is no git checkout at or above this root, '
         + 'so nothing records or undoes what they change.');
     }
     // A WORKTREE checkout's .git is a FILE, not a directory. Requiring a
@@ -246,9 +299,13 @@ function createTeamMeasure({ fs, path, childProcess } = {}) {
   // rationale sheet walks the array as it stands.
   function measure(root) {
     const vcs = measureVcs(root);
+    // Resolved once and threaded into `suite`: an ambiguous or absent lockfile
+    // yields no runner, and the JS arm falls back to `npm test`.
+    const hits = lockfileHits(root);
+    const manager = hits.length === 1 ? hits[0].manager : null;
     return [
-      measureSuite(root),
-      measurePackageManager(root),
+      measureSuite(root, manager),
+      measurePackageManager(hits),
       vcs,
       measureWorktreeSupport(root, vcs),
       measureGeneratedPaths(root),
