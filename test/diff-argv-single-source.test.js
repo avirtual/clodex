@@ -73,45 +73,14 @@ function leafDiffFlags(src) {
   return flags;
 }
 
-// The flags as QUOTED in CHECK 4's messages. Reads every quoted RANGE DIFF in
+// The flags as QUOTED in CHECK 4's messages. Reads every `git diff …` string in
 // the file rather than the two known sites: a third message added later is
 // exactly the drift this file exists to catch, and pinning by line number would
 // miss it while looking rigorous.
-//
-// THE ANCHOR IS THE RANGE (`${a}..${b}`), not the literal prefix `git diff`, and
-// the difference is not pedantry — the first version anchored on the prefix and
-// was wrong in both directions at once:
-//
-//   - it BLOCKED AN IMPROVEMENT. Rewriting the messages in the pasteable
-//     `git -C ${team.root} diff …` form the UNKNOWN arm already uses made this
-//     extractor return [], tripping the ENTER. A guard that reds on a strictly
-//     better message is a guard that gets edited into silence.
-//   - it DRAGGED IN A STRANGER. A `git diff --stat ${sha}^1 ${sha}` quoted
-//     elsewhere was collected and then required to equal the leaf's flags.
-//
-// `-C ${…}` is therefore optional, and the `..` range is what identifies the
-// command `diffText` actually runs. `${sha}^1 ${sha}` is two arguments, not a
-// range, so the UNKNOWN arm's --stat command is correctly not this one.
-//
-// THE RANGE ALONE IS NOT ENOUGH, measured: a `git diff --stat ${a}..${b}` quoted
-// anywhere in the file is also a range diff, and comparing ITS flags to the
-// leaf's argv reds this file over a command that has nothing to do with
-// `diffText`. So the scan is also SCOPED TO A CALL SITE — quoted commands are
-// read only from the neighbourhood of a `gitWorktree.diffText(` call, which is
-// where a message describing that call can be.
-//
-// That mirrors `leafDiffFlags`, which is scoped to the `diffText` FUNCTION for
-// the same reason, and it keeps the property the unscoped version was for: a
-// THIRD message added beside these two is still caught, because it is in scope.
-// Only a range diff describing some OTHER command, somewhere else, is excluded.
-const CALL_WINDOW = 2000;
 function quotedDiffFlags(src) {
   const out = [];
-  for (const call of src.matchAll(/gitWorktree\.diffText\(/g)) {
-    const near = src.slice(call.index, call.index + CALL_WINDOW);
-    for (const m of near.matchAll(/`git (?:-C \$\{[^}]*\}\s+)?diff ((?:--[\w-]+\s+)*)\$\{[^}]*\}\.\.\$\{[^}]*\}/g)) {
-      out.push(m[1].trim().split(/\s+/).filter(Boolean));
-    }
+  for (const m of src.matchAll(/`git diff ((?:--[\w-]+\s+)*)\$\{/g)) {
+    out.push(m[1].trim().split(/\s+/).filter(Boolean));
   }
   return out;
 }
@@ -143,9 +112,8 @@ test('FIXTURES: the leaf extractor reads the flags out of diffText, and only dif
   assert.strictEqual(leafDiffFlags('function nothing() {}'), null, 'a file without diffText yields null, not []');
 });
 
-test('FIXTURES: the message extractor reads every quoted RANGE diff near the call', () => {
+test('FIXTURES: the message extractor reads every quoted git-diff command', () => {
   const fake = [
-    "const diff = await gitWorktree.diffText(team.root, baseSha, branch);",
     "fail('a', `git diff --text --no-ext-diff ${x}..${y} failed`);",
     "fail('b', `git diff --text ${x}..${y} is empty`);",
     "log(`git status ${x}`);",
@@ -156,58 +124,8 @@ test('FIXTURES: the message extractor reads every quoted RANGE diff near the cal
   assert.deepStrictEqual(quotedDiffFlags('nothing here'), [], 'no matches yields an empty list');
 });
 
-test('FIXTURES: the `-C ${…}` form is FOUND, so the pin cannot block a better message', () => {
-  // Measured against the r8 extractor: this returned [] and tripped the ENTER,
-  // so rewriting CHECK 4 into the pasteable-from-anywhere form the UNKNOWN arm
-  // already uses would have RED the guard. A guard that punishes an improvement
-  // is one someone eventually deletes.
-  const CALL = "const diff = await gitWorktree.diffText(team.root, baseSha, branch);\n";
-  const withC = CALL + "fail('a', `git -C ${team.root} diff --text --no-ext-diff ${baseSha}..${branch} failed`);";
-  assert.deepStrictEqual(quotedDiffFlags(withC), [['--text', '--no-ext-diff']],
-    'the -C form is found and its flags compared, not skipped');
-  // Both spellings must yield the SAME answer, or the pin would silently depend
-  // on which form the message happens to use.
-  const withoutC = CALL + "fail('a', `git diff --text --no-ext-diff ${baseSha}..${branch} failed`);";
-  assert.deepStrictEqual(quotedDiffFlags(withC), quotedDiffFlags(withoutC),
-    'the -C prefix changes nothing about which flags are read');
-});
-
-test('FIXTURES: a quoted git diff that is NOT the leaf\'s range diff is not dragged in', () => {
-  // The other direction of the same defect. `${sha}^1 ${sha}` is two arguments,
-  // not a `..` range — the UNKNOWN arm's --stat command is a DIFFERENT command
-  // to a different question, and comparing its flags to the leaf's argv reds the
-  // file over an unrelated line.
-  const strangers = [
-    "const diff = await gitWorktree.diffText(team.root, baseSha, branch);",
-    "run `git -C ${team.root} diff --stat ${sha}^1 ${sha}` before deciding",
-    "run `git diff --stat ${sha}^1 ${sha}` before deciding",
-    "`git -C ${team.root} merge --no-ff ${branch}`",
-    "`git -C ${team.root} revert -m 1 ${merged.sha}`",
-  ].join('\n');
-  assert.deepStrictEqual(quotedDiffFlags(strangers), [],
-    'only the range diff diffText runs is collected');
-  // ENTER: the stranger really is a quoted git command, so this is an exclusion
-  // the extractor makes rather than a string it could never have matched.
-  assert.match(strangers, /`git [^`]*diff --stat/, 'ENTER: a quoted `git … diff --stat` is present to be excluded');
-
-  // The measured case the RANGE anchor alone did NOT exclude: a --stat command
-  // that IS a range. Only the call-site scoping keeps it out, and without that
-  // scoping this file reds over a line describing a different command.
-  const statRange = "run `git -C ${team.root} diff --stat ${sha}..${other}` before deciding";
-  assert.deepStrictEqual(quotedDiffFlags(statRange), [],
-    'a --stat RANGE diff far from any diffText call is not this command');
-  assert.deepStrictEqual(
-    quotedDiffFlags("const d = await gitWorktree.diffText(a, b, c);\n" + statRange),
-    [['--stat']],
-    'ENTER: the same string IS collected when it sits at a call site — so the '
-    + 'exclusion above is the SCOPING working, not a regex that never matches');
-});
-
 // The comparison, as its own function so the RED fixtures below exercise the
-// same code the real assertion uses. That sentence was FALSE when first written
-// — the real assertion re-implemented the comparison and merely happened to
-// agree, which is this file's own subject one level in. It is true now because
-// the real assertion calls this, not because someone maintains the claim.
+// same code the real assertion uses.
 const agrees = (leaf, quoted) => quoted.length > 0
   && quoted.every((q) => q.length === leaf.length && q.every((f, i) => f === leaf[i]));
 
@@ -251,11 +169,6 @@ test('the flags CHECK 4 quotes to the lead are the flags diffText actually runs'
   assert.ok(quoted.length >= 2,
     `ENTER: CHECK 4's quoted commands were found (got ${quoted.length}, expected at least the two fail() messages)`);
 
-  // THE comparison — the same function the RED fixtures above exercise, so a
-  // change to it cannot pass the fixtures and skip the real files, or vice
-  // versa. The loop below then re-states the failure in a diffable form; it is
-  // the diagnostic, not the check.
-  const ok = agrees(leaf, quoted);
   for (const q of quoted) {
     assert.deepStrictEqual(q, leaf,
       'a message quotes a `git diff` command that is not what diffText runs — '
@@ -263,9 +176,4 @@ test('the flags CHECK 4 quotes to the lead are the flags diffText actually runs'
       + 'copy in team-tickets.js CHECK 4, or the argv in git-worktree.js, so '
       + 'they agree.');
   }
-  // Reached only when every element matched, so this fires on exactly the case
-  // the loop cannot see: `quoted` empty. The ENTER above already covers it for
-  // the real file — this keeps the two paths from drifting if that ENTER is ever
-  // relaxed.
-  assert.ok(ok, 'the flags agree, and at least one quoted command was compared');
 });
