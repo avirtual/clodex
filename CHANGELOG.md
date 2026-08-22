@@ -13,6 +13,19 @@ blocks a release.
 
 ## Unreleased
 
+- New **GitHub plugin**, off by default. It adds one read-only agent verb,
+  `[agent:gh]`, that collapses the six-commands-and-two-wrong-guesses dance an
+  agent otherwise does against a repo: `status` (branch vs base, PR, CI and
+  review state in one answer), `ci` (the failing checks, with the error lines
+  distilled out of tens of thousands of lines of build log), `review`
+  (unresolved review threads as a `file:line` worklist), and `pr --dry`, which
+  renders the title, description and diffstat of the PR your commits would
+  open. It never pushes and never opens a PR — a bare `[agent:gh pr]` declines
+  and says why, because opening a pull request is the operator's action. It
+  holds no credentials of its own: it shells out to the operator's own
+  authenticated `gh` CLI, so `gh auth login` is a prerequisite. Enable it in
+  Manage Plugins, then tick its verb in each seat's intent checklist.
+
 - A reviewer seat no longer outlives the review round it was spawned for. A
   reviewer retires itself once it delivers a verdict, but when the lead ended
   the round instead — rejecting a ticket back for rework, or accepting it — the
