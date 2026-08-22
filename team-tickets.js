@@ -7004,7 +7004,12 @@ function createTicketMethods(deps, shared) {
             });
             const r = this.kill(s.name);
             if (r && typeof r.catch === 'function') {
-              r.catch((e) => log.error('ticket', `retiring reviewer ${s.name} for ${ticketId} failed: ${e.message}`));
+              // Names the SEAT and contradicts the line above in as many words.
+              // kill() is async, so the summary below is written while this is
+              // still pending — an operator who greps the success line and stops
+              // looking is exactly who this correction has to reach.
+              r.catch((e) => log.error('ticket',
+                `reviewer ${s.name} did NOT retire after all for ${ticketId} — it is STILL LIVE: ${e.message}`));
             }
             retired.push(s.name);
           } catch (e) {
@@ -7012,7 +7017,17 @@ function createTicketMethods(deps, shared) {
           }
         }
         if (retired.length) {
-          log.info('intent', `ticket ${ticketId} ${why} — retired ${retired.length} live reviewer seat(s) (discard): ${retired.join(', ')}`);
+          // "retiring", not "retired", and the tense is the whole point: kill() is
+          // ASYNC, so at this instant every teardown is still in flight and a
+          // completed claim here is one an operator acts on by not looking for a
+          // seat that is still live. The `.catch` above corrects it by name.
+          //
+          // The push stays SYNCHRONOUS rather than moving into a `.then`: this
+          // line and the return value are both built here, so deferring the push
+          // would leave both empty on every real (async) kill — trading a false
+          // success for total silence on the path that actually runs in
+          // production. What the list honestly means is "asked to retire".
+          log.info('intent', `ticket ${ticketId} ${why} — retiring ${retired.length} live reviewer seat(s) (discard): ${retired.join(', ')}`);
         }
       } catch (e) {
         log.error('ticket', `reviewer teardown for ${ticketId} failed: ${e.message}`);
