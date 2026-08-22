@@ -259,7 +259,17 @@ test('the retire uses review-done\'s own shape — retired/discard, not a bare k
   // A reviewer seat is minted with no worktree of its own, so DISCARD is what
   // `sweepReviewerGraveyard` and the sidebar are written for. An `archive` here
   // would leave an archived ephemeral record behind with nothing to resume into.
-  const acts = f.contextActions.filter((a) => a.name === rec.name && a.channel === 'session:context-action');
+  //
+  // Filtered to `retired` rather than exact-matching every context-action for
+  // this seat: `_handleTeamReview` defers create() into a setImmediate that
+  // fires `{action: 'reattach'}` on the SAME channel for the SAME name. This
+  // subject is synchronous so that never lands — but an exact match would turn
+  // any future `await` here into a failure reporting a wrong DISPOSITION, which
+  // points at the wrong cause entirely. The disposition is still asserted
+  // exactly, which is the whole subject: `archive` here would leave an archived
+  // ephemeral record with nothing to resume into.
+  const acts = f.contextActions.filter((a) => a.name === rec.name
+    && a.channel === 'session:context-action' && a.payload.action === 'retired');
   assert.deepStrictEqual(acts.map((a) => a.payload), [
     { action: 'retired', name: rec.name, disposition: 'discard' },
   ], 'one retire, discard — the same shape review-done fires');
@@ -485,6 +495,14 @@ test('an ASYNC teardown rejection does not cost the reject either', async () => 
   assert.ok(f.logs.some((l) => l.level === 'error'
     && /did NOT retire after all/.test(l.msg) && l.msg.includes(rec.name) && /pty is gone/.test(l.msg)),
   'the rejected kill is caught and corrected BY NAME — an uncaught one escapes the close entirely');
+  // PAIRED, and the pair is the point: the negative below is equally true of an
+  // implementation that deletes the summary line outright — which is the other
+  // way the operator loses the signal, and an absence assertion is true of the
+  // empty set. The positive pins that the line exists and names the seat; the
+  // negative pins that it does not overclaim.
+  assert.ok(f.logs.some((l) => l.level === 'info'
+    && /— retiring \d+ live reviewer seat/.test(l.msg) && l.msg.includes(rec.name)),
+  'the summary line exists and names the seat');
   assert.ok(!f.logs.some((l) => l.level === 'info' && /— retired \d+ live reviewer/.test(l.msg)),
     'and no line claims the seat WAS retired: kill() is async, so that claim cannot be true when it is written');
   assert.deepStrictEqual(liveFor(f, 't1'), [rec.name],
