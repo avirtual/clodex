@@ -16,9 +16,10 @@
  *    is what the agent will read. A failure is a normal result with an honest
  *    sentence in it, because "the call failed" is information the agent must
  *    act on, not an exception to swallow.
- *  - READ before WRITE, always. `openPr` re-checks for an existing PR after it
- *    has decided to create one is unnecessary; it checks BEFORE, and it refuses
- *    rather than guessing whenever the repository is not in the state the
+ *  - NOTHING here writes. Every call is a read or a local rendering; no function
+ *    pushes, creates or mutates a ref. `prDryRun` describes a PR and stops —
+ *    opening one is the operator's action, so there is no counterpart to it.
+ *  - Refuse rather than guess whenever the repository is not in the state the
  *    workflow assumes.
  *  - No credentials anywhere. See proc.js.
  */
@@ -290,13 +291,6 @@ function bucketCounts(checks) {
 // [agent:gh status]
 // ---------------------------------------------------------------------------
 
-/**
- * Collapses: git rev-parse · git status · git rev-list · gh repo view ·
- * gh pr view · gh pr checks · a GraphQL reviewThreads query — into one answer
- * an agent can act on. This is the verb that shortens a transcript most, and it
- * is the one an agent should reach for BEFORE deciding to open, update or merge
- * anything.
- */
 async function status(cwd) {
   const ctx = await context(cwd);
   if (!ctx.ok) return ctx;
@@ -335,7 +329,7 @@ async function status(cwd) {
   if (!prR.ok) { lines.push(prR.error); return done(lines); }
 
   if (!prR.pr) {
-    lines.push('no pull request for this branch. `[agent:gh pr]` opens one.');
+    lines.push('no pull request for this branch. `[agent:gh pr --dry]` renders the one your commits would open.');
     return done(lines);
   }
 
@@ -369,7 +363,7 @@ async function status(cwd) {
 }
 
 // ---------------------------------------------------------------------------
-// [agent:gh pr]
+// [agent:gh pr --dry]
 // ---------------------------------------------------------------------------
 
 /** Commit subjects on this branch and not on the base, oldest first. */
@@ -401,16 +395,8 @@ function humanizeBranch(branch) {
     .replace(/^./, (c) => c.toUpperCase());
 }
 
-/**
- * The description an agent would otherwise write badly or not at all: a title
- * from the commits (or the branch, if the commits are a mess of "wip"), the
- * agent's own stated intent as the summary, and the commit list and diffstat as
- * evidence.
- *
- * Deliberately NOT a template the agent has to fill in. The agent's body is
- * optional; when it supplies one it leads, because a human-written "why" beats
- * a generated one and the generated part is only ever the "what".
- */
+// The agent's body, when there is one, LEADS: a human-written "why" beats a
+// generated one, and the generated part is only ever the "what".
 function assembleDescription({ branch, commits, stat, files, body }) {
   const meaningful = commits.filter((c) => !/^(wip|fixup!|squash!|amend)\b/i.test(c));
   const title = meaningful.length === 1 ? meaningful[0]
@@ -429,24 +415,21 @@ function assembleDescription({ branch, commits, stat, files, body }) {
 }
 
 /**
- * Collapses the whole open-a-PR dance: work out the base, confirm there is
- * something to review, refuse the states that would produce a misleading PR,
- * write a real description from the commits, push with an upstream, create, and
- * hand back the URL.
+ * Renders the PR that WOULD be opened — base, commits, title, description,
+ * diffstat — and stops. There is deliberately no counterpart that opens it:
+ * pushing is the operator's action, so this function is the whole of `pr`.
  *
- * `dry` runs everything up to and including the description and STOPS — no
- * push, no create. That is not a debugging affordance: it is how an agent shows
- * an operator what it is about to open.
- *
- * The refusals are the interesting part. Each one is a state in which the PR
- * would exist but be wrong, and an agent cannot tell the difference afterwards:
+ * It still refuses the states in which the rendered PR would be misleading,
+ * because a preview of a wrong PR is a wrong preview:
  *   - on the default branch      → the PR would be main←main
- *   - detached HEAD              → there is no branch to push
+ *   - detached / unborn HEAD     → there is no branch to describe
  *   - nothing ahead of base      → an empty PR
- *   - uncommitted changes        → a PR missing the work it is named after
- *   - a PR already open          → a duplicate, and the second one wins reviews
+ *   - a PR already open          → the description would duplicate a live one
+ *
+ * A dirty tree is a NOTE here rather than a refusal: nothing is being created,
+ * so the useful answer is the description plus "these files would be left out".
  */
-async function openPr(cwd, { body, dry }) {
+async function prDryRun(cwd, { body }) {
   const ctx = await context(cwd);
   if (!ctx.ok) return ctx;
 
@@ -464,7 +447,7 @@ async function openPr(cwd, { body, dry }) {
       `a pull request for ${ctx.branch} already exists — not opening a second one.`,
       `PR #${existing.pr.number} ${existing.pr.isDraft ? '(draft) ' : ''}${existing.pr.state}: ${existing.pr.title}`,
       `  ${existing.pr.url}`,
-      'Push more commits to update it; `[agent:gh status]` for its CI and review state.',
+      '`[agent:gh status]` for its CI and review state.',
     ]);
   }
 
@@ -478,60 +461,18 @@ async function openPr(cwd, { body, dry }) {
   }
 
   const dirty = await dirtyFiles(cwd);
-  if (dirty && dirty.length && !dry) {
-    return fail([
-      `${dirty.length} file(s) have uncommitted changes: ${dirty.slice(0, 8).join(', ')}${dirty.length > 8 ? ', …' : ''}`,
-      'Those changes would NOT be in the PR. Commit them (or stash them) and ask again.',
-    ]);
-  }
-
   const [stat, files] = await Promise.all([diffStat(cwd, ref), changedFileList(cwd, ref)]);
   const desc = assembleDescription({ branch: ctx.branch, commits, stat, files, body });
 
-  if (dry) {
-    return done([
-      `draft PR for ${ctx.repo}: ${ctx.base} ← ${ctx.branch} (${commits.length} commit(s))`,
-      dirty && dirty.length ? `NOTE: ${dirty.length} file(s) are uncommitted and would be left out.` : null,
-      '',
-      `title: ${desc.title}`,
-      '',
-      neuter(desc.body),
-      '',
-      'Nothing was pushed or created. `[agent:gh pr]` opens it for real.',
-    ]);
-  }
-
-  // Push. `-u origin HEAD` both creates the remote branch and sets the upstream,
-  // which is what makes `gh pr create` able to infer the head ref. A branch that
-  // already has an upstream is pushed the same way; git is idempotent here.
-  const push = await git(cwd, ['push', '--set-upstream', 'origin', `HEAD:${ctx.branch}`], { timeout: 60000 });
-  if (!push.ok) {
-    return fail([
-      `pushing ${ctx.branch} to origin failed, so no PR was created.`,
-      explain(push, 'git push'),
-    ]);
-  }
-
-  const created = await gh(cwd, [
-    'pr', 'create',
-    '--base', ctx.base,
-    '--head', ctx.branch,
-    '--title', desc.title,
-    '--body', desc.body,
-  ], { timeout: 60000 });
-
-  if (!created.ok) {
-    return fail([
-      `the branch was pushed, but creating the PR failed: ${explain(created, 'gh pr create')}`,
-      'The commits are on origin — retry, or open the PR in the browser.',
-    ]);
-  }
-
-  const url = (created.stdout.match(/https:\/\/\S+/) || [])[0] || created.stdout.trim();
   return done([
-    `opened ${ctx.base} ← ${ctx.branch} (${commits.length} commit(s), ${files.length} file(s))`,
+    `draft PR for ${ctx.repo}: ${ctx.base} ← ${ctx.branch} (${commits.length} commit(s))`,
+    dirty && dirty.length ? `NOTE: ${dirty.length} file(s) are uncommitted and would be left out.` : null,
+    '',
     `title: ${desc.title}`,
-    url,
+    '',
+    neuter(desc.body),
+    '',
+    'Nothing was pushed and no PR was created — this is a rendering only. Opening it is the operator\'s action; show them this and let them run `gh pr create`.',
   ]);
 }
 
@@ -545,16 +486,10 @@ function runIdFromLink(link) {
   return m ? m[1] : null;
 }
 
-/**
- * Collapses "why is CI red": find the checks, pick the failing ones, resolve
- * each to its workflow run, pull ONLY the failed steps' logs, and tail them.
- *
- * The tail is the point. `gh run view --log-failed` on a real repo is tens of
- * thousands of lines; an agent that pipes that into its own context has spent
- * its budget to learn one assertion name. Three jobs, forty lines each, capped
- * again at the reply — and the omission is stated so the agent knows to ask for
- * more rather than assuming it read everything.
- */
+// Caps are load-bearing, not tidiness: `--log-failed` on a real repo is tens of
+// thousands of lines, and an agent that pipes that into its own context spends
+// its budget to learn one assertion name. The omission is always STATED — a
+// silently truncated log is how an agent concludes the wrong thing confidently.
 async function ci(cwd) {
   const ctx = await context(cwd);
   if (!ctx.ok) return ctx;
@@ -661,15 +596,9 @@ async function unresolvedThreads(cwd, nameWithOwner, number) {
   return { ok: true, list: threads.filter((t) => t && !t.isResolved) };
 }
 
-/**
- * Collapses "what does the review actually want": the GraphQL query an agent
- * will otherwise get wrong twice, plus the top-level reviews, rendered as a
- * compact worklist rather than an API response.
- *
- * Resolved threads are dropped and outdated ones are flagged: an agent that
- * re-fixes a resolved comment wastes a round trip, and one that acts on an
- * outdated line number edits the wrong place.
- */
+// Resolved threads are dropped and outdated ones flagged: an agent that
+// re-fixes a resolved comment wastes a round trip, and one that acts on an
+// outdated line number edits the wrong place.
 async function review(cwd) {
   const ctx = await context(cwd);
   if (!ctx.ok) return ctx;
@@ -720,7 +649,7 @@ async function review(cwd) {
 }
 
 module.exports = {
-  status, openPr, ci, review,
+  status, prDryRun, ci, review,
   // exported for the test harness
   _internals: { assembleDescription, humanizeBranch, neuter, tailLines, distillLog, stripLogPrefix, clip, clipLine, runIdFromLink, context, prFor, checksFor, bucketCounts, reply, MAX_REPLY_CHARS },
 };

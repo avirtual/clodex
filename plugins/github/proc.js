@@ -8,12 +8,12 @@
  *
  *  1. NO CREDENTIAL EVER TOUCHES THIS PLUGIN. There is no token argument, no
  *     token setting, no token in `host.storage` (which is plaintext JSON with
- *     no mode bits — see plugin-api.md §4), no token in argv and none in the
+ *     no mode bits — see plugins/plugin-api.md §4), no token in argv and none in the
  *     environment we construct. `gh` is invoked exactly as the operator would
  *     invoke it and reads its own keychain entry itself. The plugin cannot leak
  *     a secret it never holds.
  *  2. NOTHING REJECTS. Every call resolves to a shaped result. A verb that
- *     throws bounces to the agent as `[agent:gh] error: …` (plugin-api.md §7),
+ *     throws bounces to the agent as `[agent:gh] error: …` (plugins/plugin-api.md §7),
  *     which is a fine channel for "you asked for something impossible" and a
  *     bad one for "the network was down", because the second is a fact the
  *     agent should be told plainly and in full.
@@ -38,7 +38,7 @@ const DEFAULT_TIMEOUT_MS = 25000;
 const MAX_BUFFER = 96 << 20;
 
 /** The engine process may have been launched from the GUI with a minimal PATH,
- *  so `gh` is not necessarily reachable. plugin-api.md never describes the
+ *  so `gh` is not necessarily reachable. plugins/plugin-api.md never describes the
  *  engine process's environment; git-branches makes the same allowance. */
 const EXTRA_PATH_DIRS = [
   '/usr/bin',

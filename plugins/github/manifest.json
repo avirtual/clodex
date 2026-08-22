@@ -3,7 +3,9 @@
   "name": "GitHub",
   "version": "1.0.0",
   "hostApi": "1",
-  "entry": { "engine": "engine.js" },
+  "entry": {
+    "engine": "engine.js"
+  },
   "enabledByDefault": false,
-  "announce": "Adds the [agent:gh] verb: repo/PR/CI state, open-a-PR, failing-CI logs and unresolved review threads, through the operator's own authenticated gh CLI. Holds no credentials."
+  "announce": "Adds the read-only [agent:gh] verb: repo/PR/CI state, failing-CI logs, unresolved review threads, and a PR dry run, through the operator's own authenticated gh CLI. Never pushes or opens a PR. Holds no credentials."
 }
