@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — a read-only GitHub verb for agents
 
 - The "ticket merged" note the ticket loop sends the lead no longer claims a
   CHANGELOG entry is owed when the merge already carried one. It now checks what
