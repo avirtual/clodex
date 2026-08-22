@@ -106,14 +106,19 @@ function leafDiffFlags(src) {
 // Only a range diff describing some OTHER command, somewhere else, is excluded.
 const CALL_WINDOW = 2000;
 function quotedDiffFlags(src) {
-  const out = [];
+  // Keyed by ABSOLUTE offset, because windows overlap: a second `diffText(` call
+  // landing within CALL_WINDOW of CHECK 4 would collect the same message twice,
+  // and the `>= 2` ENTER below would then be counting one message rather than
+  // two. Harmless today — the duplicates all equal `leaf` — but the ENTER's
+  // arithmetic should mean what its message says.
+  const seen = new Map();
   for (const call of src.matchAll(/gitWorktree\.diffText\(/g)) {
     const near = src.slice(call.index, call.index + CALL_WINDOW);
     for (const m of near.matchAll(/`git (?:-C \$\{[^}]*\}\s+)?diff ((?:--[\w-]+\s+)*)\$\{[^}]*\}\.\.\$\{[^}]*\}/g)) {
-      out.push(m[1].trim().split(/\s+/).filter(Boolean));
+      seen.set(call.index + m.index, m[1].trim().split(/\s+/).filter(Boolean));
     }
   }
-  return out;
+  return [...seen.entries()].sort((a, b) => a[0] - b[0]).map(([, flags]) => flags);
 }
 
 // ── the extractors, exercised against synthetic input FIRST ────────────────
@@ -129,6 +134,11 @@ test('FIXTURES: the leaf extractor reads the flags out of diffText, and only dif
     "  const r = await git(repo, ['diff', '--text', '--no-ext-diff', `${base}..${head}`], { maxBuffer });",
     "  return { ok: true, text: r.stdout };",
     "}",
+    // TRAILING EMPTY ELEMENT, so `join` ends the fixture with `\n}\n` — the
+    // terminator `leafDiffFlags` scans for. Without it `indexOf` returns -1 and
+    // `slice(at, -1)` produces the passing result by a DIFFERENT path than the
+    // real file takes, which is a fixture green for the wrong reason.
+    "",
   ].join('\n');
   assert.deepStrictEqual(leafDiffFlags(fake), ['--text', '--no-ext-diff'],
     'the flags come out in order');
@@ -194,13 +204,27 @@ test('FIXTURES: a quoted git diff that is NOT the leaf\'s range diff is not drag
   // that IS a range. Only the call-site scoping keeps it out, and without that
   // scoping this file reds over a line describing a different command.
   const statRange = "run `git -C ${team.root} diff --stat ${sha}..${other}` before deciding";
-  assert.deepStrictEqual(quotedDiffFlags(statRange), [],
-    'a --stat RANGE diff far from any diffText call is not this command');
-  assert.deepStrictEqual(
-    quotedDiffFlags("const d = await gitWorktree.diffText(a, b, c);\n" + statRange),
-    [['--stat']],
-    'ENTER: the same string IS collected when it sits at a call site — so the '
-    + 'exclusion above is the SCOPING working, not a regex that never matches');
+  const CALL = "const d = await gitWorktree.diffText(a, b, c);\n";
+
+  // ADJACENT: collected. This is the positive control — without it, the empty
+  // result below is indistinguishable from an extractor that finds nothing.
+  assert.deepStrictEqual(quotedDiffFlags(CALL + statRange), [['--stat']],
+    'the same string IS collected when it sits at a call site');
+
+  // DISTANT: not collected, and the fixture really spans the window — a real
+  // call site, then CALL_WINDOW worth of filler, then the command. The previous
+  // version passed `statRange` alone, which contains no `diffText(` at all, so
+  // the outer loop never iterated and `[]` came free: measured, raising
+  // CALL_WINDOW to 50000 left every subject in this file green.
+  //
+  // The filler is DERIVED from CALL_WINDOW rather than a hardcoded length, so
+  // the fixture cannot drift from the constant it pins.
+  const far = CALL + 'x'.repeat(CALL_WINDOW) + statRange;
+  assert.match(far, /gitWorktree\.diffText\(/,
+    'ENTER: the distant fixture really does contain a call site, so the outer '
+    + 'loop iterates and the exclusion below is the DISTANCE, not an empty scan');
+  assert.deepStrictEqual(quotedDiffFlags(far), [],
+    'a --stat RANGE diff beyond CALL_WINDOW of any diffText call is not this command');
 });
 
 // The comparison, as its own function so the RED fixtures below exercise the
