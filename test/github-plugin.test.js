@@ -52,13 +52,17 @@ const no = (stderr = 'nope') => ({ ok: false, code: 1, stdout: '', stderr });
 // because the two interesting paths diverge on it: `prDryRun` STOPS at an
 // existing PR (so a fixture that always has one never reaches the commit read
 // where the push used to sit), while `review` needs one to have anything to
-// read.
+// read. `state.dirty` is the same kind of knob for the uncommitted-files
+// branch, which used to be a REFUSAL and is now a note (see the dirty-tree
+// test).
 function answer(cmd, args, state) {
   const line = `${cmd} ${args.join(' ')}`;
   if (line === 'git rev-parse --abbrev-ref HEAD') return ok('feature/chip');
   if (line.startsWith('git rev-parse --verify --quiet refs/remotes/origin/')) return ok('abc123');
   if (line.startsWith('git rev-list')) return ok('2\t3');
-  if (line.startsWith('git status --porcelain')) return ok('');
+  if (line.startsWith('git status --porcelain')) {
+    return ok(state.dirty ? ' M renderer.js\n M CHANGELOG.md' : '');
+  }
   if (line.startsWith('git log')) return ok('first commit\nsecond commit');
   if (line.startsWith('git diff --stat')) return ok(' 3 files changed, 40 insertions(+)');
   if (line.startsWith('git diff --name-only')) return ok('renderer.js\nmain.js');
@@ -107,10 +111,10 @@ function seedProc(spawns, state) {
   require.cache[PROC_PATH] = { id: PROC_PATH, filename: PROC_PATH, loaded: true, exports, children: [], paths: [] };
 }
 
-function boot({ pr = true } = {}) {
+function boot({ pr = true, dirty = false } = {}) {
   const spawns = [];
   const injected = [];
-  const state = { pr };
+  const state = { pr, dirty };
   for (const p of [ENGINE_PATH, WORKFLOWS_PATH, PROC_PATH]) delete require.cache[p];
   seedProc(spawns, state);
   const engine = require(ENGINE_PATH);
@@ -197,7 +201,16 @@ test('github: the push commands are absent from the plugin SOURCE, not merely un
   // The behavioural guard above only sees paths the fixture drives. This one
   // catches a push added behind a condition that fixture never satisfies, and
   // a reintroduction that is commented out rather than deleted.
-  for (const file of fs.readdirSync(PLUGIN_DIR).filter((f) => f.endsWith('.js'))) {
+  const files = fs.readdirSync(PLUGIN_DIR).filter((f) => f.endsWith('.js'));
+  // ENTER: the three assertions below are ABSENCES, all true of an empty file
+  // list — a plugin dir that existed but yielded no .js would pass this test
+  // while scanning nothing. Named rather than counted: a count is what just
+  // went wrong in plugin-scope.test.js, and a fourth module should not fail
+  // this test, only go unscanned if someone forgets — which naming catches.
+  for (const known of ['engine.js', 'proc.js', 'workflows.js']) {
+    assert.ok(files.includes(known), `ENTER: ${known} is present to be scanned`);
+  }
+  for (const file of files) {
     const src = fs.readFileSync(path.join(PLUGIN_DIR, file), 'utf8');
     assert.ok(!/'push'/.test(src), `${file} names a git push argv`);
     assert.ok(!/--set-upstream/.test(src), `${file} names --set-upstream`);
@@ -232,6 +245,61 @@ test('github: a bare `pr` REFUSES and names why — it does not silently dry-run
     assert.strictEqual(replies.length, 2);
     assert.match(replies[1], /Nothing was pushed/, 'the dry run states that nothing happened');
     assert.match(replies[1], /title:/, 'and it renders the description it exists to show');
+  } finally { cleanup(); }
+});
+
+test('github: an uncommitted tree is a NOTE on the rendering, not a refusal', async () => {
+  // This behaviour CHANGED in the cut and the change was adjudicated, so it is
+  // pinned here rather than living only in the README. Before: a dirty tree
+  // refused, because the PR would have been missing the work it was named
+  // after. After: nothing is created, so the description is still the useful
+  // answer and the uncommitted files are named as ones left out.
+  const { spawns, cleanup } = boot({ pr: false, dirty: true });
+  try {
+    const replies = [];
+    const handle = { name: 'seat', isAlive: () => true, inject: (t) => replies.push(t) };
+    const row = registry.pluginRowFor('gh');
+    row.handler(handle, row.parse('[agent:gh pr --dry]'));
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+
+    assert.strictEqual(replies.length, 1, 'ENTER: an answer reached the agent');
+    const [out] = replies;
+
+    // ENTER: the dirty state is the one the fixture actually produced — without
+    // this, both halves below could be asserting about a clean tree.
+    assert.ok(spawns.some((a) => a[0] === 'git' && a[1] === 'status'),
+      'ENTER: the workflow read the working tree');
+    assert.match(out, /2 file\(s\) are uncommitted/, 'the NOTE names how many files would be left out');
+
+    // The assertion carrying the argument: it is a note and not a refusal
+    // precisely because the description STILL RENDERS. A refusal would stop
+    // here, and a reader of the first assertion alone could not tell which.
+    assert.match(out, /title:/, 'the description renders anyway — this is why it is a note, not a refusal');
+    assert.match(out, /## Commits/, 'including the commit evidence');
+    assert.match(out, /Nothing was pushed/, 'and it still states that nothing happened');
+    assert.ok(spawns.some((a) => a[0] === 'git' && a[1] === 'log'),
+      'the commit read happened, i.e. the workflow ran past the point that used to refuse');
+
+    // And it is still read-only on this path.
+    assert.deepStrictEqual(spawns.filter(isPush), []);
+    assert.deepStrictEqual(spawns.filter(isPrCreate), []);
+  } finally { cleanup(); }
+});
+
+test('github: a CLEAN tree renders the same description with no NOTE', async () => {
+  // Control for the test above: proves the NOTE is produced BY the dirty state
+  // rather than being unconditional prose in the template.
+  const { cleanup } = boot({ pr: false, dirty: false });
+  try {
+    const replies = [];
+    const handle = { name: 'seat', isAlive: () => true, inject: (t) => replies.push(t) };
+    const row = registry.pluginRowFor('gh');
+    row.handler(handle, row.parse('[agent:gh pr --dry]'));
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+
+    assert.strictEqual(replies.length, 1);
+    assert.match(replies[0], /title:/, 'ENTER: the description rendered here too');
+    assert.ok(!/uncommitted/.test(replies[0]), 'no NOTE when there is nothing uncommitted');
   } finally { cleanup(); }
 });
 
