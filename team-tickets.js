@@ -5359,6 +5359,15 @@ function createTicketMethods(deps, shared) {
         ticket.reworkRound = (Number(ticket.reworkRound) || 0) + 1;
         delete ticket.loopStep;
         ticketsStore.save(team.root, tickets);
+        // The reviewer goes with the step, exactly as it does in `_taskReject`.
+        // This pair is documented as never diverging (see the header), so the
+        // teardown belongs on both sides of it even though this side is currently
+        // LATENT: the loop rejects only at `loopStep: 'verify'` with a red suite,
+        // and no reviewer exists for the round until the suite is green. It cannot
+        // fail — the resolver returns [] when nothing is live, and the helper never
+        // throws — and a twin that has silently diverged is a trap for the next
+        // reader, who is told here that it has not.
+        this._retireReviewSeatsFor(team, ticketId, 'rejected by the loop');
         // Rework needs the verb as much as a first dispatch: the seat closes a
         // SECOND time, and without it here that close depends on the seeded role
         // prompt — the stale-file dependency this whole line exists to remove from
@@ -5449,6 +5458,17 @@ function createTicketMethods(deps, shared) {
     // its gate is a ticket ALREADY `open` for rework, and a review round only
     // exists while the ticket is `done` — both keepHold arms keep it there. There
     // is no round to end, and this path does not touch `loopStep` at all.
+    //
+    // So a seat still resolving for an `open` ticket is one whose round something
+    // ELSE already ended, and retiring it here would destroy a review nobody
+    // ended. It cannot corrupt the board either: `_landVerdictOnTicket`'s
+    // `ticketInFlight` guard refuses a verdict on an open ticket, and it falls
+    // through to the lead in full instead.
+    //
+    // NOT "it might be an ad-hoc review": an ad-hoc review can never carry
+    // `reviewTicket`, so it is invisible to the resolver. The intent path calls
+    // `_handleTeamReview` with NO opts (session-manager.js, the team-review arm);
+    // only `_spawnTicketReview` seeds the field.
     _taskRejectFollowUp(session, team, tickets, ticket, reason, reply) {
       const seat = this._ticketAssigneeSeat(team, ticket);
       // Its own arm, because on a SOLO board `_soloContext` makes the lead its own

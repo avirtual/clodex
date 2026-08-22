@@ -150,6 +150,7 @@ function mkFixture() {
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
   const killed = [];
+  const archived = [];
   m._injectText = (s, text, opts) => {
     const out = opts && typeof opts.produce === 'function' ? opts.produce() : text;
     if (out == null || out === '') return;
@@ -171,12 +172,16 @@ function mkFixture() {
   // leaves behind is what every assertion below reads, so a teardown that killed
   // the wrong name cannot pass by having been called.
   m.kill = async (name) => { killed.push(name); persistence.remove(name); m.sessions.delete(name); };
+  // Stubbed for the same reason kill() is: the real archive() arms a 5s
+  // `process.kill(pid, 'SIGKILL')` against this fixture's fake `pid: 1`, which is
+  // init. It records the state the not-merged accept arm is asserted on.
+  m.archive = async (name) => { archived.push(name); persistence.setArchived(name, true); };
   const seat = (name, cwd = repoDir) => {
     m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle' });
     return m.sessions.get(name);
   };
   return {
-    m, team, home, repoDir, tstore, persistence, injected, gated, contextActions, logs, killed, seat,
+    m, team, home, repoDir, tstore, persistence, injected, gated, contextActions, logs, killed, archived, seat,
     one: (id) => tstore.load(team.root).find((t) => t.id === id),
   };
 }
@@ -336,7 +341,13 @@ test('an accept retires the reviewer, which its own teardowns never reach', asyn
 
   await accept(f, 't1');
 
-  assert.ok(f.one('t1').acceptedAt, 'ENTER: the accept landed on the merged arm');
+  // `closedOut`, not `acceptedAt`: finish() stamps acceptedAt on ALL FOUR arms,
+  // so an ENTER on it would pass just as happily from the not-merged arm and
+  // silently relabel this subject if isMerged ever regressed. Only the merged arm
+  // is terminal.
+  assert.strictEqual(f.one('t1').closedOut, true, 'ENTER: the accept took the terminal MERGED arm');
+  assert.match(f.injected.join('\n'), /branch landed deleted/,
+    'ENTER: the branch was DELETED, which only the merged arm does — the other two keep it');
   assert.strictEqual(f.one('t1').loopStep, undefined, 'ENTER: and ended the round');
   // The accept teardowns all target `seatName` — the ticket's ASSIGNEE. A
   // reviewer is resolved off `ephemeral` + `reviewTicket` and never appears as an
@@ -372,8 +383,15 @@ test('a follow-up must-fix on a reopened ticket leaves an in-flight review alone
   f.seat('lead'); f.seat('team-hand');
   // Already open for rework — the gate `_taskRejectFollowUp` is reached through.
   // No review round is open on a ticket in this state (a round exists only while
-  // the ticket is `done`), so a seat carrying `reviewTicket` here belongs to an
-  // ad-hoc review the lead asked for, which is in flight and must survive.
+  // the ticket is `done`), so a seat still resolving here is one whose round
+  // something else already ended: retiring it would destroy a review nobody
+  // ended, and the board is protected anyway — `ticketInFlight` refuses a verdict
+  // on an open ticket and it falls through to the lead in full.
+  //
+  // The seat is loop-spawned, necessarily: an ad-hoc review carries no
+  // `reviewTicket` (the intent path passes no opts) and so is invisible to the
+  // resolver. This exact board state is only reachable in production through a
+  // round that ended without a teardown — which is what this ticket closes.
   f.tstore.save(f.team.root, [{
     id: 't1', state: 'open', spec: 'one', assignee: 'team-hand', role: 'hand', taskDir: 'tasks/t1/SPEC.md',
     openedAt: 1, startedAt: 1, lastActivityAt: 3, reworkRound: 1,
@@ -409,4 +427,48 @@ test('a teardown that throws does not cost the reject', () => {
     'the failure is logged rather than swallowed — a seat that could not be retired is still a leak');
   assert.deepStrictEqual(liveFor(f, 't1'), [rec.name],
     'ENTER: and the seat really did survive, so the arm above is the failing one');
+});
+
+// ── the loop's own reject is the documented twin of the lead's ─────────────
+
+test('the LOOP\'s reject retires the reviewer too — the twin must not diverge', () => {
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1');
+  assert.deepStrictEqual(liveFor(f, 't1'), [rec.name], 'ENTER: a seat is live and linked to t1');
+
+  // LATENT in production, pinned anyway: the loop rejects only at
+  // `loopStep: 'verify'` with a red suite, and no reviewer exists for the round
+  // until the suite goes green. `_rejectTicketFromLoop`'s header states the pair
+  // is deliberately identical and that a change to `_taskReject` must follow
+  // here — this subject is what makes that claim checkable rather than aspirational.
+  const r = f.m._rejectTicketFromLoop(f.team, 't1', 'the suite FAILS on your branch');
+
+  assert.strictEqual(r.ok, true, 'ENTER: the loop reject actually landed — it needs a live seat to reach');
+  assert.strictEqual(f.one('t1').state, 'open', 'ENTER: and reopened the ticket');
+  assert.strictEqual(f.one('t1').reworkRound, 1, 'ENTER: counting a rework round, exactly as the lead\'s reject does');
+  assert.deepStrictEqual(liveFor(f, 't1'), [],
+    'a pair documented as never diverging had diverged: the lead\'s reject retires, the loop\'s did not');
+});
+
+// ── the teardown cannot cost the close, on EITHER failure shape ────────────
+
+test('an ASYNC teardown rejection does not cost the reject either', () => {
+  const f = mkFixture();
+  reviewingTicket(f);
+  const rec = spawnReviewer(f, 't1');
+  // The real kill() is async, so its failure arrives as a REJECTED PROMISE, not a
+  // synchronous throw — a different arm from the subject above (that one is
+  // caught by the inner try; this one is only caught by the `.catch` on the
+  // returned promise). An unhandled rejection here would surface as an ESCAPES
+  // failure rather than as this subject, which is why it is asserted directly.
+  f.m.kill = async () => { throw new Error('pty is gone'); };
+
+  reject(f, 't1');
+
+  assert.strictEqual(f.one('t1').state, 'open', 'the reject still landed');
+  assert.strictEqual(f.one('t1').reworkRound, 1, 'and counted its round');
+  assert.match(f.injected.join('\n'), /reopened \(rework\)/, 'and the lead still got its confirmation');
+  assert.deepStrictEqual(liveFor(f, 't1'), [rec.name],
+    'ENTER: the seat really did survive the failed teardown, so this is the failing arm');
 });
