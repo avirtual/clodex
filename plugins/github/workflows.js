@@ -276,7 +276,6 @@ async function checksFor(cwd, branch) {
   }
   const m = `${r.stderr}${r.stdout}`;
   if (/no checks reported|no pull requests found/i.test(m)) return { ok: true, checks: [] };
-  // Exit 8 = pending; gh still printed the JSON, which ghJson parsed into data.
   if (r.code === 8 && Array.isArray(r.data)) return { ok: true, checks: r.data };
   return { ok: false, error: explain(r, 'reading CI checks') };
 }

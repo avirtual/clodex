@@ -54,9 +54,7 @@ function childEnv() {
   for (const dir of EXTRA_PATH_DIRS) if (!parts.includes(dir)) parts.push(dir);
   env.PATH = parts.join(path.delimiter);
 
-  // Non-interactive and parseable. GIT_TERMINAL_PROMPT=0 is the one that
-  // matters: without it a push to a repo whose credentials have expired blocks
-  // on a username prompt forever, on a PTY nobody is watching.
+  // Non-interactive and parseable.
   env.GIT_TERMINAL_PROMPT = '0';
   env.GIT_OPTIONAL_LOCKS = '0';
   env.GH_PROMPT_DISABLED = '1';
