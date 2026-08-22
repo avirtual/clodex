@@ -1,0 +1,9 @@
+{
+  "id": "github",
+  "name": "GitHub",
+  "version": "1.0.0",
+  "hostApi": "1",
+  "entry": { "engine": "engine.js" },
+  "enabledByDefault": false,
+  "announce": "Adds the [agent:gh] verb: repo/PR/CI state, open-a-PR, failing-CI logs and unresolved review threads, through the operator's own authenticated gh CLI. Holds no credentials."
+}
