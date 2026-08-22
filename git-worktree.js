@@ -398,6 +398,9 @@ async function diffText(cwd, base, head, { maxBuffer = 32 * 1024 * 1024 } = {}) 
     const v = await git(repo, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
     if (!v.ok) return { ok: false, text: null, error: `ref does not resolve: ${ref}` };
   }
+  // These flags are QUOTED back to the lead by team-tickets.js's CHECK 4 failure
+  // messages so they can re-run the command by hand. That copy went stale once;
+  // sweep it when this argv changes.
   const r = await git(repo, ['diff', '--text', '--no-ext-diff', `${base}..${head}`], { maxBuffer });
   if (!r.ok) return { ok: false, text: null, error: (r.stderr || 'git diff failed').trim() };
   return { ok: true, text: r.stdout };
