@@ -135,8 +135,16 @@ test('every SHIPPED plugin is global — the field changes nothing that exists t
     .sort();
   // ENTER: the reduction above must have found the shipped set. A glob that
   // matched nothing would satisfy every assertion in the loop below vacuously.
-  assert.deepStrictEqual(ids, ['git-branches', 'memory-viewer', 'tickets-viewer', 'workbench'],
-    'ENTER: all four shipped plugins were read off disk');
+  //
+  // MEMBERSHIP, not the whole list. The invariant under test is "no shipped
+  // plugin opts into session scope", which is a property of EACH manifest —
+  // pinning the exact catalog makes every new plugin fail a test about the
+  // existing ones, which is how a second shipped plugin once failed a test
+  // about the first (test/plugin-kill-switch.test.js:98-101). The named four
+  // are asserted present because they are what makes the loop non-vacuous.
+  for (const known of ['git-branches', 'memory-viewer', 'tickets-viewer', 'workbench']) {
+    assert.ok(ids.includes(known), `ENTER: ${known} was read off disk`);
+  }
   for (const id of ids) {
     const m = JSON.parse(fs.readFileSync(path.join(dir, id, 'manifest.json'), 'utf8'));
     assert.ok(!('scope' in m), `${id} declares no scope — the shipped four must not opt in`);
