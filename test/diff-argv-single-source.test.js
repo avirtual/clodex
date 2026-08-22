@@ -111,6 +111,14 @@ function quotedDiffFlags(src) {
   // and the `>= 2` ENTER below would then be counting one message rather than
   // two. Harmless today — the duplicates all equal `leaf` — but the ENTER's
   // arithmetic should mean what its message says.
+  //
+  // NOT OBSERVABLE BY MUTATION, stated because everything else in this file is:
+  // reverting this to a plain `push` leaves the suite green. Producing a
+  // duplicate needs two `diffText(` calls inside CALL_WINDOW, and the corridor
+  // subject below forbids exactly that — today's two calls are 220288 chars
+  // apart against a 9167 ceiling. The fix is correct and unpinned; a fixture
+  // built to make that mutation fail would be a decoration, which is the one
+  // thing this file must not become.
   const seen = new Map();
   for (const call of src.matchAll(/gitWorktree\.diffText\(/g)) {
     const near = src.slice(call.index, call.index + CALL_WINDOW);
@@ -138,6 +146,13 @@ test('FIXTURES: the leaf extractor reads the flags out of diffText, and only dif
     // terminator `leafDiffFlags` scans for. Without it `indexOf` returns -1 and
     // `slice(at, -1)` produces the passing result by a DIFFERENT path than the
     // real file takes, which is a fixture green for the wrong reason.
+    //
+    // NOT OBSERVABLE BY MUTATION: removing this element again leaves the suite
+    // green. The `['diff'` anchor matches before either slice end is reached, so
+    // both paths yield identical flags — measured, including with a second
+    // function planted after `diffText` to try to force divergence. Kept because
+    // the fixture should exercise the path the real file takes, not because a
+    // test would catch its absence.
     "",
   ].join('\n');
   assert.deepStrictEqual(leafDiffFlags(fake), ['--text', '--no-ext-diff'],
