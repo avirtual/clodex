@@ -335,7 +335,13 @@ test('the lead is told the merge landed, and that a CHANGELOG entry is owed', as
   assert.match(notes[0].body, new RegExp(f.masterHead().slice(0, 12)), 'and the merge sha, so it can be undone');
   // CHANGELOG.md is deliberately not written by the merge — it conflicts across
   // every live branch — so the debt must be STATED or the release ships without it.
-  assert.match(notes[0].body, /CHANGELOG/, 'the CHANGELOG debt is stated');
+  // MEASURED, not asserted: this fixture's branch carries work.txt and nothing
+  // else, so the true answer is that none landed. A bare /CHANGELOG/ match was
+  // true of all three arms and stayed green through the nine merges where the
+  // claim was false — the wording is the claim, so the wording is what is pinned.
+  assert.match(notes[0].body, /A CHANGELOG\.md entry is OWED/,
+    'the debt is stated when the merge really carried no entry');
+  assert.ok(!/LANDED with the merge/.test(notes[0].body), 'and it does not claim one landed');
 
   // The body carries a complete, ready-to-fire `[agent:task accept t1]`, inert
   // ONLY because prose precedes it on its line — IntentScanner's parse is
@@ -374,6 +380,146 @@ test('the merge does NOT touch CHANGELOG.md and does NOT accept the ticket', asy
   assert.deepStrictEqual(t.worktree, { path: pathReal.join(repo.dir, 'wt'), branch: 'tl-1', baseSha },
     'and the worktree record is untouched');
   assert.ok(f.m.sessions.has('team-hand'), 'the hand seat survives the merge');
+});
+
+// ── the CHANGELOG claim is MEASURED: three outcomes, none collapsible ───────
+// Unconditional before t472, and wrong on nine consecutive merges (t470, t471):
+// both branches wrote their `## Unreleased` entry in round 1, so every merge
+// carried it to master and every notice still asked the lead for one. The cost
+// is desensitization — a lead who learns to skip the line skips it on the day
+// it is true — so each of the three answers is pinned by its WORDING and each
+// is paired against the other two, an absence assertion alone being true of a
+// notice that was never sent.
+
+// A repo whose master already has a CHANGELOG.md, with tl-1 cut from that
+// commit. Returns the fixture args the two branch-side subjects share.
+function mkRepoWithChangelog() {
+  const repo = mkRepo();
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), '# Changelog\n\n## Unreleased\n');
+  git(repo.dir, ['add', 'CHANGELOG.md']);
+  git(repo.dir, ['commit', '-q', '-m', 'changelog']);
+  git(repo.dir, ['branch', '-f', 'tl-1', 'HEAD']);
+  const baseSha = git(repo.dir, ['rev-parse', 'HEAD']);
+  return {
+    repo: { ...repo, baseSha },
+    ticketOver: { worktree: { path: pathReal.join(repo.dir, 'wt'), branch: 'tl-1', baseSha } },
+  };
+}
+
+test('a branch that WROTE a CHANGELOG entry is told the entry landed, not that one is owed', async () => {
+  const { repo, ticketOver } = mkRepoWithChangelog();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  commitOnBranch(repo.dir, 'tl-1', 'CHANGELOG.md', '# Changelog\n\n## Unreleased\n\n- the widget is reentrant\n');
+  const f = mkMerge({ repo, ticketOver });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc(), [], 'ENTER: the merge happened, so there is a notice to read');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: exactly one merge notification reached the lead');
+  assert.strictEqual(notes[0].target, 'lead', 'ENTER: and it went to the lead, not into the void');
+  // Read off MASTER rather than the fixture's intent: the claim is about what
+  // the merge carried, and this is the only witness that it really carried it.
+  assert.match(fsReal.readFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), 'utf8'), /the widget is reentrant/,
+    'ENTER: master really carries the entry now');
+
+  assert.match(notes[0].body, /A CHANGELOG\.md entry LANDED with the merge/,
+    'the notice says the entry landed');
+  // PAIRED, because "does not ask" is also true of a notice never sent — the
+  // three assertions above establish that one was.
+  assert.ok(!/entry is OWED/.test(notes[0].body), 'and does NOT ask the lead to write a duplicate');
+  assert.ok(!/UNKNOWN/.test(notes[0].body), 'and does not hedge — the probe answered');
+});
+
+test('a branch that wrote NO entry still gets the debt stated, over a master that already has a CHANGELOG', async () => {
+  // The near-miss the range choice turns on: master HAS a CHANGELOG.md, the
+  // branch simply did not touch it. A probe measuring the FILE's existence, or
+  // diffing baseSha..branch against a master that moved, answers "landed" here.
+  const { repo, ticketOver } = mkRepoWithChangelog();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc(), [], 'ENTER: the merge happened');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: exactly one merge notification reached the lead');
+  assert.ok(fsReal.existsSync(pathReal.join(repo.dir, 'CHANGELOG.md')),
+    'ENTER: the file exists on master, so a presence check would answer wrongly here');
+
+  assert.match(notes[0].body, /A CHANGELOG\.md entry is OWED/, 'the debt is stated');
+  assert.ok(!/LANDED with the merge/.test(notes[0].body), 'and no entry is claimed');
+  assert.ok(!/UNKNOWN/.test(notes[0].body), 'and it does not hedge — the probe answered');
+});
+
+test('a probe that could NOT run says so, and collapses into neither other answer', async () => {
+  // The arm most likely to pass vacuously, so the failure is reached through the
+  // REAL diffText: maxBuffer 1 overflows execFile on any non-empty diff, which is
+  // git-worktree's own documented ok:false-on-overflow path. A hand-rolled
+  // `{ ok: false }` stub would pin the shape this test invented rather than the
+  // shape the leaf returns.
+  const { repo, ticketOver } = mkRepoWithChangelog();
+  commitOnBranch(repo.dir, 'tl-1', 'CHANGELOG.md', '# Changelog\n\n## Unreleased\n\n- the widget is reentrant\n');
+  const real = require('../git-worktree');
+  const f = mkMerge({
+    repo, ticketOver,
+    gitOver: { diffText: (cwd, base, head) => real.diffText(cwd, base, head, { maxBuffer: 1 }) },
+  });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc(), [], 'ENTER: the merge itself still landed — only the probe failed');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: exactly one merge notification reached the lead');
+
+  assert.match(notes[0].body, /CHANGELOG\.md: UNKNOWN/, 'the notice says the check could not run');
+  // Not a quieter way of saying either answer. A failed probe reported as
+  // "an entry landed" is how a release ships with no notes; reported as "one is
+  // owed" it trains the lead to ignore the line.
+  assert.ok(!/LANDED with the merge/.test(notes[0].body), 'it does not claim an entry landed');
+  assert.ok(!/entry is OWED/.test(notes[0].body), 'and it does not claim one is owed');
+  assert.match(notes[0].body, /show --stat/, 'and it hands the lead the command that answers it');
+  assert.match(notes[0].body, /the probe did not answer/, 'and it names the failure in its own words');
+});
+
+test('the failed-probe fixture really is what flips the answer', async () => {
+  // The pairing that makes the subject above non-vacuous. Byte-identical fixture,
+  // WITHOUT the override: if this said UNKNOWN too, the assertion up there would
+  // be green over a repo shape rather than over the failure branch.
+  const { repo, ticketOver } = mkRepoWithChangelog();
+  commitOnBranch(repo.dir, 'tl-1', 'CHANGELOG.md', '# Changelog\n\n## Unreleased\n\n- the widget is reentrant\n');
+  const f = mkMerge({ repo, ticketOver });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: the same fixture delivers a notice');
+  assert.ok(!/UNKNOWN/.test(notes[0].body),
+    'the same repo answers cleanly when diffText is not sabotaged');
+  assert.match(notes[0].body, /A CHANGELOG\.md entry LANDED with the merge/,
+    'and it answers LANDED — so the override, not the fixture, produced the UNKNOWN above');
+});
+
+test('a caller that omits the probe result gets UNKNOWN, never a claim', () => {
+  // The default arm. Reached by FORGETTING rather than by failing, which is the
+  // one way a future call site can arrive here — and it must not be able to
+  // arrive at either claim.
+  const { repo } = mkRepoWithChangelog();
+  const f = mkMerge({ repo });
+
+  f.m._notifyMergeLanded(f.team, 't1', { branch: 'tl-1', sha: 'deadbee', rounds: 1, summary: '5 pass' });
+
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: the notice was sent');
+  assert.match(notes[0].body, /CHANGELOG\.md: UNKNOWN/, 'an absent result is unknown');
+  assert.ok(!/LANDED with the merge/.test(notes[0].body) && !/entry is OWED/.test(notes[0].body),
+    'and is neither claim');
+  // The knife-edge holds on every arm, not just the two the older subject reached:
+  // the CHANGELOG line is now built by a conditional, and a wording change on any
+  // arm reflows this body.
+  for (const line of notes[0].body.split('\n')) {
+    assert.ok(!line.startsWith('[agent:'), `no line may START with an intent: ${JSON.stringify(line)}`);
+  }
 });
 
 // ── step 1: the must-fixes come off the BODY, never off a header count ─────

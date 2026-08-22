@@ -1643,8 +1643,21 @@ function createTicketMethods(deps, shared) {
         // question for the lead, and a second channel is what the loop's design
         // forbids.
         this._stampMergeError(team, ticketId, null);
+        // The CHANGELOG claim is MEASURED here rather than asserted in the
+        // notice. It was unconditional and wrong nine merges running (t470,
+        // t471): both branches wrote their entry in round 1, so every merge
+        // carried it and every notice still asked for one. The cost is not the
+        // noise — a lead who acts writes a duplicate entry, and a lead who
+        // learns to skip the line has been trained to skip it on the day it is
+        // true.
+        //
+        // The range is headBefore..sha — what THIS merge actually added to
+        // master, not what the branch carries. The two disagree exactly when
+        // master already had the entry, and the notice's wording is about what
+        // the merge carried, so it must be measured off that.
+        const changelog = await this._mergeTouchedChangelog(team, merged.headBefore, merged.sha);
         this._notifyMergeLanded(team, ticketId, {
-          branch, sha: merged.sha, rounds, summary: suite.summary,
+          branch, sha: merged.sha, rounds, summary: suite.summary, changelog,
         });
       } catch (e) {
         // A throw AFTER the merge landed is the dangerous shape: master carries
@@ -1662,11 +1675,45 @@ function createTicketMethods(deps, shared) {
       }
     },
 
+    // Did the merged range touch CHANGELOG.md? THREE answers, and `known:false`
+    // is the DEFAULT rather than an error arm — every path that cannot prove
+    // the answer lands there, so a failure mode added later cannot arrive as a
+    // claim. A failed probe reported as "an entry landed" is how a release
+    // ships with no notes; reported as "one is owed" it retrains the lead to
+    // ignore the line. Neither collapse is available from here.
+    //
+    // The `^`-anchored `diff --git` header IS the detection. Every hunk body
+    // line carries a `+`, `-` or space prefix, so a file whose CONTENT quotes a
+    // diff header cannot spoof a match.
+    //
+    // Whole-range diff TEXT for a one-filename question, deliberately: it is the
+    // only range-diff git-worktree.js exports, and its `ok:false`-on-overflow
+    // lands in `known:false`, which is honest. A cheaper `--name-only` probe
+    // would be a new lent-or-withheld export, and that is the lead's call.
+    async _mergeTouchedChangelog(team, base, head) {
+      try {
+        if (!base || !head) return { known: false, error: 'the merge did not report both ends of its range' };
+        const d = await gitWorktree.diffText(team.root, base, head)
+          .catch((e) => ({ ok: false, error: e && e.message ? e.message : String(e) }));
+        if (!d || !d.ok || typeof d.text !== 'string') {
+          return { known: false, error: (d && d.error) || 'git diff returned nothing readable' };
+        }
+        return { known: true, touched: /^diff --git a\/CHANGELOG\.md b\/CHANGELOG\.md$/m.test(d.text) };
+      } catch (e) {
+        return { known: false, error: e && e.message ? e.message : String(e) };
+      }
+    },
+
     // The merge landed. Rides _escalateTicket's channel — one lead DM from the
-    // loop, whichever way it went — and states the CHANGELOG debt, because
-    // CHANGELOG.md is deliberately not touched by the merge: it conflicts across
-    // every live branch, so it stays the lead's, and an unstated debt is one the
-    // release then ships without.
+    // loop, whichever way it went — and reports the CHANGELOG state, because the
+    // merge never WRITES CHANGELOG.md (it conflicts across every live branch) but
+    // routinely CARRIES an entry the branch already wrote. An unstated debt is
+    // one the release ships without; a debt stated over an entry that landed is
+    // a duplicate entry and, repeated, a line the lead stops reading.
+    //
+    // `changelog` is _mergeTouchedChangelog's three-valued result, and a MISSING
+    // or malformed one reads as unknown, not as either claim — the default is
+    // the only arm a caller can reach by forgetting.
     // COLUMN 1 IS THE SAFETY, the same knife-edge ticketCloseLine documents and
     // for a worse consequence: the last line carries a complete, ready-to-fire
     // `[agent:task accept <id>]`, inert only because `Nothing was torn down: `
@@ -1675,13 +1722,22 @@ function createTicketMethods(deps, shared) {
     // retiring the seat and destroying the worktree, the one thing this whole
     // step promises not to do, and the one action here that no revert undoes.
     // Keep the prefix.
-    _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary }) {
+    _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary, changelog }) {
       try {
+        const changelogLine = (changelog && changelog.known)
+          ? (changelog.touched
+            ? `A CHANGELOG.md entry LANDED with the merge — the branch wrote one and it is on ${MERGE_TARGET_BRANCH} now. Nothing is owed; writing a second entry duplicates it.`
+            : `A CHANGELOG.md entry is OWED — the merge carried none (the merge never writes one itself: it conflicts across every live branch).`)
+          // "the check could not RUN" is HOLD_RECOVERY's infra arm verbatim, and
+          // hold-recovery-single-source.test.js's phrase scan reads a shared
+          // 5-gram as a copied arm. Different subject, so the wording stays
+          // apart rather than the scan being widened.
+          : `CHANGELOG.md: UNKNOWN — the probe did not answer (${(changelog && changelog.error) || 'no result'}). This is neither of the other two answers: run \`git -C ${team.root} show --stat ${sha}\` before deciding, because a release shipped on the belief that an entry landed ships with no notes.`;
         const body = [
           `[ticket ${ticketId} MERGED] ${branch} → ${MERGE_TARGET_BRANCH} as ${sha}`,
           '',
           `Review rounds: ${rounds}. Suite on ${MERGE_TARGET_BRANCH} after the merge: ${summary}.`,
-          `A CHANGELOG.md entry is OWED — the merge does not write one (it conflicts across every live branch).`,
+          changelogLine,
           `Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`,
         ].join('\n');
         const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticketId} MERGED]`);
