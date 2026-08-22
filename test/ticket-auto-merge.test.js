@@ -98,16 +98,6 @@ function mkRepo() {
   return { dir, baseSha };
 }
 
-// An external diff driver, written once. `GIT_EXTERNAL_DIFF` makes git print
-// THIS script's output instead of its own, so the diff carries no `diff --git`
-// headers at all — the config the headerless-guard subject measures.
-const drvPath = (() => {
-  const p = pathReal.join(fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-extdiff-')), 'drv.sh');
-  fsReal.writeFileSync(p, '#!/bin/sh\necho "EXTERNAL DIFF DRIVER: $1 changed"\n');
-  fsReal.chmodSync(p, 0o755);
-  return p;
-})();
-
 // One commit on the ticket branch, through git, so the merge moves real content.
 function commitOnBranch(dir, branch, file, body) {
   const cur = git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
@@ -667,7 +657,12 @@ test('a diff carrying NO git headers is UNKNOWN, not a measured "no CHANGELOG"',
     gitOver: {
       diffText: async (cwd, base, head) => {
         const prev = process.env.GIT_EXTERNAL_DIFF;
-        process.env.GIT_EXTERNAL_DIFF = drvPath;
+        // `/bin/echo` IS the driver: git runs it with the diff's metadata as argv,
+        // so it exits 0 and prints one non-empty line carrying no `diff --git`
+        // header — byte-for-byte the property this subject measures. A written
+        // shell script would need mkdtemp + chmod 0755, which reds on a noexec
+        // tmpdir for reasons that have nothing to do with the guard.
+        process.env.GIT_EXTERNAL_DIFF = '/bin/echo';
         try { return await real.diffText(cwd, base, head); }
         finally { if (prev === undefined) delete process.env.GIT_EXTERNAL_DIFF; else process.env.GIT_EXTERNAL_DIFF = prev; }
       },
@@ -701,9 +696,10 @@ test('the headerless guard is NOT a blanket: an empty diff still reads as OWED',
     gitOver: {
       diffText: async (cwd, base, head) => {
         const r = await real.diffText(cwd, base, head);
-        // Force the empty-text case the guard must ignore, and record that it
-        // really was empty — otherwise this subject silently measures a normal diff.
-        sawEmpty = true;
+        // Records that the REAL diff was NON-empty, which is what makes replacing
+        // it with '' a substitution rather than a tautology: if git had returned
+        // empty anyway, the subject would prove nothing about the guard.
+        sawEmpty = r.text.trim() !== '';
         return { ...r, text: '' };
       },
     },
@@ -711,7 +707,7 @@ test('the headerless guard is NOT a blanket: an empty diff still reads as OWED',
 
   await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
 
-  assert.ok(sawEmpty, 'ENTER: the empty-text path was actually taken');
+  assert.ok(sawEmpty, 'ENTER: the real diff was non-empty, so substituting empty text is a real substitution');
   const notes = f.landed();
   assert.strictEqual(notes.length, 1, 'ENTER: exactly one notice');
   assert.match(notes[0].body, /A CHANGELOG\.md entry is OWED/, 'empty means nothing changed, and OWED is correct');

@@ -1699,11 +1699,16 @@ function createTicketMethods(deps, shared) {
           return { known: false, error: (d && d.error) || 'git diff returned nothing readable' };
         }
         // A NON-EMPTY diff with no `diff --git` header at all is not evidence of
-        // anything: `GIT_EXTERNAL_DIFF`, or a configured diff driver, replaces
-        // git's output with the driver's and emits no headers. Reading that as
+        // anything: a GLOBAL external driver (`GIT_EXTERNAL_DIFF`) replaces git's
+        // whole output with the driver's and emits no headers. Reading that as
         // "no CHANGELOG.md here" answers touched:false on EVERY merge under such
         // a config and reports it as a measurement — this method's own defect,
         // arriving through the parser instead of the claim.
+        //
+        // GLOBAL is the word that matters: a PER-PATH driver (`.gitattributes`
+        // saying `CHANGELOG.md diff=x`) suppresses the header for that file while
+        // other files keep theirs, so this guard does not fire. That case is a
+        // residual, enumerated below with the others.
         //
         // It cannot mis-fire on a genuinely empty range: empty text means nothing
         // changed, where OWED is the correct answer, so the guard requires text
@@ -1722,12 +1727,24 @@ function createTicketMethods(deps, shared) {
         // touched:false on EVERY merge under such a config — a systematic false
         // OWED wearing the authority of a measurement.
         //
-        // RESIDUAL, stated rather than papered over, and now exactly one shape:
-        // under `diff.noprefix` a nested `docs/CHANGELOG.md` is indistinguishable
-        // from a prefixed root file, because the two are byte-identical as
-        // headers. Undecidable from the header alone. The error direction is the
-        // safe one — a false "look before adding one", never a false "nothing to
-        // do".
+        // RESIDUALS — THREE shapes, enumerated rather than summarised, because the
+        // previous version of this comment claimed "exactly one" and was wrong:
+        //
+        //   1. `diff.noprefix` + a NESTED `docs/CHANGELOG.md`, whose header is
+        //      byte-identical to a prefixed root file. Undecidable from the
+        //      header alone. Reads as CHANGED.
+        //   2. A RENAME into or out of the root file: `git mv NOTES.md
+        //      CHANGELOG.md` emits `diff --git a/NOTES.md b/CHANGELOG.md`, and
+        //      the root filename is required on BOTH sides, so it reads as OWED
+        //      even though the merge did create the file.
+        //   3. A PER-PATH external driver on `CHANGELOG.md` itself, which
+        //      suppresses that file's header while others keep theirs — so the
+        //      headerless guard above does not fire. Reads as OWED.
+        //
+        // All three fail toward asking the lead to look, never toward silence,
+        // which is why the pattern is NOT widened to test each side
+        // independently: that trades a residual with a safe error direction for
+        // a new match surface. Adjudicated, not merely preferred.
         //
         // `^` stays load-bearing: every hunk-body line carries a `+`, `-` or
         // space, so a file whose CONTENT quotes a diff header cannot spoof it.
