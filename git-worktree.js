@@ -366,6 +366,22 @@ async function commitsOnBranch(cwd, branch, base = null) {
 // reporting that it read the diff. Forcing text yields a readable (if noisy)
 // diff in that case, which a reviewer can see is noisy.
 //
+// `--no-ext-diff` is the SAME failure through a different door, and is likewise
+// not optional. An external driver — `GIT_EXTERNAL_DIFF`, or a `.gitattributes`
+// `diff=<name>` on one path — replaces git's output with the driver's, so the
+// diff arrives with no hunks and, for a per-path driver, no `diff --git` header
+// for exactly the file the driver covers. A cold reviewer handed that reviews
+// nothing while truthfully reporting it read the diff; a caller parsing the
+// headers silently reads the covered file as absent. Neither is detectable
+// downstream, which is why it is refused HERE rather than guarded at each
+// caller. Measured (git 2.52.0): a per-path driver yields 1 header where 2 are
+// due, and a global one yields 0.
+//
+// The flag is ancient and carries no version risk. `--default-prefix` is
+// deliberately NOT added beside it: it needs git >= 2.41 and ERRORS on older
+// git, turning every caller's result into `ok:false` — a hard failure traded
+// for a parsing residual whose error direction is already safe.
+//
 // A LARGER maxBuffer than git()'s default, because the failure is silent in the
 // same way: execFile kills the child on overflow and the diff comes back
 // truncated at a hunk boundary that looks like a legitimate end of diff.
@@ -382,7 +398,7 @@ async function diffText(cwd, base, head, { maxBuffer = 32 * 1024 * 1024 } = {}) 
     const v = await git(repo, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
     if (!v.ok) return { ok: false, text: null, error: `ref does not resolve: ${ref}` };
   }
-  const r = await git(repo, ['diff', '--text', `${base}..${head}`], { maxBuffer });
+  const r = await git(repo, ['diff', '--text', '--no-ext-diff', `${base}..${head}`], { maxBuffer });
   if (!r.ok) return { ok: false, text: null, error: (r.stderr || 'git diff failed').trim() };
   return { ok: true, text: r.stdout };
 }

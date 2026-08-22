@@ -641,40 +641,70 @@ test('a SIBLING file whose name merely ends in CHANGELOG.md is not the root file
   assert.ok(!/was CHANGED by this merge/.test(notes[0].body), 'and no change to the root file is claimed');
 });
 
-test('a diff carrying NO git headers is UNKNOWN, not a measured "no CHANGELOG"', async () => {
-  // `GIT_EXTERNAL_DIFF` and configured diff drivers replace git's output with
-  // their own, emitting no `diff --git` lines. Reading that as "the root file is
-  // absent" answers OWED on every merge under such a config and calls it a
-  // measurement — this ticket's defect arriving through the parser rather than
-  // through the claim.
+test('the diff leaf DEFEATS an external diff driver, so the reviewer never reads driver output', async () => {
+  // The production behaviour `--no-ext-diff` buys, pinned where it can red. An
+  // external driver replaces git's output with its own: the reviewer at CHECK 4
+  // — the other caller of this leaf — then receives a diff with no hunks and
+  // reports, truthfully, that it read it. Same failure `--text` exists to
+  // prevent for binary files, through a different door.
+  const { repo } = mkRepoWithChangelog();
+  commitOnBranch(repo.dir, 'tl-1', 'CHANGELOG.md', '# Changelog\n\n## Unreleased\n\n- the widget is reentrant\n');
+  const real = require('../git-worktree');
+  const headBefore = git(repo.dir, ['rev-parse', 'master']);
+
+  // ENTER: the driver really is honoured by git here, or the assertion below
+  // passes for the trivial reason that nothing was ever suppressed.
+  const prev = process.env.GIT_EXTERNAL_DIFF;
+  process.env.GIT_EXTERNAL_DIFF = '/bin/echo';
+  let raw, viaLeaf;
+  try {
+    raw = execFileSync('git', ['-C', repo.dir, 'diff', `${headBefore}..tl-1`], { encoding: 'utf8' });
+    viaLeaf = await real.diffText(repo.dir, headBefore, 'tl-1');
+  } finally {
+    if (prev === undefined) delete process.env.GIT_EXTERNAL_DIFF; else process.env.GIT_EXTERNAL_DIFF = prev;
+  }
+  assert.ok(raw.trim(), 'ENTER: the driver produced output');
+  assert.ok(!/^diff --git /m.test(raw),
+    'ENTER: a plain `git diff` under this driver really does emit NO headers');
+
+  // THE ASSERTION: the leaf gets real headers back anyway.
+  assert.ok(viaLeaf.ok, 'the leaf still succeeds under a driver');
+  assert.match(viaLeaf.text, /^diff --git a\/CHANGELOG\.md b\/CHANGELOG\.md$/m,
+    'the leaf returns git\'s OWN diff, not the driver\'s output');
+  assert.match(viaLeaf.text, /^\+- the widget is reentrant$/m,
+    'and it carries real hunks — which is what the reviewer actually reads');
+});
+
+test('text arriving with NO git headers is UNKNOWN, not a measured "no CHANGELOG"', async () => {
+  // The guard from round 4, kept. `--no-ext-diff` makes this UNREACHABLE through
+  // `diffText`, not wrong: the guard defends text arriving headerless by any
+  // other route, and deleting it would unpin that work on the strength of a flag
+  // whose absence nobody would notice. Fed directly, the way the empty-text
+  // subject substitutes '' — git can no longer be talked into producing it here.
   const { repo, ticketOver } = mkRepoWithChangelog();
   commitOnBranch(repo.dir, 'tl-1', 'CHANGELOG.md', '# Changelog\n\n## Unreleased\n\n- the widget is reentrant\n');
   const real = require('../git-worktree');
+  let realWasHeadered = false;
   const f = mkMerge({
     repo, ticketOver,
-    // Through the REAL leaf, with the driver git itself honours — the headerless
-    // text is git's own output under that config, not a string this test wrote.
     gitOver: {
       diffText: async (cwd, base, head) => {
-        const prev = process.env.GIT_EXTERNAL_DIFF;
-        // `/bin/echo` IS the driver: git runs it with the diff's metadata as argv,
-        // so it exits 0 and prints one non-empty line carrying no `diff --git`
-        // header — byte-for-byte the property this subject measures. A written
-        // shell script would need mkdtemp + chmod 0755, which reds on a noexec
-        // tmpdir for reasons that have nothing to do with the guard.
-        process.env.GIT_EXTERNAL_DIFF = '/bin/echo';
-        try { return await real.diffText(cwd, base, head); }
-        finally { if (prev === undefined) delete process.env.GIT_EXTERNAL_DIFF; else process.env.GIT_EXTERNAL_DIFF = prev; }
+        const r = await real.diffText(cwd, base, head);
+        // Records that the REAL diff DID carry headers, so replacing it with
+        // headerless text is a substitution rather than a tautology.
+        realWasHeadered = /^diff --git /m.test(r.text || '');
+        return { ...r, text: 'EXTERNAL DIFF DRIVER: CHANGELOG.md changed\n' };
       },
     },
   });
 
   await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
 
+  assert.ok(realWasHeadered, 'ENTER: the real diff was headered, so the headerless text is a real substitution');
   assert.deepStrictEqual(f.esc(), [], 'ENTER: the merge itself still landed — only the read was unreadable');
   const notes = f.landed();
   assert.strictEqual(notes.length, 1, 'ENTER: exactly one notice');
-  assert.match(notes[0].body, /CHANGELOG\.md: UNKNOWN/, 'a headerless diff is not evidence of absence');
+  assert.match(notes[0].body, /CHANGELOG\.md: UNKNOWN/, 'headerless text is not evidence of absence');
   assert.match(notes[0].body, /no git headers/, 'and the reason names the parse assumption that failed');
   // The pairing that matters: this branch DID write the entry, so the false
   // answer the guard prevents is specifically OWED.

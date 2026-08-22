@@ -1727,24 +1727,35 @@ function createTicketMethods(deps, shared) {
         // touched:false on EVERY merge under such a config — a systematic false
         // OWED wearing the authority of a measurement.
         //
-        // RESIDUALS — THREE shapes, enumerated rather than summarised, because the
-        // previous version of this comment claimed "exactly one" and was wrong:
+        // THE INVARIANT, which is what actually holds: every misread this pattern
+        // is known to produce fails toward asking the lead to LOOK, never toward
+        // silence. A wrong CHANGED costs a glance; a wrong "nothing to do" is a
+        // release with no notes. That is the property to preserve when editing.
         //
-        //   1. `diff.noprefix` + a NESTED `docs/CHANGELOG.md`, whose header is
-        //      byte-identical to a prefixed root file. Undecidable from the
-        //      header alone. Reads as CHANGED.
-        //   2. A RENAME into or out of the root file: `git mv NOTES.md
-        //      CHANGELOG.md` emits `diff --git a/NOTES.md b/CHANGELOG.md`, and
-        //      the root filename is required on BOTH sides, so it reads as OWED
-        //      even though the merge did create the file.
-        //   3. A PER-PATH external driver on `CHANGELOG.md` itself, which
-        //      suppresses that file's header while others keep theirs — so the
-        //      headerless guard above does not fire. Reads as OWED.
+        // The shapes below are the ones MEASURED, not a closed set — and that
+        // wording is deliberate. This comment said "exactly one shape", then
+        // "THREE shapes", and a fourth turned up in the next round; the recurring
+        // defect is the exhaustiveness claim itself, not the count. Do not
+        // re-close the set. Observed so far:
         //
-        // All three fail toward asking the lead to look, never toward silence,
-        // which is why the pattern is NOT widened to test each side
-        // independently: that trades a residual with a safe error direction for
-        // a new match surface. Adjudicated, not merely preferred.
+        //   - `diff.noprefix` + a NESTED `docs/CHANGELOG.md`: not distinguishable
+        //     FROM A PREFIXED ROOT FILE BY THIS PATTERN (the strings differ —
+        //     `docs/CHANGELOG.md docs/CHANGELOG.md` vs `a/CHANGELOG.md
+        //     b/CHANGELOG.md` — but both satisfy it). Reads as CHANGED.
+        //   - A RENAME into or out of the root file: `git mv NOTES.md
+        //     CHANGELOG.md` emits `diff --git a/NOTES.md b/CHANGELOG.md`, and the
+        //     root filename is required on BOTH sides. Reads as OWED.
+        //   - A MULTI-SEGMENT prefix (`diff.srcPrefix 'i/w/'`) emits
+        //     `diff --git i/w/CHANGELOG.md o/w/CHANGELOG.md`, which one optional
+        //     segment cannot cross. Reads as OWED.
+        //   - A PER-PATH external driver on `CHANGELOG.md` itself suppressed that
+        //     file's header while others kept theirs. Now unreachable through
+        //     `diffText`, which passes `--no-ext-diff`; listed because the guard
+        //     above still defends text arriving headerless by another route.
+        //
+        // The pattern is NOT widened to chase these: testing each side
+        // independently, or allowing `[^\s]+\/`, swallows nested paths and trades
+        // a safe-direction residual for a false CHANGED. Adjudicated.
         //
         // `^` stays load-bearing: every hunk-body line carries a `+`, `-` or
         // space, so a file whose CONTENT quotes a diff header cannot spoof it.
