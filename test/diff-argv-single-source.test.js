@@ -106,14 +106,27 @@ function leafDiffFlags(src) {
 // Only a range diff describing some OTHER command, somewhere else, is excluded.
 const CALL_WINDOW = 2000;
 function quotedDiffFlags(src) {
-  const out = [];
+  // Keyed by ABSOLUTE offset, because windows overlap: a second `diffText(` call
+  // landing within CALL_WINDOW of CHECK 4 would collect the same message twice,
+  // and the `>= 2` ENTER below would then be counting one message rather than
+  // two. Harmless today — the duplicates all equal `leaf` — but the ENTER's
+  // arithmetic should mean what its message says.
+  //
+  // NOT OBSERVABLE BY MUTATION, stated because everything else in this file is:
+  // reverting this to a plain `push` leaves the suite green. Producing a
+  // duplicate needs two `diffText(` calls inside CALL_WINDOW, and the corridor
+  // subject below forbids exactly that — today's two calls are 220288 chars
+  // apart against a 9167 ceiling. The fix is correct and unpinned; a fixture
+  // built to make that mutation fail would be a decoration, which is the one
+  // thing this file must not become.
+  const seen = new Map();
   for (const call of src.matchAll(/gitWorktree\.diffText\(/g)) {
     const near = src.slice(call.index, call.index + CALL_WINDOW);
     for (const m of near.matchAll(/`git (?:-C \$\{[^}]*\}\s+)?diff ((?:--[\w-]+\s+)*)\$\{[^}]*\}\.\.\$\{[^}]*\}/g)) {
-      out.push(m[1].trim().split(/\s+/).filter(Boolean));
+      seen.set(call.index + m.index, m[1].trim().split(/\s+/).filter(Boolean));
     }
   }
-  return out;
+  return [...seen.entries()].sort((a, b) => a[0] - b[0]).map(([, flags]) => flags);
 }
 
 // ── the extractors, exercised against synthetic input FIRST ────────────────
@@ -129,6 +142,18 @@ test('FIXTURES: the leaf extractor reads the flags out of diffText, and only dif
     "  const r = await git(repo, ['diff', '--text', '--no-ext-diff', `${base}..${head}`], { maxBuffer });",
     "  return { ok: true, text: r.stdout };",
     "}",
+    // TRAILING EMPTY ELEMENT, so `join` ends the fixture with `\n}\n` — the
+    // terminator `leafDiffFlags` scans for. Without it `indexOf` returns -1 and
+    // `slice(at, -1)` produces the passing result by a DIFFERENT path than the
+    // real file takes, which is a fixture green for the wrong reason.
+    //
+    // NOT OBSERVABLE BY MUTATION: removing this element again leaves the suite
+    // green. The `['diff'` anchor matches before either slice end is reached, so
+    // both paths yield identical flags — measured, including with a second
+    // function planted after `diffText` to try to force divergence. Kept because
+    // the fixture should exercise the path the real file takes, not because a
+    // test would catch its absence.
+    "",
   ].join('\n');
   assert.deepStrictEqual(leafDiffFlags(fake), ['--text', '--no-ext-diff'],
     'the flags come out in order');
@@ -194,13 +219,27 @@ test('FIXTURES: a quoted git diff that is NOT the leaf\'s range diff is not drag
   // that IS a range. Only the call-site scoping keeps it out, and without that
   // scoping this file reds over a line describing a different command.
   const statRange = "run `git -C ${team.root} diff --stat ${sha}..${other}` before deciding";
-  assert.deepStrictEqual(quotedDiffFlags(statRange), [],
-    'a --stat RANGE diff far from any diffText call is not this command');
-  assert.deepStrictEqual(
-    quotedDiffFlags("const d = await gitWorktree.diffText(a, b, c);\n" + statRange),
-    [['--stat']],
-    'ENTER: the same string IS collected when it sits at a call site — so the '
-    + 'exclusion above is the SCOPING working, not a regex that never matches');
+  const CALL = "const d = await gitWorktree.diffText(a, b, c);\n";
+
+  // ADJACENT: collected. This is the positive control — without it, the empty
+  // result below is indistinguishable from an extractor that finds nothing.
+  assert.deepStrictEqual(quotedDiffFlags(CALL + statRange), [['--stat']],
+    'the same string IS collected when it sits at a call site');
+
+  // DISTANT: not collected, and the fixture really spans the window — a real
+  // call site, then CALL_WINDOW worth of filler, then the command. The previous
+  // version passed `statRange` alone, which contains no `diffText(` at all, so
+  // the outer loop never iterated and `[]` came free: measured, raising
+  // CALL_WINDOW to 50000 left every subject in this file green.
+  //
+  // The filler is DERIVED from CALL_WINDOW rather than a hardcoded length, so
+  // the fixture cannot drift from the constant it pins.
+  const far = CALL + 'x'.repeat(CALL_WINDOW) + statRange;
+  assert.match(far, /gitWorktree\.diffText\(/,
+    'ENTER: the distant fixture really does contain a call site, so the outer '
+    + 'loop iterates and the exclusion below is the DISTANCE, not an empty scan');
+  assert.deepStrictEqual(quotedDiffFlags(far), [],
+    'a --stat RANGE diff beyond CALL_WINDOW of any diffText call is not this command');
 });
 
 // The comparison, as its own function so the RED fixtures below exercise the
@@ -235,6 +274,47 @@ test('FIXTURES: GREEN only when both sides carry the same flags in the same orde
   assert.ok(!agrees(['--text', '--no-ext-diff'], []),
     'and NO quoted command at all is a failure, not a vacuous pass — otherwise '
     + 'deleting both messages would satisfy this file');
+});
+
+// CALL_WINDOW's VALUE, pinned against the real file rather than a fixture.
+//
+// The fixture above pins the RELATIONSHIP — a command beyond the window is not
+// collected — but it derives its filler from CALL_WINDOW, so it scales with the
+// constant and stays green at any value. That is correct for what it measures
+// and useless for the value, which is measured here instead.
+//
+// The window sits in a CORRIDOR with a real floor and a real ceiling:
+//
+//   FLOOR   — CHECK 4's own messages sit ~177 chars after their `diffText(`
+//             call. A window below that stops collecting the very thing this
+//             file exists to compare, and the `>= 2` ENTER goes red.
+//   CEILING — the UNKNOWN arm's `git … diff --stat ${sha}^1 ${sha}` sits ~9167
+//             chars from the nearest call. A window past that swallows a
+//             command describing a DIFFERENT question, and the comparison reds
+//             over an unrelated line — the r9 defect, restored by a constant.
+//
+// Both bounds are read from the source here, not hardcoded, so they follow the
+// files as they move.
+test('CALL_WINDOW is inside the corridor the real file requires', () => {
+  const src = read('team-tickets.js');
+  const calls = [...src.matchAll(/gitWorktree\.diffText\(/g)].map((m) => m.index);
+  assert.ok(calls.length >= 1, 'ENTER: there is at least one diffText call site to measure from');
+
+  // FLOOR: the distance from a call to the CHECK 4 message it describes.
+  const msg = src.indexOf('git diff --text');
+  assert.ok(msg > 0, 'ENTER: CHECK 4 quotes a git diff command');
+  const owner = calls.filter((c) => c < msg).pop();
+  assert.ok(owner !== undefined, 'ENTER: that message sits after a call site');
+  const floor = msg - owner;
+  assert.ok(CALL_WINDOW > floor,
+    `CALL_WINDOW (${CALL_WINDOW}) must exceed ${floor} or CHECK 4's own message falls out of scope`);
+
+  // CEILING: the distance to the nearest quoted git command that is NOT this one.
+  const stranger = src.indexOf('diff --stat ${sha}');
+  assert.ok(stranger > 0, 'ENTER: the UNKNOWN arm still quotes a different git diff command');
+  const ceiling = Math.min(...calls.map((c) => Math.abs(stranger - c)));
+  assert.ok(CALL_WINDOW < ceiling,
+    `CALL_WINDOW (${CALL_WINDOW}) must stay below ${ceiling} or the UNKNOWN arm's --stat command is swallowed`);
 });
 
 // ── the real files ─────────────────────────────────────────────────────────
