@@ -318,6 +318,19 @@ not by size:
   rather than shelling out to git — `resolveTeam` runs on every roster render and
   ticket resolution, and a subprocess there would make membership a latency
   problem.
+- **team-measure.js** — what can be PROVEN about a project directory, as five
+  findings (suite, packageManager, vcs, worktreeSupport, generatedPaths), each
+  `{ id, claim, status, evidence }`. The measured half of the team helper; the
+  generative half that turns these into a prompt cannot be pinned by a test,
+  which is why this half carries the load. Pure leaf over injected
+  fs/path/childProcess — no requires — so the table is assertable against a
+  fixture directory. NEVER GUESSES: an `absent` finding is a first-class result
+  with its own claim sentence, never an omission and never a default, and all
+  five ids come back on every call. Two lockfiles is `absent` naming the
+  ambiguity rather than a pick. It reads the suite command and never RUNS it —
+  `childProcess` is for `git rev-parse` and nothing else, because executing an
+  unknown repo's scripts as a side effect of describing it is not this module's
+  business.
 - **team-preflight.js** — "does this team's manifest name anything that resolves
   to nothing?", as findings rather than as N scattered warns. One resolver, and
   every surface (roles popover, Create Team…, the spawn/dispatch replies) is a
