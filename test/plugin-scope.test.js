@@ -147,7 +147,7 @@ test('every SHIPPED plugin is global — the field changes nothing that exists t
   }
   for (const id of ids) {
     const m = JSON.parse(fs.readFileSync(path.join(dir, id, 'manifest.json'), 'utf8'));
-    assert.ok(!('scope' in m), `${id} declares no scope — the shipped four must not opt in`);
+    assert.ok(!('scope' in m), `${id} declares no scope — no shipped plugin may opt in`);
     assert.strictEqual(scopeOf(m), 'global', `${id} therefore resolves to global`);
     assert.strictEqual(validateManifest(m, id), null, `${id} still validates`);
   }

@@ -390,9 +390,11 @@ test('github: deactivate tears the verb down and leaves nothing behind', () => {
 test('github: re-activation after a deactivate works — module state is reset, not stale', () => {
   // §10: Node's module cache survives a disable, so a re-enable calls activate()
   // again on the same module object.
+  // In a finally like every other boot in this file: a throw here would leak the
+  // plugin row into the module-level registry, and the NEXT test would fail with
+  // EVERBTAKEN — a misattributed failure pointing at innocent code.
   const first = boot();
-  first.host.deactivate('github');
-  first.cleanup();
+  try { first.host.deactivate('github'); } finally { first.cleanup(); }
 
   const { host, cleanup } = boot();
   try {
