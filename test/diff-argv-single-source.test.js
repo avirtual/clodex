@@ -261,6 +261,47 @@ test('FIXTURES: GREEN only when both sides carry the same flags in the same orde
     + 'deleting both messages would satisfy this file');
 });
 
+// CALL_WINDOW's VALUE, pinned against the real file rather than a fixture.
+//
+// The fixture above pins the RELATIONSHIP — a command beyond the window is not
+// collected — but it derives its filler from CALL_WINDOW, so it scales with the
+// constant and stays green at any value. That is correct for what it measures
+// and useless for the value, which is measured here instead.
+//
+// The window sits in a CORRIDOR with a real floor and a real ceiling:
+//
+//   FLOOR   — CHECK 4's own messages sit ~177 chars after their `diffText(`
+//             call. A window below that stops collecting the very thing this
+//             file exists to compare, and the `>= 2` ENTER goes red.
+//   CEILING — the UNKNOWN arm's `git … diff --stat ${sha}^1 ${sha}` sits ~9167
+//             chars from the nearest call. A window past that swallows a
+//             command describing a DIFFERENT question, and the comparison reds
+//             over an unrelated line — the r9 defect, restored by a constant.
+//
+// Both bounds are read from the source here, not hardcoded, so they follow the
+// files as they move.
+test('CALL_WINDOW is inside the corridor the real file requires', () => {
+  const src = read('team-tickets.js');
+  const calls = [...src.matchAll(/gitWorktree\.diffText\(/g)].map((m) => m.index);
+  assert.ok(calls.length >= 1, 'ENTER: there is at least one diffText call site to measure from');
+
+  // FLOOR: the distance from a call to the CHECK 4 message it describes.
+  const msg = src.indexOf('git diff --text');
+  assert.ok(msg > 0, 'ENTER: CHECK 4 quotes a git diff command');
+  const owner = calls.filter((c) => c < msg).pop();
+  assert.ok(owner !== undefined, 'ENTER: that message sits after a call site');
+  const floor = msg - owner;
+  assert.ok(CALL_WINDOW > floor,
+    `CALL_WINDOW (${CALL_WINDOW}) must exceed ${floor} or CHECK 4's own message falls out of scope`);
+
+  // CEILING: the distance to the nearest quoted git command that is NOT this one.
+  const stranger = src.indexOf('diff --stat ${sha}');
+  assert.ok(stranger > 0, 'ENTER: the UNKNOWN arm still quotes a different git diff command');
+  const ceiling = Math.min(...calls.map((c) => Math.abs(stranger - c)));
+  assert.ok(CALL_WINDOW < ceiling,
+    `CALL_WINDOW (${CALL_WINDOW}) must stay below ${ceiling} or the UNKNOWN arm's --stat command is swallowed`);
+});
+
 // ── the real files ─────────────────────────────────────────────────────────
 
 test('the flags CHECK 4 quotes to the lead are the flags diffText actually runs', () => {
