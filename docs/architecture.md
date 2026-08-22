@@ -327,10 +327,15 @@ not by size:
   fixture directory. NEVER GUESSES: an `absent` finding is a first-class result
   with its own claim sentence, never an omission and never a default, and all
   five ids come back on every call. Two lockfiles is `absent` naming the
-  ambiguity rather than a pick. It reads the suite command and never RUNS it —
-  `childProcess` is for `git rev-parse` and nothing else, because executing an
-  unknown repo's scripts as a side effect of describing it is not this module's
-  business.
+  ambiguity rather than a pick. The JS suite claim is COMPOSED with the measured
+  lockfile (`pnpm test`, not `npm test`, in a pnpm repo — npm would run against a
+  dependency graph it never installed); an ambiguous lockfile set falls back to
+  `npm` rather than picking a contender. `vcs` falls back to `git rev-parse
+  --git-dir` before declaring absence, so a monorepo package inside a checkout is
+  not told it has no version control. It reads the suite command and never RUNS
+  it — `childProcess` is for `git rev-parse` and nothing else, because executing
+  an unknown repo's scripts as a side effect of describing it is not this
+  module's business. Sync subprocesses: not a render path.
 - **team-preflight.js** — "does this team's manifest name anything that resolves
   to nothing?", as findings rather than as N scattered warns. One resolver, and
   every surface (roles popover, Create Team…, the spawn/dispatch replies) is a
