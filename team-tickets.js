@@ -5445,6 +5445,10 @@ function createTicketMethods(deps, shared) {
     // With no live seat this must FAIL LOUDLY rather than reply success — same
     // reasoning as the loop's own pre-write seat check: rework nobody receives
     // must never read as delivered.
+    // No reviewer teardown here, unlike the reopen arm that delegates to this:
+    // its gate is a ticket ALREADY `open` for rework, and a review round only
+    // exists while the ticket is `done` — both keepHold arms keep it there. There
+    // is no round to end, and this path does not touch `loopStep` at all.
     _taskRejectFollowUp(session, team, tickets, ticket, reason, reply) {
       const seat = this._ticketAssigneeSeat(team, ticket);
       // Its own arm, because on a SOLO board `_soloContext` makes the lead its own
@@ -6162,6 +6166,13 @@ function createTicketMethods(deps, shared) {
       // on a ticket that is being worked, in a body that tells the hand to re-close.
       delete ticket.verifyHold;
       ticketsStore.save(team.root, tickets);
+      // The reviewer of the round this reject ends goes with the step it was
+      // spawned under. AFTER the save, so the board is already correct if the
+      // teardown misbehaves. Reachable through the DOCUMENTED recovery, not just
+      // the happy path: a ticket escalated at `review` sits `done` with a live
+      // seat, and this handler's gate accepts exactly that — so the prescribed
+      // way out of a wedged review was itself the way into a stranded seat.
+      this._retireReviewSeatsFor(team, ticket.id, 'rejected');
       const seat = this._ticketAssigneeSeat(team, ticket);
       // Same rework reasoning as the loop's reject. This call passed NO tag before,
       // which was harmless while the body was short enough to arrive inline; adding
@@ -6465,6 +6476,17 @@ function createTicketMethods(deps, shared) {
         } else {
           ticketsStore.save(team.root, tickets);
         }
+        // The reviewer too, and it is NOT already covered by the teardowns in the
+        // arms above: every one of those targets `seatName` — the ticket's
+        // ASSIGNEE, the hand — while a reviewer is resolved off its record's
+        // `ephemeral` + `reviewTicket` and never appears as an assignee. So this
+        // is an addition, not a second teardown of the same seat.
+        //
+        // In `finish()` rather than in one arm, because all four accept arms run
+        // it and all four delete `loopStep`: the two that invite another accept
+        // end the review round just as terminally as the two that do not, and a
+        // per-arm call would leak on whichever arm a later edit forgot.
+        this._retireReviewSeatsFor(team, ticket.id, 'accepted');
         this._broadcast('ipc-message', { type: 'task', from: session.name, to: seatName || '(unassigned)', body: `ticket ${ticket.id} accepted` });
         log.info('intent', `task accept ${ticket.id} by ${session.name}: ${msg}`);
         // Cancellation is gated on the SAME fact the stamp is: only an accept
@@ -6920,6 +6942,62 @@ function createTicketMethods(deps, shared) {
         if (rec && rec.ephemeral && rec.reviewTicket === ticketId) out.push(s);
       }
       return out;
+    },
+
+    // Retire the reviewer seats of a round the LEAD has ended.
+    //
+    // A reviewer retires ITSELF on the normal path (`_handleReviewDone`), and
+    // that is the ONLY other teardown. When the lead ends the round instead —
+    // `reject` reopens the ticket, `accept` closes it out — nothing did, so the
+    // seat stayed live still carrying `reviewTicket`. Its verdict cannot land
+    // while the ticket is out of flight, but a rework round re-closes the ticket
+    // and `ticketInFlight` is true again: the stranded seat's verdict then lands
+    // on the CURRENT round, written against a diff that no longer exists.
+    //
+    // Called ONLY where a lead transition deletes `loopStep` without a verdict.
+    // NOT from the `keepHold` escalation arms: those keep the step precisely
+    // because the ticket is still in flight and the seat's verdict may still
+    // land, so retiring there would destroy the review the hold exists to
+    // preserve. Hold while a verdict may land; retire once the lead has ended
+    // the round.
+    //
+    // Same shape as review-done's own teardown — `session:context-action`
+    // retired/discard, then kill() — so the record, the sidebar and
+    // `sweepReviewerGraveyard` see one kind of reviewer exit rather than two.
+    // DISCARD is right because a reviewer seat is minted with no worktree of its
+    // own (`_handleTeamReview` upserts name/ephemeral/reviewFor/reviewTicket and
+    // no `worktree`), so there is no tree an archive would preserve.
+    //
+    // NEVER throws, and never awaited. A reject or accept that failed because a
+    // seat teardown did is strictly worse than the leak it fixes — the ticket
+    // transition is already saved by the time this runs, so an escaping error
+    // would abandon the reply and leave the board ahead of the lead. Same
+    // reasoning as `_stampTicketRevival`'s call site, and the same reason
+    // review-done fires its own kill() unawaited.
+    _retireReviewSeatsFor(team, ticketId, why) {
+      const retired = [];
+      try {
+        for (const s of this._liveReviewSeatsFor(team, ticketId)) {
+          try {
+            this._sendToSession(s.name, 'session:context-action', {
+              action: 'retired', name: s.name, disposition: 'discard',
+            });
+            const r = this.kill(s.name);
+            if (r && typeof r.catch === 'function') {
+              r.catch((e) => log.error('ticket', `retiring reviewer ${s.name} for ${ticketId} failed: ${e.message}`));
+            }
+            retired.push(s.name);
+          } catch (e) {
+            log.error('ticket', `retiring reviewer ${s.name} for ${ticketId} failed: ${e.message}`);
+          }
+        }
+        if (retired.length) {
+          log.info('intent', `ticket ${ticketId} ${why} — retired ${retired.length} live reviewer seat(s) (discard): ${retired.join(', ')}`);
+        }
+      } catch (e) {
+        log.error('ticket', `reviewer teardown for ${ticketId} failed: ${e.message}`);
+      }
+      return retired;
     },
 
     // Accumulated CPU for a pid, in ms, or null when it cannot be read.

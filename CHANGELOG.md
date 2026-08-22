@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- A reviewer seat no longer outlives the review round it was spawned for. A
+  reviewer retires itself once it delivers a verdict, but when the lead ended
+  the round instead — rejecting a ticket back for rework, or accepting it — the
+  seat stayed live in the sidebar still attached to that ticket. If it later
+  delivered its verdict, that verdict could land on a LATER round, judging work
+  that no longer existed. Both endings now retire the seat, and an escalated
+  review whose reviewer is still expected to answer is deliberately left alone.
+
 ## 5.16.0 — 2026-08-22
 
 - A command run in an agent's terminal tab can no longer be corrupted by the
