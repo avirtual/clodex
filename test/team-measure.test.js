@@ -306,7 +306,10 @@ test('vcs: a root INSIDE a checkout with no .git of its own still measures', { s
   assert.strictEqual(vcs.status, 'measured');
   assert.strictEqual(vcs.claim, 'Your hands will commit their work to git, on a branch of their own.');
   // evidence names what was actually found, not a `.git` that is not there.
-  assert.match(vcs.evidence, /^git rev-parse --git-dir \(/, `evidence was ${vcs.evidence}`);
+  // Anchored and requiring a non-empty interior: the loose prefix form stayed
+  // green on `git rev-parse --git-dir ()`, which is this file's own documented
+  // failure shape.
+  assert.match(vcs.evidence, /^git rev-parse --git-dir \(\S.*\)$/, `evidence was ${vcs.evidence}`);
 });
 
 // ---- 4. worktreeSupport ----------------------------------------------------
@@ -506,6 +509,14 @@ test('suite: real make targets still measure, including the double-colon rule', 
   }
 });
 
+test('suite: a TAB-INDENTED `test:` is a recipe line, not a target', () => {
+  // The module comment credits the `^` anchor with excluding this and nothing
+  // pinned it, so a future loosening to /^\s*test/m would pass silently. A
+  // `test:` inside another target's recipe is a shell command, not a rule.
+  const dir = fixture({ 'Makefile': 'all:\n\ttest:\n\techo t\n' });
+  assert.strictEqual(pick(measurer().measure(dir), 'suite').status, 'absent');
+});
+
 test('suite: `testing:` is a different target and does not count', () => {
   const dir = fixture({ 'Makefile': 'testing:\n\techo t\n' });
   assert.strictEqual(pick(measurer().measure(dir), 'suite').status, 'absent');
@@ -517,7 +528,42 @@ test('suite: the JS runner follows the LOCKFILE, not a hardcoded npm', () => {
   // `npm test` in a pnpm-lock repo runs against a dependency graph npm never
   // installed. Both findings come from the same pass, so composing them is
   // measurement rather than a guess.
-  for (const [file, runner] of [
+  //
+  // The third column is a LITERAL, deliberately. Building it as `${manager}
+  // test` would be the same concatenation the implementation performs, so every
+  // row would assert only that the code agrees with itself — structurally
+  // incapable of catching a per-manager exception, which is exactly how the
+  // `bun test` defect stayed green. Each row now states an independent fact.
+  // This is CLAUDE.md's regex-matching-all-arms rule in table form.
+  for (const [file, expected] of [
+    ['package-lock.json', 'npm test'],
+    ['pnpm-lock.yaml', 'pnpm test'],
+    ['yarn.lock', 'yarn test'],
+    // NOT `bun test`: that is bun's own reserved runner subcommand and shadows
+    // the package script the evidence field points at.
+    ['bun.lockb', 'bun run test'],
+    ['bun.lock', 'bun run test'],
+  ]) {
+    const dir = fixture({
+      'package.json': JSON.stringify({ scripts: { test: 'node --test' } }),
+      [file]: '',
+    });
+    assert.deepStrictEqual(pick(measurer().measure(dir), 'suite'), {
+      id: 'suite',
+      claim: `Your hands will run the suite with \`${expected}\`, not directly.`,
+      status: 'measured',
+      evidence: 'package.json scripts.test',
+    }, `lockfile ${file}`);
+  }
+});
+
+test('suite: every runner command actually runs the package script', () => {
+  // The invariant the bun row violated: `evidence` says the command came from
+  // package.json scripts.test, so the command emitted must be one that EXECUTES
+  // that script. `bun test` runs bun's own test runner instead — a finding whose
+  // evidence and claim contradict each other.
+  const seen = new Set();
+  for (const [file, manager] of [
     ['package-lock.json', 'npm'],
     ['pnpm-lock.yaml', 'pnpm'],
     ['yarn.lock', 'yarn'],
@@ -527,13 +573,20 @@ test('suite: the JS runner follows the LOCKFILE, not a hardcoded npm', () => {
       'package.json': JSON.stringify({ scripts: { test: 'node --test' } }),
       [file]: '',
     });
-    assert.deepStrictEqual(pick(measurer().measure(dir), 'suite'), {
-      id: 'suite',
-      claim: `Your hands will run the suite with \`${runner} test\`, not directly.`,
-      status: 'measured',
-      evidence: 'package.json scripts.test',
-    }, `lockfile ${file}`);
+    const claim = pick(measurer().measure(dir), 'suite').claim;
+    const m = claim.match(/`([^`]+)`/);
+    assert.ok(m, `ENTER: no command found in the claim for ${file} — the assertion below is vacuous`);
+    const cmd = m[1];
+    seen.add(manager);
+    assert.ok(cmd.startsWith(`${manager} `), `${file}: command "${cmd}" is not a ${manager} invocation`);
+    // bun is the one manager whose bare `test` is a different program.
+    if (manager === 'bun') {
+      assert.strictEqual(cmd, 'bun run test',
+        'bare `bun test` runs bun\'s own runner, not the package script the evidence names');
+    }
   }
+  assert.deepStrictEqual([...seen].sort(), ['bun', 'npm', 'pnpm', 'yarn'],
+    'ENTER: not every manager was exercised');
 });
 
 test('suite: an AMBIGUOUS lockfile set falls back to npm rather than picking', () => {

@@ -21,6 +21,12 @@
 // (execFileSync) twice; fine for a team-create or a helper run, wrong for
 // anything on a render or roster path. The consuming ticket will be tempted.
 //
+// WORKTREE CAVEAT for the consuming ticket: when `root` is a package inside a
+// monorepo, `worktreeSupport` measures the enclosing CHECKOUT — `git worktree
+// add` there yields a tree of the whole repo, not of that package. The claim is
+// true as worded; a caller that promises a hand "your own copy of this package"
+// would be adding something this module did not measure.
+//
 // childProcess is for `git rev-parse` on vcs/worktreeSupport and NOTHING else. This
 // module must never execute the project's own test command: running an unknown
 // repo's scripts as a side effect of DESCRIBING it is not a thing a describe
@@ -49,6 +55,19 @@ const LOCKFILES = [
 // claim is one sentence an operator reads; a 40-entry .gitignore rendered whole
 // is not one.
 const PATHS_IN_CLAIM = 5;
+
+// How each manager runs the package's `test` SCRIPT. A lookup, not
+// `${manager} test`, because of the bun row: `test` is a reserved bun
+// subcommand (its own Jest-style runner) and SHADOWS the package script, so
+// `bun test` would not execute the `scripts.test` the evidence field points at.
+// npm/pnpm/yarn `test` are genuine shorthands for `run test`; bun is the
+// exception. Do not simplify this back into interpolation.
+const RUNNER_TEST_CMD = {
+  npm: 'npm test',
+  pnpm: 'pnpm test',
+  yarn: 'yarn test',
+  bun: 'bun run test',
+};
 
 // `npm init`'s placeholder test script, verbatim. Matched on the distinctive
 // message rather than the whole string so the `&& exit 1` tail and quoting
@@ -108,8 +127,8 @@ function createTeamMeasure({ fs, path, childProcess } = {}) {
       // exists to prevent. Both findings come from the same pass, so this is
       // measurement, not a guess. JS-runner only: `make test` and friends below
       // are unaffected by a JS package manager.
-      const runner = isNonEmptyString(manager) ? manager : 'npm';
-      return measured('suite', suiteClaim(`${runner} test`), 'package.json scripts.test');
+      const cmd = (isNonEmptyString(manager) && RUNNER_TEST_CMD[manager]) || RUNNER_TEST_CMD.npm;
+      return measured('suite', suiteClaim(cmd), 'package.json scripts.test');
     }
 
     const makefile = readText(root, 'Makefile');
