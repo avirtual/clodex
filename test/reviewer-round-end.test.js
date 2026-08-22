@@ -374,6 +374,11 @@ test('the reviewer goes on the NON-terminal accept arm as well', async () => {
   assert.strictEqual(f.one('t1').closedOut, undefined, 'ENTER: which is NOT terminal — another accept is invited');
   assert.deepStrictEqual(liveFor(f, 't1'), [],
     'the round ended (loopStep is gone) even though the ticket did not close out');
+  // The two teardowns are different verbs on different seats, and this pins that
+  // adding the reviewer's did not displace the hand's: the hand is ARCHIVED
+  // (unmerged work, so it must stay resumable) while the reviewer is KILLED.
+  assert.deepStrictEqual(f.archived, ['team-hand'], 'the hand was archived, and only the hand');
+  assert.deepStrictEqual(f.killed, [rec.name], 'the reviewer was killed, and only the reviewer');
 });
 
 // ── the paths that end NO round, and must not tear anything down ───────────
@@ -453,22 +458,35 @@ test('the LOOP\'s reject retires the reviewer too — the twin must not diverge'
 
 // ── the teardown cannot cost the close, on EITHER failure shape ────────────
 
-test('an ASYNC teardown rejection does not cost the reject either', () => {
+test('an ASYNC teardown rejection does not cost the reject either', async () => {
   const f = mkFixture();
   reviewingTicket(f);
   const rec = spawnReviewer(f, 't1');
   // The real kill() is async, so its failure arrives as a REJECTED PROMISE, not a
-  // synchronous throw — a different arm from the subject above (that one is
-  // caught by the inner try; this one is only caught by the `.catch` on the
-  // returned promise). An unhandled rejection here would surface as an ESCAPES
-  // failure rather than as this subject, which is why it is asserted directly.
+  // synchronous throw — a different arm from the subject above, which the inner
+  // try catches. This one is caught only by the `.catch` on the returned promise.
   f.m.kill = async () => { throw new Error('pty is gone'); };
 
   reject(f, 't1');
+  // Drained before asserting, so this subject FALSIFIES INSIDE ITSELF. Without
+  // it every assertion below is equally true with the `.catch` deleted, and the
+  // only thing that goes red is the runner's ESCAPES counter — attributed after
+  // the test ended, to the file rather than to this arm, and maskable by any
+  // later unrelated escape. That is the "green while asserting nothing about the
+  // arm in its own title" shape, in the subject written to prevent it.
+  await new Promise((r) => setImmediate(r));
 
   assert.strictEqual(f.one('t1').state, 'open', 'the reject still landed');
   assert.strictEqual(f.one('t1').reworkRound, 1, 'and counted its round');
   assert.match(f.injected.join('\n'), /reopened \(rework\)/, 'and the lead still got its confirmation');
+  // The correction, not merely an error: the summary line says "retiring" while
+  // this kill was still pending, so the seat must be named as still live or an
+  // operator greps the success and stops looking.
+  assert.ok(f.logs.some((l) => l.level === 'error'
+    && /did NOT retire after all/.test(l.msg) && l.msg.includes(rec.name) && /pty is gone/.test(l.msg)),
+  'the rejected kill is caught and corrected BY NAME — an uncaught one escapes the close entirely');
+  assert.ok(!f.logs.some((l) => l.level === 'info' && /— retired \d+ live reviewer/.test(l.msg)),
+    'and no line claims the seat WAS retired: kill() is async, so that claim cannot be true when it is written');
   assert.deepStrictEqual(liveFor(f, 't1'), [rec.name],
     'ENTER: the seat really did survive the failed teardown, so this is the failing arm');
 });
