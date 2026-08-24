@@ -318,6 +318,14 @@ test('a DIRTY tree downgrades the merged-arm destroy to an archive, keeping the 
   assert.match(msg, /\[agent:task accept t1\] again to finish the cleanup/,
     'and points at the verb that actually completes it');
   assert.doesNotMatch(msg, /by hand/, 'rather than manual cleanup the app does not require');
+  // The ref that recovery depends on must still be there. `git branch -d`
+  // usually refuses while the kept tree has it checked out, but not always — a
+  // pruned registration or a tree on another branch lets it through, and then
+  // the second accept finds no branch, takes the check-failed arm, and the tree
+  // can never be reclaimed by the verb this reply just named.
+  assert.ok(branches(f).includes('landed'), 'the branch survives, so the invited re-accept can still run');
+  assert.match(msg, /branch landed was KEPT \(the accept above is unfinished\)/,
+    'and the reply says the ref was kept rather than claiming a deletion');
 });
 
 test('a CLEAN tree on the same path is still destroyed — the downgrade is the exception', async (t) => {
@@ -416,4 +424,50 @@ test('an UNREADABLE tree also downgrades the destroy, and says which of the two 
   assert.ok(f.persistence.get('team-hand-t1'), 'and its record survives, rather than being dropped');
   assert.match(msg, /could not be inspected/, 'the reply names this downgrade, not the dirty one');
   assert.doesNotMatch(msg, /has uncommitted work/, 'and does not send the lead to commit a tree that is gone');
+});
+
+// The fourth case on the non-merged arms, and the one neither the implementer
+// nor the lead spotted: NOT ephemeral and NOT live. Two shapes reach it — a
+// standing seat that exited (record kept), and an assignee that is a bare ROLE
+// KEY with no record at all, where `rec === null` makes `ephemeralSeat` false by
+// absence of evidence rather than by evidence of standing. Keyed on
+// `!ephemeralSeat` alone the reply says "left running" about a seat that may not
+// exist at all.
+test('a standing seat that is NOT running is not described as left running', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = f.worktreeSeat('helper', 'pending', { ephemeral: false });
+  // The operator's helper exited on its own; its record survives.
+  f.m.sessions.delete('helper');
+  doneTicket(f, { assignee: 'helper', branch: 'pending' });
+
+  assert.strictEqual(f.m.sessions.has('helper'), false, 'ENTER: the seat is not live');
+  assert.strictEqual(f.persistence.get('helper').ephemeral, false,
+    'ENTER: and its record does NOT mark it one-shot — the branch that over-claimed');
+
+  const msg = await accept(f, 't1');
+
+  assert.deepStrictEqual(f.archived, [], 'still nothing torn down — it is not acceptance\'s seat');
+  assert.deepStrictEqual(f.killed, [], 'and nothing destroyed');
+  assert.doesNotMatch(msg, /left running/, 'a seat that is not running is never reported as running');
+  assert.match(msg, /helper is not running/, 'it gets the sentence that is true of it');
+  assert.strictEqual(exists(wt), true, 'its tree is kept either way');
+});
+
+// The same predicate, reached with NO record at all — a ticket whose assignee is
+// a role key. `ephemeralSeat` is false here by absence of evidence, so this is
+// the shape most likely to be described as a standing seat that does not exist.
+test('an assignee with no record at all is not described as a running standing seat', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  doneTicket(f, { assignee: 'hand', branch: 'pending' });
+
+  assert.strictEqual(f.persistence.get('hand'), null, 'ENTER: no record — ephemeralSeat is false by absence');
+  assert.strictEqual(f.m.sessions.has('hand'), false, 'ENTER: and nothing is live under that name');
+
+  const msg = await accept(f, 't1');
+
+  assert.deepStrictEqual([f.killed, f.archived], [[], []], 'nothing to tear down, and nothing is');
+  assert.doesNotMatch(msg, /left running/, 'a seat that does not exist is not reported as running');
+  assert.match(msg, /hand is not running/, 'the reply claims only what it can support');
 });

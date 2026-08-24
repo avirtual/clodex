@@ -6759,6 +6759,12 @@ function createTicketMethods(deps, shared) {
         // sentence must not assert a teardown nobody can point at. What is true
         // either way is that it is not running and nothing was archived now.
         if (ephemeralSeat) return `${seatName} is not running, so nothing was archived, and its `;
+        // Liveness is a SEPARATE fact from whose seat it is, and `!ephemeralSeat`
+        // cannot carry it: a standing seat that exited keeps its record, and an
+        // assignee that is a bare role key has no record at all — `rec === null`
+        // lands here too, so an unconditional "left running" describes a seat
+        // that may not even exist. Same split as the merged arm.
+        if (!this.sessions.has(seatName)) return `${seatName} is not running, and its `;
         return `${seatName} was left running (not a one-shot ticket seat), and its `;
       };
       const archiveIfEphemeral = async () => {
@@ -6879,11 +6885,23 @@ function createTicketMethods(deps, shared) {
         }
       }
       // Deleting the ref is bookkeeping about the BRANCH, which the merge fact
-      // does license, so it runs on every path — including the two that keep the
-      // seat. Where a kept tree still has the branch checked out `git branch -d`
-      // refuses, and that refusal is reported rather than hidden: it names the
-      // tree that must be dealt with before the ref can go.
-      const del = await gitWorktree.deleteBranch(team.root, branch).catch((e) => ({ ok: false, error: e.message }));
+      // does license, so it runs on the paths that keep the seat too — a kept
+      // standing seat has finished cleanup, it simply is not acceptance's seat
+      // to retire.
+      //
+      // The DIRTY downgrade is the exception, because there the cleanup is
+      // explicitly unfinished and the reply names a second accept as the way to
+      // finish it. That recovery reads the branch back through `isMerged`.
+      // Usually the ref survives anyway — `git branch -d` refuses while the kept
+      // tree has it checked out — but not always: the record's tree may have a
+      // different branch checked out, or its registration may have been pruned.
+      // Then the ref goes, the second accept gets `ok:false` from a branch that
+      // no longer exists, lands on the check-failed arm, and the tree can never
+      // be reclaimed by the verb the first reply pointed at. Skipping the delete
+      // costs a ref that the completing accept will remove.
+      const del = downgrade && downgrade.kind === 'dirty'
+        ? { ok: true, skipped: true }
+        : await gitWorktree.deleteBranch(team.root, branch).catch((e) => ({ ok: false, error: e.message }));
       const parts = [];
       if (seatName) {
         // Each sentence claims only what happened. A kept seat reported as
@@ -6922,7 +6940,13 @@ function createTicketMethods(deps, shared) {
               : `${seatName} retired`);
         }
       }
-      parts.push(del.ok ? `branch ${branch} deleted` : `branch ${branch} could NOT be deleted (${del.error})`);
+      // `skipped` before `ok`: the skip returns ok:true so nothing downstream
+      // reads it as a failure, but reporting it as "deleted" would be the same
+      // over-claim this ticket exists to remove — and here it would send the
+      // lead looking for a ref that is deliberately still there.
+      parts.push(del.skipped ? `branch ${branch} was KEPT (the accept above is unfinished)`
+        : del.ok ? `branch ${branch} deleted`
+          : `branch ${branch} could NOT be deleted (${del.error})`);
       // FOUR outcomes, one teardown. Each claims only what its evidence supports:
       //
       //   !c.ok                  the count could not be run at all
