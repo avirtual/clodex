@@ -29,7 +29,13 @@ test('check: token configured → exact match passes, everything else fails', ()
   const { check, configured } = makeTokenGate('s3cret');
   assert.strictEqual(configured, true);
   assert.strictEqual(check('s3cret'), true);
-  assert.strictEqual(check('wrong'), false);      // same length, wrong bytes
+  // EQUAL LENGTH, every byte wrong. Without this row the whole test is
+  // vacuous: 'wrong' is 5 bytes against a 6-byte secret, so every negative
+  // case below differs in LENGTH, and `p.length === secret.length` with no
+  // byte compare at all passes all of them — while accepting any same-length
+  // token an attacker sends. This row is the only thing asserting bytes.
+  assert.strictEqual(check('AAAAAA'), false);
+  assert.strictEqual(check('wrong'), false);      // shorter (5 vs 6)
   assert.strictEqual(check('s3cre'), false);      // shorter
   assert.strictEqual(check('s3cret!'), false);    // longer
   assert.strictEqual(check(''), false);

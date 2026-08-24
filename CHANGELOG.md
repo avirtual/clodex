@@ -11,7 +11,24 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — three ways a hostile value reached your machine
+
+- **A peer could run code on your machine by being looked at.** Numbers in a
+  peer's session data were written into the sidebar without escaping, and this
+  renderer can `require()` — so markup in a peer's HTTP response was not a
+  display bug, it was code execution, triggered by attaching a peer session and
+  viewing it. The values are now type-checked where they are formatted, which
+  also closes the same hole at the other thirty-odd places those formatters are
+  used. Only relevant if you connect to peers.
+- **"Open in Terminal" ran the session's folder through a shell.** A folder path
+  containing shell syntax was executed rather than opened. Paths are agent-
+  supplied, and a session that *failed* to start still leaves a row you can
+  right-click. No shell is involved now.
+- **Two Codex sessions in one folder deleted that folder's `.codex/hooks.json`.**
+  Clodex backs the file up while it borrows it and restores it on exit; with two
+  sessions the backup was made once, restored by the first to exit, and the
+  second then removed your original. Clodex now removes the file only when it
+  still contains the config Clodex wrote.
 
 ## 5.17.0 — 2026-08-22 — a read-only GitHub verb for agents
 
