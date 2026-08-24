@@ -20270,6 +20270,7 @@ ${i3.join("\n")}
         return `${Math.max(1, Math.ceil(remaining_s / 60))}m`;
       }
       function fmtTokens(n) {
+        if (typeof n !== "number" || !Number.isFinite(n)) return "0";
         if (n >= 1e6) {
           const m = n / 1e6;
           return (Number.isInteger(m) ? m : m.toFixed(1)) + "M";
@@ -20308,6 +20309,7 @@ ${i3.join("\n")}
       }
       function fmtBustTokens(n) {
         if (!n) return "0";
+        if (typeof n !== "number" || !Number.isFinite(n)) return "0";
         if (n >= 1e3) return `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}k`;
         return String(n);
       }
@@ -33402,7 +33404,7 @@ ${detail}` });
         } else if (typeof pct === "number" && pct > 0) {
           segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} data-tip="${ctxTip || "Context window used"}">\u{1F9E0} ${pct}%</span>`);
         } else if (p.context && p.context.messages != null) {
-          segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} data-tip="${ctxTip || "Messages in context"}">\u{1F9E0} ${p.context.messages} msg</span>`);
+          segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} data-tip="${ctxTip || "Messages in context"}">\u{1F9E0} ${esc(p.context.messages)} msg</span>`);
         }
         const tSeg = turnSeg(p);
         if (tSeg) segs.push(`<span class="px-seg" data-tip="${esc(tSeg.tip)}">${esc(tSeg.text)}</span>`);
