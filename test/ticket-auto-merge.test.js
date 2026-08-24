@@ -1926,7 +1926,13 @@ test('no code path in the merge can push, and none stages with -A', () => {
   // sibling seat's uncommitted work into a merge commit.
   const gw = fsReal.readFileSync(pathReal.join(__dirname, '..', 'git-worktree.js'), 'utf8');
   const sm = fsReal.readFileSync(pathReal.join(__dirname, '..', 'session-manager.js'), 'utf8');
-  for (const [name, src] of [['git-worktree.js', gw], ['session-manager.js', sm]]) {
+  // team-tickets.js holds the merge itself since the t380 split: _autoMergeTicket
+  // and the whole merge/revert/suite-runner cluster live there, and it receives
+  // `childProcess` in its deps and already calls it directly. Scanning only the
+  // two files above left the likeliest module for a `push` edit unscanned - the
+  // exact hole this pin exists to close.
+  const tt = fsReal.readFileSync(pathReal.join(__dirname, '..', 'team-tickets.js'), 'utf8');
+  for (const [name, src] of [['git-worktree.js', gw], ['session-manager.js', sm], ['team-tickets.js', tt]]) {
     assert.ok(!/'push'/.test(src), `${name} must never invoke git push`);
   }
   // The staging ban is scoped to git-worktree.js and to argv shapes that could
@@ -1938,6 +1944,8 @@ test('no code path in the merge can push, and none stages with -A', () => {
   // through it), which is what makes the narrowing lossless.
   assert.ok(!/'git'|"git"|`git`/.test(sm),
     'ENTER: session-manager.js never invokes git itself, or scoping the -A scan to git-worktree.js misses a site');
+  assert.ok(!/'git'|"git"|`git`/.test(tt),
+    'ENTER: team-tickets.js reaches git only through gitWorktree, or the -A scan must widen to it too');
   // `['add'` and not `'add',`: git-worktree.js legitimately runs
   // `git worktree add`, which stages nothing. The ban is on argv that BEGINS
   // with add — the staging command — and on the flags that would sweep a

@@ -131,6 +131,7 @@ const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 're
 // destructured alongside it moved with the verbs that call them (t380).
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
+const { atomicWriteFileSync } = require('./fs-util');
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
@@ -572,6 +573,21 @@ function createSessionManager(deps) {
     }
 
 
+    // Split out of _ensureWire so the durability of the totals write is reachable
+    // without a listening proxy: _ensureWire awaits wire.listen(), which binds a
+    // real port, and that is the only reason this pair is not inline.
+    //
+    // The write goes through atomicWriteFileSync, not fs.writeFileSync. This is
+    // all-time per-session cost history rewritten IN FULL on wire-telemetry's 1s
+    // debounce, and the read side above swallows a parse error by design — so a
+    // torn write drops the whole ledger with nothing reporting it.
+    _wireTotalsPersist(totalsPath) {
+      return {
+        read: () => JSON.parse(fs.readFileSync(totalsPath, 'utf8')),
+        write: (obj) => atomicWriteFileSync(totalsPath, JSON.stringify(obj)),
+      };
+    }
+
     async _ensureWire() {
       if (this._wire) return this._wire;
       const { WireProxy } = require('./wire/proxy');
@@ -740,11 +756,7 @@ function createSessionManager(deps) {
       });
       try {
         const { WireTelemetry } = require('./wire-telemetry');
-        const totalsPath = path.join(getUserDataPath(), 'wire-totals.json');
-        const persistTotals = {
-          read: () => JSON.parse(fs.readFileSync(totalsPath, 'utf8')),
-          write: (obj) => fs.writeFileSync(totalsPath, JSON.stringify(obj)),
-        };
+        const persistTotals = this._wireTotalsPersist(path.join(getUserDataPath(), 'wire-totals.json'));
         this._wireTelemetry = new WireTelemetry({ warmth, hold, log: (rec) => this._shadowLog(rec), persist: persistTotals });
         wire.on('turn.completed', (t) => this._wireTelemetry.noteTurn(t));
       } catch (e) {

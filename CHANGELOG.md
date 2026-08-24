@@ -23,6 +23,15 @@ blocks a release.
   says which of the two it did. It also refuses to remove any tree with
   uncommitted or untracked files, archiving the seat instead and telling you
   where to look — the same downgrade "retire" already made.
+- **A crash mid-write could wipe your whole cost history.** `wire-totals.json`
+  holds the all-time per-session token and dollar totals behind the cost
+  display and every per-ticket rollup, and it is rewritten in full about once a
+  second while agents work. It was the one store still written straight over
+  itself rather than through Clodex's crash-safe write, so a quit or a power
+  loss landing inside that window truncated it — and because a corrupt totals
+  file is deliberately tolerated on read, the ledger came back empty with
+  nothing said. It is now written to a temp file and renamed into place, so an
+  interrupted write leaves the previous totals intact.
 - **A peer could run code on your machine by being looked at.** Numbers in a
   peer's session data were written into the sidebar without escaping, and this
   renderer can `require()` — so markup in a peer's HTTP response was not a
