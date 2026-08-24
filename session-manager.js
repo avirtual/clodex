@@ -581,6 +581,13 @@ function createSessionManager(deps) {
     // all-time per-session cost history rewritten IN FULL on wire-telemetry's 1s
     // debounce, and the read side above swallows a parse error by design — so a
     // torn write drops the whole ledger with nothing reporting it.
+    //
+    // Two consequences worth stating so neither is rediscovered as a mystery:
+    // `read` uses the INJECTED fs while `write` uses fs-util's own require('fs')
+    // — identical in production, but a future fake-fs fixture would get a
+    // split-brain pair. And the first atomic write tightens the ledger's mode to
+    // 0600 (the temp file is opened that way), where a bare write left it at the
+    // umask default.
     _wireTotalsPersist(totalsPath) {
       return {
         read: () => JSON.parse(fs.readFileSync(totalsPath, 'utf8')),

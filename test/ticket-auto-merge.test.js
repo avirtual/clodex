@@ -1933,7 +1933,11 @@ test('no code path in the merge can push, and none stages with -A', () => {
   // exact hole this pin exists to close.
   const tt = fsReal.readFileSync(pathReal.join(__dirname, '..', 'team-tickets.js'), 'utf8');
   for (const [name, src] of [['git-worktree.js', gw], ['session-manager.js', sm], ['team-tickets.js', tt]]) {
-    assert.ok(!/'push'/.test(src), `${name} must never invoke git push`);
+    // Every quoting style, not just single: the scan now covers a 7.5k-line
+    // module, and `execFile('git', ["push", …])` is as irreversible as the
+    // single-quoted form. No file scanned here carries a quoted `push` literal
+    // in any style, so widening lands green rather than being weakened to fit.
+    assert.ok(!/['"`]push['"`]/.test(src), `${name} must never invoke git push`);
   }
   // The staging ban is scoped to git-worktree.js and to argv shapes that could
   // STAGE, not to the two-character string '-A' anywhere in a 9000-line module.

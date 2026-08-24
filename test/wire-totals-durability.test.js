@@ -35,13 +35,14 @@ const { WireTelemetry } = require('../wire-telemetry');
 // this pins the bytes production actually writes. Everything _ensureWire does
 // around it (a listening proxy, a warmth sqlite) is out of reach of a unit test,
 // which is why the pair is its own method.
-function mkPersist() {
+function mkPersist(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-totals-'));
+  if (t) t.after(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
   const SessionManager = createSessionManager({
     REGISTRY_DIR: root, fs, path, getUserDataPath: () => root,
   });
   const file = path.join(root, 'wire-totals.json');
-  return { file, persist: new SessionManager()._wireTotalsPersist(file) };
+  return { file, root, persist: new SessionManager()._wireTotalsPersist(file) };
 }
 
 // Count fsyncs during fn by patching the real fs module — every module here
@@ -55,8 +56,8 @@ function countingFsync(fn) {
 
 const LEDGER = { version: 1, sessions: { s1: { cost: 1.5, turns: 3 } } };
 
-test('the wire-totals write fsyncs the bytes AND the directory entry (t483)', () => {
-  const { file, persist } = mkPersist();
+test('the wire-totals write fsyncs the bytes AND the directory entry (t483)', (t) => {
+  const { file, persist } = mkPersist(t);
   const { calls } = countingFsync(() => persist.write(LEDGER));
   assert.ok(calls >= 2, `a totals write must fsync the file and its dir, saw ${calls}`);
   // The durability change must not have altered what the read side sees.
@@ -64,8 +65,8 @@ test('the wire-totals write fsyncs the bytes AND the directory entry (t483)', ()
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), LEDGER);
 });
 
-test('a totals rewrite lands by rename, never into the live ledger (t483)', () => {
-  const { file, persist } = mkPersist();
+test('a totals rewrite lands by rename, never into the live ledger (t483)', (t) => {
+  const { file, persist } = mkPersist(t);
   persist.write(LEDGER);
   const first = fs.statSync(file).ino;
 
@@ -77,20 +78,28 @@ test('a totals rewrite lands by rename, never into the live ledger (t483)', () =
   assert.deepStrictEqual(persist.read(), GROWN, 'ENTER: the second write landed');
   assert.notStrictEqual(fs.statSync(file).ino, first,
     'the ledger must be replaced by rename — an in-place rewrite is the torn write');
-  // And no temp file is left behind for the next read to trip over.
+  // And no temp file is left behind for the next read to trip over. Filtered to
+  // the temp SHAPE rather than "everything that is not the ledger": the broad
+  // form also silently asserts that constructing a SessionManager writes nothing
+  // else into userData, so an unrelated new file there would fail this as a
+  // phantom leaked temp.
   assert.deepStrictEqual(
-    fs.readdirSync(path.dirname(file)).filter((f) => f !== 'wire-totals.json'), []);
+    fs.readdirSync(path.dirname(file)).filter((f) => /^\.wire-totals\.json\.tmp/.test(f)), []);
 });
 
-test('WireTelemetry saves through that same crash-safe pair (t483)', () => {
+test('WireTelemetry saves through that same crash-safe pair (t483)', (t) => {
   // The seam is only worth pinning if the real consumer uses it: WireTelemetry's
   // debounced _save is the sole writer of this store.
-  const { file, persist } = mkPersist();
+  const { file, persist } = mkPersist(t);
   const wt = new WireTelemetry({ persist });
   wt.noteTurn({
     agent: 'a1', sessionId: 'sess-1', reqId: 'r1',
     sessionTotals: { est_usd: 0.25, turns: 1, requests: 1 },
   });
+  // noteTurn arms the real 1s debounce; the hand-called _save below is the
+  // subject. Disarm it or an unref'd timer fires after the test and writes
+  // again — the escaped-work shape scripts/test-escapes.js exists to catch.
+  clearTimeout(wt._saveTimer); wt._saveTimer = null;
   const { calls } = countingFsync(() => wt._save());
   assert.ok(calls >= 2, `the telemetry save must be crash-safe too, saw ${calls}`);
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
