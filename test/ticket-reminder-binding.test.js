@@ -202,6 +202,7 @@ function mkFixture() {
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(repoDir) ? repoDir : null),
   };
 
+  const costWrites = [];
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
   m._injectText = (s, text, opts) => {
@@ -217,7 +218,14 @@ function mkFixture() {
   m._deliverParkedActive = () => {};
   m._reconcileTickets = () => {};
   m._advanceSeat = () => null;
-  m._writeTicketCost = () => {};
+  // RECORDING, not a silencer (t483). This stub existed only to keep the real
+  // COST.json hook off a fixture that has no git history — but nothing anywhere
+  // asserted the hook fires, so BOTH of its production call sites (`task done`,
+  // `task cancel`) were deletable with the whole suite green. The hook's own
+  // body is a setImmediate inside a try/catch that early-returns on refusal, so
+  // a test that does NOT stub it cannot see the call either. Recording the
+  // arguments here is what makes the WIRING assertable at all.
+  m._writeTicketCost = (t, ticket) => costWrites.push({ team: t && t.name, id: ticket && ticket.id, state: ticket && ticket.state });
 
   const seat = (name) => {
     m.sessions.set(name, {
@@ -233,7 +241,7 @@ function mkFixture() {
   const reply = (msg) => replies.push(msg);
 
   return {
-    m, team, lead, reply, replies, tstore, scheduler, clock, fires, logs, injected,
+    m, team, lead, reply, replies, tstore, scheduler, clock, fires, logs, injected, costWrites,
     repo, persistence,
     store: stores.reminders,
     one: (id) => tstore.load(team.root).find((t) => t.id === id),
@@ -422,6 +430,46 @@ test('cancel cancels the reminders bound to that ticket', () => {
     assert.strictEqual(f.one('t1').state, 'cancelled', 'ENTER: the close actually happened');
     assert.strictEqual(f.store.get(before.id), null, 'the bound reminder is gone');
     assert.match(f.replies.join('\n'), /1 bound reminder\(s\) cancelled/);
+  } finally { f.cleanup(); }
+});
+
+// ── the COST.json close-hook is WIRED (t483) ───────────────────────────────
+
+// `_writeTicketCost` is called from `task done` and from `task cancel` and was
+// asserted by no test anywhere: both call sites were deletable with the whole
+// suite staying green. This file already stubbed the hook, so it is the cheapest
+// place to make the stub RECORDING and close that hole — the fixture drives both
+// real close verbs a few subjects up.
+//
+// Each subject asserts the ticket's own id and its post-close state as literals,
+// not `f.one(id).state`: re-reading the board would assert only that the hook
+// saw whatever the code had just written, which is true however the ticket was
+// closed and would not distinguish the two verbs from each other.
+
+test('`task done` invokes the COST.json hook, once, with the closed ticket (t483)', () => {
+  const f = mkFixture();
+  try {
+    const hand = f.m.sessions.get('team-hand');
+    assert.deepStrictEqual(f.costWrites, [], 'ENTER: nothing has written a cost yet');
+
+    f.m._taskDone(hand, f.team, { id: 't1', body: 'I did the work.' }, f.reply);
+
+    assert.strictEqual(f.one('t1').state, 'done', 'ENTER: the close actually happened');
+    assert.deepStrictEqual(f.costWrites, [{ team: 'team', id: 't1', state: 'done' }],
+      'done writes the ticket cost exactly once, for the ticket it closed');
+  } finally { f.cleanup(); }
+});
+
+test('`task cancel` invokes the COST.json hook too — the other close verb (t483)', () => {
+  const f = mkFixture();
+  try {
+    assert.deepStrictEqual(f.costWrites, [], 'ENTER: nothing has written a cost yet');
+
+    f.m._taskCancel(f.lead, f.team, { id: 't1', body: 'dropped' }, f.reply);
+
+    assert.strictEqual(f.one('t1').state, 'cancelled', 'ENTER: the close actually happened');
+    assert.deepStrictEqual(f.costWrites, [{ team: 'team', id: 't1', state: 'cancelled' }],
+      'cancel writes the ticket cost too — a cancelled ticket still spent tokens');
   } finally { f.cleanup(); }
 });
 
