@@ -4853,7 +4853,13 @@ function createSessionManager(deps) {
               await this.kill(name);
               if (!await waitExit(name)) throw new Error('old process did not exit in time');
             }
-            this._preserveAcrossRestart(name, entry, ['createdAt']);
+            // Same field set as engine.js's restartSession/applySessionArgs — a
+            // reload is a kill()+create() like theirs, and `ephemeral` is what
+            // tells `task accept` whether the loop minted this seat. Dropped
+            // here, a reloaded ticket seat reads as the operator's standing seat
+            // at accept: no teardown, a leaked worktree, and a reply claiming it
+            // is not a one-shot ticket seat.
+            this._preserveAcrossRestart(name, entry, ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt']);
             await this.create(
               name, entry.type, entry.cwd, entry.extraArgs || [], null, entry.workspaceId,
               entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],

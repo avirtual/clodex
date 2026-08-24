@@ -83,6 +83,43 @@ test('DISCOVERY: every _preserveAcrossRestart call site is a plain call into the
   }
 });
 
+test('DISCOVERY: every restart call site preserves the seat-identity fields', () => {
+  // The shape guard above passes a call whose array is EMPTY or short — it
+  // checks the (name, entry, [...]) form, not what is in the brackets. That is
+  // how the reload site drifted: it passed ['createdAt'] while its two siblings
+  // in engine.js passed four fields, so it was structurally identical and
+  // semantically the odd one out, and nothing failed.
+  //
+  // `ephemeral` is the load-bearing one. It is what tells `task accept` whether
+  // the ticket loop minted a seat; dropped across a restart, a ticket seat reads
+  // as the operator's standing seat and accept skips its teardown, leaks the
+  // worktree, and says "it is not a one-shot ticket seat" — false. `reviewFor`
+  // and `reviewTicket` are the same fact for reviewer seats.
+  const REQUIRED = ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt'];
+  const sites = callSites();
+  // ENTER: the fields are read off a literal array on the same line. A site that
+  // passes a VARIABLE (engine.js builds one) is resolved to its declaration; if
+  // neither shape matches, this guard would silently check nothing.
+  let checked = 0;
+  for (const s of sites) {
+    const src = fs.readFileSync(path.join(ROOT, s.file), 'utf8');
+    let arr = /_preserveAcrossRestart\([^,]+,\s*[^,]+,\s*\[([^\]]*)\]/.exec(s.text);
+    if (!arr) {
+      // `(name, entry, someVar)` — find `const someVar = [...]` in the file.
+      const varName = /_preserveAcrossRestart\([^,]+,\s*[^,]+,\s*([A-Za-z_$][\w$]*)\s*\)/.exec(s.text);
+      if (varName) arr = new RegExp(`${varName[1]}\\s*=\\s*\\[([^\\]]*)\\]`).exec(src);
+    }
+    assert.ok(arr, `${s.file}:${s.line}: cannot read the field list — this guard must not pass by failing to look`);
+    const fields = arr[1].split(',').map((f) => f.trim().replace(/^['"`]|['"`]$/g, '')).filter(Boolean);
+    for (const req of REQUIRED) {
+      assert.ok(fields.includes(req),
+        `${s.file}:${s.line}: restart drops \`${req}\` — every restart path must carry it, or the seat comes back as a different KIND of seat than it was`);
+    }
+    checked += 1;
+  }
+  assert.ok(checked >= 3, `expected to check at least 3 call sites, checked ${checked}`);
+});
+
 test('DISCOVERY: no restart path re-seeds persistence by hand instead of using the helper', () => {
   // engine.js and session-manager.js are the only files with restart seams.
   // A `kill(` followed within 12 lines by a `create(` and NO
