@@ -195,6 +195,12 @@ function mkFixture() {
 // is what makes the shortcut honest.
 function reviewingTicket(f, id = 't1') {
   f.seat('lead'); f.seat('team-hand');
+  // The hand is a seat the LOOP minted, and since t482 the accept arms only
+  // archive/destroy a seat whose record says so (_spawnTicketSeat stamps it on
+  // every seat it mints). Without the record the hand reads as the operator's
+  // standing seat, which accept deliberately leaves alone — and the hand-vs-
+  // reviewer teardown assertions below would pass or fail for the wrong reason.
+  f.persistence.upsert({ name: 'team-hand', ephemeral: true });
   f.tstore.save(f.team.root, [{
     id, state: 'done', spec: `spec for ${id}`, assignee: 'team-hand', role: 'hand',
     taskDir: `tasks/${id}-fixture/SPEC.md`,

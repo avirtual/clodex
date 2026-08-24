@@ -6770,10 +6770,16 @@ test('task cancel: works on an assigned ticket (reason to assignee) and a backlo
 // from the default by exactly one field, and hand-typing a second copy is how a
 // fixture silently stops matching production: `baseSha` itself was added here
 // once, and a divergent copy would have gone on measuring the older shape.
+// `ephemeral: true` is not decoration: t482 made every teardown below conditional
+// on it, and _spawnTicketSeat stamps it UNCONDITIONALLY on each seat it mints —
+// so a ticket seat without it is a shape production cannot produce. Omitted, this
+// fixture would quietly describe the operator's standing seat, and every
+// "the seat is retired" assertion here would be asserting against the arm that
+// deliberately retires nothing.
 function mkRecord({ baseSha = 'deadbeef' } = {}) {
   const worktree = { path: '/wt/t1', branch: 't1-build-the-widget' };
   if (baseSha !== null) worktree.baseSha = baseSha;
-  return { name: 'team-hand', sessionId: 'sess-abc', worktree };
+  return { name: 'team-hand', sessionId: 'sess-abc', ephemeral: true, worktree };
 }
 
 function mkAccept(mergedAnswer, extra = {}, countAnswer = { ok: true, count: 3, base: 'deadbeef' }) {
@@ -6797,6 +6803,13 @@ function mkAccept(mergedAnswer, extra = {}, countAnswer = { ok: true, count: 3, 
       },
       deleteBranch: async (root, branch) => { deleted.push(branch); return { ok: true }; },
       removeWorktree: async () => ({ ok: true }),
+      // The ordinary merged path: a seat that committed its work leaves a clean
+      // tree. t482 gates the merged arm's destroy on this, and an ABSENT stub
+      // would answer `ok:false` — not evidence of a clean tree, so the arm would
+      // downgrade to an archive and every teardown assertion below would be
+      // measuring the downgrade. The dirty and unreadable directions are pinned
+      // against REAL trees in accept-standing-seat.test.js.
+      isDirty: async () => ({ ok: true, dirty: false }),
     },
     ...extra,
   });
