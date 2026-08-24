@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased — three ways a hostile value reached your machine
 
+- **Accepting a ticket could delete a checkout you were working in.** `task
+  accept` retired whatever seat the ticket named — and on a merged branch that
+  meant killing it, dropping its record and force-removing its worktree, with no
+  check for uncommitted work. A ticket assigned to one of your own standing
+  seats (by name, or by reassigning a ticket after its worktree seat died) put
+  that seat's checkout on the wrong end of it. Acceptance now only retires seats
+  the ticket loop itself spawned, leaves a standing seat and its tree alone, and
+  says which of the two it did. It also refuses to remove any tree with
+  uncommitted or untracked files, archiving the seat instead and telling you
+  where to look — the same downgrade "retire" already made.
 - **A peer could run code on your machine by being looked at.** Numbers in a
   peer's session data were written into the sidebar without escaping, and this
   renderer can `require()` — so markup in a peer's HTTP response was not a
