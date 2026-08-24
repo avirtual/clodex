@@ -6804,12 +6804,12 @@ function mkAccept(mergedAnswer, extra = {}, countAnswer = { ok: true, count: 3, 
       deleteBranch: async (root, branch) => { deleted.push(branch); return { ok: true }; },
       removeWorktree: async () => ({ ok: true }),
       // The ordinary merged path: a seat that committed its work leaves a clean
-      // tree. t482 gates the merged arm's destroy on this, and an ABSENT stub
-      // would answer `ok:false` — not evidence of a clean tree, so the arm would
-      // downgrade to an archive and every teardown assertion below would be
-      // measuring the downgrade. Both downgrade directions — dirty, and
-      // unreadable — are pinned against REAL trees in
-      // accept-standing-seat.test.js.
+      // tree. t482 gates the merged arm's destroy on this, so the stub is
+      // REQUIRED — but a missing one fails loudly rather than silently: the call
+      // is `gitWorktree.isDirty(...)` on an object that lacks it, which throws a
+      // synchronous TypeError that the arm's `.catch` cannot intercept, so the
+      // whole accept rejects. Both downgrade directions — dirty, and unreadable
+      // — are pinned against REAL trees in accept-standing-seat.test.js.
       isDirty: async () => ({ ok: true, dirty: false }),
     },
     ...extra,
