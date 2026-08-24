@@ -59,9 +59,15 @@ function mkRepo() {
   return dir;
 }
 
-function mkFixture() {
+// Every tmp dir a fixture makes, so `t.after` can reap them. Each subject builds
+// a real repo AND a real linked worktree; left behind that is a pile of them per
+// run, and the destructive subjects are precisely the ones that would NOT clean
+// up after themselves if the code under test regressed.
+function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
   const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t482-'));
   const repoDir = mkRepo();
+  const tmpDirs = [home, repoDir];
+  if (t) t.after(() => { for (const d of tmpDirs) { try { fsReal.rmSync(d, { recursive: true, force: true }); } catch {} } });
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: repoDir, lead: 'lead', watchdogMs: null,
@@ -108,7 +114,10 @@ function mkFixture() {
     runDirFor: require('../clodex-paths').runDirFor,
     os: osReal,
     ensureDir: require('../fs-util').ensureDir,
-    gitWorktree: require('../git-worktree'),
+    // Real by default — every disk assertion depends on it. An override exists
+    // only for the arm whose subject is git FAILING, which cannot be staged on a
+    // healthy repo.
+    gitWorktree: gwOverride || require('../git-worktree'),
     childProcess: require('node:child_process'),
     countPending: require('../pending-store').countPending,
     isDraftOpen: require('../proxy-util').isDraftOpen,
@@ -162,6 +171,7 @@ function mkFixture() {
   const worktreeSeat = (name, branch, { ephemeral }) => {
     const wtPath = pathReal.join(osReal.tmpdir(), `clodex-t482-wt-${name}-${Date.now()}`);
     execFileSync('git', ['-C', repoDir, 'worktree', 'add', '-q', wtPath, branch], { encoding: 'utf8' });
+    tmpDirs.push(wtPath);
     persistence.upsert({ name, cwd: wtPath, ephemeral, worktree: { path: wtPath, branch } });
     seat(name, repoDir);
     return wtPath;
@@ -200,8 +210,8 @@ const branches = (f) => execFileSync('git', ['-C', f.repoDir, 'for-each-ref', '-
 // This is the behaviour the whole loop depends on, and it is the half that makes
 // the standing-seat assertions mean anything.
 
-test('an ephemeral ticket seat on a merged branch is still destroyed and its tree removed', async () => {
-  const f = mkFixture();
+test('an ephemeral ticket seat on a merged branch is still destroyed and its tree removed', async (t) => {
+  const f = mkFixture(t);
   f.seat('lead');
   const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
   doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
@@ -222,8 +232,8 @@ test('an ephemeral ticket seat on a merged branch is still destroyed and its tre
 
 // ── direction 2: a STANDING seat named as assignee survives ────────────────────
 
-test('a standing seat on a merged branch keeps its session, its record and its tree', async () => {
-  const f = mkFixture();
+test('a standing seat on a merged branch keeps its session, its record and its tree', async (t) => {
+  const f = mkFixture(t);
   f.seat('lead');
   // No `ephemeral` on the record — the shape a seat the OPERATOR spawned has.
   const wt = f.worktreeSeat('helper', 'landed', { ephemeral: false });
@@ -244,8 +254,8 @@ test('a standing seat on a merged branch keeps its session, its record and its t
   assert.strictEqual(f.one('t1').closedOut, true, 'the ticket still closes out — the BRANCH did merge');
 });
 
-test('a standing seat is not archived on the not-merged arm either', async () => {
-  const f = mkFixture();
+test('a standing seat is not archived on the not-merged arm either', async (t) => {
+  const f = mkFixture(t);
   f.seat('lead');
   const wt = f.worktreeSeat('helper', 'pending', { ephemeral: false });
   doneTicket(f, { assignee: 'helper', branch: 'pending' });
@@ -264,8 +274,8 @@ test('a standing seat is not archived on the not-merged arm either', async () =>
 
 // The same arm, other direction — otherwise "not archived" above is equally true
 // of a fix that stopped archiving anyone.
-test('an ephemeral seat IS still archived on the not-merged arm', async () => {
-  const f = mkFixture();
+test('an ephemeral seat IS still archived on the not-merged arm', async (t) => {
+  const f = mkFixture(t);
   f.seat('lead');
   f.worktreeSeat('team-hand-t1', 'pending', { ephemeral: true });
   doneTicket(f, { assignee: 'team-hand-t1', branch: 'pending' });
@@ -280,8 +290,8 @@ test('an ephemeral seat IS still archived on the not-merged arm', async () => {
 
 // ── the dirty downgrade, on the intended (ephemeral) path ─────────────────────
 
-test('a DIRTY tree downgrades the merged-arm destroy to an archive, keeping the tree', async () => {
-  const f = mkFixture();
+test('a DIRTY tree downgrades the merged-arm destroy to an archive, keeping the tree', async (t) => {
+  const f = mkFixture(t);
   f.seat('lead');
   const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
   // Uncommitted work: exactly what `git worktree remove --force` would delete
@@ -301,10 +311,17 @@ test('a DIRTY tree downgrades the merged-arm destroy to an archive, keeping the 
   assert.ok(f.persistence.get('team-hand-t1'), 'and the record that points at the tree survives with it');
   assert.match(msg, /ARCHIVED, not retired/, 'the reply does not claim a retire it downgraded');
   assert.match(msg, /has uncommitted work/, 'and names the reason, so the lead can go commit it');
+  // The recovery is the SAME verb again, not manual cleanup: `closedOut` is not
+  // a gate on accept (only `ticket.state` is), so a re-accept after committing
+  // finishes the teardown. Telling the lead to remove it by hand sent them to do
+  // work the app would have done.
+  assert.match(msg, /\[agent:task accept t1\] again to finish the cleanup/,
+    'and points at the verb that actually completes it');
+  assert.doesNotMatch(msg, /by hand/, 'rather than manual cleanup the app does not require');
 });
 
-test('a CLEAN tree on the same path is still destroyed — the downgrade is the exception', async () => {
-  const f = mkFixture();
+test('a CLEAN tree on the same path is still destroyed — the downgrade is the exception', async (t) => {
+  const f = mkFixture(t);
   f.seat('lead');
   const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
   const d = await require('../git-worktree').isDirty(wt);
@@ -317,4 +334,58 @@ test('a CLEAN tree on the same path is still destroyed — the downgrade is the 
   assert.deepStrictEqual(f.killed, ['team-hand-t1'], 'the seat is destroyed');
   assert.strictEqual(exists(wt), false, 'and the clean tree is reclaimed');
   assert.match(msg, /retired and its worktree removed/, 'the reply reports the teardown');
+});
+
+// ── the third case the two non-merged arms must tell apart ────────────────────
+//
+// Ephemeral AND not live. Keying the kept-seat sentence on "did an archive run"
+// collapses this into the standing case and reports a dead one-shot seat as
+// "left running (not a one-shot ticket seat)" — false about liveness and false
+// about the distinction this ticket ships. Reachable two ordinary ways: a hand
+// that exits naturally after `task done` keeps its record (session-manager.js
+// drops records only for `!agentType` seats), and the second accept THIS ARM
+// INVITES arrives after the first one's archive() left `this.sessions`.
+test('an ephemeral seat that is already gone is not described as a standing seat', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'pending', { ephemeral: true });
+  // The seat exited; the RECORD survives, which is what production leaves behind.
+  f.m.sessions.delete('team-hand-t1');
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'pending' });
+
+  assert.strictEqual(f.m.sessions.has('team-hand-t1'), false, 'ENTER: the seat is not live');
+  assert.strictEqual(f.persistence.get('team-hand-t1').ephemeral, true,
+    'ENTER: but its record still says the loop minted it — the case that collapses');
+
+  const msg = await accept(f, 't1');
+
+  assert.deepStrictEqual(f.archived, [], 'nothing to archive — it is already gone');
+  assert.doesNotMatch(msg, /left running/, 'a dead seat is never reported as left running');
+  assert.doesNotMatch(msg, /not a one-shot ticket seat/, 'and never as a standing seat — its record says otherwise');
+  assert.match(msg, /is not running, so nothing was archived/, 'it gets the sentence that is true of it');
+  assert.strictEqual(exists(wt), true, 'its tree is kept, as on any non-merged arm');
+});
+
+// nit 5: the same wording on the OTHER non-merged arm. Cheap here because the
+// only difference is which answer isMerged gives, and it is the arm the fix
+// above touches.
+test('the check-failed arm makes the same standing-vs-ephemeral distinction', async (t) => {
+  // A merge check that cannot RUN — absence of evidence, treated as not merged.
+  // Only isMerged is replaced; removeWorktree and the rest stay real, so a
+  // teardown that wrongly fired would still really delete the tree below.
+  const realGw = require('../git-worktree');
+  const f = mkFixture(t, {
+    gitWorktree: { ...realGw, isMerged: async () => ({ ok: false, error: 'git exploded' }) },
+  });
+  f.seat('lead');
+  const wt = f.worktreeSeat('helper', 'landed', { ephemeral: false });
+  doneTicket(f, { assignee: 'helper', branch: 'landed' });
+  const msg = await accept(f, 't1');
+
+  assert.match(msg, /merge check could NOT run/, 'ENTER: this really is the check-failed arm');
+  assert.deepStrictEqual(f.archived, [], 'a standing seat is not archived when the check cannot run either');
+  assert.deepStrictEqual(f.killed, [], 'and certainly not destroyed');
+  assert.ok(f.m.sessions.has('helper'), 'the operator\'s seat keeps running');
+  assert.strictEqual(exists(wt), true, 'its checkout is untouched');
+  assert.match(msg, /left running \(not a one-shot ticket seat\)/, 'and the reply names it as the standing seat it is');
 });
