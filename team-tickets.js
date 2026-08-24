@@ -6582,11 +6582,18 @@ function createTicketMethods(deps, shared) {
     // before the lead has read a word, and before the two rework rounds a reject
     // exists to send. Acceptance is the lead's judgement and arrives later.
     //
-    // Every destructive step is gated on ONE fact — `merge-base --is-ancestor`.
-    // Once the branch is in, the tree protects nothing and the seat has nothing
-    // to resume into; until then the seat is archived and tree and branch are
-    // kept. A check that could not RUN is treated as not merged: `ok:false` is
-    // absence of evidence, and inferring "merged" from it deletes unmerged work.
+    // The merge fact — `merge-base --is-ancestor` — licenses the BRANCH
+    // bookkeeping and nothing else. Once the branch is in, the tree protects
+    // nothing and a ticket seat has nothing to resume into; until then the seat
+    // is archived and tree and branch are kept. A check that could not RUN is
+    // treated as not merged: `ok:false` is absence of evidence, and inferring
+    // "merged" from it deletes unmerged work.
+    //
+    // Two further facts gate every step that touches a SEAT, because a merged
+    // branch says nothing about either. `ephemeral` on the record: acceptance
+    // may only retire a seat the loop minted, never a standing seat that merely
+    // got ticketed by name. And `isDirty` on the tree before any force-removal,
+    // the same downgrade `_handleTeamRetire` runs.
     async _taskAccept(session, team, intent, reply) {
       const note = String(intent.body == null ? '' : intent.body).trim();
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can accept a ticket${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
@@ -6606,6 +6613,26 @@ function createTicketMethods(deps, shared) {
       let rec = null;
       try { rec = seatName ? getPersistence().get(seatName) : null; } catch { rec = null; }
       const branch = (rec && rec.worktree && rec.worktree.branch) || (ticket.worktree && ticket.worktree.branch) || null;
+
+      // Whether the ASSIGNEE is a seat this loop minted, and therefore a seat
+      // acceptance may retire. Read once here because all four arms below need
+      // it: only the no-branch arm used to resolve it, and the three
+      // branch-carrying arms tore down whatever `ticket.assignee` named.
+      //
+      // A standing seat reaches those arms by two ordinary lead moves, not by
+      // misuse: `_resolveAssignee` takes a live seat NAME, and when a worktree
+      // seat dies `_ticketAssigneeSeat` refuses to degrade the pin, so
+      // reassigning to a standing role carries `ticket.worktree` — and thus a
+      // branch — onto it. The merged arm's destroy() then killed the operator's
+      // persistent seat, dropped its record and force-removed its checkout, all
+      // licensed by a merge fact that speaks only about the BRANCH.
+      //
+      // The RECORD's `ephemeral`, never the role def, for the reason the
+      // no-branch arm states: the role def is agent-writable and may have been
+      // edited between dispatch and accept. No record is NOT a licence either —
+      // it is absence of evidence that the loop minted this seat, and the
+      // fail-safe direction on an irreversible teardown is to keep the seat.
+      const ephemeralSeat = !!(rec && rec.ephemeral);
 
       // `closedOut` is passed by the CALLING ARM, never derived here: finish()
       // runs on all four accept paths and cannot tell them apart, and that is
@@ -6690,7 +6717,6 @@ function createTicketMethods(deps, shared) {
       // recoverable; destroy is not. Same treatment the `!m.merged` arm gives a
       // worktree seat, for the same reason.
       if (!branch) {
-        const ephemeralSeat = !!(rec && rec.ephemeral);
         if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
         let archived = false;
         if (ephemeralSeat && seatName && this.sessions.has(seatName)) {
@@ -6713,32 +6739,44 @@ function createTicketMethods(deps, shared) {
 
       if (!m.ok) {
         if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
-        if (seatName && this.sessions.has(seatName)) await this.archive(seatName);
+        // Archive only a seat the loop minted. A standing seat is the operator's
+        // and keeps running: acceptance is a judgement about the WORK, and on
+        // this arm it has not even established the merge fact.
+        let archived = false;
+        if (ephemeralSeat && seatName && this.sessions.has(seatName)) {
+          await this.archive(seatName);
+          archived = true;
+        }
         // NOT terminal (no `closedOut`): the reply below invites another accept
         // once the merge fact can be established, so the ticket is still live
         // and any reminder bound to it is still wanted.
         finish(`ticket ${ticket.id} accepted, but the merge check could NOT run for branch ${branch} (${m.error || 'unknown error'}) — treated as NOT merged: `
-          + `${seatName ? `${seatName} was archived, and its ` : 'its '}worktree and branch were KEPT. Nothing was removed.`);
+          + `${archived ? `${seatName} was archived, and its ` : seatName ? `${seatName} was left running (not a one-shot ticket seat), and its ` : 'its '}worktree and branch were KEPT. Nothing was removed.`);
         return;
       }
 
       if (!m.merged) {
         if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
-        if (seatName && this.sessions.has(seatName)) await this.archive(seatName);
+        let archived = false;
+        if (ephemeralSeat && seatName && this.sessions.has(seatName)) {
+          await this.archive(seatName);
+          archived = true;
+        }
         // NOT terminal (no `closedOut`), same reasoning: "Merge it, then accept
         // again" is an explicit invitation to come back. Cancelling a bound
         // reminder in the message that reports the branch did NOT land is the
         // worst possible moment for it.
         finish(`ticket ${ticket.id} accepted, but branch ${branch} is NOT merged into ${m.base} — `
-          + `${seatName ? `${seatName} was archived (resumable), and its ` : 'its '}worktree and branch were KEPT. `
+          + `${archived ? `${seatName} was archived (resumable), and its ` : seatName ? `${seatName} was left running (not a one-shot ticket seat), and its ` : 'its '}worktree and branch were KEPT. `
           + `Merge it, then [agent:task accept ${ticket.id}] again to clean up.`);
         return;
       }
 
       // How many commits the branch actually carries — for the REPLY ONLY. The
-      // teardown above and below is unconditional and must stay that way: an
-      // empty branch has nothing to lose, and refusing to clean it up leaves
-      // dead trees accumulating.
+      // count must never become a teardown gate: an empty branch has nothing to
+      // lose, and refusing to clean it up leaves dead trees accumulating. (What
+      // DOES gate the teardown below is whose seat it is and whether its tree is
+      // dirty — both facts about what would be destroyed, not about the work.)
       //
       // Counted HERE, before the teardown: destroy() removes the worktree and
       // deleteBranch() drops the ref, and after either the count is unobtainable
@@ -6785,17 +6823,62 @@ function createTicketMethods(deps, shared) {
           { accepted: true, mergedInto: (measured && c.count === 0) ? null : m.base });
       }
 
+      // TWO independent gates stand between a merge fact and a destroy(), and
+      // they answer different questions. `ephemeralSeat` asks whose seat this is
+      // — a standing seat is never acceptance's to end. The dirty check asks
+      // what the tree still holds — force-removing it takes uncommitted and
+      // untracked files with it, and the merge fact says nothing about those
+      // (isDirty deliberately ignores committed work, which survives on the
+      // branch). `_handleTeamRetire` runs the same downgrade for the same
+      // reason; this arm was the one destructive path that skipped it.
       let removed = null;
-      if (seatName && (this.sessions.has(seatName) || rec)) {
-        const r = await this.destroy(seatName).catch((e) => ({ ok: false, error: e.message }));
-        removed = r || null;
+      let downgrade = null;
+      if (seatName && ephemeralSeat && (this.sessions.has(seatName) || rec)) {
+        const wt = rec && rec.worktree && rec.worktree.path ? rec.worktree.path : null;
+        if (wt) {
+          // `ok:false` is NOT evidence of a clean tree, so it downgrades too —
+          // but it is kept distinguishable from a genuinely dirty one, because
+          // only one of the two is something the lead can go and commit. The
+          // commonest way to be unreadable is a tree already removed by hand.
+          const d = await gitWorktree.isDirty(wt).catch((e) => ({ ok: false, error: e.message }));
+          if (!d.ok) downgrade = { kind: 'unreadable', path: wt, why: d.error || 'git could not read the tree' };
+          else if (d.dirty) downgrade = { kind: 'dirty', path: wt };
+        }
+        if (downgrade) {
+          // Archive, not destroy: recoverable, and the tree it would resume into
+          // is exactly the tree being preserved.
+          if (this.sessions.has(seatName)) await this.archive(seatName);
+        } else {
+          const r = await this.destroy(seatName).catch((e) => ({ ok: false, error: e.message }));
+          removed = r || null;
+        }
       }
+      // Deleting the ref is bookkeeping about the BRANCH, which the merge fact
+      // does license, so it runs on every path — including the two that keep the
+      // seat. Where a kept tree still has the branch checked out `git branch -d`
+      // refuses, and that refusal is reported rather than hidden: it names the
+      // tree that must be dealt with before the ref can go.
       const del = await gitWorktree.deleteBranch(team.root, branch).catch((e) => ({ ok: false, error: e.message }));
       const parts = [];
       if (seatName) {
-        parts.push(removed && removed.worktreeRemoved ? `${seatName} retired and its worktree removed`
-          : removed && removed.error ? `${seatName} retired but its worktree could NOT be removed (${removed.error})`
-            : `${seatName} retired`);
+        // Each sentence claims only what happened. A kept seat reported as
+        // "retired" is the class of lie the no-branch arm's comment names, and
+        // here it would be a lie about a checkout the lead may be working in.
+        if (downgrade && downgrade.kind === 'dirty') {
+          parts.push(`${seatName} was ARCHIVED, not retired, and its worktree was KEPT — ${downgrade.path} has uncommitted work `
+            + 'that a removal would have deleted. Commit or clear that tree, then remove it and the seat by hand');
+        } else if (downgrade) {
+          parts.push(`${seatName} was ARCHIVED, not retired, and its worktree was KEPT — ${downgrade.path} could not be inspected `
+            + `(${downgrade.why}), and an unreadable tree is not evidence of a clean one. That is usually a tree already removed; `
+            + 'if so, delete the session from the sidebar');
+        } else if (!ephemeralSeat) {
+          parts.push(`${seatName} was LEFT RUNNING with its worktree intact — it is not a one-shot ticket seat, `
+            + 'so acceptance does not retire it or touch its checkout');
+        } else {
+          parts.push(removed && removed.worktreeRemoved ? `${seatName} retired and its worktree removed`
+            : removed && removed.error ? `${seatName} retired but its worktree could NOT be removed (${removed.error})`
+              : `${seatName} retired`);
+        }
       }
       parts.push(del.ok ? `branch ${branch} deleted` : `branch ${branch} could NOT be deleted (${del.error})`);
       // FOUR outcomes, one teardown. Each claims only what its evidence supports:
@@ -6833,14 +6916,20 @@ function createTicketMethods(deps, shared) {
       const outcome = !c.ok
         ? `accepted — branch ${branch} is an ancestor of ${m.base}, but its commit count could NOT be obtained (${c.error || 'unknown error'}), so whether it carried any work is UNKNOWN`
         : c.count === 0 && measured
-          ? `accepted — branch ${branch} has 0 commits beyond ${c.base}, so NOTHING was merged; it was torn down as empty`
+          // The "torn down as empty" half is claimed only where a teardown
+          // actually ran: on a kept seat the branch is empty just the same, but
+          // its tree is still there and saying otherwise misreports the one
+          // thing this arm changed about the operator's disk.
+          ? `accepted — branch ${branch} has 0 commits beyond ${c.base}, so NOTHING was merged${removed ? '; it was torn down as empty' : ''}`
           : c.count === 0
             ? `accepted — branch ${branch} is an ancestor of ${m.base}, but ${why()}, where an empty branch and one already merged both count 0 — so whether it carried any work is UNKNOWN`
             : `accepted — merged into ${m.base}`;
-      // Terminal on all four: the seat is retired and the branch deleted either
-      // way, so nothing here invites a second accept and a bound reminder has
-      // done its job. An empty branch is finished work too — there is no tree
-      // left to come back to.
+      // Terminal on all four outcomes, and it stays terminal on the paths that
+      // KEEP the seat. Terminality is a fact about the TICKET — the branch is
+      // merged and the work is accepted — not about the cleanup: unlike the two
+      // arms above, nothing here asks the lead to accept again, and what the
+      // kept-seat replies ask for (commit that tree, remove it by hand) is not
+      // something a second accept would do.
       finish(`ticket ${ticket.id} ${outcome}; ${parts.join('; ')}.`, true);
     },
 
