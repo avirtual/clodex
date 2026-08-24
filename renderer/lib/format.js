@@ -48,7 +48,13 @@ function fmtMinutes(remaining_s) {
 }
 
 // Compact token count: 201234 -> "201k", 1000000 -> "1M".
+// The type guard is a SECURITY boundary, not tidiness: callers interpolate the
+// result straight into innerHTML without esc(), and peer-supplied JSON reaches
+// here unvalidated. Both comparisons below are false for a non-numeric string,
+// so the old tail `String(n)` handed the caller its own payload back verbatim.
+// Anything not a finite number formats as '0' — never as itself.
 function fmtTokens(n) {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '0';
   if (n >= 1e6) { const m = n / 1e6; return (Number.isInteger(m) ? m : m.toFixed(1)) + 'M'; }
   if (n >= 1000) return Math.round(n / 1000) + 'k';
   return String(n);
@@ -86,8 +92,10 @@ function shortTs(iso) {
   return `${mon} ${+m[3]} ${m[4]}:${m[5]}`;
 }
 
+// Same unescaped-innerHTML boundary as fmtTokens — see the note there.
 function fmtBustTokens(n) {
   if (!n) return '0';
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '0';
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
   return String(n);
 }

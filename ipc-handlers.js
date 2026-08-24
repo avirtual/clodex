@@ -1642,8 +1642,12 @@ function registerIpcHandlers(deps) {
         enabled: !!cwd,
         click: () => {
           if (!cwd) return;
-          const { exec } = require('child_process');
-          exec(`open -a Terminal "${cwd.replace(/"/g, '\\"')}"`);
+          // execFile, never exec: `cwd` is agent-supplied ([agent:spawn cwd:Y]
+          // stores it verbatim) and exec routes through /bin/sh, where double
+          // quotes do NOT suppress $(...). Passing argv keeps it one word with
+          // no shell in the path at all. Same rule as `shellEsc` above.
+          const { execFile } = require('child_process');
+          execFile('open', ['-a', 'Terminal', cwd]);
         },
       },
       { type: 'separator' },

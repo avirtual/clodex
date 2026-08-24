@@ -2793,7 +2793,11 @@ function renderProxyBar() {
   } else if (typeof pct === 'number' && pct > 0) {
     segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} data-tip="${ctxTip || 'Context window used'}">🧠 ${pct}%</span>`);
   } else if (p.context && p.context.messages != null) {
-    segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} data-tip="${ctxTip || 'Messages in context'}">🧠 ${p.context.messages} msg</span>`);
+    // esc(): p.context arrives from a peer's HTTP body (peer-client JSON.parse
+    // -> peerProxyView, which passes context through by reference) and the
+    // guard above is `!= null`, which a string satisfies. Unescaped here is
+    // local code execution, not XSS — the renderer has require().
+    segs.push(`<span class="px-seg${ctxCls}"${ctxAttr} data-tip="${ctxTip || 'Messages in context'}">🧠 ${esc(p.context.messages)} msg</span>`);
   }
   const tSeg = turnSeg(p);
   if (tSeg) segs.push(`<span class="px-seg" data-tip="${esc(tSeg.tip)}">${esc(tSeg.text)}</span>`);

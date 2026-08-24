@@ -519,20 +519,26 @@ OUTPUT="\${RUNDIR}/hook-output.json"
     const hooksPath = path.join(codexDir, 'hooks.json');
     const backupPath = hooksPath + '.wb-wrap-backup';
 
-    const hooksConfig = {
+    fs.mkdirSync(codexDir, { recursive: true });
+    if (fs.existsSync(hooksPath) && !fs.existsSync(backupPath)) {
+      fs.copyFileSync(hooksPath, backupPath);
+    }
+    fs.writeFileSync(hooksPath, codexHooksBody(scriptPath));
+  }
+
+  // The bytes setupCodexHook writes. Cleanup reconstructs them to prove the
+  // file on disk is still OURS before removing it — see cleanupCodexHook.
+  // Every codex seat in a cwd produces the SAME bytes (the hook script is
+  // shared and routed by $WB_WRAP_NAME), so the comparison is exact.
+  function codexHooksBody(scriptPath) {
+    return JSON.stringify({
       hooks: {
         SessionStart: [{
           matcher: '',
           hooks: [{ type: 'command', command: scriptPath }]
         }]
       }
-    };
-
-    fs.mkdirSync(codexDir, { recursive: true });
-    if (fs.existsSync(hooksPath) && !fs.existsSync(backupPath)) {
-      fs.copyFileSync(hooksPath, backupPath);
-    }
-    fs.writeFileSync(hooksPath, JSON.stringify(hooksConfig));
+    });
   }
 
   // Both cleanups drop the whole per-agent run/<name>/ dir. The SHARED
@@ -550,8 +556,20 @@ OUTPUT="\${RUNDIR}/hook-output.json"
     if (fs.existsSync(backupPath)) {
       fs.renameSync(backupPath, hooksPath);
     } else if (fs.existsSync(hooksPath)) {
-      try { fs.unlinkSync(hooksPath); } catch {}
-      try { fs.rmdirSync(codexDir); } catch {}
+      // Remove ONLY a file that still holds the config we generated. With two
+      // codex seats in one cwd the backup is made once (guarded) and consumed
+      // by whichever exits first, restoring the user's file — so the second
+      // exit arrives with no backup and the ORIGINAL on disk. Unlinking on
+      // "no backup exists" deleted it. Never remove what we did not write.
+      let ours = false;
+      try {
+        ours = fs.readFileSync(hooksPath, 'utf8')
+          === codexHooksBody(path.join(REGISTRY_DIR, 'codex-session-hook.sh'));
+      } catch {}
+      if (ours) {
+        try { fs.unlinkSync(hooksPath); } catch {}
+        try { fs.rmdirSync(codexDir); } catch {}
+      }
     }
   }
 
