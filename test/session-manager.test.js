@@ -6807,8 +6807,9 @@ function mkAccept(mergedAnswer, extra = {}, countAnswer = { ok: true, count: 3, 
       // tree. t482 gates the merged arm's destroy on this, and an ABSENT stub
       // would answer `ok:false` — not evidence of a clean tree, so the arm would
       // downgrade to an archive and every teardown assertion below would be
-      // measuring the downgrade. The dirty and unreadable directions are pinned
-      // against REAL trees in accept-standing-seat.test.js.
+      // measuring the downgrade. Both downgrade directions — dirty, and
+      // unreadable — are pinned against REAL trees in
+      // accept-standing-seat.test.js.
       isDirty: async () => ({ ok: true, dirty: false }),
     },
     ...extra,

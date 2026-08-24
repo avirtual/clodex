@@ -6908,7 +6908,13 @@ function createTicketMethods(deps, shared) {
             + `(${downgrade.why}), and an unreadable tree is not evidence of a clean one. That is usually a tree already removed; `
             + 'if so, delete the session from the sidebar');
         } else if (!ephemeralSeat) {
-          parts.push(`${seatName} was LEFT RUNNING with its worktree intact — it is not a one-shot ticket seat, `
+          // Whose seat it is and whether it is RUNNING are separate facts, split
+          // here the same way `seatClause` splits them: a standing seat that
+          // exited on its own keeps its record, so `!ephemeralSeat` alone cannot
+          // carry a claim about liveness. Nothing is torn down on either path —
+          // only the sentence differs.
+          parts.push(`${seatName} was ${this.sessions.has(seatName) ? 'LEFT RUNNING' : 'left alone (its session is not running)'} `
+            + 'and its worktree KEPT — it is not a one-shot ticket seat, '
             + 'so acceptance does not retire it or touch its checkout');
         } else {
           parts.push(removed && removed.worktreeRemoved ? `${seatName} retired and its worktree removed`
