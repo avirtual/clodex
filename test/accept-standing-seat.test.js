@@ -389,3 +389,31 @@ test('the check-failed arm makes the same standing-vs-ephemeral distinction', as
   assert.strictEqual(exists(wt), true, 'its checkout is untouched');
   assert.match(msg, /left running \(not a one-shot ticket seat\)/, 'and the reply names it as the standing seat it is');
 });
+
+// The OTHER downgrade direction: git cannot look at the tree at all. `ok:false`
+// is not evidence of a clean one, so it archives and KEEPS the record rather
+// than destroying — and that is not an inert branch. The commonest way to reach
+// it is the ordinary "tree already removed by hand" case, which this flips from
+// retire-and-drop-the-record to archive-and-keep-it.
+test('an UNREADABLE tree also downgrades the destroy, and says which of the two it was', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  // The tree is gone, but the RECORD still points at it — exactly the state an
+  // operator leaves by deleting a worktree directory by hand.
+  fsReal.rmSync(wt, { recursive: true, force: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+
+  const d = await require('../git-worktree').isDirty(wt);
+  assert.strictEqual(d.ok, false, 'ENTER: git cannot inspect the tree, so this is the unreadable arm');
+  assert.strictEqual(f.persistence.get('team-hand-t1').worktree.path, wt,
+    'ENTER: and the record still names it — otherwise no probe would run at all');
+
+  const msg = await accept(f, 't1');
+
+  assert.deepStrictEqual(f.killed, [], 'an unreadable tree is not evidence of a clean one, so nothing is destroyed');
+  assert.deepStrictEqual(f.archived, ['team-hand-t1'], 'the seat is archived — the recoverable direction');
+  assert.ok(f.persistence.get('team-hand-t1'), 'and its record survives, rather than being dropped');
+  assert.match(msg, /could not be inspected/, 'the reply names this downgrade, not the dirty one');
+  assert.doesNotMatch(msg, /has uncommitted work/, 'and does not send the lead to commit a tree that is gone');
+});
