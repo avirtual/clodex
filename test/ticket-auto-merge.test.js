@@ -1783,6 +1783,45 @@ test('a lock naming a DEAD pid is stale and does not block the merge forever', a
 
 // ── the verdict→merge gap ──────────────────────────────────────────────────
 
+test('a lead reject landing INSIDE the merge, after the gates have passed, still leaves master untouched', async () => {
+  // Observed live on t482: the reject reopened the ticket and the merge landed
+  // anyway. The read at the top of _autoMergeTicket covers only the queue→start
+  // gap; the reject arrived AFTER it, inside the awaited git calls the gates run.
+  //
+  // Interleaved at `currentBranch` — the LAST await before the merge — through
+  // the REAL `_taskReject`, not by writing `state` from the test: what is being
+  // pinned is that the lead's actual veto verb beats the merge, and a hand-flipped
+  // field would pass over a reject that had stopped reopening tickets at all.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  let f = null;
+  const realCurrentBranch = require('../git-worktree').currentBranch;
+  const gitOver = {
+    currentBranch: async (root) => {
+      const out = await realCurrentBranch(root);
+      const replies = [];
+      f.m._taskReject(f.m.sessions.get('lead'), f.team, { id: 't1', body: 'round 3: the claim in the report is over-stated' },
+        (msg) => replies.push(msg));
+      assert.match(replies.join('\n'), /reopened \(rework\)/, 'ENTER: the reject really landed, mid-merge');
+      assert.strictEqual(f.one().state, 'open', 'ENTER: and it really reopened the ticket on the board');
+      return out;
+    },
+  };
+  f = mkMerge({ repo, gitOver });
+  const before = f.masterHead();
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.strictEqual(f.masterHead(), before, 'master is untouched — the veto beat the merge');
+  assert.doesNotMatch(f.masterLog(), /Merge t1:/, 'and no merge commit exists for the rejected ticket');
+  assert.deepStrictEqual(f.landed(), [], 'nothing was announced as merged');
+  assert.deepStrictEqual(f.esc(), [], 'and the abandoned merge is silent, not an escalation');
+  assert.strictEqual(f.one().state, 'open', 'the ticket is left open for the rework round');
+  assert.ok(!('mergeError' in f.one()), 'and carries no merge error — nothing went wrong');
+  assert.ok(f.logs.some((l) => /ABANDONED at the merge step/.test(l.msg)),
+    'the abandoned merge is findable in the log');
+});
+
 test('a ticket reopened between the verdict and the merge is not merged', async () => {
   // The gap is async (an ancestor check, then a whole suite) and the loop
   // re-loads across every other such gap. A `task reject`/`cancel` landing in it
