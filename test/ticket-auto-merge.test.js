@@ -2003,6 +2003,37 @@ test('no code path in the merge can push, and none stages with -A', () => {
   assert.ok(!/'-A'|'--all'/.test(gw), 'git-worktree.js must never stage with -A');
 });
 
+test('nothing awaits between the pre-merge state check and the merge itself', () => {
+  // The t482 window, pinned as a source shape because no fixture can prove it:
+  // a runtime test can only exercise the interleavings that exist TODAY, and
+  // what this guards is that no FUTURE edit adds one.
+  //
+  // _autoMergeTicket re-reads the ticket immediately before merging and abandons
+  // the merge if it is no longer done. That check is only worth its line if it is
+  // the last thing that can be reached across an `await`: intent handlers are
+  // synchronous, so `task reject` can interleave ONLY at an await, and an await
+  // inserted below the check reopens exactly the gap that put a rejected t482 on
+  // master. Three humans have verified this by hand across as many rounds; none
+  // of that survives the next edit, so it is asserted here instead.
+  const tt = fsReal.readFileSync(pathReal.join(__dirname, '..', 'team-tickets.js'), 'utf8');
+  // Anchored on the two statements themselves, not on line numbers or comment
+  // prose: the check's own `const`, and the merge call it protects.
+  const start = tt.indexOf('const stillDone = this._loadTicket(team, ticketId);');
+  const end = tt.indexOf('merged = await gitWorktree.mergeNoFf(');
+  // ENTER, and the reason this pin is worth writing at all. If either anchor
+  // stops matching after an innocent rename, `slice` silently yields '' or a
+  // backwards empty range, and the absence assertion below becomes
+  // `assert(!/await/.test(''))` — true forever, over a property nothing checks.
+  assert.ok(start > 0, 'ENTER: the pre-merge state check was found — if this fails the anchor moved, and the pin below proves nothing');
+  assert.ok(end > start, 'ENTER: the merge call was found AFTER the check — a backwards range would empty the slice and pass vacuously');
+  // Exclusive of the merge call: `mergeNoFf` is itself awaited, and it is the
+  // endpoint rather than a violation.
+  const slice = tt.slice(start, end);
+  assert.ok(slice.length > 200, `ENTER: the slice really spans the merge preamble (got ${slice.length} chars)`);
+  assert.ok(!/\bawait\b/.test(slice),
+    'no `await` may sit between the pre-merge ticket-state check and the merge — one there lets a `task reject` land in the gap and merge a ticket the lead just reopened (t482)');
+});
+
 test('the revert of a merge passes a mainline, or the undo is not possible at all', () => {
   // git REFUSES to revert a merge commit without -m: omitting it turns the undo
   // into an error at precisely the moment master is broken and the undo is the

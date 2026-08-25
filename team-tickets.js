@@ -1507,8 +1507,11 @@ function createTicketMethods(deps, shared) {
         // a merge abandoned this late is worth finding in the log.
         // A GATE, not the record everything below reads: the merge message and
         // the post-merge suite keep using the `ticket` snapshot on purpose. The
-        // only verb that rewrites `spec` is _taskRespec, which is gated to
-        // `state === 'open'` and so trips this guard first.
+        // verbs that rewrite `spec` while a merge is in flight are `_taskRespec`
+        // (gated to `state === 'open'`, so it trips this guard first) and the
+        // board's `editSpec`, which is state-agnostic by design; the latter can
+        // restyle the merge subject but cannot make an abandoned merge land,
+        // since nothing below this line awaits.
         const stillDone = this._loadTicket(team, ticketId);
         if (!stillDone || stillDone.state !== 'done') {
           log.info('ticket', `auto-merge for ${ticketId} ABANDONED at the merge step: the ticket is ${stillDone ? stillDone.state : 'gone'}, not done — nothing was merged`);
