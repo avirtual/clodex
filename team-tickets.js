@@ -1488,6 +1488,29 @@ function createTicketMethods(deps, shared) {
 
         // STEP 4 — the merge itself, always with a merge commit.
         //
+        // RE-READ THE STATE ONE LAST TIME, and keep this the last statement
+        // before the merge that can be reached across an `await`.
+        //
+        // The read at the top of this function covers only the queue→start gap:
+        // a merge waiting its turn in _mergeChain, or waiting out the retry
+        // delay, re-enters and re-reads. It does NOT cover start→merge, and that
+        // window is three awaited git subprocesses wide — which is where a
+        // `task reject` was observed landing while the merge went ahead anyway,
+        // putting on master work the lead had just sent back for another round.
+        // Intent handlers are synchronous, so they can only interleave at an
+        // `await`; anything that adds one BELOW this line reopens the gap.
+        //
+        // Fails CLOSED and silent, the same predicate and the same argument as
+        // the top read: `state !== 'done'` covers reject and cancel alike, the
+        // lead who reopened it does not need telling the loop noticed, and the
+        // merge is not lost — the next ACCEPT queues it again. Logged, because
+        // a merge abandoned this late is worth finding in the log.
+        const still = this._loadTicket(team, ticketId);
+        if (!still || still.state !== 'done') {
+          log.info('ticket', `auto-merge for ${ticketId} ABANDONED at the merge step: the ticket is ${still ? still.state : 'gone'}, not done — nothing was merged`);
+          return;
+        }
+        //
         // The message goes through a FILE, never `-m`: it is generated text
         // carrying a ticket title an agent wrote, and it is multi-line by
         // construction. The file also survives for the lead to read if the merge

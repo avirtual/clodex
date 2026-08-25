@@ -23,6 +23,14 @@ blocks a release.
   says which of the two it did. It also refuses to remove any tree with
   uncommitted or untracked files, archiving the seat instead and telling you
   where to look — the same downgrade "retire" already made.
+- **Rejecting a ticket did not stop the merge it was overriding.** When a
+  reviewer returned ACCEPT, the ticket loop queued the merge and then ran its
+  safety gates — a git ancestor check, a clean-tree check, a branch check. A
+  `task reject` sent in that window reopened the ticket correctly but the merge
+  still landed on master, so work the lead had explicitly sent back for another
+  round shipped anyway, with nothing on the record saying so. The merge step now
+  re-reads the ticket immediately before merging and abandons it if the ticket
+  is no longer done, leaving master untouched; the next ACCEPT queues it again.
 - **A crash mid-write could wipe your whole cost history.** `wire-totals.json`
   holds the all-time per-session token and dollar totals behind the cost
   display and every per-ticket rollup, and it is rewritten in full about once a
