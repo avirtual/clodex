@@ -6799,6 +6799,11 @@ function createTicketMethods(deps, shared) {
         // lands here too, so an unconditional "left running" describes a seat
         // that may not even exist. Same split as the merged arm.
         if (!this.sessions.has(seatName)) return `${seatName} is not running, and its `;
+        // Split on `rec` for the same absence-of-evidence reason one line up: a
+        // LIVE seat with no record is `ephemeralSeat === false` because nothing
+        // says otherwise, not because anything says it is standing. Only a
+        // record can carry "not a one-shot ticket seat".
+        if (!rec) return `${seatName} was left running, and its `;
         return `${seatName} was left running (not a one-shot ticket seat), and its `;
       };
       const archiveIfEphemeral = async () => {
@@ -6896,7 +6901,11 @@ function createTicketMethods(deps, shared) {
       // reason; this arm was the one destructive path that skipped it.
       let removed = null;
       let downgrade = null;
-      if (seatName && ephemeralSeat && (this.sessions.has(seatName) || rec)) {
+      // No liveness term: `ephemeralSeat` is `rec && rec.ephemeral`, so it
+      // already implies a record, and a seat that is merely not RUNNING still
+      // has a tree to reclaim — destroy() reads the path off that record and now
+      // drops it whether or not the pty was still up.
+      if (seatName && ephemeralSeat) {
         const wt = rec && rec.worktree && rec.worktree.path ? rec.worktree.path : null;
         if (wt) {
           // `ok:false` is NOT evidence of a clean tree, so it downgrades too —
@@ -6965,8 +6974,14 @@ function createTicketMethods(deps, shared) {
           // exited on its own keeps its record, so `!ephemeralSeat` alone cannot
           // carry a claim about liveness. Nothing is torn down on either path —
           // only the sentence differs.
+          //
+          // The one-shot clause splits on `rec` for the same reason, in the
+          // other direction: with no record `ephemeralSeat` is false by absence
+          // of evidence, so "it is not a one-shot ticket seat" is asserted about
+          // a seat nothing describes — including a LIVE one, which the liveness
+          // split alone still sends down the confident branch.
           parts.push(`${seatName} was ${this.sessions.has(seatName) ? 'LEFT RUNNING' : 'left alone (its session is not running)'} `
-            + 'and its worktree KEPT — it is not a one-shot ticket seat, '
+            + `and its worktree KEPT — ${rec ? 'it is not a one-shot ticket seat' : 'no record marks it a one-shot ticket seat'}, `
             + 'so acceptance does not retire it or touch its checkout');
         } else {
           parts.push(removed && removed.worktreeRemoved ? `${seatName} retired and its worktree removed`
@@ -7031,7 +7046,11 @@ function createTicketMethods(deps, shared) {
       // the dirty path can invite a second accept without contradicting it: the
       // ticket is closed out either way, and `closedOut` is not a gate on accept
       // (only `ticket.state` is), so re-accepting after committing the tree
-      // finishes the teardown.
+      // finishes the teardown. That path is the ONE place the "don't cancel a
+      // bound reminder in a message that invites you back" rule on the
+      // not-merged arms is knowingly broken — terminality here is the merge
+      // fact, and losing a reminder about cleanup is the accepted cost of not
+      // reporting merged work as unfinished. Deliberate; do not "fix" it.
       finish(`ticket ${ticket.id} ${outcome}; ${parts.join('; ')}.`, true);
     },
 

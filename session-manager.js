@@ -2259,10 +2259,28 @@ function createSessionManager(deps) {
     //
     // Captured BEFORE the kill and removed AFTER the pty exits, so git is not
     // racing a live cwd.
+    //
+    // A seat that has ALREADY exited still gets its record dropped here, and
+    // that is this method's own drop, not kill()'s: kill() returns at `if (!s)`
+    // before its `remove()`, so on a dead seat the tree went and the record
+    // naming it stayed — a record pointing at nothing, which is the "agents
+    // vanish" class in reverse. Not reachable only by mishap: the accept arm's
+    // dirty downgrade archives the seat (leaving `this.sessions`) and then
+    // invites a second accept, so the app itself routes that second accept
+    // here with the seat dead every time. Widened HERE rather than in kill()
+    // because the restart paths call kill() on purpose to recreate the same
+    // seat — but all three destroy() callers (the merged accept arm,
+    // team-retire --discard, the sidebar's Delete Session…) mean gone for good.
     async destroy(name) {
       const entry = getPersistence().get(name);
       const worktree = entry && entry.worktree && entry.worktree.path ? entry.worktree : null;
+      const wasLive = this.sessions.has(name);
       await this.kill(name);
+      // clearHintForRecord BEFORE remove, for the reason its own header gives:
+      // this is an exit with no live session to read `spawnerHintSet` off, the
+      // hint table has no TTL, and the record is the last place the route id
+      // exists. Both calls are no-ops when kill() already did the drop.
+      if (!wasLive) { this.clearHintForRecord(name); getPersistence().remove(name); }
       if (!worktree) return { ok: true };
       await this._waitForExit(name);
       const r = await gitWorktree.removeWorktree(worktree.path).catch((e) => ({ ok: false, error: e.message }));
