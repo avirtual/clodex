@@ -610,3 +610,110 @@ test('a live seat with no record is not claimed to be a standing seat (not-merge
     'the seatClause claims liveness and stops there');
   assert.doesNotMatch(msg, /not a one-shot ticket seat/, 'no record, so no claim about whose seat it is');
 });
+
+// ── t486 r2: the drop must not outrun the removal ────────────────────────────
+//
+// r1 dropped the record BEFORE removeWorktree ran. That is the orphan
+// destroy()'s own header forbids, reached from the other side: a removal that
+// FAILS then leaves a checkout on disk with nothing naming it — path
+// unrecoverable, unmerged commits with it. The property is not an arm and not a
+// line: destroy() must never RETURN having dropped the record while the tree it
+// named still exists.
+//
+// gitWorktree is overridden only in `removeWorktree`, the way the check-failed
+// subject above overrides only `isMerged`: everything else stays real, so the
+// tree below is a real tree that really survives.
+test('a FAILED worktree removal keeps the record — the tree still on disk must stay named', async (t) => {
+  const realGw = require('../git-worktree');
+  const f = mkFixture(t, {
+    gitWorktree: { ...realGw, removeWorktree: async () => ({ ok: false, error: 'git worktree remove exploded' }) },
+  });
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  // The dead-seat path — the one r1 added the drop for, and the one where only
+  // destroy()'s own drop can run at all.
+  f.m.sessions.delete('team-hand-t1');
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+
+  assert.strictEqual(f.m.sessions.has('team-hand-t1'), false, 'ENTER: the seat is dead, so kill() drops nothing');
+  assert.ok(f.persistence.get('team-hand-t1'), 'ENTER: and its record is present to be wrongly dropped');
+
+  const msg = await accept(f, 't1');
+
+  assert.strictEqual(exists(wt), true, 'ENTER: the removal really failed, so the tree is really still there');
+  assert.ok(f.persistence.get('team-hand-t1'),
+    'the record SURVIVES a failed removal: it is the only pointer to a checkout still on disk, and dropping it orphans that tree irrecoverably along with its unmerged commits');
+  assert.strictEqual(f.persistence.get('team-hand-t1').worktree.path, wt,
+    'and it still names the path, which is what makes the tree recoverable at all');
+  assert.match(msg, /could NOT be removed/, 'the reply reports the failure rather than claiming a teardown');
+  assert.match(msg, new RegExp(`remove ${wt} by hand`),
+    'and names the path, so the operator can finish it — matching _handleTeamRetire\'s discardPath sentence');
+});
+
+// The other direction, and the one that keeps the subject above from being
+// satisfied by a fix that simply stopped dropping records. Same override shape,
+// removal SUCCEEDS.
+test('a SUCCESSFUL removal on the same dead-seat path still drops the record', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  f.m.sessions.delete('team-hand-t1');
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+
+  const msg = await accept(f, 't1');
+
+  assert.strictEqual(exists(wt), false, 'ENTER: this time the tree really goes');
+  assert.strictEqual(f.persistence.get('team-hand-t1'), null,
+    'so the record goes with it — nothing is left pointing at a folder that does not exist');
+  assert.match(msg, /retired and its worktree removed/, 'and the reply claims exactly what happened');
+  assert.doesNotMatch(msg, /by hand/, 'with no manual cleanup to hand off');
+});
+
+// The `!worktree` case, pinned directly on destroy() rather than through accept:
+// there is no tree to strand, so the drop must still happen. This is r1's fix
+// and the r2 ordering must not regress it — a fix that moved the drop to "only
+// after a successful removal" would silently lose this one, since a seat with no
+// worktree never reaches a removal at all.
+test('destroy() drops a dead seat\'s record when there is no worktree to remove', async (t) => {
+  const f = mkFixture(t);
+  // No worktree key at all — a plain seat, the shape a non-ticket agent has.
+  f.persistence.upsert({ name: 'plain', cwd: f.repoDir, ephemeral: true });
+  assert.ok(f.persistence.get('plain'), 'ENTER: the record exists');
+  assert.strictEqual(f.m.sessions.has('plain'), false, 'ENTER: and the seat is not live, so kill() returns early');
+
+  const r = await f.m.destroy('plain');
+
+  assert.deepStrictEqual(r, { ok: true }, 'destroy reports the no-tree shape');
+  assert.strictEqual(f.persistence.get('plain'), null,
+    'and the record is dropped: with no tree to lose there is nothing to strand, which is the r1 fix this ordering must not regress');
+});
+
+// The invariant stated as itself, over the real bytes. The subjects above pin
+// the two reachable outcomes; this pins the PROPERTY — that no return which
+// drops the record can sit after a removal whose failure it ignores. A future
+// edit that hoists the drop back above `removeWorktree` passes neither, but this
+// one names why in the language the header uses.
+test('t486: destroy() never drops the record before the removal it depends on', () => {
+  const src = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'session-manager.js'), 'utf8');
+  const body = src.slice(src.indexOf('async destroy(name)'));
+  const end = body.indexOf('\n    async archive(');
+  const destroySrc = body.slice(0, end);
+  assert.ok(end > 0, 'ENTER: the destroy() body was located, so the assertions below read real bytes');
+
+  const removeAt = destroySrc.indexOf('gitWorktree.removeWorktree(');
+  const failReturn = destroySrc.indexOf('worktreeRemoved: false');
+  assert.ok(removeAt > 0 && failReturn > removeAt, 'ENTER: both the removal and its failure return are present, in that order');
+
+  // The drop is reachable only through the closure, so counting its CALLS is
+  // counting the returns that drop. An unconditional `getPersistence().remove(`
+  // outside it would reintroduce the hoisted drop under a different spelling.
+  const bareRemoves = (destroySrc.match(/getPersistence\(\)\.remove\(/g) || []).length;
+  assert.strictEqual(bareRemoves, 1,
+    'the record drop lives in exactly one place (the dropRecord closure) — a second bare remove() in destroy() is the hoisted drop coming back, and it strands the tree on a failed removal');
+  const calls = [...destroySrc.matchAll(/dropRecord\(\)/g)].map((mm) => mm.index);
+  assert.strictEqual(calls.length, 3,
+    'expected the closure plus exactly 2 call sites (the no-tree return and the removal-succeeded return); a third call site is almost certainly the failure return, which must NOT drop');
+  assert.ok(calls[calls.length - 1] < failReturn,
+    'no dropRecord() call may sit between the failed removal and its return: that return leaves a tree on disk, and the record is the only thing naming it');
+});

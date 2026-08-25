@@ -6984,8 +6984,14 @@ function createTicketMethods(deps, shared) {
             + `and its worktree KEPT — ${rec ? 'it is not a one-shot ticket seat' : 'no record marks it a one-shot ticket seat'}, `
             + 'so acceptance does not retire it or touch its checkout');
         } else {
+          // The path comes off destroy()'s result, which withholds the record
+          // drop precisely when the removal failed — so the tree is still there
+          // to be named, and naming it is the difference between a report the
+          // operator can act on and one that says only that something failed.
+          // Same shape as `_handleTeamRetire`'s discardPath sentence.
           parts.push(removed && removed.worktreeRemoved ? `${seatName} retired and its worktree removed`
             : removed && removed.error ? `${seatName} retired but its worktree could NOT be removed (${removed.error})`
+              + `${removed.path ? ` — remove ${removed.path} by hand` : ' — remove it by hand'}`
               : `${seatName} retired`);
         }
       }
