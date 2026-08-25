@@ -690,30 +690,106 @@ test('destroy() drops a dead seat\'s record when there is no worktree to remove'
 
 // The invariant stated as itself, over the real bytes. The subjects above pin
 // the two reachable outcomes; this pins the PROPERTY — that no return which
-// drops the record can sit after a removal whose failure it ignores. A future
-// edit that hoists the drop back above `removeWorktree` passes neither, but this
-// one names why in the language the header uses.
+// drops the record can sit after a removal whose failure it ignores. Neither
+// behavioural subject sees a THIRD return added later, which is the gap this
+// covers.
+//
+// COMMENTS ARE STRIPPED FIRST, and that is the whole reason this scanner has a
+// function rather than being a regex inline. The first version of this pin
+// counted raw `dropRecord()` matches and scored 3 — two real calls plus the
+// prose in `// NO dropRecord() here …`. Deleting that comment and adding a real
+// call before the failure return kept the count at 3, so the pin passed over
+// code that strands the tree. A pin that reads as a general guard while being
+// defeated by editing a COMMENT is worse than no pin: it tells the next agent
+// the property is enforced. `stripComments` is the same idiom, for the same
+// forced reason, as test/sender-token-contract.test.js — no parser resolves in
+// this repo, so a text scan is the only lane and its discrimination has to be
+// asserted rather than assumed.
+function stripComments(src) {
+  return src.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+// The scan, as a function of source text, so the planted-violation subject below
+// can run it against code that does NOT exist on disk. Returns the facts; the
+// assertions live in the callers.
+//
+// Call sites are counted as `dropRecord()` NOT preceded by `= ` — the closure is
+// `const dropRecord = () => {`, which contains no `dropRecord()` token at all,
+// so what is counted is exactly the invocations.
+function scanDestroy(fullSrc) {
+  const body = fullSrc.slice(fullSrc.indexOf('async destroy(name)'));
+  const end = body.indexOf('\n    async archive(');
+  const destroySrc = stripComments(body.slice(0, end > 0 ? end : body.length));
+  const failReturn = destroySrc.indexOf('worktreeRemoved: false');
+  return {
+    located: end > 0,
+    removeAt: destroySrc.indexOf('gitWorktree.removeWorktree('),
+    failReturn,
+    bareRemoves: (destroySrc.match(/getPersistence\(\)\.remove\(/g) || []).length,
+    calls: [...destroySrc.matchAll(/dropRecord\(\)/g)].map((mm) => mm.index),
+    // The property itself: no call sits at or after the failed removal's return.
+    dropsAfterFailedRemoval: [...destroySrc.matchAll(/dropRecord\(\)/g)]
+      .some((mm) => failReturn > 0 && mm.index > failReturn - 40 && mm.index < failReturn),
+  };
+}
+
 test('t486: destroy() never drops the record before the removal it depends on', () => {
   const src = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '..', 'session-manager.js'), 'utf8');
-  const body = src.slice(src.indexOf('async destroy(name)'));
-  const end = body.indexOf('\n    async archive(');
-  const destroySrc = body.slice(0, end);
-  assert.ok(end > 0, 'ENTER: the destroy() body was located, so the assertions below read real bytes');
+  const f = scanDestroy(src);
+  assert.ok(f.located, 'ENTER: the destroy() body was located, so the assertions below read real bytes');
+  assert.ok(f.removeAt > 0 && f.failReturn > f.removeAt,
+    'ENTER: both the removal and its failure return are present, in that order');
 
-  const removeAt = destroySrc.indexOf('gitWorktree.removeWorktree(');
-  const failReturn = destroySrc.indexOf('worktreeRemoved: false');
-  assert.ok(removeAt > 0 && failReturn > removeAt, 'ENTER: both the removal and its failure return are present, in that order');
-
-  // The drop is reachable only through the closure, so counting its CALLS is
-  // counting the returns that drop. An unconditional `getPersistence().remove(`
-  // outside it would reintroduce the hoisted drop under a different spelling.
-  const bareRemoves = (destroySrc.match(/getPersistence\(\)\.remove\(/g) || []).length;
-  assert.strictEqual(bareRemoves, 1,
+  assert.strictEqual(f.bareRemoves, 1,
     'the record drop lives in exactly one place (the dropRecord closure) — a second bare remove() in destroy() is the hoisted drop coming back, and it strands the tree on a failed removal');
-  const calls = [...destroySrc.matchAll(/dropRecord\(\)/g)].map((mm) => mm.index);
-  assert.strictEqual(calls.length, 3,
-    'expected the closure plus exactly 2 call sites (the no-tree return and the removal-succeeded return); a third call site is almost certainly the failure return, which must NOT drop');
-  assert.ok(calls[calls.length - 1] < failReturn,
+  assert.strictEqual(f.calls.length, 2,
+    'expected exactly 2 dropRecord() CALL SITES (the no-tree return and the removal-succeeded return) — the closure definition contains no such token, so this counts invocations only');
+  assert.strictEqual(f.dropsAfterFailedRemoval, false,
     'no dropRecord() call may sit between the failed removal and its return: that return leaves a tree on disk, and the record is the only thing naming it');
+});
+
+// What makes the green above mean anything. The scanner is a text scan by
+// necessity, so its DISCRIMINATION is the risk — and the previous version of
+// this pin proved that risk is real rather than theoretical. These plant the
+// exact defeating edits against the scanner in memory, so a future weakening of
+// it reddens here instead of shipping a pin that cannot fail.
+test('t486: the source pin actually discriminates — the edits that must redden it', () => {
+  const real = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'session-manager.js'), 'utf8');
+  assert.strictEqual(scanDestroy(real).calls.length, 2, 'ENTER: the real source is the passing case');
+
+  // 1. THE EDIT THAT DEFEATED THE FIRST PIN: delete the "NO dropRecord() here"
+  //    comment AND add a real call before the failure return. The old scanner
+  //    scored 3 both before and after — prose swapped for a call, one for one.
+  const bothAtOnce = real
+    .replace(/      \/\/ NO dropRecord\(\) here[\s\S]*?operator what to remove by hand\.\n/,
+      '      dropRecord();\n');
+  assert.ok(!/NO dropRecord\(\) here/.test(bothAtOnce) && bothAtOnce !== real,
+    'ENTER: the planted edit really removed the comment and really changed the source');
+  const swapped = scanDestroy(bothAtOnce);
+  assert.strictEqual(swapped.calls.length, 3,
+    'the comment no longer inflates the count, so adding a real call is now VISIBLE as a third call site');
+  assert.strictEqual(swapped.dropsAfterFailedRemoval, true,
+    'and the property assertion sees the drop that strands the tree — this is the case that shipped green before');
+
+  // 2. The comment deleted ALONE must NOT redden: comments carry no weight now,
+  //    which is the point of stripping them. Without this, the pin would just
+  //    have traded one prose dependency for another.
+  const commentOnly = real
+    .replace(/      \/\/ NO dropRecord\(\) here[\s\S]*?operator what to remove by hand\.\n/, '');
+  assert.ok(commentOnly !== real, 'ENTER: the comment really was removed');
+  assert.strictEqual(scanDestroy(commentOnly).calls.length, 2,
+    'deleting a comment changes nothing — the scanner reads code, so prose is not load-bearing on this test');
+  assert.strictEqual(scanDestroy(commentOnly).dropsAfterFailedRemoval, false, 'and the property still holds');
+
+  // 3. r1's original bug, once more, through the new scanner: hoisting the drop
+  //    above the removal leaves the two calls collapsed into one early one.
+  const hoisted = real
+    .replace('      if (!worktree) { dropRecord(); return { ok: true }; }',
+      '      dropRecord();\n      if (!worktree) { return { ok: true }; }')
+    .replace('        dropRecord();\n        log.info', '        log.info');
+  assert.ok(hoisted !== real, 'ENTER: the hoist really applied');
+  assert.strictEqual(scanDestroy(hoisted).calls.length, 1,
+    'the hoisted drop is one unconditional call, not two guarded ones — the count alone catches r1\'s bug');
 });
