@@ -716,20 +716,59 @@ function stripComments(src) {
 // Call sites are counted as `dropRecord()` NOT preceded by `= ` — the closure is
 // `const dropRecord = () => {`, which contains no `dropRecord()` token at all,
 // so what is counted is exactly the invocations.
+//
+// `dropsOnFailurePath` is the PROPERTY, and getting it wrong is the r3 defect:
+// it asked whether a call sat in the 40 BYTES before the failure return, which
+// is a proxy for "is reached on the failure path" and not the same question.
+// Moving the no-tree drop down to just above `const error = …` keeps the count
+// at 2 and lands outside that window, so the pin passed while both behavioural
+// subjects reddened.
+//
+// The span is everything after the removal call EXCEPT the success block. That
+// exception is not a fudge: the success arm's drop sits between `removeAt` and
+// `failReturn` by construction, so the plain span reddens correct source (it
+// really does — measured: calls [462, 680], removeAt 558, failReturn 1074, so
+// the legitimate 680 is inside it). Code after the removal that is NOT inside
+// `if (r && r.ok) { … }` is exactly the code a failed removal runs on its way to
+// its return, which is the sentence the property is written in.
 function scanDestroy(fullSrc) {
   const body = fullSrc.slice(fullSrc.indexOf('async destroy(name)'));
   const end = body.indexOf('\n    async archive(');
   const destroySrc = stripComments(body.slice(0, end > 0 ? end : body.length));
   const failReturn = destroySrc.indexOf('worktreeRemoved: false');
+  const removeAt = destroySrc.indexOf('gitWorktree.removeWorktree(');
+  const calls = [...destroySrc.matchAll(/dropRecord\(\)/g)].map((mm) => mm.index);
+
+  // Brace-match the success arm so its interior can be excluded by SPAN rather
+  // than by counting: a scan that just subtracted "one expected call" would be
+  // satisfied by a call moved from inside it to the failure path.
+  const okAt = destroySrc.indexOf('if (r && r.ok) {', removeAt);
+  let okOpen = -1;
+  let okClose = -1;
+  if (okAt > 0) {
+    okOpen = destroySrc.indexOf('{', okAt);
+    let depth = 0;
+    for (let i = okOpen; i < destroySrc.length; i += 1) {
+      if (destroySrc[i] === '{') depth += 1;
+      else if (destroySrc[i] === '}') {
+        depth -= 1;
+        if (depth === 0) { okClose = i; break; }
+      }
+    }
+  }
+  const insideSuccessArm = (i) => okOpen > 0 && okClose > okOpen && i > okOpen && i < okClose;
+
   return {
     located: end > 0,
-    removeAt: destroySrc.indexOf('gitWorktree.removeWorktree('),
+    removeAt,
     failReturn,
+    successArmClosed: okClose > okOpen && okOpen > 0,
     bareRemoves: (destroySrc.match(/getPersistence\(\)\.remove\(/g) || []).length,
-    calls: [...destroySrc.matchAll(/dropRecord\(\)/g)].map((mm) => mm.index),
-    // The property itself: no call sits at or after the failed removal's return.
-    dropsAfterFailedRemoval: [...destroySrc.matchAll(/dropRecord\(\)/g)]
-      .some((mm) => failReturn > 0 && mm.index > failReturn - 40 && mm.index < failReturn),
+    calls,
+    // Any drop reached on the way from a failed removal to its return: after the
+    // removal, before that return, and not inside the success arm.
+    dropsOnFailurePath: calls.some((i) =>
+      removeAt > 0 && failReturn > removeAt && i > removeAt && i < failReturn && !insideSuccessArm(i)),
   };
 }
 
@@ -745,8 +784,10 @@ test('t486: destroy() never drops the record before the removal it depends on', 
     'the record drop lives in exactly one place (the dropRecord closure) — a second bare remove() in destroy() is the hoisted drop coming back, and it strands the tree on a failed removal');
   assert.strictEqual(f.calls.length, 2,
     'expected exactly 2 dropRecord() CALL SITES (the no-tree return and the removal-succeeded return) — the closure definition contains no such token, so this counts invocations only');
-  assert.strictEqual(f.dropsAfterFailedRemoval, false,
-    'no dropRecord() call may sit between the failed removal and its return: that return leaves a tree on disk, and the record is the only thing naming it');
+  assert.ok(f.successArmClosed,
+    'ENTER: the success arm was brace-matched, so the span below really does exclude it rather than silently excluding nothing');
+  assert.strictEqual(f.dropsOnFailurePath, false,
+    'no dropRecord() call may be reached on the path from a failed removal to its return: that return leaves a tree on disk, and the record is the only thing naming it');
 });
 
 // What makes the green above mean anything. The scanner is a text scan by
@@ -770,7 +811,7 @@ test('t486: the source pin actually discriminates — the edits that must redden
   const swapped = scanDestroy(bothAtOnce);
   assert.strictEqual(swapped.calls.length, 3,
     'the comment no longer inflates the count, so adding a real call is now VISIBLE as a third call site');
-  assert.strictEqual(swapped.dropsAfterFailedRemoval, true,
+  assert.strictEqual(swapped.dropsOnFailurePath, true,
     'and the property assertion sees the drop that strands the tree — this is the case that shipped green before');
 
   // 2. The comment deleted ALONE must NOT redden: comments carry no weight now,
@@ -781,7 +822,7 @@ test('t486: the source pin actually discriminates — the edits that must redden
   assert.ok(commentOnly !== real, 'ENTER: the comment really was removed');
   assert.strictEqual(scanDestroy(commentOnly).calls.length, 2,
     'deleting a comment changes nothing — the scanner reads code, so prose is not load-bearing on this test');
-  assert.strictEqual(scanDestroy(commentOnly).dropsAfterFailedRemoval, false, 'and the property still holds');
+  assert.strictEqual(scanDestroy(commentOnly).dropsOnFailurePath, false, 'and the property still holds');
 
   // 3. r1's original bug, once more, through the new scanner: hoisting the drop
   //    above the removal leaves the two calls collapsed into one early one.
@@ -792,4 +833,22 @@ test('t486: the source pin actually discriminates — the edits that must redden
   assert.ok(hoisted !== real, 'ENTER: the hoist really applied');
   assert.strictEqual(scanDestroy(hoisted).calls.length, 1,
     'the hoisted drop is one unconditional call, not two guarded ones — the count alone catches r1\'s bug');
+
+  // 4. THE EDIT THAT DEFEATED THE r3 PIN, and the only one of these the count
+  //    cannot see: the no-tree drop MOVED down onto the failure path, just above
+  //    `const error = …`. Two calls before, two calls after — but the second is
+  //    now reached by a failed removal, so the tree is stranded. r3 scored this
+  //    false because the call missed a 40-byte window before the return; the span
+  //    check sees it wherever on the failure path it sits.
+  const movedOntoFailurePath = real
+    .replace('      if (!worktree) { dropRecord(); return { ok: true }; }',
+      '      if (!worktree) { return { ok: true }; }')
+    .replace("      const error = (r && r.error) || 'unknown error';",
+      "      dropRecord();\n      const error = (r && r.error) || 'unknown error';");
+  assert.ok(movedOntoFailurePath !== real, 'ENTER: the move really applied');
+  const moved = scanDestroy(movedOntoFailurePath);
+  assert.strictEqual(moved.calls.length, 2,
+    'ENTER: the COUNT is unchanged at 2 — which is exactly why a count alone cannot pin this property');
+  assert.strictEqual(moved.dropsOnFailurePath, true,
+    'the span check sees a drop reached on the failure path: the record goes while the tree it names is still on disk');
 });
