@@ -31,6 +31,8 @@ blocks a release.
   round shipped anyway, with nothing on the record saying so. The merge step now
   re-reads the ticket immediately before merging and abandons it if the ticket
   is no longer done, leaving master untouched; the next ACCEPT queues it again.
+  A reject sent once the merge itself is already underway still lands — by then
+  there is a merge commit to undo, and reverting it stays your call.
 - **A crash mid-write could wipe your whole cost history.** `wire-totals.json`
   holds the all-time per-session token and dollar totals behind the cost
   display and every per-ticket rollup, and it is rewritten in full about once a
