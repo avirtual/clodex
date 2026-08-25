@@ -160,7 +160,17 @@ function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
   // test: it reads the worktree off the record before killing, then really runs
   // `git worktree remove --force`. Stubbing it would leave the tree assertions
   // measuring the stub.
-  m.kill = async (name) => { killed.push(name); persistence.remove(name); m.sessions.delete(name); };
+  //
+  // The `!m.sessions.has` early return mirrors the real kill()'s `if (!s)
+  // return;` and is load-bearing, not tidiness: a stub that dropped the record
+  // unconditionally would drop it for an ALREADY-DEAD seat too, which is the
+  // exact state t486 fixed in destroy(). Every dead-seat subject below would
+  // then pass against the unfixed code — vacuous in the way `.claude/CLAUDE.md`
+  // describes, and silently so.
+  m.kill = async (name) => {
+    if (!m.sessions.has(name)) return;
+    killed.push(name); persistence.remove(name); m.sessions.delete(name);
+  };
   m.archive = async (name) => { archived.push(name); persistence.setArchived(name, true); };
   const seat = (name, cwd = repoDir) => {
     m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle' });
@@ -470,4 +480,133 @@ test('an assignee with no record at all is not described as a running standing s
   assert.deepStrictEqual([f.killed, f.archived], [[], []], 'nothing to tear down, and nothing is');
   assert.doesNotMatch(msg, /left running/, 'a seat that does not exist is not reported as running');
   assert.match(msg, /hand is not running/, 'the reply claims only what it can support');
+});
+
+// ── t486: the record must die with the tree, on a seat that already exited ────
+//
+// destroy() -> kill(), and kill() returns at `if (!s) return;` BEFORE its
+// `getPersistence().remove()`. On a dead seat that removed the worktree and left
+// a record naming a path that no longer exists, while the reply said "retired
+// and its worktree removed" — an orphaned record, the "agents vanish" class in
+// reverse.
+//
+// Reached by the route the app itself prescribes: the dirty downgrade archives
+// the seat and asks the lead to clear the tree and accept again. The archive
+// kills the pty, so the SECOND accept — the one this reply invited — always
+// lands on the merged arm with the seat out of `this.sessions`.
+test('the second accept the dirty downgrade invites destroys a DEAD seat record and all', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  fsReal.writeFileSync(pathReal.join(wt, 'uncommitted.txt'), 'not yet committed\n');
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+
+  const first = await accept(f, 't1');
+  assert.match(first, /\[agent:task accept t1\] again to finish the cleanup/,
+    'ENTER: the first accept really is the dirty downgrade, and really does invite a second');
+  assert.deepStrictEqual(f.archived, ['team-hand-t1'], 'ENTER: which archived the seat rather than destroying it');
+
+  // What the real archive() leaves behind: it kills the pty, and _cleanup drops
+  // the name from this.sessions. The fixture's archive stub only flags the
+  // record, so the map drop is staged here — without it the second accept would
+  // run against a LIVE seat and never reach the branch under test.
+  f.m.sessions.delete('team-hand-t1');
+  // The lead does what the reply asked. Clearing rather than committing keeps
+  // `landed` an ancestor of master, so the second accept reaches the same arm.
+  fsReal.rmSync(pathReal.join(wt, 'uncommitted.txt'));
+
+  assert.strictEqual(f.m.sessions.has('team-hand-t1'), false, 'ENTER: the seat is gone, as the archive left it');
+  assert.ok(f.persistence.get('team-hand-t1'), 'ENTER: but its record survived the downgrade, pointing at the tree');
+  assert.deepStrictEqual(await require('../git-worktree').isDirty(wt), { ok: true, dirty: false },
+    'ENTER: and the tree is clean now, so this accept tears down instead of downgrading again');
+
+  const msg = await accept(f, 't1');
+
+  assert.strictEqual(exists(wt), false, 'the worktree is removed, as it was before the fix');
+  assert.strictEqual(f.persistence.get('team-hand-t1'), null,
+    'and the record goes WITH it — a surviving record names a path that no longer exists, which is what the reply below would then be lying about');
+  assert.match(msg, /retired and its worktree removed/, 'the reply claims a full teardown, and now every part of it happened');
+  assert.strictEqual(branches(f).includes('landed'), false, 'the merged branch is deleted on this completing accept');
+});
+
+// The same drop, reached the other ordinary way: a hand that exits naturally
+// after `task done` keeps its record (session-manager.js drops records only for
+// `!agentType` seats), so the FIRST accept already finds it dead.
+test('a one-shot seat that exited on its own is destroyed record and all', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  f.m.sessions.delete('team-hand-t1');
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+
+  assert.strictEqual(f.m.sessions.has('team-hand-t1'), false, 'ENTER: not live');
+  assert.strictEqual(f.persistence.get('team-hand-t1').ephemeral, true,
+    'ENTER: but its record still marks it the loop\'s, which is what licenses the teardown');
+
+  const msg = await accept(f, 't1');
+
+  assert.strictEqual(exists(wt), false, 'its tree is reclaimed');
+  assert.strictEqual(f.persistence.get('team-hand-t1'), null, 'and its record with it');
+  assert.match(msg, /retired and its worktree removed/, 'the reply reports the teardown it actually performed');
+});
+
+// nit: the merged arm's `left alone (its session is not running)` string had no
+// subject at all — the one arm of that ternary nothing exercised.
+test('a standing seat that is NOT running is not described as LEFT RUNNING on the merged arm', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = f.worktreeSeat('helper', 'landed', { ephemeral: false });
+  // The operator's helper exited on its own; its record survives.
+  f.m.sessions.delete('helper');
+  doneTicket(f, { assignee: 'helper', branch: 'landed' });
+
+  assert.strictEqual(f.persistence.get('helper').ephemeral, false,
+    'ENTER: the record says standing, so nothing here is acceptance\'s to tear down');
+
+  const msg = await accept(f, 't1');
+
+  assert.deepStrictEqual([f.killed, f.archived], [[], []], 'nothing torn down — it is not a one-shot seat');
+  assert.strictEqual(exists(wt), true, 'and the operator\'s checkout is untouched');
+  assert.doesNotMatch(msg, /LEFT RUNNING/, 'a seat that is not running is never reported as running');
+  assert.match(msg, /left alone \(its session is not running\)/, 'it gets the sentence that is true of it');
+  assert.match(msg, /it is not a one-shot ticket seat/, 'and the record supports the one-shot claim, so it is still made');
+  assert.strictEqual(f.one('t1').closedOut, true, 'ENTER: this is the merged arm — the one whose string had no subject');
+});
+
+// The fourth cell of the same 2x2, on both arms: LIVE and with NO RECORD.
+// `ephemeralSeat` is false there by absence of evidence, so the liveness split
+// alone still sends it down the confident "not a one-shot ticket seat" branch —
+// a claim about a seat nothing describes.
+test('a live seat with no record is not claimed to be a standing seat (merged arm)', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  f.seat('drifter'); // live, but nothing was ever persisted under that name
+  doneTicket(f, { assignee: 'drifter', branch: 'landed' });
+
+  assert.strictEqual(f.persistence.get('drifter'), null, 'ENTER: no record — ephemeralSeat is false by absence');
+  assert.ok(f.m.sessions.has('drifter'), 'ENTER: and it IS live, which is the cell the liveness split misses');
+
+  const msg = await accept(f, 't1');
+
+  assert.deepStrictEqual([f.killed, f.archived], [[], []], 'no record, so no licence to tear anything down');
+  assert.match(msg, /drifter was LEFT RUNNING/, 'liveness is claimed — that part is observed');
+  assert.match(msg, /no record marks it a one-shot ticket seat/, 'but the one-shot claim is reported as the absence it is');
+  assert.doesNotMatch(msg, /it is not a one-shot ticket seat/, 'rather than asserted about a seat nothing describes');
+});
+
+test('a live seat with no record is not claimed to be a standing seat (not-merged arm)', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  f.seat('drifter');
+  doneTicket(f, { assignee: 'drifter', branch: 'pending' });
+
+  assert.ok(f.m.sessions.has('drifter'), 'ENTER: live with no record, same cell, other arm');
+  assert.strictEqual(f.persistence.get('drifter'), null, 'ENTER: and still no record');
+
+  const msg = await accept(f, 't1');
+
+  assert.match(msg, /NOT merged/, 'ENTER: this really is the not-merged arm');
+  assert.match(msg, /drifter was left running, and its worktree and branch were KEPT/,
+    'the seatClause claims liveness and stops there');
+  assert.doesNotMatch(msg, /not a one-shot ticket seat/, 'no record, so no claim about whose seat it is');
 });

@@ -23,6 +23,14 @@ blocks a release.
   says which of the two it did. It also refuses to remove any tree with
   uncommitted or untracked files, archiving the seat instead and telling you
   where to look — the same downgrade "retire" already made.
+- **Finishing a ticket cleanup could leave a session row pointing at a deleted
+  folder.** Removing a seat that had already exited removed its worktree but
+  kept its session record, so the sidebar showed a row whose checkout was gone
+  — and the reply still said the seat was retired and its worktree removed. The
+  route there was the one the app itself suggests: when acceptance finds
+  uncommitted work it keeps the tree and asks you to accept again once you have
+  committed, and by then the seat is no longer running. Both halves now happen
+  together, however the seat ended.
 - **Rejecting a ticket did not stop the merge it was overriding.** When a
   reviewer returned ACCEPT, the ticket loop queued the merge and then ran its
   safety gates — a git ancestor check, a clean-tree check, a branch check. A
