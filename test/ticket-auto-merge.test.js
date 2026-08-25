@@ -1802,6 +1802,12 @@ test('a lead reject landing INSIDE the merge, after the gates have passed, still
       const replies = [];
       f.m._taskReject(f.m.sessions.get('lead'), f.team, { id: 't1', body: 'round 3: the claim in the report is over-stated' },
         (msg) => replies.push(msg));
+      // These two ENTERs cannot report themselves: the call site wraps this stub
+      // in `.catch(e => ({ ok: false, error: e.message }))`, so an AssertionError
+      // thrown here is swallowed into an `on-master` gate failure. The subject
+      // still goes red — esc() is non-empty, mergeError is set, the ABANDONED log
+      // is missing — but the red names on-master, not the line below. Debug from
+      // the escalation text, not from where these appear to fail.
       assert.match(replies.join('\n'), /reopened \(rework\)/, 'ENTER: the reject really landed, mid-merge');
       assert.strictEqual(f.one().state, 'open', 'ENTER: and it really reopened the ticket on the board');
       return out;

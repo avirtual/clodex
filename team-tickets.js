@@ -1505,9 +1505,13 @@ function createTicketMethods(deps, shared) {
         // lead who reopened it does not need telling the loop noticed, and the
         // merge is not lost — the next ACCEPT queues it again. Logged, because
         // a merge abandoned this late is worth finding in the log.
-        const still = this._loadTicket(team, ticketId);
-        if (!still || still.state !== 'done') {
-          log.info('ticket', `auto-merge for ${ticketId} ABANDONED at the merge step: the ticket is ${still ? still.state : 'gone'}, not done — nothing was merged`);
+        // A GATE, not the record everything below reads: the merge message and
+        // the post-merge suite keep using the `ticket` snapshot on purpose. The
+        // only verb that rewrites `spec` is _taskRespec, which is gated to
+        // `state === 'open'` and so trips this guard first.
+        const stillDone = this._loadTicket(team, ticketId);
+        if (!stillDone || stillDone.state !== 'done') {
+          log.info('ticket', `auto-merge for ${ticketId} ABANDONED at the merge step: the ticket is ${stillDone ? stillDone.state : 'gone'}, not done — nothing was merged`);
           return;
         }
         //
