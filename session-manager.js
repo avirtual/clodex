@@ -2271,26 +2271,47 @@ function createSessionManager(deps) {
     // because the restart paths call kill() on purpose to recreate the same
     // seat — but all three destroy() callers (the merged accept arm,
     // team-retire --discard, the sidebar's Delete Session…) mean gone for good.
+    //
+    // That drop is placed PER RETURN, never once up front, and the invariant is
+    // the whole point: destroy() must not return having dropped the record while
+    // the tree it named still stands. Dropping first is the same irrecoverable
+    // orphan the header forbids, arrived at from the other side — a failed
+    // `removeWorktree` would leave a checkout on disk with nothing naming it,
+    // its path unrecoverable and its unmerged commits with it. So the two safe
+    // returns call it and the failure return deliberately does not, which keeps
+    // the property readable at each exit instead of inferred from an ordering.
     async destroy(name) {
       const entry = getPersistence().get(name);
       const worktree = entry && entry.worktree && entry.worktree.path ? entry.worktree : null;
       const wasLive = this.sessions.has(name);
-      await this.kill(name);
       // clearHintForRecord BEFORE remove, for the reason its own header gives:
       // this is an exit with no live session to read `spawnerHintSet` off, the
       // hint table has no TTL, and the record is the last place the route id
-      // exists. Both calls are no-ops when kill() already did the drop.
-      if (!wasLive) { this.clearHintForRecord(name); getPersistence().remove(name); }
-      if (!worktree) return { ok: true };
+      // exists. Both are no-ops once kill() has already dropped the record, so
+      // this is a live seat's second call, not a double drop.
+      const dropRecord = () => {
+        if (wasLive) return;
+        this.clearHintForRecord(name);
+        getPersistence().remove(name);
+      };
+      await this.kill(name);
+      // No tree to lose, so nothing can strand: this is the r1 case the drop
+      // exists for, and it must keep dropping.
+      if (!worktree) { dropRecord(); return { ok: true }; }
       await this._waitForExit(name);
       const r = await gitWorktree.removeWorktree(worktree.path).catch((e) => ({ ok: false, error: e.message }));
       if (r && r.ok) {
+        dropRecord();
         log.info('worktree', `removed ${worktree.path} (branch ${worktree.branch}) after destroying ${name}`);
         return { ok: true, worktreeRemoved: true };
       }
       const error = (r && r.error) || 'unknown error';
       log.info('worktree', `remove failed for ${worktree.path} after destroying ${name}: ${error}`);
-      return { ok: true, worktreeRemoved: false, error };
+      // NO dropRecord() here, and that is the invariant, not an omission: the
+      // tree is still on disk and this record is the only thing naming it. The
+      // path rides the result so the caller's failure sentence can tell the
+      // operator what to remove by hand.
+      return { ok: true, worktreeRemoved: false, error, path: worktree.path };
     }
 
     async archive(name) {

@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — three ways a hostile value reached your machine
+## Unreleased — your checkouts, your cost history, and three hostile values
 
 - **Accepting a ticket could delete a checkout you were working in.** `task
   accept` retired whatever seat the ticket named — and on a merged branch that
@@ -29,8 +29,11 @@ blocks a release.
   — and the reply still said the seat was retired and its worktree removed. The
   route there was the one the app itself suggests: when acceptance finds
   uncommitted work it keeps the tree and asks you to accept again once you have
-  committed, and by then the seat is no longer running. Both halves now happen
-  together, however the seat ended.
+  committed, and by then the seat is no longer running. The row now goes with
+  the folder, however the seat ended — except when the folder could not be
+  removed, where the row is deliberately kept, since it is the only thing left
+  naming a checkout still on disk. That case now tells you the path to remove
+  by hand.
 - **Rejecting a ticket did not stop the merge it was overriding.** When a
   reviewer returned ACCEPT, the ticket loop queued the merge and then ran its
   safety gates — a git ancestor check, a clean-tree check, a branch check. A

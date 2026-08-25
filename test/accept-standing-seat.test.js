@@ -610,3 +610,245 @@ test('a live seat with no record is not claimed to be a standing seat (not-merge
     'the seatClause claims liveness and stops there');
   assert.doesNotMatch(msg, /not a one-shot ticket seat/, 'no record, so no claim about whose seat it is');
 });
+
+// ── t486 r2: the drop must not outrun the removal ────────────────────────────
+//
+// r1 dropped the record BEFORE removeWorktree ran. That is the orphan
+// destroy()'s own header forbids, reached from the other side: a removal that
+// FAILS then leaves a checkout on disk with nothing naming it — path
+// unrecoverable, unmerged commits with it. The property is not an arm and not a
+// line: destroy() must never RETURN having dropped the record while the tree it
+// named still exists.
+//
+// gitWorktree is overridden only in `removeWorktree`, the way the check-failed
+// subject above overrides only `isMerged`: everything else stays real, so the
+// tree below is a real tree that really survives.
+test('a FAILED worktree removal keeps the record — the tree still on disk must stay named', async (t) => {
+  const realGw = require('../git-worktree');
+  const f = mkFixture(t, {
+    gitWorktree: { ...realGw, removeWorktree: async () => ({ ok: false, error: 'git worktree remove exploded' }) },
+  });
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  // The dead-seat path — the one r1 added the drop for, and the one where only
+  // destroy()'s own drop can run at all.
+  f.m.sessions.delete('team-hand-t1');
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+
+  assert.strictEqual(f.m.sessions.has('team-hand-t1'), false, 'ENTER: the seat is dead, so kill() drops nothing');
+  assert.ok(f.persistence.get('team-hand-t1'), 'ENTER: and its record is present to be wrongly dropped');
+
+  const msg = await accept(f, 't1');
+
+  assert.strictEqual(exists(wt), true, 'ENTER: the removal really failed, so the tree is really still there');
+  assert.ok(f.persistence.get('team-hand-t1'),
+    'the record SURVIVES a failed removal: it is the only pointer to a checkout still on disk, and dropping it orphans that tree irrecoverably along with its unmerged commits');
+  assert.strictEqual(f.persistence.get('team-hand-t1').worktree.path, wt,
+    'and it still names the path, which is what makes the tree recoverable at all');
+  assert.match(msg, /could NOT be removed/, 'the reply reports the failure rather than claiming a teardown');
+  assert.match(msg, new RegExp(`remove ${wt} by hand`),
+    'and names the path, so the operator can finish it — matching _handleTeamRetire\'s discardPath sentence');
+});
+
+// The other direction, and the one that keeps the subject above from being
+// satisfied by a fix that simply stopped dropping records. Same override shape,
+// removal SUCCEEDS.
+test('a SUCCESSFUL removal on the same dead-seat path still drops the record', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  f.m.sessions.delete('team-hand-t1');
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+
+  const msg = await accept(f, 't1');
+
+  assert.strictEqual(exists(wt), false, 'ENTER: this time the tree really goes');
+  assert.strictEqual(f.persistence.get('team-hand-t1'), null,
+    'so the record goes with it — nothing is left pointing at a folder that does not exist');
+  assert.match(msg, /retired and its worktree removed/, 'and the reply claims exactly what happened');
+  assert.doesNotMatch(msg, /by hand/, 'with no manual cleanup to hand off');
+});
+
+// The `!worktree` case, pinned directly on destroy() rather than through accept:
+// there is no tree to strand, so the drop must still happen. This is r1's fix
+// and the r2 ordering must not regress it — a fix that moved the drop to "only
+// after a successful removal" would silently lose this one, since a seat with no
+// worktree never reaches a removal at all.
+test('destroy() drops a dead seat\'s record when there is no worktree to remove', async (t) => {
+  const f = mkFixture(t);
+  // No worktree key at all — a plain seat, the shape a non-ticket agent has.
+  f.persistence.upsert({ name: 'plain', cwd: f.repoDir, ephemeral: true });
+  assert.ok(f.persistence.get('plain'), 'ENTER: the record exists');
+  assert.strictEqual(f.m.sessions.has('plain'), false, 'ENTER: and the seat is not live, so kill() returns early');
+
+  const r = await f.m.destroy('plain');
+
+  assert.deepStrictEqual(r, { ok: true }, 'destroy reports the no-tree shape');
+  assert.strictEqual(f.persistence.get('plain'), null,
+    'and the record is dropped: with no tree to lose there is nothing to strand, which is the r1 fix this ordering must not regress');
+});
+
+// The invariant stated as itself, over the real bytes. The subjects above pin
+// the two reachable outcomes; this pins the PROPERTY — that no return which
+// drops the record can sit after a removal whose failure it ignores. Neither
+// behavioural subject sees a THIRD return added later, which is the gap this
+// covers.
+//
+// COMMENTS ARE STRIPPED FIRST, and that is the whole reason this scanner has a
+// function rather than being a regex inline. The first version of this pin
+// counted raw `dropRecord()` matches and scored 3 — two real calls plus the
+// prose in `// NO dropRecord() here …`. Deleting that comment and adding a real
+// call before the failure return kept the count at 3, so the pin passed over
+// code that strands the tree. A pin that reads as a general guard while being
+// defeated by editing a COMMENT is worse than no pin: it tells the next agent
+// the property is enforced. `stripComments` is the same idiom, for the same
+// forced reason, as test/sender-token-contract.test.js — no parser resolves in
+// this repo, so a text scan is the only lane and its discrimination has to be
+// asserted rather than assumed.
+function stripComments(src) {
+  return src.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+// The scan, as a function of source text, so the planted-violation subject below
+// can run it against code that does NOT exist on disk. Returns the facts; the
+// assertions live in the callers.
+//
+// Call sites are counted as `dropRecord()` NOT preceded by `= ` — the closure is
+// `const dropRecord = () => {`, which contains no `dropRecord()` token at all,
+// so what is counted is exactly the invocations.
+//
+// `dropsOnFailurePath` is the PROPERTY, and getting it wrong is the r3 defect:
+// it asked whether a call sat in the 40 BYTES before the failure return, which
+// is a proxy for "is reached on the failure path" and not the same question.
+// Moving the no-tree drop down to just above `const error = …` keeps the count
+// at 2 and lands outside that window, so the pin passed while both behavioural
+// subjects reddened.
+//
+// The span is everything after the removal call EXCEPT the success block. That
+// exception is not a fudge: the success arm's drop sits between `removeAt` and
+// `failReturn` by construction, so the plain span reddens correct source (it
+// really does — measured: calls [462, 680], removeAt 558, failReturn 1074, so
+// the legitimate 680 is inside it). Code after the removal that is NOT inside
+// `if (r && r.ok) { … }` is exactly the code a failed removal runs on its way to
+// its return, which is the sentence the property is written in.
+function scanDestroy(fullSrc) {
+  const body = fullSrc.slice(fullSrc.indexOf('async destroy(name)'));
+  const end = body.indexOf('\n    async archive(');
+  const destroySrc = stripComments(body.slice(0, end > 0 ? end : body.length));
+  const failReturn = destroySrc.indexOf('worktreeRemoved: false');
+  const removeAt = destroySrc.indexOf('gitWorktree.removeWorktree(');
+  const calls = [...destroySrc.matchAll(/dropRecord\(\)/g)].map((mm) => mm.index);
+
+  // Brace-match the success arm so its interior can be excluded by SPAN rather
+  // than by counting: a scan that just subtracted "one expected call" would be
+  // satisfied by a call moved from inside it to the failure path.
+  const okAt = destroySrc.indexOf('if (r && r.ok) {', removeAt);
+  let okOpen = -1;
+  let okClose = -1;
+  if (okAt > 0) {
+    okOpen = destroySrc.indexOf('{', okAt);
+    let depth = 0;
+    for (let i = okOpen; i < destroySrc.length; i += 1) {
+      if (destroySrc[i] === '{') depth += 1;
+      else if (destroySrc[i] === '}') {
+        depth -= 1;
+        if (depth === 0) { okClose = i; break; }
+      }
+    }
+  }
+  const insideSuccessArm = (i) => okOpen > 0 && okClose > okOpen && i > okOpen && i < okClose;
+
+  return {
+    located: end > 0,
+    removeAt,
+    failReturn,
+    successArmClosed: okClose > okOpen && okOpen > 0,
+    bareRemoves: (destroySrc.match(/getPersistence\(\)\.remove\(/g) || []).length,
+    calls,
+    // Any drop reached on the way from a failed removal to its return: after the
+    // removal, before that return, and not inside the success arm.
+    dropsOnFailurePath: calls.some((i) =>
+      removeAt > 0 && failReturn > removeAt && i > removeAt && i < failReturn && !insideSuccessArm(i)),
+  };
+}
+
+test('t486: destroy() never drops the record before the removal it depends on', () => {
+  const src = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'session-manager.js'), 'utf8');
+  const f = scanDestroy(src);
+  assert.ok(f.located, 'ENTER: the destroy() body was located, so the assertions below read real bytes');
+  assert.ok(f.removeAt > 0 && f.failReturn > f.removeAt,
+    'ENTER: both the removal and its failure return are present, in that order');
+
+  assert.strictEqual(f.bareRemoves, 1,
+    'the record drop lives in exactly one place (the dropRecord closure) — a second bare remove() in destroy() is the hoisted drop coming back, and it strands the tree on a failed removal');
+  assert.strictEqual(f.calls.length, 2,
+    'expected exactly 2 dropRecord() CALL SITES (the no-tree return and the removal-succeeded return) — the closure definition contains no such token, so this counts invocations only');
+  assert.ok(f.successArmClosed,
+    'ENTER: the success arm was brace-matched, so the span below really does exclude it rather than silently excluding nothing');
+  assert.strictEqual(f.dropsOnFailurePath, false,
+    'no dropRecord() call may be reached on the path from a failed removal to its return: that return leaves a tree on disk, and the record is the only thing naming it');
+});
+
+// What makes the green above mean anything. The scanner is a text scan by
+// necessity, so its DISCRIMINATION is the risk — and the previous version of
+// this pin proved that risk is real rather than theoretical. These plant the
+// exact defeating edits against the scanner in memory, so a future weakening of
+// it reddens here instead of shipping a pin that cannot fail.
+test('t486: the source pin actually discriminates — the edits that must redden it', () => {
+  const real = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'session-manager.js'), 'utf8');
+  assert.strictEqual(scanDestroy(real).calls.length, 2, 'ENTER: the real source is the passing case');
+
+  // 1. THE EDIT THAT DEFEATED THE FIRST PIN: delete the "NO dropRecord() here"
+  //    comment AND add a real call before the failure return. The old scanner
+  //    scored 3 both before and after — prose swapped for a call, one for one.
+  const bothAtOnce = real
+    .replace(/      \/\/ NO dropRecord\(\) here[\s\S]*?operator what to remove by hand\.\n/,
+      '      dropRecord();\n');
+  assert.ok(!/NO dropRecord\(\) here/.test(bothAtOnce) && bothAtOnce !== real,
+    'ENTER: the planted edit really removed the comment and really changed the source');
+  const swapped = scanDestroy(bothAtOnce);
+  assert.strictEqual(swapped.calls.length, 3,
+    'the comment no longer inflates the count, so adding a real call is now VISIBLE as a third call site');
+  assert.strictEqual(swapped.dropsOnFailurePath, true,
+    'and the property assertion sees the drop that strands the tree — this is the case that shipped green before');
+
+  // 2. The comment deleted ALONE must NOT redden: comments carry no weight now,
+  //    which is the point of stripping them. Without this, the pin would just
+  //    have traded one prose dependency for another.
+  const commentOnly = real
+    .replace(/      \/\/ NO dropRecord\(\) here[\s\S]*?operator what to remove by hand\.\n/, '');
+  assert.ok(commentOnly !== real, 'ENTER: the comment really was removed');
+  assert.strictEqual(scanDestroy(commentOnly).calls.length, 2,
+    'deleting a comment changes nothing — the scanner reads code, so prose is not load-bearing on this test');
+  assert.strictEqual(scanDestroy(commentOnly).dropsOnFailurePath, false, 'and the property still holds');
+
+  // 3. r1's original bug, once more, through the new scanner: hoisting the drop
+  //    above the removal leaves the two calls collapsed into one early one.
+  const hoisted = real
+    .replace('      if (!worktree) { dropRecord(); return { ok: true }; }',
+      '      dropRecord();\n      if (!worktree) { return { ok: true }; }')
+    .replace('        dropRecord();\n        log.info', '        log.info');
+  assert.ok(hoisted !== real, 'ENTER: the hoist really applied');
+  assert.strictEqual(scanDestroy(hoisted).calls.length, 1,
+    'the hoisted drop is one unconditional call, not two guarded ones — the count alone catches r1\'s bug');
+
+  // 4. THE EDIT THAT DEFEATED THE r3 PIN, and the only one of these the count
+  //    cannot see: the no-tree drop MOVED down onto the failure path, just above
+  //    `const error = …`. Two calls before, two calls after — but the second is
+  //    now reached by a failed removal, so the tree is stranded. r3 scored this
+  //    false because the call missed a 40-byte window before the return; the span
+  //    check sees it wherever on the failure path it sits.
+  const movedOntoFailurePath = real
+    .replace('      if (!worktree) { dropRecord(); return { ok: true }; }',
+      '      if (!worktree) { return { ok: true }; }')
+    .replace("      const error = (r && r.error) || 'unknown error';",
+      "      dropRecord();\n      const error = (r && r.error) || 'unknown error';");
+  assert.ok(movedOntoFailurePath !== real, 'ENTER: the move really applied');
+  const moved = scanDestroy(movedOntoFailurePath);
+  assert.strictEqual(moved.calls.length, 2,
+    'ENTER: the COUNT is unchanged at 2 — which is exactly why a count alone cannot pin this property');
+  assert.strictEqual(moved.dropsOnFailurePath, true,
+    'the span check sees a drop reached on the failure path: the record goes while the tree it names is still on disk');
+});
