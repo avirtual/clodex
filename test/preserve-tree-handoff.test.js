@@ -35,11 +35,18 @@
 // repo. `create()` and the pty are the only stubs, and the pty stub exists
 // precisely to hold the window open the way a real CLI's shutdown does.
 //
-// ORDERING. `startRestart()` returns after ONE macrotask, which is what puts the
-// seat in the invisible state; the dispatch is fired from there. Both interleave
-// orderings are broken WITHOUT the guard and in DIFFERENT ways — claim-then-seed
-// leaves two records, seed-then-claim leaves the restarted seat naming nothing —
-// which is why the assertion is on the record SET and not on one row.
+// ORDERING IS ARRANGED, NOT TIMED. `startRestart()` holds the seat in the map
+// with its record already dropped and waits for that state; the dispatch runs
+// there, the claim is waited for, and only then is the seat released. An earlier
+// draft used a fixed 5ms delay and passed locally 5/5 while failing in the full
+// suite: `_spawnTicketSeat` reaches its git subprocess only after a setImmediate,
+// so under parallel load the restart finished first and the re-dispatch was
+// CORRECTLY refused — leaving the test failing its own ENTER having exercised
+// nothing. A timing window is not a fixture.
+//
+// Both interleave orderings are broken WITHOUT the guard and in DIFFERENT ways —
+// claim-then-seed leaves two records, seed-then-claim leaves the restarted seat
+// naming nothing — which is why the assertion is on the record SET, not one row.
 
 const { test, after } = require('node:test');
 const assert = require('node:assert');
@@ -92,18 +99,40 @@ function mkWorld() {
   const tstore = createTicketsStore({ clodexHome: registryDir });
 
   // The pty stub is the load-bearing one. `kill()` signals and returns; the
-  // session leaves the map only when the process actually dies. Deferring the
-  // map delete by a timer is what reproduces the real gap between "record gone"
-  // and "session gone" — a stub that deleted synchronously would close the
-  // window in the fixture and the test would pass against the bug.
+  // session leaves the map only when the process actually dies, and the gap
+  // between "record gone" and "session gone" IS the window under test — a stub
+  // that deleted synchronously would close it in the fixture and the test would
+  // pass against the bug.
+  //
+  // Gated, not timed. A fixed delay makes the window a race against a real git
+  // subprocess: `_spawnTicketSeat` reaches `_existingTicketTree` only after a
+  // setImmediate and a `git worktree list`, so on a loaded box the timer fired
+  // first, the restart completed, and the re-dispatch was correctly refused a
+  // tree whose holder was live again — the test then failed on its own ENTER
+  // having exercised nothing. `hold()` keeps the seat in the map until the test
+  // has watched the claim land, so the ordering is asserted rather than raced.
+  const held = new Set();
   const seat = (name, cwd) => {
     const s = {
       name, type: 'claude', agentType: 'claude', cwd, workspaceId: 'default',
       activityState: 'idle',
-      pty: { pid: 1, kill() { setTimeout(() => m.sessions.delete(name), 30); } },
+      pty: {
+        pid: 1,
+        kill() {
+          if (held.has(name)) { held.add(`${name}:asked`); return; }
+          setTimeout(() => m.sessions.delete(name), 5);
+        },
+      },
     };
     m.sessions.set(name, s);
     return s;
+  };
+  // Arm the gate before a restart; release it to let the "process" finish dying.
+  const hold = (name) => held.add(name);
+  const killAsked = (name) => held.has(`${name}:asked`);
+  const release = (name) => {
+    held.delete(name); held.delete(`${name}:asked`);
+    m.sessions.delete(name);
   };
   m.create = async (...args) => {
     seat(args[0], args[2]);
@@ -120,7 +149,7 @@ function mkWorld() {
   m._broadcast = () => {};
   m._sendToSession = () => {};
 
-  return { tmp, repo, registryDir, eng, P, m, tstore, seat, said };
+  return { tmp, repo, registryDir, eng, P, m, tstore, seat, said, hold, killAsked, release };
 }
 
 async function until(cond, ms = 5000) {
@@ -158,12 +187,24 @@ async function dispatch(w) {
   return tree;
 }
 
-// Begins the restart and returns with the seat in the invisible state: record
-// removed by kill(), session still in the map. Returns the pending promise; the
-// caller fires the dispatch into the gap and awaits it afterwards.
-function startRestart(w, name) {
-  const p = w.eng.restartSession(name, {}, 'default');
-  return p;
+// Begins the restart and resolves once the seat is in the invisible state:
+// record removed by kill(), session still in the map. The caller fires the
+// dispatch into that gap, then releases.
+//
+// The pending restart is returned BOXED. `await` on an async function flattens a
+// returned promise, so handing it back bare would make `await startRestart(…)`
+// wait for the whole restart — which, with the seat held, is the 8s
+// waitForSessionExit timeout whose catch arm re-upserts the pre-kill entry and
+// closes the window before a single assertion runs.
+async function startRestart(w, name) {
+  w.hold(name);
+  const p = w.eng.restartSession(name, {}, 'default').then((r) => r, (e) => ({ ok: false, error: e.message }));
+  // Waited for, not slept past: `kill()` is async and the record drop is what
+  // opens the window. Polling the product's own state is what makes the ENTERs
+  // below assertions about an arrangement rather than about a timer.
+  assert.ok(await until(() => w.killAsked(name) && w.P.get(name) === null),
+    `ENTER: kill() must have been asked for ${name} and its record dropped — the window never opened`);
+  return { p };
 }
 
 // The records naming `treePath`, canonically, sorted. The record SET is the
@@ -179,11 +220,10 @@ function namingTree(P, treePath) {
 test('a tree claimed while its seat restarts is NOT re-seeded onto the restarted record', async () => {
   const w = mkWorld();
   const tree = await dispatch(w);
-  const restart = startRestart(w, 'team-hand-1');
-  // One macrotask past kill(). Not a "give it a moment" sleep: this is the state
-  // the whole ticket is about, and the three ENTERs below are what prove the
-  // test reached it rather than racing past it.
-  await new Promise((r) => setTimeout(r, 5));
+  // The seat is held in the map with its record already dropped — the state the
+  // whole ticket is about. The ENTERs below prove the test arranged it rather
+  // than raced past it.
+  const { p: restart } = await startRestart(w, 'team-hand-1');
 
   assert.strictEqual(w.P.get('team-hand-1'), null,
     'ENTER: kill() must have REMOVED the record — with it present, claimTree finds a row to clear and the '
@@ -201,13 +241,18 @@ test('a tree claimed while its seat restarts is NOT re-seeded onto the restarted
     `ENTER: the re-dispatch must actually have spawned a second seat — replies: ${JSON.stringify(w.said)}`);
   assert.ok(w.said.some((t) => /WORK IN: /.test(t) && t.includes(tree.path)),
     'ENTER: and it must have been handed THE SAME TREE — a second seat on a fresh checkout is not a collision');
+  // The claim is what the preserve must react to, so it has to have LANDED
+  // before the restart is let go. Waiting on the record rather than on a delay
+  // is what stops a loaded box from reordering the two.
+  assert.ok(await until(() => namingTree(w.P, tree.path).includes('team-builder-1')),
+    'ENTER: claimTree must have written the new holder\'s pointer — the seed under test reacts to that record');
 
+  // Only now does the "process" finish dying and the restart proceed to its
+  // preserve + create.
+  w.release('team-hand-1');
   const res = await restart;
   assert.strictEqual(res.ok, true, `ENTER: the restart itself must have completed (${res.error || ''})`);
-  // The claim and the preserve are on independent async paths; sample after both
-  // have certainly run, or a clean read is only clean because nothing happened yet.
-  await until(() => namingTree(w.P, tree.path).length > 0);
-  await new Promise((r) => setTimeout(r, 50));
+  await until(() => w.m.sessions.has('team-hand-1'));
 
   assert.deepStrictEqual(namingTree(w.P, tree.path), ['team-builder-1'],
     'exactly ONE record may name the tree, and it must be the seat that now holds it. Two rows let Delete '
