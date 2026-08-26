@@ -319,7 +319,7 @@ see §4.)
   `_cleanup`, persistence decision before cleanup.
 - JsonlWatcher starts reading at EOF on every symlink repoint.
 - Restore/respawn failure keeps the persisted entry (`{failed:true}`).
-- A restart that throws re-upserts the entry (`restartSession`) — a session
+- A restart that throws re-upserts the entry — a session
   must never vanish because a respawn threw. A different arm from the bullet
   above: that one is restore-on-launch's `failed:true` row, this one writes
   the record back and returns `{ok:false}`.
