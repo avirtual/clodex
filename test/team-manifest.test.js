@@ -1042,8 +1042,13 @@ test('formatTeamBlock: shrunk identity block with role match (lead seat)', () =>
   // itself, not of one phrasing, so a reworded line that reintroduces it still
   // fails.
   assert.ok(!block.includes('boss'), 'the seat name is not in the cache-stable block');
-  assert.ok(!block.includes('[agent:exec clodex-team]'),
-    'the rendered roster invocation moved to the hook roster, which may name the seat');
+  // The block DOES carry an invocation, and carrying it is the point: a codex
+  // seat's boot roster is a dm, so a context reset discards it while this block
+  // survives in the cached model_instructions_file. What the block must not
+  // carry is the SEAT NAME, so the payload here is the name-free placeholder
+  // form; the concrete named one is the hook roster's, pinned separately.
+  assert.ok(block.includes('[agent:exec clodex-team] {"action":"roster","agent":"<your name>"}'),
+    'the block carries the name-free roster invocation, so it survives a reset with the block');
 });
 
 test('formatTeamBlock: role match via the <team>-<role> naming convention', () => {
@@ -1062,9 +1067,9 @@ test('formatTeamBlock: a seat that matches no role reports the none-case', () =>
 // two seats of the same role must produce an IDENTICAL block. What that is
 // worth, measured: for seats whose role prompt rides --system-prompt-file (all
 // ticket seats) the block is the TAIL of the append channel, so the ~180 bytes
-// of the block itself are the whole saving and nothing trails it to strand. The
-// case where a varying token WOULD strand a role prompt behind it is the lead's
-// concatenated prompt, and a team has one lead, so it can never be shared.
+// of the block itself are the whole saving and nothing trails it to strand.
+// Where that append is NOT skipped, the concatenation strands the whole role
+// prompt behind a varying token instead.
 // strictEqual on the whole string, not a regex: a regex can only forbid the
 // forms someone thought to forbid.
 test('formatTeamBlock: same-role seats render BYTE-IDENTICAL blocks', () => {
@@ -1079,7 +1084,8 @@ test('formatTeamBlock: same-role seats render BYTE-IDENTICAL blocks', () => {
   assert.strictEqual(formatTeamBlock(t, 'shop-hand-503'),
     '# Team\n'
     + 'You are on team shop (root /Users/me/shop). Your role: hand.\n'
-    + 'Team composition arrives in your context, and with it the ground-truth roster invocation.');
+    + 'Team composition arrives in your context. Ground truth on demand: '
+    + '[agent:exec clodex-team] {"action":"roster","agent":"<your name>"}');
   // DIFFERENT roles must still differ — an implementation that returned one
   // constant for everything would satisfy every assertion above.
   assert.notStrictEqual(formatTeamBlock(t, 'shop-hand'), formatTeamBlock(t, 'shop-reviewer'));
@@ -1838,13 +1844,15 @@ test('formatRoster: the action line keys off the role name, never the lead SEAT 
   assert.match(roster, /Dispatch: TWO steps\. \[agent:task add <role>\] <spec>/);
 });
 
-// The block used to render its own exec invocation; it no longer carries one at
-// all, because a concrete payload must name the reader's seat to be copyable and
-// that is the token this block must not vary on. The concrete named rendering
-// lives in the HOOK roster (formatRoster), pinned separately — this asserts the
-// duplicate is gone from the system prompt, not that it is gone everywhere.
-test('formatTeamBlock: carries no exec invocation — the concrete one is the hook roster\'s', () => {
-  assert.strictEqual(execPayloadFrom(formatTeamBlock(TEAM(), 'shop-hand')), null);
+// The block renders the invocation with a PLACEHOLDER agent, never the reader's
+// seat: that token is the one thing this block must not vary on. Both halves are
+// load-bearing and neither implies the other — dropping the payload strands a
+// codex seat after a context reset (its boot roster was a dm and went with the
+// history, while this block survives in the cached model_instructions_file), and
+// rendering it concretely breaks the byte-identical property above.
+test('formatTeamBlock: renders the roster invocation, with the seat name left as a placeholder', () => {
+  assert.deepStrictEqual(execPayloadFrom(formatTeamBlock(TEAM(), 'shop-hand')),
+    { action: 'roster', agent: '<your name>' });
   assert.ok(execPayloadFrom(formatRoster(TEAM(), ['shop-hand'], { seat: 'shop-hand' })),
     'the hook roster still renders a concrete payload, so nothing was lost');
 });
