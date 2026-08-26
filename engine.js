@@ -1279,7 +1279,12 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
     if (entry.label) persistence.setLabel(name, entry.label);
     return { ok: true, restarted: true, backend: created.backend || null };
   } catch (err) {
-    persistence.upsert(entry);
+    // The seat is kept, but not a pointer to a checkout another live seat has
+    // taken while this restart was in flight. Routed through the manager rather
+    // than re-derived here: _ticketTreeHolder is the single reader of tree
+    // occupancy, and a second implementation in this file is the second source of
+    // truth that design forbids (t491).
+    persistence.upsert(manager._stripClaimedTree(entry));
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
 }
@@ -1365,7 +1370,10 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
     return { ok: true, restarted: true, backend: created.backend || null };
   } catch (err) {
-    persistence.upsert({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? nextIntents : undefined, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined });
+    // Applied to the ASSEMBLED object, not to `beforeKill`: the spread is what
+    // actually reaches the store, so stripping the source would be undone by it.
+    // Same reason as restartSession's arm above (t491).
+    persistence.upsert(manager._stripClaimedTree({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? nextIntents : undefined, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined }));
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
 }
