@@ -248,6 +248,21 @@ plus setter-added `sessionIds[]` history, label, stripLevel, `createdAt`,
 (stored only as `false` to opt out). Writes validate before backing up to
 `.bak`; load falls back to the backup.
 
+A `worktree` pointer naming a tree that no longer exists is EXPECTED and is not
+swept. Three supported routes produce one: team-retire with archive on a dirty
+tree, the same on a tree it could not inspect, and the merge gate's
+not-merged arm followed by a later accept. Nothing reads the pointer in a way a
+missing tree breaks — resume spawns in `entry.cwd` (the shared checkout), never
+in `worktree.path`; `_ticketTreeHolder` only scans live sessions; `claimTree`
+clears any other record naming a path it mints; and `destroy()` takes its
+keep-the-record failure return when `removeWorktree` cannot find the tree. Only
+the Delete Session… confirm text reads stale. Do not add a sweep keyed on the
+path being missing: a missing path is not evidence a session is dead (an
+unmounted volume or a moved repo reads identically), and dropping records on it
+is the pre-v0.5.3 "upgrade kills my agents" bug. Clearing only `worktree` while
+keeping the row is WORSE, not a compromise — see ALWAYS_PRESERVE in
+session-manager.js for why absent is the dangerous state.
+
 **templates.json** stores reusable session configs. Base fields
 (`id/name/type/cwd/extraArgs`) plus the config subset snapshotted by the
 session context menu's **Export as Template…** (agent sessions only):
