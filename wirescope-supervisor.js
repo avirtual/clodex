@@ -285,12 +285,17 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       try {
         const rec = JSON.parse(fs.readFileSync(this._pidFile(), 'utf8'));
         const s = getUiSettings().get();
-        if (!rec || !(rec.pid > 0) || rec.port !== (s.wirescopePort || 7800)) {
-          if (rec && rec.pid !== undefined && !(rec.pid > 0)) {
+        if (!rec) return null;
+        if (!(rec.pid > 0)) {
+          // Logged only when the pidfile actually carried something: an absent
+          // pid is the ordinary "no survivor" case, a non-positive one is a
+          // corrupt record that would have been signalled.
+          if (rec.pid !== undefined) {
             log.warn('wirescope', `ignoring pidfile: pid is ${rec.pid}, which would broadcast rather than target`);
           }
           return null;
         }
+        if (rec.port !== (s.wirescopePort || 7800)) return null;
         process.kill(rec.pid, 0); // throws if gone
         return rec.pid;
       } catch { return null; }

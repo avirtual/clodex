@@ -111,12 +111,12 @@ const CENSUS = [
   },
   {
     file: 'wirescope-supervisor.js', pid: 'pid', sig: "'SIGTERM'", count: 2,
-    guard: 'if (!rec || !(rec.pid > 0) || rec.port !== (s.wirescopePort || 7800))',
+    guard: 'if (!(rec.pid > 0)) {',
     why: 'stop() and restart() both signal _survivorPid()\'s return; the pidfile read is the funnel',
   },
   {
     file: 'wirescope-supervisor.js', pid: 'pid', sig: "'SIGKILL'", count: 1,
-    guard: 'if (!rec || !(rec.pid > 0) || rec.port !== (s.wirescopePort || 7800))',
+    guard: 'if (!(rec.pid > 0)) {',
     why: "restart()'s escalation — reached because kill(-1, 0) does not throw, so gone() never ends the poll",
   },
 
