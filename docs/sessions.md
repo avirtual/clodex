@@ -270,19 +270,12 @@ is kept in step with `test/create-mint-census.test.js`);
 the other two `setWorktree` call sites (`session:markWorktree`, the spawn-intent
 mint) do NOT scan, so that self-healing covers the ticket path only; and
 `destroy()` has a failure return that KEEPS the record — see its own comment
-for when. No sidebar route can leave a record behind through it: §4's two ✕
-routes drop the record directly, and Delete Session… routes through `kill()`,
-which drops it before any tree work.
+for when.
 
 The only user-visible staleness is the Delete Session… confirm sentence and the
-`Worktree removal failed: …` toast that follows it; both are cosmetic. Reaching
-either needs an unarchive first (`dialog:confirmKill` is wired to a LIVE row's
-context menu — an archived row has none, and neither does a failed ghost row),
-and the unarchive is what makes the difference: the row is then live, so Delete
-Session… DOES drop the record and merely toasts the removal failure. Either
-sidebar route therefore drops it. Use the ARCHIVED row's ✕ (`forgetSession` →
-`persistence.remove`) as the direct one — it needs no unarchive and kills no
-process.
+`Worktree removal failed: …` toast that follows it; both are cosmetic. Use the
+ARCHIVED row's ✕ (`forgetSession` → `persistence.remove`) as the direct one — it
+needs no unarchive and kills no process.
 
 Do not add a sweep keyed on the path being missing: a missing path is not
 evidence a session is dead (an unmounted volume or a moved repo reads
