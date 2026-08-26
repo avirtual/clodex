@@ -103,6 +103,16 @@
         <span class="footer-label">Inbox</span>
         <span class="inbox-count zero" id="inbox-count">0</span>
       </button>
+      <!-- Voice input mode (t509). Box-wide, NOT per-session: `/voice` writes
+           ~/.claude/settings.json, which every Claude session here shares, so a
+           home on the per-session proxy bar would read as seat-scoped while
+           moving a global — and that bar is drawn for proxied sessions only,
+           which would hide it on an unproxied box. Ships hidden: a machine with
+           no Claude session has no /voice to send. -->
+      <button id="voice-open" class="hidden" data-tip="Voice input mode (off · tap · hold)" type="button">
+        <span class="footer-glyph">&#127908;</span>
+        <span class="footer-label" id="voice-label">Voice</span>
+      </button>
     </div>
     <!-- Drag handle to resize the sidebar (Task 17). Thin hit area pinned to the
          right edge; renderer.js drives the --sidebar-width var from pointer moves. -->

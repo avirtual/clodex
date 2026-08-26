@@ -311,7 +311,7 @@ html, body {
    by the host's own attribute, is deliberate: the chrome of the sidebar footer
    is core's, so a plugin gets a button that looks native without shipping — or
    being able to override — the footer's look. */
-#inbox-open, #sidebar-footer [data-plugin-footer] {
+#inbox-open, #voice-open, #sidebar-footer [data-plugin-footer] {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -325,7 +325,15 @@ html, body {
   font-size: 12px;
 }
 
-#inbox-open:hover, #sidebar-footer [data-plugin-footer]:hover { background: var(--sidebar-hover); color: var(--text); }
+#inbox-open:hover, #voice-open:hover, #sidebar-footer [data-plugin-footer]:hover { background: var(--sidebar-hover); color: var(--text); }
+/* Beats the #voice-open display:flex above on specificity (id+class), which the
+   project's per-id .hidden convention requires — there is no generic .hidden rule. */
+#voice-open.hidden { display: none; }
+#voice-open:disabled { opacity: 0.5; cursor: default; }
+/* The injected /voice is quiet-gated, so a mid-turn choice is PARKED rather than
+   applied. Without this the button reads as dead and invites a second click,
+   which queues a second command. */
+#voice-open.voice-pending .footer-label { color: var(--accent); font-style: italic; }
 .footer-glyph { font-size: 13px; line-height: 1; }
 /* The host creates the badge span unconditionally, so a button whose plugin
    declares no badge() still has one — as a flex item it would otherwise draw
@@ -1581,12 +1589,14 @@ html, body {
   padding-top: 7px;
   border-radius: 0 0 4px 4px;
 }
-/* Strip-level menu: wider, each item a name + one-line description. */
-.strip-menu { min-width: 240px; max-width: 300px; }
-.strip-menu .strip-item { display: flex; flex-direction: column; gap: 1px; }
-.strip-menu .strip-name { font-size: 12px; }
-.strip-menu .strip-item.strip-cur .strip-name { color: #4caa6e; }
-.strip-menu .strip-desc { font-size: 10px; color: var(--text-dim); }
+/* Strip-level menu: wider, each item a name + one-line description. The voice
+   menu (t509) reuses .strip-item/.strip-name/.strip-desc rows verbatim, so it is
+   grouped into the width rule rather than copying one. */
+.strip-menu, .voice-menu { min-width: 240px; max-width: 300px; }
+.strip-menu .strip-item, .voice-menu .strip-item { display: flex; flex-direction: column; gap: 1px; }
+.strip-menu .strip-name, .voice-menu .strip-name { font-size: 12px; }
+.strip-menu .strip-item.strip-cur .strip-name, .voice-menu .strip-item.strip-cur .strip-name { color: #4caa6e; }
+.strip-menu .strip-desc, .voice-menu .strip-desc { font-size: 10px; color: var(--text-dim); }
 .strip-menu .strip-soon { font-size: 10px; color: var(--warn); font-style: italic; }
 
 /* Per-session history picker (mirrors the warm menu, list of conversations). */
