@@ -21,10 +21,12 @@ test('CLAUDE_TOOLS: non-empty, unique, includes the staples', () => {
 // disabledTools against it, so unchecking one in the UI is silently dropped.
 // That makes a missed addition a functional gap rather than a cosmetic one, and
 // it is invisible — the checklist just never offers the tool. Pinning the ones
-// observed on the live wire is the only cheap guard; ListAgents shipped in an
-// Anthropic drop and went unnoticed until it showed up in a system prompt.
+// observed on the live wire is the only cheap guard, and it has now missed
+// twice: ListAgents, then SendFeedback, each noticed only when it appeared in a
+// live system prompt. A pin can only assert the names someone already saw, so
+// this list trails the wire by one drop and adding to it is a standing chore.
 test('CLAUDE_TOOLS: covers the tools observed on the live wire', () => {
-  for (const t of ['SendMessage', 'ListAgents', 'Agent', 'Skill', 'WebSearch']) {
+  for (const t of ['SendMessage', 'ListAgents', 'SendFeedback', 'Agent', 'Skill', 'WebSearch']) {
     assert.ok(CLAUDE_TOOLS.includes(t), `missing ${t}`);
   }
 });

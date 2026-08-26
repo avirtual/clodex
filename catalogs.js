@@ -45,7 +45,7 @@ const CLAUDE_TOOLS = [
   // Notifications, remote & prompts
   'PushNotification', 'RemoteTrigger', 'ShareOnboardingGuide', 'AskUserQuestion',
   // Conversation control
-  'EndConversation',
+  'EndConversation', 'SendFeedback',
   // Publishing & review (Artifact uploads local content to claude.ai hosting)
   'Artifact', 'ReportFindings',
   // MCP plumbing
@@ -72,7 +72,10 @@ const CLAUDE_TOOLS = [
 // plumbing, unused in a console session), and EndConversation (abuse-
 // termination affordance with one of the largest always-shipped
 // descriptions in the roster; pointless in a managed console where the
-// operator kills sessions from the UI). Orchestration
+// operator kills sessions from the UI), and SendFeedback (~4.7k chars of
+// prose + a 27-value enum schema every request, to draft a report that is
+// queued locally and needs the operator's approval to go anywhere — the
+// operator is right here). Orchestration
 // tools (Cron*/other Task*/Monitor/worktrees) are intentionally NOT here — some
 // agents genuinely use them, and denying-by-default would force the per-session
 // overrides that re-fragment M1. The default is an editable FLOOR, not a ceiling;
@@ -80,7 +83,7 @@ const CLAUDE_TOOLS = [
 // settings panel.
 const DEFAULT_TOOL_DENY_FLOOR = [
   'NotebookEdit', 'LSP', 'PowerShell', 'ShareOnboardingGuide', 'DesignSync', 'Workflow',
-  'TaskOutput', 'Artifact', 'ReportFindings', 'EndConversation',
+  'TaskOutput', 'Artifact', 'ReportFindings', 'EndConversation', 'SendFeedback',
 ];
 
 // Known CLI-shipped built-in skills. Unlike tools, skills are normally
