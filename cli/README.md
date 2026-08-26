@@ -61,8 +61,8 @@ not a fallback. Pick whichever fits your box:
 
 `cli/` remains a standalone package — installable on a box that has never seen
 Clodex, requiring only `node:*` builtins and its own siblings, never an app
-file. That holds of the SHIPPED tree (`cli/src` and `cli/bin`, which is what
-`files` publishes); `cli/test` does require upward into the app tree, and an
+file. That holds of the SHIPPED tree (`cli/src` and `cli/bin`, the *code* `files`
+publishes); `cli/test` does require upward into the app tree, and an
 upward require added to `cli/src` would break the package. That direction of
 the boundary is unchanged.
 
