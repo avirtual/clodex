@@ -26,13 +26,13 @@ blocks a release.
 
 - **Reloading a session lost track of its worktree, and the checkout leaked.**
   A session's worktree provenance is stored on its record, and that record is
-  the only thing that names the checkout — but an in-place restart rebuilds the
+  how the app finds the checkout again — but an in-place restart rebuilds the
   record from the spawn arguments, and the worktree was not carried across. A
   ticket seat that reloaded itself therefore came back not knowing where it was
   working: deleting it, or accepting its ticket, then reported success while
-  leaving the directory on disk with nothing pointing at it, unmerged commits
-  and all. Two related settings were being dropped by the same seam and are now
-  carried too — a session exempted from auto-compaction silently went back to
+  leaving the directory on disk, unmerged commits and all, with nothing in the
+  app able to find it. Two related settings were being dropped by the same seam
+  and are now carried too — a session exempted from auto-compaction went back to
   compacting after a restart, and a reloaded seat re-delivered a boot digest to
   a conversation that already had one.
 
