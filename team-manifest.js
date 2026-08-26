@@ -1032,7 +1032,7 @@ function rosterExecPayload(seatName) {
 // prompt. Live composition arrives as data.
 //
 // The OUTPUT must not carry the seat name, only the role `seatName` resolves
-// to, so same-role seats share this prefix of the frozen prompt. Scope of that,
+// to, so same-role seats share this text verbatim. Scope of that,
 // measured rather than assumed: for a seat whose role prompt rides
 // --system-prompt-file (every ticket seat — session-manager's
 // `promptRidesAsSystem` skips the append) this block is the TAIL of the append

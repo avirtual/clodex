@@ -1036,9 +1036,11 @@ test('formatTeamBlock: shrunk identity block with role match (lead seat)', () =>
   // The roster listing moved OUT — no "Roles:" line in the invariant block.
   assert.ok(!/Roles:/.test(block), 'roster listing no longer in the system-prompt block');
   // And so did the seat name, in BOTH the places it used to appear: this block
-  // is a prefix of the frozen prompt, so any per-seat token strands the role
-  // prompt behind it. Asserted as an absence of the name itself, not of one
-  // phrasing, so a reworded line that reintroduces it still fails.
+  // must be per-role constant, being the tail of the append channel for ticket
+  // seats and, for the lead, the text preceding the role prompt — so a per-seat
+  // token there is unshareable either way. Asserted as an absence of the name
+  // itself, not of one phrasing, so a reworded line that reintroduces it still
+  // fails.
   assert.ok(!block.includes('boss'), 'the seat name is not in the cache-stable block');
   assert.ok(!block.includes('[agent:exec clodex-team]'),
     'the rendered roster invocation moved to the hook roster, which may name the seat');
