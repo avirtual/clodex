@@ -1057,11 +1057,12 @@ test('formatTeamBlock: a seat that matches no role reports the none-case', () =>
 });
 
 // THE property, stated as bytes rather than as an absence of one substring:
-// two seats of the same role must produce an IDENTICAL block. This block is a
-// prefix of the frozen system prompt (session-manager concatenates the role
-// prompt after it), so a single differing token makes every byte behind it
-// unshareable between concurrent same-role seats — measured at 8,795 bytes for
-// a hand and 4,484 for a reviewer against the live manifest before this held.
+// two seats of the same role must produce an IDENTICAL block. What that is
+// worth, measured: for seats whose role prompt rides --system-prompt-file (all
+// ticket seats) the block is the TAIL of the append channel, so the ~180 bytes
+// of the block itself are the whole saving and nothing trails it to strand. The
+// case where a varying token WOULD strand a role prompt behind it is the lead's
+// concatenated prompt, and a team has one lead, so it can never be shared.
 // strictEqual on the whole string, not a regex: a regex can only forbid the
 // forms someone thought to forbid.
 test('formatTeamBlock: same-role seats render BYTE-IDENTICAL blocks', () => {
@@ -1094,7 +1095,7 @@ test('spawn-callsite: block present when cwd-in-team, absent when not', () => {
     const team = tm.resolveTeam(cwd);
     return team ? formatTeamBlock(team, name) : '';
   };
-  // cwd inside the team root → a real block naming the seat + team.
+  // cwd inside the team root → a real block naming the team + resolved role.
   const inside = block(path.join(root, 'src'), 'shop-reviewer');
   assert.match(inside, /# Team/);
   assert.match(inside, /on team shop/);

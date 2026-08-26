@@ -56,3 +56,33 @@ Block itself also shrank 241->183B (hand), 253->187B (reviewer).
 ## CHANGELOG
 Entry added under `## Unreleased` — behavioural change, states the honest TTL
 caveat (only pays when same-role seats overlap).
+
+## r1 rework — the cost model was wrong (lead's correction, reviewer's catch)
+
+My spec's premise (role prompt concatenated AFTER the block, so the varying
+token strands it) does NOT hold for the seats it named. Verified at source AND
+empirically, rather than taking it on trust a second time:
+
+- session-manager.js:2448 `promptRidesAsSystem = def && def.prompt &&
+  systemPromptFile === def.prompt`; the append at :2467 is guarded
+  `else if (!promptRidesAsSystem && rolePrompt)` — so it is SKIPPED.
+- team-tickets.js:3852 `systemPromptFile: (def && def.prompt) || ...` makes that
+  equality hold for every ticket seat. The role prompt rides
+  --system-prompt-file, a separate channel, already per-role constant.
+- Live files: ~/.clodex/run/clodex-hand-505/append-prompt.md has `# Team` at
+  line 104 of 106 — the block is the TAIL, nothing trails it. The lead's has it
+  at 79 with `# Team lead` at 83 of 307 — the concat case is the LEAD's only,
+  and a team has one lead, so it can never be shared with a same-role peer.
+
+Honest figure: the block ITSELF moves from unshareable to shareable.
+  hand      241B -> 183B   reviewer  253B -> 187B   (~180B/seat, both roles)
+8,795/4,484 were the lead's stranding, generalized to roles where it is zero.
+
+Fixed all three repetitions: CHANGELOG entry rewritten (hygiene at ~180B, not a
+KB win), team-manifest.js:1035-1037 and test/team-manifest.test.js:1063-1064
+now state the tail-vs-lead mechanism. Grepped: no stale figure remains.
+Also fixed the stale :1097 comment ("naming the seat + team" -> "the team +
+resolved role"), per the lead.
+
+Deviation adjudicated by the lead: constant line 3 STAYS. Production change
+unchanged — only numbers and comments were wrong.

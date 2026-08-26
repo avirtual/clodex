@@ -1032,12 +1032,20 @@ function rosterExecPayload(seatName) {
 // prompt. Live composition arrives as data.
 //
 // The OUTPUT must not carry the seat name, only the role `seatName` resolves
-// to: this block is a PREFIX of the frozen prompt, and session-manager appends
-// the role prompt AFTER it, so a token that varies per seat strands every byte
-// behind it (a hand's whole role prompt) as unshareable cache. The name is
-// already conversation content — cli-hooks.js's SessionStart additionalContext
-// leads with it and re-fires on clear AND compact — and the concrete copyable
-// roster invocation is the hook roster's own `Ground truth on demand:` line.
+// to, so same-role seats share this prefix of the frozen prompt. Scope of that,
+// measured rather than assumed: for a seat whose role prompt rides
+// --system-prompt-file (every ticket seat — session-manager's
+// `promptRidesAsSystem` skips the append) this block is the TAIL of the append
+// channel, so ~180 bytes are all there is to share and nothing trails it. The
+// `${teamBlock}\n\n${rolePrompt}` case that would strand a whole role prompt
+// behind a varying token is the LEAD's, and a team has exactly one lead, so
+// there is no same-role peer to share it with. Worth doing for the invariant,
+// not for a KB-scale saving.
+//
+// The name is already conversation content — cli-hooks.js's SessionStart
+// additionalContext leads with it and re-fires on clear AND compact — and the
+// concrete copyable roster invocation is the hook roster's own
+// `Ground truth on demand:` line.
 function formatTeamBlock(team, seatName) {
   const mine = matchSeatRole(team, seatName);
   const yourRole = mine || 'none — not a manifest role';
