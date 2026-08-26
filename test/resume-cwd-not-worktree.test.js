@@ -110,7 +110,10 @@ function bodyAfter(src, anchor) {
 
 // All five sites that respawn a session from its persisted record. The three that
 // run against a LIVE record (restartSession, applySessionArgs, the reload intent)
-// are here for the same reason as the two archived-record ones: the mutation this
+// are here for the same reason as the two that run without a live session
+// (retrySpawn, restore-on-launch — the latter respawns COLD entries and skips
+// `archivedAt` ones outright, so "archived" is the wrong word for either): the
+// mutation this
 // file guards against — "boot the seat in the tree it is supposed to work in" — is
 // a one-line edit at any of the five, and a table covering some of them would let
 // it land while reading as a checked list.

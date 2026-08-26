@@ -214,6 +214,12 @@ function census() {
 // back under a name that is already its own), and add the row. Do not silence it
 // by regenerating the table from the code.
 //
+// A `mint: false` row is ALSO a row of `RESUME_SITES` in
+// test/resume-cwd-not-worktree.test.js — add it there in the same commit. Only
+// this file fails on a count, so nothing else will tell you: that table's own
+// per-site proof mutates the sites it lists and is structurally blind to a site
+// it does not, which is how it shipped covering four of five.
+//
 // ── THE `noWire` COLUMN (t189) ───────────────────────────────────────────────
 // Same shape, same rule, different axis. `noWire` is the 21st positional and it
 // ALSO defaults false, so the failure mode is identical to mint's: a site that
