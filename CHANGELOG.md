@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased — your checkouts, your cost history, and three hostile values
 
+- **`SendFeedback` can now be switched off.** The tool arrived in a recent CLI
+  drop and Clodex did not know about it, and a tool Clodex has never heard of
+  cannot be disabled at all — unchecking it would have done nothing, except that
+  the checklist never offered it. It is now in the list, and denied by default
+  for new installs: it costs roughly 4,700 characters of instructions on every
+  single request, to draft a feedback report that is queued on your machine and
+  goes nowhere without your approval. If you have already customised the default
+  deny list, your list wins and this one does not change it — add `SendFeedback`
+  from the settings panel if you want it off. (`ListAgents`, mentioned in the
+  same breath, has been toggleable since early August.)
+
 - **Teammates of the same role now share the `# Team` block.** That block, in
   every team seat's system prompt, named the seat — "You are seat
   clodex-hand-504…" — and repeated it in a roster invocation on the line below,
