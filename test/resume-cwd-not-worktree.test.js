@@ -113,10 +113,9 @@ function bodyAfter(src, anchor) {
 // are here for the same reason as the two that run without a live session
 // (retrySpawn, restore-on-launch — the latter respawns COLD entries and skips
 // `archivedAt` ones outright, so "archived" is the wrong word for either): the
-// mutation this
-// file guards against — "boot the seat in the tree it is supposed to work in" — is
-// a one-line edit at any of the five, and a table covering some of them would let
-// it land while reading as a checked list.
+// mutation this file guards against — "boot the seat in the tree it is supposed
+// to work in" — is a one-line edit at any of the five, and a table covering some
+// of them would let it land while reading as a checked list.
 //
 // GROUND TRUTH for this table is `test/create-mint-census.test.js`'s EXPECTED —
 // its `mint: false` rows ARE the respawn-from-record set, and it fails on a count

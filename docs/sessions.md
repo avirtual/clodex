@@ -196,9 +196,8 @@ row's ✕, which archives. Archived rows surface via the sidebar status filter
 
 The record-droppers reachable from the sidebar are three, not one: the ARCHIVED
 row's ✕ and the FAILED ghost row's ✕ (both `forgetSession` → `persistence.remove`,
-renderer.js), and right-click Delete Session…. Only the last kills a process; the
-two ✕ routes act on a record whose session is already gone. (The full in-process
-list, which includes non-UI droppers, is in .claude/CLAUDE.md.)
+renderer.js), and right-click Delete Session…. Only the last kills a session
+process; the two ✕ routes act on a record whose session is already gone.
 
 **Real delete of a LIVE session = right-click "Delete Session…"** + native
 confirm. It routes through `manager.kill`
@@ -270,11 +269,11 @@ is kept in step with `test/create-mint-census.test.js`);
 `claimTree` (team-tickets.js) clears any other record naming a path it mints —
 the other two `setWorktree` call sites (`session:markWorktree`, the spawn-intent
 mint) do NOT scan, so that self-healing covers the ticket path only; and
-`destroy()` takes its keep-the-record failure return when `removeWorktree`
-cannot find the tree — but only for a seat that is already DEAD (`dropRecord` is
-gated `if (wasLive) return`, and on a live seat `kill()` has already removed the
-record unconditionally). That arm is reachable from team-retire/discard, NOT
-from the sidebar.
+`destroy()` has a failure return that KEEPS the record — see its own comment
+for when. That arm is not reachable from the sidebar: an archived row's ✕ drops
+the record directly, and Delete Session… needs an unarchive first, after which
+the row is live and `kill()` has already dropped the record before any tree
+work.
 
 The only user-visible staleness is the Delete Session… confirm sentence and the
 `Worktree removal failed: …` toast that follows it; both are cosmetic. Reaching
