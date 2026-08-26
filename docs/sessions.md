@@ -271,13 +271,21 @@ is kept in step with `test/create-mint-census.test.js`);
 the other two `setWorktree` call sites (`session:markWorktree`, the spawn-intent
 mint) do NOT scan, so that self-healing covers the ticket path only; and
 `destroy()` takes its keep-the-record failure return when `removeWorktree`
-cannot find the tree. The only user-visible staleness is the Delete Session…
-confirm sentence and the `Worktree removal failed: …` toast that follows it, and
-reaching either needs an unarchive first (`dialog:confirmKill` is wired to a
-non-archived row's context menu only); both are cosmetic and neither drops a
-record. To actually drop one of these records, use the ARCHIVED row's ✕
-(`forgetSession` → `persistence.remove`) — not Delete Session…, which routes
-through `destroy()` and for a stale pointer deliberately KEEPS the record.
+cannot find the tree — but only for a seat that is already DEAD (`dropRecord` is
+gated `if (wasLive) return`, and on a live seat `kill()` has already removed the
+record unconditionally). That arm is reachable from team-retire/discard, NOT
+from the sidebar.
+
+The only user-visible staleness is the Delete Session… confirm sentence and the
+`Worktree removal failed: …` toast that follows it; both are cosmetic. Reaching
+either needs an unarchive first (`dialog:confirmKill` is wired to a LIVE row's
+context menu — an archived row has none, and neither does a failed ghost row),
+and the unarchive is what makes the difference: the row is then live, so Delete
+Session… DOES drop the record and merely toasts the removal failure. Either
+sidebar route therefore drops it. Use the ARCHIVED row's ✕ (`forgetSession` →
+`persistence.remove`) as the direct one — it needs no unarchive and kills no
+process.
+
 Do not add a sweep keyed on the path being missing: a missing path is not
 evidence a session is dead (an unmounted volume or a moved repo reads
 identically), and dropping records on it is the pre-v0.5.3 "upgrade kills my
