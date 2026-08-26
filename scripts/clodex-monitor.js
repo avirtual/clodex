@@ -314,7 +314,10 @@ function listMonitors(agent) {
     const fid = f.replace(/\.json$/, ''); // authoritative id = filename stem
     try {
       const s = JSON.parse(fs.readFileSync(path.join(monitorsDir(agent), f), 'utf-8'));
-      const alive = s.pid && isAlive(s.pid);
+      // `> 0` and not merely truthy: isAlive() is a kill(pid, 0) probe, and
+      // kill(-1, 0) does not throw, so a state file holding a broadcast pid would
+      // read as alive forever — never reaped, listed to the agent on every call.
+      const alive = s.pid > 0 && isAlive(s.pid);
       if (!alive) { cleanupState(agent, fid); continue; }
       items.push(s.description ? `${fid}(${s.description})` : fid);
     } catch { /* skip unreadable */ }
@@ -356,7 +359,16 @@ async function runLauncher() {
     let state;
     try { state = JSON.parse(fs.readFileSync(statePath(agent, p.id), 'utf-8')); }
     catch { die(`no such monitor ${p.id}`); return; }
-    try { process.kill(state.pid, 'SIGTERM'); } catch { /* already gone */ }
+    // `> 0`, the same refusal the launcher's killTarget carries above and for the
+    // same reason — except this pid has FILE provenance, which is the shape that
+    // can actually be non-positive: it is read back from the watcher's state JSON,
+    // which a truncated write, a crashed watcher or a hand-edit can leave holding
+    // -1 or 0, and process.kill would then signal every process this user owns
+    // rather than the monitor. Falls through to cleanupState either way: a state
+    // file naming an unsignallable pid is exactly the one worth deleting.
+    if (state.pid > 0) {
+      try { process.kill(state.pid, 'SIGTERM'); } catch { /* already gone */ }
+    }
     cleanupState(agent, p.id);
     process.exit(0); // silent success — the watcher's passive 'stopped' event confirms
   }

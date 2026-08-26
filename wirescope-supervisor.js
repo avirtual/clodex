@@ -273,11 +273,41 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
     _pidFile() { return path.join(getUserDataPath(), 'wirescope', 'wirescope.pid'); }
     _logFile() { return path.join(this._dirs().logDir, 'uvicorn.log'); }
 
+    // The ONE place a pid of FILE provenance enters this class, so it is the one
+    // place the `> 0` refusal has to live: stop() and restart() both signal
+    // whatever this returns, and restart() escalates to SIGKILL. `> 0` and not
+    // merely truthy — process.kill reads a non-positive pid as a BROADCAST, so a
+    // pidfile carrying -1 (a truncated write, a hand-edit, a recycled file) has
+    // stop() signalling every process the user owns. The liveness probe below is
+    // no backstop for that: kill(-1, 0) does NOT throw, so a broadcast pid reads
+    // as alive and restart()'s gone() poll never terminates the escalation.
     _survivorPid() {
       try {
         const rec = JSON.parse(fs.readFileSync(this._pidFile(), 'utf8'));
         const s = getUiSettings().get();
-        if (!rec || !rec.pid || rec.port !== (s.wirescopePort || 7800)) return null;
+        if (!rec) return null;
+        if (!(rec.pid > 0)) {
+          // Logged only when the pidfile actually carried something: an absent
+          // pid is the ordinary "no survivor" case, a non-positive one is a
+          // corrupt record that would have been signalled. DISCARDED rather than
+          // latched behind a warn-once flag, because this runs on the status()
+          // watchdog (engine.js, every 10s): a latch would silence the log but
+          // leave the corrupt file in place forever, and stop() can no longer
+          // clean it — it gets null from here, so the release never runs.
+          // Deleting it is self-healing and warns exactly once by construction,
+          // the same answer clodex-monitor's stop path gives a poisoned state file.
+          //
+          // Through _releasePidFile, never a bare unlink: `rec` is a snapshot, and
+          // a successor can write its own valid record between that read and this
+          // line. The release re-reads and unlinks only while the file still names
+          // the pid we are discarding, so a successor's record survives.
+          if (rec.pid !== undefined) {
+            log.warn('wirescope', `discarding pidfile: pid is ${rec.pid}, which would broadcast rather than target`);
+            this._releasePidFile(rec.pid);
+          }
+          return null;
+        }
+        if (rec.port !== (s.wirescopePort || 7800)) return null;
         process.kill(rec.pid, 0); // throws if gone
         return rec.pid;
       } catch { return null; }
