@@ -1027,16 +1027,24 @@ function rosterExecPayload(seatName) {
   return `[agent:exec clodex-team] ${JSON.stringify({ action: 'roster', agent: seatName || '<your name>' })}`;
 }
 
-// Per-seat invariants ONLY — the roster listing must stay OUT: composition
+// Per-role invariants ONLY — the roster listing must stay OUT: composition
 // changes over a seat's life and this text is part of the cache-stable system
 // prompt. Live composition arrives as data.
+//
+// The OUTPUT must not carry the seat name, only the role `seatName` resolves
+// to: this block is a PREFIX of the frozen prompt, and session-manager appends
+// the role prompt AFTER it, so a token that varies per seat strands every byte
+// behind it (a hand's whole role prompt) as unshareable cache. The name is
+// already conversation content — cli-hooks.js's SessionStart additionalContext
+// leads with it and re-fires on clear AND compact — and the concrete copyable
+// roster invocation is the hook roster's own `Ground truth on demand:` line.
 function formatTeamBlock(team, seatName) {
   const mine = matchSeatRole(team, seatName);
   const yourRole = mine || 'none — not a manifest role';
   return [
     '# Team',
-    `You are seat ${seatName} on team ${team.name} (root ${team.root}). Your role: ${yourRole}.`,
-    `Team composition arrives in your context; ground truth: ${rosterExecPayload(seatName)}`,
+    `You are on team ${team.name} (root ${team.root}). Your role: ${yourRole}.`,
+    'Team composition arrives in your context, and with it the ground-truth roster invocation.',
   ].join('\n');
 }
 
