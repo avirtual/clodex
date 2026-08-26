@@ -8,7 +8,7 @@ and [telemetry.md](telemetry.md) for the proxy/ctx side-channels.
 Reading guide for a change: **spawn/argv** → `SessionManager.create` +
 argv-merge.js · **hooks** → cli-hooks.js · **transcript watching** →
 jsonl-watcher.js / wire-intents.js · **exit/restore** → `ptyProc.onExit`,
-`restartSession` (main.js), `app:restore-sessions` · **persistence** →
+`restartSession` (engine.js), `app:restore-sessions` · **persistence** →
 stores.js · **workspaces** → workspaces store + `SessionManager.windows`.
 
 ## 1. Create
@@ -196,9 +196,8 @@ row's ✕, which archives. Archived rows surface via the sidebar status filter
 
 The record-droppers reachable from the sidebar are three, not one: the ARCHIVED
 row's ✕ and the FAILED ghost row's ✕ (both `forgetSession` → `persistence.remove`,
-renderer.js), and right-click Delete Session… (see `destroy()` for when it does
-not drop). Only the last kills a session process; the two ✕ routes act on a
-record whose session is already gone.
+renderer.js), and right-click Delete Session…. Only the last kills a session
+process; the two ✕ routes act on a record whose session is already gone.
 
 **Real delete of a LIVE session = right-click "Delete Session…"** + native
 confirm. It routes through `manager.destroy` (`ipc-handlers.js` `session:kill`)
@@ -215,14 +214,9 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | Restore failure | kept, returned `{failed:true}` | never spawned | failed ghost tab (retry / forget) |
 | Restore (archived) | kept | never spawned | dimmed archived row (click = resume) |
 
-`restartSession(name, opts)` (main.js — shared by the local IPC handler and
-the peer restart endpoint): kill → `waitForSessionExit` (polls the map;
-removal is async up to the SIGKILL fallback — a fixed sleep caused
-"already exists") → `manager.create` from the persisted entry →
-re-assert stripLevel + label. On failure it **upserts the entry back**
-(kill had removed it) — a session must never vanish because a respawn threw.
-`opts.fresh` drops the resumeId (required for skill roster changes, which
-are frozen on resume).
+`restartSession` (engine.js) — shared by the local IPC handler and the peer
+restart endpoint. `opts.fresh` drops the resumeId (required for skill roster
+changes, which are frozen on resume).
 
 Restore (`app:restore-sessions`) has three branches: an entry with `archivedAt`
 comes back `{archived:true}` and is **never spawned** (rendered as a dimmed
@@ -247,7 +241,7 @@ fourth library object but is JSON, not markdown).
 sessions.json entries carry the full respawn recipe (type/cwd/extraArgs/
 sessionId/workspaceId/prompt refs/proxy tri-state/agents/deny/tools/skills)
 plus setter-added `sessionIds[]` history, label, stripLevel, `createdAt`,
-`worktree` provenance (`setWorktree`, cleared on delete's worktree removal),
+`worktree` provenance (`setWorktree`, removed with the record on delete),
 `archivedAt` (`setArchived`, present only while archived), and `autoCompact`
 (stored only as `false` to opt out). Writes validate before backing up to
 `.bak`; load falls back to the backup.
@@ -327,8 +321,8 @@ see §4.)
 - Restore/respawn failure keeps the persisted entry (`{failed:true}`).
 - ✕ / Cmd+W on a LIVE row archives (keep the record, stamp `archivedAt`). The
   ARCHIVED row's ✕ and the FAILED ghost row's ✕ are different controls
-  (`forgetSession`) and DO drop the record, as does Delete Workspace….
-  "✕ archives" is true only of a live row.
+  (`forgetSession`) and DO drop the record, as do right-click Delete Session…
+  and Delete Workspace…. "✕ archives" is true only of a live row.
 - Parked-DM dir removal is gated on `_userKilled` — archive leaves it false.
 - Strip level is not a spawn arg — every kill+create path must re-assert it.
 - The append-prompt channel is static per protocol (see messaging.md §6);
