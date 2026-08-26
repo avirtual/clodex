@@ -38,7 +38,7 @@ function registerIpcHandlers(deps) {
     jsonlToMarkdown, log, manager,
     openWirescopeWindow, os,
     path, persistence, probePeer, proxyPoller,
-    pty, readEffectiveSkillState, readEffectiveToolState, readSessionMeta,
+    pty, readEffectiveSkillState, readEffectiveToolState, readVoiceMode, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead,
@@ -895,6 +895,12 @@ function registerIpcHandlers(deps) {
     const names = [...new Set([...CLAUDE_SKILLS, ...Object.keys(eff.overrides)])].sort();
     return { ok: true, names, effective: eff.overrides, skillsLocked: eff.skillsLocked, canReenable: SKILL_REENABLE_CONFIRMED };
   });
+  // Box-wide, so it takes no session name: ~/.claude/settings.json is global and
+  // every Claude session on this box shares it. Reading it MAIN-side is what lets
+  // the browser frontend have this control at all — a renderer-side fs read would
+  // ship a button that is dead over web-host.
+  handle('settings:voiceMode', () => ({ ok: true, ...readVoiceMode() }));
+
   handle('settings:toolCatalogFor', (_e, cwd) => {
     return { ok: true, effective: readEffectiveToolState(cwd || null).overrides };
   });
