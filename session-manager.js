@@ -222,6 +222,27 @@ function nearMissFormHint(text) {
 // notice the flag is gone and _maybeRearmHold never runs against anything.
 const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'keepWarmAlways', 'holdUntil'];
 
+// The delayed backstop SIGKILL for a pty that ignored `pty.kill()`. The `> 0`
+// is the whole function: `process.kill` reads non-positive pids as BROADCASTS,
+// not as process ids, and both callers reach it from a `setTimeout` five
+// seconds after the session object was captured.
+//   -1  signals EVERY process the user may signal — the entire desktop.
+//    0  signals our own process group — the whole app.
+// Neither is theoretical. A test fixture whose stub pty carried `pid: -1`
+// reached kill() and SIGKILLed ~277 processes (Dock, WindowServer, Terminal,
+// Chrome, Postgres) three times over, and the bare `catch {}` swallowed it so
+// nothing reached the log. A pid is not required to be real here: `pty` is an
+// injected seam, and an exited pty can leave the field undefined.
+// team-tickets.js's suite-runner guards the identical call for the identical
+// reason; that guard predates this one and did not reach this file.
+function sigkillPid(pid, name, log) {
+  if (!(pid > 0)) {
+    if (log) log.warn('session', `refusing SIGKILL for ${name}: pid is ${pid}, which would broadcast rather than target`);
+    return;
+  }
+  try { process.kill(pid, 'SIGKILL'); } catch {}
+}
+
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
 // re-register over — when the process it names is dead, OR when it names OUR OWN
 // pid for a session this process isn't running. The latter is the deterministic-
@@ -2238,9 +2259,7 @@ function createSessionManager(deps) {
       }
       getPersistence().remove(name);
       try { s.pty.kill(); } catch {}
-      setTimeout(() => {
-        try { process.kill(s.pty.pid, 'SIGKILL'); } catch {}
-      }, 5000);
+      setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
     }
 
     // Poll the map the kill path actually releases. engine.js has its own copy
@@ -2331,9 +2350,7 @@ function createSessionManager(deps) {
       getPersistence().setArchived(name, true);
       s._archived = true;
       try { s.pty.kill(); } catch {}
-      setTimeout(() => {
-        try { process.kill(s.pty.pid, 'SIGKILL'); } catch {}
-      }, 5000);
+      setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
     }
 
     // The exits that DROP a record run without a live session, so they cannot read

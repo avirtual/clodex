@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased — your checkouts, your cost history, and three hostile values
 
+- **A stub pty in a test could SIGKILL every process on the machine.** When a
+  session is killed or archived, Clodex asks its pty to exit and then, five
+  seconds later, sends SIGKILL as a backstop in case it did not. That backstop
+  passed the pty's pid straight to `process.kill` with no check, and
+  `process.kill` does not read a non-positive pid as an id: `-1` means *every
+  process you are allowed to signal*, and `0` means *your own process group*.
+  A test whose fake pty carried `pid: -1` reached that path and killed roughly
+  277 processes — Dock, WindowServer, Terminal, browsers, databases — three
+  times over, with the empty `catch` swallowing every trace. Both backstops now
+  refuse any pid that is not a real one, and log the refusal.
+
 - **Reloading a session silently turned keep-warm off.** A perpetual keep-warm
   hold (Always, in the session menu) is stored on the session record, but every
   in-place restart — Restart, an args edit with restart ticked, and

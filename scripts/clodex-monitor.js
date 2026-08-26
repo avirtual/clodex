@@ -221,6 +221,14 @@ async function runWatcher() {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     killTarget = () => {
+      // `> 0` before negating, the same guard cli/src/dial.js and
+      // team-tickets.js's suite runner carry on the identical call. A failed
+      // spawn leaves `child.pid` undefined, so `-child.pid` is NaN — and
+      // process.kill reads a non-positive pid as a BROADCAST, not an id: it
+      // would signal every process this user owns instead of this command's
+      // group. The command here is operator-supplied and may fail to spawn for
+      // reasons this code never sees.
+      if (!(child.pid > 0)) return;
       try { process.kill(-child.pid, 'SIGTERM'); } catch {}
       setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, 2000);
     };
