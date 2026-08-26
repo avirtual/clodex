@@ -30,8 +30,9 @@ const { createCliHooks } = require('../cli-hooks');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { bakePrompt, promptCacheDir, readCache, cachePathFor } = require('../ipc-prompt-cache');
 const { mergeSessionEnv } = require('../env-scopes');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-refresh-')); }
+function tmp() { return mkTmpRoot('clodex-refresh-'); }
 
 // The prompt-assembly deps are REAL; only the world outside it (pty, transport,
 // watcher, os notifications) is stubbed. That split is the point of the file.

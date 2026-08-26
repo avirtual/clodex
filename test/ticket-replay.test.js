@@ -23,6 +23,7 @@ const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { createTicketsStore } = require('../tickets-store');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const CWD = os.tmpdir();
 
@@ -35,7 +36,7 @@ function mkWorld() {
   // under it (projects/<leaf>-<hash8>/tickets.json), so minting a fresh one per
   // manager would hand every "second process" test an empty board and the replay
   // it exists to prove would look correct while testing nothing.
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-tr-home-'));
+  const home = mkTmpRoot('clx-tr-home-');
   const tstore = createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,
@@ -59,7 +60,7 @@ function mkWorld() {
 
 // A manager = one app process. `boot()` returns a fresh one over the same world.
 function boot(world, opts = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-tr-run-'));
+  const root = mkTmpRoot('clx-tr-run-');
   const writes = new Map();          // seat name → concatenated PTY bytes
   const dataCb = new Map();          // seat name → the manager's onData handler
   // Seat name → the ms after which this terminal keeps what is written to it.
@@ -794,7 +795,7 @@ test('a spilled replay carries the marker on the POINTER line, not only inside t
     deps: {
       MSG_SPILL_THRESHOLD: 500,
       spillToFile: (sender, body, recipient) => {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-tr-spill-'));
+        const dir = mkTmpRoot('clx-tr-spill-');
         const f = path.join(dir, `msg-${recipient}-${spills.length}.txt`);
         fs.writeFileSync(f, `From: ${sender}\n\n${body}`);
         spills.push(f);

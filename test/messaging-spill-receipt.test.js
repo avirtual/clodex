@@ -21,6 +21,7 @@ const path = require('path');
 
 const { sweepSpilledMessages } = require('../engine');
 const { parkDelivery, drainPending, allParkedTexts } = require('../pending-store');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const MAX_AGE = 1800;            // seconds — mirrors engine.MSG_MAX_AGE
 const NOW = 1_800_000_000_000;   // fixed clock, so nothing depends on wall time
@@ -28,7 +29,7 @@ const OLD = NOW - (MAX_AGE + 60) * 1000;
 const FRESH = NOW - 60 * 1000;
 
 function tmpDirs() {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'spill-receipt-'));
+  const base = mkTmpRoot('spill-receipt-');
   const msgDir = path.join(base, 'messages');
   const pendingDir = path.join(base, 'pending');
   fs.mkdirSync(msgDir, { recursive: true });

@@ -10,9 +10,10 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { preseedClaudeOnboarding } = require('../session-manager');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmpHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'preseed-'));
+  return mkTmpRoot('preseed-');
 }
 
 test('fresh home: seeds hasCompletedOnboarding + theme, 0600', () => {

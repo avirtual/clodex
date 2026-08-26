@@ -11,9 +11,10 @@ const os = require('os');
 const path = require('path');
 
 const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, allParkedTexts, parkIdInUse, claimParkedById, agentDir } = require('../pending-store');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'pending-test-'));
+  return mkTmpRoot('pending-test-');
 }
 
 test('park then drain round-trips the text', () => {

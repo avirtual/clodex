@@ -11,8 +11,9 @@ const os = require('os');
 const path = require('path');
 const { runLegacySweep, findOrphans, deriveOwner } = require('../legacy-sweep');
 const { legacyPathsFor, runDirFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-sweep-')); }
+function tmp() { return mkTmpRoot('clodex-sweep-'); }
 const touch = (p, body = '') => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, body); };
 const exists = (p) => fs.existsSync(p);
 

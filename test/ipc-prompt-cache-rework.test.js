@@ -32,8 +32,9 @@ const { createCliHooks } = require('../cli-hooks');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { bakePrompt, promptCacheDir, cachePathFor, readCache } = require('../ipc-prompt-cache');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-t63-')); }
+function tmp() { return mkTmpRoot('clodex-t63-'); }
 
 function promptV(extra = '') {
   const lines = [];

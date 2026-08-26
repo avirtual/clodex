@@ -23,9 +23,10 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { createCtlService, tokenize, refuse, aliasCtx, ALLOWED, MAX_BLOCK_CHARS } = require('../ctl-service');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmpCtxFile() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-ctl-'));
+  const dir = mkTmpRoot('clx-ctl-');
   return path.join(dir, 'contexts.json');
 }
 
@@ -437,7 +438,7 @@ test('the service is electron-free — it must load in a plain node process', ()
 // reading the developer's own store would make the test pass or fail on
 // whatever contexts they happen to have.
 test('an absent contextsFile falls back to the CLI default path, not null', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-home-'));
+  const home = mkTmpRoot('clx-home-');
   fs.mkdirSync(path.join(home, '.clodex', 'cli'), { recursive: true });
   fs.writeFileSync(
     path.join(home, '.clodex', 'cli', 'contexts.json'),

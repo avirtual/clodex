@@ -11,13 +11,14 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const {
   createBasketRetriever, buildIndex, rank, parseBasket, recencyOf, MIN_HITS,
 } = require('../basket-retrieve');
 
 function mkBasket(records) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-basket-'));
+  const dir = mkTmpRoot('clx-basket-');
   const file = path.join(dir, 'operator.jsonl');
   fs.writeFileSync(file, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
   return file;
@@ -61,7 +62,7 @@ test('basket: confinement is enforced before ranking, not by scoring', () => {
 });
 
 test('basket: a corrupt line does not lose the rest of the basket', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-basket-'));
+  const dir = mkTmpRoot('clx-basket-');
   const file = path.join(dir, 'operator.jsonl');
   // A crash mid-append leaves a truncated tail. Losing 13,926 records because
   // the last one is half-written is not an acceptable failure mode.

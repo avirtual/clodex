@@ -21,6 +21,7 @@ const path = require('path');
 const os = require('os');
 
 const { parseAndValidate } = require('../exec-schema');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'clodex-monitor.js');
 // The SHIPPED def, not a copy of it (t101).
@@ -197,7 +198,7 @@ const launchMon = (home, payload) => new Promise((resolve) => {
 });
 
 test('launcher refuses a traversing agent or id before touching the filesystem', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mon-'));
+  const home = mkTmpRoot('clodex-mon-');
   // A file OUTSIDE the monitors tree that a traversal would reach. `list`
   // cleans up dead monitors, so it unlinks on the path it is handed.
   const outside = path.join(home, 'precious.json');

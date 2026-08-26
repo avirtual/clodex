@@ -22,6 +22,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { parseEscapes, formatEscapes, MARK } = require('../scripts/test-escapes.js');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const RUNNER = path.join(__dirname, '..', 'scripts', 'run-tests.js');
 
@@ -120,7 +121,7 @@ test('MARK is the substring Node actually emits, in every reporter', () => {
 // ── Wrapper ─────────────────────────────────────────────────────────────────
 
 function scratch(body) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-escape-'));
+  const dir = mkTmpRoot('clodex-escape-');
   const file = path.join(dir, 'scratch.test.js');
   fs.writeFileSync(file, body);
   return { dir, file, clean: () => fs.rmSync(dir, { recursive: true, force: true }) };

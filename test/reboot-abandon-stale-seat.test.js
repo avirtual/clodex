@@ -27,6 +27,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createEngine } = require('../engine');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Fixed points, never relative offsets: a re-mint lands on the real Date.now()
 // and must not be able to collide with either of these by accident.
@@ -42,7 +43,7 @@ const T1 = 1800000000000;
 const T2 = T1 + 6 * 60 * 1000;
 
 function mkEngine(seams) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t283-'));
+  const tmp = mkTmpRoot('clx-t283-');
   // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,

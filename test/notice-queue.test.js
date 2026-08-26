@@ -28,12 +28,13 @@ const { createCliHooks } = require('../cli-hooks');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { promptCacheDir } = require('../ipc-prompt-cache');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
   NOTICE_MAX_DEPTH, NOTICE_MAX_AGE_MS,
   noticeDir, noticePath, enqueueNotice, parseNotices, versionNoticeFor, clearNotices,
 } = require('../notice-queue');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-t240-')); }
+function tmp() { return mkTmpRoot('clodex-t240-'); }
 
 function lines(root, name) {
   return fs.readFileSync(noticePath(root, name), 'utf8').split('\n').filter((l) => l.trim());

@@ -17,6 +17,7 @@ const path = require('node:path');
 
 const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION, NO_SUCH_METHOD } = require('../plugin-api');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // ── fakes ──────────────────────────────────────────────────────────────────
 function makeManager(sessions = []) {
@@ -39,7 +40,7 @@ function makeManager(sessions = []) {
 }
 
 function makeHost({ manager = makeManager(), settings = {}, loader = null, libraryKinds, libraryPinKinds } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugin-test-'));
+  const dir = mkTmpRoot('clodex-plugin-test-');
   let ui = { ...settings };
   const logged = [];
   const removals = [];
@@ -441,7 +442,7 @@ test('lib and telemetry are frozen read-only passthroughs', () => {
 // Read-only is now a property of the value rather than a request.
 test('t8: telemetry.snapshot returns a deep copy — a plugin cannot edit core\'s live payload', () => {
   const live = { tok: 1234, nested: { model: 'opus', calls: [1, 2] } };
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugin-test-'));
+  const dir = mkTmpRoot('clodex-plugin-test-');
   let ui = {};
   const engine = createPluginHostEngine({
     manager: makeManager(),
@@ -484,7 +485,7 @@ test('t8: telemetry.snapshot returns a deep copy — a plugin cannot edit core\'
 test('t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls', () => {
   const realLeaf = require('../git-worktree');
   const before = realLeaf.removeWorktree;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugin-test-'));
+  const dir = mkTmpRoot('clodex-plugin-test-');
   let ui = {};
   const engine = createPluginHostEngine({
     manager: makeManager(),

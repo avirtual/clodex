@@ -10,8 +10,9 @@ const os = require('os');
 const path = require('path');
 const { createAgentTransport } = require('../agent-transport');
 const { pathFor, runDirFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-reg-')); }
+function tmp() { return mkTmpRoot('clodex-reg-'); }
 function mk(REGISTRY_DIR) { return createAgentTransport({ REGISTRY_DIR, MAX_MSG: 65536 }); }
 // Registry entries now live per-agent at run/<name>/agent.json (clodex-paths).
 function regFile(root, name) { return pathFor(root, name, 'registry'); }

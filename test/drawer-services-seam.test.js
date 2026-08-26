@@ -30,6 +30,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createEngine } = require('../engine');
 const { createWebHost } = require('../web-host');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // This list IS the contract — nothing derives it from the handlers. A step-3
 // service registered as `clodexctl:run` rather than `ctl:run` would sail past
@@ -54,7 +55,7 @@ const WEB_REGISTERED = ['wterm:spawn', 'wterm:write', 'wterm:resize'];
 const silentLog = { info() {}, warn() {}, error() {} };
 
 function mkEngine(seams) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-drawer-seam-'));
+  const tmp = mkTmpRoot('clx-drawer-seam-');
   // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,

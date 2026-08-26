@@ -44,13 +44,14 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createEngine } = require('../engine');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A fixed past deadline, not an offset: a preserved value and a re-minted one
 // must not be able to coincide by accident.
 const DEADLINE = 1700000000000; // 2023-11-14T22:13:20Z
 
 function mkEngine() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-keepwarm-'));
+  const tmp = mkTmpRoot('clx-keepwarm-');
   // registryDir, or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,

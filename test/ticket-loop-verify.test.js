@@ -26,6 +26,7 @@ const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { ticketInFlight } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 // The REAL parser, used to execute the recovery an escalation prescribes rather
 // than to pattern-match it: a copy of the grammar in this file would agree with
 // itself after a rename and let the advice go stale silently.
@@ -171,7 +172,7 @@ function stubSuite(repo, mode) {
 // the shape the loop is designed for. Returned SHAs are read back from git, not
 // assumed, so a fixture that failed to build the state it names cannot pass.
 function mkRepo() {
-  const dir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-loop-repo-'));
+  const dir = mkTmpRoot('clodex-loop-repo-');
   git(dir, ['init', '-q', '-b', 'master']);
   git(dir, ['config', 'user.email', 't@t.t']);
   git(dir, ['config', 'user.name', 'T']);
@@ -218,7 +219,7 @@ function mkLoop({
   wrapFs = (f) => f,
 } = {}) {
   stubSuite(repo, suite);
-  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-loop-'));
+  const home = mkTmpRoot('clodex-loop-');
   // The reviewer's role prompt must EXIST, because the spawn path warns when it
   // does not and the loop escalates on that warning. Without this the fixture
   // models a box with no prompts installed, and every green-path assertion below

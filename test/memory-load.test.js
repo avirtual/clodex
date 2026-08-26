@@ -20,6 +20,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const { digestTiers, composeDigest, createMemoryStore, DIGEST_BUDGET,
   RECENT_BODY_CAP } = require('../memory-store');
@@ -102,7 +103,7 @@ test('digestTiers: a pin demoted to an index line is TITLE, not FULL', () => {
 // product's own code; the stubs stand only between create()'s entry and the
 // session landing in the map.
 function mkManager({ units = [], extraDeps = {} } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-memload-'));
+  const root = mkTmpRoot('clx-memload-');
   const memRoot = path.join(root, 'library', 'memory');
   const store = createMemoryStore(memRoot);
   const ids = [];

@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'task-ledger.js');
 const FIXTURES = path.join(__dirname, 'fixtures', 'task-ledger');
@@ -107,8 +108,8 @@ test('task-ledger attributes transcript cost to team task dirs', async (t) => {
 
 test('task-ledger resolves a team by --project root containment (deepest wins)', () => {
   // Build a throwaway CLODEX_HOME with two nested teams; the deeper root must win.
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-home-'));
-  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-outer-'));
+  const home = mkTmpRoot('tl-home-');
+  const outer = mkTmpRoot('tl-outer-');
   const inner = path.join(outer, 'packages', 'app');
   fs.mkdirSync(path.join(home, 'teams', 'mono', 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(home, 'teams', 'app', 'tasks'), { recursive: true });
@@ -123,7 +124,7 @@ test('task-ledger resolves a team by --project root containment (deepest wins)',
 });
 
 test('task-ledger errors when no team root contains --project', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tl-none-'));
+  const home = mkTmpRoot('tl-none-');
   fs.mkdirSync(path.join(home, 'teams'), { recursive: true });
   assert.throws(
     () => run(['--project', '/nowhere/at/all', '--json'], home),

@@ -23,6 +23,7 @@ const path = require('node:path');
 
 const sessionManagerModule = require('../session-manager');
 const { enqueueNotice, versionNoticeFor, clearNotices } = require('../notice-queue');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Wrap, don't replace: capture the deps and delegate, so the engine is built
 // exactly as it would be in the app.
@@ -36,7 +37,7 @@ sessionManagerModule.createSessionManager = (deps) => {
 const { createEngine } = require('../engine');
 
 function mkEngine() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-notice-wiring-'));
+  const tmp = mkTmpRoot('clx-notice-wiring-');
   // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,

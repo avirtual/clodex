@@ -15,9 +15,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createEngine } = require('../engine');
 const { createRemoteWiring } = require('../remote-wiring');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function mkEngine(seams) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-eng-web-'));
+  const tmp = mkTmpRoot('clx-eng-web-');
   // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,

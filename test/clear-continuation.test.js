@@ -13,9 +13,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function mkManager(overrides = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-clearcont-'));
+  const root = mkTmpRoot('clx-clearcont-');
   const watchers = [];
   const injected = [];
   const broadcasts = [];

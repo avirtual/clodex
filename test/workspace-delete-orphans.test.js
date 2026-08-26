@@ -33,11 +33,12 @@ const path = require('node:path');
 const { initStores } = require('../stores.js');
 const { createSessionManager } = require('../session-manager.js');
 const { deleteWorkspaceDetail } = require('../app-menus.js');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
 function realPersistence() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-wsdel-'));
+  const dir = mkTmpRoot('clodex-wsdel-');
   return initStores(dir, {
     log: { info: () => {}, error: () => {} },
     registryDir: path.join(dir, 'registry'),

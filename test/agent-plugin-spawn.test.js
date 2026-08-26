@@ -27,6 +27,7 @@ const { pathFor, runDirFor } = require('../clodex-paths');
 const { confine } = require('../path-confine');
 const { buildAgentPlugin, qualifiedAgentName, DROPPED_AGENT_FIELDS, BUILTIN_AGENTS } = require('../agents-util');
 const { buildSkillPlugin, unresolvedSubagentRefs } = require('../skills-util');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // The library every arm resolves against. `meta` mirrors what stores.js hands
 // over: raw frontmatter strings, not coerced values.
@@ -36,7 +37,7 @@ const LIB = [
 ];
 
 function mkManager({ library = LIB, skills = [], enabledAgents = [], injectSkills = [] } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-agentplugin-'));
+  const root = mkTmpRoot('clx-agentplugin-');
   const AGENT_PLUGINS_DIR = path.join(root, 'agent-plugins');
   const SKILL_PLUGINS_DIR = path.join(root, 'skill-plugins');
   const ensureDir = (d) => fs.mkdirSync(d, { recursive: true });

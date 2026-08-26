@@ -32,6 +32,7 @@ const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { ticketInFlight } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Copied, not shared, for the reason reviewer-ticket-name.test.js states: these
 // assertions are about the seat's LIFETIME, and a shared fixture makes either
@@ -56,7 +57,7 @@ const SHIPPED_REVIEWER_TEMPLATE = {
 // while taking whichever arm the stub was written to return. `landed` is an
 // ancestor of master; `pending` carries a commit master does not have.
 function mkRepo() {
-  const dir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t470-repo-'));
+  const dir = mkTmpRoot('clodex-t470-repo-');
   const git = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
   git(['init', '-q', '-b', 'master']);
   git(['config', 'user.email', 't@t.t']);
@@ -74,7 +75,7 @@ function mkRepo() {
 }
 
 function mkFixture() {
-  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t470-'));
+  const home = mkTmpRoot('clodex-t470-');
   const repoDir = mkRepo();
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {

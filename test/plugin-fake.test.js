@@ -37,6 +37,7 @@ const path = require('node:path');
 const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION, HOST_PSEUDO_ID, NO_SUCH_METHOD, pluginsEnabled } = require('../plugin-api');
 const intentRegistry = require('../intent-registry');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // ════════════════════════════════════════════════════════════════════════════
 // PART 1 — the ENGINE half
@@ -70,7 +71,7 @@ const seatA = { name: 'seat-a', type: 'claude', cwd: '/repo/a', workspaceId: 'ws
 const seatB = { name: 'seat-b', type: 'bash', cwd: '/repo/b', workspaceId: 'ws-closed' };
 
 function makeEngine({ manager = makeManager([seatA, seatB]), settings = {} } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-fake-plugin-'));
+  const dir = mkTmpRoot('clodex-fake-plugin-');
   let ui = { ...settings };
   const logged = [];
   const engine = createPluginHostEngine({
@@ -971,7 +972,7 @@ function makeWiredPair({ intents = ['fake-note'], noHost = false } = {}) {
   m.sessions.set('seat-a', { name: 'seat-a', type: 'claude', agentType: 'claude', cwd: '/repo/a', workspaceId: 'ws-open' });
 
   if (!noHost) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-fake-plugin-'));
+    const dir = mkTmpRoot('clodex-fake-plugin-');
     engine = createPluginHostEngine({
       manager: m,
       getUiSettings: () => ({ get: () => ({}), set: () => {} }),

@@ -10,9 +10,10 @@ const os = require('os');
 const path = require('path');
 const { createSessionMeta } = require('../session-meta');
 const { pathFor, runDirFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmpRegistry() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-meta-'));
+  return mkTmpRoot('clodex-meta-');
 }
 
 // Create a per-agent transcript symlink → a real file with a known mtime.
@@ -107,7 +108,7 @@ test('prStatus: a git repo with no PR reports prState "none" (groupable), not nu
   try { require('child_process').execFileSync('git', ['--version'], { stdio: 'ignore' }); } catch { hasGit = false; }
   if (!hasGit) return;
   const { execFileSync } = require('child_process');
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-pr-'));
+  const repo = mkTmpRoot('clodex-pr-');
   execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'ignore' });
   execFileSync('git', ['-C', repo, 'config', 'user.email', 't@t.co'], { stdio: 'ignore' });
   execFileSync('git', ['-C', repo, 'config', 'user.name', 't'], { stdio: 'ignore' });
@@ -127,7 +128,7 @@ test('prStatus: a git repo with no PR reports prState "none" (groupable), not nu
 test('prStatus: non-repo cwd → isRepo:false, cached within the TTL', async () => {
   const REGISTRY_DIR = tmpRegistry();
   const meta = createSessionMeta({ REGISTRY_DIR, prTtlMs: 60000 });
-  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-nr-'));
+  const notRepo = mkTmpRoot('clodex-nr-');
   const r1 = await meta.prStatus(notRepo);
   assert.strictEqual(r1.isRepo, false);
   assert.strictEqual(r1.prState, null);

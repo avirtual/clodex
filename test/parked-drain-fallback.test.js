@@ -28,6 +28,7 @@ const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const pendingStore = require('../pending-store');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const CWD = os.tmpdir();
 
@@ -38,7 +39,7 @@ class FastQueue extends require('../inject-queue').InjectQueue {
 }
 
 function boot(opts = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-pdf-'));
+  const root = mkTmpRoot('clx-pdf-');
   const writes = new Map();          // seat name → concatenated PTY bytes
   const dataCb = new Map();          // seat name → the manager's onData handler
   // Seat name → the ms after which this terminal KEEPS what is written to it.

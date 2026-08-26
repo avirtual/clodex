@@ -26,6 +26,7 @@ const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { matchSeatRole, formatRoster } = require('../team-manifest');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Copied, not shared, for the reason review-verdict-ticket.test.js states: these
 // assertions are about the NAME, and a shared fixture makes either file's edits
@@ -45,7 +46,7 @@ const SHIPPED_REVIEWER_TEMPLATE = {
 };
 
 function mkFixture() {
-  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-rtn-'));
+  const home = mkTmpRoot('clodex-rtn-');
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,

@@ -8,11 +8,12 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const scm = require('../plugins/workbench/git-scm');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function gitOk() { try { execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } }
 
 function makeRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-scm-'));
+  const dir = mkTmpRoot('clodex-scm-');
   const g = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
   g('init', '-q'); g('config', 'user.email', 't@t.co'); g('config', 'user.name', 't');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
@@ -82,7 +83,7 @@ test('discard restores a tracked file (destructive)', { skip: !gitOk() }, async 
 });
 
 test('status: non-repo → ok:false, isRepo:false', async () => {
-  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-nr-'));
+  const notRepo = mkTmpRoot('clodex-nr-');
   const r = await scm.status(notRepo);
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.isRepo, false);
