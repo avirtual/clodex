@@ -9,8 +9,8 @@
 // unarchives and re-spawns in the shared checkout, which exists, so the resume
 // succeeds and no user-visible failure follows from the staleness.
 //
-// Change any of the four sites to boot a seat in the tree it is "supposed" to work in — a
-// plausible-looking improvement, since a ticket seat's work IS in its worktree —
+// Change any of the five sites to boot a seat in the tree it is "supposed" to
+// work in — a plausible-looking improvement, since a seat's work IS in its tree —
 // and the harm the sweep was rejected for becomes real: every archived ticket seat
 // resumes into ENOENT. The pressure to then add a sweep keyed on "the path is
 // missing" is exactly the pre-v0.5.3 "upgrade kills my agents" bug, which is why
@@ -108,16 +108,26 @@ function bodyAfter(src, anchor) {
   return '';
 }
 
-// All four sites that respawn a session from its persisted record. The two that
-// run against a LIVE record (restartSession, the reload intent) are here for the
-// same reason as the two archived-record ones: the mutation this file guards
-// against — "boot the seat in the tree it is supposed to work in" — is a one-line
-// edit at any of the four, and a table covering half of them would let it land.
+// All five sites that respawn a session from its persisted record. The three that
+// run against a LIVE record (restartSession, applySessionArgs, the reload intent)
+// are here for the same reason as the two archived-record ones: the mutation this
+// file guards against — "boot the seat in the tree it is supposed to work in" — is
+// a one-line edit at any of the five, and a table covering some of them would let
+// it land while reading as a checked list.
+//
+// GROUND TRUTH for this table is `test/create-mint-census.test.js`'s EXPECTED —
+// its `mint: false` rows ARE the respawn-from-record set, and it fails on a count
+// mismatch when a `.create(` site is added. Cross-check against it rather than
+// re-deriving by hand; extending either table means extending this one too. This
+// file shipped covering four of the five because the count was taken from prose
+// instead: a per-site proof over an incomplete table proves the rows present and
+// can never see the row missing.
 //
 // Each row's expected cwd argument is written out as a literal rather than derived,
-// so the table can express a site that legitimately differs — and so agreeing with
-// the code is not the same as agreeing with itself. `call` likewise: the manager is
-// `manager` in three of them and `this` inside SessionManager.
+// so the table can express a site that legitimately differs — applySessionArgs
+// reads `beforeKill`, not `entry`, and a derived expectation would paper over
+// exactly that. `call` likewise: the manager is `manager` in four of them and
+// `this` inside SessionManager.
 const RESUME_SITES = [
   {
     file: 'ipc-handlers.js',
@@ -138,7 +148,14 @@ const RESUME_SITES = [
     anchor: 'async function restartSession',
     call: 'manager.create',
     cwdArg: 'entry.cwd',
-    label: 'restartSession — the kill+create behind applySessionArgs and the restart menu item',
+    label: 'restartSession — the restart menu item and the peer restart endpoint',
+  },
+  {
+    file: 'engine.js',
+    anchor: 'async function applySessionArgs',
+    call: 'manager.create',
+    cwdArg: 'beforeKill.cwd',
+    label: 'applySessionArgs — the args-edit restart (session:setArgs, the peer args POST); a SEPARATE create() from restartSession\'s, reading a beforeKill snapshot',
   },
   {
     file: 'session-manager.js',
@@ -156,9 +173,11 @@ test('resume paths spawn in the record cwd, not its worktree path', () => {
     // Assert on the CALL's index, not on the paren's: `indexOf('(', -1)` searches
     // from 0 and returns the anchor's own paren, so a `-1` check on the paren can
     // never fire and a missing call would surface downstream as a parse failure.
-    const c = body.indexOf(site.call);
+    // Match the paren as part of the needle so `this.create` cannot be satisfied
+    // by a longer name (`this.createBox`) that merely starts the same way.
+    const c = body.indexOf(`${site.call}(`);
     assert.notStrictEqual(c, -1, `${site.file}: no ${site.call}( call in ${site.label}`);
-    const open = body.indexOf('(', c);
+    const open = c + site.call.length;
     const args = callArgs(body, open);
     // ENTER: the walker must actually have produced a full argument list. A scan
     // that fell off the end returns a short array, and every assertion below it

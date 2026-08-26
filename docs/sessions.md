@@ -189,11 +189,19 @@ PTY but **keep** the record, stamped `archivedAt` (`manager.archive` →
 renderer's `archivingSessions` map, so `onSessionExit` tears the live tab down
 and rebuilds it in place as a **dimmed archived row** (`.session-item.archived`,
 "archived — click to resume") — no app restart. Clicking it unarchives
-(`setArchived(false)`) then resume-spawns; its ✕ forgets the entry. Archived
-rows surface via the sidebar status filter (Active/Archived/All).
+(`setArchived(false)`) then resume-spawns; its ✕ forgets the entry
+(`forgetSession` → `persistence.remove`) — a DIFFERENT control from the live
+row's ✕, which archives. Archived rows surface via the sidebar status filter
+(Active/Archived/All).
 
-**Real delete = right-click "Delete Session…"** + native confirm (the only
-record-dropper besides Delete Workspace). It routes through `manager.kill`
+The record-droppers reachable from the sidebar are three, not one: the ARCHIVED
+row's ✕ and the FAILED ghost row's ✕ (both `forgetSession` → `persistence.remove`,
+renderer.js), and right-click Delete Session…. Only the last kills a process; the
+two ✕ routes act on a record whose session is already gone. (The full in-process
+list, which includes non-UI droppers, is in .claude/CLAUDE.md.)
+
+**Real delete of a LIVE session = right-click "Delete Session…"** + native
+confirm. It routes through `manager.kill`
 (`_userKilled` → `persistence.remove`); the `session:kill` handler additionally
 grabs worktree provenance *before* the kill, `await`s `waitForSessionExit`, then
 `await`s `gitWorktree.removeWorktree` — **awaited, toasted on failure**, not the
@@ -252,10 +260,12 @@ A `worktree` pointer naming a tree that no longer exists is EXPECTED and is not
 swept. Three supported routes produce one: team-retire with archive on a dirty
 tree, the same on a tree it could not inspect, and the merge gate's
 not-merged arm followed by a later accept. Nothing reads the pointer in a way a
-missing tree breaks — all four respawn-from-record paths (retrySpawn, restore-on-
-launch, `restartSession`, the `[agent:context reload]` intent) spawn in
-`entry.cwd`, the shared checkout, never in `worktree.path` (pinned as a
-source-shape property by `test/resume-cwd-not-worktree.test.js`);
+missing tree breaks — all five respawn-from-record paths (retrySpawn, restore-on-
+launch, `restartSession`, `applySessionArgs`, the `[agent:context reload]`
+intent) spawn in the shared checkout the record names — `entry.cwd`, or
+`beforeKill.cwd` at applySessionArgs — never in `worktree.path` (pinned as a
+source-shape property by `test/resume-cwd-not-worktree.test.js`, whose row set
+is kept in step with `test/create-mint-census.test.js`);
 `_ticketTreeHolder` only scans live sessions; the ticket-dispatch mint's
 `claimTree` (team-tickets.js) clears any other record naming a path it mints —
 the other two `setWorktree` call sites (`session:markWorktree`, the spawn-intent
@@ -270,10 +280,10 @@ record. To actually drop one of these records, use the ARCHIVED row's ✕
 through `destroy()` and for a stale pointer deliberately KEEPS the record.
 Do not add a sweep keyed on the path being missing: a missing path is not
 evidence a session is dead (an unmounted volume or a moved repo reads
-identically), and dropping records on it
-is the pre-v0.5.3 "upgrade kills my agents" bug. Clearing only `worktree` while
-keeping the row is WORSE, not a compromise — see ALWAYS_PRESERVE in
-session-manager.js for why absent is the dangerous state.
+identically), and dropping records on it is the pre-v0.5.3 "upgrade kills my
+agents" bug. Clearing only `worktree` while keeping the row is WORSE, not a
+compromise — see ALWAYS_PRESERVE in session-manager.js for why absent is the
+dangerous state.
 
 **templates.json** stores reusable session configs. Base fields
 (`id/name/type/cwd/extraArgs`) plus the config subset snapshotted by the
@@ -310,9 +320,10 @@ Closing a window detaches its sessions: `pty-data` buffers
 into `session.pendingOutput` (2MB cap, oldest dropped) and replays on
 reopen; exit/activity events while detached are dropped and recomputed.
 **Delete Workspace…** (Window menu) removes a whole workspace record: confirm →
-kill its sessions → remove the record → close the window. (For a single session,
-right-click **Delete Session…** is the per-session record-dropper; ✕ / Cmd+W
-archive instead — see §4.)
+kill its sessions → remove the record → close the window. (For a single LIVE
+session, right-click **Delete Session…** is the record-dropper; ✕ / Cmd+W on a
+live row archives instead. An archived or failed row's ✕ drops its record —
+see §4.)
 
 ## Invariants (do not break)
 
@@ -320,9 +331,10 @@ archive instead — see §4.)
   `_cleanup`, persistence decision before cleanup.
 - JsonlWatcher starts reading at EOF on every symlink repoint.
 - Restore/respawn failure keeps the persisted entry (`{failed:true}`).
-- ✕ / Cmd+W on a LIVE row archives (keep the record, stamp `archivedAt`); an
-  ARCHIVED row's ✕ is a different control (`forgetSession`) and DOES drop the
-  record, as do right-click Delete Session… and Delete Workspace….
+- ✕ / Cmd+W on a LIVE row archives (keep the record, stamp `archivedAt`). The
+  ARCHIVED row's ✕ and the FAILED ghost row's ✕ are different controls
+  (`forgetSession`) and DO drop the record, as do right-click Delete Session…
+  and Delete Workspace…. "✕ archives" is true only of a live row.
 - Parked-DM dir removal is gated on `_userKilled` — archive leaves it false.
 - Strip level is not a spawn arg — every kill+create path must re-assert it.
 - The append-prompt channel is static per protocol (see messaging.md §6);
