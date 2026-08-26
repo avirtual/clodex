@@ -29,6 +29,13 @@ function wirescopeEnvGate(env = process.env) {
 }
 
 function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDataPath, isPackaged }) {
+  // `log` is a bare fn in some hosts (every test harness here passes one), so a
+  // direct log.warn() throws a TypeError — and both call sites below sit inside a
+  // `catch {}`, which would swallow it along with the work that followed the warn.
+  const warn = (msg) => {
+    try { (log && typeof log.warn === 'function') ? log.warn('wirescope', msg) : (typeof log === 'function' && log(msg)); } catch {}
+  };
+
   class WirescopeSupervisor {
     constructor() {
       this.child = null;       // ChildProcess of a managed instance, else null
@@ -302,7 +309,7 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
           // line. The release re-reads and unlinks only while the file still names
           // the pid we are discarding, so a successor's record survives.
           if (rec.pid !== undefined) {
-            log.warn('wirescope', `discarding pidfile: pid is ${rec.pid}, which would broadcast rather than target`);
+            warn(`discarding pidfile: pid is ${rec.pid}, which would broadcast rather than target`);
             this._releasePidFile(rec.pid);
           }
           return null;
@@ -334,13 +341,11 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
     _reclaimPidFile(port) {
       if (this._survivorPid()) return null;            // a valid record already exists
       // start() runs on every launch and every settings:set, so an unfixable
-      // environment must not log on a loop. `log` is a bare fn in some hosts —
-      // never assume the tagged-method shape here.
+      // environment must not log on a loop.
       const warnOnce = (tool) => {
         if (this._missingTool === tool) return;
         this._missingTool = tool;
-        const msg = `${tool} not found — cannot re-adopt an orphaned wirescope`;
-        try { (log && typeof log.warn === 'function') ? log.warn('wirescope', msg) : (typeof log === 'function' && log(msg)); } catch {}
+        warn(`${tool} not found — cannot re-adopt an orphaned wirescope`);
       };
       const wantDb = this._dirs().warmthDb;
       const host = wirescopeBindHost(process.env);

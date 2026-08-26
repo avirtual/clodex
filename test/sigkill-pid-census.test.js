@@ -46,13 +46,62 @@ function sourceFiles() {
     .filter((f) => f && !f.startsWith('test/') && !f.startsWith('cli/test/'));
 }
 
-// Comments blanked before matching: this file's own prose quotes `process.kill(-1)`,
-// and so do the guard comments in the modules being scanned. A scan that counted
-// prose would report them. Every scan below goes through this — a check that reads
-// raw source is a check a comment can satisfy.
+// Comments blanked to spaces, offsets preserved — but string literals are SKIPPED
+// OVER, not blanked, and that asymmetry is the whole point of this function.
+//
+// Adapted from the `stripNonCode` in test/sigkill-pid-guard.test.js (which took it
+// from test/preserve-census.test.js); copied rather than shared because those files
+// export nothing, and `require`-ing one .test.js from another re-registers its
+// subjects in this process, so the suite would run them twice and report inflated
+// counts.
+//
+// The defect being fixed is the naive `/\/\/[^\n]*/g` this replaced: a `//` inside a
+// string literal ate the rest of that line. wirescope-supervisor.js is scanned here
+// and carries exactly that shape (`http://127.0.0.1:${port}`), so a process.kill
+// sharing a line with a URL would have gone unseen by BOTH rawCount and callsIn —
+// consistently, which is why the raw-vs-parsed check below could never catch it.
+//
+// It diverges from the guard file's version by KEEPING string bodies: `callsIn`
+// reads each site's signal argument as a literal (`'SIGKILL'`) and every CENSUS row
+// keys on it, so blanking strings would empty the `sig` of 8 of the 14 rows and the
+// census would key nothing. Skipping the literal is enough to fix the line-eating;
+// blanking it is not needed for that and costs the census its identity.
+function stripNonCode(src) {
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const two = src.slice(i, i + 2);
+    if (two === '//') {
+      const end = src.indexOf('\n', i);
+      const stop = end < 0 ? src.length : end;
+      out += ' '.repeat(stop - i);
+      i = stop;
+    } else if (two === '/*') {
+      const end = src.indexOf('*/', i + 2);
+      const stop = end < 0 ? src.length : end + 2;
+      out += ' '.repeat(stop - i);
+      i = stop;
+    } else if (src[i] === "'" || src[i] === '"' || src[i] === '`') {
+      const q = src[i];
+      let j = i + 1;
+      while (j < src.length && src[j] !== q) j += src[j] === '\\' ? 2 : 1;
+      const stop = Math.min(j + 1, src.length);
+      out += src.slice(i, stop);
+      i = stop;
+    } else {
+      out += src[i];
+      i += 1;
+    }
+  }
+  return out;
+}
+
+// This file's own prose quotes `process.kill(-1)`, and so do the guard comments in
+// the modules being scanned. A scan that counted prose would report them. Every
+// scan below goes through this — a check that reads raw source is a check a comment
+// can satisfy.
 function codeOf(rel) {
-  const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-  return src.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  return stripNonCode(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
 }
 
 // The parse is deliberately NARROW — two comma-separated arguments, neither
@@ -75,8 +124,15 @@ function callsIn(rel) {
     .map((m) => ({ file: rel, pid: m[1], sig: m[2] }));
 }
 
+// Whitespace-tolerant where `callsIn` is not, deliberately: `process.kill (pid, sig)`
+// and `process . kill(pid, sig)` are legal spellings that the narrow parse cannot
+// read, so counting them with the same literal would have made them invisible to
+// both halves at once — the defect this pair exists to close. Counted here and
+// unparsed there, they surface as a loud raw-vs-parsed mismatch instead.
+// `const k = process.kill` stays out of reach of any static scan; that is accepted,
+// not an oversight to widen this regex over.
 function rawCount(rel) {
-  return (codeOf(rel).match(/process\.kill\(/g) || []).length;
+  return (codeOf(rel).match(/process\s*\.\s*kill\s*\(/g) || []).length;
 }
 
 // A liveness probe. Signal 0 delivers nothing, so a broadcast pid here is a wrong
@@ -220,6 +276,11 @@ test('every process.kill call site is one the census can actually READ', () => {
     + '  process.kill(rec.pid)                    — one argument; the signal DEFAULTS to SIGTERM, so a '
     + 'non-positive pid here still broadcasts\n'
     + "  process.kill(Number(rec.pid), 'SIGKILL') — the pid group stops at the inner paren\n"
+    + '  process.kill (pid, SIG)                  — rawCount tolerates the space, the parse does not\n'
+    + 'Comments are blanked before both counts, so prose never lands here — but STRING BODIES are not (the '
+    + "census keys on each site's `'SIGKILL'` literal, so they have to survive). A file that merely PRINTS "
+    + 'the text `process.kill(` inside a string therefore raw-counts without parsing, and shows up as a '
+    + 'spurious row here; hoist that text out of the literal or split it.\n'
     + 'Respell the call as `process.kill(pid, SIG)` with a bare identifier for the pid (hoist any expression '
     + 'into a const first, which is what every guarded site in this repo already does), or teach the matcher '
     + 'the new shape. Do NOT relax this assertion: a site the census cannot see is worse than an uncensused '
@@ -291,9 +352,24 @@ test('no censused liveness probe has become a real signal', () => {
     assert.strictEqual(row.sig, '0',
       `${row.file}'s censused probe is marked probe:true but sends ${row.sig}. A probe row exists to be `
       + 'exempt from the guard requirement; a row that sends a real signal is not a probe and needs a guard.');
-    const src = fs.readFileSync(path.join(ROOT, row.file), 'utf8');
+    // codeOf, not the raw source, for the reason the guard subject above gives: a
+    // deleted probe whose rationale still spells `process.kill(pid, 0)` in prose
+    // would keep this row green over code that no longer exists.
+    const src = codeOf(row.file);
     assert.ok(new RegExp(`process\\.kill\\(\\s*${row.pid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*,\\s*0\\s*\\)`).test(src),
       `${row.file} no longer probes with process.kill(${row.pid}, 0). If it now sends a signal, it needs a `
       + '`> 0` guard and a non-probe census row.');
   }
+});
+
+test('the comment/string strip does not swallow a file tail', () => {
+  // stripNonCode models neither `${…}` interpolation nor regex literals, so a
+  // mis-parse blanks an arbitrary TAIL span rather than one line — and every scan
+  // above then reads an empty file and passes. wirescope-supervisor.js is the
+  // canary because it carries the interpolated-URL shape that broke the strip this
+  // replaced; its last line contains no comment and no string, so it must survive.
+  assert.ok(codeOf('wirescope-supervisor.js').includes('module.exports = { createWirescopeSupervisor'),
+    'stripNonCode blanked the tail of wirescope-supervisor.js: an unterminated quote or comment ran to EOF, '
+    + 'which silently empties every scan in this file rather than failing one. Fix the strip — do not delete '
+    + 'this canary.');
 });
