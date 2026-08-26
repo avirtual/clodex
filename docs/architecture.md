@@ -92,9 +92,9 @@ bundle), whose packaged form is the Docker image under
   app menu, `registerIpcHandlers`, update-checker banners, and the shared
   session helpers (`fetchProxyContext/Report/Bust`,
   `fetchSessionFiles/FilePeek/FileDiff`, `restartSession`,
-  `waitForSessionExit`, `peerProxyView` — injected into both remote-wiring and
-  ipc-handlers; deliberately NOT a module). `before-quit` /
-  `window-all-closed` route to `engine.shutdown()`.
+  `waitForSessionExit`, `peerProxyView` — defined in engine.js and injected
+  into both remote-wiring and ipc-handlers; deliberately NOT a module).
+  `before-quit` / `window-all-closed` route to `engine.shutdown()`.
 - **headless-main.js** — the **headless adapter**, `node headless-main.js`. No
   Electron, no Xvfb, no windows/tray/ipc: `userDataPath` from
   `CLODEX_DATA_DIR` (or the platform default), a pidfile single-instance lock,
