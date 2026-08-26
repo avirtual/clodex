@@ -48,12 +48,35 @@ function sourceFiles() {
 
 // Comments blanked before matching: this file's own prose quotes `process.kill(-1)`,
 // and so do the guard comments in the modules being scanned. A scan that counted
-// prose would report them.
-function callsIn(rel) {
+// prose would report them. Every scan below goes through this — a check that reads
+// raw source is a check a comment can satisfy.
+function codeOf(rel) {
   const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-  const code = src.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  return src.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+// The parse is deliberately NARROW — two comma-separated arguments, neither
+// containing a paren — and `rawCount` is what keeps that narrowness honest. A
+// spelling this regex cannot read is not a site that passes the census, it is a
+// site the census cannot SEE, which is strictly worse: it contributes nothing to
+// `scanned()`, so it can never appear as uncensused and nothing fails. Two legal
+// spellings evade it, and both were demonstrated against this file:
+//
+//   process.kill(rec.pid)                     one-arg — signal defaults to SIGTERM,
+//                                             so process.kill(-1) really does broadcast
+//   process.kill(Number(rec.pid), 'SIGKILL')  the pid group stops at the inner paren
+//
+// Counting raw `process.kill(` occurrences and requiring the two numbers to agree
+// turns "cannot see it" into a loud failure, which is the only version of this
+// pin that matches its own contract at the top of the file.
+function callsIn(rel) {
+  const code = codeOf(rel);
   return [...code.matchAll(/process\.kill\(\s*([^,)]+?)\s*,\s*([^)]+?)\s*\)/g)]
     .map((m) => ({ file: rel, pid: m[1], sig: m[2] }));
+}
+
+function rawCount(rel) {
+  return (codeOf(rel).match(/process\.kill\(/g) || []).length;
 }
 
 // A liveness probe. Signal 0 delivers nothing, so a broadcast pid here is a wrong
@@ -63,7 +86,6 @@ function callsIn(rel) {
 // than filtered out: if one of these is ever changed to send a real signal, its
 // row stops matching and this test says so. That is the only reason the split is
 // safe to draw.
-const isProbe = (c) => c.sig === '0';
 
 // Every process.kill in non-test source, with the guard that covers it.
 //
@@ -178,8 +200,44 @@ test('ENTER: the scan actually finds process.kill call sites in the known files'
   }
 });
 
+test('every process.kill call site is one the census can actually READ', () => {
+  // The must-fix. `scanned()` can only report sites the narrow regex parses, so a
+  // site written in a spelling it cannot read is invisible rather than uncensused
+  // — it fails nothing, and the census silently stops being a census. This subject
+  // is what makes the file's opening claim ("a new call site fails this test
+  // whether or not it is guarded") true; without it that claim was false, and two
+  // legal spellings were shown to walk straight past every other subject here.
+  const mismatched = [];
+  for (const f of sourceFiles()) {
+    const raw = rawCount(f);
+    const parsed = callsIn(f).length;
+    if (raw !== parsed) mismatched.push(`${f}: ${raw} written, ${parsed} readable`);
+  }
+  assert.deepStrictEqual(mismatched, [],
+    'these files contain a process.kill the census cannot parse:\n  ' + mismatched.join('\n  ')
+    + '\n\nThe matcher reads exactly `process.kill(pid, SIG)` with two comma-separated arguments and no '
+    + 'parens inside either. Two legal spellings evade it and are the reason this check exists:\n'
+    + '  process.kill(rec.pid)                    — one argument; the signal DEFAULTS to SIGTERM, so a '
+    + 'non-positive pid here still broadcasts\n'
+    + "  process.kill(Number(rec.pid), 'SIGKILL') — the pid group stops at the inner paren\n"
+    + 'Respell the call as `process.kill(pid, SIG)` with a bare identifier for the pid (hoist any expression '
+    + 'into a const first, which is what every guarded site in this repo already does), or teach the matcher '
+    + 'the new shape. Do NOT relax this assertion: a site the census cannot see is worse than an uncensused '
+    + 'one, because nothing fails.');
+});
+
 test('every process.kill in non-test source is censused, and nothing censused has vanished', () => {
   const found = scanned();
+
+  // A duplicated key would otherwise be silently collapsed by the Map below,
+  // keeping only the last row and halving the count this census expects — an
+  // under-count that reads as a passing census while a real call site goes
+  // unaccounted for.
+  const keys = CENSUS.map(key);
+  assert.strictEqual(new Set(keys).size, CENSUS.length,
+    'two CENSUS rows share a key, so one silently overwrites the other and its `count` is lost. Sites that '
+    + 'genuinely share a spelling belong in ONE row with `count` raised, not in two.');
+
   const expected = new Map(CENSUS.map((c) => [key(c), c.count]));
 
   const uncensused = [...found].filter(([k, n]) => (expected.get(k) || 0) < n)
@@ -211,7 +269,10 @@ test('every censused guard literal is still present in the file it guards', () =
     + 'been dropped from rows rather than from code');
 
   for (const row of guarded) {
-    const src = fs.readFileSync(path.join(ROOT, row.file), 'utf8');
+    // codeOf, not the raw source: the comment block above each of these guards
+    // quotes the guard literal while explaining it, so a raw `includes` stays
+    // green when the guard is DELETED and only its rationale is left behind.
+    const src = codeOf(row.file);
     assert.ok(src.includes(row.guard),
       `${row.file} no longer contains its censused guard:\n    ${row.guard}\n`
       + `  It covers process.kill(${row.pid}, ${row.sig}) — ${row.why}.\n`

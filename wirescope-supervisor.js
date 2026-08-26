@@ -289,9 +289,18 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
         if (!(rec.pid > 0)) {
           // Logged only when the pidfile actually carried something: an absent
           // pid is the ordinary "no survivor" case, a non-positive one is a
-          // corrupt record that would have been signalled.
+          // corrupt record that would have been signalled. UNLINKED rather than
+          // latched behind a warn-once flag, because this runs on the status()
+          // watchdog (engine.js, every 10s): a latch would silence the log but
+          // leave the corrupt file in place forever, and stop() can no longer
+          // clean it — it gets null from here, so _releasePidFile never runs.
+          // Deleting it is self-healing and warns exactly once by construction,
+          // the same answer clodex-monitor's stop path gives a poisoned state
+          // file. Safe against a successor: a valid one writes its own positive
+          // pid over this record, so a non-positive record can never be theirs.
           if (rec.pid !== undefined) {
-            log.warn('wirescope', `ignoring pidfile: pid is ${rec.pid}, which would broadcast rather than target`);
+            log.warn('wirescope', `discarding pidfile: pid is ${rec.pid}, which would broadcast rather than target`);
+            try { fs.unlinkSync(this._pidFile()); } catch {}
           }
           return null;
         }
