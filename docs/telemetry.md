@@ -109,8 +109,8 @@ increase over a known baseline (the attach seed is silent).
 **`popoverApi(name)`** is the local-vs-peer data seam: local sessions call
 the direct IPC (getProxyContext/Report/Bust, sessionFiles, filePeek,
 fileDiff); peer sessions route the same kinds through `peerQuery`, with
-identical response shapes so render code is shared. `peerProxyView`
-(main.js) is the owner-side trim: no base/capabilities/sessionId crosses
+identical response shapes so render code is shared. `peerProxyView` is
+the owner-side trim: no base/capabilities/sessionId crosses
 the wire (no reach-back), plus a computed `queries[]` advertising which
 popovers the owner will answer.
 
