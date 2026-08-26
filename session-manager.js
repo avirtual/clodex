@@ -211,7 +211,16 @@ function nearMissFormHint(text) {
 // `entry.wireLabel || name`. Dropped by an in-place restart, the seat's whole
 // remaining spend bills to an unlabeled route and its ticket's COST.json reads
 // a null label — the ticket looks free because the money went somewhere else.
-const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel'];
+// `keepWarmAlways`/`holdUntil` pass both clauses too — written only by
+// setKeepWarmAlways/setHoldUntil off an operator action, absent from create()'s
+// argument list and its rebuild upsert, re-asserted by no caller. They must
+// move as a PAIR: ipc-handlers' wire:hold writes each by clearing the other, so
+// preserving one alone resurrects a seat holding both, and rearmPlan reads
+// `always` first — a stale `keepWarmAlways` would outrank the deadline the
+// operator actually set. Losing them is silent and unbounded: the perpetual
+// hold is the one mode whose seat nobody is sitting at, so no turn arrives to
+// notice the flag is gone and _maybeRearmHold never runs against anything.
+const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'keepWarmAlways', 'holdUntil'];
 
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
 // re-register over — when the process it names is dead, OR when it names OUR OWN
