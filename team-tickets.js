@@ -457,6 +457,12 @@ function createTicketMethods(deps, shared) {
     ? deps.ticketSuiteTimeoutMs : TICKET_SUITE_TIMEOUT_MS;
 
   return {
+    // The three-marker filter is the safety argument, and it is an IDENTITY read
+    // off the record — no stat, no filesystem. Do not copy this shape into a sweep
+    // keyed on a recorded path being missing: an unmounted volume and a moved repo
+    // read identically to a deleted tree, and dropping records on that signal is
+    // the pre-v0.5.3 "upgrade kills my agents" bug. Stale `worktree` pointers are
+    // expected and deliberately unswept — docs/sessions.md §5 has the trace.
     sweepReviewerGraveyard() {
       const swept = [];
       const corpses = getPersistence().list()
