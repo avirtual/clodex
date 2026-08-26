@@ -223,14 +223,24 @@ function nearMissFormHint(text) {
 // `worktree` is here because ABSENT is the DANGEROUS state and stale is the safe
 // one — the reverse of the usual intuition about a preserved pointer. destroy()
 // reads `entry.worktree.path` to find the tree; with no pointer it takes the
-// `if (!worktree)` arm, drops the record and returns ok, orphaning the checkout
-// irrecoverably (the record is the only thing naming it). A pointer to a tree
-// that is already gone instead fails removeWorktree, which KEEPS the record and
-// rides the path out for the operator. Preservation also cannot manufacture the
-// stale case: a restart re-enters the same cwd and deliberately does not touch
-// the tree, so the value copied back is the one that was there microseconds
-// earlier. _ticketTreeHolder reads occupancy off the record too, so a reloaded
-// seat without it is invisible and its LIVE tree can be handed to a second seat.
+// `if (!worktree)` arm, drops the record and returns ok, leaving the checkout
+// with nothing in the APP naming it — the delete path can no longer find it and
+// reports success. (Not unrecoverable in general: a ticket-dispatched tree is
+// also named by the TICKET record, and `git worktree list` names any of them.
+// For a spawn-intent tree the session record really is the only pointer.) A
+// pointer to a tree that is already gone instead fails removeWorktree, which
+// KEEPS the record and rides the path out for the operator.
+// _ticketTreeHolder reads occupancy off the record too, so a reloaded seat
+// without it is invisible and its LIVE tree can be handed to a second seat.
+// Preservation does not normally manufacture a stale pointer — a restart
+// re-enters the same cwd and deliberately does not touch the tree, so the value
+// copied back is the one that was there microseconds earlier. One interleaving
+// can: the seed is captured from priorEntry BEFORE kill, and a seat mid-restart
+// is invisible to _ticketTreeHolder, so a re-dispatch can reuse its tree and
+// claimTree finds no record to clear — the preserve then re-seeds a pointer to a
+// tree another seat now holds. That window is inherent to EVERY field here, not
+// to `worktree`, and pre-exists this list: engine.js's restart catch-arm
+// re-upserts a whole pre-kill snapshot the same way.
 // `autoCompact` is stored ONLY as the opt-OUT (`false`; enabling deletes the
 // key), so losing it fails toward the more destructive default — autoCompactOf
 // reads absence as ON and compacts a seat the operator exempted.

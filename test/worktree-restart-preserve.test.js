@@ -53,15 +53,23 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { createEngine } = require('../engine');
 const gitWorktree = require('../git-worktree');
+const { createMemoryStore } = require('../memory-store');
 
 function mkEngine() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-wt-'));
   // registryDir, or the engine seeds the operator's live ~/.clodex (t359).
-  return createEngine({
+  const registryDir = path.join(tmp, 'clodex-home');
+  const eng = createEngine({
     userDataPath: tmp,
-    seams: { registryDir: path.join(tmp, 'clodex-home') },
+    seams: { registryDir },
     log: { info() {}, warn() {}, error() {} },
   });
+  // Returned rather than read back off the engine, which does not expose it: the
+  // memory-store path below must be derived the same way engine.js derives it
+  // (MEMORY_DIR = REGISTRY_DIR/library/memory) or the fixture seeds a directory
+  // nothing reads.
+  eng.registryDir = registryDir;
+  return eng;
 }
 
 // A real repo with one real commit — `git worktree add` refuses to fork from a
@@ -368,11 +376,25 @@ test('a fresh conversation is still owed its digest — the preserved list canno
   // the reason they are different decisions rather than one. rosterSentAt is a
   // bare timestamp: carried into a fresh restart it suppresses the roster inject
   // that restart exists to trigger. `digested` carries the conversation IDENTITY
-  // inside its value, so it is self-invalidating — a new conversation's id is by
-  // construction not in the array, and isDigested returns false for it.
-  const { createEngine: _ce } = require('../engine'); // same module, named for clarity
-  assert.strictEqual(typeof _ce, 'function', 'ENTER: the engine module is the one under test');
+  // inside its value, so it is self-invalidating.
+  //
+  // DRIVEN THROUGH THE REAL CONSUMER, `_maybeDeliverDigest`, whose `isDigested`
+  // gate is the branch this argument is about. Two reasons it is not an
+  // `isDigested(...)` call: the function is module-local to engine.js (injected
+  // into createSessionManager, absent from module.exports), and re-implementing
+  // its `.includes()` in the fixture would assert only that the test agrees with
+  // itself — the shape CLAUDE.md's `## Tests` warns about, and the shape of the
+  // tautology this replaced. Delivery-or-not is the observable the seat actually
+  // experiences.
   const eng = mkEngine();
+  // A non-empty store, or _maybeDeliverDigest returns early at `if (!digest)`
+  // and BOTH halves below pass for the wrong reason.
+  const memory = createMemoryStore(path.join(eng.registryDir, 'library', 'memory'));
+  memory.remember('i', { text: 'a durable fact', source: 'i' });
+
+  const delivered = [];
+  eng.manager._deliverMessage = (name, sender, body, kind) => { delivered.push({ name, sender, kind }); };
+
   const entry = { name: 'i', type: 'claude', cwd: '/tmp', workspaceId: 'default', sessionId: 'old-sid' };
   eng.stores.persistence.upsert(entry);
   eng.stores.persistence.markDigested('i', 'old-sid');
@@ -384,10 +406,21 @@ test('a fresh conversation is still owed its digest — the preserved list canno
 
   const carried = (seen[0].recordAtCreate || {}).digested;
   assert.deepStrictEqual(carried, ['old-sid'], 'the history carried across the fresh restart');
-  assert.strictEqual(carried.includes('new-sid-minted-after-the-restart'), false,
-    'and it does not cover the conversation the fresh restart mints — which is the whole safety argument: '
-    + 'the preserved value can only ever suppress a digest for a conversation that already RECEIVED one, '
-    + 'so unlike rosterSentAt it cannot swallow a delivery that is due');
+
+  // Both directions, and the PAIR is the point — either alone is equally true of
+  // a preserve that dropped the field, or of one that carried a value nothing
+  // reads.
+  eng.manager._maybeDeliverDigest({ name: 'i', agentType: 'claude', sessionId: 'old-sid' }, 'old-sid');
+  assert.deepStrictEqual(delivered, [],
+    'the CARRIED id must still suppress its digest — this is the half that needs the field to have survived '
+    + 'the restart at all, and it is what a dropped `digested` breaks: the seat re-delivers a boot digest '
+    + 'into a conversation that already received one');
+
+  eng.manager._maybeDeliverDigest({ name: 'i', agentType: 'claude', sessionId: 'new-sid' }, 'new-sid');
+  assert.deepStrictEqual(delivered.map((d) => [d.name, d.kind]), [['i', 'memory']],
+    'and a conversation the fresh restart mints is STILL OWED its digest — the preserved array cannot cover '
+    + 'an id that did not exist when it was written. That is the whole safety argument for ALWAYS_PRESERVE '
+    + 'here: unlike rosterSentAt, a carried value can only suppress a delivery that already happened');
 });
 
 after(() => { setImmediate(() => process.exit(0)); });
