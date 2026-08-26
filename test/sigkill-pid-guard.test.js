@@ -36,6 +36,48 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { createSessionManager } = require('../session-manager');
 
+// Comments AND string bodies blanked to spaces, offsets preserved. Copied from
+// test/preserve-census.test.js rather than shared: that file exports nothing,
+// and `require`-ing one .test.js from another re-registers its subjects in this
+// process, so the suite would run them twice and report inflated counts. Ten
+// lines duplicated is the cheaper of the two; a `test/lib/` home is the third
+// option and is not this ticket's to take.
+//
+// Blanking strings is the part the naive `/\/\/[^\n]*/g` this replaced got
+// wrong: a `//` inside a string literal ate the rest of that line, so a future
+// `process.kill(` sharing a line with a URL would have slipped the allowlist
+// below unseen. Latent, not live — session-manager.js contains no `http://`
+// today — but an allowlist that can be blinded by an unrelated edit is not one.
+function stripNonCode(src) {
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const two = src.slice(i, i + 2);
+    if (two === '//') {
+      const end = src.indexOf('\n', i);
+      const stop = end < 0 ? src.length : end;
+      out += ' '.repeat(stop - i);
+      i = stop;
+    } else if (two === '/*') {
+      const end = src.indexOf('*/', i + 2);
+      const stop = end < 0 ? src.length : end + 2;
+      out += ' '.repeat(stop - i);
+      i = stop;
+    } else if (src[i] === "'" || src[i] === '"' || src[i] === '`') {
+      const q = src[i];
+      let j = i + 1;
+      while (j < src.length && src[j] !== q) j += src[j] === '\\' ? 2 : 1;
+      const stop = Math.min(j + 1, src.length);
+      out += ' '.repeat(stop - i);
+      i = stop;
+    } else {
+      out += src[i];
+      i += 1;
+    }
+  }
+  return out;
+}
+
 // Every pid shape that is NOT a request to signal one specific process.
 // -1 is the one that fired; the others are the same class and cost the same.
 const BROADCAST_PIDS = [-1, 0, undefined, null, NaN, -4242];
@@ -147,9 +189,9 @@ for (const pid of BROADCAST_PIDS) {
 test('every process.kill in session-manager.js is guarded against a broadcast pid', () => {
   const src = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '..', 'session-manager.js'), 'utf8');
-  // Comments blanked: this file's own header quotes `process.kill(-1)` while
-  // explaining the incident, and a scan that counted prose would report it.
-  const code = src.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  // Comments and strings blanked: this file's own header quotes `process.kill(-1)`
+  // while explaining the incident, and a scan that counted prose would report it.
+  const code = stripNonCode(src);
 
   const calls = [...code.matchAll(/process\.kill\(([^,)]+)/g)].map((m) => m[1].trim());
   assert.ok(calls.length >= 1,
