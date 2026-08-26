@@ -270,10 +270,9 @@ is kept in step with `test/create-mint-census.test.js`);
 the other two `setWorktree` call sites (`session:markWorktree`, the spawn-intent
 mint) do NOT scan, so that self-healing covers the ticket path only; and
 `destroy()` has a failure return that KEEPS the record — see its own comment
-for when. That arm is not reachable from the sidebar: an archived row's ✕ drops
-the record directly, and Delete Session… needs an unarchive first, after which
-the row is live and `kill()` has already dropped the record before any tree
-work.
+for when. No sidebar route can leave a record behind through it: §4's two ✕
+routes drop the record directly, and Delete Session… routes through `kill()`,
+which drops it before any tree work.
 
 The only user-visible staleness is the Delete Session… confirm sentence and the
 `Worktree removal failed: …` toast that follows it; both are cosmetic. Reaching
