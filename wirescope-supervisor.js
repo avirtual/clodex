@@ -273,11 +273,24 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
     _pidFile() { return path.join(getUserDataPath(), 'wirescope', 'wirescope.pid'); }
     _logFile() { return path.join(this._dirs().logDir, 'uvicorn.log'); }
 
+    // The ONE place a pid of FILE provenance enters this class, so it is the one
+    // place the `> 0` refusal has to live: stop() and restart() both signal
+    // whatever this returns, and restart() escalates to SIGKILL. `> 0` and not
+    // merely truthy — process.kill reads a non-positive pid as a BROADCAST, so a
+    // pidfile carrying -1 (a truncated write, a hand-edit, a recycled file) has
+    // stop() signalling every process the user owns. The liveness probe below is
+    // no backstop for that: kill(-1, 0) does NOT throw, so a broadcast pid reads
+    // as alive and restart()'s gone() poll never terminates the escalation.
     _survivorPid() {
       try {
         const rec = JSON.parse(fs.readFileSync(this._pidFile(), 'utf8'));
         const s = getUiSettings().get();
-        if (!rec || !rec.pid || rec.port !== (s.wirescopePort || 7800)) return null;
+        if (!rec || !(rec.pid > 0) || rec.port !== (s.wirescopePort || 7800)) {
+          if (rec && rec.pid !== undefined && !(rec.pid > 0)) {
+            log.warn('wirescope', `ignoring pidfile: pid is ${rec.pid}, which would broadcast rather than target`);
+          }
+          return null;
+        }
         process.kill(rec.pid, 0); // throws if gone
         return rec.pid;
       } catch { return null; }
