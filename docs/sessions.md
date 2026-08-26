@@ -272,10 +272,10 @@ mint) do NOT scan, so that self-healing covers the ticket path only; and
 `destroy()` has a failure return that KEEPS the record — see its own comment
 for when.
 
-The only user-visible staleness is the Delete Session… confirm sentence and the
-`Worktree removal failed: …` toast that follows it; both are cosmetic. Use the
-ARCHIVED row's ✕ (`forgetSession` → `persistence.remove`) as the direct one — it
-needs no unarchive and kills no process.
+The Delete Session… confirm sentence and the `Worktree removal failed: …` toast
+both name a tree that is gone; both are cosmetic. To drop such a record by hand,
+use the ARCHIVED row's ✕ (`forgetSession` → `persistence.remove`) — it kills no
+process.
 
 Do not add a sweep keyed on the path being missing: a missing path is not
 evidence a session is dead (an unmounted volume or a moved repo reads
