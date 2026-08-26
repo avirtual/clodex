@@ -273,9 +273,8 @@ mint) do NOT scan, so that self-healing covers the ticket path only; and
 for when.
 
 The Delete Session… confirm sentence and the `Worktree removal failed: …` toast
-both name a tree that is gone; both are cosmetic. To drop such a record by hand,
-use the ARCHIVED row's ✕ (`forgetSession` → `persistence.remove`) — it kills no
-process.
+both name a tree that is already gone. To drop such a record by hand, use the
+ARCHIVED row's ✕ (`forgetSession`).
 
 Do not add a sweep keyed on the path being missing: a missing path is not
 evidence a session is dead (an unmounted volume or a moved repo reads
