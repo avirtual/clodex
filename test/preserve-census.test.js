@@ -254,24 +254,17 @@ const NOT_PRESERVED = {
     + '`manager.sessions.has(name)`, so no restart path runs against an archived record.',
 };
 
-// Fields that are persisted, are NOT regrown by create(), and are on no list —
-// i.e. the SAME hole `ephemeral` and `keepWarmAlways` were in. Found by this
-// census when it was first written (t487) and left open deliberately: deciding
-// them is a behaviour change outside that ticket, and a guard that silently
-// swallowed them would be the guard failing at its one job.
+// The backlog this census found open when it was written (t487) — `worktree`,
+// `autoCompact`, `digested` — is CLOSED (t489): all three went to
+// ALWAYS_PRESERVE, each on its own argument, and the ledger emptied in the same
+// commit. It stays as an EMPTY object rather than being deleted outright: the
+// guard below prescribes three cures and "park it here" is not among them, so
+// the name has to remain readable for the failure message to keep making sense.
 //
-// Asserted by EXACT equality, not membership. A growable escape hatch is a place
-// to put the next omission instead of deciding it; exact equality means adding a
-// name here is a visible diff line someone has to justify, and FIXING one fails
-// this file until the name is removed — which is the reminder that the entry was
-// a defect and not a decision.
-const KNOWN_UNDECIDED = {
-  worktree: 'setWorktree writes the seat\'s worktree provenance; create() does not write it back. '
-    + 'A reloaded ticket seat loses it — the same consequence class as `ephemeral` (accept can no longer '
-    + 'find the tree to remove, so it leaks).',
-  autoCompact: 'a template-set `autoCompact: false` reverts to on after a reload, silently.',
-  digested: 'markDigested\'s per-conversation history restarts, so a reloaded seat re-digests.',
-};
+// Do not put a new field here. The three cures the failure message names are the
+// decisions; this is where undecided fields were PARKED, and re-opening it is
+// re-opening the hole `ephemeral` and `keepWarmAlways` fell into.
+const KNOWN_UNDECIDED = {};
 
 // --------------------------------------------------------------- classifier
 
@@ -317,6 +310,19 @@ test('ENTER: the census actually sees the fields both shipped bugs were about', 
   assert.ok(census.has('ephemeral'),
     'the census cannot see `ephemeral` — the upsert-literal scan has stopped matching. It has no stores.js '
     + 'setter at all, so without that half this census would have been green over the ORIGINAL bug');
+  // storeWrittenFields runs TWO scans — `entry.x =` and `delete entry.x` — and
+  // until t489 emptied KNOWN_UNDECIDED the exact-equality test below was what
+  // covered the first one: blanking it left the ENTER and main guards green and
+  // failed only there. An empty ledger makes that assertion `deepStrictEqual(
+  // undecided, [])`, which is TRUE of a census that shrank, so the coverage went
+  // with the backlog. `sessionIds` restores it as a literal: it is written ONLY
+  // by `entry.sessionIds = …` and never deleted, never upserted, so it is
+  // reachable through the assignment branch alone. Measured: blanking that line
+  // drops 7 of 32 fields, which `census.size >= 20` below does not notice.
+  assert.ok(census.has('sessionIds'),
+    'the census cannot see `sessionIds` — the `entry.x =` half of the stores.js scan has stopped matching. '
+    + 'Nothing else reaches that branch: the delete half and the upsert half are both green without it, '
+    + 'and a census that quietly shrank reports no undecided fields at all');
   assert.ok(census.size >= 20,
     `the census found only ${census.size} fields — a persistence record has far more, so the parsers are broken`);
   assert.ok(sites >= 3,
@@ -335,7 +341,7 @@ test('every persisted seat field has a preserve decision', () => {
     + '  - add it to ALWAYS_PRESERVE (session-manager.js) if no caller can regrow it and none re-asserts it;\n'
     + '  - add it to the field list at each _preserveAcrossRestart call site, if a caller must control it;\n'
     + '  - add it to NOT_PRESERVED in this file WITH the reason it is safe to drop.\n'
-    + 'Do not add it to KNOWN_UNDECIDED — that list is the two-item backlog this census found, not a hatch.');
+    + 'Do not add it to KNOWN_UNDECIDED — that list is the backlog this census found, now closed, not a hatch.');
 });
 
 test('the KNOWN_UNDECIDED backlog is exactly the set this census found open', () => {
@@ -343,11 +349,11 @@ test('the KNOWN_UNDECIDED backlog is exactly the set this census found open', ()
   // instead of decided; shrinkage means one was fixed and the entry is now a
   // stale claim that a live field is broken.
   //
-  // It is also this file's parser canary, which is the reason not to relax it to
-  // a subset check. Measured: blanking one line of storeWrittenFields' scan
-  // leaves the ENTER test green (the delete-branch still matches) and the main
-  // guard green (a census that shrank has nothing left to report), and THIS
-  // assertion is the only one that fails.
+  // This was also the file's parser canary while the ledger had entries in it.
+  // It is NOT one any more and must not be read as one: with KNOWN_UNDECIDED
+  // empty the assertion is `deepStrictEqual(undecided, [])`, which the main guard
+  // above already makes and which a census that shrank to nothing satisfies. The
+  // `sessionIds` literal in the ENTER test is what covers that branch now.
   const { undecided } = undecidedFields(realSources());
   assert.deepStrictEqual(undecided, Object.keys(KNOWN_UNDECIDED).sort(),
     'KNOWN_UNDECIDED no longer matches what the census finds open. If you FIXED one, delete its entry here. '
@@ -467,20 +473,31 @@ test('DISCRIMINATION: a field added the OTHER way — an upsert stub, no setter 
     'a field stamped by a spawn stub with no setter was NOT reported — that is exactly how `ephemeral` was lost');
 });
 
-test('DISCRIMINATION: deleting the fix re-reports keepWarmAlways', () => {
-  // The strongest available statement that this file guards the product change:
-  // revert part 1 in the source text and the census must name the field again.
-  const real = realSources();
-  const sessionManagerSrc = real.sessionManagerSrc.replace(
-    "const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'keepWarmAlways', 'holdUntil'];",
-    "const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel'];");
-  assert.notStrictEqual(sessionManagerSrc, real.sessionManagerSrc,
-    'ENTER: the fix was actually reverted in the copy — an unchanged string would make this test assert nothing');
+// The strongest available statement that this file guards the product change:
+// revert a fix in the source text and the census must name its fields again.
+// Written as a table because there are now two such fixes, decided a ticket
+// apart. Each row REMOVES only its own names from the list, rather than
+// restating the whole literal: a row that re-pinned the full list would have to
+// be rewritten by every later ticket that adds a field, and rewriting a
+// revert-to expectation is how one silently stops reverting anything.
+for (const { ticket, remove, fields } of [
+  { ticket: 't487', remove: ", 'keepWarmAlways', 'holdUntil'", fields: ['keepWarmAlways', 'holdUntil'] },
+  { ticket: 't489', remove: ", 'worktree', 'autoCompact', 'digested'", fields: ['worktree', 'autoCompact', 'digested'] },
+]) {
+  test(`DISCRIMINATION: deleting ${ticket}'s fix re-reports ${fields.join('/')}`, () => {
+    const real = realSources();
+    const sessionManagerSrc = real.sessionManagerSrc.replace(remove, '');
+    assert.notStrictEqual(sessionManagerSrc, real.sessionManagerSrc,
+      `ENTER: ${ticket}'s fix was actually reverted in the copy — an unchanged string would make this test `
+      + 'assert nothing. If ALWAYS_PRESERVE was reformatted, fix the `remove` string; do not delete the row');
 
-  const { undecided } = undecidedFields({ ...real, sessionManagerSrc });
-  assert.ok(undecided.includes('keepWarmAlways') && undecided.includes('holdUntil'),
-    'with the fix reverted the census still reports both fields decided — it is not reading ALWAYS_PRESERVE');
-});
+    const { undecided } = undecidedFields({ ...real, sessionManagerSrc });
+    for (const f of fields) {
+      assert.ok(undecided.includes(f),
+        `with ${ticket} reverted the census still reports \`${f}\` decided — it is not reading ALWAYS_PRESERVE`);
+    }
+  });
+}
 
 test('DISCRIMINATION: a decision recorded in the LEDGER silences the report', () => {
   // The counterpart to the tests above: the census must be satisfiable. A guard
