@@ -252,13 +252,25 @@ A `worktree` pointer naming a tree that no longer exists is EXPECTED and is not
 swept. Three supported routes produce one: team-retire with archive on a dirty
 tree, the same on a tree it could not inspect, and the merge gate's
 not-merged arm followed by a later accept. Nothing reads the pointer in a way a
-missing tree breaks — resume spawns in `entry.cwd` (the shared checkout), never
-in `worktree.path`; `_ticketTreeHolder` only scans live sessions; `claimTree`
-clears any other record naming a path it mints; and `destroy()` takes its
-keep-the-record failure return when `removeWorktree` cannot find the tree. Only
-the Delete Session… confirm text reads stale. Do not add a sweep keyed on the
-path being missing: a missing path is not evidence a session is dead (an
-unmounted volume or a moved repo reads identically), and dropping records on it
+missing tree breaks — all four respawn-from-record paths (retrySpawn, restore-on-
+launch, `restartSession`, the `[agent:context reload]` intent) spawn in
+`entry.cwd`, the shared checkout, never in `worktree.path` (pinned as a
+source-shape property by `test/resume-cwd-not-worktree.test.js`);
+`_ticketTreeHolder` only scans live sessions; the ticket-dispatch mint's
+`claimTree` (team-tickets.js) clears any other record naming a path it mints —
+the other two `setWorktree` call sites (`session:markWorktree`, the spawn-intent
+mint) do NOT scan, so that self-healing covers the ticket path only; and
+`destroy()` takes its keep-the-record failure return when `removeWorktree`
+cannot find the tree. The only user-visible staleness is the Delete Session…
+confirm sentence and the `Worktree removal failed: …` toast that follows it, and
+reaching either needs an unarchive first (`dialog:confirmKill` is wired to a
+non-archived row's context menu only); both are cosmetic and neither drops a
+record. To actually drop one of these records, use the ARCHIVED row's ✕
+(`forgetSession` → `persistence.remove`) — not Delete Session…, which routes
+through `destroy()` and for a stale pointer deliberately KEEPS the record.
+Do not add a sweep keyed on the path being missing: a missing path is not
+evidence a session is dead (an unmounted volume or a moved repo reads
+identically), and dropping records on it
 is the pre-v0.5.3 "upgrade kills my agents" bug. Clearing only `worktree` while
 keeping the row is WORSE, not a compromise — see ALWAYS_PRESERVE in
 session-manager.js for why absent is the dangerous state.
@@ -308,8 +320,9 @@ archive instead — see §4.)
   `_cleanup`, persistence decision before cleanup.
 - JsonlWatcher starts reading at EOF on every symlink repoint.
 - Restore/respawn failure keeps the persisted entry (`{failed:true}`).
-- ✕ / Cmd+W archive (keep the record, stamp `archivedAt`); only right-click
-  Delete Session… and Delete Workspace… drop a session record.
+- ✕ / Cmd+W on a LIVE row archives (keep the record, stamp `archivedAt`); an
+  ARCHIVED row's ✕ is a different control (`forgetSession`) and DOES drop the
+  record, as do right-click Delete Session… and Delete Workspace….
 - Parked-DM dir removal is gated on `_userKilled` — archive leaves it false.
 - Strip level is not a spawn arg — every kill+create path must re-assert it.
 - The append-prompt channel is static per protocol (see messaging.md §6);

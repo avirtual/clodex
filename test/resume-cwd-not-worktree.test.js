@@ -9,7 +9,7 @@
 // unarchives and re-spawns in the shared checkout, which exists, so the resume
 // succeeds and no user-visible failure follows from the staleness.
 //
-// Change either site to boot a seat in the tree it is "supposed" to work in — a
+// Change any of the four sites to boot a seat in the tree it is "supposed" to work in — a
 // plausible-looking improvement, since a ticket seat's work IS in its worktree —
 // and the harm the sweep was rejected for becomes real: every archived ticket seat
 // resumes into ENOENT. The pressure to then add a sweep keyed on "the path is
@@ -69,21 +69,34 @@ function callArgs(src, open) {
 // Slice from `anchor` to the end of the balanced brace block it opens — the
 // handler/function body, so the worktree assertion below is scoped to the resume
 // path and not to whatever else the module happens to contain.
+//
+// An anchor that ENDS in '{' names its own body brace and is used verbatim; every
+// other anchor gets the paren walk below. A call-site anchor MUST take the first
+// form: the paren walk starts inside `handle(`'s own paren, so the callback's '{'
+// sits at depth 1 and is skipped, and the walk runs on to the next depth-0 brace —
+// which at ipc-handlers.js is `if (enableDrawerServices) {`, swallowing every
+// handler in between. That over-scope was green only by accident (no other
+// manager.create, no `worktree` in the range); one future handler saying
+// "worktree" would fail this file naming the resume path.
 function bodyAfter(src, anchor) {
   const start = src.indexOf(anchor);
   assert.notStrictEqual(start, -1, `anchor not found in source: ${anchor}`);
-  // The body brace is the first '{' outside the parameter list, NOT the first '{'
-  // after the anchor: restoreSessionsForWorkspace destructures its deps object, so
-  // naively taking the first brace grabs the parameter pattern and the slice ends
-  // before create() is ever reached. That produced a zero-argument parse the ENTER
-  // check below caught — the failure this walker exists in this shape to avoid.
   let open = -1;
-  let paren = 0;
-  for (let i = start; i < src.length; i += 1) {
-    const c = src[i];
-    if (c === '(') paren += 1;
-    else if (c === ')') paren -= 1;
-    else if (c === '{' && paren === 0) { open = i; break; }
+  if (anchor.endsWith('{')) {
+    open = start + anchor.length - 1;
+  } else {
+    // The body brace is the first '{' outside the parameter list, NOT the first '{'
+    // after the anchor: restoreSessionsForWorkspace destructures its deps object, so
+    // naively taking the first brace grabs the parameter pattern and the slice ends
+    // before create() is ever reached. That produced a zero-argument parse the ENTER
+    // check below caught — the failure this walker exists in this shape to avoid.
+    let paren = 0;
+    for (let i = start; i < src.length; i += 1) {
+      const c = src[i];
+      if (c === '(') paren += 1;
+      else if (c === ')') paren -= 1;
+      else if (c === '{' && paren === 0) { open = i; break; }
+    }
   }
   assert.notStrictEqual(open, -1, `no block opens after anchor: ${anchor}`);
   let depth = 0;
@@ -95,21 +108,44 @@ function bodyAfter(src, anchor) {
   return '';
 }
 
+// All four sites that respawn a session from its persisted record. The two that
+// run against a LIVE record (restartSession, the reload intent) are here for the
+// same reason as the two archived-record ones: the mutation this file guards
+// against — "boot the seat in the tree it is supposed to work in" — is a one-line
+// edit at any of the four, and a table covering half of them would let it land.
+//
 // Each row's expected cwd argument is written out as a literal rather than derived,
 // so the table can express a site that legitimately differs — and so agreeing with
-// the code is not the same as agreeing with itself.
+// the code is not the same as agreeing with itself. `call` likewise: the manager is
+// `manager` in three of them and `this` inside SessionManager.
 const RESUME_SITES = [
   {
     file: 'ipc-handlers.js',
-    anchor: "handle('session:retrySpawn'",
+    anchor: "handle('session:retrySpawn', async (e, name) => {",
+    call: 'manager.create',
     cwdArg: 'entry.cwd',
     label: 'session:retrySpawn — the archived-row click (unarchive → retry) AND the failed-tab retry button',
   },
   {
     file: 'session-restore.js',
     anchor: 'async function restoreSessionsForWorkspace',
+    call: 'manager.create',
     cwdArg: 'entry.cwd',
     label: 'restoreSessionsForWorkspace — restore-on-launch',
+  },
+  {
+    file: 'engine.js',
+    anchor: 'async function restartSession',
+    call: 'manager.create',
+    cwdArg: 'entry.cwd',
+    label: 'restartSession — the kill+create behind applySessionArgs and the restart menu item',
+  },
+  {
+    file: 'session-manager.js',
+    anchor: "if (sub === 'reload') {",
+    call: 'this.create',
+    cwdArg: 'entry.cwd',
+    label: '[agent:context reload] — the cold respawn a seat asks for itself',
   },
 ];
 
@@ -117,8 +153,12 @@ test('resume paths spawn in the record cwd, not its worktree path', () => {
   for (const site of RESUME_SITES) {
     const src = fs.readFileSync(path.join(ROOT, site.file), 'utf8');
     const body = bodyAfter(src, site.anchor);
-    const open = body.indexOf('(', body.indexOf('manager.create'));
-    assert.notStrictEqual(open, -1, `${site.file}: no manager.create( call in ${site.label}`);
+    // Assert on the CALL's index, not on the paren's: `indexOf('(', -1)` searches
+    // from 0 and returns the anchor's own paren, so a `-1` check on the paren can
+    // never fire and a missing call would surface downstream as a parse failure.
+    const c = body.indexOf(site.call);
+    assert.notStrictEqual(c, -1, `${site.file}: no ${site.call}( call in ${site.label}`);
+    const open = body.indexOf('(', c);
     const args = callArgs(body, open);
     // ENTER: the walker must actually have produced a full argument list. A scan
     // that fell off the end returns a short array, and every assertion below it
