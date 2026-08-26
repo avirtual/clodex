@@ -1027,16 +1027,32 @@ function rosterExecPayload(seatName) {
   return `[agent:exec clodex-team] ${JSON.stringify({ action: 'roster', agent: seatName || '<your name>' })}`;
 }
 
-// Per-seat invariants ONLY — the roster listing must stay OUT: composition
+// Per-role invariants ONLY — the roster listing must stay OUT: composition
 // changes over a seat's life and this text is part of the cache-stable system
 // prompt. Live composition arrives as data.
+//
+// The OUTPUT must not carry the seat name, only the role `seatName` resolves
+// to, so same-role seats share this text verbatim. Scope of that,
+// measured rather than assumed: for a seat whose role prompt rides
+// --system-prompt-file (every ticket seat — session-manager's
+// `promptRidesAsSystem` skips the append) this block is the TAIL of the append
+// channel, so ~180 bytes are all there is to share and nothing trails it. The
+// `${teamBlock}\n\n${rolePrompt}` case that would strand a whole role prompt
+// behind a varying token is the LEAD's, and a team has exactly one lead, so
+// there is no same-role peer to share it with. Worth doing for the invariant,
+// not for a KB-scale saving.
+//
+// The name is already conversation content — cli-hooks.js's SessionStart
+// additionalContext leads with it and re-fires on clear AND compact — and the
+// concrete copyable roster invocation is the hook roster's own
+// `Ground truth on demand:` line.
 function formatTeamBlock(team, seatName) {
   const mine = matchSeatRole(team, seatName);
   const yourRole = mine || 'none — not a manifest role';
   return [
     '# Team',
-    `You are seat ${seatName} on team ${team.name} (root ${team.root}). Your role: ${yourRole}.`,
-    `Team composition arrives in your context; ground truth: ${rosterExecPayload(seatName)}`,
+    `You are on team ${team.name} (root ${team.root}). Your role: ${yourRole}.`,
+    'Team composition arrives in your context, and with it the ground-truth roster invocation.',
   ].join('\n');
 }
 
