@@ -14,6 +14,7 @@ const path = require('node:path');
 const D = require('../src/deploy');
 const { EXIT } = require('../src/errors');
 const { run } = require('../src/main');
+const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 const noSleep = async () => {};
 
@@ -332,7 +333,7 @@ async function cli(argv, io = {}) {
   });
   return { code, stdout, stderr };
 }
-function tmpCtxFile() { return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-ssm-')), 'contexts.json'); }
+function tmpCtxFile() { return path.join(mkTmpRoot('clodexctl-ssm-'), 'contexts.json'); }
 
 test('deploy ssm --no-wirescope: the sent wrapper embeds CLODEX_NO_WIRESCOPE=1; absent without the flag', async () => {
   const rec = {};
@@ -386,7 +387,7 @@ test('deploy ssm happy path: preflight→send→poll→verify→ctx (ssm kind + 
 test('deploy ssm --claude-token-file: OAuth token delivered over the WIRE, NEVER in the SSM send-command params', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-tok-'));
+  const dir = mkTmpRoot('clodexctl-tok-');
   const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-oauth-secret\n');
   let delivered = null;
   const { code, stdout } = await cli(['deploy', 'ssm', 'mybox', '--target', 'i-1', '--claude-token-file', tf], {
@@ -411,7 +412,7 @@ test('deploy ssm --claude-token-file: OAuth token delivered over the WIRE, NEVER
 });
 
 test('deploy ssm --claude-token-file --dry-run: token noted by presence only, absent from wrapper', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-tok-'));
+  const dir = mkTmpRoot('clodexctl-tok-');
   const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-drysecret\n');
   const { code, stdout } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '--claude-token-file', tf, '--dry-run'], {
     execFn: async () => ({ stdout: '{}' }), probeSsm: async () => ({}),
@@ -423,7 +424,7 @@ test('deploy ssm --claude-token-file --dry-run: token noted by presence only, ab
 });
 
 test('deploy ssm --claude-token-file: a bad token file fails fast BEFORE any aws call', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-tok-'));
+  const dir = mkTmpRoot('clodexctl-tok-');
   const tf = path.join(dir, 'empty'); fs.writeFileSync(tf, '\n');
   let awsCalled = false;
   const { code, stderr } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '--claude-token-file', tf], {

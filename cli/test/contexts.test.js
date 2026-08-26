@@ -8,9 +8,10 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const C = require('../src/contexts');
+const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 function tmpFile() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-'));
+  const d = mkTmpRoot('ctx-');
   return path.join(d, 'contexts.json');
 }
 

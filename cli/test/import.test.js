@@ -11,10 +11,11 @@ const os = require('node:os');
 const path = require('node:path');
 const imp = require('../src/import');
 const { run } = require('../src/main');
+const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 // Build a fixture userData dir with a ui-settings.json and optional env files.
 function fixture({ ui = {}, remoteToken = null, sandboxTokens = {} } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-ud-'));
+  const dir = mkTmpRoot('clx-ud-');
   fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify(ui));
   if (remoteToken != null) fs.writeFileSync(path.join(dir, 'remote.env'), `CLODEX_REMOTE_TOKEN=${remoteToken}\n`, { mode: 0o600 });
   for (const [subdir, tok] of Object.entries(sandboxTokens)) {
@@ -26,7 +27,7 @@ function fixture({ ui = {}, remoteToken = null, sandboxTokens = {} } = {}) {
 
 // ── leaf: env-file parse ─────────────────────────────────────────────────────
 test('parseEnvFile: KEY=value, ignores blanks/comments/leading-=, missing→{}', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-env-'));
+  const dir = mkTmpRoot('clx-env-');
   const f = path.join(dir, 'x.env');
   fs.writeFileSync(f, 'CLODEX_REMOTE_TOKEN=abc123\n\n=nope\nBARE\nOTHER=v=w\n');
   assert.deepStrictEqual(imp.parseEnvFile(f), { CLODEX_REMOTE_TOKEN: 'abc123', OTHER: 'v=w' });
@@ -48,7 +49,7 @@ test('resolveDataDir: CLODEX_DATA_DIR between flag and defaults', () => {
 });
 
 test('resolveDataDir: both Clodex+clodex exist → newest ui-settings mtime wins, noted', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-home-'));
+  const home = mkTmpRoot('clx-home-');
   const base = path.join(home, 'Library', 'Application Support');
   const packaged = path.join(base, 'Clodex');
   const dev = path.join(base, 'clodex');
@@ -177,7 +178,7 @@ test('applyImport: collision skips by default, --force overwrites, current untou
 
 // ── end-to-end through main.run against a fixture + a tmp contexts file ───────
 function tmpCtxFile() {
-  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'clx-cf-')), 'contexts.json');
+  return path.join(mkTmpRoot('clx-cf-'), 'contexts.json');
 }
 async function cli(argv, ctxFile, env = {}) {
   let stdout = '', stderr = '';

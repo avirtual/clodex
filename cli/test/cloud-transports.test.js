@@ -13,6 +13,7 @@ const { EventEmitter } = require('node:events');
 const T = require('../src/transport');
 const C = require('../src/contexts');
 const { run } = require('../src/main');
+const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 // ── argv builders ────────────────────────────────────────────────────────────
 
@@ -287,7 +288,7 @@ test('validateEntry: unknown sibling fields inside a kind are ignored (forward c
 // ── ctx add flag → stored shape ──────────────────────────────────────────────
 
 function tmpCtxFile() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-cloud-'));
+  const dir = mkTmpRoot('clodexctl-cloud-');
   return path.join(dir, 'contexts.json');
 }
 async function cli(argv, contextsFile) {

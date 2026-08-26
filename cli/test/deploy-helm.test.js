@@ -13,6 +13,7 @@ const path = require('node:path');
 const D = require('../src/deploy');
 const { EXIT } = require('../src/errors');
 const { run } = require('../src/main');
+const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 // ── pure: helmArgv ───────────────────────────────────────────────────────────
 
@@ -192,7 +193,7 @@ async function cli(argv, io = {}) {
   });
   return { code, stdout, stderr };
 }
-function tmpCtxFile() { return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-helm-t-')), 'contexts.json'); }
+function tmpCtxFile() { return path.join(mkTmpRoot('clodexctl-helm-t-'), 'contexts.json'); }
 
 test('deploy helm happy path: preflight→mint→helm→ctx (kubectl kind + token)→verify', async () => {
   const rec = {};
@@ -556,7 +557,7 @@ test('deploy helm re-run: the release\'s own token is NOT re-applied through val
 
 test('deploy helm: --claude-token-file on re-run WINS over the release oauth (rotation path)', async () => {
   const rec = {};
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-helm-tok-'));
+  const dir = mkTmpRoot('clodexctl-helm-tok-');
   const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-oauth-new\n');
   const { code } = await cli(['deploy', 'helm', 'n', '--claude-token-file', tf, '--no-ctx'], {
     execFn: fakeK8s(rec, {
@@ -605,7 +606,7 @@ test('deploy helm: release exists but its Secret is unreadable → SERVER error 
 test('deploy helm --claude-token-file: extracted value staged 0600 → --set-file, never argv/stdout', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-helm-tok-'));
+  const dir = mkTmpRoot('clodexctl-helm-tok-');
   const tf = path.join(dir, 'tok');
   // env-file format: the EXTRACTED value must ride, not the raw file bytes.
   fs.writeFileSync(tf, '# auth\nCLAUDE_CODE_OAUTH_TOKEN=sk-oauth-secret\n');
@@ -646,7 +647,7 @@ test('deploy helm: no name → USAGE', async () => {
 test('deploy helm --dry-run: plan only — cluster/ns/release/chart/ctx entry, claude by presence, nothing runs', async () => {
   let ran = false;
   const contextsFile = tmpCtxFile();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-helm-tok-'));
+  const dir = mkTmpRoot('clodexctl-helm-tok-');
   const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-drysecret\n');
   const { code, stdout } = await cli(['deploy', 'helm', 'n', '--kube-context', 'prod', '--claude-token-file', tf, '--dry-run'], {
     execFn: async () => { ran = true; return { stdout: '' }; },

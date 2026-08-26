@@ -12,6 +12,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const D = require('../src/deploy');
 const { run } = require('../src/main');
+const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 // ── pure helpers ─────────────────────────────────────────────────────────────
 
@@ -62,7 +63,7 @@ test('installer: wirescope opt-out — CLODEX_NO_WIRESCOPE gates the drop-in + t
 });
 
 test('readClaudeToken: raw token, env-file line, and rejections', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-tok-'));
+  const dir = mkTmpRoot('clodexctl-tok-');
   const raw = path.join(dir, 'raw'); fs.writeFileSync(raw, '  sk-abc123\n');
   assert.strictEqual(D.readClaudeToken(raw), 'sk-abc123');
   const env = path.join(dir, 'env'); fs.writeFileSync(env, '# comment\nCLAUDE_CODE_OAUTH_TOKEN="sk-env-9"\nOTHER=1\n');
@@ -216,7 +217,7 @@ async function cli(argv, { spawnFn, probeHello, contextsFile } = {}) {
 }
 
 function tmpCtxFile() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-deploy-'));
+  const dir = mkTmpRoot('clodexctl-deploy-');
   return path.join(dir, 'contexts.json');
 }
 
@@ -259,7 +260,7 @@ test('deploy happy path: env delivered, script on stdin, hello verified, ctx sav
 test('deploy --claude-token-file: token rides ssh stdin (preamble), NEVER argv/stdout', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-tok-'));
+  const dir = mkTmpRoot('clodexctl-tok-');
   const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-secret-42\n');
   const { code, stdout } = await cli(['deploy', 'user@box', '--claude-token-file', tf], {
     spawnFn: fakeSsh(rec, { lines: HAPPY }),
@@ -292,7 +293,7 @@ test('deploy --no-wirescope: CLODEX_NO_WIRESCOPE=1 rides the stdin preamble; abs
 });
 
 test('deploy --claude-token-file --dry-run: notes the token by presence only, redacted', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-tok-'));
+  const dir = mkTmpRoot('clodexctl-tok-');
   const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-secret-99\n');
   const { code, stdout } = await cli(['deploy', 'user@box', '--claude-token-file', tf, '--dry-run'], {});
   assert.strictEqual(code, 0);

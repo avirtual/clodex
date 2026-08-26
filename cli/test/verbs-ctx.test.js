@@ -11,9 +11,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { run } = require('../src/main');
+const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 function tmpCtx() {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ctxv-'));
+  const d = mkTmpRoot('ctxv-');
   return path.join(d, 'contexts.json');
 }
 

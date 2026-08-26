@@ -65,16 +65,46 @@ function trackTmpRoot(root) {
 // `<repoName>-<branch>` (plus a `-2` collision suffix) beside the repo root it
 // is given. Re-deriving that rule here would go stale silently the next time it
 // changes; the prefix sweep covers it by construction.
+function rmQuiet(target) {
+  // Every removal is guarded. A fixture can leave a root unremovable —
+  // test/fs-explorer.test.js and test/tickets-migrate.test.js both chmod 0o000 a
+  // directory inside a try/finally, so a throw between the chmod and the restore
+  // leaves exactly that state — and an unguarded rmSync here would throw out of a
+  // top-level `after` and turn cleanup into a RED FILE. Cleanup failing to clean
+  // is a leak; cleanup failing loudly is a broken suite, which is worse.
+  try { fs.rmSync(target, { recursive: true, force: true }); } catch { /* not ours to force */ }
+}
+
 function sweep() {
+  // Grouped by parent so each pass does ONE readdirSync per distinct parent,
+  // not one per root. The ungrouped version was O(roots × $TMPDIR entries): on a
+  // box with 283k entries a readdirSync costs ~170ms, so session-manager.test.js
+  // (877 roots × 2 passes) spent ~292s enumerating the same directory 1,754
+  // times — measured, and it dominated the file's runtime.
+  //
+  // Keyed on the parent rather than assuming one, because there is more than
+  // one: test/clodex-team.test.js mints under fs.realpathSync(os.tmpdir()),
+  // which on macOS is a different string from os.tmpdir() itself.
+  const byParent = new Map();
   for (const root of ROOTS) {
     const parent = path.dirname(root);
-    const prefix = `${path.basename(root)}-`;
+    let bases = byParent.get(parent);
+    if (!bases) byParent.set(parent, (bases = []));
+    bases.push(path.basename(root));
+  }
+  for (const [parent, bases] of byParent) {
+    const prefixes = bases.map((b) => `${b}-`);
     try {
       for (const name of fs.readdirSync(parent)) {
-        if (name.startsWith(prefix)) fs.rmSync(path.join(parent, name), { recursive: true, force: true });
+        for (const prefix of prefixes) {
+          if (name.startsWith(prefix)) { rmQuiet(path.join(parent, name)); break; }
+        }
       }
     } catch { /* parent unreadable — nothing to sweep */ }
-    fs.rmSync(root, { recursive: true, force: true });
+    // The roots themselves, which the scan above cannot match: a name is never a
+    // sibling of its own prefix (`base` does not start with `base + '-'`), so
+    // this is the only pass that removes them and nothing is handled twice.
+    for (const base of bases) rmQuiet(path.join(parent, base));
   }
 }
 
