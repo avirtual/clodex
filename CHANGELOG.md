@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased — your checkouts, your cost history, and three hostile values
 
+- **Reloading a session silently turned keep-warm off.** A perpetual keep-warm
+  hold (Always, in the session menu) is stored on the session record, but every
+  in-place restart — Restart, an args edit with restart ticked, and
+  `[agent:context reload]` — rebuilds that record from the spawn arguments, and
+  keep-warm was not among the fields carried across. The setting simply
+  vanished, with no toast and no log line, and because a perpetual hold exists
+  precisely for a seat nobody is sitting at, nothing ever noticed: the seat took
+  no turn, so no re-arm ran. Both keep-warm states now survive a restart, the
+  perpetual flag and a timed deadline alike.
+
 - **Accepting a ticket could delete a checkout you were working in.** `task
   accept` retired whatever seat the ticket named — and on a merged branch that
   meant killing it, dropping its record and force-removing its worktree, with no
