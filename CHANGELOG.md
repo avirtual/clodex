@@ -24,6 +24,18 @@ blocks a release.
   times over, with the empty `catch` swallowing every trace. Both backstops now
   refuse any pid that is not a real one, and log the refusal.
 
+- **Reloading a session lost track of its worktree, and the checkout leaked.**
+  A session's worktree provenance is stored on its record, and that record is
+  the only thing that names the checkout — but an in-place restart rebuilds the
+  record from the spawn arguments, and the worktree was not carried across. A
+  ticket seat that reloaded itself therefore came back not knowing where it was
+  working: deleting it, or accepting its ticket, then reported success while
+  leaving the directory on disk with nothing pointing at it, unmerged commits
+  and all. Two related settings were being dropped by the same seam and are now
+  carried too — a session exempted from auto-compaction silently went back to
+  compacting after a restart, and a reloaded seat re-delivered a boot digest to
+  a conversation that already had one.
+
 - **Reloading a session silently turned keep-warm off.** A perpetual keep-warm
   hold (Always, in the session menu) is stored on the session record, but every
   in-place restart — Restart, an args edit with restart ticked, and
