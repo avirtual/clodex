@@ -240,7 +240,13 @@ function nearMissFormHint(text) {
 // claimTree finds no record to clear — the preserve then re-seeds a pointer to a
 // tree another seat now holds. That window is inherent to EVERY field here, not
 // to `worktree`, and pre-exists this list: engine.js's restart catch-arm
-// re-upserts a whole pre-kill snapshot the same way.
+// re-upserts a whole pre-kill snapshot the same way. `worktree` is the field it
+// is guarded for, because a checkout is the one EXCLUSIVE resource on this list;
+// _preserveAcrossRestart's own header carries the guard's reasoning, and
+// test/preserve-tree-handoff.test.js exhibits the interleaving. The guard is
+// bookkeeping only: it keeps one record per tree, and does NOT stop the
+// re-dispatch itself — two live seats can still be told to work in one checkout,
+// which is the same blindness one layer up and is not fixable from here.
 // `autoCompact` is stored ONLY as the opt-OUT (`false`; enabling deletes the
 // key), so losing it fails toward the more destructive default — autoCompactOf
 // reads absence as ON and compacts a seat the operator exempted.
@@ -2712,6 +2718,45 @@ function createSessionManager(deps) {
       let any = false;
       for (const f of [...fields, ...ALWAYS_PRESERVE]) {
         if (priorEntry[f] !== undefined) { seed[f] = priorEntry[f]; any = true; }
+      }
+      // The one field whose pre-kill value can be WRONG by the time it is written
+      // back, because a live seat can take it in between (t491, exhibited against
+      // the real dispatch path). kill() removes the record synchronously and the
+      // seat leaves this.sessions only at pty exit, so through the whole
+      // waitForSessionExit poll a restarting seat is live in its tree and named by
+      // no record — invisible to _ticketTreeHolder, which reads occupancy off the
+      // record. A re-dispatch landing there reuses the tree and claimTree finds no
+      // record to clear, and this seed then puts a SECOND record on it. That is
+      // the state claimTree's own comment calls worse than the orphan it fixes:
+      // session:kill removes the tree named by whichever row is deleted, so Delete
+      // Session… on the restarted seat force-removes the checkout the other seat
+      // is committing in.
+      //
+      // Asked of _ticketTreeHolder rather than scanning the record set here, and
+      // that is the whole design: it is the SAME reader the dispatch consulted
+      // when it decided the tree was free, so the guard cannot disagree with the
+      // hand-off it is reacting to — a second scan beside it is a second source of
+      // truth about who holds a tree. It also carries the part a raw record scan
+      // does not: the other record's seat must be LIVE. A stale pointer from an
+      // ARCHIVED seat is expected state on a real board (archive KEEPS the record;
+      // t488 found eight), and skipping the seed for one would drop the pointer on
+      // an ORDINARY restart — landing in the ABSENT state this list calls the
+      // dangerous one, to avoid a collision that is not happening.
+      //
+      // Only `worktree`. The window is inherent to every field here, but a tree is
+      // the one exclusive resource among them: two records naming one `wireLabel`
+      // costs nothing, two naming one checkout destroys work.
+      //
+      // A throw seeds anyway, deliberately: stale beats absent, which is the same
+      // asymmetry that put `worktree` on this list.
+      if (seed.worktree && seed.worktree.path && typeof this._ticketTreeHolder === 'function') {
+        let holder = null;
+        try { holder = this._ticketTreeHolder(seed.worktree.path); } catch { holder = null; }
+        if (holder && holder !== name) {
+          delete seed.worktree;
+          log.info('session', `restart of ${name}: not re-seeding worktree ${priorEntry.worktree.path} — ${holder} holds it now`);
+          any = Object.keys(seed).length > 1;
+        }
       }
       if (!any) return;
       const p = getPersistence();
