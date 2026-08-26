@@ -2696,31 +2696,6 @@ function createSessionManager(deps) {
       if (p && typeof p.setRosterSent === 'function') p.setRosterSent(session.name);
     }
 
-    // Re-seed post-create persistence fields across a kill()+create restart (task
-    // 22 rework / MUST-FIX 2, generalized in task 24 / MUST-FIX 2). The APP-RELAUNCH
-    // restore path keeps the persistence record (never removed), so create()'s
-    // existingEntry carries these fields. But the IN-PLACE restart paths
-    // (engine.restartSession / applySessionArgs) route through kill(), which
-    // REMOVES the record — so create() rebuilds it from spawn args ONLY, dropping
-    // any field seeded AFTER create on the prior spawn: `rosterSentAt` (roster
-    // gate → re-injects the roster into a --resume'd context) and a reviewer seat's
-    // `ephemeral`/`reviewFor` (identity → review-done can no longer route/retire).
-    // Re-seeding AFTER create() is too late for the fields create() itself reads
-    // (rosterSentAt gates in create), so the restart callers capture the pre-kill
-    // entry and call this AFTER kill, BEFORE create: it re-seeds JUST the requested
-    // fields present on the prior entry, and create's own upsert then spread-merges
-    // the full record over this stub, preserving them. A prior entry lacking a
-    // field seeds nothing for it (a genuinely fresh seat gets its roster).
-    //
-    // ALWAYS_PRESERVE is carried whether or not a caller names it, and that is
-    // deliberate rather than a shortcut: `sessionIds` is the seat's session_id
-    // HISTORY, which is what the cost panel sums a name's whole spend over
-    // (session-info trackedSessionIds → sumAgentCost). Only setSessionId appends
-    // to it, and only on a CHANGE, so an array dropped here never regrows — the
-    // seat's lifetime cost silently restarts from the current id and reads as
-    // "agent total below session total". All three callers omitted it and none
-    // had a reason to; an opt-in field list makes a fourth caller repeat the
-    // same omission, so the invariant lives in the helper, not in its callers.
     // `entry` with `worktree` removed IFF a DIFFERENT LIVE seat now holds that
     // checkout; `entry` untouched otherwise, and untouched on any throw. Every
     // path that writes a PRE-KILL snapshot back after a restart must run its
@@ -2783,6 +2758,31 @@ function createSessionManager(deps) {
       return stripped;
     }
 
+    // Re-seed post-create persistence fields across a kill()+create restart (task
+    // 22 rework / MUST-FIX 2, generalized in task 24 / MUST-FIX 2). The APP-RELAUNCH
+    // restore path keeps the persistence record (never removed), so create()'s
+    // existingEntry carries these fields. But the IN-PLACE restart paths
+    // (engine.restartSession / applySessionArgs) route through kill(), which
+    // REMOVES the record — so create() rebuilds it from spawn args ONLY, dropping
+    // any field seeded AFTER create on the prior spawn: `rosterSentAt` (roster
+    // gate → re-injects the roster into a --resume'd context) and a reviewer seat's
+    // `ephemeral`/`reviewFor` (identity → review-done can no longer route/retire).
+    // Re-seeding AFTER create() is too late for the fields create() itself reads
+    // (rosterSentAt gates in create), so the restart callers capture the pre-kill
+    // entry and call this AFTER kill, BEFORE create: it re-seeds JUST the requested
+    // fields present on the prior entry, and create's own upsert then spread-merges
+    // the full record over this stub, preserving them. A prior entry lacking a
+    // field seeds nothing for it (a genuinely fresh seat gets its roster).
+    //
+    // ALWAYS_PRESERVE is carried whether or not a caller names it, and that is
+    // deliberate rather than a shortcut: `sessionIds` is the seat's session_id
+    // HISTORY, which is what the cost panel sums a name's whole spend over
+    // (session-info trackedSessionIds → sumAgentCost). Only setSessionId appends
+    // to it, and only on a CHANGE, so an array dropped here never regrows — the
+    // seat's lifetime cost silently restarts from the current id and reads as
+    // "agent total below session total". All three callers omitted it and none
+    // had a reason to; an opt-in field list makes a fourth caller repeat the
+    // same omission, so the invariant lives in the helper, not in its callers.
     _preserveAcrossRestart(name, priorEntry, fields) {
       if (!priorEntry || !Array.isArray(fields)) return;
       let seed = { name };
