@@ -196,22 +196,19 @@ row's ✕, which archives. Archived rows surface via the sidebar status filter
 
 The record-droppers reachable from the sidebar are three, not one: the ARCHIVED
 row's ✕ and the FAILED ghost row's ✕ (both `forgetSession` → `persistence.remove`,
-renderer.js), and right-click Delete Session…. Only the last kills a session
-process; the two ✕ routes act on a record whose session is already gone.
+renderer.js), and right-click Delete Session… (see `destroy()` for when it does
+not drop). Only the last kills a session process; the two ✕ routes act on a
+record whose session is already gone.
 
 **Real delete of a LIVE session = right-click "Delete Session…"** + native
-confirm. It routes through `manager.kill`
-(`_userKilled` → `persistence.remove`); the `session:kill` handler additionally
-grabs worktree provenance *before* the kill, `await`s `waitForSessionExit`, then
-`await`s `gitWorktree.removeWorktree` — **awaited, toasted on failure**, not the
-old fire-and-forget `setTimeout`. The session is deleted regardless; a
-worktree-removal failure returns `{ok:true, worktreeRemoved:false, error}` so
-the renderer toasts it while the row still goes.
+confirm. It routes through `manager.destroy` (`ipc-handlers.js` `session:kill`)
+— see that method's own comment for what it does and in what order. A
+worktree-removal failure is toasted by the renderer while the row goes.
 
 | Event | sessions.json | Process | UI |
 |---|---|---|---|
 | Archive (✕ / Cmd+W) | kept, `archivedAt` stamped | killed (SIGKILL fallback 5s) | live tab → dimmed archived row |
-| Delete (right-click "Delete Session…") | removed (+ worktree removed, awaited) | killed (SIGKILL fallback 5s) | tab removed |
+| Delete (right-click "Delete Session…") | removed (+ worktree; see `destroy()`) | killed (SIGKILL fallback 5s) | tab removed |
 | Natural exit (agent) | kept → `--resume` next open | dead | tab removed |
 | Natural exit (bash) | removed (unless `_archived`) | dead | tab removed |
 | App quit | kept | all killed (`killAll`, `_shuttingDown`) | windows closed |
@@ -273,8 +270,7 @@ mint) do NOT scan, so that self-healing covers the ticket path only; and
 for when.
 
 The Delete Session… confirm sentence and the `Worktree removal failed: …` toast
-both name a tree that is already gone. To drop such a record by hand, use the
-ARCHIVED row's ✕ (`forgetSession`).
+both concern a tree that is already gone.
 
 Do not add a sweep keyed on the path being missing: a missing path is not
 evidence a session is dead (an unmounted volume or a moved repo reads
@@ -331,8 +327,8 @@ see §4.)
 - Restore/respawn failure keeps the persisted entry (`{failed:true}`).
 - ✕ / Cmd+W on a LIVE row archives (keep the record, stamp `archivedAt`). The
   ARCHIVED row's ✕ and the FAILED ghost row's ✕ are different controls
-  (`forgetSession`) and DO drop the record, as do right-click Delete Session…
-  and Delete Workspace…. "✕ archives" is true only of a live row.
+  (`forgetSession`) and DO drop the record, as does Delete Workspace….
+  "✕ archives" is true only of a live row.
 - Parked-DM dir removal is gated on `_userKilled` — archive leaves it false.
 - Strip level is not a spawn arg — every kill+create path must re-assert it.
 - The append-prompt channel is static per protocol (see messaging.md §6);
