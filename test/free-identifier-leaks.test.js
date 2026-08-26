@@ -161,7 +161,8 @@ const SCANNED_MODULES = [
   // out of main.js, so the forward scan can only catch it accidentally using a
   // name main.js happens to define. That is a weak statement compared to what
   // this test does for a real main.js extraction. The strong guard for cli/ is
-  // its leaf property (no upward require at all), which cli/test/load-smoke.js
+  // its leaf property — no upward require in the SHIPPED tree, `cli/src` and
+  // `cli/bin` (`cli/test` does require upward) — which cli/test/load-smoke.test.js
   // and the packaging tests speak to.
   'cli/src/dial.js',
   // The shared SSE frame decoder (t47/L3), collapsing two copies of the

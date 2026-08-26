@@ -61,7 +61,10 @@ not a fallback. Pick whichever fits your box:
 
 `cli/` remains a standalone package — installable on a box that has never seen
 Clodex, requiring only `node:*` builtins and its own siblings, never an app
-file. That direction of the boundary is unchanged.
+file. That holds of the SHIPPED tree (`cli/src` and `cli/bin`, which is what
+`files` publishes); `cli/test` does require upward into the app tree, and an
+upward require added to `cli/src` would break the package. That direction of
+the boundary is unchanged.
 
 **The desktop app's packaged DMG DOES ship `cli/`** (`"cli/**/*"` in
 `build.files`). This reverses an earlier position, so the reason is recorded
