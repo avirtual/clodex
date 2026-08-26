@@ -220,7 +220,26 @@ function nearMissFormHint(text) {
 // operator actually set. Losing them is silent and unbounded: the perpetual
 // hold is the one mode whose seat nobody is sitting at, so no turn arrives to
 // notice the flag is gone and _maybeRearmHold never runs against anything.
-const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'keepWarmAlways', 'holdUntil'];
+// `worktree` is here because ABSENT is the DANGEROUS state and stale is the safe
+// one — the reverse of the usual intuition about a preserved pointer. destroy()
+// reads `entry.worktree.path` to find the tree; with no pointer it takes the
+// `if (!worktree)` arm, drops the record and returns ok, orphaning the checkout
+// irrecoverably (the record is the only thing naming it). A pointer to a tree
+// that is already gone instead fails removeWorktree, which KEEPS the record and
+// rides the path out for the operator. Preservation also cannot manufacture the
+// stale case: a restart re-enters the same cwd and deliberately does not touch
+// the tree, so the value copied back is the one that was there microseconds
+// earlier. _ticketTreeHolder reads occupancy off the record too, so a reloaded
+// seat without it is invisible and its LIVE tree can be handed to a second seat.
+// `autoCompact` is stored ONLY as the opt-OUT (`false`; enabling deletes the
+// key), so losing it fails toward the more destructive default — autoCompactOf
+// reads absence as ON and compacts a seat the operator exempted.
+// `digested` is append-only history like `sessionIds`, and unlike `rosterSentAt`
+// it carries the conversation identity INSIDE its value: a fresh restart mints an
+// id that is by construction not in the array, so a preserved list cannot
+// suppress a digest that is due. That is what makes it safe here where a bare
+// timestamp is not.
+const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested'];
 
 // The delayed backstop SIGKILL for a pty that ignored `pty.kill()`. The `> 0`
 // is the whole function: `process.kill` reads non-positive pids as BROADCASTS,
