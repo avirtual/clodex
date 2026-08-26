@@ -55,8 +55,21 @@ const { createEngine } = require('../engine');
 const gitWorktree = require('../git-worktree');
 const { createMemoryStore } = require('../memory-store');
 
+// Same shape as test/git-worktree.test.js:13 and test/team-measure.test.js — the
+// six subjects below shell out to a real `git`, and without the gate a git-less
+// box gets an opaque execFileSync throw instead of a skip.
+function gitAvailable() {
+  try { execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
+}
+
+// Every tmpdir this file mints, reaped by the `after` hook at the bottom. The
+// ORPHAN subject deliberately leaves a checkout on disk — that IS its assertion —
+// so nothing here may run before it; see the hook for why it is where it is.
+const TMP_ROOTS = [];
+
 function mkEngine() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-wt-'));
+  TMP_ROOTS.push(tmp);
   // registryDir, or the engine seeds the operator's live ~/.clodex (t359).
   const registryDir = path.join(tmp, 'clodex-home');
   const eng = createEngine({
@@ -76,6 +89,9 @@ function mkEngine() {
 // repo with no commits, so the commit is load-bearing, not scene-setting.
 function mkRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-repo-'));
+  // Both the repo AND the `<dir>-<branch>` checkouts createWorktree puts beside
+  // it (git-worktree.js derives the sibling path from this one).
+  TMP_ROOTS.push(dir);
   const run = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
   run('init', '-q', '-b', 'main');
   run('config', 'user.email', 't489@example.invalid');
@@ -142,7 +158,7 @@ function assertEntered(seen, removals, name, path_) {
 
 // --------------------------------------------------- the preserve itself
 
-test('restartSession carries the worktree pointer across the kill+create seam', async () => {
+test('restartSession carries the worktree pointer across the kill+create seam', { skip: !gitAvailable() }, async () => {
   const eng = mkEngine();
   const repo = mkRepo();
   const wt = await gitWorktree.createWorktree(repo, 't489-a');
@@ -173,7 +189,7 @@ test('restartSession carries the worktree pointer across the kill+create seam', 
     "and it survives create()'s rebuild upsert, which spread-merges over the seed");
 });
 
-test('a FRESH restart carries it too — a checkout is a seat property, not conversation state', async () => {
+test('a FRESH restart carries it too — a checkout is a seat property, not conversation state', { skip: !gitAvailable() }, async () => {
   const eng = mkEngine();
   const repo = mkRepo();
   const wt = await gitWorktree.createWorktree(repo, 't489-b');
@@ -201,7 +217,7 @@ test('a FRESH restart carries it too — a checkout is a seat property, not conv
     + 'contrast proves nothing');
 });
 
-test('[agent:context reload] carries it across its cold respawn — the ticket-seat path', async () => {
+test('[agent:context reload] carries it across its cold respawn — the ticket-seat path', { skip: !gitAvailable() }, async () => {
   // The path the leak was argued from: a ticket seat that reloads itself comes
   // back having lost its provenance, and `task accept` can then no longer find
   // the tree to remove.
@@ -264,7 +280,7 @@ test('a seat with no worktree is not handed one by the restart', async () => {
 // about whether a directory still exists afterwards. That difference is the
 // entire argument for the decision this ticket made.
 
-test('CONSEQUENCE: with the pointer, destroy() actually removes the checkout', async () => {
+test('CONSEQUENCE: with the pointer, destroy() actually removes the checkout', { skip: !gitAvailable() }, async () => {
   const eng = mkEngine();
   const repo = mkRepo();
   const wt = await gitWorktree.createWorktree(repo, 't489-live');
@@ -282,7 +298,7 @@ test('CONSEQUENCE: with the pointer, destroy() actually removes the checkout', a
     'the record is dropped only because the tree it named went with it');
 });
 
-test('CONSEQUENCE: without it, destroy() reports success and ORPHANS the checkout', async () => {
+test('CONSEQUENCE: without it, destroy() reports success and ORPHANS the checkout', { skip: !gitAvailable() }, async () => {
   // The state an in-place restart produced before this ticket: create() rebuilt
   // the record from spawn args, so the pointer is simply absent. Everything else
   // is identical to the test above.
@@ -307,7 +323,7 @@ test('CONSEQUENCE: without it, destroy() reports success and ORPHANS the checkou
     + 'is nothing to strand');
 });
 
-test('CONSEQUENCE: a STALE pointer is the SAFE failure — the record is KEPT', async () => {
+test('CONSEQUENCE: a STALE pointer is the SAFE failure — the record is KEPT', { skip: !gitAvailable() }, async () => {
   // The objection this decision had to answer: preserving a pointer risks
   // carrying a stale one. It does — a tree can be removed by hand between the
   // restart and the destroy — and this is what that costs. Compare with the
@@ -423,4 +439,34 @@ test('a fresh conversation is still owed its digest — the preserved list canno
     + 'here: unlike rosterSentAt, a carried value can only suppress a delivery that already happened');
 });
 
-after(() => { setImmediate(() => process.exit(0)); });
+// MEASURED, not assumed (t492): before this hook, one run of this file left ~15
+// directories in os.tmpdir() — 9 mkEngine roots, 6 mkRepo roots and the 4
+// checkouts the subjects do not remove. 816 of them had accumulated across ~44
+// runs in a single day (~35M), so the OS was not reaping them on any timescale
+// that matters. The orphan subject is only 2 of the 15; the rest is ordinary
+// fixture litter.
+//
+// A top-level `after` is the ONLY correct place for this. The orphan subject's
+// whole assertion is that a checkout is STILL on disk after destroy(), so a
+// cleanup that ran any earlier would delete the evidence and leave the test
+// passing for the wrong reason. Runs before the force-exit below, or nothing
+// is reaped at all.
+//
+// Sibling checkouts are globbed rather than collected from each `wt.path`
+// because git-worktree.js derives them (`<repoName>-<branch>`, plus a `-2`
+// collision suffix) — matching the derivation here would go stale silently,
+// while a prefix sweep of a directory this file minted cannot touch anything
+// it did not make.
+after(() => {
+  for (const root of TMP_ROOTS) {
+    const parent = path.dirname(root);
+    const prefix = `${path.basename(root)}-`;
+    try {
+      for (const name of fs.readdirSync(parent)) {
+        if (name.startsWith(prefix)) fs.rmSync(path.join(parent, name), { recursive: true, force: true });
+      }
+    } catch { /* parent unreadable — nothing to sweep */ }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  setImmediate(() => process.exit(0));
+});
