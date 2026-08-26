@@ -91,9 +91,8 @@ bundle), whose packaged form is the Docker image under
   windows (`createWindow`, `workspaceOfSender`, `openWirescopeWindow`), tray +
   app menu, `registerIpcHandlers`, update-checker banners, and the shared
   session helpers (`fetchProxyContext/Report/Bust`,
-  `fetchSessionFiles/FilePeek/FileDiff`, `restartSession`,
-  `waitForSessionExit`, `peerProxyView` — defined in engine.js and injected;
-  deliberately NOT a module).
+  `fetchSessionFiles/FilePeek/FileDiff`, `restartSession` — defined in
+  engine.js and injected; deliberately NOT a module).
   `before-quit` / `window-all-closed` route to `engine.shutdown()`.
 - **headless-main.js** — the **headless adapter**, `node headless-main.js`. No
   Electron, no Xvfb, no windows/tray/ipc: `userDataPath` from
