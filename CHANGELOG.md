@@ -13,6 +13,19 @@ blocks a release.
 
 ## Unreleased — your checkouts, your cost history, and three hostile values
 
+- **Teammates of the same role now share prompt cache.** The `# Team` block at
+  the top of every team seat's system prompt named the seat — "You are seat
+  clodex-hand-504…" — and repeated it in a roster invocation on the line below.
+  That block is a prefix of the frozen prompt and the role's standing prompt is
+  appended *after* it, so the one varying token made everything behind it
+  unshareable: measured against a live team, 8,795 bytes for a hand and 4,484
+  for a reviewer, per seat. The block now states only the team, root and role,
+  which is identical for every seat of a role. Nothing is lost — a seat is still
+  told its own name at the top of every session, and again after each `/clear`
+  and `/compact`, and the copyable roster command still arrives with the roster
+  itself. The saving only materializes when same-role seats run concurrently,
+  which for most teams means reviewers.
+
 - **A stub pty in a test could SIGKILL every process on the machine.** When a
   session is killed or archived, Clodex asks its pty to exit and then, five
   seconds later, sends SIGKILL as a backstop in case it did not. That backstop

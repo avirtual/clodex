@@ -32,3 +32,27 @@ keeps the concrete named line, untouched per spec.
 ## Next
 Tests: update pins at test/team-manifest.test.js :1035, :1043, :1805; add the
 byte-identical property test. Do NOT touch :1681 (hook roster). Then CHANGELOG.
+
+## Tests changed (test/team-manifest.test.js)
+- :1032 lead-seat block pin -> new constant line 2; asserts the ABSENCE of the
+  name and of `[agent:exec clodex-team]` rather than a new phrasing.
+- :1041 convention pin -> `You are on team shop` + name-absent assertion.
+- :1805 "ground-truth invocation is concrete" -> inverted: the block carries NO
+  payload now, and the same test proves formatRoster still does, so the pin
+  states "the duplicate moved" rather than "it vanished".
+- NEW: same-role seats render BYTE-IDENTICAL blocks. strictEqual on the whole
+  string across shop-hand-503 / -504 / bare shop-hand, plus one hardcoded
+  literal of the exact expected bytes (equality alone would pass on an empty or
+  role-less block), plus a notStrictEqual across DIFFERENT roles so a constant-
+  returning implementation fails.
+- :1681 hook-roster pin: NOT touched, per spec.
+
+## After-measurement (same script, live manifest)
+  hand      block=183B  stranded=0  identical=true   (was 8795 stranded)
+  reviewer  block=187B  stranded=0  identical=true   (was 4484 stranded)
+  lead      block=183B  stranded=0  identical=true
+Block itself also shrank 241->183B (hand), 253->187B (reviewer).
+
+## CHANGELOG
+Entry added under `## Unreleased` — behavioural change, states the honest TTL
+caveat (only pays when same-role seats overlap).

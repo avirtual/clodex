@@ -1032,21 +1032,54 @@ test('matchSeatRole: a numeric suffix strips with or without a separator, and an
 test('formatTeamBlock: shrunk identity block with role match (lead seat)', () => {
   const block = formatTeamBlock(teamFixture(), 'boss');
   assert.match(block, /^# Team$/m);
-  assert.match(block, /You are seat boss on team shop \(root \/Users\/me\/shop\)\. Your role: lead\./);
-  assert.match(block, /Team composition arrives in your context; ground truth: \[agent:exec clodex-team\] \{"action":"roster","agent":"boss"\}/);
+  assert.match(block, /^You are on team shop \(root \/Users\/me\/shop\)\. Your role: lead\.$/m);
   // The roster listing moved OUT — no "Roles:" line in the invariant block.
   assert.ok(!/Roles:/.test(block), 'roster listing no longer in the system-prompt block');
+  // And so did the seat name, in BOTH the places it used to appear: this block
+  // is a prefix of the frozen prompt, so any per-seat token strands the role
+  // prompt behind it. Asserted as an absence of the name itself, not of one
+  // phrasing, so a reworded line that reintroduces it still fails.
+  assert.ok(!block.includes('boss'), 'the seat name is not in the cache-stable block');
+  assert.ok(!block.includes('[agent:exec clodex-team]'),
+    'the rendered roster invocation moved to the hook roster, which may name the seat');
 });
 
 test('formatTeamBlock: role match via the <team>-<role> naming convention', () => {
   const block = formatTeamBlock(teamFixture(), 'shop-hand');
-  assert.match(block, /You are seat shop-hand on team shop/);
+  assert.match(block, /You are on team shop/);
   assert.match(block, /Your role: hand\./);
+  assert.ok(!block.includes('shop-hand'), 'the resolving seat name never reaches the output');
 });
 
 test('formatTeamBlock: a seat that matches no role reports the none-case', () => {
   const block = formatTeamBlock(teamFixture(), 'wanderer');
   assert.match(block, /Your role: none — not a manifest role/);
+});
+
+// THE property, stated as bytes rather than as an absence of one substring:
+// two seats of the same role must produce an IDENTICAL block. This block is a
+// prefix of the frozen system prompt (session-manager concatenates the role
+// prompt after it), so a single differing token makes every byte behind it
+// unshareable between concurrent same-role seats — measured at 8,795 bytes for
+// a hand and 4,484 for a reviewer against the live manifest before this held.
+// strictEqual on the whole string, not a regex: a regex can only forbid the
+// forms someone thought to forbid.
+test('formatTeamBlock: same-role seats render BYTE-IDENTICAL blocks', () => {
+  const t = teamFixture();
+  // Convention-named siblings, the shape the spawn loop actually produces.
+  assert.strictEqual(formatTeamBlock(t, 'shop-hand-503'), formatTeamBlock(t, 'shop-hand-504'));
+  // And the bare role name resolves to the same role, so it must match too.
+  assert.strictEqual(formatTeamBlock(t, 'shop-hand'), formatTeamBlock(t, 'shop-hand-504'));
+  // The literal that distinguishes this case from the ones above: proving the
+  // blocks are equal is worthless if they are equal by being empty or by having
+  // lost the role, so pin the exact bytes once.
+  assert.strictEqual(formatTeamBlock(t, 'shop-hand-503'),
+    '# Team\n'
+    + 'You are on team shop (root /Users/me/shop). Your role: hand.\n'
+    + 'Team composition arrives in your context, and with it the ground-truth roster invocation.');
+  // DIFFERENT roles must still differ — an implementation that returned one
+  // constant for everything would satisfy every assertion above.
+  assert.notStrictEqual(formatTeamBlock(t, 'shop-hand'), formatTeamBlock(t, 'shop-reviewer'));
 });
 
 // The exact caller expression session-manager uses at the spawn callsite:
@@ -1802,12 +1835,15 @@ test('formatRoster: the action line keys off the role name, never the lead SEAT 
   assert.match(roster, /Dispatch: TWO steps\. \[agent:task add <role>\] <spec>/);
 });
 
-test('formatTeamBlock: its ground-truth invocation is concrete and schema-valid', () => {
-  const payload = execPayloadFrom(formatTeamBlock(TEAM(), 'shop-hand'));
-  assert.ok(payload, 'the block carries a JSON payload, not the bare word "roster"');
-  assert.deepStrictEqual(payload, { action: 'roster', agent: 'shop-hand' });
-  assert.deepStrictEqual(schemaViolations(payload, EXEC_SCHEMA), [],
-    'the rendered payload satisfies resources/library/exec/clodex-team.json');
+// The block used to render its own exec invocation; it no longer carries one at
+// all, because a concrete payload must name the reader's seat to be copyable and
+// that is the token this block must not vary on. The concrete named rendering
+// lives in the HOOK roster (formatRoster), pinned separately — this asserts the
+// duplicate is gone from the system prompt, not that it is gone everywhere.
+test('formatTeamBlock: carries no exec invocation — the concrete one is the hook roster\'s', () => {
+  assert.strictEqual(execPayloadFrom(formatTeamBlock(TEAM(), 'shop-hand')), null);
+  assert.ok(execPayloadFrom(formatRoster(TEAM(), ['shop-hand'], { seat: 'shop-hand' })),
+    'the hook roster still renders a concrete payload, so nothing was lost');
 });
 
 // --- formatCompositionDelta: the passive one-liner -------------------------
