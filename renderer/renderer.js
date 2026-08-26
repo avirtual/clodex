@@ -3504,7 +3504,7 @@ createTermTab({
 
 createInboxDrawer({ openFilePeek, showToast });
 
-createVoiceControl({
+const voiceControl = createVoiceControl({
   getActiveSession: () => activeSession, sessionTypeOf, sessionList, showToast,
 });
 
@@ -5509,6 +5509,10 @@ async function openPrefs() {
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
   applyPrefsGate();
+  // Re-read the voice mode on open rather than trusting the 15s poll: a `/voice`
+  // typed in a terminal since the last read would otherwise show stale for up to
+  // that long, on the one screen that claims to say what the mode IS.
+  voiceControl.refresh();
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
   if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
   prefsRemoteToken.value = '';

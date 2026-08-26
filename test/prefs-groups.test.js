@@ -23,6 +23,7 @@ function prefsMarkup() {
 // adding it here on purpose; losing one to a careless move fails.
 const CONTROLS = [
   'prefs-overlay', 'prefs-dialog', 'prefs-theme',
+  'prefs-voice-mode', 'prefs-voice-state',
   'prefs-claude-components', 'prefs-claude-sl-cmd', 'prefs-codex-components',
   'prefs-proxy-enabled', 'ws-dot', 'ws-status-text', 'ws-restart-btn',
   'prefs-compact-on-resume', 'prefs-compact-on-resume-why',
@@ -48,7 +49,7 @@ test('every group is collapsible and named', () => {
   const groups = [...prefsMarkup().matchAll(/<details class="prefs-group" data-group="([^"]+)"/g)]
     .map((m) => m[1]);
   assert.deepStrictEqual(groups, [
-    'appearance', 'statusline', 'new-sessions', 'env', 'traffic', 'phone', 'discovery',
+    'appearance', 'voice', 'statusline', 'new-sessions', 'env', 'traffic', 'phone', 'discovery',
   ], 'group set/order changed — update this list deliberately');
   // One summary per group, or a group has no header to click.
   assert.strictEqual((prefsMarkup().match(/<summary>/g) || []).length, groups.length);
