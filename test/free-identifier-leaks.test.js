@@ -296,6 +296,12 @@ const RENDERER_SCANNED_MODULES = [
   // matters as much as the forward one here: ipc-log.js keeping a name that
   // moved to the host is the same silent break as the host reaching for one of
   // renderer.js's.
+  // The voice-mode selector (t509). Scanned like every island: it renders off
+  // the sidebar rows and the active tab, both of which are renderer.js names in
+  // easy reach — reading `activeSession` or `sessionList` directly instead of
+  // through its injected seams would ship green, and would break the browser
+  // frontend, where this island is bundled and those names are not its to take.
+  'renderer/voice-control.js',
   'renderer/drawer-host.js',
   'renderer/ipc-log.js',
   'renderer/inbox-drawer.js',

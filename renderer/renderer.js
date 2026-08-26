@@ -46,6 +46,7 @@ const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
 const { createDrawerHost } = require('./drawer-host');
 const { createIpcLog } = require('./ipc-log');
 const { createInboxDrawer } = require('./inbox-drawer');
+const { createVoiceControl } = require('./voice-control');
 const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
 const { initBanners } = require('./banners');
@@ -3502,6 +3503,10 @@ createTermTab({
 });
 
 createInboxDrawer({ openFilePeek, showToast });
+
+createVoiceControl({
+  getActiveSession: () => activeSession, sessionTypeOf, sessionList, showToast,
+});
 
 
 

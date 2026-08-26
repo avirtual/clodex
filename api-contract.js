@@ -360,6 +360,9 @@ const API_CONTRACT = [
   { name: 'getAgentCatalog', kind: 'invoke', channel: 'session:agentCatalog' },
   { name: 'getSkillCatalogFor', kind: 'invoke', channel: 'settings:skillCatalogFor' },
   { name: 'getToolCatalogFor', kind: 'invoke', channel: 'settings:toolCatalogFor' },
+  // t509: the box-wide voice-input mode the CLI persists. Read-only — the mode is
+  // CHANGED by injecting `/voice <mode>`, so there is no setter row to pair with it.
+  { name: 'getVoiceMode', kind: 'invoke', channel: 'settings:voiceMode' },
   { name: 'listWorkspaces', kind: 'invoke', channel: 'workspace:list' },
   { name: 'currentWorkspace', kind: 'invoke', channel: 'workspace:current' },
   { name: 'setWorkspaceName', kind: 'invoke', channel: 'workspace:setName' },

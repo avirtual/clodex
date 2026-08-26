@@ -100,6 +100,10 @@ const PINNED_NAMES = [
   'restartSession', 'setSessionTools', 'setSessionSkills', 'setSessionAgents',
   'setSessionIntents', 'getSkillCatalog', 'getAgentCatalog', 'getSkillCatalogFor',
   'getToolCatalogFor', 'listWorkspaces', 'currentWorkspace', 'setWorkspaceName',
+  // t509: the sidebar voice-mode selector's read of ~/.claude/settings.json.
+  // Read-only and box-wide — the WRITE is an injectPrompt of `/voice <mode>`,
+  // which is why this arrives as one row and not two.
+  'getVoiceMode',
   'newWorkspace',
   // Managed Docker sandbox (sandbox-plan.md [internal design doc, not in this repo] M2) — appended deliberately as
   // the surface grew past the ffe1161 snapshot; the count below moved with it.
@@ -181,8 +185,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 260-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 260, 'pinned list is the full 260-method surface');
+test('contract covers exactly the pinned 261-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 261, 'pinned list is the full 261-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -206,7 +210,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 260, 'window.api has exactly 260 methods');
+    assert.equal(generated.length, 261, 'window.api has exactly 261 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

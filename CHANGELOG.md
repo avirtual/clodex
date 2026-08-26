@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased — your checkouts, your cost history, and three hostile values
 
+- **Voice input has a switch in the sidebar.** The Claude CLI's voice mode —
+  off, tap-to-talk, or hold-to-talk — was reachable only by typing `/voice` into
+  a terminal, so nothing on screen said which one you were in. There is now a 🎤
+  row in the sidebar footer that shows the current mode and switches it. It sits
+  in the footer, not on a session's bar, because the setting is one per machine:
+  every Claude session here shares it. Choosing a mode sends `/voice` to a live
+  session rather than editing the settings file, since a session already running
+  would not notice the edit — pick one mid-turn and it is queued until the agent
+  is between turns, and the row says so. A `/voice` you type yourself is picked
+  up too: the row reads the file, not what Clodex last sent. Sessions started
+  before a change keep the mode they launched with until they restart.
+
 - **`SendFeedback` can now be switched off.** The tool arrived in a recent CLI
   drop and Clodex did not know about it, and a tool Clodex has never heard of
   cannot be disabled at all — unchecking it would have done nothing, except that

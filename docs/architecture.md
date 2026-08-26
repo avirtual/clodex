@@ -211,6 +211,12 @@ bundle), whose packaged form is the Docker image under
   `process.env` with the settings layers the CLI loads (user < project < local),
   and classifying whether that env routes the CLI to a TEE-BLIND backend
   (Bedrock / Vertex) the wire tee cannot see.
+- **voice-settings.js** — the box-wide voice-input mode the Claude CLI persists
+  in `~/.claude/settings.json` (`voice.mode` / `voice.enabled`), behind the
+  sidebar's voice selector. READ-ONLY: the mode is changed by injecting
+  `/voice <mode>`, since a running CLI holds its mode in memory and would not
+  pick up an edited file. The legacy `voiceEnabled` sibling is reported and
+  never merged.
 - **env-scopes.js** — merges the GUI-managed environment scopes over the base
   process env for a wrapper PTY, and is the single source for the canonical
   precedence. Pure fs/path, no electron.
@@ -699,6 +705,12 @@ Own state + DOM, `init*(deps)`:
   the sidebar-footer unread badge; no core state, but takes `openFilePeek`
   and `showToast` by injection so a link in a note lands in the same peek
   modal and toasts the same miss a path click in the terminal does.
+- **voice-control.js** — the sidebar-footer voice-mode selector (off · tap ·
+  hold), reading `voice-settings.js` over `getVoiceMode` and writing by
+  INJECTING `/voice <mode>` into a live Claude session. Box-wide, so it sits in
+  the footer rather than the per-session proxy bar — which is also drawn for
+  proxied sessions only. Hidden with no Claude row at all, disabled with one
+  it cannot reach.
 - **plugin-host.js** — the renderer-side plugin host. Plugins hand it data or
   callbacks, NEVER HTML: everything user-supplied is escaped here, and every
   registered id becomes `"<pluginId>:<id>"` before it reaches the DOM, so a

@@ -476,6 +476,7 @@ body {
   padding: 6px 8px;
 }
 #inbox-open,
+#voice-open,
 #sidebar-footer [data-plugin-footer] {
   display: flex;
   align-items: center;
@@ -490,9 +491,21 @@ body {
   font-size: 12px;
 }
 #inbox-open:hover,
+#voice-open:hover,
 #sidebar-footer [data-plugin-footer]:hover {
   background: var(--sidebar-hover);
   color: var(--text);
+}
+#voice-open.hidden {
+  display: none;
+}
+#voice-open:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+#voice-open.voice-pending .footer-label {
+  color: var(--accent);
+  font-style: italic;
 }
 .footer-glyph {
   font-size: 13px;
@@ -2049,22 +2062,27 @@ body {
   padding-top: 7px;
   border-radius: 0 0 4px 4px;
 }
-.strip-menu {
+.strip-menu,
+.voice-menu {
   min-width: 240px;
   max-width: 300px;
 }
-.strip-menu .strip-item {
+.strip-menu .strip-item,
+.voice-menu .strip-item {
   display: flex;
   flex-direction: column;
   gap: 1px;
 }
-.strip-menu .strip-name {
+.strip-menu .strip-name,
+.voice-menu .strip-name {
   font-size: 12px;
 }
-.strip-menu .strip-item.strip-cur .strip-name {
+.strip-menu .strip-item.strip-cur .strip-name,
+.voice-menu .strip-item.strip-cur .strip-name {
   color: #4caa6e;
 }
-.strip-menu .strip-desc {
+.strip-menu .strip-desc,
+.voice-menu .strip-desc {
   font-size: 10px;
   color: var(--text-dim);
 }
@@ -5970,6 +5988,16 @@ body {
         <span class="footer-label">Inbox</span>
         <span class="inbox-count zero" id="inbox-count">0</span>
       </button>
+      <!-- Voice input mode (t509). Box-wide, NOT per-session: `/voice` writes
+           ~/.claude/settings.json, which every Claude session here shares, so a
+           home on the per-session proxy bar would read as seat-scoped while
+           moving a global — and that bar is drawn for proxied sessions only,
+           which would hide it on an unproxied box. Ships hidden: a machine with
+           no Claude session has no /voice to send. -->
+      <button id="voice-open" class="hidden" data-tip="Voice input mode (off · tap · hold)" type="button">
+        <span class="footer-glyph">&#127908;</span>
+        <span class="footer-label" id="voice-label">Voice</span>
+      </button>
     </div>
     <!-- Drag handle to resize the sidebar (Task 17). Thin hit area pinned to the
          right edge; renderer.js drives the --sidebar-width var from pointer moves. -->
@@ -7360,6 +7388,9 @@ body {
         { name: "getAgentCatalog", kind: "invoke", channel: "session:agentCatalog" },
         { name: "getSkillCatalogFor", kind: "invoke", channel: "settings:skillCatalogFor" },
         { name: "getToolCatalogFor", kind: "invoke", channel: "settings:toolCatalogFor" },
+        // t509: the box-wide voice-input mode the CLI persists. Read-only — the mode is
+        // CHANGED by injecting `/voice <mode>`, so there is no setter row to pair with it.
+        { name: "getVoiceMode", kind: "invoke", channel: "settings:voiceMode" },
         { name: "listWorkspaces", kind: "invoke", channel: "workspace:list" },
         { name: "currentWorkspace", kind: "invoke", channel: "workspace:current" },
         { name: "setWorkspaceName", kind: "invoke", channel: "workspace:setName" },
@@ -22520,6 +22551,135 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // renderer/voice-control.js
+  var require_voice_control = __commonJS({
+    "renderer/voice-control.js"(exports, module) {
+      var { esc } = require_format();
+      var VOICE_ITEMS = [
+        { mode: "off", name: "Off", desc: "No voice input" },
+        { mode: "tap", name: "Tap", desc: "Tap to start dictating, tap again to stop" },
+        { mode: "hold", name: "Hold", desc: "Hold the key while speaking, release to send" }
+      ];
+      var POLL_MS = 15e3;
+      function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, showToast }) {
+        const btn = document.getElementById("voice-open");
+        const labelEl = document.getElementById("voice-label");
+        if (!btn || !labelEl) return { refresh() {
+        } };
+        let state = null;
+        let pending = null;
+        let menu = null;
+        function injectTarget() {
+          const active = getActiveSession();
+          if (active && sessionTypeOf(active) === "claude") return active;
+          for (const el of sessionList.querySelectorAll('.session-item[data-type="claude"]')) {
+            if (el.dataset.peerUi || el.dataset.failed) continue;
+            if (el.classList.contains("archived") || el.classList.contains("peer-item")) continue;
+            if (el.dataset.name) return el.dataset.name;
+          }
+          return null;
+        }
+        function anyClaudeRow() {
+          return !!sessionList.querySelector('.session-item[data-type="claude"]');
+        }
+        function render() {
+          if (!anyClaudeRow()) {
+            btn.classList.add("hidden");
+            return;
+          }
+          btn.classList.remove("hidden");
+          const target = injectTarget();
+          const mode = pending || state && state.effective;
+          const known = VOICE_ITEMS.find((i) => i.mode === mode);
+          labelEl.textContent = known ? `Voice: ${known.name}` : "Voice";
+          btn.classList.toggle("voice-pending", !!pending);
+          btn.disabled = !target;
+          btn.dataset.tip = !target ? "Voice input mode (off \xB7 tap \xB7 hold) \u2014 no live Claude session to send /voice to." : pending ? `Switching voice to ${pending} \u2014 the command is queued until ${target} is between turns.` : `Voice input mode for every Claude session on this box${known ? "" : " \u2014 not set yet"}. A session already running keeps the mode it started with until it restarts.`;
+        }
+        async function refresh() {
+          let r = null;
+          try {
+            r = await window.api.getVoiceMode();
+          } catch {
+            r = null;
+          }
+          if (r && r.ok) {
+            state = r;
+            if (pending && r.effective === pending) pending = null;
+          }
+          render();
+        }
+        function closeMenu() {
+          if (menu) {
+            menu.remove();
+            menu = null;
+          }
+        }
+        function openMenu() {
+          closeMenu();
+          const cur = pending || state && state.effective;
+          menu = document.createElement("div");
+          menu.className = "warm-menu voice-menu";
+          const items = ['<div class="warm-menu-label">Voice input (all Claude sessions)</div>'];
+          for (const it of VOICE_ITEMS) {
+            const isCur = it.mode === cur ? " strip-cur" : "";
+            items.push(`<button class="warm-item strip-item${isCur}" data-mode="${it.mode}"><span class="strip-name">${esc(it.name)}${it.mode === cur ? " \u2713" : ""}</span><span class="strip-desc">${esc(it.desc)}</span></button>`);
+          }
+          if (state && state.source === "legacy") {
+            items.push('<div class="warm-menu-label">Only the legacy voiceEnabled key is set \u2014 pick a mode to set one.</div>');
+          }
+          menu.innerHTML = items.join("");
+          menu.addEventListener("click", async (e) => {
+            const item = e.target.closest(".strip-item");
+            if (!item) return;
+            const mode = item.dataset.mode;
+            closeMenu();
+            const target = injectTarget();
+            if (!target) return;
+            pending = mode;
+            render();
+            let r2 = null;
+            try {
+              r2 = await window.api.injectPrompt(target, `/voice ${mode}`);
+            } catch (err) {
+              r2 = { ok: false, error: err.message };
+            }
+            if (!r2 || !r2.ok) {
+              pending = null;
+              render();
+              showToast(`Setting voice to ${mode} failed: ${r2 && r2.error || "unknown error"}`);
+              return;
+            }
+            setTimeout(refresh, 1500);
+          });
+          document.body.appendChild(menu);
+          const r = btn.getBoundingClientRect();
+          const w = menu.offsetWidth;
+          menu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+          menu.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+        }
+        btn.addEventListener("click", () => {
+          if (menu) closeMenu();
+          else openMenu();
+        });
+        document.addEventListener("click", (e) => {
+          if (!menu) return;
+          if (menu.contains(e.target) || e.target.closest("#voice-open")) return;
+          closeMenu();
+        });
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Escape" && menu) closeMenu();
+        });
+        window.addEventListener("focus", refresh);
+        setInterval(refresh, POLL_MS);
+        new MutationObserver(render).observe(sessionList, { childList: true, subtree: true });
+        refresh();
+        return { refresh, render };
+      }
+      module.exports = { createVoiceControl, VOICE_ITEMS };
+    }
+  });
+
   // renderer/term-search.js
   var require_term_search = __commonJS({
     "renderer/term-search.js"(exports, module) {
@@ -30883,6 +31043,7 @@ ${detail}` });
       var { createDrawerHost } = require_drawer_host();
       var { createIpcLog } = require_ipc_log();
       var { createInboxDrawer } = require_inbox_drawer();
+      var { createVoiceControl } = require_voice_control();
       var { createTermSearch } = require_term_search();
       var { createIntentHighlight } = require_intent_highlight();
       var { initBanners } = require_banners();
@@ -33998,6 +34159,12 @@ Click for live activity`;
         }
       });
       createInboxDrawer({ openFilePeek, showToast });
+      createVoiceControl({
+        getActiveSession: () => activeSession,
+        sessionTypeOf,
+        sessionList,
+        showToast
+      });
       var {
         typeToTakeControl,
         renderPeerBar,
