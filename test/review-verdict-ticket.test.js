@@ -25,6 +25,7 @@ const pathReal = require('node:path');
 const osReal = require('node:os');
 
 const { createSessionManager, ticketCloseLine, ticketTaskDirLine } = require('../session-manager');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 // t353: the dispatch head carries the close verb. Imported, not copied — the
 // pins in this file are ENTER/setup assertions about WHICH delivery happened,
 // not about the verb's wording. The wording is pinned once in
@@ -76,7 +77,7 @@ function mkVerdict(extra = {}) {
   // code writes: _landVerdictOnTicket's whole claim is that the verdict is on
   // DISK afterwards, and a Map-backed ticket store would prove only that an
   // object in memory was mutated.
-  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-rv-'));
+  const home = mkTmpRoot('clodex-rv-');
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,

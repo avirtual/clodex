@@ -19,6 +19,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const {
   ShadowLog, isBulkType, BULK_TYPES, BULK_MAX_AGE_MS, BULK_MAX_BYTES, DIAG_MAX_BYTES,
@@ -28,7 +29,7 @@ const {
 const DAY = 24 * 60 * 60 * 1000;
 
 function rig() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shadow-ret-'));
+  const dir = mkTmpRoot('shadow-ret-');
   let clock = Date.parse('2026-08-15T12:00:00Z');
   const log = new ShadowLog({ fs, path, dir, now: () => clock });
   return {

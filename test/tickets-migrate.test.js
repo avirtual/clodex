@@ -16,9 +16,10 @@ const path = require('node:path');
 const { runTicketsMigration, mergeBoards, reconcileBoard, MARKER } = require('../tickets-migrate');
 const { createTicketsStore } = require('../tickets-store');
 const { projectDirFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function mkHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mig-'));
+  return mkTmpRoot('clodex-mig-');
 }
 
 // A team on disk: teams/<name>/{team.json,tickets.json}. `root` omitted on

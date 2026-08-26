@@ -16,6 +16,7 @@ const path = require('node:path');
 const D = require('../src/deploy');
 const { EXIT } = require('../src/errors');
 const { run } = require('../src/main');
+const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 const ACCT = '000000000000';   // placeholder account — never a real identifier
 const WIRE = 'W'.repeat(48);   // the stack's minted wire token (get-secret-value)
@@ -185,9 +186,9 @@ async function cli(argv, io = {}) {
   });
   return { code, stdout, stderr };
 }
-function tmpCtxFile() { return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-fargate-t-')), 'contexts.json'); }
+function tmpCtxFile() { return path.join(mkTmpRoot('clodexctl-fargate-t-'), 'contexts.json'); }
 function tokenFile(body = 'sk-oauth-secret\n') {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-fargate-tok-'));
+  const dir = mkTmpRoot('clodexctl-fargate-tok-');
   const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, body); return tf;
 }
 

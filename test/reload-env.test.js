@@ -25,6 +25,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Two keys, not one. The drop is a whole-env loss, not a hint-specific one — a
 // single-key fixture would read as if some named variable were special-cased and
@@ -32,8 +33,8 @@ const { pathFor, runDirFor } = require('../clodex-paths');
 const ENV = { AWS_PROFILE: 'acct-prod', CLODEX_SPAWNER_HINT: 'off' };
 
 function mkManager() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-reload-env-'));
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-reload-ud-')); // no env-override.env inside
+  const root = mkTmpRoot('clx-reload-env-');
+  const userData = mkTmpRoot('clx-reload-ud-'); // no env-override.env inside
   const store = new Map();
   const persistence = {
     list: () => [...store.values()],

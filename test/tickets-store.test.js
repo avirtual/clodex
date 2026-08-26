@@ -8,15 +8,16 @@ const path = require('path');
 
 const { createTicketsStore, nextTicketId, titleLine, ticketTitle, extractTaskDir, branchSlug } = require('../tickets-store');
 const { projectDirFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmpHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-tickets-'));
+  return mkTmpRoot('clodex-tickets-');
 }
 
 // A project ROOT is now the store's key — any absolute path will do, since the
 // board dir is derived from it by hashing, not by existing on disk.
 function tmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-proj-'));
+  return mkTmpRoot('clodex-proj-');
 }
 
 test('tickets-store: a missing registry loads as empty (never throws)', () => {

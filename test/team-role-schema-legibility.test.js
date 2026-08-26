@@ -32,6 +32,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const os = require('node:os');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const {
   ROLE_KEYS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, CUT_ROLE_FIELDS,
@@ -67,9 +68,9 @@ function rowModelFields() {
 // through (`team:addRole` takes an arbitrary def), and the one the other three
 // miss: they describe what the UI offers, while this is what a caller can store.
 function addRoleWritableFields() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'legib-home-'));
+  const home = mkTmpRoot('legib-home-');
   fs.mkdirSync(path.join(home, 'teams'), { recursive: true });
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'legib-proj-'));
+  const root = mkTmpRoot('legib-proj-');
   // A REAL directory: `cwd` is refused at write time unless it exists under the
   // root (Clodex never creates it), so without this the addRole below throws and
   // this helper measures nothing.

@@ -27,9 +27,10 @@ const os = require('os');
 const path = require('path');
 
 const { createTeamManifest, formatRoster, HONORED_CUT_FIELDS } = require('../team-manifest');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function mkHome() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'retired-roster-'));
+  const home = mkTmpRoot('retired-roster-');
   fs.mkdirSync(path.join(home, 'teams'), { recursive: true });
   return home;
 }

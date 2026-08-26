@@ -27,6 +27,7 @@ const path = require('node:path');
 const { createPluginLoader } = require('../plugin-loader');
 const { createPluginHostEngine } = require('../plugin-host-engine');
 const { pluginsEnabled, NO_SUCH_METHOD } = require('../plugin-api');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ROOT = path.join(__dirname, '..');
 const PLUGINS_DIR = path.join(ROOT, 'plugins');
@@ -46,7 +47,7 @@ function makeRealLoader() {
 
 function makeRealHost(loader) {
   let ui = {};
-  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'clodex-killswitch-'));
+  const dir = mkTmpRoot('clodex-killswitch-');
   return createPluginHostEngine({
     manager: {
       sessions: new Map(), list: () => [], listForWorkspace: () => [],

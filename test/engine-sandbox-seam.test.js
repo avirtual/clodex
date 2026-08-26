@@ -18,9 +18,10 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createEngine } = require('../engine');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function mkEngine(seams) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-eng-sbx-'));
+  const tmp = mkTmpRoot('clx-eng-sbx-');
   // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,

@@ -11,6 +11,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const D = require('../src/deploy');
 const { run } = require('../src/main');
+const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 // ── pure helpers ─────────────────────────────────────────────────────────────
 
@@ -95,7 +96,7 @@ async function cli(argv, io = {}) {
 }
 
 function tmpCtxFile() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-docker-'));
+  const dir = mkTmpRoot('clodexctl-docker-');
   return path.join(dir, 'contexts.json');
 }
 

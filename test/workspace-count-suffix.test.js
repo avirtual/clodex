@@ -24,6 +24,7 @@ const path = require('node:path');
 const { initStores } = require('../stores.js');
 const { createSessionManager } = require('../session-manager.js');
 const { workspaceCountSuffix } = require('../app-menus.js');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // ── Pure copy assertions ────────────────────────────────────────────────────
 
@@ -58,7 +59,7 @@ test('workspaceCountSuffix: pluralisation follows the TOTAL, not either part', (
 // ── The disjointness the sum depends on ─────────────────────────────────────
 
 function realStores() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-wscount-'));
+  const dir = mkTmpRoot('clodex-wscount-');
   return initStores(dir, {
     log: { info: () => {}, error: () => {} },
     registryDir: path.join(dir, 'registry'),

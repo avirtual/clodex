@@ -25,6 +25,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { initStores } = require('../stores.js');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function openStores(dir) {
   return initStores(dir, {
@@ -37,7 +38,7 @@ function openStores(dir) {
 }
 
 function mkDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-termreports-'));
+  return mkTmpRoot('clodex-termreports-');
 }
 
 function writeSettings(dir, obj) {
@@ -186,7 +187,7 @@ test('the revocation fires only on leaving `all`, and only for passive rows', ()
 // memory-viewer-plugin.test.js uses).
 
 function bootEngine() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-termreports-home-'));
+  const home = mkTmpRoot('clodex-termreports-home-');
   const prevHome = process.env.HOME;
   process.env.HOME = home;
   const { createEngine } = require('../engine');

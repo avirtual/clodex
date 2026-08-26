@@ -17,9 +17,10 @@ const U = require('../src/upgrade');
 const D = require('../src/deploy');
 const { EXIT } = require('../src/errors');
 const { run } = require('../src/main');
+const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 function tmpCtxFile(contexts, current = null) {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-up-t-')), 'contexts.json');
+  const f = path.join(mkTmpRoot('clodexctl-up-t-'), 'contexts.json');
   fs.mkdirSync(path.dirname(f), { recursive: true });
   fs.writeFileSync(f, JSON.stringify({ current, contexts }, null, 2), { mode: 0o600 });
   return f;

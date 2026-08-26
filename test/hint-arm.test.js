@@ -26,6 +26,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const {
   foldDraft, createHintArm, DRAFT_CAP, HINT_ID, TTL_S, HOLD_MAX_MS,
@@ -190,7 +191,7 @@ test('fold: CSI bytes never land in the draft as content', () => {
 // --- ranking ---------------------------------------------------------------
 
 function mkStore(units) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-hintarm-'));
+  const root = mkTmpRoot('clx-hintarm-');
   const store = createMemoryStore(path.join(root, 'library', 'memory'));
   const ids = units.map((u) => store.remember('a', { text: u.text, scope: u.scope || '' }).id);
   return { root, store, ids };
@@ -359,7 +360,7 @@ test('rank: confidence is a documented 0-1 band, floor maps to 0.5', () => {
 // every time. A dead-end instruction with nothing red anywhere, which is why
 // the fallback needs a test of its own.
 test('recall: a common-store id resolves through the fallback, not just the agent store', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hint-recall-'));
+  const dir = mkTmpRoot('hint-recall-');
   const own = createMemoryStore(path.join(dir, 'memory'));
   const common = createMemoryStore(path.join(dir, 'common-memory'));
   const unit = common.remember('chat-extract', { text: 'the operator sails a Bavaria 34', scope: 'life' });
@@ -1122,7 +1123,7 @@ test('once: the stored record reads back once === true', async () => {
 // test/memory-load.test.js — the draft fold and the arm calls are the product's
 // own code; the stubs stand only between create()'s entry and the session map.
 function mkManager({ hintArm = null, extraDeps = {} } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-hintwire-'));
+  const root = mkTmpRoot('clx-hintwire-');
   const store = createMemoryStore(path.join(root, 'library', 'memory'));
   const persisted = new Map();
   const watchers = [];
@@ -2067,7 +2068,7 @@ test('semantic: a slow ranker never blocks the keystroke path', async () => {
 // --- common memory + composite ranking -------------------------------------
 
 function mkCommonStore(units, set = 'chat-extract') {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-common-'));
+  const root = mkTmpRoot('clx-common-');
   const store = createMemoryStore(path.join(root, 'library', 'common-memory'));
   units.forEach((u) => store.remember(set, { text: u.text, scope: u.scope || '', tags: u.tags || '' }));
   return store;
@@ -2146,7 +2147,7 @@ test('common: extra frontmatter (kind, volatility, quote-in-body) survives the s
   // The import writes kind/authority/confidence/volatility/refs as frontmatter
   // the parser preserves, and puts the quote in the BODY — frontmatter is
   // line-based, so a multi-line quote truncates at the first newline.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-commonmeta-'));
+  const root = mkTmpRoot('clx-commonmeta-');
   const dir = path.join(root, 'library', 'common-memory', 'chat-extract');
   fs.mkdirSync(dir, { recursive: true });
   const body = 'Bogdan measured 57% of tokens as thinking.\n\n> i analyzed\n> tens of thousands of sessions';

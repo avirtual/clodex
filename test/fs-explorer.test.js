@@ -8,9 +8,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const fse = require('../plugins/workbench/fs-explorer');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function makeRoot() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-fse-'));
+  const root = mkTmpRoot('clodex-fse-');
   fs.mkdirSync(path.join(root, 'sub'));
   fs.mkdirSync(path.join(root, 'node_modules')); // noise — should be filtered
   fs.writeFileSync(path.join(root, 'b.txt'), 'text\n');

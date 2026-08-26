@@ -21,6 +21,7 @@ const fs = require('node:fs');
 
 const { createSessionManager } = require('../session-manager');
 const { CLAUDE_TOOLS } = require('../catalogs');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const REVIEWER_CAP = ['Read', 'Grep', 'Glob'];
 
@@ -717,7 +718,7 @@ test('t386: the TICKET path is untouched — it still takes template argv verbat
 // A team root on disk, with `api/` inside it. Returned as a team object shaped
 // like a loaded manifest.
 function teamOnDisk(roles) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'rolecwd-')));
+  const root = fs.realpathSync(mkTmpRoot('rolecwd-'));
   fs.mkdirSync(path.join(root, 'api'));
   return { name: 'crew', lead: 'lead', root, roles };
 }
@@ -884,7 +885,7 @@ test('role cwd: a SYMLINK out of the root cannot point a seat at another project
   // confinement compares strings, so `link` reads as confined — while the PTY
   // would boot in another project. Only realpath sees it.
   const team = teamOnDisk({ hand: { cwd: 'link' } });
-  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'rolecwd-out-')));
+  const outside = fs.realpathSync(mkTmpRoot('rolecwd-out-'));
   fs.symlinkSync(outside, path.join(team.root, 'link'));
   const m = managerWith([]);
   const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
@@ -898,10 +899,10 @@ test('role cwd: a symlink INSIDE the root is honored, and so is a symlinked root
   // reached through a symlink on macOS, and a one-sided compare would fall back
   // on every legitimate cwd there — turning the feature off exactly where the
   // tests run.
-  const real = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'rolecwd-real-')));
+  const real = fs.realpathSync(mkTmpRoot('rolecwd-real-'));
   fs.mkdirSync(path.join(real, 'api'));
   fs.symlinkSync(path.join(real, 'api'), path.join(real, 'api-link'));
-  const linkRoot = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rolecwd-lnk-')), 'proj');
+  const linkRoot = path.join(mkTmpRoot('rolecwd-lnk-'), 'proj');
   fs.symlinkSync(real, linkRoot);
   assert.notStrictEqual(fs.realpathSync(linkRoot), linkRoot,
     'ENTER: the root really is reached through a symlink, or this asserts nothing');

@@ -21,9 +21,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { createEngine } = require('../engine');
 const { ProxyClient, PROXY_REPORT_TIMEOUT } = require('../wirescope-proxy');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function mkEngine() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-ctx-timeout-'));
+  const tmp = mkTmpRoot('clx-ctx-timeout-');
   // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,

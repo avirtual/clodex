@@ -22,6 +22,7 @@ const os = require('os');
 const path = require('path');
 const childProcess = require('child_process');
 const { createTeamMeasure, FINDING_IDS, STATUSES } = require('../team-measure');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function gitAvailable() {
   try { childProcess.execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
@@ -29,7 +30,7 @@ function gitAvailable() {
 
 // A fixture directory: { 'package.json': '…', 'sub/x': '…' } written verbatim.
 function fixture(files = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-tm-'));
+  const dir = mkTmpRoot('clodex-tm-');
   for (const [rel, body] of Object.entries(files)) {
     const abs = path.join(dir, rel);
     fs.mkdirSync(path.dirname(abs), { recursive: true });

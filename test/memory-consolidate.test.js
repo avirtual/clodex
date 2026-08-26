@@ -10,6 +10,7 @@ const os = require('os');
 const path = require('path');
 
 const { createMemoryStore, parseMemoryUnit, composeDigest } = require('../memory-store');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
   run, restore, drift, parseVerdict, partialRate, consolidate, moreConservative,
   ARCHIVE_DIR, PARTIAL_ALARM, ARCHIVE_CAP, CONSERVATISM,
@@ -19,7 +20,7 @@ const { buckets, render } = require('../scripts/memory-tag/build-buckets');
 const AGENT = 'alpha';
 
 function fixture(specs) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-arch-'));
+  const root = mkTmpRoot('clodex-arch-');
   const store = createMemoryStore(root);
   const ids = [];
   for (let i = 0; i < specs.length; i++) {
@@ -678,7 +679,7 @@ test('archive: --out snapshots the active store before the first move', () => {
   const f = fixture([{ text: 'about to be archived' }, { text: 'the replacement' }]);
   const [dead, live] = f.ids;
   const before = fs.readFileSync(f.activePath(dead), 'utf-8');
-  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-out-'));
+  const outDir = mkTmpRoot('clodex-out-');
 
   const r = batch(f.root, [{ tag: 'x', text: `${dead}: superseded ${live} # replaced\n` }], { outDir });
   assert.strictEqual(r.archived.length, 1);

@@ -51,13 +51,14 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createEngine } = require('../engine');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A fixed point in the past, not a relative offset: ENTER (c). Any re-mint
 // lands on Date.now(), which cannot collide with it.
 const BORN = 1700000000000; // 2023-11-14T22:13:20Z
 
 function mkEngine() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-createdat-'));
+  const tmp = mkTmpRoot('clx-createdat-');
   // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,
@@ -229,7 +230,7 @@ const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 
 function mkManagerWithStore(extraDeps = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-createdat-mgr-'));
+  const root = mkTmpRoot('clx-createdat-mgr-');
   const store = new Map();
   const persistence = {
     list: () => [...store.values()],

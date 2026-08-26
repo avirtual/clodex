@@ -9,10 +9,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const d = require('../session-discovery');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Build a fake projects root; monkeypatch os.homedir so scanClaudeDisk reads it.
 function fakeProjects(records) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-disc-'));
+  const home = mkTmpRoot('clodex-disc-');
   const projects = path.join(home, '.claude', 'projects');
   for (const rec of records) {
     const slugDir = path.join(projects, rec.slug);
@@ -32,14 +33,14 @@ function withHome(home, fn) {
 }
 
 test('transcriptCwd: pulls the embedded cwd from a transcript head', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-tc-'));
+  const dir = mkTmpRoot('clodex-tc-');
   const file = path.join(dir, 's.jsonl');
   fs.writeFileSync(file, JSON.stringify({ type: 'user', cwd: '/Users/x/proj' }) + '\n');
   assert.strictEqual(d.transcriptCwd(file), '/Users/x/proj');
 });
 
 test('transcriptCwd: null when absent / unreadable', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-tc2-'));
+  const dir = mkTmpRoot('clodex-tc2-');
   const file = path.join(dir, 's.jsonl');
   fs.writeFileSync(file, JSON.stringify({ type: 'summary' }) + '\n');
   assert.strictEqual(d.transcriptCwd(file), null);
@@ -88,7 +89,7 @@ test('scanClaudeDisk: honors the age cutoff', () => {
 });
 
 test('scanClaudeDisk: missing store → empty list, never throws', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-empty-'));
+  const home = mkTmpRoot('clodex-empty-');
   assert.deepStrictEqual(withHome(home, () => d.scanClaudeDisk()), []);
 });
 

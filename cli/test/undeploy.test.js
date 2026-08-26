@@ -12,6 +12,7 @@ const path = require('node:path');
 const U = require('../src/undeploy');
 const { EXIT } = require('../src/errors');
 const { run } = require('../src/main');
+const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 const ACCT = '000000000000';   // placeholder account — never a real identifier
 
@@ -27,7 +28,7 @@ async function cli(argv, io = {}) {
   return { code, stdout, stderr };
 }
 function tmpCtxFile(seed = null) {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-undeploy-t-')), 'contexts.json');
+  const f = path.join(mkTmpRoot('clodexctl-undeploy-t-'), 'contexts.json');
   if (seed) fs.writeFileSync(f, JSON.stringify(seed, null, 2));
   return f;
 }

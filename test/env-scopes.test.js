@@ -10,12 +10,13 @@ const assert = require('node:assert');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
   DENY_KEYS, envKeyError, flattenScope, sanitizeFlat, mergeSessionEnv,
 } = require('../env-scopes');
 
 function tmpFile(body) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'env-scopes-'));
+  const dir = mkTmpRoot('env-scopes-');
   const f = path.join(dir, 'env-override.env');
   fs.writeFileSync(f, body);
   return f;

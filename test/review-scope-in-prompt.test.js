@@ -27,11 +27,12 @@ const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const pendingStore = require('../pending-store');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SCOPE = 'diff at /tmp/t5.diff against 2b7179c — attn: the migration ordering';
 
 function boot(extraDeps = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t5-'));
+  const root = mkTmpRoot('clx-t5-');
   const writes = new Map();
   const store = new Map();
   // Every inlineBody mergeClaudeSystemPrompt was asked to bake, by seat name.

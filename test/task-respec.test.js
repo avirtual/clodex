@@ -29,9 +29,10 @@ const ticketsMod = require('../tickets-store');
 const { ticketStarted } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { parseIntent } = require('../intent-scanner');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function mkRespec(extra = {}) {
-  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-respec-'));
+  const home = mkTmpRoot('clodex-respec-');
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,

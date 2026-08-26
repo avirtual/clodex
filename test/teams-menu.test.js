@@ -29,13 +29,14 @@ const path = require('node:path');
 const { createTeamManifest } = require('../team-manifest');
 const { API_CONTRACT } = require('../api-contract');
 const { buildTeamsMenu: buildWebTeamsMenu } = require('../renderer/web/menubar');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ON_CHANNELS = new Set(API_CONTRACT.filter((r) => r.kind === 'on').map((r) => r.channel));
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
 function mkHome() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'teams-menu-'));
+  const home = mkTmpRoot('teams-menu-');
   fs.mkdirSync(path.join(home, 'teams'), { recursive: true });
   return home;
 }

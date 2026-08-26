@@ -22,6 +22,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const KEY = 'CLAUDE_STREAM_IDLE_TIMEOUT_MS';
 const FLOOR = '1800000'; // the CLI clamps to [1, 1800000]; nothing higher is expressible
@@ -35,8 +36,8 @@ const FLOOR = '1800000'; // the CLI clamps to [1, 1800000]; nothing higher is ex
 const SIBLING = 'CLODEX_IDLE_SIBLING';
 
 function mkManager(scopes, { breakScopes = false } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-idle-'));
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-idle-ud-')); // no env-override.env inside
+  const root = mkTmpRoot('clx-idle-');
+  const userData = mkTmpRoot('clx-idle-ud-'); // no env-override.env inside
   const spawns = [];
   const SessionManager = createSessionManager({
     REGISTRY_DIR: root,

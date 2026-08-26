@@ -20,6 +20,7 @@ const pathReal = require('node:path');
 const osReal = require('node:os');
 
 const { createSessionManager, ticketCloseLine } = require('../session-manager');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 // t353: the dispatch head carries the close verb. Imported, not copied — the
 // pins in this file are ENTER/setup assertions about WHICH delivery happened,
 // not about the verb's wording. The wording is pinned once in
@@ -32,7 +33,7 @@ const { intentEnabled } = require('../intent-catalog');
 const { parseIntent } = require('../intent-scanner');
 
 function mkStart(extra = {}) {
-  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-ts-'));
+  const home = mkTmpRoot('clodex-ts-');
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,

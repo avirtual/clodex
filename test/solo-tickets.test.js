@@ -14,6 +14,7 @@ const pathReal = require('node:path');
 const osReal = require('node:os');
 
 const { createSessionManager, ticketCloseLine } = require('../session-manager');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 // t353: the dispatch head carries the close verb. Imported, not copied — the
 // pins in this file are ENTER/setup assertions about WHICH delivery happened,
 // not about the verb's wording. The wording is pinned once in
@@ -27,7 +28,7 @@ const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 
 function tmp(prefix) {
-  return fsReal.realpathSync(fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), prefix)));
+  return fsReal.realpathSync(mkTmpRoot(prefix));
 }
 
 // ---------------------------------------------------------------- project-root

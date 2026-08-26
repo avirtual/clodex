@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 
 const { createMemoryStore } = require('../memory-store');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
   findPointers, renderCandidates, matchesIn, chunkBucket, CHUNK_DECLARERS,
 } = require('../scripts/memory-tag/find-pointers');
@@ -24,7 +25,7 @@ const AGENT = 'alpha';
 const FILLER = 14;
 
 function fixture(specs, { filler = FILLER } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ptr-'));
+  const root = mkTmpRoot('clodex-ptr-');
   const store = createMemoryStore(root);
   const ids = [];
   const all = [...specs];

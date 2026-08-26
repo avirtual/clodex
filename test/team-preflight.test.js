@@ -21,6 +21,7 @@ const os = require('os');
 const path = require('path');
 const { teamPreflight } = require('../team-preflight');
 const { preflightByRole } = require('../renderer/lib/team-roles');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A probe set where EVERYTHING resolves. Individual tests remove one thing, so
 // the finding under test is the only difference from a known-empty baseline —
@@ -406,7 +407,7 @@ function mkManager(root, team) {
 }
 
 function withPrompts(stems) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-preflight-'));
+  const root = mkTmpRoot('clodex-preflight-');
   const dir = path.join(root, 'library', 'prompts', 'system');
   fs.mkdirSync(dir, { recursive: true });
   for (const s of stems) fs.writeFileSync(path.join(dir, `${s}.md`), `# ${s}\nbody\n`);

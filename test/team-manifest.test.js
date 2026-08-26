@@ -12,6 +12,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const {
   createTeamManifest, matchSeatRole, formatTeamBlock, formatRoster,
@@ -20,7 +21,7 @@ const {
 
 // A fresh fake ~/.clodex per helper call, so tests don't cross-contaminate.
 function mkHome() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'team-home-'));
+  const home = mkTmpRoot('team-home-');
   fs.mkdirSync(path.join(home, 'teams'), { recursive: true });
   return home;
 }
@@ -51,7 +52,7 @@ function validManifest(root) {
 
 test('resolveTeam finds the team whose root contains a nested cwd', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   mkTeam(home, 'shop', validManifest(root));
   const tm = createTeamManifest({ fs, clodexHome: home });
 
@@ -73,7 +74,7 @@ test('resolveTeam returns null when no team root contains the cwd', () => {
 
 test('resolveTeam picks the deepest root on nesting', () => {
   const home = mkHome();
-  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'outer-'));
+  const outer = mkTmpRoot('outer-');
   const inner = path.join(outer, 'packages', 'app');
   mkTeam(home, 'monorepo', validManifest(outer));
   mkTeam(home, 'app', validManifest(inner));
@@ -86,7 +87,7 @@ test('resolveTeam picks the deepest root on nesting', () => {
 
 test('resolveTeam skips an invalid manifest instead of throwing', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   mkTeam(home, 'broken', 'not json {');           // invalid — must be skipped
   mkTeam(home, 'good', validManifest(root));
   const tm = createTeamManifest({ fs, clodexHome: home });
@@ -95,7 +96,7 @@ test('resolveTeam skips an invalid manifest instead of throwing', () => {
 
 test('findProjectRoot returns the plain root string (core-compatible)', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   mkTeam(home, 'shop', validManifest(root));
   const tm = createTeamManifest({ fs, clodexHome: home });
   const found = tm.findProjectRoot(path.join(root, 'src'));
@@ -120,7 +121,7 @@ test('listTeams lists team dirs, excludes dotfiles, empty when none', () => {
 
 test('loadManifest applies defaults and returns name/root', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   mkTeam(home, 'shop', validManifest(root));
   const tm = createTeamManifest({ fs, clodexHome: home });
   const m = tm.loadManifest('shop');
@@ -135,7 +136,7 @@ test('loadManifest applies defaults and returns name/root', () => {
 
 test('loadManifest carries an optional role prompt through the shape', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   mkTeam(home, 'shop', {
     root, lead: 'lead',
     roles: {
@@ -156,7 +157,7 @@ test('loadManifest carries an optional role prompt through the shape', () => {
 // over a key nothing consumes. Warn and drop.
 test('loadManifest: a version-1 file carrying the cut keys loads clean, dropping them', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   mkTeam(home, 'shop', {
     root, lead: 'lead', watchdogMs: 600000,
     roles: {
@@ -197,7 +198,7 @@ test('loadManifest: a version-1 file carrying the cut keys loads clean, dropping
 // and gated on version, which is what lets a rewrite clear it for good.
 test('loadManifest: the drop warning is emitted once per key set, and a current-version file is silent', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   mkTeam(home, 'shop', {
     root, lead: 'lead',
     roles: { lead: {}, runner: { brief: 'r', tools: ['Read'] } },
@@ -216,7 +217,7 @@ test('loadManifest: the drop warning is emitted once per key set, and a current-
   // key: that is a hand-added key on today's schema (the legibility gate's job),
   // not the migration this warning exists for.
   const home2 = mkHome();
-  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root2 = mkTmpRoot('proj-');
   mkTeam(home2, 'shop', {
     version: 3, root: root2, lead: 'lead',
     roles: { lead: {}, runner: { brief: 'r', invented: 'x' } },
@@ -239,7 +240,7 @@ test('loadManifest: the drop warning is emitted once per key set, and a current-
 // warn is deliberately NOT version-gated.
 test('loadManifest: a retired role field warns even on a CURRENT-version file, and says it is ignored', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   mkTeam(home, 'shop', {
     version: MANIFEST_VERSION, root, lead: 'lead',
     roles: { lead: {}, reviewer: { prompt: 'rev', tools: ['Read', 'Grep', 'Glob'] } },
@@ -272,7 +273,7 @@ test('loadManifest: a retired role field warns even on a CURRENT-version file, a
 test('loadManifest: every CUT_ROLE_FIELDS member warns on a current-version file, truthfully', () => {
   for (const field of CUT_ROLE_FIELDS) {
     const home = mkHome();
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+    const root = mkTmpRoot('proj-');
     mkTeam(home, 'shop', {
       version: MANIFEST_VERSION, root, lead: 'lead',
       roles: { lead: {}, runner: { brief: 'r', [field]: true } },
@@ -320,7 +321,7 @@ test('loadManifest: every CUT_ROLE_FIELDS member warns on a current-version file
 for (const version of [MANIFEST_VERSION, 2]) {
   test(`loadManifest: \`worktree: true\` is warned as STILL READ, never as inert (version ${version})`, () => {
     const home = mkHome();
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+    const root = mkTmpRoot('proj-');
     mkTeam(home, 'shop', {
       version, root, lead: 'lead',
       roles: { lead: {}, hand: { brief: 'h', worktree: true } },
@@ -362,7 +363,7 @@ for (const [label, roleName, def, why] of [
 ]) {
   test(`loadManifest: an INERT \`worktree\` (${label}) gets the ignored line, never the still-read one`, () => {
     const home = mkHome();
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+    const root = mkTmpRoot('proj-');
     mkTeam(home, 'shop', {
       version: MANIFEST_VERSION, root, lead: 'lead',
       roles: { lead: {}, ...{ [roleName]: def } },
@@ -393,7 +394,7 @@ for (const [label, roleName, def, why] of [
 // would have to make one of the two texts false.
 test('loadManifest: retired and unknown keys on one file warn separately', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   mkTeam(home, 'shop', {
     root, lead: 'lead',
     roles: { lead: {}, runner: { brief: 'r', tools: ['Read'], invented: 'x' } },
@@ -417,7 +418,7 @@ test('loadManifest: retired and unknown keys on one file warn separately', () =>
 // file whose unknown and retired sets stringify alike silence one of them.
 test('loadManifest: the retired-field warning is emitted once per file, and a clean manifest is silent', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   mkTeam(home, 'shop', {
     version: MANIFEST_VERSION, root, lead: 'lead',
     roles: { lead: {}, runner: { brief: 'r', tools: ['Read'] } },
@@ -435,7 +436,7 @@ test('loadManifest: the retired-field warning is emitted once per file, and a cl
   // A manifest carrying no retired field says nothing — the warn must not
   // become background noise every team pays on every resolve.
   const home2 = mkHome();
-  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root2 = mkTmpRoot('proj-');
   mkTeam(home2, 'shop', {
     version: MANIFEST_VERSION, root: root2, lead: 'lead',
     roles: { lead: {}, runner: { brief: 'r', dispatch: 'worktree' } },
@@ -462,7 +463,7 @@ test('loadManifest: the retired-field warning is emitted once per file, and a cl
 // is inert while claiming to be self-healing.
 test('a mutator migrates EVERY role off the cut fields, including reserved ones, and stamps', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const file = path.join(home, 'teams', 'shop', 'team.json');
   mkTeam(home, 'shop', {
     root, lead: 'clodex',
@@ -511,7 +512,7 @@ test('a mutator migrates EVERY role off the cut fields, including reserved ones,
 // also stamp a file that still carries something a reader drops.
 test('the migration strips only the NAMED cut fields, leaving hand-authored keys and the stamp off', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const file = path.join(home, 'teams', 'shop', 'team.json');
   mkTeam(home, 'shop', {
     root, lead: 'lead',
@@ -533,7 +534,7 @@ test('the migration strips only the NAMED cut fields, leaving hand-authored keys
 // The lead role specifically: `instantiate: subagent` on it was a hard throw.
 test('loadManifest: a version-1 lead role with instantiate: subagent no longer throws', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   mkTeam(home, 'shop', { root, lead: 'lead', roles: { lead: { instantiate: 'subagent' } } });
   const tm = createTeamManifest({ fs, clodexHome: home });
   const realWarn = console.warn;
@@ -550,7 +551,7 @@ test('loadManifest: a version-1 lead role with instantiate: subagent no longer t
 // site — indistinguishable from a real opt-out.
 test('loadManifest: role dispatch normalizes to the enum, default standing', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   mkTeam(home, 'shop', {
     root, lead: 'lead',
     roles: {
@@ -586,7 +587,7 @@ test('loadManifest: role dispatch normalizes to the enum, default standing', () 
 // THIS TEST; that absence is the whole point.
 test('loadManifest: an UNMIGRATED v2 `worktree: true` dispatches to a worktree without any write', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const file = path.join(home, 'teams', 'shop', 'team.json');
   mkTeam(home, 'shop', {
     version: 2,
@@ -630,7 +631,7 @@ test('loadManifest: an UNMIGRATED v2 `worktree: true` dispatches to a worktree w
 // read is a fallback for files that predate the enum, never an override of one.
 test('loadManifest: an explicit dispatch wins over a stale `worktree` boolean', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   mkTeam(home, 'shop', {
     version: 2, root, lead: 'lead',
     roles: {
@@ -656,7 +657,7 @@ test('loadManifest: an explicit dispatch wins over a stale `worktree` boolean', 
 // checkout weeks later.
 test('v2 → v3: a role\'s `worktree: true` carries over to dispatch BEFORE the cut delete', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const file = path.join(home, 'teams', 'shop', 'team.json');
   mkTeam(home, 'shop', {
     version: 2,
@@ -701,7 +702,7 @@ test('v2 → v3: a role\'s `worktree: true` carries over to dispatch BEFORE the 
 // whose front door refuses to write it would migrate a lie into a stricter world.
 test('v2 → v3: a reserved role\'s `worktree: true` is dropped, not carried', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const file = path.join(home, 'teams', 'shop', 'team.json');
   mkTeam(home, 'shop', {
     version: 2,
@@ -730,7 +731,7 @@ test('v2 → v3: a reserved role\'s `worktree: true` is dropped, not carried', (
 // grows values that read as policy and do nothing.
 test('addRole/setRole/createTeam refuse a worktree dispatch on a reserved role', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'lead' });
 
@@ -740,7 +741,7 @@ test('addRole/setRole/createTeam refuse a worktree dispatch on a reserved role',
     /operator-owned/, 'setRole bounces every reserved-role edit already');
 
   const home2 = mkHome();
-  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj2-'));
+  const root2 = mkTmpRoot('proj2-');
   assert.throws(() => createTeamManifest({ fs, clodexHome: home2 }).createTeam({
     name: 'shop2', root: root2, lead: 'lead', roles: { lead: { dispatch: 'worktree' } },
   }), /cannot dispatch to a worktree/, 'a brand-new file cannot be BORN naming lead a worktree role');
@@ -760,7 +761,7 @@ test('addRole/setRole/createTeam refuse a worktree dispatch on a reserved role',
 // reserved roles to whatever was added.
 test('a reserved role refuses a `spawn` dispatch too, and refuses by inversion', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'lead' });
 
@@ -768,7 +769,7 @@ test('a reserved role refuses a `spawn` dispatch too, and refuses by inversion',
     /operator-owned|standing/, 'reviewer cannot be defined as a spawn role');
 
   const home2 = mkHome();
-  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj2-'));
+  const root2 = mkTmpRoot('proj2-');
   assert.throws(() => createTeamManifest({ fs, clodexHome: home2 }).createTeam({
     name: 'shop2', root: root2, lead: 'lead', roles: { lead: { dispatch: 'spawn' } },
   }), /one-shot spawn seat|cannot dispatch/, 'a brand-new file cannot be BORN naming lead a spawn role');
@@ -778,7 +779,7 @@ test('a reserved role refuses a `spawn` dispatch too, and refuses by inversion',
   // `dispatch`, and assertDispatchAllowed runs before any enum validation on
   // this path — so reaching the enum error instead would mean the guard let it by.
   const home3 = mkHome();
-  const root3 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj3-'));
+  const root3 = mkTmpRoot('proj3-');
   assert.throws(() => createTeamManifest({ fs, clodexHome: home3 }).createTeam({
     name: 'shop3', root: root3, lead: 'lead', roles: { lead: { dispatch: 'some-future-value' } },
   }), /one-shot spawn seat|cannot dispatch/,
@@ -790,7 +791,7 @@ test('a reserved role refuses a `spawn` dispatch too, and refuses by inversion',
   assert.strictEqual(tm.addRole('shop', 'runner', { dispatch: 'spawn' }).roles.runner.dispatch, 'spawn',
     'an ordinary role takes spawn');
   const home4 = mkHome();
-  const root4 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj4-'));
+  const root4 = mkTmpRoot('proj4-');
   const born = createTeamManifest({ fs, clodexHome: home4 }).createTeam({
     name: 'shop4', root: root4, lead: 'lead', roles: { lead: { dispatch: 'standing' } },
   });
@@ -805,7 +806,7 @@ test('a reserved role refuses a `spawn` dispatch too, and refuses by inversion',
 // exists to end.
 test('addRole refuses the legacy `worktree` key rather than silently dropping it', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'lead' });
 
@@ -827,7 +828,7 @@ test('addRole refuses the legacy `worktree` key rather than silently dropping it
 
 test('setRole refuses an off-enum dispatch, naming the field', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'lead' });
   tm.addRole('shop', 'runner', {});
@@ -900,7 +901,7 @@ test('cwdInProject: membership is root-or-under, not prefix-string', () => {
 const { execFileSync } = require('child_process');
 
 function mkRepoWithWorktree() {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-team-'));
+  const base = mkTmpRoot('wt-team-');
   // Real paths: macOS /tmp is a symlink to /private/tmp, and git writes the
   // RESOLVED path into the .git file. Comparing against the unresolved one would
   // fail for a reason that has nothing to do with membership.
@@ -943,7 +944,7 @@ test('cwdInProject: a git worktree of the repo is ON the team, and a foreign rep
 
 test('cwdInProject: a plain directory containing a .git FILE does not smuggle membership', () => {
   const tm = createTeamManifest({ fs, clodexHome: mkHome() });
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wt-fake-')));
+  const root = fs.realpathSync(mkTmpRoot('wt-fake-'));
   const repo = path.join(root, 'repo');
   const impostor = path.join(root, 'impostor');
   fs.mkdirSync(repo); fs.mkdirSync(impostor);
@@ -1052,7 +1053,7 @@ test('formatTeamBlock: a seat that matches no role reports the none-case', () =>
 // resolveTeam(cwd) → a block when the cwd is inside a team root, '' when not.
 test('spawn-callsite: block present when cwd-in-team, absent when not', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   mkTeam(home, 'shop', validManifest(root));
   const tm = createTeamManifest({ fs, clodexHome: home });
 
@@ -1078,8 +1079,8 @@ test('spawn-callsite: block present when cwd-in-team, absent when not', () => {
 // silently and the block still stands.
 test('spawn-callsite: role prompt rides after the team block, best-effort', () => {
   const home = mkHome();
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reg-'));
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const registryDir = mkTmpRoot('reg-');
+  const root = mkTmpRoot('proj-');
   // A team whose reviewer role names a prompt, plus a dev role that names none.
   mkTeam(home, 'shop', {
     root, lead: 'lead',
@@ -1142,7 +1143,7 @@ test('spawn-callsite: role prompt rides after the team block, best-effort', () =
 // --- createTeam: the front door's write path -------------------------------
 test('createTeam writes the default manifest and adopts the lead seat', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   const team = tm.createTeam({ name: 'shop', root, lead: 'clodex' });
   // Returned manifest: lead SEAT adopted, default lead + hand + reviewer roles
@@ -1174,7 +1175,7 @@ test('createTeam writes the default manifest and adopts the lead seat', () => {
 
 test('createTeam honors caller-supplied roles over the default scaffold', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   // A caller passing its own non-empty roles map wins — the scaffold defaults
   // (hand + reviewer tools) must NOT be merged in.
@@ -1187,15 +1188,15 @@ test('createTeam honors caller-supplied roles over the default scaffold', () => 
   assert.ok(!('hand' in team.roles), 'scaffold hand not injected when caller supplies roles');
   assert.ok(!('reviewer' in team.roles), 'scaffold reviewer not injected when caller supplies roles');
   // An empty roles map falls back to the default scaffold (not honored as "no roles").
-  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root2 = mkTmpRoot('proj-');
   const team2 = tm.createTeam({ name: 'shop2', root: root2, lead: 'clodex', roles: {} });
   assert.strictEqual(team2.roles.hand.prompt, 'clodex-team-hand', 'empty roles → default scaffold');
 });
 
 test('createTeam refuses a duplicate name, a duplicate exact root, and a bad name', () => {
   const home = mkHome();
-  const rootA = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
-  const rootB = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const rootA = mkTmpRoot('proj-');
+  const rootB = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root: rootA, lead: 'clodex' });
   // (1) duplicate team name.
@@ -1211,7 +1212,7 @@ test('createTeam refuses a duplicate name, a duplicate exact root, and a bad nam
 // --- addRole: the join path (no-op-if-equal / refuse-if-differs) ------------
 test('addRole appends a new role, no-ops on an identical def, refuses a divergent one', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
 
@@ -1243,7 +1244,7 @@ test('addRole appends a new role, no-ops on an identical def, refuses a divergen
 // lead-supplied def — the spec's C1 attack via a hand-deleted key.
 test('addRole refuses to MINT lead/reviewer when the key is absent (C1), no-ops a matching stock re-join', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
   const file = path.join(home, 'teams', 'shop', 'team.json');
@@ -1279,7 +1280,7 @@ test('addRole refuses to MINT lead/reviewer when the key is absent (C1), no-ops 
 
 test('addRole (C4/MF2) rejects a template that is not a bare library-template NAME', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
   // A path-shaped template (what the \S+ scanner token would let through) is refused.
@@ -1298,7 +1299,7 @@ test('addRole (C4/MF2) rejects a template that is not a bare library-template NA
 // and enforces nothing.
 test('a hand-authored role `tools` is dropped, never stored as a restriction', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
 
@@ -1328,7 +1329,7 @@ test('a hand-authored role `tools` is dropped, never stored as a restriction', (
 // disk unfiltered, so a team could be BORN carrying the fields addRole refuses.
 test('createTeam picks caller roles down to the schema before writing', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({
     name: 'shop',
@@ -1349,7 +1350,7 @@ test('createTeam picks caller roles down to the schema before writing', () => {
 // Pure JSON edits with the C1/C4/C6 guards. C5 (seat fail-close) is Slice 2.
 test('setRole edits the editable fields, ignores everything else, preserves unmodeled raw', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
   tm.addRole('shop', 'runner', { prompt: 'old-runner', brief: 'old brief' });
@@ -1381,7 +1382,7 @@ test('setRole edits the editable fields, ignores everything else, preserves unmo
 
 test('setRole: C1 refuses reviewer + lead, C4 validates template, throws on missing role', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' }); // scaffold has lead+hand+reviewer
   // C1: operator-owned topology keys are refused.
@@ -1398,7 +1399,7 @@ test('setRole: C1 refuses reviewer + lead, C4 validates template, throws on miss
 
 test('removeRole removes a normal role, refuses lead + reviewer (C1), throws on missing', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
   tm.addRole('shop', 'runner', { prompt: 'r' });
@@ -1417,7 +1418,7 @@ test('removeRole removes a normal role, refuses lead + reviewer (C1), throws on 
 
 test('removeRole: the operator may drop `reviewer`; an agent still cannot', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
   assert.ok(tm.loadManifest('shop').roles.reviewer,
@@ -1446,7 +1447,7 @@ test('removeRole: the operator may drop `reviewer`; an agent still cannot', () =
 
 test('removeRole: `lead` is refused for EVERYONE, operator included, with its own reason', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
 
@@ -1461,7 +1462,7 @@ test('removeRole: `lead` is refused for EVERYONE, operator included, with its ow
 
 test('addRole: an operator re-mint of `reviewer` writes the STOCK def and IGNORES the supplied one', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
   tm.removeRole('shop', 'reviewer', { operator: true });
@@ -1489,7 +1490,7 @@ test('addRole: an operator re-mint of `reviewer` writes the STOCK def and IGNORE
 
 test('addRole: an AGENT still cannot mint an absent `reviewer`, stock def or not', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
   tm.removeRole('shop', 'reviewer', { operator: true });
@@ -1505,7 +1506,7 @@ test('addRole: an AGENT still cannot mint an absent `reviewer`, stock def or not
 
 test('addRole: the operator opt-in does NOT let a reserved def be rewritten when the key exists', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
   const before = tm.loadManifest('shop').roles.reviewer;
@@ -1525,7 +1526,7 @@ test('addRole: the operator opt-in does NOT let a reserved def be rewritten when
 
 test('addRole: an operator mint of an absent `lead` is refused — removeRole can never produce that state', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
   const file = path.join(home, 'teams', 'shop', 'team.json');
@@ -1541,7 +1542,7 @@ test('addRole: an operator mint of an absent `lead` is refused — removeRole ca
 
 test('renameRole renames a normal role, refuses lead/reviewer either direction, guards collisions', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
   tm.addRole('shop', 'runner', { prompt: 'r', brief: 'the runner' });
@@ -1579,7 +1580,7 @@ test('watchdogMs is CLAMPED at consume (C3): below min → min, above max → ma
 
 test('setLead re-points the lead SEAT, accepts a seat that is not running, validates the name', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
   let team = tm.setLead('shop', 'shop-lead-2');
@@ -1607,7 +1608,7 @@ test('setLead re-points the lead SEAT, accepts a seat that is not running, valid
 
 test('setTeamWatchdog writes a finite ms, clears on null, rejects non-finite, round-trips clamped', () => {
   const home = mkHome();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'));
+  const root = mkTmpRoot('proj-');
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'clodex' });
   // Write a valid value → carried, round-trips through the consume clamp unchanged.
@@ -1837,7 +1838,7 @@ test('formatCompositionDelta renders seat and role-only events', () => {
 // its team.json for before/after comparison.
 function teamForCwd() {
   const home = mkHome();
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdproj-')));
+  const root = fs.realpathSync(mkTmpRoot('cwdproj-'));
   fs.mkdirSync(path.join(root, 'api'));
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root, lead: 'shop-lead' });
@@ -1885,7 +1886,7 @@ test('role cwd: a SYMLINK out of the root is refused and nothing is written', ()
   // statSync FOLLOWS the link, so the directory check passes, and the lexical
   // confinement compares path strings, so `link` reads as confined — the value
   // still points a PTY at another project. Only a realpath comparison sees it.
-  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdout-')));
+  const outside = fs.realpathSync(mkTmpRoot('cwdout-'));
   fs.symlinkSync(outside, path.join(root, 'link'));
   assert.ok(fs.statSync(path.join(root, 'link')).isDirectory(),
     'ENTER: the link must resolve to a real directory, or this passes for the wrong reason');
@@ -1898,11 +1899,11 @@ test('role cwd: a symlink INSIDE the root is honored, and so is a symlinked root
   // on macOS a /tmp project root is itself a symlink (/tmp → /private/tmp), so a
   // one-sided comparison would refuse every legitimate cwd under it.
   const home = mkHome();
-  const realRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdreal-')));
+  const realRoot = fs.realpathSync(mkTmpRoot('cwdreal-'));
   fs.mkdirSync(path.join(realRoot, 'api'));
   fs.symlinkSync(path.join(realRoot, 'api'), path.join(realRoot, 'api-link'));
   // The team names the root through a symlinked PREFIX, the shape /tmp gives.
-  const linkRoot = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdlink-')), 'proj');
+  const linkRoot = path.join(mkTmpRoot('cwdlink-'), 'proj');
   fs.symlinkSync(realRoot, linkRoot);
   const tm = createTeamManifest({ fs, clodexHome: home });
   tm.createTeam({ name: 'shop', root: linkRoot, lead: 'l' });
@@ -1940,7 +1941,7 @@ test('role cwd: the LEAD role refuses one, and the reason names the fix (D3)', (
   const tm2 = createTeamManifest({ fs, clodexHome: home });
   assert.throws(
     () => tm2.createTeam({
-      name: 'shop2', root: fs.mkdtempSync(path.join(os.tmpdir(), 'cwdproj2-')),
+      name: 'shop2', root: mkTmpRoot('cwdproj2-'),
       lead: 'l', roles: { lead: { cwd: 'api' } },
     }),
     /lead[\s\S]*not spawned by the team/,
@@ -1951,7 +1952,7 @@ test('role cwd: the LEAD role refuses one, and the reason names the fix (D3)', (
 
 test('role cwd: createTeam refuses an escaping cwd on a seeded role, and writes no team', () => {
   const home = mkHome();
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdproj3-')));
+  const root = fs.realpathSync(mkTmpRoot('cwdproj3-'));
   const tm = createTeamManifest({ fs, clodexHome: home });
   assert.throws(
     () => tm.createTeam({ name: 'shop3', root, lead: 'l', roles: { hand: { cwd: '../outside' } } }),
@@ -2031,7 +2032,7 @@ test('role cwd: a hand-edited bad cwd LOADS rather than breaking the whole team'
   // no roster, no ticket resolution, no surface left to fix it from. The bad
   // value is neutralized at SPAWN instead (resolve-seat-shape.test.js).
   const home = mkHome();
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cwdproj4-')));
+  const root = fs.realpathSync(mkTmpRoot('cwdproj4-'));
   mkTeam(home, 'shop', { root, lead: 'l', roles: { lead: {}, hand: { cwd: '/etc' } } });
   const tm = createTeamManifest({ fs, clodexHome: home });
   const m = tm.loadManifest('shop');

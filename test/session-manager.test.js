@@ -13,6 +13,7 @@ const assert = require('node:assert');
 const { createSessionManager, deniedBodyDisposition, isStaleRegistration, nameConflict } = require('../session-manager');
 const { canFireCompact } = require('../inject-queue');
 const { intentEnabled } = require('../intent-catalog');
+const { mkTmpRoot, trackTmpRoot } = require('./lib/tmp-roots');
 
 // Minimal fake deps: only what the PTY-free methods touch. Everything else is
 // undefined, which the destructure tolerates (those methods aren't reached).
@@ -292,7 +293,7 @@ const pathReal = require('path');
 const { pathFor: pathForReal, runDirFor: runDirForReal } = require('../clodex-paths');
 
 function mkWithTranscript(sessionId, overrides = {}) {
-  const root = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-sm-'));
+  const root = mkTmpRoot('clodex-sm-');
   fsReal.mkdirSync(runDirForReal(root, 'a'), { recursive: true });
   if (sessionId) {
     const target = pathReal.join(root, `${sessionId}.jsonl`);
@@ -320,7 +321,7 @@ test('_wireSessionCorroborated: symlink agrees → true, disagrees → false, ab
 // under test is a filesystem SIDE EFFECT: it ensureDir's run/<name>/, so a stub
 // would pin the call and miss the directory.
 function mkRemover({ forget = () => {}, units = [], digestThrows = false } = {}) {
-  const root = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-rm-'));
+  const root = mkTmpRoot('clodex-rm-');
   const real = require('../cli-hooks').createCliHooks({
     REGISTRY_DIR: root,
     memoryStore: { list: () => units },
@@ -948,7 +949,7 @@ test('gate: exec disabled → coarse bounce before the per-command grant is cons
 // The spill is REAL here (a temp dir) for the reason mkSpillTasks documents: a
 // stub returning a fixed string cannot tell a written file from a named one.
 function mkDenied(extra = {}) {
-  const spillDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t170-'));
+  const spillDir = mkTmpRoot('clodex-t170-');
   const spills = [];
   const injected = [];
   const m = mk({
@@ -1824,8 +1825,8 @@ test('t229 reboot notice: the attempts stamp survives a REAL settings round-trip
   // reached and a permanently-undeliverable notice would announce forever. Driven
   // through the real store (not the private sanitizer) so the persisted shape is
   // what's asserted.
-  const userData = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-ui-'));
-  const registryDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-reg-'));
+  const userData = mkTmpRoot('clodex-ui-');
+  const registryDir = mkTmpRoot('clodex-reg-');
   const { uiSettings } = initStoresReal(userData, { log: { info() {}, warn() {}, error() {} }, registryDir });
   uiSettings.set({ pendingRebootNotice: { name: 'a', at: 123, reason: 'r', attempts: 2 } });
   assert.strictEqual(uiSettings.get().pendingRebootNotice.attempts, 2, 'the stamp survives the write');
@@ -2084,7 +2085,7 @@ const path = require('node:path');
 const { isFilenameToken, parseAndValidate } = require('../exec-schema');
 
 test('exec dispatcher: ${CLODEX_BIN}/${CLODEX_HOME} in argv + cwd expand before spawn', async () => {
-  const REGISTRY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-exec-'));
+  const REGISTRY_DIR = mkTmpRoot('clodex-exec-');
   const execDir = path.join(REGISTRY_DIR, 'library', 'exec');
   fs.mkdirSync(execDir, { recursive: true });
   // A def mirroring the seeded shape: placeholder argv, and (to prove cwd is
@@ -2290,7 +2291,7 @@ test('spawn template: prompt refs thread into create() params 15/16', async () =
 // template:VALUE with a '/' or leading ~/. is a file path (resolved against the
 // spawner cwd), read + parsed into the same template object the library lookup
 // yields — so config application can't drift between the two sources.
-const tmpTplDir = () => fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-tpl-'));
+const tmpTplDir = () => mkTmpRoot('clodex-tpl-');
 
 test('spawn template: a JSON file path resolves + applies its config', async () => {
   const dir = tmpTplDir();
@@ -2397,7 +2398,7 @@ const { parkDelivery, drainPending, hasPending, hasActivePending, countPending: 
 const { isDraftOpen: isDraftOpenReal } = require('../proxy-util');
 
 function mkPark(overrides = {}) {
-  const PENDING_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-pend-'));
+  const PENDING_DIR = mkTmpRoot('clodex-pend-');
   const injected = [];
   const m = mk({
     PENDING_DIR, parkDelivery, drainPending, hasActivePending, isDraftOpen: isDraftOpenReal,
@@ -3047,7 +3048,7 @@ test('team-retire: an UNREADABLE worktree also downgrades to an archive', async 
 // The tree is really removed here rather than mocked: a stubbed `{ok:false}`
 // tests the branch but not the condition that produces it in the field.
 test('team-retire: a tree that is GONE says so, and never claims uncommitted work', async () => {
-  const repoDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-retire-'));
+  const repoDir = mkTmpRoot('clodex-retire-');
   const runGit = (...a) => require('child_process').execFileSync('git', ['-C', repoDir, ...a], { stdio: 'ignore' });
   runGit('init', '-q');
   runGit('config', 'user.email', 't@example.com');
@@ -3953,7 +3954,7 @@ function mkReview(extra = {}) {
   // it did, for two tickets, taking every `path` consumer (_roleCwdRel) with it.
   // The prompt is INSTALLED because that leaves the default reply shape
   // unchanged; `extra` still overrides all three, as four tests rely on.
-  const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-review-fx-'));
+  const REGISTRY_DIR = mkTmpRoot('clodex-review-fx-');
   const promptDir = pathReal.join(REGISTRY_DIR, 'library', 'prompts', 'system');
   fsReal.mkdirSync(promptDir, { recursive: true });
   fsReal.writeFileSync(pathReal.join(promptDir, `${SHIPPED_REVIEWER_TEMPLATE.systemPromptFile}.md`), 'you are the reviewer');
@@ -4085,7 +4086,7 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
 // tests used, appropriate when the POST was in the handler) would assert nothing
 // here.
 function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null } = {}) {
-  const root = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-hint-'));
+  const root = mkTmpRoot('clodex-hint-');
   const hints = [];
   const order = [];
   const warns = [];
@@ -5436,7 +5437,7 @@ test('team-review (t425): an UNWIRED path dep surfaces instead of silently skipp
 // Preflight it and warn on the lead's confirm line so a team that never installed
 // the prompt gets a signal rather than a silently-unbriefed reviewer.
 test('team-review: a missing role-prompt file appends an UNBRIEFED warning to the confirm line', async () => {
-  const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-review-'));
+  const REGISTRY_DIR = mkTmpRoot('clodex-review-');
   // Empty registry — library/prompts/system/clodex-team-reviewer.md does NOT exist.
   const { m, injected, created } = mkReview({ REGISTRY_DIR, fs: fsReal, path: pathReal });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
@@ -5448,7 +5449,7 @@ test('team-review: a missing role-prompt file appends an UNBRIEFED warning to th
 
 // The prompt file PRESENT → no warning.
 test('team-review: an installed role-prompt file yields NO unbriefed warning', async () => {
-  const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-review-'));
+  const REGISTRY_DIR = mkTmpRoot('clodex-review-');
   const dir = pathReal.join(REGISTRY_DIR, 'library', 'prompts', 'system');
   fsReal.mkdirSync(dir, { recursive: true });
   fsReal.writeFileSync(pathReal.join(dir, 'clodex-team-reviewer.md'), 'you are the reviewer');
@@ -5466,7 +5467,7 @@ test('team-review: an installed role-prompt file yields NO unbriefed warning', a
 // pre-existing warn wins; the relay stands down. Accepting the double-report is
 // how a rule stops being one.
 test('team-review (t414): a missing prompt reports ONCE — the spawn relay defers to the existing promptWarn', async () => {
-  const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-review-'));
+  const REGISTRY_DIR = mkTmpRoot('clodex-review-');
   const { m, injected, created } = mkReview({ REGISTRY_DIR, fs: fsReal, path: pathReal });
   // create() would have found it too — this is the double-report shape, made
   // real rather than assumed: without the dedupe both texts land in one reply.
@@ -5489,7 +5490,7 @@ test('team-review (t414): a missing prompt reports ONCE — the spawn relay defe
 });
 
 test('team-review (t414): with no promptWarn to defer to, the spawn finding DOES ride the reply', async () => {
-  const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-review-'));
+  const REGISTRY_DIR = mkTmpRoot('clodex-review-');
   const dir = pathReal.join(REGISTRY_DIR, 'library', 'prompts', 'system');
   fsReal.mkdirSync(dir, { recursive: true });
   // Installed, so the pre-existing promptWarn stays empty and the dedupe above
@@ -5538,7 +5539,7 @@ const clodexPaths = require('../clodex-paths');
 const teamCost = require('../team-cost');
 
 function mkTasks(extra = {}) {
-  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-tk-'));
+  const home = mkTmpRoot('clodex-tk-');
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,
@@ -5959,7 +5960,7 @@ test('t93 _staleHostSuffix is computed ONCE per intent, not per reply line', () 
 
 test('t94 the real suffix speaks when there is no stamp and modules changed under the host', () => {
   const f = mkTasks();
-  const root = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t94-sm-'));
+  const root = mkTmpRoot('clodex-t94-sm-');
   const dir = pathReal.join(root, 'src');
   const runRoot = pathReal.join(root, 'run');
   fsReal.mkdirSync(dir); fsReal.mkdirSync(runRoot);
@@ -5976,7 +5977,7 @@ test('t94 the real suffix speaks when there is no stamp and modules changed unde
 
 test('t94 the real suffix stays SILENT when nothing changed under the host', () => {
   const f = mkTasks();
-  const root = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t94-sm2-'));
+  const root = mkTmpRoot('clodex-t94-sm2-');
   const dir = pathReal.join(root, 'src');
   const runRoot = pathReal.join(root, 'run');
   fsReal.mkdirSync(dir); fsReal.mkdirSync(runRoot);
@@ -6381,7 +6382,7 @@ test('task done: a NON-assignee is bounced (no close, no delivery)', () => {
 // The spill is REAL here (a temp dir), unlike the rest of this file which stubs it
 // away — a stub returning a fixed string cannot distinguish those two cases.
 function mkSpillTasks(extra = {}) {
-  const spillDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t166-'));
+  const spillDir = mkTmpRoot('clodex-t166-');
   const spills = [];
   const f = mkTasks({
     spillToFile: (sender, body, recipient) => {
@@ -9469,7 +9470,7 @@ test('t322 a seat that wakes while the git probe runs is not alarmed about', asy
 // ticketsStore.load round-trips.
 function mkTeamMut(extra = {}) {
   // Same home-not-team-dir shape as mkTasks: _roleInUse reads the PROJECT board.
-  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-teammut-'));
+  const home = mkTmpRoot('clodex-teammut-');
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,
@@ -9729,7 +9730,7 @@ const {
 } = require('../exec-schema');
 
 function mkExec({ grants = [], entry = null, cmd = 'bridge-reply' } = {}) {
-  const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-exec-'));
+  const REGISTRY_DIR = mkTmpRoot('clodex-exec-');
   const execDir = pathReal.join(REGISTRY_DIR, 'library', 'exec');
   fsReal.mkdirSync(execDir, { recursive: true });
   if (entry) fsReal.writeFileSync(pathReal.join(execDir, `${cmd}.json`), JSON.stringify(entry));
@@ -10276,10 +10277,10 @@ function mkEnvProbe({ global = {}, workspaces = {} } = {}) {
   const fakePty = {
     spawn: (_cmd, _args, opts) => { capturedEnv = opts.env; return { onData() {}, onExit() {}, pid: 999 }; },
   };
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-envud-')); // no env-override.env inside
+  const userData = mkTmpRoot('clodex-envud-'); // no env-override.env inside
   // A root that is NOT ~/.clodex, so the CLODEX_HOME pin below asserts something:
   // against the real default it would agree with an unpinned env by accident.
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-envroot-'));
+  const registryDir = mkTmpRoot('clodex-envroot-');
   const m = mk({
     REGISTRY_DIR: registryDir,
     getPersistence: () => ({
@@ -10433,8 +10434,8 @@ test('create: an absent session env writes NO env key (absent ≡ {} ≡ falls t
 const claudeEnv = require('../claude-env');
 const { mergeSessionEnv } = require('../env-scopes');
 test('tee-blind trap: a SCOPE-set CLAUDE_CODE_USE_BEDROCK is seen only through the merged baseEnv (scanner stays jsonl)', () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-tee-'));   // no .claude/settings.json
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-teehome-')); // isolate ~/.claude too
+  const cwd = mkTmpRoot('clodex-tee-');   // no .claude/settings.json
+  const home = mkTmpRoot('clodex-teehome-'); // isolate ~/.claude too
   // The scope (e.g. a global env var) sets bedrock; the base env does not.
   const merged = mergeSessionEnv({ base: {}, global: { CLAUDE_CODE_USE_BEDROCK: { value: '1' } } });
   // FIXED path — create() passes baseEnv: mergedEnv → bedrock is seen → the claude
@@ -10975,7 +10976,7 @@ const { createRemindScheduler: createRemindSchedulerReal } = require('../remind-
 const { initStores: initStoresReal } = require('../stores');
 
 function mkDeliver({ persisted = null } = {}) {
-  const PENDING_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-remind-pending-'));
+  const PENDING_DIR = mkTmpRoot('clodex-remind-pending-');
   const persistence = { list: () => [], get: (n) => (persisted && persisted.name === n ? persisted : null) };
   const m = mk({
     PENDING_DIR, parkDelivery, fs: fsReal, path: pathReal, os: osReal,
@@ -11027,8 +11028,8 @@ test('remind: start()-before-restore race — launch fire into an empty map is p
   // restore, so a coalesced missed fire lands on an empty session map. With the
   // real store + the real deliver seam, that fire must PARK (persistence still
   // has the resumable entry) rather than vanish.
-  const userData = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'remind-race-ud-'));
-  const registryDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'remind-race-reg-'));
+  const userData = mkTmpRoot('remind-race-ud-');
+  const registryDir = mkTmpRoot('remind-race-reg-');
   const stores = initStoresReal(userData, { log: console, registryDir });
   try {
     const { m, PENDING_DIR } = mkDeliver({ persisted: { name: 't1', type: 'claude' } });
@@ -11059,8 +11060,8 @@ test('remind: start()-before-restore race — launch fire into an empty map is p
 });
 
 test('remind: a gone agent\'s recurring schedule is pruned by the deliver seam (no zombie)', () => {
-  const userData = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'remind-gone-ud-'));
-  const registryDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'remind-gone-reg-'));
+  const userData = mkTmpRoot('remind-gone-ud-');
+  const registryDir = mkTmpRoot('remind-gone-reg-');
   const stores = initStoresReal(userData, { log: console, registryDir });
   try {
     const { m } = mkDeliver({ persisted: null }); // no persistence entry → 'gone'
@@ -11638,7 +11639,7 @@ function mkOnDataProbe(overrides = {}) {
   const fakePty = {
     spawn: () => ({ onData(cb) { onDataCb = cb; }, onExit() {}, kill() {}, pid: 777 }),
   };
-  const PENDING_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-pend-ondata-'));
+  const PENDING_DIR = mkTmpRoot('clodex-pend-ondata-');
   const m = mk({
     getPersistence: () => ({
       list: () => [], get: () => null, upsert: () => {}, setSessionId: () => {}, remove: () => {},
@@ -12198,7 +12199,7 @@ test('plugin verb: live on the BASH PTY feed too — but with no body (documente
 // wrapped class goes only to create(); the returned `Transport` stays the real
 // one, so tests keep building genuine victim servers with it.
 function mkAgentCreateProbe(opts = {}) {
-  const REGISTRY_DIR = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t57-'));
+  const REGISTRY_DIR = mkTmpRoot('clodex-t57-');
   const { isAlive, registry, Transport } = require('../agent-transport')
     .createAgentTransport({ REGISTRY_DIR, MAX_MSG: 65536 });
   const m = mk({
@@ -12709,7 +12710,7 @@ test('hint arming re-resolves the proxy pref per draft, and an explicit route su
 // inside _ensureWire(), reachable only through a wire failure event, and
 // extracting it would reshape production code to suit a test.
 function mkRecovery() {
-  const root = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t188-'));
+  const root = mkTmpRoot('clodex-t188-');
   const warns = [];
   const m = mk({
     REGISTRY_DIR: root, fs: fsReal, path: pathReal,
@@ -12896,7 +12897,7 @@ async function until(cond, ms = 5000) {
 }
 
 function mkGitRepo() {
-  const root = fsReal.realpathSync(fsReal.mkdtempSync(path.join(os.tmpdir(), 'sm-wt-')));
+  const root = trackTmpRoot(fsReal.realpathSync(fsReal.mkdtempSync(path.join(os.tmpdir(), 'sm-wt-'))));
   const repo = path.join(root, 'repo');
   fsReal.mkdirSync(repo);
   const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
@@ -13025,7 +13026,7 @@ test('spawn worktree: a bare `worktree:` is refused, never a silent unisolated s
 function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   // A temp clodex HOME, not a team dir: the board resolves under it off the
   // project root, and it must be the same home the manager gets as REGISTRY_DIR.
-  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-twt-'));
+  const home = mkTmpRoot('clodex-twt-');
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: repo, lead: 'lead', watchdogMs: null,
@@ -14900,7 +14901,7 @@ test('t295: an inherited ticket gives the sibling a badge and keeps its stall cl
 // with no later pass to put them back. Silent, and it costs a working seat its
 // stall detection.
 test('sweep: two teams on one project sweep the board ONCE but reconcile SEPARATELY', async () => {
-  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-2team-'));
+  const home = mkTmpRoot('clodex-2team-');
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const mkT = (name) => ({
     name, root: '/proj', lead: `${name}-lead`, watchdogMs: null,
@@ -15153,7 +15154,7 @@ test('task done on a spawn ticket: no loop step, no reviewer, done stays termina
 // assertion that matters is that NO git call sits on the path — a mode that
 // merely tolerates git failing would work here by accident.
 test('a non-git team root can dispatch, spawn and accept a spawn ticket end to end', async () => {
-  const plain = fsReal.realpathSync(fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'sm-nogit-')));
+  const plain = fsReal.realpathSync(mkTmpRoot('sm-nogit-'));
   assert.ok(!fsReal.existsSync(pathReal.join(plain, '.git')),
     'ENTER: the root must genuinely not be a repo, or this measures nothing');
   // Every gitWorktree entry point RECORDS itself and then throws. The record is

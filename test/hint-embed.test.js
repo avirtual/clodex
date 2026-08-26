@@ -9,6 +9,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const {
   createEmbedder, createVectorCache, createSemanticRanker,
@@ -49,7 +50,7 @@ function axisFetch({ pick = 0, failQuery = false, failDocs = false, count = null
 }
 
 function mkRanker(fetchImpl, records = RECORDS, opts = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-emb-'));
+  const dir = mkTmpRoot('clx-emb-');
   const cache = createVectorCache({ file: path.join(dir, 'vec.json') });
   const embedder = createEmbedder({ fetchImpl });
   return {
@@ -128,7 +129,7 @@ test('embed: a partly-embedded corpus defers instead of ranking a fraction of it
   // lexical while the backfill catches up is the only honest option.
   const many = [];
   for (let i = 0; i < 20; i++) many.push({ id: `p${i}`, text: `padding record ${i}`, tags: '', scope: '' });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-emb-'));
+  const dir = mkTmpRoot('clx-emb-');
   const cache = createVectorCache({ file: path.join(dir, 'vec.json') });
   // Seed exactly one vector, leaving coverage far below the bar.
   cache.set(keyOf(many[0]), [1, 0, 0]);
@@ -167,7 +168,7 @@ test('embed: the cache is keyed by content so an edited unit is re-embedded', as
 
 test('embed: the corpus is embedded once across restarts', async () => {
   const fetchImpl = axisFetch({ pick: 0 });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-emb-'));
+  const dir = mkTmpRoot('clx-emb-');
   const file = path.join(dir, 'vec.json');
   const mk = () => createSemanticRanker({
     listRecords: () => RECORDS,
@@ -186,7 +187,7 @@ test('embed: the corpus is embedded once across restarts', async () => {
 
 test('embed: a deleted unit does not accumulate in the cache file', async () => {
   const fetchImpl = axisFetch({ pick: 0 });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-emb-'));
+  const dir = mkTmpRoot('clx-emb-');
   const file = path.join(dir, 'vec.json');
   const cache = createVectorCache({ file });
   const ranker = createSemanticRanker({
@@ -215,7 +216,7 @@ test('embed: a deleted unit does not accumulate in the cache file', async () => 
 // every pass and no agent was ever fully covered.
 test('embed: warming one agent does not evict another agent\'s vectors', async () => {
   const fetchImpl = axisFetch({ pick: 0 });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-emb-'));
+  const dir = mkTmpRoot('clx-emb-');
   const file = path.join(dir, 'vec.json');
 
   const A = [{ id: 'a1', text: 'agent A unit one', tags: '', scope: '' }];
@@ -260,7 +261,7 @@ test('embed: a down daemon abandons the pass instead of timing out per record', 
 });
 
 test('embed: a corrupt cache file costs a re-embed, not a crash', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-emb-'));
+  const dir = mkTmpRoot('clx-emb-');
   const file = path.join(dir, 'vec.json');
   fs.writeFileSync(file, '{"u1:abc": [1,0,0], TRUNCATED');
   const cache = createVectorCache({ file });

@@ -15,12 +15,13 @@ const path = require('node:path');
 
 const { createPluginLoader, validateManifest, isNewerVersion } = require('../plugin-loader');
 const { HOST_API_VERSION, RESERVED_PLUGIN_IDS, isValidPluginId } = require('../plugin-api');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A real temp plugins/ tree. Real fs rather than a mock because the thing under
 // test IS filesystem interpretation — a mocked readdir would pass a loader that
 // cannot read a directory.
 function mkTree(plugins) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugins-'));
+  const root = mkTmpRoot('clodex-plugins-');
   for (const [name, spec] of Object.entries(plugins)) {
     const dir = path.join(root, name);
     fs.mkdirSync(dir, { recursive: true });
@@ -806,7 +807,7 @@ test('a SYMLINKED plugin directory is followed', () => {
   // of a working checkout is the likeliest thing a developer does in the user
   // root.
   const src = mkTree({ gamma: { manifest: { ...OK_MANIFEST, id: 'gamma' }, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
-  const user = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-userroot-'));
+  const user = mkTmpRoot('clodex-userroot-');
   fs.symlinkSync(path.join(src, 'gamma'), path.join(user, 'gamma'), 'dir');
   const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
   const recs = loader.discover();
@@ -822,7 +823,7 @@ test('a symlink cannot be used to escape the plugin directory', () => {
   // insideDir runs against the RESOLVED dir, so the escape check is not weakened
   // by the symlink following above.
   const src = mkTree({ evil: { manifest: { ...OK_MANIFEST, id: 'evil', entry: { engine: '../../elsewhere.js' } }, files: { 'engine.js': engineFile } } });
-  const user = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-userroot-'));
+  const user = mkTmpRoot('clodex-userroot-');
   fs.symlinkSync(path.join(src, 'evil'), path.join(user, 'evil'), 'dir');
   const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
   assert.deepStrictEqual(loader.discover(), []);
@@ -994,7 +995,7 @@ function freshTree(id, version, body = engineFile) {
 }
 
 test('re-scan picks up a plugin ADDED after startup', () => {
-  const user = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugins-'));
+  const user = mkTmpRoot('clodex-plugins-');
   const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
   const host = rescanHost();
   loader.loadAll(host);
@@ -1060,7 +1061,7 @@ test('re-scan takes NO strike when a plugin fails to activate', () => {
   // A re-scan is not a launch (t20's reasoning). The counter exists for plugins
   // that crash on a real activation; a user pressing Re-scan three times must
   // not quarantine a plugin that was half-copied when they pressed it.
-  const user = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugins-'));
+  const user = mkTmpRoot('clodex-plugins-');
   const { loader, ui } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
   const host = rescanHost();
   loader.loadAll(host);
@@ -1170,7 +1171,7 @@ test('ensureUserRoot creates the directory it reveals', () => {
   // representation of "no user plugins". This is the exception the rule names:
   // the user has explicitly asked to be shown where plugins go, and revealing a
   // path that does not exist is a broken action.
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugins-'));
+  const base = mkTmpRoot('clodex-plugins-');
   const userDir = path.join(base, 'plugins');
   const { loader } = mkMultiLoader([
     { id: 'core', dir: base, label: 'Built in' },
@@ -1194,7 +1195,7 @@ test('ensureUserRoot returns null when there is no user root', () => {
 // is that it takes no path and does not recurse — both pinned below.
 
 test('listUserRoot lists the user root one level deep, marking directories', () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugins-'));
+  const base = mkTmpRoot('clodex-plugins-');
   const userDir = path.join(base, 'plugins');
   fs.mkdirSync(path.join(userDir, 'zeta'), { recursive: true });
   fs.mkdirSync(path.join(userDir, 'alpha'), { recursive: true });
@@ -1216,7 +1217,7 @@ test('listUserRoot does NOT descend into an entry', () => {
   // Non-recursion is the security-relevant half of the bound: the row answers
   // "what is in the plugin root", not "walk the host's filesystem for me". A
   // nested name appearing here would mean the walk went one level too far.
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugins-'));
+  const base = mkTmpRoot('clodex-plugins-');
   const userDir = path.join(base, 'plugins');
   fs.mkdirSync(path.join(userDir, 'demo', 'inner'), { recursive: true });
   fs.writeFileSync(path.join(userDir, 'demo', 'manifest.json'), '{}');
@@ -1236,7 +1237,7 @@ test('listUserRoot takes no argument that could redirect it', () => {
   // is NOT the plugin root and it must still answer with the plugin root. An
   // argument the function ignores cannot steer a read — and a fake path would
   // dodge the claim, since it would fail for merely not existing.
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugins-'));
+  const base = mkTmpRoot('clodex-plugins-');
   const userDir = path.join(base, 'plugins');
   const elsewhere = path.join(base, 'elsewhere');
   fs.mkdirSync(path.join(userDir, 'mine'), { recursive: true });

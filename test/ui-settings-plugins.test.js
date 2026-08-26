@@ -28,6 +28,7 @@ const os = require('os');
 const path = require('path');
 
 const { initStores } = require('../stores.js');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A real store rooted in a throwaway userData dir. initStores derives every
 // path from the one it is given, so this exercises the actual load/save code.
@@ -43,7 +44,7 @@ function openStores(dir) {
 }
 
 function mkStore() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-uisettings-'));
+  const dir = mkTmpRoot('clodex-uisettings-');
   return { ui: openStores(dir).uiSettings, dir };
 }
 
@@ -146,7 +147,7 @@ test('the real store satisfies the loader end to end', () => {
   const { createPluginLoader } = require('../plugin-loader.js');
   const { ui, dir } = mkStore();
 
-  const pluginsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-plugins-'));
+  const pluginsDir = mkTmpRoot('clodex-plugins-');
   const pdir = path.join(pluginsDir, 'demo');
   fs.mkdirSync(pdir);
   fs.writeFileSync(path.join(pdir, 'engine.js'), 'module.exports = {};');

@@ -24,12 +24,13 @@ const os = require('os');
 const path = require('path');
 const { createCliHooks } = require('../cli-hooks');
 const { pathFor, runDirFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
   unifiedDiff, ipcDelta, stageDelta, bakePrompt,
   promptCacheDir, cachePathFor, readCache, DELTA_HEADER,
 } = require('../ipc-prompt-cache');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-ipccache-')); }
+function tmp() { return mkTmpRoot('clodex-ipccache-'); }
 
 // A realistic prompt: the real one is ~9KB / ~200 lines, and a one-line diff of
 // a 200-line file is the case that matters (a diff of two 3-line strings would

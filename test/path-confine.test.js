@@ -18,6 +18,7 @@ const path = require('path');
 const { confine, confineOrThrow } = require('../path-confine');
 const { createMemoryStore } = require('../memory-store');
 const { initStores } = require('../stores');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // `..` reaches the root's parent; `../..` reaches ITS parent, which for the
 // real skill-plugins dir is $HOME. A guard that special-cases `..` handles the
@@ -56,7 +57,7 @@ test('confineOrThrow: names the thing it refused', () => {
 // ── memory store ────────────────────────────────────────────────────────────
 
 function tmpMem() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-confine-mem-'));
+  const dir = mkTmpRoot('clodex-confine-mem-');
   return { store: createMemoryStore(dir), dir };
 }
 
@@ -125,8 +126,8 @@ test('memoryStore: forget cannot reach a file outside the agent dir', () => {
 // resourcesDir that does not exist, so the shipped library defaults don't
 // appear in the list() assertions below.
 function tmpStores() {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-confine-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-confine-reg-'));
+  const userData = mkTmpRoot('clodex-confine-ud-');
+  const registryDir = mkTmpRoot('clodex-confine-reg-');
   const stores = initStores(userData, {
     log: console, registryDir, resourcesDir: path.join(registryDir, '__no_seed__'),
   });

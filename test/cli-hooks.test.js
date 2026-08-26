@@ -11,8 +11,9 @@ const path = require('path');
 const cp = require('child_process');
 const { createCliHooks } = require('../cli-hooks');
 const { pathFor, runDirFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-hooks-')); }
+function tmp() { return mkTmpRoot('clodex-hooks-'); }
 function mk(REGISTRY_DIR) {
   return createCliHooks({
     REGISTRY_DIR,

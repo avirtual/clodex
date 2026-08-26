@@ -3,12 +3,13 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const { createMemoryStore, composeDigest, parseMemoryUnit, DIGEST_BUDGET,
   OPERATOR_PIN_CAP, RECENT_BODY_CAP } = require('../memory-store');
 
 function tmpStore() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-mem-'));
+  const dir = mkTmpRoot('clodex-mem-');
   return { store: createMemoryStore(dir), dir };
 }
 

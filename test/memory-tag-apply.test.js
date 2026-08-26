@@ -12,6 +12,7 @@ const path = require('path');
 const { createMemoryStore, parseMemoryUnit } = require('../memory-store');
 const { apply } = require('../scripts/memory-tag/apply');
 const { census, readUnitFile, VOCAB_VERSION } = require('../scripts/memory-tag/unit-file');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const AGENT = 'alpha';
 
@@ -19,7 +20,7 @@ const AGENT = 'alpha';
 // raw rewrite, because remember() cannot write unknown keys — and unknown-key
 // survival is precisely what these tests are for.
 function fixture(specs) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-tag-'));
+  const root = mkTmpRoot('clodex-tag-');
   const store = createMemoryStore(root);
   const ids = [];
   for (const s of specs) {

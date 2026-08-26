@@ -27,6 +27,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const CWD = os.tmpdir();
 
@@ -35,8 +36,8 @@ const CWD = os.tmpdir();
 // is real there: the disposition this latch arms on is produced by the inject
 // queue, so a stubbed queue would hand every test the disposition it expected.
 function boot(opts = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-dm-run-'));
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-dm-home-'));
+  const root = mkTmpRoot('clx-dm-run-');
+  const home = mkTmpRoot('clx-dm-home-');
   const writes = new Map();          // seat name -> concatenated PTY bytes
   let pending = null;                // the name create() is currently spawning
   const store = new Map();

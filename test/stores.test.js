@@ -11,14 +11,15 @@ const path = require('path');
 const crypto = require('crypto');
 const { initStores } = require('../stores');
 const { shellCapGranted } = require('../peer-shell');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Fresh temp userData + registry dirs, and a stores bundle over them. Seeding is
 // disabled here (resourcesDir → a path that doesn't exist) so the shipped library
 // defaults don't pollute the per-store assertions below; the seed step has its
 // own dedicated tests that exercise it explicitly.
 function freshStores() {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
   const stores = initStores(userData, { log: console, registryDir, resourcesDir: path.join(registryDir, '__no_seed__') });
   return { userData, registryDir, stores,
     cleanup() {
@@ -725,8 +726,8 @@ const REPO_TEAMLEAD = path.join(__dirname, '..', 'resources', 'library', 'prompt
 test('seed: ships the clodex-team-lead system prompt into a fresh registry (byte-exact)', () => {
   // The DEFAULT source (__dirname/resources/library) is exercised here — no
   // resourcesDir override — so this pins the real shipped tree, not a fixture.
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
   try {
     const stores = initStores(userData, { registryDir });
     const dest = path.join(registryDir, 'library', 'prompts', 'system', 'clodex-team-lead.md');
@@ -743,8 +744,8 @@ test('seed: ships the clodex-team-lead system prompt into a fresh registry (byte
 });
 
 test('seed: never clobbers an operator-edited copy already on disk', () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
   try {
     // Operator has already edited their clodex-team-lead prompt BEFORE this launch.
     const dest = path.join(registryDir, 'library', 'prompts', 'system', 'clodex-team-lead.md');
@@ -760,9 +761,9 @@ test('seed: never clobbers an operator-edited copy already on disk', () => {
 });
 
 test('seed: walks a nested source tree, seeding absent files and skipping present ones', () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
-  const resourcesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-res-'));
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
+  const resourcesDir = mkTmpRoot('stores-res-');
   try {
     // A shipped tree with nesting across two library kinds.
     fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
@@ -789,8 +790,8 @@ test('seed: walks a nested source tree, seeding absent files and skipping presen
 });
 
 test('seed: a missing source tree is a no-op, not a throw', () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
   try {
     // Point at a source that does not exist — construction must still succeed.
     const stores = initStores(userData, { registryDir, resourcesDir: path.join(registryDir, 'no-such-seed') });
@@ -813,9 +814,9 @@ const readSeedState = (registryDir) => JSON.parse(fs.readFileSync(seedStatePath(
 const readSeedReport = (registryDir) => JSON.parse(fs.readFileSync(path.join(registryDir, 'library', '.seed-report.json'), 'utf-8'));
 
 function withSeedDirs(fn) {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
-  const resourcesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-res-'));
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
+  const resourcesDir = mkTmpRoot('stores-res-');
   try { fn({ userData, registryDir, resourcesDir }); }
   finally {
     fs.rmSync(userData, { recursive: true, force: true });
@@ -1385,8 +1386,8 @@ const TEAM_ROLE_PROMPTS = ['clodex-team-lead', 'clodex-team-hand', 'clodex-team-
 const REPO_SYSTEM_DIR = path.join(__dirname, '..', 'resources', 'library', 'prompts', 'system');
 
 test('seed: ships all three default team role prompts into a fresh registry', () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
   try {
     const stores = initStores(userData, { registryDir });
     for (const name of TEAM_ROLE_PROMPTS) {
@@ -1402,8 +1403,8 @@ test('seed: ships all three default team role prompts into a fresh registry', ()
 });
 
 test('seed: an operator-edited team prompt survives while the other two seed', () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
   try {
     // Operator has hand-installed their own hand prompt before this launch.
     const edited = path.join(registryDir, 'library', 'prompts', 'system', 'clodex-team-hand.md');
@@ -1509,8 +1510,8 @@ test('seed: shipped team prompts pair the spec base-commit check', () => {
 const REPO_REVIEWER_TPL = path.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-reviewer.json');
 
 test('seed (T52): ships the reviewer template into a fresh registry (byte-exact) and it lists', () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
   try {
     const stores = initStores(userData, { registryDir });
     const dest = path.join(registryDir, 'library', 'templates', 'clodex-team-reviewer.json');
@@ -1652,8 +1653,8 @@ test('promptLibrary: save/list/raw/remove under the registry dir', () => {
 });
 
 test('prompts.json migration runs once during construction', () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
   try {
     fs.writeFileSync(path.join(userData, 'prompts.json'),
       JSON.stringify([{ id: '1', title: 'My Prompt', body: 'HELLO' }]));
@@ -2287,8 +2288,8 @@ test('uiSettings: boxes defaults to one seed box on a fresh install (no top-leve
 });
 
 test('uiSettings: a pre-M6b file (sandbox key, no boxes) is ignored — no migration, just the seed', () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-ud-'));
-  const registryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-'));
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
   try {
     // 0600 like a real settings file: this fixture is written by the test rather
     // than by atomicWriteFileSync, and a 0644 one would (correctly) trip the
@@ -2572,7 +2573,7 @@ test('uiSettings: a non-boolean hint flag falls back to the default', () => {
     raw.semanticHints = 'yes';
     fs.writeFileSync(f, JSON.stringify(raw));
     const again = initStores(userData, { log: console,
-      registryDir: fs.mkdtempSync(path.join(os.tmpdir(), 'stores-reg-')),
+      registryDir: mkTmpRoot('stores-reg-'),
       resourcesDir: path.join(userData, '__no_seed__') });
     assert.strictEqual(again.uiSettings.get().semanticHints, false,
       'a truthy non-boolean must not read as enabled');

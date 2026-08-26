@@ -28,13 +28,14 @@ const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { createCliHooks } = require('../cli-hooks');
 const { pathFor, runDirFor } = require('../clodex-paths');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // The manager under test runs the REAL cli-hooks so the settings bytes asserted
 // below are the bytes a spawn actually writes. Everything between create()'s
 // entry and that write is stubbed to the minimum — this file says nothing about
 // prompt assembly, MCP resolution or the PTY.
 function mkManager({ proxyBase = null, wireShadow = true } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-wireoff-'));
+  const root = mkTmpRoot('clx-wireoff-');
   const store = new Map();
   const persistence = {
     list: () => [...store.values()],

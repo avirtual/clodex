@@ -19,6 +19,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn, execFileSync } = require('node:child_process');
 const { createWirescopeSupervisor, wirescopeEnvGate } = require('../wirescope-supervisor');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // ── pure: wirescopeEnvGate matrix ────────────────────────────────────────────
 
@@ -70,7 +71,7 @@ const ROUTED = { proxyEnabled: true, proxyUrl: 'http://127.0.0.1:7800', wirescop
 function makeSup(settings, { probe } = {}) {
   const probes = [];
   const logs = [];
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-gate-'));
+  const tmp = mkTmpRoot('ws-gate-');
   const { WirescopeSupervisor } = createWirescopeSupervisor({
     // A BARE fn, not a tagged logger. engine.js passes the tagged shape, so every
     // log.warn('wirescope', …) in the module works there and only ever fails here
@@ -284,7 +285,7 @@ function withListener({ cwd, env }, fn) {
 
 // A source dir that _looksValid, and a supervisor pointed at it with no pidfile.
 function reclaimSup(port) {
-  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-src-'));
+  const src = mkTmpRoot('ws-src-');
   fs.writeFileSync(path.join(src, 'logproxy.py'), '# stub\n');
   const { sup } = makeSup({ ...ROUTED, wirescopePort: port, wirescopeDir: src });
   fs.mkdirSync(path.dirname(sup._pidFile()), { recursive: true });
@@ -372,7 +373,7 @@ test('reclaim: nothing on the port, or no source, is a silent null', () => {
 // Behavioral, not a source grep: a source-text assertion passes for dead code.
 test('reclaim: start() adopts an orphan and reports `managed`, not `external`', async () => {
   const port = nextPort;
-  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-src-'));
+  const src = mkTmpRoot('ws-src-');
   fs.writeFileSync(path.join(src, 'logproxy.py'), '# stub\n');
   const { sup } = makeSup(
     { ...ROUTED, wirescopePort: port, wirescopeDir: src },

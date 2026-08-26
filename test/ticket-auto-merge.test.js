@@ -26,6 +26,7 @@ const { execFileSync } = require('node:child_process');
 const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SHIPPED_REVIEWER_TEMPLATE = {
   name: 'clodex-team-reviewer',
@@ -81,7 +82,7 @@ const SUITE_STUBS = {
 // subject here would escalate at clean-tree and the assertions downstream would
 // be measuring that escalation instead of the merge.
 function mkRepo() {
-  const dir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-merge-repo-'));
+  const dir = mkTmpRoot('clodex-merge-repo-');
   git(dir, ['init', '-q', '-b', 'master']);
   git(dir, ['config', 'user.email', 't@t.t']);
   git(dir, ['config', 'user.name', 'T']);
@@ -126,7 +127,7 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
   fsReal.mkdirSync(pathReal.join(repo.dir, 'node_modules'), { recursive: true });
   fsReal.writeFileSync(pathReal.join(repo.dir, 'scripts', 'run-tests.js'), SUITE_STUBS[suite]);
 
-  const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-merge-'));
+  const home = mkTmpRoot('clodex-merge-');
   const pdir = pathReal.join(home, 'library', 'prompts', 'system');
   fsReal.mkdirSync(pdir, { recursive: true });
   fsReal.writeFileSync(pathReal.join(pdir, 'clodex-team-reviewer.md'), '# reviewer\n');
@@ -2039,7 +2040,7 @@ test('the revert of a merge passes a mainline, or the undo is not possible at al
   // into an error at precisely the moment master is broken and the undo is the
   // only way back. Pinned against real git rather than by reading the source,
   // because the refusal is git's behaviour and not ours.
-  const dir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-revert-'));
+  const dir = mkTmpRoot('clodex-revert-');
   git(dir, ['init', '-q', '-b', 'master']);
   git(dir, ['config', 'user.email', 't@t.t']);
   git(dir, ['config', 'user.name', 'T']);

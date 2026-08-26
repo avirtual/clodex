@@ -9,13 +9,14 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const wt = require('../git-worktree');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function gitAvailable() {
   try { execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
 }
 
 function makeRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-wt-'));
+  const dir = mkTmpRoot('clodex-wt-');
   const run = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
   run('init', '-q');
   run('config', 'user.email', 't@example.com');
@@ -27,7 +28,7 @@ function makeRepo() {
 }
 
 test('repoToplevel: null for a non-repo path, resolves inside a repo', { skip: !gitAvailable() }, async () => {
-  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-nr-'));
+  const notRepo = mkTmpRoot('clodex-nr-');
   assert.strictEqual(await wt.repoToplevel(notRepo), null);
   assert.strictEqual(await wt.repoToplevel(null), null);
   const repo = makeRepo();
@@ -64,7 +65,7 @@ test('createWorktree: rejects a missing / invalid branch name', { skip: !gitAvai
 });
 
 test('createWorktree: fails cleanly outside a repo', { skip: !gitAvailable() }, async () => {
-  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-nr2-'));
+  const notRepo = mkTmpRoot('clodex-nr2-');
   const r = await wt.createWorktree(notRepo, 'x');
   assert.strictEqual(r.ok, false);
   assert.match(r.error, /not inside a git repository/i);
@@ -118,7 +119,7 @@ test('a worktree dir deleted by hand: listed as prunable, and the branch stays u
 });
 
 test('listWorktrees: non-repo → ok:false', { skip: !gitAvailable() }, async () => {
-  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-wl-'));
+  const notRepo = mkTmpRoot('clodex-wl-');
   assert.strictEqual((await wt.listWorktrees(notRepo)).ok, false);
 });
 
@@ -133,7 +134,7 @@ test('repoInfo: reports default branch + branch list for a repo, isRepo:false ot
   // Default branch is listed first.
   assert.strictEqual(info.branches[0], info.defaultBranch);
 
-  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-nri-'));
+  const notRepo = mkTmpRoot('clodex-nri-');
   assert.strictEqual((await wt.repoInfo(notRepo)).isRepo, false);
 });
 
