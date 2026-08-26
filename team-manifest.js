@@ -1036,10 +1036,10 @@ function rosterExecPayload(seatName) {
 // measured rather than assumed: for a seat whose role prompt rides
 // --system-prompt-file (every ticket seat — session-manager's
 // `promptRidesAsSystem` skips the append) this block is the TAIL of the append
-// channel, so ~180 bytes are all there is to share and nothing trails it. The
-// `${teamBlock}\n\n${rolePrompt}` case that would strand a whole role prompt
-// behind a varying token is the LEAD's. Worth doing for the invariant,
-// not for a KB-scale saving.
+// channel, so ~180 bytes are all there is to share and nothing trails it.
+// Where that append is NOT skipped, the concatenation strands the whole
+// role prompt behind a varying token instead. Worth doing for the
+// invariant, not for a KB-scale saving.
 //
 // The name is already conversation content — cli-hooks.js's SessionStart
 // additionalContext leads with it and re-fires on clear AND compact — and the

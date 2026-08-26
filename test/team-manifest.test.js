@@ -1067,9 +1067,9 @@ test('formatTeamBlock: a seat that matches no role reports the none-case', () =>
 // two seats of the same role must produce an IDENTICAL block. What that is
 // worth, measured: for seats whose role prompt rides --system-prompt-file (all
 // ticket seats) the block is the TAIL of the append channel, so the ~180 bytes
-// of the block itself are the whole saving and nothing trails it to strand. The
-// case where a varying token WOULD strand a role prompt behind it is the lead's
-// concatenated prompt, and a team has one lead, so it can never be shared.
+// of the block itself are the whole saving and nothing trails it to strand.
+// Where that append is NOT skipped, the concatenation strands the whole role
+// prompt behind a varying token instead.
 // strictEqual on the whole string, not a regex: a regex can only forbid the
 // forms someone thought to forbid.
 test('formatTeamBlock: same-role seats render BYTE-IDENTICAL blocks', () => {
