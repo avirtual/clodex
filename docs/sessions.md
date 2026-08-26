@@ -319,6 +319,10 @@ see §4.)
   `_cleanup`, persistence decision before cleanup.
 - JsonlWatcher starts reading at EOF on every symlink repoint.
 - Restore/respawn failure keeps the persisted entry (`{failed:true}`).
+- A restart that throws re-upserts the entry (`restartSession`) — a session
+  must never vanish because a respawn threw. A different arm from the bullet
+  above: that one is restore-on-launch's `failed:true` row, this one writes
+  the record back and returns `{ok:false}`.
 - ✕ / Cmd+W on a LIVE row archives (keep the record, stamp `archivedAt`). The
   ARCHIVED row's ✕ and the FAILED ghost row's ✕ are different controls
   (`forgetSession`) and DO drop the record, as do right-click Delete Session…

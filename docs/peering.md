@@ -62,7 +62,7 @@ content — the viewer pulls via query; `file open` is never mirrored),
 
 Notable callback semantics (remote-wiring.js): `createSession` routes the
 live `manager.create()` (persists like `[agent:spawn]`); `restartSession`
-routes the shared main.js helper; `deliverDm` runs the same `_gatedDeliver`
+routes the shared engine.js helper; `deliverDm` runs the same `_gatedDeliver`
 cost-gate as local mail; `resizePty` tags `manager.resize(..,'peer-control')`
 so the ops log can arbitrate perturbation reports; `onControlChange` chips
 the owner's tab — control is never silent. Bash sessions are IPC-private
