@@ -46,6 +46,17 @@ function trackedSources() {
   ));
 }
 
+// A line whose FIRST non-space token opens a comment. Every scanner below skips
+// these: all three regex whole lines, so an explanatory comment naming the shape
+// a scanner hunts for trips it for a non-reason — a false red on the guards whose
+// job is to fail loudly for a real one. (test/reload-env.test.js:79 already
+// carries such a comment, out of scan range only by luck.)
+//
+// Anchored at line start deliberately: `foo(); /* ... */` carries real code and
+// is still scanned. The known limit is a line inside a `/* */` block that opens
+// with neither `*` nor `/*`; every comment in the scanned files is `//`-style.
+const isComment = (l) => /^\s*(\/\/|\/\*|\*)/.test(l);
+
 // Call sites, as { file, line, text }. The definition (`_preserveAcrossRestart(`
 // preceded by nothing that makes it a call) is excluded by requiring a receiver
 // — every call goes through `manager.` or `this.`.
@@ -58,6 +69,7 @@ function callSites() {
     if (!src.includes('_preserveAcrossRestart')) continue;
     const lines = src.split('\n');
     for (let i = 0; i < lines.length; i++) {
+      if (isComment(lines[i])) continue;
       if (CALL_RE.test(lines[i])) found.push({ file, line: i + 1, text: lines[i] });
     }
   }
@@ -129,8 +141,15 @@ test('DISCOVERY: no restart path re-seeds persistence by hand instead of using t
   for (const file of ['engine.js', 'session-manager.js']) {
     const lines = fs.readFileSync(path.join(ROOT, file), 'utf8').split('\n');
     for (let i = 0; i < lines.length; i++) {
+      if (isComment(lines[i])) continue;
       if (!/await\s+(?:manager|this)\.kill\(/.test(lines[i])) continue;
-      const window = lines.slice(i, i + 12);
+      // 12 lines of CODE, not 12 raw lines: comments inside the window consume
+      // the budget and push the real `_preserveAcrossRestart` out of it, which
+      // fails on the REAL kill rather than on the comment — a false red the skip
+      // guard above cannot reach. engine.js:1262's window is already 4 comment
+      // lines deep, so this is latent, not hypothetical. Widening (12 code lines
+      // >= 12 raw lines) strengthens the guard; it never narrows it.
+      const window = lines.slice(i).filter((l) => !isComment(l)).slice(0, 12);
       const createAt = window.findIndex((l) => /(?:manager|this)\.create\(/.test(l));
       if (createAt < 0) continue;
       const between = window.slice(0, createAt).join('\n');
@@ -155,18 +174,19 @@ test('DISCOVERY: no restart path re-seeds persistence by hand instead of using t
 // occupancy reader" — so it is asserted as one. Per CLAUDE.md: this comment claims
 // coverage, and the claim and the test land in the same commit.
 test('t491: every restart catch arm restores its snapshot through the tree guard', () => {
-  // The three arms, by the variable each one restores. Named rather than
-  // discovered, because the assertion is about a specific hazardous SHAPE and a
-  // scanner broad enough to find it by itself would match every upsert in the repo.
-  const ARMS = [
-    { file: 'engine.js', restores: 'entry', what: 'restartSession' },
-    { file: 'engine.js', restores: '{ ...beforeKill,', what: 'applySessionArgs' },
-    { file: 'session-manager.js', restores: 'entry', what: '[agent:context reload]' },
-  ];
+  // LABELS ONLY, and deliberately not a per-arm identity check. What the scanner
+  // guarantees is a COUNT plus a per-site assertion; matching these names to sites
+  // would have to go by order (`restores: 'entry'` describes two of the three, so
+  // only file+order discriminates), and order is not the invariant — reordering
+  // the arms in engine.js would fail this for a non-reason. A table that promises
+  // nothing beats one that promises a check it performs badly, so these are what
+  // the count's failure message names, nothing more.
+  const ARMS = ['restartSession', 'applySessionArgs', '[agent:context reload]'];
   const seen = [];
   for (const file of ['engine.js', 'session-manager.js']) {
     const lines = fs.readFileSync(path.join(ROOT, file), 'utf8').split('\n');
     for (let i = 0; i < lines.length; i++) {
+      if (isComment(lines[i])) continue;
       // An upsert restoring a pre-kill snapshot: the argument is `entry`,
       // `beforeKill`, or an object literal spreading one of them.
       const m = /(?:persistence|getPersistence\(\))\.upsert\(([^;]*)\)/.exec(lines[i]);
@@ -184,7 +204,7 @@ test('t491: every restart catch arm restores its snapshot through the tree guard
   // matching would make every assertion above vacuous — this guard's own failure
   // mode, and the one it cannot detect from inside the loop.
   assert.strictEqual(seen.length, ARMS.length,
-    `expected ${ARMS.length} snapshot-restoring upserts (${ARMS.map((a) => a.what).join(', ')}), found ${seen.length} `
+    `expected ${ARMS.length} snapshot-restoring upserts (${ARMS.join(', ')}), found ${seen.length} `
     + `(${seen.map((s) => `${s.file}:${s.line}`).join(', ')}) — the scanner has stopped seeing them, do not weaken this`);
   // And the spread-literal arm specifically: the helper must wrap the ASSEMBLED
   // object, not `beforeKill`, or the spread that actually reaches the store undoes
