@@ -37,7 +37,21 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   const logger = log || { info() {}, warn() {}, error() {} };
   // Injected so the kill escalation is assertable without a five-second test.
   const later = setTimeoutFn || setTimeout;
-  const killProcess = killPid || ((pid, sig) => process.kill(pid, sig));
+  // The `> 0` is the safety property, and it lives in the DEFAULT rather than at
+  // the call site because that is the arm production actually takes — engine.js
+  // injects no killPid. A non-positive pid is not an id to process.kill: -1
+  // signals every process the user may signal, 0 our own process group. Same
+  // refusal, same reason, as session-manager's sigkillPid; this file's escalation
+  // has the identical shape that made that one bite (an injected spawn seam, a
+  // pid read off a record, and a 5s deferral that fires long after the record is
+  // gone, into a bare `catch {}` that would swallow the evidence).
+  const killProcess = killPid || ((pid, sig) => {
+    if (!(pid > 0)) {
+      logger.warn('drawer', `refusing SIGKILL: pid is ${pid}, which would broadcast rather than target`);
+      return;
+    }
+    process.kill(pid, sig);
+  });
   let disposed = false;
   // Two minutes. Long enough for a build, short enough that a wedged command
   // does not leave an agent waiting for the rest of its life. It does NOT cancel
