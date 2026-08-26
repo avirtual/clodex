@@ -59,7 +59,7 @@ the template says.
 
 The trap is the *other* spawn paths — the lead's
 `[agent:spawn name:X template:Z]` with no explicit `cwd:`, which the lead is
-told about in its own team block, and picking a template in the New Session
+told about in its own hook roster, and picking a template in the New Session
 dialog. Both take the template's `cwd` verbatim. A template that hardcodes an
 absolute path therefore boots the seat **in the project that template was
 written for**, while its ticket lives in yours. It looks like a working seat.
@@ -250,7 +250,7 @@ Two seats can hold the same role; a ticket assigned to a role that has a
 worktree `dispatch` mints a fresh branch and a fresh seat per ticket, which is
 what keeps parallel work from colliding in one checkout.
 
-The lead's team block spells out the reachable actions for whatever roles exist,
+The lead's hook roster spells out the reachable actions for whatever roles exist,
 so you do not have to teach it the vocabulary.
 
 ## Checklist for a new project

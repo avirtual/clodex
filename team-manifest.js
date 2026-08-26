@@ -1038,8 +1038,7 @@ function rosterExecPayload(seatName) {
 // `promptRidesAsSystem` skips the append) this block is the TAIL of the append
 // channel, so ~180 bytes are all there is to share and nothing trails it. The
 // `${teamBlock}\n\n${rolePrompt}` case that would strand a whole role prompt
-// behind a varying token is the LEAD's, and a team has exactly one lead, so
-// there is no same-role peer to share it with. Worth doing for the invariant,
+// behind a varying token is the LEAD's. Worth doing for the invariant,
 // not for a KB-scale saving.
 //
 // The name is already conversation content — cli-hooks.js's SessionStart
@@ -1052,7 +1051,7 @@ function formatTeamBlock(team, seatName) {
   return [
     '# Team',
     `You are on team ${team.name} (root ${team.root}). Your role: ${yourRole}.`,
-    'Team composition arrives in your context, and with it the ground-truth roster invocation.',
+    `Team composition arrives in your context. Ground truth on demand: ${rosterExecPayload(null)}`,
   ].join('\n');
 }
 

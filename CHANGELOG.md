@@ -25,6 +25,16 @@ blocks a release.
   arrives with the roster itself. It only pays when same-role seats run
   concurrently, which for most teams means reviewers.
 
+- **A Codex seat keeps the roster command across a `/clear` or `/compact`.** The
+  `# Team` block told every seat that the way to check its team's composition
+  would arrive in its context. For a Codex seat that was true only for the first
+  conversation: the roster is delivered there as a message, so a context reset
+  discarded it, while the block itself is cached and went on promising it. A
+  Claude seat never had the problem — its roster is re-issued on every reset. The
+  block now carries the command itself, with `<your name>` where the seat name
+  goes, so it survives every reset alongside the block. The concrete, ready-to-copy
+  version still comes with the roster.
+
 - **A stub pty in a test could SIGKILL every process on the machine.** When a
   session is killed or archived, Clodex asks its pty to exit and then, five
   seconds later, sends SIGKILL as a backstop in case it did not. That backstop
