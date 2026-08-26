@@ -69,15 +69,21 @@ const ROUTED = { proxyEnabled: true, proxyUrl: 'http://127.0.0.1:7800', wirescop
 
 function makeSup(settings, { probe } = {}) {
   const probes = [];
+  const logs = [];
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-gate-'));
   const { WirescopeSupervisor } = createWirescopeSupervisor({
-    log: () => {},
+    // A BARE fn, not a tagged logger. engine.js passes the tagged shape, so every
+    // log.warn('wirescope', …) in the module works there and only ever fails here
+    // — and both of its call sites sit inside a `catch {}` that swallows the
+    // TypeError along with whatever followed the warn. Keeping this harness bare
+    // is what makes that difference reachable.
+    log: (m) => logs.push(m),
     ProxyClient: { probe: async (base) => { probes.push(base); if (probe) return probe(base); throw new Error('down'); } },
     getUiSettings: () => ({ get: () => settings }),
     getUserDataPath: () => tmp,
     isPackaged: () => false,
   });
-  return { sup: new WirescopeSupervisor(), probes };
+  return { sup: new WirescopeSupervisor(), probes, logs };
 }
 
 test('autoStartWanted: gate matrix — env off / bedrock / vertex kill it; unset keeps it; gate beats proxyEnabled', async () => {
@@ -198,6 +204,46 @@ test('pidfile: an unreadable or absent record is cleared, not preserved', () => 
   assert.ok(!fs.existsSync(pidFile),
     'a corrupt record must not be treated as a successor claim and left forever');
   assert.doesNotThrow(() => sup._releasePidFile(444), 'and a missing file is not an error');
+});
+
+test('pidfile: a non-positive pid is discarded, and the discard survives a bare-fn host', () => {
+  // The self-heal, driven end to end. A pidfile carrying -1 would have stop()
+  // signalling every process the user owns, and the liveness probe is no backstop
+  // (kill(-1, 0) does not throw). _survivorPid must refuse it AND delete it: the
+  // refusal alone returns null to stop(), which then can never clean the file up.
+  //
+  // The bare-fn `log` above is the load-bearing part. This path warns before it
+  // releases, so a direct log.warn() here throws into _survivorPid's outer
+  // `catch { return null; }` — the null still keeps the safety property, which is
+  // why the loss is silent, but the release never runs and the corrupt file stays
+  // forever while status() re-enters this branch every 10s.
+  for (const bad of [-1, 0]) {
+    const { sup, logs } = makeSup(ROUTED);
+    const pidFile = sup._pidFile();
+    fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+    fs.writeFileSync(pidFile, JSON.stringify({ pid: bad, port: 7800 }));
+
+    assert.strictEqual(sup._survivorPid(), null, `pid ${bad} must not be reported as a survivor`);
+    assert.ok(!fs.existsSync(pidFile),
+      `pid ${bad} was refused but its record was left behind — stop() gets null from _survivorPid, so `
+      + 'nothing else ever deletes it and this branch re-fires on every status() watchdog tick');
+    assert.deepStrictEqual(logs, [`discarding pidfile: pid is ${bad}, which would broadcast rather than target`],
+      'the discard must reach a bare-fn log too; a tagged-shape call throws into the outer catch and takes '
+      + 'the release with it');
+  }
+});
+
+test('pidfile: an ABSENT pid is neither warned about nor discarded', () => {
+  // The ordinary "no survivor" case. `{}` is not corruption — it must stay quiet,
+  // which is the whole reason the discard is gated on `rec.pid !== undefined`
+  // rather than on the refusal above it.
+  const { sup, logs } = makeSup(ROUTED);
+  const pidFile = sup._pidFile();
+  fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+  fs.writeFileSync(pidFile, JSON.stringify({ port: 7800 }));
+
+  assert.strictEqual(sup._survivorPid(), null);
+  assert.deepStrictEqual(logs, [], 'an absent pid is the ordinary case and must not log');
 });
 
 // ── re-adopting a survivor whose record was lost ────────────────────────────
