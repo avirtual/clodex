@@ -140,6 +140,62 @@ test('DISCOVERY: no restart path re-seeds persistence by hand instead of using t
   }
 });
 
+// t491. The success path is not the only writer of a pre-kill snapshot: every
+// restart's CATCH arm re-upserts one wholesale, and that arm is the LIKELIER one
+// in the scenario the guard exists for — the window is held open by a CLI slow to
+// die, and a CLI slow enough to hold it past waitForSessionExit's 8s is the one
+// whose restart then throws. An arm that restores `worktree` while another live
+// seat holds the checkout puts a second record on one tree.
+//
+// A SOURCE-SHAPE guard, and deliberately so. Two of the three arms are reachable
+// at runtime only behind fixtures heavy enough that the pin would live somewhere
+// nobody looks (this was found by vacuity-proving each site: deleting the guard on
+// the reload and applySessionArgs arms left the whole suite green). The invariant
+// is a property of the SOURCE — "no snapshot-restoring upsert bypasses the single
+// occupancy reader" — so it is asserted as one. Per CLAUDE.md: this comment claims
+// coverage, and the claim and the test land in the same commit.
+test('t491: every restart catch arm restores its snapshot through the tree guard', () => {
+  // The three arms, by the variable each one restores. Named rather than
+  // discovered, because the assertion is about a specific hazardous SHAPE and a
+  // scanner broad enough to find it by itself would match every upsert in the repo.
+  const ARMS = [
+    { file: 'engine.js', restores: 'entry', what: 'restartSession' },
+    { file: 'engine.js', restores: '{ ...beforeKill,', what: 'applySessionArgs' },
+    { file: 'session-manager.js', restores: 'entry', what: '[agent:context reload]' },
+  ];
+  const seen = [];
+  for (const file of ['engine.js', 'session-manager.js']) {
+    const lines = fs.readFileSync(path.join(ROOT, file), 'utf8').split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      // An upsert restoring a pre-kill snapshot: the argument is `entry`,
+      // `beforeKill`, or an object literal spreading one of them.
+      const m = /(?:persistence|getPersistence\(\))\.upsert\(([^;]*)\)/.exec(lines[i]);
+      if (!m) continue;
+      const arg = m[1];
+      if (!/\bentry\b|\bbeforeKill\b/.test(arg)) continue;
+      seen.push({ file, line: i + 1, arg });
+      assert.match(arg, /_stripClaimedTree\(/,
+        `${file}:${i + 1}: this arm restores a pre-kill snapshot without routing it through _stripClaimedTree — `
+        + 'if another live seat took the checkout while the restart was in flight, this write puts a SECOND '
+        + 'record on one tree, and session:kill on either row force-removes it under the seat living in it');
+    }
+  }
+  // ENTER: the scanner must still be finding all three. A regex that stopped
+  // matching would make every assertion above vacuous — this guard's own failure
+  // mode, and the one it cannot detect from inside the loop.
+  assert.strictEqual(seen.length, ARMS.length,
+    `expected ${ARMS.length} snapshot-restoring upserts (${ARMS.map((a) => a.what).join(', ')}), found ${seen.length} `
+    + `(${seen.map((s) => `${s.file}:${s.line}`).join(', ')}) — the scanner has stopped seeing them, do not weaken this`);
+  // And the spread-literal arm specifically: the helper must wrap the ASSEMBLED
+  // object, not `beforeKill`, or the spread that actually reaches the store undoes
+  // the strip. Asserting the shape because the two read almost identically.
+  const spread = seen.find((s) => s.arg.includes('...beforeKill'));
+  assert.ok(spread, 'ENTER: the applySessionArgs arm must still be a spread literal, or this check is about nothing');
+  assert.match(spread.arg, /_stripClaimedTree\(\{\s*\.\.\.beforeKill/,
+    `${spread.file}:${spread.line}: the guard must wrap the assembled object — wrapping \`beforeKill\` alone is undone `
+    + 'by the spread that follows it, which is what actually reaches the store');
+});
+
 // --- BEHAVIOUR ---
 
 function mkPersistence() {
@@ -212,4 +268,76 @@ test('BEHAVIOUR: the seeded history survives create()\'s rebuild upsert', () => 
   p.upsert({ name: 'cx', type: 'claude', cwd: '/proj', sessionId: 'c' });
   assert.deepStrictEqual(p.get('cx').sessionIds, ['a', 'b'], 'history survives the rebuild');
   assert.strictEqual(p.get('cx').sessionId, 'c', 'and the rebuild still writes the current id');
+});
+
+// --- t491: the tree-claim guard, driven directly ---
+//
+// `_stripClaimedTree` is the ONE reader of tree occupancy for every path that
+// writes a pre-kill snapshot back: the preserve on the success path, and the
+// three restart CATCH arms (engine.js restartSession / applySessionArgs, the
+// [agent:context reload] intent), which re-upsert the snapshot wholesale.
+//
+// Driven here rather than only through the integration exhibit in
+// test/preserve-tree-handoff.test.js, and that is the point of these four: the
+// exhibit's fixture models create()'s rebuild upsert, which re-writes the record
+// anyway — so an assertion downstream of it can be satisfied by the HARNESS
+// rather than by the code, and the reduced-seed branch in particular was
+// exercised by nothing. These call the helper with nothing between it and the
+// assertion.
+//
+// `_ticketTreeHolder` is stubbed because it is the INPUT to the decision under
+// test, not part of it; it is grafted onto the prototype from team-tickets.js and
+// has its own coverage. What must not be stubbed is the decision itself.
+
+test('t491: the worktree seed is DROPPED when a different live seat holds the tree', () => {
+  const p = mkPersistence();
+  const m = mkManager(p);
+  m._ticketTreeHolder = (path) => (path === '/trees/t1' ? 'other-seat' : null);
+  m._preserveAcrossRestart('cx', { name: 'cx', worktree: { path: '/trees/t1', branch: 'b' }, sessionIds: ['a'] }, []);
+  const rec = p.get('cx');
+  assert.ok(rec, 'ENTER: the record must still be seeded — the guard drops one FIELD, never the whole seed');
+  assert.strictEqual('worktree' in rec, false,
+    'the pointer must not be written back: another live seat holds that checkout, and a second record naming '
+    + 'it lets Delete Session… on this row force-remove the tree the other seat is committing in');
+  assert.deepStrictEqual(rec.sessionIds, ['a'],
+    'and every OTHER preserved field still rides — dropping the tree must not cost the seat its history');
+});
+
+test('t491: the seed is KEPT when the holder is the seat itself', () => {
+  const p = mkPersistence();
+  const m = mkManager(p);
+  // Reachable on the catch arms: create() can succeed and a LATER step throw,
+  // which leaves the seat live with a rebuilt record already naming the tree —
+  // so the holder resolved there is the seat's own name. `holder != null` would
+  // strip a pointer nothing else holds.
+  m._ticketTreeHolder = () => 'cx';
+  m._preserveAcrossRestart('cx', { name: 'cx', worktree: { path: '/trees/t1', branch: 'b' } }, []);
+  assert.deepStrictEqual(p.get('cx').worktree, { path: '/trees/t1', branch: 'b' },
+    'a seat that still holds its own tree keeps the pointer — stripping it would orphan the checkout, which is '
+    + 'the failure ALWAYS_PRESERVE put this field on the list to prevent');
+});
+
+test('t491: a throwing occupancy read KEEPS the pointer — stale beats absent', () => {
+  const p = mkPersistence();
+  const m = mkManager(p);
+  m._ticketTreeHolder = () => { throw new Error('board unreadable'); };
+  m._preserveAcrossRestart('cx', { name: 'cx', worktree: { path: '/trees/t1', branch: 'b' } }, []);
+  assert.deepStrictEqual(p.get('cx').worktree, { path: '/trees/t1', branch: 'b' },
+    'the failure direction is deliberate and is the same asymmetry that put `worktree` in ALWAYS_PRESERVE: a '
+    + 'stale pointer fails removeWorktree and KEEPS the record, an absent one makes destroy() drop the record '
+    + 'and report success over an orphaned tree');
+});
+
+test('t491: a seed reduced to nothing but the tree does not manufacture a record', () => {
+  const p = mkPersistence();
+  const m = mkManager(p);
+  m._ticketTreeHolder = () => 'other-seat';
+  // The branch the integration test cannot reach: with `worktree` stripped this
+  // seed is a bare { name }, and seeding it would hand create() an existingEntry
+  // and suppress the roster inject — the same failure the original `any` guard
+  // exists to prevent, arrived at by a different route.
+  m._preserveAcrossRestart('solo', { name: 'solo', worktree: { path: '/trees/t1', branch: 'b' } }, []);
+  assert.strictEqual(p.get('solo'), null,
+    'a seed with nothing left after the strip must write NOTHING — a bare { name } record reads as a resumed '
+    + 'seat and costs it the roster its restart was supposed to deliver');
 });

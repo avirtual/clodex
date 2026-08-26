@@ -152,7 +152,14 @@ function mkWorld() {
   return { tmp, repo, registryDir, eng, P, m, tstore, seat, said, hold, killAsked, release };
 }
 
-async function until(cond, ms = 5000) {
+// 3s, not the 5s the sibling fixtures use, and it is a budget rather than a
+// taste: while the seat is HELD, engine's waitForSessionExit is running its hard
+// 8s timeout, and its expiry throws into the catch arm that re-upserts the
+// pre-kill entry — closing the window mid-test. Two consecutive 5s waits inside
+// that window overrun it; 3s each leaves 6s of the 8s and fails as a clean
+// assertion instead of as a silently-closed window. The one fixture whose thesis
+// is that a timing window is not a fixture should not carry one.
+async function until(cond, ms = 3000) {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
     if (cond()) return true;
@@ -264,25 +271,73 @@ test('a tree claimed while its seat restarts is NOT re-seeded onto the restarted
   fs.rmSync(w.tmp, { recursive: true, force: true });
 });
 
-// The other half, and the one that decides the guard's SHAPE. The spec proposed
-// skipping the seed whenever another RECORD names the tree. That condition is
-// also true of a stale pointer left by an ARCHIVED seat — archive KEEPS the
-// record, and t488 found eight such pointers on the live board and ruled them
-// expected state. Under the literal condition an ordinary restart of the genuine
-// holder would drop its own pointer and land in the ABSENT state ALWAYS_PRESERVE
-// calls the dangerous one: destroy() then takes `if (!worktree)`, drops the
-// record and reports success over an orphaned checkout. `_ticketTreeHolder`
-// requires the other seat to be LIVE, which is what tells the two cases apart.
-test('a stale pointer from an ARCHIVED seat does not block the restart from keeping its own', async () => {
+// THE FAILURE PATH, and it is this ticket's LIKELIEST arm rather than a
+// neighbouring one. The window is held open by a CLI slow to die — and a CLI slow
+// enough to hold it past waitForSessionExit's hard 8s is exactly the one whose
+// restart then throws. So the arm that runs in the scenario this ticket is about
+// is the catch, which re-upserts the whole pre-kill snapshot including `worktree`
+// and predates ALWAYS_PRESERVE entirely. A guard covering only the success path
+// would leave the central case open under a header that reads as closed.
+//
+// Driven by making create() throw AFTER the claim has landed, which is the real
+// shape: the restart got far enough to lose its record and slow enough for the
+// tree to be taken.
+test('the restart CATCH arm restores the seat without the tree another seat took', async () => {
   const w = mkWorld();
   const tree = await dispatch(w);
-  // Archive, not kill: the record is KEPT and goes on naming the tree while the
-  // session is gone. That is the shape a raw record scan cannot distinguish.
-  w.P.upsert({ name: 'ghost', type: 'claude', cwd: w.repo, workspaceId: 'default' });
-  w.P.setWorktree('ghost', { path: tree.path, branch: tree.branch });
-  assert.deepStrictEqual(namingTree(w.P, tree.path), ['ghost', 'team-hand-1'],
-    'ENTER: a second, ARCHIVED record names the tree going in — without it this test is the one above');
-  assert.ok(!w.m.sessions.has('ghost'), 'ENTER: and its seat is NOT live, which is the whole distinction');
+  const { p: restart } = await startRestart(w, 'team-hand-1');
+  assert.strictEqual(w.P.get('team-hand-1'), null, 'ENTER: the record is dropped, so the catch arm restores it from the snapshot');
+
+  w.said.length = 0;
+  w.m._handleTask(w.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'builder', id: 't1', body: '' });
+  assert.ok(await until(() => w.m.sessions.has('team-builder-1')),
+    `ENTER: the re-dispatch must have spawned a second seat — replies: ${JSON.stringify(w.said)}`);
+  assert.ok(await until(() => namingTree(w.P, tree.path).includes('team-builder-1')),
+    'ENTER: and claimTree must have written its pointer before the restart fails');
+
+  // Fails the respawn AFTER the claim. `restartSession` catches this and
+  // re-upserts the pre-kill entry — the write under test.
+  w.m.create = async () => { throw new Error('respawn failed'); };
+  w.release('team-hand-1');
+  const res = await restart;
+  assert.strictEqual(res.ok, false, 'ENTER: the restart must actually have FAILED, or the catch arm never ran');
+  assert.match(res.error || '', /respawn failed/, 'ENTER: and failed for the reason this test injected');
+
+  const restored = w.P.get('team-hand-1');
+  assert.notStrictEqual(restored, null,
+    'the record is still restored — the catch arm exists so a failed respawn does not eat the seat, and this '
+    + 'guard must not turn a failed restart into a lost session');
+  assert.strictEqual('worktree' in restored, false,
+    'but WITHOUT the tree: another live seat holds that checkout now, and the catch arm re-upserting the '
+    + 'pre-kill snapshot wholesale is how the failure path puts a second record on one tree');
+  assert.deepStrictEqual(namingTree(w.P, tree.path), ['team-builder-1'],
+    'so one record still names it — the same invariant as the success path, through the arm that is actually '
+    + 'likelier to run in this scenario');
+  fs.rmSync(w.tmp, { recursive: true, force: true });
+});
+
+// The other half, and the one that decides the guard's SHAPE. The spec proposed
+// skipping the seed whenever another RECORD names the tree. That condition is
+// also true of a stale pointer left by a seat that is no longer live — archive
+// KEEPS the record, and t488 found eight such pointers on the live board and
+// ruled them expected state. Under the literal condition an ordinary restart of
+// the genuine holder would drop its own pointer and land in the ABSENT state
+// ALWAYS_PRESERVE calls the dangerous one: destroy() then takes `if (!worktree)`,
+// drops the record and reports success over an orphaned checkout.
+// `_ticketTreeHolder` requires the other seat to be LIVE, which tells them apart.
+test('a stale pointer from a seat that is no longer live does not block the restart from keeping its own', async () => {
+  const w = mkWorld();
+  const tree = await dispatch(w);
+  // A record that OUTLIVED its session and goes on naming the tree — the shape a
+  // raw record scan cannot tell from a live holder. Pinned by the two properties
+  // the guard actually reads (record present, session absent) rather than by
+  // stamping `archivedAt`, which nothing on this path consults; naming it
+  // "archived" would promise a field this fixture does not write.
+  w.P.upsert({ name: 'stale-row', type: 'claude', cwd: w.repo, workspaceId: 'default' });
+  w.P.setWorktree('stale-row', { path: tree.path, branch: tree.branch });
+  assert.deepStrictEqual(namingTree(w.P, tree.path), ['stale-row', 'team-hand-1'],
+    'ENTER: a second record names the tree going in — without it this test is the one above');
+  assert.ok(!w.m.sessions.has('stale-row'), 'ENTER: and its seat is NOT live, which is the whole distinction');
 
   const res = await w.eng.restartSession('team-hand-1', {}, 'default');
   assert.strictEqual(res.ok, true, `ENTER: the restart completed (${res.error || ''})`);

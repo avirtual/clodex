@@ -239,14 +239,23 @@ function nearMissFormHint(text) {
 // is invisible to _ticketTreeHolder, so a re-dispatch can reuse its tree and
 // claimTree finds no record to clear — the preserve then re-seeds a pointer to a
 // tree another seat now holds. That window is inherent to EVERY field here, not
-// to `worktree`, and pre-exists this list: engine.js's restart catch-arm
-// re-upserts a whole pre-kill snapshot the same way. `worktree` is the field it
-// is guarded for, because a checkout is the one EXCLUSIVE resource on this list;
-// _preserveAcrossRestart's own header carries the guard's reasoning, and
-// test/preserve-tree-handoff.test.js exhibits the interleaving. The guard is
-// bookkeeping only: it keeps one record per tree, and does NOT stop the
-// re-dispatch itself — two live seats can still be told to work in one checkout,
-// which is the same blindness one layer up and is not fixable from here.
+// to `worktree`, and pre-exists this list: engine.js's restart catch arms
+// re-upsert a whole pre-kill snapshot the same way. `worktree` is the field it is
+// guarded for, because a checkout is the one EXCLUSIVE resource on this list.
+//
+// _stripClaimedTree is that guard and carries the reasoning; it runs on the
+// success path here AND on all three catch arms (engine.js restartSession /
+// applySessionArgs, the [agent:context reload] intent), so the snapshot-restoring
+// failure paths named above are covered rather than merely documented — that
+// matters because the catch is the LIKELIER arm in this scenario, the window
+// being held open by a CLI slow to die and such a CLI being the one that throws.
+// test/preserve-tree-handoff.test.js exhibits the interleaving on both paths.
+//
+// What it does NOT cover, and do not read the sentence above as more than it is:
+// the guard is BOOKKEEPING. It keeps one record per tree; it does not stop the
+// re-dispatch, so two live seats can still be told to work in one checkout. That
+// is _ticketTreeHolder's blindness one layer up — it reads occupancy off the
+// record, and a seat mid-restart has none — and it is not fixable from here.
 // `autoCompact` is stored ONLY as the opt-OUT (`false`; enabling deletes the
 // key), so losing it fails toward the more destructive default — autoCompactOf
 // reads absence as ON and compacts a seat the operator exempted.
@@ -2712,53 +2721,81 @@ function createSessionManager(deps) {
     // "agent total below session total". All three callers omitted it and none
     // had a reason to; an opt-in field list makes a fourth caller repeat the
     // same omission, so the invariant lives in the helper, not in its callers.
+    // `entry` with `worktree` removed IFF a DIFFERENT LIVE seat now holds that
+    // checkout; `entry` untouched otherwise, and untouched on any throw. Every
+    // path that writes a PRE-KILL snapshot back after a restart must run its
+    // entry through this — the success path via _preserveAcrossRestart, and all
+    // three failure paths (engine.js restartSession / applySessionArgs, the
+    // [agent:context reload] intent), whose catch arms re-upsert the snapshot
+    // wholesale. The catch arms are not a lesser case: the window is held open by
+    // a CLI slow to die, and a CLI slow enough to hold it past waitForSessionExit's
+    // 8s is precisely the one whose restart then throws.
+    //
+    // THE WINDOW (t491, exhibited end to end in test/preserve-tree-handoff.test.js).
+    // kill() removes the record synchronously and the seat leaves this.sessions
+    // only at pty exit, so for the whole waitForSessionExit poll a restarting seat
+    // is live in its tree and named by no record — invisible to _ticketTreeHolder,
+    // which reads occupancy off the RECORD. A re-dispatch landing there reuses the
+    // tree, claimTree finds no record to clear, and writing the snapshot back then
+    // puts a SECOND record on it. That is the state claimTree's own comment calls
+    // worse than the orphan it fixes: session:kill removes the tree named by
+    // whichever row is deleted, so Delete Session… on the restarted seat
+    // force-removes the checkout the other seat is committing in.
+    //
+    // ONE READER. _ticketTreeHolder is the same question the dispatch asked when
+    // it decided the tree was free, so this guard cannot disagree with the
+    // hand-off it is reacting to. A second scan — here or in engine.js — would be
+    // the second source of truth about who holds a tree that the design forbids,
+    // which is why this is a manager method and its callers in engine.js reach it
+    // through the manager they already hold.
+    //
+    // It also carries what a raw record scan does not: the other seat must be
+    // LIVE. A stale pointer from an ARCHIVED seat is expected state on a real
+    // board (archive KEEPS the record; t488 found eight), and stripping for one
+    // would drop the pointer on an ORDINARY restart — landing in the ABSENT state
+    // ALWAYS_PRESERVE calls the dangerous one, to avoid a collision that is not
+    // happening.
+    //
+    // `holder !== name` and NOT `holder != null`, and the difference is reachable:
+    // on the catch arms create() can have SUCCEEDED and a later step thrown, which
+    // leaves the seat live with a rebuilt record already naming the tree, so the
+    // holder this resolves is the seat's OWN name. Stripping there would delete a
+    // pointer nothing else holds.
+    //
+    // Stripping is safe precisely BECAUSE a different live seat holds it: that
+    // seat's record still names the checkout, so nothing is orphaned. The
+    // absent-is-dangerous asymmetry does not apply when someone else holds the
+    // pointer — and on any throw we keep it, because stale beats absent.
+    _stripClaimedTree(entry) {
+      if (!entry || !entry.name || !entry.worktree || !entry.worktree.path) return entry;
+      if (typeof this._ticketTreeHolder !== 'function') return entry;
+      let holder = null;
+      try { holder = this._ticketTreeHolder(entry.worktree.path); } catch { return entry; }
+      if (!holder || holder === entry.name) return entry;
+      if (log) log.info('session', `restart of ${entry.name}: dropping worktree ${entry.worktree.path} from the restored record — ${holder} holds it now`);
+      // Copy-and-delete rather than a `{ worktree, ...rest }` destructure: the
+      // free-identifier scanner (test/free-identifier-leaks.test.js) does not
+      // model an object rest binding and reads `rest` as a dangling reference.
+      // Not worth whitelisting a name in a guard that catches real extraction
+      // bugs to buy one line of style.
+      const stripped = { ...entry };
+      delete stripped.worktree;
+      return stripped;
+    }
+
     _preserveAcrossRestart(name, priorEntry, fields) {
       if (!priorEntry || !Array.isArray(fields)) return;
-      const seed = { name };
-      let any = false;
+      let seed = { name };
       for (const f of [...fields, ...ALWAYS_PRESERVE]) {
-        if (priorEntry[f] !== undefined) { seed[f] = priorEntry[f]; any = true; }
+        if (priorEntry[f] !== undefined) seed[f] = priorEntry[f];
       }
-      // The one field whose pre-kill value can be WRONG by the time it is written
-      // back, because a live seat can take it in between (t491, exhibited against
-      // the real dispatch path). kill() removes the record synchronously and the
-      // seat leaves this.sessions only at pty exit, so through the whole
-      // waitForSessionExit poll a restarting seat is live in its tree and named by
-      // no record — invisible to _ticketTreeHolder, which reads occupancy off the
-      // record. A re-dispatch landing there reuses the tree and claimTree finds no
-      // record to clear, and this seed then puts a SECOND record on it. That is
-      // the state claimTree's own comment calls worse than the orphan it fixes:
-      // session:kill removes the tree named by whichever row is deleted, so Delete
-      // Session… on the restarted seat force-removes the checkout the other seat
-      // is committing in.
-      //
-      // Asked of _ticketTreeHolder rather than scanning the record set here, and
-      // that is the whole design: it is the SAME reader the dispatch consulted
-      // when it decided the tree was free, so the guard cannot disagree with the
-      // hand-off it is reacting to — a second scan beside it is a second source of
-      // truth about who holds a tree. It also carries the part a raw record scan
-      // does not: the other record's seat must be LIVE. A stale pointer from an
-      // ARCHIVED seat is expected state on a real board (archive KEEPS the record;
-      // t488 found eight), and skipping the seed for one would drop the pointer on
-      // an ORDINARY restart — landing in the ABSENT state this list calls the
-      // dangerous one, to avoid a collision that is not happening.
-      //
-      // Only `worktree`. The window is inherent to every field here, but a tree is
-      // the one exclusive resource among them: two records naming one `wireLabel`
-      // costs nothing, two naming one checkout destroys work.
-      //
-      // A throw seeds anyway, deliberately: stale beats absent, which is the same
-      // asymmetry that put `worktree` on this list.
-      if (seed.worktree && seed.worktree.path && typeof this._ticketTreeHolder === 'function') {
-        let holder = null;
-        try { holder = this._ticketTreeHolder(seed.worktree.path); } catch { holder = null; }
-        if (holder && holder !== name) {
-          delete seed.worktree;
-          log.info('session', `restart of ${name}: not re-seeding worktree ${priorEntry.worktree.path} — ${holder} holds it now`);
-          any = Object.keys(seed).length > 1;
-        }
-      }
-      if (!any) return;
+      seed = this._stripClaimedTree(seed);
+      // Counted AFTER the strip, not tracked while seeding: a seed reduced to a
+      // bare { name } must not manufacture a record for a seat that had nothing
+      // else to preserve — that would hand create() an existingEntry and suppress
+      // the roster inject, which is the failure the `any` guard has always been
+      // about.
+      if (Object.keys(seed).length <= 1) return;
       const p = getPersistence();
       if (p && typeof p.upsert === 'function') p.upsert(seed);
     }
@@ -5025,7 +5062,11 @@ function createSessionManager(deps) {
             if (fresh) this._injectReloadHandoff(fresh, handoff);
           } catch (err) {
             console.error(`[agent:context reload] ${name} failed:`, err.message);
-            getPersistence().upsert(entry); // never let a failed respawn eat the entry
+            // Never let a failed respawn eat the entry — but not its `worktree` if
+            // another live seat took the checkout while this reload was in flight.
+            // Re-upserting the whole pre-kill snapshot is how a failure path puts
+            // a second record on one tree; see _stripClaimedTree.
+            getPersistence().upsert(this._stripClaimedTree(entry));
           }
         });
         return;
