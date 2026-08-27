@@ -488,12 +488,18 @@ test('no comment leaks through the strip un-blanked', () => {
     `only ${suspect.length} comment lines mentioning process.kill were found across the scanned set; `
     + 'there were 5 when this was written, in four production files — drawer-pty.js, session-manager.js, '
     + 'wirescope-supervisor.js and scripts/clodex-monitor.js (twice). This test file is NOT among them: '
-    + 'sourceFiles() filters test/, so this file contributes nothing to the floor. Two causes:\n'
+    + 'sourceFiles() filters test/, so this file contributes nothing to the floor. Three causes:\n'
     + '  1. the line matcher or the file list has stopped selecting, and the emptiness assert below '
     + 'proves nothing — the scan is broken.\n'
     + '  2. one of those guard comments was reworded to stop spelling `process.kill` (say, `kill()` '
     + 'instead). Nothing is wrong: the prose moved, the scan is fine, and the FLOOR is what should '
-    + 'change. Re-grep the scanned set and set it to what is really there.');
+    + 'change. Re-grep the scanned set and set it to what is really there.\n'
+    + '  3. stripNonCode stopped preserving offsets on one of those four files, so the length guard '
+    + 'at the top of this loop skipped it before any line was examined — it counted toward neither '
+    + 'number. The matcher and the prose are both fine; the strip is what broke. Do not start here: '
+    + "the subject above ('the comment/string strip does not swallow a file tail') asserts that "
+    + 'condition directly and names the offending file and its two lengths. Fix what IT reports, and '
+    + 'this floor comes back on its own.');
 
   assert.deepStrictEqual(leaked, [],
     'these COMMENT lines survived stripNonCode un-blanked:\n  ' + leaked.join('\n  ')
