@@ -302,10 +302,17 @@ function doTickets(payload) {
   // phrase of this leaf's own would make the two boards describe the same record
   // differently. On BOTH row shapes: the stamp lands on a ticket already `done`.
   const mergeWaitingMark = (t) => (t.mergeWaiting ? ` (merge waiting: ${t.mergeWaiting})` : '');
+  // Mirrors _taskList's `mergeErrorMark`: the field reads as "this ticket needs
+  // a human", so a board that omits it is the one board the lead consults about
+  // a merge that has stopped by itself. Shaped unlike the two parenthetical
+  // marks beside it, and the stored step renders verbatim — see the core's
+  // comment for both reasons. On BOTH row shapes; the merge runs after
+  // `task done`, so the closed row is where it is normally read.
+  const mergeErrorMark = (t) => (t.mergeError ? ` !! MERGE FAILED: ${t.mergeError}` : '');
   const row = (t) =>
-    `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}`;
+    `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
   const closedRow = (t) =>
-    `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}`;
+    `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
   const lines = shown.map(row);
   const closed = filter === 'open' ? tickets.filter((t) => t.state !== 'open') : [];
   const doneAll = closed.filter((t) => t.state === 'done');

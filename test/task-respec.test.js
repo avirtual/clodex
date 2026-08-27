@@ -280,6 +280,69 @@ test('t531: a deferred merge is VISIBLE on the board — open row and closed row
   assert.doesNotMatch(f.reply(), /merge waiting/, 'the mark is gone once the merge is no longer deferred');
 });
 
+// ── t533: the merge-ERROR mark, the louder half of the same gap ────────────
+// Filed beside t531's for the same reason it was: this is the READER, and its
+// precedent in mechanism and shape is the two marks above. ticket-auto-merge
+// .test.js keeps owning the stamp's lifecycle.
+//
+// Driven through `_stampMergeError`, not a hand-written `mergeError` field: a
+// hand-written one pins the renderer against this test's belief about the field
+// name, which is what a rename breaks invisibly.
+test('t533: a FAILED merge is visible on the board — open row and closed row', () => {
+  const f = mkRespec();
+  openPinned(f);
+  const lead = f.seat('lead');
+
+  f.m._handleTask(lead, { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  assert.doesNotMatch(f.reply(), /MERGE FAILED/, 'ENTER: a ticket whose merge never failed carries no mark');
+
+  f.m._stampMergeError(f.team, 't1', 'clean-tree');
+  assert.strictEqual(f.one('t1').mergeError, 'clean-tree',
+    'ENTER: the stamp really landed on the record — otherwise the assertion below reads an unstamped board');
+  f.m._handleTask(lead, { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  assert.match(f.reply(), /t1 \[open\].*MERGE FAILED: clean-tree/,
+    'the open row states the failed merge, with the step verbatim');
+
+  // The CLOSED row, which is the shape that actually occurs: the merge runs
+  // after `task done`, so the failure lands on a ticket already closed and the
+  // lead reads it in the recently-closed block.
+  const t = f.one('t1');
+  t.state = 'done';
+  t.closedAt = Date.now();
+  f.tstore.save(f.team.root, f.load().map((x) => (x.id === 't1' ? t : x)));
+  f.m._handleTask(lead, { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  assert.match(f.reply(), /recently closed:/, 'ENTER: the row reached the recently-closed block, not the open list');
+  assert.match(f.reply(), /t1 \[done\].*closed.*MERGE FAILED: clean-tree/,
+    'the closed row states it too — this is the row the lead actually reads');
+
+  // And it goes away with the stamp: `_stampMergeError(…, null)` is the green
+  // path's clear, and a mark outliving the field would send the lead after a
+  // merge that has already landed.
+  f.m._stampMergeError(f.team, 't1', null);
+  assert.ok(!('mergeError' in f.one('t1')), 'ENTER: the stamp was cleared');
+  f.m._handleTask(lead, { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  assert.doesNotMatch(f.reply(), /MERGE FAILED/, 'the mark is gone once the merge no longer needs a human');
+});
+
+// The two merge marks mean OPPOSITE things to a lead — "wait, this is coming"
+// versus "this stopped and needs you" — and `_autoMergeTicket`'s deferred arm
+// keeps them apart in the record on purpose. A board that renders them alike
+// throws that distinction away at the last step, so the shapes are pinned as
+// DIFFERENT here rather than left to whichever wording a later edit prefers.
+test('t533: waiting and failed are visually distinguishable on one row', () => {
+  const f = mkRespec();
+  openPinned(f);
+  const lead = f.seat('lead');
+
+  f.m._stampMergeWaiting(f.team, 't1', 'suite-in-flight');
+  f.m._stampMergeError(f.team, 't1', 'suite-red');
+  f.m._handleTask(lead, { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  const line = f.reply().split('\n').find((l) => /^t1 /.test(l));
+  assert.ok(line, `ENTER: the t1 row is in the listing: ${f.reply()}`);
+  assert.match(line, /\(merge waiting: suite-in-flight\) !! MERGE FAILED: suite-red/,
+    'both marks render, in that order, and the failure does not read as a third parenthetical aside');
+});
+
 // The guard t339 must not lose: an open ticket silently rewritten into
 // different work, with no record that it changed, is the failure mode.
 test('respec records the supersession — that it happened, and by whom', () => {

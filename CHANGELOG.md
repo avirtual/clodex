@@ -13,6 +13,15 @@ blocks a release.
 
 ## Unreleased
 
+- **A ticket whose auto-merge FAILED now says so on the board.** When the merge
+  loop gives up on a ticket it stamps the failing step, and that stamp means the
+  ticket needs the lead by hand — but no board showed it, so the one state that
+  requires intervention was reachable only by opening `tickets.json`.
+  `[agent:task list]` and the `clodex-team` exec pull now both show
+  `!! MERGE FAILED: <step>` on the row, open and recently-closed alike, shaped
+  unlike the quieter `(merge waiting: …)` mark so a board scan separates "needs
+  me" from "waiting its turn".
+
 - **A ticket whose merge is waiting now says so on the board.** When the loop
   defers an auto-merge because a suite is already running in the root checkout,
   it stamps the ticket — but nothing rendered that stamp, so the lead could only
