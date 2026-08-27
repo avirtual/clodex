@@ -6895,6 +6895,63 @@ function createTicketMethods(deps, shared) {
       // undecidable case gets its own rather than borrowing either.
       const measured = c.ok && baseSha && c.base === String(baseSha).trim();
 
+      // The merge gate answered an ANCESTOR question, and one class of failure
+      // makes that answer read as "landed" over work that is not in the base's
+      // tree at all: the loop merges, its post-merge suite goes red, and it undoes
+      // the merge with `git revert -m 1` — which ADDS a commit rather than
+      // removing one. The merge commit stays an ancestor, `isMerged` still says
+      // merged, and the teardown below then destroyed the tree and deleted the
+      // branch holding the only copy of the work. It happened on t537: the branch
+      // was deleted and the change survived only as a reverted commit in the
+      // reflog. `revert-blocked` is the same shape without the revert — the merge
+      // is left standing on a red or unverified master for a human to undo — so an
+      // accept there reports a clean landing AND removes the tree that undo needs.
+      //
+      // The evidence is the loop's OWN stamp, not a content comparison of the
+      // branch's changed files against the base. That comparison answers the
+      // question we actually want, and answers it wrongly whenever a later commit
+      // touched the same files — the ordinary case for a ticket accepted a day
+      // after it merged — so it would refuse teardown on genuinely landed work
+      // with nothing in the reply to tell the two refusals apart. The stamp is
+      // narrow and exact instead: `_stampMergeError` is written by the merge loop
+      // alone and CLEARED by its own green path, so it is present here only where
+      // the loop gave up at a merge step, and every step it names leaves the
+      // ancestor answer unable to mean "the work is in the base's tree right now".
+      // On the clean path it costs one field read and no git.
+      //
+      // A demonstrably EMPTY branch is exempt, and the exemption is not a
+      // weakening: the veto protects WORK, and 0 commits measured against the
+      // recorded fork point means there is none to lose — nothing landed, so
+      // nothing can have been reverted. What the TREE holds uncommitted is
+      // protected by the isDirty gate below, which this arm never reaches anyway.
+      const mergeStamp = (ticket.mergeError && String(ticket.mergeError)) || null;
+      if (mergeStamp && !(c.ok && measured && c.count === 0)) {
+        // No `mergedInto`, deliberately: this arm exists because the merge cannot
+        // be shown, and stamping m.base there would store the very claim the reply
+        // below refuses to make.
+        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
+        await archiveIfEphemeral();
+        const carries = c.ok
+          ? `Its ${c.count} commit${c.count === 1 ? '' : 's'} beyond ${c.base} may be off ${m.base} entirely.`
+          : `Its commit count could NOT be obtained (${c.error || 'unknown error'}), so how much is at stake is unknown.`;
+        // TERMINAL, and the second accept is the recovery. `closedOut` retires the
+        // stamp through finish()'s existing rule, and that is what lets a second
+        // accept differ from this one: nothing the lead can do to the REPOSITORY
+        // clears a mergeError, so a non-terminal refusal here would re-refuse for
+        // ever and no `task accept` could ever reclaim the tree — a gate whose
+        // input cannot change is a wall. The reply says outright that the second
+        // accept will delete the branch, so what this arm adds is an informed
+        // decision rather than a refusal. Cancelling reminders bound to a ticket
+        // whose reply invites another accept is the cost, paid knowingly here the
+        // same way the dirty-tree arm below pays it.
+        finish(`ticket ${ticket.id} accepted — branch ${branch} is an ancestor of ${m.base}, but the merge loop stamped this ticket MERGE FAILED at "${mergeStamp}", `
+          + 'and an ancestor test cannot tell a merge that still stands from one that was reverted: `git revert -m 1` ADDS a commit, so the merge stays an ancestor either way. '
+          + `${carries} NOTHING was torn down: ${seatClause('archived (resumable)')}worktree and branch were KEPT. `
+          + `Confirm by hand that ${m.base} still carries that merge — a revert of it lands as a later \`Revert "Merge …"\` commit — because this reply ANSWERS the mark, and a second `
+          + `[agent:task accept ${ticket.id}] takes the ordinary merged path and DELETES the branch.`, true);
+        return;
+      }
+
       // Stamp before the teardown — destroy() drops the record the session id
       // lives in, so after it the link is unrecoverable. `mergedInto` records
       // only a merge that can be shown: a demonstrably empty branch is an
