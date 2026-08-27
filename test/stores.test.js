@@ -1503,11 +1503,12 @@ test('seed: the lead prompt briefs accept as a four-outcome verb, not a two-outc
 // keeps the tree instead. Pinned by MEANING in both directions; the `doesNotMatch`
 // arms are the exact prior sentences, so a revert cannot restore a green suite.
 //
-// The `\s+`s below were written AT wrap points, some still at one; they tolerate
-// a space or a newline and nothing wider. That is deliberate, not laxity: the
-// failure they admit is a false RED on a reflow, never a false green on a
-// reversal, and a regex loose enough to survive any reflow would stop pinning
-// the sentence. Re-wrap the prompt and these move with it.
+// The `\s+`s below were written AT wrap points, some still at one. They tolerate
+// any run of whitespace — a space, a newline, or a blank line — but nothing
+// else, so the words and their order still have to hold. That is deliberate, not
+// laxity: the failure they admit is a false RED on a reflow, never a false green
+// on a reversal, and a regex loose enough to survive any reflow would stop
+// pinning the sentence. Re-wrap the prompt and these move with it.
 test('seed: the lead prompt qualifies accept — merge window and the dirty/unreadable downgrade', () => {
   const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
   assert.match(lead, /UNLESS\s+the ACCEPT verdict is\s+fresh/,
@@ -1525,7 +1526,7 @@ test('seed: the lead prompt qualifies accept — merge window and the dirty/unre
   // t532 r1: the record drop is NOT unconditional — a failed removal keeps the
   // record deliberately, since it is the only thing still naming the tree
   // (pinned against a real tree in accept-standing-seat.test.js). The row says so.
-  assert.match(lead, /\| loop-minted seat, tree clean \(or no tree recorded\) \| RETIRED, record dropped \(kept if the removal fails, so the tree stays named\) \| REMOVED \| deleted \|/,
+  assert.match(lead, /\| loop-minted seat, tree clean \(or no tree recorded\) \| RETIRED, record dropped \(kept if the removal fails, so the tree stays named\) \| REMOVED \| deleted — refused if that removal failed \|/,
     'lead prompt gates accept\'s full teardown on a loop-minted seat and a clean, readable tree');
   assert.doesNotMatch(lead, /\| RETIRED, record dropped \| REMOVED \|/,
     'lead prompt must not still claim the record drop is unconditional');
@@ -1543,18 +1544,41 @@ test('seed: the lead prompt qualifies accept — merge window and the dirty/unre
     'and the unreadable tree its own, whose delete is an attempt rather than an outcome');
   assert.doesNotMatch(lead, /tree UNREADABLE \| archived, only if still running \| KEPT \| deleted \|/,
     'lead prompt must not still claim the unreadable row deletes the branch outright');
-  assert.match(lead, /`git branch -d` refuses to delete a branch that any worktree still has\s+checked out/,
+  assert.match(lead, /`git branch -d` refuses to delete a\s+branch that any worktree still has checked out/,
     'and says WHY those deletes fail, so a surviving ref is not read as a bug');
-  assert.match(lead, /only `git worktree prune` releases it, which this path never runs/,
+  assert.match(lead, /only `git worktree prune` releases it — which this path never\s+runs/,
     'and covers the removed-by-hand case, where a stale registration blocks it just the same');
+  // t532 r2: the branch sentence follows the TREE, not the row, so routing
+  // `could NOT be deleted` to "rows 3 and 4" mis-sent row 1's failure sub-case —
+  // where the removal failed, the tree is still checked out and the delete is
+  // refused identically. Both halves pinned: the rule, and the row-1 cell.
+  assert.match(lead, /it fails wherever the TREE SURVIVED/,
+    'lead prompt gives one rule for every branch cell rather than a per-row list');
+  assert.match(lead, /\| REMOVED \| deleted — refused if that removal failed \|/,
+    'and row 1\'s branch cell carries its own failure sub-case');
+  assert.doesNotMatch(lead, /\| REMOVED \| deleted \|/,
+    'lead prompt must not still claim row 1 always deletes the branch');
+  assert.doesNotMatch(lead, /`branch X could NOT be deleted \(…\)` — the ordinary result on rows 3\s+and 4/,
+    'and must not still route that sentence to rows 3 and 4 alone');
+  // The bare `retired` arm (nothing removed, no tree recorded) is a sentence a
+  // lead can receive and the key had no row for it.
+  assert.match(lead, /plain `retired` \(the no-tree-recorded half of row 1\)/,
+    'the reply key covers the bare retired sentence too');
   assert.doesNotMatch(lead, /ARCHIVES the seat[\s\S]{0,32}and\s+keeps the tree instead/,
     'lead prompt must not still fold the two downgrades into one sentence');
   assert.doesNotMatch(lead, /deletes the branch for you\.\s+Retiring a seat/,
     'lead prompt must not still state accept\'s teardown as unconditional');
   // `archiveIfEphemeral()` runs on BOTH not-merged arms, so "nothing is removed"
   // alone would leave a lead unable to place an archive it can plainly see.
-  assert.match(lead, /nothing is removed on any row \(a\s+loop-minted seat is archived\)/,
-    'lead prompt notes the archive that still happens when the branch did not merge');
+  // t532 r2: `archiveIfEphemeral` gates on `this.sessions.has(seatName)`, so a
+  // loop-minted hand that exited after `task done` is NOT archived — it gets
+  // "is not running, so nothing was archived". Kept EXACT rather than widened to
+  // `[^)]*`: the condition IS the claim being pinned, and a pin that matches the
+  // sentence with or without it cannot fail when it goes missing again.
+  assert.match(lead, /nothing is removed on any row \(a\s+loop-minted seat is archived, if it is still running\)/,
+    'lead prompt notes the archive that still happens when the branch did not merge, and conditions it');
+  assert.doesNotMatch(lead, /loop-minted seat is archived\)/,
+    'lead prompt must not still state that archive unconditionally');
 });
 
 // t529: a THIRD gate sits above the two t525 pinned, and it is the one an
