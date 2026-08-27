@@ -1446,10 +1446,30 @@ test('seed: shipped team prompts agree on who commits, who merges, who pushes', 
     'the hand prompt must not still carry the reversed "never commit" rule');
   assert.match(hand, /Commit to YOUR OWN branch/, 'hand is told to commit to its own branch');
   assert.match(hand, /NEVER push/, 'hand is still barred from pushing');
-  assert.match(hand, /Merging your branch is the lead's/, 'hand knows merging is not its job');
+  assert.match(hand, /Merging your branch is not yours/, 'hand knows merging is not its job');
   assert.match(lead, /worktree:<branch>/, 'lead prompt names the spawn form that mints the worktree');
-  assert.match(lead, /YOU merge, and only after the review verdict/,
-    'lead prompt carries the merge-after-review step the hand defers to');
+  // t524: both prompts told the LEAD to merge by hand, while `_landVerdictOnTicket`
+  // queues `_autoMergeTicket` on an ACCEPT and runs a post-merge suite behind it.
+  // Obeying the prompt hand-merges ahead of the loop, which then finds the branch
+  // already in master and escalates with that suite never run (t514, live). Pinned
+  // by MEANING in both directions: the doesNotMatch arms are the reversal, and
+  // without them a revert restores a green suite over a contradicted pair.
+  assert.match(lead, /An ACCEPT verdict TRIGGERS the merge, and the loop performs it/,
+    'lead prompt says the loop merges on ACCEPT');
+  assert.doesNotMatch(lead, /YOU merge, and only after the review verdict/,
+    'lead prompt must not still claim the lead performs the merge');
+  assert.doesNotMatch(hand, /Merging your branch is the lead's/,
+    'hand prompt must not still name the lead as the one who merges');
+  // The two cases where a lead really does merge must survive the rewrite —
+  // "never merge" is as false as "always merge".
+  assert.match(lead, /no ticket carries the verdict/,
+    'lead prompt keeps the team-review exception where it merges itself');
+  assert.match(lead, /escalated AT the merge step/,
+    'lead prompt keeps the escalated-at-merge exception where it merges itself');
+  // t524, defect 2: this bullet told the lead to remove the worktree by hand
+  // while the file's own `task accept` paragraph said accept does it.
+  assert.match(lead, /`task accept` is the cleanup/,
+    'lead prompt points worktree cleanup at accept, not at the lead');
 });
 
 // t454: the accept paragraph described a two-outcome verb (merged → cleanup,

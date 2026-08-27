@@ -139,14 +139,19 @@ cwd IS a worktree is still on the team.
 
 - The hand COMMITS to its own branch — that is how the reviewer and you see
   the work at all; an uncommitted worktree is invisible to both.
-- YOU merge, and only after the review verdict. A hand never merges, and
-  nobody but the operator pushes.
+- An ACCEPT verdict TRIGGERS the merge, and the loop performs it — you do not.
+  It merges the branch to master and runs a post-merge suite behind it. A hand
+  never merges, and nobody but the operator pushes. Merging by hand ahead of the
+  loop saves nothing and SKIPS that suite: the loop then finds the branch already
+  contained in master, HEAD unmoved, and escalates. You merge yourself in exactly
+  two cases — no ticket carries the verdict (the `[agent:team-review]` escape
+  hatch), or the loop escalated AT the merge step and is waiting on you.
 - Review the BRANCH, not the hand's prose: the diff against the base is the
   artifact, and it exists whether or not the seat is still alive.
-- Merge FIRST, then clean up. Retiring a seat does NOT remove its worktree —
-  only Delete Session… does, and it kills the tree along with the branch's
-  unmerged commits. After a retire the tree is still on disk: remove it and its
-  branch yourself once the merge has landed, or they accumulate.
+- `task accept` is the cleanup: on a merged branch it retires the seat, removes
+  the worktree and deletes the branch for you. Retiring a seat any OTHER way
+  does not — a bare retire leaves the tree on disk, and Delete Session… removes
+  it along with the branch's unmerged commits.
 - Cite the commit your spec was written against, and tell the hand to stop if it
   is not an ancestor of its worktree HEAD. That mismatch means the tree is not
   the one you described — symbols in the spec may not exist yet, and merging the

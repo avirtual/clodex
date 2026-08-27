@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- **The team lead prompt no longer tells the lead to merge and clean up by
+  hand.** Both steps have been automated for a while: an ACCEPT verdict makes
+  the ticket loop merge the branch to master and run a suite behind that merge,
+  and `task accept` retires the seat, removes its worktree and deletes the
+  branch. The shipped prompt still instructed the lead to do both itself, and a
+  lead that obeyed it merged ahead of the loop — which then found the branch
+  already in master and escalated, with the post-merge suite silently never run.
+  The prompt now says the loop merges on ACCEPT, names the two cases where a
+  lead really does still merge (no ticket carries the verdict, or the loop
+  escalated at the merge step), and points cleanup at `task accept`. The hand
+  prompt's matching sentence was corrected the same way.
+
 ## 5.18.0 — 2026-08-27 — your checkouts, your cost history, and three hostile values
 
 - **Voice input has a switch — in Preferences and on the session bar.** The
