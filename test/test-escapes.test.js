@@ -131,15 +131,15 @@ function scratch(body) {
 // and a `node --test` that sees it inherited refuses to run files ("run() is
 // being called recursively within a test file"). We are spawning an
 // INDEPENDENT runner, not nesting one, so the child gets a clean env.
-function runWrapperIn(runner, extraEnv, ...args) {
+function runWrapperWithEnv(extraEnv, ...args) {
   const env = { ...process.env, ...extraEnv };
   delete env.NODE_TEST_CONTEXT;
-  const r = spawnSync(process.execPath, [runner, '--reporter=dot', ...args], { encoding: 'utf8', env });
+  const r = spawnSync(process.execPath, [RUNNER, '--reporter=dot', ...args], { encoding: 'utf8', env });
   return { out: `${r.stdout}${r.stderr}`, code: r.status };
 }
 
 function runWrapper(...args) {
-  return runWrapperIn(RUNNER, {}, ...args);
+  return runWrapperWithEnv({}, ...args);
 }
 
 test('THE t25 CASE: an escape alongside a real failure in the same file is named', () => {
@@ -245,9 +245,14 @@ test('a refusing run removes its own tmp dir — the silent leak (t500)', () => 
   // runner leaves the private TMPDIR empty, the runner with t500's
   // `process.on('exit')` handler deleted leaves exactly one dir.
   //
-  // TMPDIR is PRIVATE to this child, and that is the whole measurement method:
-  // os.tmpdir() honours it, so the child's dir lands somewhere only this
-  // subject can have written. A before/after count of the shared $TMPDIR would
+  // The temp root is PRIVATE to this child, and that is the whole measurement
+  // method: os.tmpdir() honours it, so the child's dir lands somewhere only
+  // this subject can have written. Set all three vars — os.tmpdir() reads
+  // TMPDIR on POSIX but TEMP/TMP on Windows, and dropping either Windows name
+  // aims the measurement at the SHARED temp while the assertion reads an
+  // empty private dir. The ENTER assertion does not catch that: the run still
+  // refuses correctly, only the count is pointed elsewhere.
+  // A before/after count of the shared temp dir would
   // be a delta against a directory other agents on this box are also filling,
   // and has already produced one false regression here. Emptiness of a
   // directory we own is attributable by construction.
@@ -257,7 +262,7 @@ test('a refusing run removes its own tmp dir — the silent leak (t500)', () => 
   // classified as a sweep and does not block on the parent run's suite lock.
   const s = scratch("require('node:test').test('never runs', () => {});");
   try {
-    const { out } = runWrapperIn(RUNNER, { TMPDIR: privateTmp }, '--bogus-node-flag', s.file);
+    const { out } = runWrapperWithEnv({ TMPDIR: privateTmp, TMP: privateTmp, TEMP: privateTmp }, '--bogus-node-flag', s.file);
     // ENTER: the leaking path was actually reached. A run that REPORTS cleans
     // its dir up on the ordinary path too, so without this the assertion below
     // would still pass if `--bogus-node-flag` ever stopped being refused — a
