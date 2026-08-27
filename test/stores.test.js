@@ -1492,6 +1492,47 @@ test('seed: the lead prompt briefs accept as a four-outcome verb, not a two-outc
     'lead prompt must not claim acceptance confirms a merge');
 });
 
+// t525: two of the accept paragraph's claims were true only of the easy case,
+// and both send the lead somewhere the code does not go. "Merge first, then
+// accept again" is right for the two cases where the lead owns the merge and
+// wrong in the window right after an ACCEPT, where `_queueAutoMerge` has
+// SCHEDULED the merge (its suite-lock arm re-enters through `_scheduleMergeRetry`,
+// so the window is minutes) — hand-merging there is the t514 defect t524 removed
+// from the other half of this file. And accept's teardown is gated on a clean,
+// readable tree: `isDirty` returning dirty OR `ok:false` archives the seat and
+// keeps the tree instead. Pinned by MEANING in both directions; the `doesNotMatch`
+// arms are the exact prior sentences, so a revert cannot restore a green suite.
+// Whitespace-tolerant because the prompt is hard-wrapped and a reflow must not
+// read as a reversal.
+test('seed: the lead prompt qualifies accept — merge window and the dirty/unreadable downgrade', () => {
+  const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
+  assert.match(lead, /UNLESS\s+the ACCEPT verdict is\s+fresh/,
+    'lead prompt exempts the fresh-ACCEPT window from "merge first, then accept again"');
+  assert.match(lead, /wait for the merge notice instead of merging/,
+    'and says what to do in that window instead of merging by hand');
+  assert.doesNotMatch(lead, /accept again\.\s+It is separate/,
+    'lead prompt must not still tell the lead to merge unconditionally before accepting');
+  assert.match(lead, /only where the tree is clean\s+and readable/,
+    'lead prompt gates accept\'s teardown on a clean, readable tree');
+  assert.match(lead, /ARCHIVES the seat and keeps the tree/,
+    'and names the downgrade the two failing shapes actually take');
+  assert.doesNotMatch(lead, /deletes the branch for you\.\s+Retiring a seat/,
+    'lead prompt must not still state accept\'s teardown as unconditional');
+});
+
+// t525, item 3: the dispatch self-reminder and the loop's stall nudge overlap,
+// and the prompt said nothing about which covers what — so a lead could not tell
+// whether its reminder was the only net. Deliberately pinned WITHOUT a duration:
+// `TICKET_STALL_MS` is 30m while `TICKET_SUITE_TIMEOUT_MS` derives to 35m, and a
+// prompt quoting either number goes stale the moment one moves.
+test('seed: the lead prompt splits the stall nudge from the dispatch reminder', () => {
+  const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
+  assert.match(lead, /two nets, and neither\s+replaces the other/,
+    'lead prompt says the loop nudge and the self-reminder are both live');
+  assert.match(lead, /refreshes that clock/,
+    'and names what the loop nudge misses: a seat still turning keeps its activity fresh');
+});
+
 // t353: three hands in a row reported by dm and left the ticket open, one of
 // them saying it believed closing required an exec grant it lacked. Both wrong
 // beliefs are denied in the prompt now, and both denials are pinned by MEANING

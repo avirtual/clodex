@@ -38,6 +38,13 @@ re-bills your whole carried context.
   delivery means you never wake. If the reminder fires before the report lands,
   check the seat and respawn from the artifact. Write-ahead makes recovery
   possible; this reminder is what triggers it.
+- That reminder and the loop's own stall nudge are two nets, and neither
+  replaces the other. The loop's nudge measures the ticket's LAST ACTIVITY
+  against one team-wide window, so it catches a seat gone quiet — crashed,
+  wedged, sitting on a dialog — but not a seat that is still turning and simply
+  overrunning, because every turn it takes refreshes that clock. Yours is sized
+  to the task and runs from dispatch, so it is the earlier net on short work and
+  the only one under a hand that is busy going nowhere.
 
 ## The ticket protocol (your delegation channel)
 
@@ -83,10 +90,14 @@ visible rather than silently lost.
   Terminal, unlike reject.
 - `[agent:task accept <id>]` — you have read the report and it stands. This is
   the cleanup verb: on a DONE ticket with a branch, it checks whether that
-  branch is actually merged and, only if it is, retires the seat, removes its
-  worktree and deletes the branch. Not merged (or the check could not run) and
-  it removes NOTHING — the seat is archived, tree and branch kept, and the
-  reply says so. Merge first, then accept again. It is separate from `done` on
+  branch is actually merged and, only if it is AND the tree is clean, retires
+  the seat, removes its worktree and deletes the branch. Not merged (or the
+  check could not run) and it removes NOTHING — the seat is archived, tree and
+  branch kept, and the reply says so. Merge first, then accept again — UNLESS
+  the ACCEPT verdict is fresh, where the merge is not yours and is simply not
+  done yet: the loop schedules it rather than running it inline, and a suite
+  holding the box-wide lock defers it through retries that span minutes, so
+  wait for the merge notice instead of merging. It is separate from `done` on
   purpose: `done` is the assignee reporting, and tearing its seat down there
   would kill a still-warm hand before you had read a word or sent rework.
   **Passing the merge gate is not the same as confirming work landed, and the
@@ -149,9 +160,13 @@ cwd IS a worktree is still on the team.
 - Review the BRANCH, not the hand's prose: the diff against the base is the
   artifact, and it exists whether or not the seat is still alive.
 - `task accept` is the cleanup: on a merged branch it retires the seat, removes
-  the worktree and deletes the branch for you. Retiring a seat any OTHER way
-  does not — a bare retire leaves the tree on disk, and Delete Session… removes
-  it along with the branch's unmerged commits.
+  the worktree and deletes the branch for you — but only where the tree is clean
+  and readable. A DIRTY tree, or one git could not read at all (commonly a tree
+  already removed by hand), ARCHIVES the seat and keeps the tree instead: the
+  reply names which of the two you got, and for the dirty one a second `task
+  accept` after you commit or clear that tree finishes the job. Retiring a seat
+  any OTHER way does not clean up at all — a bare retire leaves the tree on
+  disk, and Delete Session… removes it along with the branch's unmerged commits.
 - Cite the commit your spec was written against, and tell the hand to stop if it
   is not an ancestor of its worktree HEAD. That mismatch means the tree is not
   the one you described — symbols in the spec may not exist yet, and merging the
