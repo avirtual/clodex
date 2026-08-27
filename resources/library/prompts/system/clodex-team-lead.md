@@ -171,19 +171,22 @@ cwd IS a worktree is still on the team.
 
   | on a MERGED branch | seat | worktree | branch |
   |---|---|---|---|
-  | loop-minted seat, tree clean (or no tree recorded) | RETIRED, record dropped (kept if the removal fails, so the tree stays named) | REMOVED | deleted |
+  | loop-minted seat, tree clean (or no tree recorded) | RETIRED, record dropped (kept if the removal fails, so the tree stays named) | REMOVED | deleted — refused if that removal failed |
   | loop-minted seat, tree DIRTY | archived, only if still running | KEPT | KEPT |
   | loop-minted seat, tree UNREADABLE | archived, only if still running | KEPT | delete ATTEMPTED — usually refused |
   | STANDING assignee, or no record — tree never inspected | untouched | KEPT | delete ATTEMPTED — usually refused |
 
   Which row you got, in the reply's own words: `retired and its worktree
-  removed` (or `retired but its worktree could NOT be removed`, where the tree
-  is still there and named) → row 1 · `has uncommitted work` → row 2 · `could
-  not be inspected` → row 3 · `LEFT RUNNING` or `left alone` → row 4. The branch
-  clause is a separate sentence with three forms, and you may get any of them:
-  `branch X deleted`, `branch X was KEPT (the accept above is unfinished)` on
-  row 2, and `branch X could NOT be deleted (…)` — the ordinary result on rows 3
-  and 4. Four things the rows say that a sentence about "the tree" cannot:
+  removed`, plain `retired` (the no-tree-recorded half of row 1), or `retired
+  but its worktree could NOT be removed`, where the tree is still there and
+  named → row 1 · `has uncommitted work` → row 2 · `could not be inspected` →
+  row 3 · `LEFT RUNNING` or `left alone` → row 4. The branch clause is a
+  SEPARATE sentence and does not identify your row — it has three forms:
+  `branch X deleted`, `branch X was KEPT (the accept above is unfinished)`,
+  which is row 2 only, and `branch X could NOT be deleted (…)`, which follows
+  the TREE surviving and so can land on any row that kept one — rows 3 and 4
+  ordinarily, and row 1 whenever the removal above failed. Four things the rows
+  say that a sentence about "the tree" cannot:
 
   - **The tree is only inspected on the loop-minted rows.** A STANDING assignee
     is not a corner case — a worktree pin is never degraded, so reassigning a
@@ -194,13 +197,15 @@ cwd IS a worktree is still on the team.
     ref: **the teardown gate never opens on a second accept either**, so no
     `task accept` will ever remove that tree, however often you run it. Clean it
     up yourself.
-  - **A delete is an ATTEMPT, and on rows 3 and 4 it ordinarily FAILS.**
-    `git branch -d` refuses to delete a branch that any worktree still has
-    checked out, merged or not — and those rows keep the tree, so the branch is
-    normally still checked out in it. Worse on row 3's commonest case, a tree
-    removed BY HAND: the stale worktree registration blocks the delete just the
-    same, and only `git worktree prune` releases it, which this path never runs.
-    Expect `could NOT be deleted` there and treat the ref as still live.
+  - **A delete is an ATTEMPT, and it fails wherever the TREE SURVIVED.** That is
+    the one rule behind every branch cell: `git branch -d` refuses to delete a
+    branch that any worktree still has checked out, merged or not. Rows 3 and 4
+    keep the tree by design, so their delete ordinarily fails; row 1 succeeds
+    only because it removed the tree first, and where that removal failed it is
+    refused exactly the same way. Worse on row 3's commonest case, a tree removed
+    BY HAND: the stale worktree registration blocks the delete just as a live
+    tree would, and only `git worktree prune` releases it — which this path never
+    runs. Wherever you see `could NOT be deleted`, treat the ref as still live.
   - **"keeps the tree" is never "keeps everything".** Only row 2 keeps the
     branch DELIBERATELY — the delete is skipped there so that a second
     `task accept`, after you commit or clear that tree, can still find the ref
@@ -213,7 +218,7 @@ cwd IS a worktree is still on the team.
     session is not running)` instead of `LEFT RUNNING`. Nothing else moves.
 
   Not merged, or the merge check could not run: nothing is removed on any row (a
-  loop-minted seat is archived). Retiring a seat any OTHER way does not clean up
+  loop-minted seat is archived, if it is still running). Retiring a seat any OTHER way does not clean up
   at all — a bare retire leaves the tree on disk, and Delete Session… removes it
   along with the branch's unmerged commits.
 - Cite the commit your spec was written against, and tell the hand to stop if it
