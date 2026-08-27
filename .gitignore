@@ -37,3 +37,16 @@ plugin-context.lean.md
 # now (clodex-paths.taskDirFor) — Clodex never writes a user project file, and
 # this repo is a product other people clone. Local strays stay unpublished.
 tasks/
+
+# Agent artifacts stranded at the REPO ROOT by a spec that named a bare filename
+# instead of a path under the task dir. Happened once: an 88-line JOURNAL.md
+# shipped into this repo and was caught in review, not by this file. Anchored to
+# the root ON PURPOSE — an unanchored NOTES.md would swallow
+# plugins/git-branches/NOTES.md and any future docs/SPEC.md. If you legitimately
+# want one of these at the root, `git add -f` it; it is ignored here by design,
+# not missing.
+/JOURNAL.md
+/SPEC.md
+/NOTES.md
+/PLAN.md
+/COST.json
