@@ -446,8 +446,9 @@ test('a fresh conversation is still owed its digest — the preserved list canno
 // that matters. The orphan subject is only 2 of the 19; the rest is ordinary
 // fixture litter. Those 816 are this file's `clx-repo-*`/`clx-wt-*` share of a
 // repo-wide leak (38 test files, each its own prefix, measured at 47,122 `clx-*`
-// dirs / 989 MB in one $TMPDIR) that has its own ticket — this hook does not fix
-// it, so do not read 816 as the total and conclude the leak is closed.
+// dirs / 989 MB in one $TMPDIR) that has its own ticket (`test/lib/tmp-roots.js`,
+// t498; this file has not been migrated to it) — this hook does not fix it, so do
+// not read 816 as the total and conclude the leak is closed.
 //
 // A top-level `after` is the ONLY correct place for this. The orphan subject's
 // whole assertion is that a checkout is STILL on disk after destroy(), so a
@@ -460,21 +461,35 @@ test('a fresh conversation is still owed its digest — the preserved list canno
 // collision suffix) — matching the derivation here would go stale silently,
 // while a prefix sweep of a directory this file minted cannot touch anything
 // it did not make.
+// Every removal is guarded, which is the actual fix and not the `finally` below.
+// `force` suppresses ENOENT only, so an EPERM/EBUSY race throws; an unguarded
+// rmSync in a top-level `after` then turns cleanup into a red file AND abandons
+// roots #2..n unswept. Cleanup failing to clean is a leak; cleanup failing loudly
+// is a broken suite, which is worse — the same reasoning as test/lib/tmp-roots.js's
+// rmQuiet, which this mirrors rather than reinvents.
+function rmQuiet(target) {
+  try { fs.rmSync(target, { recursive: true, force: true }); } catch { /* not ours to force */ }
+}
+
 after(() => {
-  // The force-exit belongs in a `finally`, not after the loop: `force` suppresses
-  // ENOENT only, so an EPERM/EBUSY race in rmSync would both red this file AND skip
-  // the exit, leaving the process on createEngine's intervals until node times out —
-  // a suite hang with no message, which is far worse than the failure it reports.
+  // The `finally` is belt-and-braces on top of that, not the mechanism: a throw
+  // escaping here would queue no force-exit, and the process would sit on
+  // createEngine's intervals until node timed out. Note it cannot be relied on
+  // ALONE — node:test records the hook failure, but the queued exit(0) fires on
+  // the next check phase and the child reports over a pipe (scripts/run-tests.js),
+  // where stdout is async on POSIX: the failure event can be dropped and the parent
+  // sees exit 0. A messageless hang traded for a silent green is not a fix, so the
+  // sweep must not throw in the first place.
   try {
     for (const root of TMP_ROOTS) {
       const parent = path.dirname(root);
       const prefix = `${path.basename(root)}-`;
       try {
         for (const name of fs.readdirSync(parent)) {
-          if (name.startsWith(prefix)) fs.rmSync(path.join(parent, name), { recursive: true, force: true });
+          if (name.startsWith(prefix)) rmQuiet(path.join(parent, name));
         }
       } catch { /* parent unreadable — nothing to sweep */ }
-      fs.rmSync(root, { recursive: true, force: true });
+      rmQuiet(root);
     }
   } finally {
     setImmediate(() => process.exit(0));
