@@ -57,13 +57,16 @@ blocks a release.
   running), and three rounds of describing that in flowing prose each left a new
   claim that was true of one path and false of another. The paragraph is now a
   four-row matrix of seat, worktree and branch, with the reply wording that tells
-  a lead which row it got — including the one the prose kept missing: on a
-  standing assignee the branch is deleted even when the tree is dirty, so the
-  "commit and accept again" recovery does not exist there. The archive on a dirty
-  or unreadable tree only runs if the seat is still up (one that already exited is
-  simply left alone), and "keeps the tree" no longer reads as "keeps everything" —
-  the dirty tree keeps its branch so a second accept can find it, the unreadable
-  one does not.
+  a lead which row it got. Two things the prose kept getting wrong are now
+  visible per row: on a standing assignee a dirty tree buys no protection at all,
+  and no number of repeat accepts will ever clean that tree up, because the gate
+  that would do it never opens; and deleting the branch is an ATTEMPT rather than
+  an outcome — `git branch -d` refuses while any worktree still has the branch
+  checked out, so on exactly the rows that keep the tree the delete ordinarily
+  fails and the ref survives. The archive on a dirty or unreadable tree only runs
+  if the seat is still up (one that already exited is simply left alone), and
+  "keeps the tree" no longer reads as "keeps everything" — the dirty tree keeps
+  its branch deliberately, so a second accept can find it.
 
 ## 5.18.0 — 2026-08-27 — your checkouts, your cost history, and three hostile values
 
