@@ -6701,6 +6701,17 @@ function createTicketMethods(deps, shared) {
         // sweep would keep alarming that someone owes an action on work that has
         // been accepted and whose tree is gone.
         delete ticket.verifyHold;
+        // The merge failure goes too, but ONLY on an arm that closed the ticket
+        // out, and the split is not the one above: `mergeError` is not loop
+        // state an accept can overrule. It has no reader but the two boards, so
+        // it is a rendered claim about the REPOSITORY - branch X did not land,
+        // a human must merge it - and accepting the WORK does not make that
+        // claim false. The two arms that invite another accept have just
+        // re-measured it and found it still true or unmeasurable; clearing
+        // there would blank the mark on the very ticket whose reply says
+        // someone still owes the merge. Where it is cleared, the branch is
+        // merged or there was never one, so the stamp is stale by fact.
+        if (closedOut) delete ticket.mergeError;
         // Re-read: the teardown below stamped revival onto its own copy.
         const fresh = ticketsStore.load(team.root);
         const row = fresh.find((t) => t.id === ticket.id);
@@ -6712,6 +6723,7 @@ function createTicketMethods(deps, shared) {
           row.lastActivityAt = ticket.lastActivityAt;
           delete row.loopStep;
           delete row.verifyHold;
+          if (closedOut) delete row.mergeError;
           ticketsStore.save(team.root, fresh);
         } else {
           ticketsStore.save(team.root, tickets);

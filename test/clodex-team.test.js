@@ -433,6 +433,14 @@ function parityBoard() {
       // waiting/error sequence is compared too: with t1 pinning respec→error
       // and t4 pinning respec→waiting, every adjacent pair of the three marks
       // is now ordered by some row.
+      //
+      // The PAIR is synthetic and the loop cannot produce it: _autoMergeTicket's
+      // `finally` clears `mergeWaiting` on every non-defer exit, and
+      // ticket-auto-merge.test.js pins that the two must not coexist. It is
+      // carried anyway because ordering two marks needs them on one row, and
+      // this fixture feeds renderers that never ask whether the state is
+      // reachable — but it is not licence to treat the pair as reachable
+      // elsewhere.
       ...(i === 2 ? { mergeWaiting: 'suite-in-flight', mergeError: 'suite-red' } : {}),
     });
   }

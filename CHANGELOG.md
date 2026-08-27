@@ -20,7 +20,13 @@ blocks a release.
   `[agent:task list]` and the `clodex-team` exec pull now both show
   `!! MERGE FAILED: <step>` on the row, open and recently-closed alike, shaped
   unlike the quieter `(merge waiting: …)` mark so a board scan separates "needs
-  me" from "waiting its turn".
+  me" from "waiting its turn". The mark now also CLEARS when the lead accepts a
+  ticket whose branch landed, or one that never had a branch: the canonical
+  recovery is that the lead merges by hand and accepts, which used to leave the
+  finished ticket shouting `!! MERGE FAILED` from the recently-closed block for
+  the whole 24h window. It deliberately survives an accept on a ticket whose
+  branch is still unmerged — there the accept's own reply says to merge and
+  accept again, so the mark is still true.
 
 - **A ticket whose merge is waiting now says so on the board.** When the loop
   defers an auto-merge because a suite is already running in the root checkout,
