@@ -192,13 +192,14 @@ function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
   };
 }
 
-const doneTicket = (f, { id = 't1', assignee, branch }) => {
+const doneTicket = (f, { id = 't1', assignee, branch, over = null }) => {
   f.tstore.save(f.team.root, [{
     id, state: 'done', spec: `spec for ${id}`, assignee, role: 'hand',
     taskDir: `tasks/${id}-fixture/SPEC.md`,
     openedAt: 1, startedAt: 1, closedAt: 2, closedBy: assignee,
     lastActivityAt: 2,
     worktree: { branch },
+    ...(over || {}),
   }]);
   return f.one(id);
 };
@@ -261,6 +262,17 @@ test('a standing seat on a merged branch keeps its session, its record and its t
   assert.ok(f.persistence.get('helper'), 'its persistence record survives');
   assert.strictEqual(exists(wt), true, 'and its checkout is still on disk');
   assert.match(msg, /LEFT RUNNING/, 'the reply says the seat was kept, rather than claiming a retire');
+  // The prompt tells the lead a delete on this row is an ATTEMPT that
+  // "ordinarily fails", and that was prose about git's behaviour with nothing
+  // measuring it. Measured here rather than asserted: `git branch -d` refuses
+  // while any worktree has the branch checked out, and row 4 keeps the tree by
+  // design, so the ref survives an arm that really did try to delete it. Both
+  // halves are needed — the survival alone is equally true of a build that
+  // stopped attempting the delete, which is the distinction the row draws.
+  assert.ok(branches(f).includes('landed'),
+    'the merged branch SURVIVES: git branch -d refuses a branch the kept worktree has checked out');
+  assert.match(msg, /branch landed could NOT be deleted/,
+    'and the reply reports a refused attempt, not a skip — row 4 attempts the delete and git declines');
   assert.strictEqual(f.one('t1').closedOut, true, 'the ticket still closes out — the BRANCH did merge');
 });
 
@@ -851,4 +863,88 @@ test('t486: the source pin actually discriminates — the edits that must redden
     'ENTER: the COUNT is unchanged at 2 — which is exactly why a count alone cannot pin this property');
   assert.strictEqual(moved.dropsOnFailurePath, true,
     'the span check sees a drop reached on the failure path: the record goes while the tree it names is still on disk');
+});
+
+// ── t536: a MERGE FAILED stamp vetoes the teardown the merge gate licensed ──
+//
+// `isMerged` is `merge-base --is-ancestor`, and the loop undoes a red merge with
+// `git revert -m 1`, which ADDS a commit. The merge commit therefore stays an
+// ancestor after the undo, the gate still answers merged, and the merged arm
+// destroyed the tree and deleted the branch holding the only copy of the work.
+// That is not hypothetical: it happened to t537, whose change survived the
+// accept only as a reverted commit in the reflog.
+//
+// The fixture's `landed` branch is a genuine ancestor of master, so these
+// subjects reach the merged arm for real — the veto is the only thing standing
+// between them and the teardown the two ephemeral subjects above demonstrate.
+
+test('a MERGE FAILED stamp keeps the tree and the branch on a branch that IS an ancestor', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed', over: { mergeError: 'suite' } });
+
+  // ENTER on the merge fact itself: without it this subject would pass against a
+  // build that simply failed the gate, and the whole point is that the gate PASSES.
+  const gw = require('../git-worktree');
+  const m = await gw.isMerged(f.repoDir, 'landed');
+  assert.deepStrictEqual({ ok: m.ok, merged: m.merged }, { ok: true, merged: true },
+    'ENTER: the branch really is an ancestor of master, so the merge gate passes and only the stamp can refuse');
+  assert.ok(exists(wt), 'ENTER: the seat has a real worktree that the merged arm would remove');
+  assert.ok(branches(f).includes('landed'), 'ENTER: and a branch the merged arm would delete');
+
+  const msg = await accept(f, 't1');
+
+  assert.deepStrictEqual(f.killed, [], 'nothing is destroyed: the ancestor answer does not establish that the work is on master');
+  assert.strictEqual(exists(wt), true, 'the worktree survives — it may hold the only copy of the change');
+  assert.ok(branches(f).includes('landed'), 'and so does the branch');
+  assert.match(msg, /stamped this ticket MERGE FAILED at "suite"/, 'the reply names the mark it is acting on');
+  assert.match(msg, /NOTHING was torn down/, 'and says plainly that it removed nothing');
+  assert.doesNotMatch(msg, /merged into master;/, 'and never claims the landing the ancestor test would have supported');
+});
+
+test('the vetoed accept is terminal and CLEARS the mark, so a second accept can finish the job', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed', over: { mergeError: 'revert-blocked' } });
+
+  assert.strictEqual(f.one('t1').mergeError, 'revert-blocked', 'ENTER: the mark is on the ticket to be answered');
+
+  await accept(f, 't1');
+
+  // Terminality is the recovery, not a detail. Nothing the lead does to the
+  // REPOSITORY clears a mergeError — only an accept that closes out does — so a
+  // veto that left the mark standing would refuse for ever and no `task accept`
+  // could ever reclaim this tree.
+  assert.strictEqual(f.one('t1').closedOut, true, 'the vetoed accept closes the ticket out');
+  assert.ok(!('mergeError' in f.one('t1')), 'and retires the mark it just answered');
+  assert.strictEqual(exists(wt), true, 'ENTER: the tree is still there for the second accept to reclaim');
+
+  const second = await accept(f, 't1');
+
+  assert.deepStrictEqual(f.killed, ['team-hand-t1'], 'the second accept takes the ordinary merged path');
+  assert.strictEqual(exists(wt), false, 'and removes the tree the first one preserved');
+  assert.strictEqual(branches(f).includes('landed'), false, 'and deletes the branch');
+  assert.match(second, /retired and its worktree removed/, 'the second reply reports the teardown it performed');
+});
+
+test('a demonstrably EMPTY branch is exempt from the veto — there is no work to protect', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  // The recorded fork point IS the branch tip, which is what makes the 0 count
+  // evidence of an empty branch rather than of an already-merged one.
+  const baseSha = execFileSync('git', ['-C', f.repoDir, 'rev-parse', 'landed'], { encoding: 'utf8' }).trim();
+  const wt = pathReal.join(osReal.tmpdir(), `clodex-t536-wt-${Date.now()}`);
+  execFileSync('git', ['-C', f.repoDir, 'worktree', 'add', '-q', wt, 'landed'], { encoding: 'utf8' });
+  t.after(() => { try { fsReal.rmSync(wt, { recursive: true, force: true }); } catch {} });
+  f.persistence.upsert({ name: 'team-hand-t1', cwd: wt, ephemeral: true, worktree: { path: wt, branch: 'landed', baseSha } });
+  f.seat('team-hand-t1', f.repoDir);
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed', over: { mergeError: 'suite' } });
+
+  const msg = await accept(f, 't1');
+
+  assert.match(msg, /has 0 commits beyond/, 'ENTER: the count really was measured against the recorded fork point');
+  assert.doesNotMatch(msg, /MERGE FAILED/, 'the veto does not fire: an empty branch carries nothing a revert could have taken');
+  assert.strictEqual(exists(wt), false, 'so the empty tree is still reclaimed');
 });
