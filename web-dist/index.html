@@ -26497,7 +26497,11 @@ helper=${d.helperPath}`;
           core.choose(row.dataset.mode);
           closeVoicePopover();
         });
-        core.subscribe(() => {
+        let lastKey = null;
+        core.subscribe((snap) => {
+          const key = `${snap.pending || ""}|${snap.mode || ""}|${snap.target || ""}|${snap.anyClaudeRow}`;
+          if (key === lastKey) return;
+          lastKey = key;
           if (!pop.classList.contains("hidden")) renderRows();
           renderProxyBar();
         });

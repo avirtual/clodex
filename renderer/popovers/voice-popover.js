@@ -97,8 +97,34 @@ function initVoicePopover({ core, renderProxyBar }) {
 
   // Repaint the open list and the bar label together: a pick lands as `pending`
   // and the operator must see it queued rather than see nothing happen.
-  core.subscribe(() => {
+  //
+  // GATED ON AN ACTUAL CHANGE, and the gate must live HERE rather than in the
+  // core. Emits arrive at >=1 Hz for the life of the window — the core's
+  // sessionList observer is held open permanently by the bar, and the sidebar's
+  // 1 s badge tick rewrites `textContent`, whose setter is replace-all and so
+  // queues a childList record even when the string is identical. An
+  // unconditional repaint here rebuilds #proxy-actions via innerHTML once a
+  // second, which destroys every .px-action between a mousedown and its mouseup
+  // and silently eats clicks across the whole bar — the same mechanism as the
+  // "3 clicks to open" bug, five times faster.
+  //
+  // Not in `emit()`: only a SURFACE knows whether it declined to paint. The
+  // Preferences row skips its `sel.value` write while the picker holds focus and
+  // repaints on blur, so its DOM is stale while the snapshot key is unchanged —
+  // a core-level gate would swallow that emit and leave the select showing a
+  // value the file contradicts, which is the exact bug its blur listener exists
+  // to fix.
+  let lastKey = null;
+  core.subscribe((snap) => {
+    const key = `${snap.pending || ''}|${snap.mode || ''}|${snap.target || ''}|${snap.anyClaudeRow}`;
+    if (key === lastKey) return;
+    lastKey = key;
+    // Equally a no-op rebuild of a live picker: the rows are detached under the
+    // pointer, so an ungated repaint swallows the pick it is meant to show.
     if (!pop.classList.contains('hidden')) renderRows();
+    // `actionHtml()` is called synchronously by renderSessionActions on every
+    // other rebuild path, so skipping a no-change repaint cannot leave the bar
+    // stale.
     renderProxyBar();
   });
 

@@ -1760,7 +1760,6 @@ html, body {
 #bust-popover .px-link-ext:hover { text-decoration: underline; }
 #bust-popover .bust-list + .cost-note { margin-top: 10px; }
 
-/* Touched-files popover — same shell as the bust popover. */
 /* Voice-mode popover: same box as #files-popover, narrower — it holds three
    fixed rows, not a list that grows. */
 #voice-popover {
@@ -1795,6 +1794,7 @@ html, body {
    Unicode, so the word carries the precise state and this carries the glance. */
 #proxy-actions .px-action.px-voice-off { opacity: 0.45; }
 
+/* Touched-files popover — same shell as the bust popover. */
 #files-popover {
   position: fixed;
   z-index: 50;
