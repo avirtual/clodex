@@ -605,13 +605,20 @@ test('both merge classes are styled, and not styled alike (t534)', () => {
 // open-only `stalled`/`parked`/`backlog` chain does not cover and the one the
 // text boards call the normal reading: the loop merges after `task done`, so a
 // merge that failed or deferred is usually read on a row that is already done.
-test('both merge marks render on a recently-CLOSED row too (t534)', async () => {
+//
+// Both fixtures are STALLED, which is the ordinary shape here rather than an
+// exotic one: the recent window is 24h and the stall threshold 30m, so a row in
+// this block has almost always been quiet long past it. A `stalled: false`
+// fixture would test the closed block in the one condition it is rarely in, and
+// would leave the precedence below asserted only on an OPEN row — where losing
+// it costs nothing, since the amber and the red say the same thing there.
+test('both merge marks render on a recently-CLOSED row too, stalled as they normally are (t534)', async () => {
   await withDom({
     projects: projectsRes([projectRow({ open: 0 })]),
     board: boardRes({
       recent: [
-        shaped('t1', { state: 'done', closedAt: 1, closedBy: 'hand', mergeError: 'clean-tree' }),
-        shaped('t2', { state: 'done', closedAt: 1, closedBy: 'hand', mergeWaiting: 'suite-in-flight' }),
+        shaped('t1', { state: 'done', closedAt: 1, closedBy: 'hand', stalled: true, mergeError: 'clean-tree' }),
+        shaped('t2', { state: 'done', closedAt: 1, closedBy: 'hand', stalled: true, mergeWaiting: 'suite-in-flight' }),
       ],
       counts: { ...boardRes().counts, done: 2 },
     }),
@@ -622,8 +629,18 @@ test('both merge marks render on a recently-CLOSED row too (t534)', async () => 
     assert.match(text, /Recently closed/, 'the closed section is on screen');
     assert.match(text, /clean-tree/, 'the failure reaches a closed row');
     assert.match(text, /suite-in-flight/, 'and so does the deferral');
-    assert.match(classesOf(root).join(' '), /tv-merge-failed/,
+
+    const rows = allByClass(root, 'tv-ticket');
+    assert.equal(rows.length, 2, 'ENTER: both closed rows rendered');
+    const failedRow = rows.find((r) => textOf(r).join('\n').includes('clean-tree'));
+    assert.ok(failedRow, 'ENTER: the failed row is identifiable by its step');
+    // The precedence WHERE IT BITES. This row is stalled and failed at once, so
+    // the amber would take the edge on source order and hide the red — on a
+    // closed row, which is where a failed merge is normally read.
+    assert.match(classesOf(failedRow).join(' '), /tv-merge-failed/,
       'the row-level mark is not gated on the row being open');
+    assert.doesNotMatch(classesOf(failedRow).join(' '), /tv-stalled/,
+      'and the stall does not take the edge from it here either');
   });
 });
 

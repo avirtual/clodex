@@ -31,8 +31,8 @@ blocks a release.
   ACCEPT was fresh enough that the merge was still coming. `[agent:task list]`
   and the `clodex-team` exec pull now both show `(merge waiting: …)` on the row,
   open and recently-closed alike. The **tickets viewer** shows it too, as a dim
-  badge and deliberately no row edge: the merge is coming by itself, so the mark
-  states it without pulling the eye the way the failure above does.
+  badge that adds no row edge of its own: the merge is coming by itself, so the
+  mark states it without pulling the eye the way the failure above does.
 
 - **The team lead prompt no longer tells the lead to merge and clean up by
   hand.** Both steps have been automated for a while: an ACCEPT verdict makes

@@ -164,9 +164,11 @@
   background: rgba(230, 160, 90, 0.06);
 }
 
-/* The row-level channel the badge alone cannot use: a recently-closed row
-   carries no stall mark, so without this a failed merge in the closed block
-   would be one small badge on an otherwise ordinary row. */
+/* Paired with the precedence in ticketRow's row-class expression, which is what
+   decides this edge is ever seen: a closed row in the recent block is usually
+   ALSO stalled — the window is 24h and the threshold 30m — so the amber above
+   would win by source order on exactly the rows a lead most needs to spot. The
+   red is the actionable one; the stall is its consequence. */
 .tv-ticket.tv-merge-failed {
   border-left-color: rgb(230, 110, 110);
   background: rgba(230, 110, 110, 0.06);
