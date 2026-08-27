@@ -13,11 +13,11 @@ blocks a release.
 
 ## Unreleased — your checkouts, your cost history, and three hostile values
 
-- **Voice input has a switch in the sidebar.** The Claude CLI's voice mode —
+- **Voice input has a switch in Preferences.** The Claude CLI's voice mode —
   off, tap-to-talk, or hold-to-talk — was reachable only by typing `/voice` into
-  a terminal, so nothing on screen said which one you were in. There is now a 🎤
-  row in the sidebar footer that shows the current mode and switches it. It sits
-  in the footer, not on a session's bar, because the setting is one per machine:
+  a terminal, so nothing on screen said which one you were in. There is now a
+  Voice input group in Preferences that shows the current mode and switches it.
+  It sits there, not on a session's bar, because the setting is one per machine:
   every Claude session here shares it. Choosing a mode sends `/voice` to a live
   session rather than editing the settings file, since a session already running
   would not notice the edit — pick one mid-turn and it is queued until the agent

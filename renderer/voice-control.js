@@ -1,30 +1,31 @@
-// voice-control.js — the sidebar-footer voice-mode selector: off · tap · hold.
+// voice-control.js — the Preferences voice-mode selector: off · tap · hold.
 //
-// BOX-WIDE, not per-session, and the placement follows from that. `/voice` writes
-// `~/.claude/settings.json`, which every Claude session on this machine shares —
-// so a control sitting on the per-session proxy bar would look like it scoped to
-// the seat under it while silently moving a global. The sidebar footer is also
-// the only always-visible home: #proxy-bar is drawn for proxied sessions only,
-// which would hide the control on an unproxied box entirely.
+// BOX-WIDE, not per-session. `/voice` writes `~/.claude/settings.json`, which
+// every Claude session on this machine shares, so a home on the per-session
+// proxy bar would look scoped to the seat under it while moving a global.
+// #prefs-dialog is box-wide by nature — every setting in it already means "this
+// machine" — so the location carries that fact instead of wording having to.
 //
 // STATE COMES FROM THE FILE, never from what we last injected. The user can type
 // `/voice hold` in any terminal, so a last-injected mirror goes stale with no
-// event to correct it; the read is re-run on window focus and on a slow poll.
-// The CLI reads the setting at ITS startup and holds a mode in memory, so a
-// long-running session and a freshly-changed file legitimately disagree — the
-// label reflects the FILE and the tip says so, rather than claiming per-session
-// truth the renderer cannot have.
+// event to correct it; the read is re-run when the dialog opens, on window
+// focus, and on a slow poll. The CLI reads the setting at ITS startup and holds
+// a mode in memory, so a long-running session and a freshly-changed file
+// legitimately disagree — the label reflects the FILE and the hint says so,
+// rather than claiming per-session truth the renderer cannot have.
 //
 // The WRITE is an injection, not an fs write: a running CLI would not pick up an
 // edited file. Injection is quiet-gated (inject-queue parks it until the agent
-// is quiet), so the button carries a pending affordance — mid-turn the command
-// is queued, not lost, and a control that looked dead meanwhile would invite a
-// second click that queues a second command.
+// is quiet), so the state line carries a pending affordance — mid-turn the
+// command is queued, not lost, and a control that looked dead meanwhile would
+// invite a second choice that queues a second command.
+//
+// The row is never HIDDEN, only disabled: it lives in a modal settings dialog
+// that opens with no live Claude session at all, and a row that vanishes from a
+// settings dialog reads as a missing feature rather than an unavailable one.
 //
 // DOM-bound, so no unit tests per the R1 rule; the read behind it is
 // test/voice-settings.test.js.
-
-const { esc } = require('./lib/format');
 
 const VOICE_ITEMS = [
   { mode: 'off', name: 'Off', desc: 'No voice input' },
@@ -33,15 +34,16 @@ const VOICE_ITEMS = [
 ];
 
 const POLL_MS = 15000;
+const CHOICE_DEBOUNCE_MS = 250;
 
 function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, showToast }) {
-  const btn = document.getElementById('voice-open');
-  const labelEl = document.getElementById('voice-label');
-  if (!btn || !labelEl) return { refresh() {} };
+  const sel = document.getElementById('prefs-voice-mode');
+  const stateEl = document.getElementById('prefs-voice-state');
+  if (!sel || !stateEl) return { refresh() {} };
 
-  let state = null;      // the last read of settings.json
-  let pending = null;    // a mode injected but not yet observed in the file
-  let menu = null;
+  let state = null;        // the last read of settings.json
+  let pending = null;      // a mode injected but not yet observed in the file
+  let injectTimer = null;  // debounce handle: only the final choice is sent
 
   // Which live LOCAL Claude session to inject into: the active tab when it is
   // one, else the first in the sidebar. A peer row is skipped — its `/voice`
@@ -59,34 +61,45 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
     return null;
   }
 
-  // Ruling 3 (hide for non-Claude) and ruling 5 (disable, never hide, with no
-  // live session) are both about a control that cannot act, and they prescribe
-  // opposite treatments — so they are split by WHY it cannot: a box with no
-  // Claude session at all has no use for the control (hidden, per 3), while a
-  // box that has one and cannot reach it right now shows it disabled with the
-  // reason (per 5). Hiding the second case is what would flicker.
   function anyClaudeRow() {
     return !!sessionList.querySelector('.session-item[data-type="claude"]');
   }
 
   function render() {
-    if (!anyClaudeRow()) {
-      btn.classList.add('hidden');
-      return;
-    }
-    btn.classList.remove('hidden');
     const target = injectTarget();
+    // A pending injection with nowhere to land can never flush: the queue that
+    // would carry it belongs to a session that is gone or unreachable, so the
+    // intent is dead rather than merely unshowable. Clearing it HERE, not at the
+    // one read site below, is what keeps the row's promise that what it shows
+    // came from the file — a surviving `pending` would be displayed as the
+    // current mode while nothing will ever make it true.
+    if (!target) pending = null;
     const mode = pending || (state && state.effective);
-    const known = VOICE_ITEMS.find((i) => i.mode === mode);
-    labelEl.textContent = known ? `Voice: ${known.name}` : 'Voice';
-    btn.classList.toggle('voice-pending', !!pending);
-    btn.disabled = !target;
-    btn.dataset.tip = !target
-      ? 'Voice input mode (off · tap · hold) — no live Claude session to send /voice to.'
-      : pending
-        ? `Switching voice to ${pending} — the command is queued until ${target} is between turns.`
-        : `Voice input mode for every Claude session on this box${known ? '' : ' — not set yet'}. ` +
-          'A session already running keeps the mode it started with until it restarts.';
+    // Never move the selection out from under an open/keyboard-driven picker: a
+    // session-row repaint fires this on its own schedule, and rewriting `value`
+    // mid-interaction would drag the operator's highlighted option elsewhere.
+    // Losing the target is the exception — the row is about to be disabled, which
+    // blurs it anyway, and skipping the write there would leave the operator's
+    // dead pick on screen under a line saying the value came from the file.
+    if (document.activeElement !== sel || !target) {
+      sel.value = VOICE_ITEMS.some((i) => i.mode === mode) ? mode : '';
+    }
+    sel.disabled = !target;
+    // The two unreachable cases are told apart because the remedy differs: start
+    // a Claude session, versus wait for the one you have. Both keep the row.
+    if (!target) {
+      stateEl.textContent = anyClaudeRow()
+        ? 'No Claude session can be reached right now — the mode is shown from the file but cannot be changed from here.'
+        : 'No Claude session on this machine — start one to change the mode. The value shown is read from the settings file.';
+    } else if (pending) {
+      stateEl.textContent = `Switching to ${pending} — queued until ${target} is between turns.`;
+    } else if (!VOICE_ITEMS.some((i) => i.mode === mode)) {
+      stateEl.textContent = state && state.source === 'legacy'
+        ? 'Only the legacy voiceEnabled key is set in the settings file — pick a mode to set one.'
+        : 'Not set in the settings file yet — pick a mode to set one.';
+    } else {
+      stateEl.textContent = '';
+    }
   }
 
   async function refresh() {
@@ -102,71 +115,56 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
     render();
   }
 
-  function closeMenu() { if (menu) { menu.remove(); menu = null; } }
-
-  function openMenu() {
-    closeMenu();
-    const cur = pending || (state && state.effective);
-    menu = document.createElement('div');
-    menu.className = 'warm-menu voice-menu';
-    const items = ['<div class="warm-menu-label">Voice input (all Claude sessions)</div>'];
-    for (const it of VOICE_ITEMS) {
-      const isCur = it.mode === cur ? ' strip-cur' : '';
-      items.push(`<button class="warm-item strip-item${isCur}" data-mode="${it.mode}">` +
-        `<span class="strip-name">${esc(it.name)}${it.mode === cur ? ' ✓' : ''}</span>` +
-        `<span class="strip-desc">${esc(it.desc)}</span></button>`);
-    }
-    // Named so a stale label is legible as staleness rather than read as a bug:
-    // the file is the truth, and a session that started earlier is not in it.
-    if (state && state.source === 'legacy') {
-      items.push('<div class="warm-menu-label">Only the legacy voiceEnabled key is set — pick a mode to set one.</div>');
-    }
-    menu.innerHTML = items.join('');
-    menu.addEventListener('click', async (e) => {
-      const item = e.target.closest('.strip-item');
-      if (!item) return;
-      const mode = item.dataset.mode;
-      closeMenu();
-      const target = injectTarget();
-      if (!target) return;
-      pending = mode;
+  async function sendMode(mode) {
+    const target = injectTarget();
+    if (!target) { pending = null; render(); return; }
+    let r = null;
+    try { r = await window.api.injectPrompt(target, `/voice ${mode}`); } catch (err) { r = { ok: false, error: err.message }; }
+    if (!r || !r.ok) {
+      // Only the injection that still OWNS `pending` may clear it. A slow first
+      // attempt can fail after a second choice has already been made and sent;
+      // without this it would wipe the live one's affordance and toast a mode
+      // the operator has already moved on from.
+      if (pending !== mode) return;
+      pending = null;
       render();
-      let r = null;
-      try { r = await window.api.injectPrompt(target, `/voice ${mode}`); } catch (err) { r = { ok: false, error: err.message }; }
-      if (!r || !r.ok) {
-        pending = null;
-        render();
-        showToast(`Setting voice to ${mode} failed: ${(r && r.error) || 'unknown error'}`);
-        return;
-      }
-      // The injection is quiet-gated, so the file changes only once the CLI has
-      // actually run the command. Re-read on a short delay AND leave the poll to
-      // catch a parked one; the pending affordance stands until a read agrees.
-      setTimeout(refresh, 1500);
-    });
-    document.body.appendChild(menu);
-    const r = btn.getBoundingClientRect();
-    const w = menu.offsetWidth;
-    menu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-    menu.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+      showToast(`Setting voice to ${mode} failed: ${(r && r.error) || 'unknown error'}`);
+      return;
+    }
+    // The injection is quiet-gated, so the file changes only once the CLI has
+    // actually run the command. Re-read on a short delay AND leave the poll to
+    // catch a parked one; the pending affordance stands until a read agrees.
+    setTimeout(refresh, 1500);
   }
 
-  btn.addEventListener('click', () => { if (menu) closeMenu(); else openMenu(); });
-  document.addEventListener('click', (e) => {
-    if (!menu) return;
-    if (menu.contains(e.target) || e.target.closest('#voice-open')) return;
-    closeMenu();
+  sel.addEventListener('change', () => {
+    const mode = sel.value;
+    // "Not set" is a READING of the file, not a mode — there is no `/voice ` to
+    // send for it, so re-picking it is a no-op rather than an injection.
+    if (!VOICE_ITEMS.some((i) => i.mode === mode)) { render(); return; }
+    const target = injectTarget();
+    if (!target) { render(); return; }
+    pending = mode;
+    render();
+    // Coalesce to the FINAL value. On the platforms the web-dist frontend is
+    // served to, a closed <select> cycles through its options on arrow keys and
+    // fires `change` at each one — so keyboard selection would otherwise inject
+    // a slash command per option passed over, landing real commands in a live
+    // agent's transcript. Converging eventually is not enough when the
+    // intermediate states are things someone has to read in their session.
+    if (injectTimer) clearTimeout(injectTimer);
+    injectTimer = setTimeout(() => { injectTimer = null; sendMode(mode); }, CHOICE_DEBOUNCE_MS);
   });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && menu) closeMenu(); });
+
   // A `/voice` typed straight into a terminal changes the file with no event of
   // any kind, so focus is the cheapest moment to notice; the poll covers a
   // window that never loses focus.
   window.addEventListener('focus', refresh);
   setInterval(refresh, POLL_MS);
-  // Visibility is a function of the session ROWS, and the island owns that watch
-  // rather than being re-rendered from renderProxyBar: that runs during restore,
-  // before this factory has been called, so a call site there would be a
-  // temporal-dead-zone crash on the very path that first populates the list.
+  // Enablement is a function of the session ROWS, and the island owns that watch
+  // rather than being re-rendered from a call site in renderer.js: the dialog is
+  // modal but a session can still die under it (a PTY exit needs no focus), and
+  // the row would then stay enabled over a target that is gone.
   new MutationObserver(render).observe(sessionList, { childList: true, subtree: true });
 
   refresh();

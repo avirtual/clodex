@@ -103,16 +103,6 @@
         <span class="footer-label">Inbox</span>
         <span class="inbox-count zero" id="inbox-count">0</span>
       </button>
-      <!-- Voice input mode (t509). Box-wide, NOT per-session: `/voice` writes
-           ~/.claude/settings.json, which every Claude session here shares, so a
-           home on the per-session proxy bar would read as seat-scoped while
-           moving a global — and that bar is drawn for proxied sessions only,
-           which would hide it on an unproxied box. Ships hidden: a machine with
-           no Claude session has no /voice to send. -->
-      <button id="voice-open" class="hidden" data-tip="Voice input mode (off · tap · hold)" type="button">
-        <span class="footer-glyph">&#127908;</span>
-        <span class="footer-label" id="voice-label">Voice</span>
-      </button>
     </div>
     <!-- Drag handle to resize the sidebar (Task 17). Thin hit area pinned to the
          right edge; renderer.js drives the --sidebar-width var from pointer moves. -->
@@ -847,6 +837,20 @@
         <summary><h4>Appearance</h4><span class="prefs-group-sub">Theme</span></summary>
         <p class="hint-text">Theme applies immediately and persists across launches. Terminals retint live.</p>
         <select id="prefs-theme"></select>
+      </details>
+      <details class="prefs-group" data-group="voice">
+        <summary><h4>Voice input</h4><span class="prefs-group-sub">Off, tap-to-talk, or hold-to-talk</span></summary>
+        <p class="hint-text">Applies as soon as you pick it — Cancel does not undo it. One setting for every Claude session on this machine — the CLI keeps it in <code>~/.claude/settings.json</code>. Clodex reads that file rather than remembering what it last sent, so a <code>/voice</code> you type in a terminal shows up here too. Changing it <em>sends</em> <code>/voice</code> to a live session instead of editing the file, because a session already running would never notice the edit; pick a mode mid-turn and the command is queued until that agent is between turns. Sessions started before a change keep the mode they launched with until they restart.</p>
+        <div class="prefs-row">
+          <span>Mode</span>
+          <select id="prefs-voice-mode" style="flex: none;">
+            <option value="">Not set</option>
+            <option value="off">Off — no voice input</option>
+            <option value="tap">Tap — tap to start dictating, tap again to stop</option>
+            <option value="hold">Hold — hold the key while speaking, release to send</option>
+          </select>
+        </div>
+        <span id="prefs-voice-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
       </details>
       <details class="prefs-group" data-group="statusline">
         <summary><h4>Statusline</h4><span class="prefs-group-sub">What each agent shows above its prompt</span></summary>
