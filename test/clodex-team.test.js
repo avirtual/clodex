@@ -488,9 +488,9 @@ test('listing parity: the two implementations RENDER the same board (t100 — no
   // deepStrictEqual below compares two boards that agree on which marks appear
   // and cannot see them disagree about the order, since t531's fixture never
   // put two marks on the same row.
-  assert.ok(mine.some((f) => /^t1\|.*respec'd ×2 !! MERGE FAILED: clean-tree/.test(f)),
+  assert.ok(mine.some((f) => /^t1\|.*respec'd ×2\) !! MERGE FAILED: clean-tree/.test(f)),
     `ENTER: respec then merge-error, adjacent on ONE row: ${mine.join(' / ')}`);
-  assert.ok(mine.some((f) => /^t4\|.*respec'd ×1 \(merge waiting: suite-in-flight\)/.test(f)),
+  assert.ok(mine.some((f) => /^t4\|.*respec'd ×1\) \(merge waiting: suite-in-flight\)/.test(f)),
     `ENTER: respec then merge-waiting, adjacent on ONE row: ${mine.join(' / ')}`);
   assert.ok(mine.some((f) => /^t6\|.*\(merge waiting: suite-in-flight\) !! MERGE FAILED: suite-red/.test(f)),
     `ENTER: merge-waiting then merge-error, adjacent on ONE row: ${mine.join(' / ')}`);
