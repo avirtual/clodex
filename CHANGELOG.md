@@ -22,8 +22,8 @@ blocks a release.
   clean landing, removed the worktree and deleted the branch — leaving the only
   copy of the change in the reflog. It happened once for real. Accept now
   refuses that teardown on any ticket the loop marked `MERGE FAILED`: it keeps
-  the tree and the branch, says which step the loop gave up at and that an
-  why the ancestor answer is not evidence on that step, and tells you what the
+  the tree and the branch, says which step the loop gave up at and why the
+  ancestor answer is not evidence on that step, and tells you what the
   mark actually owes you — which differs by step: confirm master still carries
   the merge where the loop reverted one, confirm someone merged by hand where no
   merge commit came out of the step, and where it merged but was blocked from
@@ -32,9 +32,8 @@ blocks a release.
   the work in no branch at all). Where the loop's catch-all fired, read the
   escalation first — it says whether a merge was made at all. That accept still
   closes the ticket out, which clears the mark, so once you have checked, a
-  second `task accept`
-  cleans up as before. A branch measurably empty against its recorded fork point
-  is exempt — there is no work there to lose.
+  second `task accept` takes the ordinary merged path. A branch measurably empty
+  against its recorded fork point is exempt — there is no work there to lose.
 
 - **A ticket whose auto-merge FAILED now says so on the board.** When the merge
   loop gives up on a ticket it stamps the failing step, and that stamp means the

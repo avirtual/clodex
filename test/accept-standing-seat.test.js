@@ -876,7 +876,11 @@ test('t486: the source pin actually discriminates — the edits that must redden
 //
 // The fixture's `landed` branch is a genuine ancestor of master, so these
 // subjects reach the merged arm for real — the veto is the only thing standing
-// between them and the teardown the two ephemeral subjects above demonstrate.
+// between them and the teardown that
+// `an ephemeral ticket seat on a merged branch is still destroyed and its tree
+// removed` demonstrates. Named rather than counted or pointed at: the
+// not-merged ephemeral subject demonstrates the OPPOSITE (archived, never
+// destroyed), so "the two ephemeral subjects" was false of one of them.
 
 test('a MERGE FAILED stamp keeps the tree and the branch on a branch that IS an ancestor', async (t) => {
   const f = mkFixture(t);

@@ -144,7 +144,7 @@ visible rather than silently lost.
   of the merge and says whether one was made at all. On every other step no
   merge commit came out of it, so if the branch is an ancestor now, someone
   merged it by hand — confirm that.
-  **That last one is the trap**: the ancestor answer is yes for a reason that is
+  **`revert-blocked` is the trap**: the ancestor answer is yes for a reason that is
   not a landing, and if you accept, let the branch go, and then run the revert
   the loop asked you for, the work is in neither master's tree nor any ref. If
   you still intend to revert, revert and re-review — do not accept again.
@@ -278,7 +278,7 @@ cwd IS a worktree is still on the team.
     adds nothing. So copy it out of the reply rather than expecting to find it
     later; `tickets.json` is a hand-read fallback, not a display — read
     `revival.worktree` there for the path, and `revival.mergeVetoed` if a
-    MERGE FAILED accept is still owed a check. That second field is written
+    MERGE FAILED accept is still owed a check. `revival.mergeVetoed` is written
     even on an already-stamped ticket, so the write-once caveat above does not
     carry onto it.
   - **"keeps the tree" is never "keeps everything".** Only row 2 keeps the
