@@ -339,7 +339,20 @@ module.exports.activate = (rhost) => {
     }
 
     function ticketRow(t, opts) {
-      const row = el('div', t.stalled ? 'tv-ticket tv-stalled' : 'tv-ticket');
+      // The failed merge takes the row-level mark AHEAD of the stall, and the
+      // precedence is load-bearing rather than arbitrary: `stalled` is not
+      // gated on the row being open — shape() computes it for closed rows too —
+      // so a merge that failed and then sat past the threshold satisfies both,
+      // and the amber stall edge would otherwise hide the red one. Of the two
+      // the failure is the actionable claim: the stall is its consequence, and
+      // chasing the seat is not what clears it.
+      //
+      // `mergeWaiting` deliberately gets no row mark at all — it resolves by
+      // itself, and painting the row would recreate on this board the "looks
+      // like it needs a human" confusion that made core keep the fields apart.
+      const row = el('div', t.mergeError
+        ? 'tv-ticket tv-merge-failed'
+        : (t.stalled ? 'tv-ticket tv-stalled' : 'tv-ticket'));
 
       const head = el('div', 'tv-ticket-head');
       head.appendChild(el('span', 'tv-id', t.id));
@@ -402,6 +415,30 @@ module.exports.activate = (rhost) => {
         // count toward the stall total or the section head.
         const flag = el('span', 'tv-backlog-flag', 'backlog');
         flag.title = 'Unassigned, so the watchdog never nudges it. Assign it or close it.';
+        meta.appendChild(flag);
+      }
+
+      // Both merge marks sit OUTSIDE the chain above, which is mutually
+      // exclusive — a merge state is orthogonal to a stall, and a row can
+      // truthfully carry one of each. Neither is gated on `!opts.closed` the
+      // way the parked and backlog arms are: a merge mark's normal home is the
+      // recently-closed block, since the loop merges after `task done` and an
+      // ACCEPT verdict, so gating them would hide the common case.
+      //
+      // Rendered as BADGES rather than as the text boards' `(merge waiting: …)`
+      // / ` !! MERGE FAILED: …` suffixes, but preserving what those shapes
+      // encode: a lead scanning the board separates "needs me" from "waiting
+      // its turn" WITHOUT reading the words. Here that distinction rides colour
+      // and weight — red and bold against dim and regular — plus the row-level
+      // border below, which only the failure gets.
+      if (t.mergeWaiting) {
+        const flag = el('span', 'tv-merge-waiting', `merge waiting: ${t.mergeWaiting}`);
+        flag.title = 'The auto-merge was deferred and is still coming. No action needed.';
+        meta.appendChild(flag);
+      }
+      if (t.mergeError) {
+        const flag = el('span', 'tv-merge-error', `merge failed: ${t.mergeError}`);
+        flag.title = 'The merge loop gave up at this step. This ticket needs the lead to merge by hand.';
         meta.appendChild(flag);
       }
       row.appendChild(meta);

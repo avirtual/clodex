@@ -679,6 +679,17 @@ function shape(t, now, stallMs) {
     // for a superseded spec is core's `[agent:task list]` row alone. Stated
     // because the obvious assumption is that a shaped field reaches the board UI.
     respecCount: Array.isArray(t.respecs) ? t.respecs.length : 0,
+    // Both merge fields carry the STORED string — the deferral reason, the
+    // failing step — because a phrase of the viewer's own would assert a state
+    // the record does not carry, which is why both text boards render them
+    // verbatim too.
+    //
+    // They are separate fields, not one merge-state enum, for the reason
+    // `_stampMergeWaiting` gives: mergeError reads as "this ticket needs a
+    // human" and a ticket merely waiting its turn does not. Collapsing them
+    // here would re-merge on the wire the distinction core keeps on disk.
+    mergeWaiting: str(t.mergeWaiting),
+    mergeError: str(t.mergeError),
   };
 }
 

@@ -164,6 +164,16 @@
   background: rgba(230, 160, 90, 0.06);
 }
 
+/* Paired with the precedence in ticketRow's row-class expression, which is what
+   decides this edge is ever seen: a closed row in the recent block is usually
+   ALSO stalled — the window is 24h and the threshold 30m — so the amber above
+   would win by source order on exactly the rows a lead most needs to spot. The
+   red is the actionable one; the stall is its consequence. */
+.tv-ticket.tv-merge-failed {
+  border-left-color: rgb(230, 110, 110);
+  background: rgba(230, 110, 110, 0.06);
+}
+
 /* Carries the spec toggle, so it gets .tv-team-row's affordance: without a
    cursor and a hover the feature is discoverable only through a tooltip that
    takes a second to appear. */
@@ -217,6 +227,22 @@
 .tv-stall-flag {
   color: rgb(230, 160, 90);
   font-weight: 600;
+}
+
+/* The error red of .tv-error, not the stall amber: a stalled ticket is one to
+   chase, a failed merge is one the loop has stopped working on. Bold and
+   coloured against .tv-merge-waiting's dim regular weight — the pair has to be
+   separable at a glance, since the words themselves are two similar phrases. */
+.tv-merge-error {
+  color: rgb(230, 110, 110);
+  font-weight: 600;
+}
+
+/* Deliberately quiet, and styled like .tv-backlog-flag rather than like the
+   badge above: a deferred merge is coming by itself, so a mark that drew the
+   eye would send the lead to look at something needing nothing. */
+.tv-merge-waiting {
+  opacity: 0.55;
 }
 
 /* Deliberately NOT the stall amber. A backlog ticket is not a problem to chase,

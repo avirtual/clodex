@@ -9240,7 +9240,7 @@ Cancelled tickets are not counted as done.`)) return;
             return bar;
           }
           function ticketRow(t, opts) {
-            const row = el("div", t.stalled ? "tv-ticket tv-stalled" : "tv-ticket");
+            const row = el("div", t.mergeError ? "tv-ticket tv-merge-failed" : t.stalled ? "tv-ticket tv-stalled" : "tv-ticket");
             const head = el("div", "tv-ticket-head");
             head.appendChild(el("span", "tv-id", t.id));
             const titleSpan = el("span", "tv-ticket-title", t.title);
@@ -9278,6 +9278,16 @@ Cancelled tickets are not counted as done.`)) return;
             } else if (t.backlog && !(opts && opts.closed)) {
               const flag = el("span", "tv-backlog-flag", "backlog");
               flag.title = "Unassigned, so the watchdog never nudges it. Assign it or close it.";
+              meta.appendChild(flag);
+            }
+            if (t.mergeWaiting) {
+              const flag = el("span", "tv-merge-waiting", `merge waiting: ${t.mergeWaiting}`);
+              flag.title = "The auto-merge was deferred and is still coming. No action needed.";
+              meta.appendChild(flag);
+            }
+            if (t.mergeError) {
+              const flag = el("span", "tv-merge-error", `merge failed: ${t.mergeError}`);
+              flag.title = "The merge loop gave up at this step. This ticket needs the lead to merge by hand.";
               meta.appendChild(flag);
             }
             row.appendChild(meta);
