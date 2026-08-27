@@ -1142,3 +1142,34 @@ test('a stamp landing after the veto read is not silently erased by the close', 
     'the mark this accept never saw SURVIVES the close — clearing it would erase a merge failure that is still true');
   assert.strictEqual(f.one('t1').closedOut, true, 'ENTER: on the terminal arm, where the clear runs at all');
 });
+
+// nit 3: the veto's trace on a ticket that was ALREADY stamped. `_stampTicketRevival`
+// pins on `!t.revival`, so its first stamp wins and every later call is a no-op —
+// which is right for the seat and session id it records (they name who did the
+// work) and wrong for `mergeVetoed`, whose whole job is to say a check is owed on
+// THIS accept. Without the targeted write the trace is missing on exactly the
+// tickets that have been round the loop before, while the arm's comment claims it
+// is what makes the owed check durable. A prompt caveat would have documented the
+// hole; this closes it.
+test('the veto stamps its trace even on a ticket an earlier retire already stamped', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed', over: { mergeError: 'suite' } });
+
+  // An earlier retire's stamp, carrying the seat identity that must survive.
+  const board = f.tstore.load(f.team.root);
+  board[0].revival = { seat: 'team-hand-t1', sessionId: 'sess-earlier', branch: 'landed', worktree: '/earlier/path', at: 1 };
+  f.tstore.save(f.team.root, board);
+  assert.ok(!('mergeVetoed' in f.one('t1').revival),
+    'ENTER: the pre-existing stamp carries no veto trace, and _stampTicketRevival will refuse to add one');
+
+  await accept(f, 't1');
+
+  assert.strictEqual(f.one('t1').revival.mergeVetoed, 'suite',
+    'the veto writes its trace anyway — the write-once guard must not silence the owed check');
+  assert.strictEqual(f.one('t1').revival.sessionId, 'sess-earlier',
+    'while the earlier stamp\'s session id survives: only mergeVetoed is touched');
+  assert.strictEqual(f.one('t1').revival.worktree, '/earlier/path',
+    'and so does its path — that is the record of who did the work');
+});

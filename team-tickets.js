@@ -6985,6 +6985,25 @@ function createTicketMethods(deps, shared) {
         // already the hand-read fallback the lead prompt points at for the
         // worktree path, so the trace belongs on it rather than in a new field.
         if (seatName) this._stampTicketRevival(team, seatName, { accepted: true, mergeVetoed: mergeStamp });
+        // …but `_stampTicketRevival` is write-once (`!t.revival`), so on a ticket
+        // ALREADY stamped by an earlier retire the call above writes nothing, and
+        // the trace would be missing on exactly the tickets that have been round
+        // the loop before. A caveat in the prompt would document that hole rather
+        // than close it, and the comment above would still over-claim; this is one
+        // targeted field write, the same shape as the merged arm's supersede.
+        // Only `mergeVetoed` is touched — the earlier stamp's seat, session id and
+        // branch are the record of who did the work and must not be overwritten.
+        try {
+          const board = ticketsStore.load(team.root);
+          const row = board.find((t) => t.id === ticket.id);
+          if (row && row.revival && row.revival.mergeVetoed !== mergeStamp) {
+            row.revival.mergeVetoed = mergeStamp;
+            row.lastActivityAt = Date.now();
+            ticketsStore.save(team.root, board);
+          }
+        } catch (e) {
+          log.error('ticket', `stamping the merge veto trace on ${ticket.id} failed: ${e.message}`);
+        }
         await archiveIfEphemeral();
         // Split on `measured` for the same reason the merged arm's outcomes are,
         // and it matters MORE here. An unmeasured count on this arm is not merely
@@ -7058,9 +7077,10 @@ function createTicketMethods(deps, shared) {
         // accept differ from this one: nothing the lead can do to the REPOSITORY
         // clears a mergeError, so a non-terminal refusal here would re-refuse for
         // ever and no `task accept` could ever reclaim the tree — a gate whose
-        // input cannot change is a wall. The reply says outright that the second
-        // accept will delete the branch, so what this arm adds is an informed
-        // decision rather than a refusal. Cancelling reminders bound to a ticket
+        // input cannot change is a wall. The reply names the second accept as the
+        // way on — without promising what it will remove, since a standing seat
+        // or a dirty tree keeps the tree there too — so what this arm adds is an
+        // informed decision rather than a refusal. Cancelling reminders bound to a ticket
         // whose reply invites another accept is the cost, paid knowingly here the
         // same way the dirty-tree arm below pays it.
         finish(`ticket ${ticket.id} accepted — branch ${branch} is an ancestor of ${m.base}, but the merge loop stamped this ticket MERGE FAILED at "${mergeStamp}", `
