@@ -7020,8 +7020,8 @@ function createTicketMethods(deps, shared) {
           : measured
             ? `Its ${c.count} commit${c.count === 1 ? '' : 's'} beyond ${c.base} may be off ${m.base} entirely.`
             : `How much it carries is UNKNOWN: ${why()}, where an empty branch and one already merged both count 0.`;
-        // THREE repositories, not two, because the steps do not describe the same
-        // one — and the middle case is the dangerous one.
+        // FOUR repositories, because the steps do not describe the same one — and
+        // `revert-blocked` is the dangerous one.
         //
         //   revert-blocked  the loop merged and deliberately did NOT revert: a
         //                   suite was running in the root, so undoing would have
