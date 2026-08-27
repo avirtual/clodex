@@ -171,21 +171,22 @@ cwd IS a worktree is still on the team.
 
   | on a MERGED branch | seat | worktree | branch |
   |---|---|---|---|
-  | loop-minted seat, tree clean (or no tree recorded) | RETIRED, record dropped (kept if the removal fails, so the tree stays named) | REMOVED | deleted — refused if that removal failed |
+  | loop-minted seat, tree clean (or no tree recorded) | RETIRED, record dropped (kept ONLY if the seat had already exited and the removal then failed) | REMOVED | deleted — refused if that removal failed |
   | loop-minted seat, tree DIRTY | archived, only if still running | KEPT | KEPT |
   | loop-minted seat, tree UNREADABLE | archived, only if still running | KEPT | delete ATTEMPTED — usually refused |
   | STANDING assignee, or no record — tree never inspected | untouched | KEPT | delete ATTEMPTED — usually refused |
 
   Which row you got, in the reply's own words: `retired and its worktree
   removed`, plain `retired` (the no-tree-recorded half of row 1), or `retired
-  but its worktree could NOT be removed`, where the tree is still there and
-  named → row 1 · `has uncommitted work` → row 2 · `could not be inspected` →
+  but its worktree could NOT be removed`, where the tree is still there and the
+  path in that sentence may be the only thing naming it — see below → row 1 ·
+  `has uncommitted work` → row 2 · `could not be inspected` →
   row 3 · `LEFT RUNNING` or `left alone` → row 4. The branch clause is a
   SEPARATE sentence and does not identify your row — it has three forms:
   `branch X deleted`, `branch X was KEPT (the accept above is unfinished)`,
   which is row 2 only, and `branch X could NOT be deleted (…)`, which follows
   the TREE surviving and so can land on any row that kept one — rows 3 and 4
-  ordinarily, and row 1 whenever the removal above failed. Four things the rows
+  ordinarily, and row 1 whenever the removal above failed. Five things the rows
   say that a sentence about "the tree" cannot:
 
   - **The tree is only inspected on the loop-minted rows.** A STANDING assignee
@@ -198,8 +199,9 @@ cwd IS a worktree is still on the team.
     `task accept` will ever remove that tree, however often you run it. Clean it
     up yourself.
   - **A delete is an ATTEMPT, and it ordinarily fails wherever the TREE
-    SURVIVED.** That is the one rule behind all three ATTEMPTED cells — row 2 is
-    not one of them, its `KEPT` being a deliberate skip rather than a failure.
+    SURVIVED.** That is the one rule behind all three cells where a delete is
+    ATTEMPTED — rows 1, 3 and 4. Row 2 is not one of them, its `KEPT` being a
+    deliberate skip rather than a failure.
     `git branch -d` refuses to delete a branch that any worktree still has
     checked out, merged or not. Rows 3 and 4 keep the tree by design, so their
     delete ordinarily fails; row 1 succeeds only because it removed the tree
@@ -210,6 +212,14 @@ cwd IS a worktree is still on the team.
     BY HAND: the stale worktree registration blocks the delete just as a live
     tree would, and only `git worktree prune` releases it — which this path never
     runs. Wherever you see `could NOT be deleted`, treat the ref as still live.
+  - **A failed removal on row 1 can leave the tree with NOTHING naming it, and
+    the reply is your only copy of the path.** `kill()` drops the record
+    unconditionally, before the tree is touched, so a LIVE seat — the ordinary
+    case, since accept usually lands on a still-warm hand — has already lost its
+    record by the time `removeWorktree` fails. The record is deliberately KEPT
+    through that failure only for a seat that had already exited. Either way the
+    reply names the path; on the live path nothing else does, so copy it out of
+    the reply rather than expecting to find it later.
   - **"keeps the tree" is never "keeps everything".** Only row 2 keeps the
     branch DELIBERATELY — the delete is skipped there so that a second
     `task accept`, after you commit or clear that tree, can still find the ref

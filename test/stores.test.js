@@ -1523,13 +1523,24 @@ test('seed: the lead prompt qualifies accept — merge window and the dirty/unre
   // but a table states them per ROW, so each is now pinned as a row rather than
   // as a clause. The `doesNotMatch` arms are the exact prose they replaced, so
   // reverting the table goes red here instead of quietly green.
-  // t532 r1: the record drop is NOT unconditional — a failed removal keeps the
-  // record deliberately, since it is the only thing still naming the tree
-  // (pinned against a real tree in accept-standing-seat.test.js). The row says so.
-  assert.match(lead, /\| loop-minted seat, tree clean \(or no tree recorded\) \| RETIRED, record dropped \(kept if the removal fails, so the tree stays named\) \| REMOVED \| deleted — refused if that removal failed \|/,
-    'lead prompt gates accept\'s full teardown on a loop-minted seat and a clean, readable tree');
+  // t532 r4: the r1 wording had this INVERTED for the common case. `kill()` calls
+  // getPersistence().remove() unconditionally BEFORE the tree is touched, and
+  // destroy()'s dropRecord closure returns early on `wasLive` precisely because
+  // of that — so the keep-on-failure invariant protects only a seat that had
+  // ALREADY EXITED. A live seat's record is gone whether or not the removal
+  // succeeds, which is the case accept usually hits. The cell said the opposite,
+  // and said it in the direction a lead acts on: that the failure documents
+  // itself. Pinned in both places it is now stated, cell and bullet.
+  assert.match(lead, /\| loop-minted seat, tree clean \(or no tree recorded\) \| RETIRED, record dropped \(kept ONLY if the seat had already exited and the removal then failed\) \| REMOVED \| deleted — refused if that removal failed \|/,
+    'lead prompt gates accept\'s full teardown on a loop-minted seat and a clean, readable tree, and scopes the record keep to the dead-seat path');
+  assert.doesNotMatch(lead, /record dropped \(kept if the removal fails, so the tree stays named\)/,
+    'lead prompt must not still promise the tree stays named after a failed removal');
   assert.doesNotMatch(lead, /\| RETIRED, record dropped \| REMOVED \|/,
     'lead prompt must not still claim the record drop is unconditional');
+  assert.match(lead, /`kill\(\)` drops the record\s+unconditionally, before the tree is touched/,
+    'and gives the mechanism, so the live-seat case is not read as an edge case');
+  assert.match(lead, /copy it out of\s+the reply rather than expecting to find it later/,
+    'and tells the lead what to DO about it, which is the only actionable half');
   assert.doesNotMatch(lead, /only where the tree is clean\s+and readable/,
     'lead prompt must not still state the gate as a prose clause');
   assert.match(lead, /\| loop-minted seat, tree DIRTY \| archived, only if still running \| KEPT \| KEPT \|/,
@@ -1563,8 +1574,13 @@ test('seed: the lead prompt qualifies accept — merge window and the dirty/unre
     'lead prompt must not state that rule without its qualifier');
   // Row 2's KEPT is `del.skipped`, set only for `downgrade.kind === 'dirty'` — a
   // deliberate skip, not a failed attempt, so the rule covers three cells.
-  assert.match(lead, /the one rule behind all three ATTEMPTED cells/,
-    'and scopes it to the attempted cells, excluding row 2\'s deliberate skip');
+  // Named by ROW, not by cell text: only two cells literally read "delete
+  // ATTEMPTED" (row 1's reads "deleted — refused if that removal failed"), so
+  // "all three ATTEMPTED cells" sent a lead counting the table's words.
+  assert.match(lead, /the one rule behind all three cells where a delete is\s+ATTEMPTED — rows 1, 3 and 4/,
+    'and scopes it to the attempted rows by number, excluding row 2\'s deliberate skip');
+  assert.doesNotMatch(lead, /all three ATTEMPTED cells/,
+    'lead prompt must not name those cells by a phrase only two of them carry');
   assert.doesNotMatch(lead, /the one rule behind every branch cell/,
     'lead prompt must not claim that rule covers row 2 as well');
   assert.match(lead, /\| REMOVED \| deleted — refused if that removal failed \|/,

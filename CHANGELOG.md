@@ -62,8 +62,8 @@ blocks a release.
   and no number of repeat accepts will ever clean that tree up, because the gate
   that would do it never opens; and deleting the branch is an ATTEMPT rather than
   an outcome — `git branch -d` refuses while any worktree still has the branch
-  checked out, so on exactly the rows that keep the tree the delete ordinarily
-  fails and the ref survives. The archive on a dirty or unreadable tree only runs
+  checked out, so on the rows that keep the tree without skipping the delete it
+  ordinarily fails and the ref survives. The archive on a dirty or unreadable tree only runs
   if the seat is still up (one that already exited is simply left alone), and
   "keeps the tree" no longer reads as "keeps everything" — the dirty tree keeps
   its branch deliberately, so a second accept can find it.
