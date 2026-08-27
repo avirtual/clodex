@@ -63,6 +63,19 @@ blocks a release.
   badge that adds no row edge of its own: the merge is coming by itself, so the
   mark states it without pulling the eye the way the failure above does.
 
+- **Accepting a ticket now ends a merge that is still waiting on the suite
+  lock.** When the loop defers an auto-merge it retries for up to ten minutes,
+  and the board says so — which is an invitation to land the branch by hand and
+  accept, and the accept then removes the worktree and deletes the branch. The
+  waiting retry knew nothing about that: it only checked the ticket was still
+  `done`, which acceptance leaves it at, so it woke up, asked git about a branch
+  that no longer existed, and stamped `!! MERGE FAILED: base-is-ancestor` back
+  onto the row the accept had just cleared, with an escalation DM about a ticket
+  you had already finished with. A pending merge is now dropped, quietly and
+  with a log line, as soon as an accept closes the ticket out. An accept that
+  does NOT close it out is untouched: those replies say to merge and accept
+  again, so the merge is still owed and the retry still lands it.
+
 - **The team lead prompt no longer tells the lead to merge and clean up by
   hand.** Both steps have been automated for a while: an ACCEPT verdict makes
   the ticket loop merge the branch to master and run a suite behind that merge,

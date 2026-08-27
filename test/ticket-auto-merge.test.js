@@ -1580,6 +1580,112 @@ test('a ticket reopened during the wait leaves no WAITING stamp behind either', 
     'the stamp is cleared even on the silent path — a finally, not a rule applied per arm');
 });
 
+// ── t538: the lead accepting during the wait ENDS the merge ────────────────
+// The defer window is up to ten minutes wide and the board advertises it
+// (`(merge waiting: suite-in-flight)`), so a lead landing the branch by hand and
+// accepting inside it is an ordinary move, not a race someone has to contrive.
+// `state` cannot see that accept — `finish()` leaves it at `done` — and accept
+// never clears `ticket.worktree`, so the retry re-entered with a branch name
+// whose ref the accept had just deleted, took the `base-is-ancestor` fail arm,
+// and put `!! MERGE FAILED` back on the row the accept had cleared, with an
+// escalation DM about a ticket that was finished.
+
+// Drives the REAL `_taskAccept` against a REAL git teardown rather than writing
+// `closedOut` by hand: the defect is the interaction between two writers, and a
+// hand-set field pins this test against its own belief about which one accept
+// sets — the difference between `closedOut` and `acceptedAt` being the entire
+// decision under test.
+test('t538: an accept that closed the ticket out abandons a merge still waiting on the lock', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  plantLock(repo);
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  assert.strictEqual(r.scheduled.length, 1, 'ENTER: the merge really deferred and armed a retry');
+  assert.strictEqual(f.one().mergeWaiting, 'suite-in-flight', 'ENTER: and stamped itself as waiting');
+
+  // What the escalation and the board's waiting mark both invite: the lead lands
+  // it by hand. This is what makes the accept below take the MERGED arm.
+  git(repo.dir, ['merge', '--no-ff', '-q', '-m', 'Merge tl-1 by hand', 'tl-1']);
+  const afterHandMerge = f.masterHead();
+
+  const replies = [];
+  await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
+    { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => replies.push(msg));
+  assert.match(replies.join('\n'), /branch tl-1 deleted/,
+    'ENTER: the accept took the merged arm and really deleted the ref the retry still names');
+  assert.strictEqual(f.one().closedOut, true, 'ENTER: and it closed the ticket out');
+  assert.strictEqual(f.one().state, 'done',
+    'ENTER: while leaving state at done — which is why the existing gate cannot see this accept');
+  assert.ok(f.one().worktree && f.one().worktree.branch === 'tl-1',
+    'ENTER: and the ticket still records the branch, so the retry has something to fail on');
+
+  clearLock(repo);
+  assert.strictEqual(await r.drain(), 1, 'the retry ran');
+
+  assert.ok(!('mergeError' in f.one()),
+    'and it left no MERGE FAILED on a ticket the lead had already accepted and closed out');
+  assert.deepStrictEqual(f.esc(), [],
+    'nor an escalation DM about a finished ticket');
+  assert.strictEqual(f.masterHead(), afterHandMerge,
+    'and master is exactly where the lead left it');
+  // The `finally` clears on this path because `deferred` is false here: the
+  // early return is above the defer arm, so nothing re-sets the flag and the
+  // waiting claim must not outlive the merge it described.
+  assert.ok(!('mergeWaiting' in f.one()),
+    'and nothing is left claiming a merge is still pending');
+
+  // The BOARD, which is where the stale mark was actually costing the lead
+  // something — a row read as current is the premise the whole board-mark family
+  // rests on.
+  f.injected.length = 0;
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  const board = f.injected[f.injected.length - 1];
+  assert.match(board, /recently closed:/, 'ENTER: the row reached the block the lead reads it in');
+  assert.match(board, /t1 \[done\].*closed/, 'ENTER: and t1 is the row in it');
+  assert.doesNotMatch(board, /MERGE FAILED/, 'the accepted ticket does not shout at the lead');
+  assert.doesNotMatch(board, /merge waiting/, 'and does not claim a merge is still coming');
+});
+
+// The gate's OTHER direction, and the one that decides between the two candidate
+// fields. `finish()` stamps `acceptedAt` on EVERY accept arm — including this
+// one (`!m.merged`), whose own reply is "Merge it, then accept again" — so a gate on
+// `acceptedAt` would pass every assertion in the subject above and silently
+// abandon a merge the lead is still waiting for. `closedOut` is passed by the
+// calling arm precisely to keep the two apart, and this subject is what makes
+// the choice falsifiable rather than argued.
+test('t538: an accept that did NOT close the ticket out leaves the pending merge free to land', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  plantLock(repo);
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  assert.strictEqual(r.scheduled.length, 1, 'ENTER: the merge deferred');
+
+  // NOT merged by hand this time, so the accept lands on the not-merged arm —
+  // the one that keeps the tree and the branch and invites another accept.
+  const replies = [];
+  await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
+    { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => replies.push(msg));
+  assert.match(replies.join('\n'), /accept t1\] again/,
+    'ENTER: this is the arm whose reply says the merge is still owed');
+  assert.ok(!('closedOut' in f.one()), 'ENTER: so it did not close the ticket out');
+  assert.ok(f.one().acceptedAt,
+    'ENTER: but it DID stamp acceptedAt — which is exactly why the gate cannot read that field');
+
+  clearLock(repo);
+  assert.strictEqual(await r.drain(), 1, 'the retry ran');
+
+  assert.match(f.masterLog(), /Merge t1:/,
+    'and the merge the lead is still waiting for landed, rather than being suppressed');
+  assert.strictEqual(f.landed().length, 1, 'announced exactly once');
+  assert.deepStrictEqual(f.esc(), [], 'and nothing escalated');
+});
+
 test('an exhausted retry escalates with the manual merge command intact', async () => {
   // A retry that gave up SILENTLY would be worse than the terminal refusal it
   // replaced: the lead would be waiting on a mechanism that had already stopped.
