@@ -1,5 +1,5 @@
 'use strict';
-// voice-settings.test.js — the main-side read behind the sidebar voice-mode
+// voice-settings.test.js — the main-side read behind the voice-mode
 // selector (t509). The control's whole claim is that it reflects the FILE rather
 // than what Clodex last injected, so what is worth pinning is the mapping from
 // every file shape a real box can be in onto the mode the UI selects.

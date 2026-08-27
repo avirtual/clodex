@@ -34,14 +34,16 @@ const VOICE_ITEMS = [
 ];
 
 const POLL_MS = 15000;
+const CHOICE_DEBOUNCE_MS = 250;
 
 function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, showToast }) {
   const sel = document.getElementById('prefs-voice-mode');
   const stateEl = document.getElementById('prefs-voice-state');
   if (!sel || !stateEl) return { refresh() {} };
 
-  let state = null;      // the last read of settings.json
-  let pending = null;    // a mode injected but not yet observed in the file
+  let state = null;        // the last read of settings.json
+  let pending = null;      // a mode injected but not yet observed in the file
+  let injectTimer = null;  // debounce handle: only the final choice is sent
 
   // Which live LOCAL Claude session to inject into: the active tab when it is
   // one, else the first in the sidebar. A peer row is skipped — its `/voice`
@@ -65,8 +67,23 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
 
   function render() {
     const target = injectTarget();
+    // A pending injection with nowhere to land can never flush: the queue that
+    // would carry it belongs to a session that is gone or unreachable, so the
+    // intent is dead rather than merely unshowable. Clearing it HERE, not at the
+    // one read site below, is what keeps the row's promise that what it shows
+    // came from the file — a surviving `pending` would be displayed as the
+    // current mode while nothing will ever make it true.
+    if (!target) pending = null;
     const mode = pending || (state && state.effective);
-    sel.value = VOICE_ITEMS.some((i) => i.mode === mode) ? mode : '';
+    // Never move the selection out from under an open/keyboard-driven picker: a
+    // session-row repaint fires this on its own schedule, and rewriting `value`
+    // mid-interaction would drag the operator's highlighted option elsewhere.
+    // Losing the target is the exception — the row is about to be disabled, which
+    // blurs it anyway, and skipping the write there would leave the operator's
+    // dead pick on screen under a line saying the value came from the file.
+    if (document.activeElement !== sel || !target) {
+      sel.value = VOICE_ITEMS.some((i) => i.mode === mode) ? mode : '';
+    }
     sel.disabled = !target;
     // The two unreachable cases are told apart because the remedy differs: start
     // a Claude session, versus wait for the one you have. Both keep the row.
@@ -98,18 +115,17 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
     render();
   }
 
-  sel.addEventListener('change', async () => {
-    const mode = sel.value;
-    // "Not set" is a READING of the file, not a mode — there is no `/voice ` to
-    // send for it, so re-picking it is a no-op rather than an injection.
-    if (!VOICE_ITEMS.some((i) => i.mode === mode)) { render(); return; }
+  async function sendMode(mode) {
     const target = injectTarget();
-    if (!target) { render(); return; }
-    pending = mode;
-    render();
+    if (!target) { pending = null; render(); return; }
     let r = null;
     try { r = await window.api.injectPrompt(target, `/voice ${mode}`); } catch (err) { r = { ok: false, error: err.message }; }
     if (!r || !r.ok) {
+      // Only the injection that still OWNS `pending` may clear it. A slow first
+      // attempt can fail after a second choice has already been made and sent;
+      // without this it would wipe the live one's affordance and toast a mode
+      // the operator has already moved on from.
+      if (pending !== mode) return;
       pending = null;
       render();
       showToast(`Setting voice to ${mode} failed: ${(r && r.error) || 'unknown error'}`);
@@ -119,6 +135,25 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
     // actually run the command. Re-read on a short delay AND leave the poll to
     // catch a parked one; the pending affordance stands until a read agrees.
     setTimeout(refresh, 1500);
+  }
+
+  sel.addEventListener('change', () => {
+    const mode = sel.value;
+    // "Not set" is a READING of the file, not a mode — there is no `/voice ` to
+    // send for it, so re-picking it is a no-op rather than an injection.
+    if (!VOICE_ITEMS.some((i) => i.mode === mode)) { render(); return; }
+    const target = injectTarget();
+    if (!target) { render(); return; }
+    pending = mode;
+    render();
+    // Coalesce to the FINAL value. On the platforms the web-dist frontend is
+    // served to, a closed <select> cycles through its options on arrow keys and
+    // fires `change` at each one — so keyboard selection would otherwise inject
+    // a slash command per option passed over, landing real commands in a live
+    // agent's transcript. Converging eventually is not enough when the
+    // intermediate states are things someone has to read in their session.
+    if (injectTimer) clearTimeout(injectTimer);
+    injectTimer = setTimeout(() => { injectTimer = null; sendMode(mode); }, CHOICE_DEBOUNCE_MS);
   });
 
   // A `/voice` typed straight into a terminal changes the file with no event of

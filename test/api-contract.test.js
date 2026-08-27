@@ -100,7 +100,7 @@ const PINNED_NAMES = [
   'restartSession', 'setSessionTools', 'setSessionSkills', 'setSessionAgents',
   'setSessionIntents', 'getSkillCatalog', 'getAgentCatalog', 'getSkillCatalogFor',
   'getToolCatalogFor', 'listWorkspaces', 'currentWorkspace', 'setWorkspaceName',
-  // t509: the sidebar voice-mode selector's read of ~/.claude/settings.json.
+  // t509: the voice-mode selector's read of ~/.claude/settings.json.
   // Read-only and box-wide — the WRITE is an injectPrompt of `/voice <mode>`,
   // which is why this arrives as one row and not two.
   'getVoiceMode',

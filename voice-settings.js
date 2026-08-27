@@ -1,5 +1,5 @@
 // voice-settings.js — read the Claude CLI's PERSISTED voice-input state out of
-// `~/.claude/settings.json`, for the sidebar's voice-mode selector.
+// `~/.claude/settings.json`, for the voice-mode selector.
 //
 // READ-ONLY BY CONSTRUCTION, and that is the whole design. The mode is changed
 // by INJECTING `/voice <mode>` into a live session; a running CLI reads the file

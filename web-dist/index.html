@@ -6711,7 +6711,7 @@ body {
       </details>
       <details class="prefs-group" data-group="voice">
         <summary><h4>Voice input</h4><span class="prefs-group-sub">Off, tap-to-talk, or hold-to-talk</span></summary>
-        <p class="hint-text">One setting for every Claude session on this machine — the CLI keeps it in <code>~/.claude/settings.json</code>. Clodex reads that file rather than remembering what it last sent, so a <code>/voice</code> you type in a terminal shows up here too. Changing it <em>sends</em> <code>/voice</code> to a live session instead of editing the file, because a session already running would never notice the edit; pick a mode mid-turn and the command is queued until that agent is between turns. Sessions started before a change keep the mode they launched with until they restart.</p>
+        <p class="hint-text">Applies as soon as you pick it — Cancel does not undo it. One setting for every Claude session on this machine — the CLI keeps it in <code>~/.claude/settings.json</code>. Clodex reads that file rather than remembering what it last sent, so a <code>/voice</code> you type in a terminal shows up here too. Changing it <em>sends</em> <code>/voice</code> to a live session instead of editing the file, because a session already running would never notice the edit; pick a mode mid-turn and the command is queued until that agent is between turns. Sessions started before a change keep the mode they launched with until they restart.</p>
         <div class="prefs-row">
           <span>Mode</span>
           <select id="prefs-voice-mode" style="flex: none;">
@@ -22550,6 +22550,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         { mode: "hold", name: "Hold", desc: "Hold the key while speaking, release to send" }
       ];
       var POLL_MS = 15e3;
+      var CHOICE_DEBOUNCE_MS = 250;
       function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, showToast }) {
         const sel = document.getElementById("prefs-voice-mode");
         const stateEl = document.getElementById("prefs-voice-state");
@@ -22557,6 +22558,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         } };
         let state = null;
         let pending = null;
+        let injectTimer = null;
         function injectTarget() {
           const active = getActiveSession();
           if (active && sessionTypeOf(active) === "claude") return active;
@@ -22572,8 +22574,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         function render() {
           const target = injectTarget();
+          if (!target) pending = null;
           const mode = pending || state && state.effective;
-          sel.value = VOICE_ITEMS.some((i) => i.mode === mode) ? mode : "";
+          if (document.activeElement !== sel || !target) {
+            sel.value = VOICE_ITEMS.some((i) => i.mode === mode) ? mode : "";
+          }
           sel.disabled = !target;
           if (!target) {
             stateEl.textContent = anyClaudeRow() ? "No Claude session can be reached right now \u2014 the mode is shown from the file but cannot be changed from here." : "No Claude session on this machine \u2014 start one to change the mode. The value shown is read from the settings file.";
@@ -22598,7 +22603,29 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           render();
         }
-        sel.addEventListener("change", async () => {
+        async function sendMode(mode) {
+          const target = injectTarget();
+          if (!target) {
+            pending = null;
+            render();
+            return;
+          }
+          let r = null;
+          try {
+            r = await window.api.injectPrompt(target, `/voice ${mode}`);
+          } catch (err) {
+            r = { ok: false, error: err.message };
+          }
+          if (!r || !r.ok) {
+            if (pending !== mode) return;
+            pending = null;
+            render();
+            showToast(`Setting voice to ${mode} failed: ${r && r.error || "unknown error"}`);
+            return;
+          }
+          setTimeout(refresh, 1500);
+        }
+        sel.addEventListener("change", () => {
           const mode = sel.value;
           if (!VOICE_ITEMS.some((i) => i.mode === mode)) {
             render();
@@ -22611,19 +22638,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           pending = mode;
           render();
-          let r = null;
-          try {
-            r = await window.api.injectPrompt(target, `/voice ${mode}`);
-          } catch (err) {
-            r = { ok: false, error: err.message };
-          }
-          if (!r || !r.ok) {
-            pending = null;
-            render();
-            showToast(`Setting voice to ${mode} failed: ${r && r.error || "unknown error"}`);
-            return;
-          }
-          setTimeout(refresh, 1500);
+          if (injectTimer) clearTimeout(injectTimer);
+          injectTimer = setTimeout(() => {
+            injectTimer = null;
+            sendMode(mode);
+          }, CHOICE_DEBOUNCE_MS);
         });
         window.addEventListener("focus", refresh);
         setInterval(refresh, POLL_MS);
