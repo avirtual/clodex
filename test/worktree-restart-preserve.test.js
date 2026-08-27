@@ -439,12 +439,15 @@ test('a fresh conversation is still owed its digest — the preserved list canno
     + 'here: unlike rosterSentAt, a carried value can only suppress a delivery that already happened');
 });
 
-// MEASURED, not assumed (t492): before this hook, one run of this file left ~15
+// MEASURED, not assumed (t492): before this hook, one run of this file left 19
 // directories in os.tmpdir() — 9 mkEngine roots, 6 mkRepo roots and the 4
 // checkouts the subjects do not remove. 816 of them had accumulated across ~44
 // runs in a single day (~35M), so the OS was not reaping them on any timescale
-// that matters. The orphan subject is only 2 of the 15; the rest is ordinary
-// fixture litter.
+// that matters. The orphan subject is only 2 of the 19; the rest is ordinary
+// fixture litter. Those 816 are this file's `clx-repo-*`/`clx-wt-*` share of a
+// repo-wide leak (38 test files, each its own prefix, measured at 47,122 `clx-*`
+// dirs / 989 MB in one $TMPDIR) that has its own ticket — this hook does not fix
+// it, so do not read 816 as the total and conclude the leak is closed.
 //
 // A top-level `after` is the ONLY correct place for this. The orphan subject's
 // whole assertion is that a checkout is STILL on disk after destroy(), so a
@@ -458,15 +461,22 @@ test('a fresh conversation is still owed its digest — the preserved list canno
 // while a prefix sweep of a directory this file minted cannot touch anything
 // it did not make.
 after(() => {
-  for (const root of TMP_ROOTS) {
-    const parent = path.dirname(root);
-    const prefix = `${path.basename(root)}-`;
-    try {
-      for (const name of fs.readdirSync(parent)) {
-        if (name.startsWith(prefix)) fs.rmSync(path.join(parent, name), { recursive: true, force: true });
-      }
-    } catch { /* parent unreadable — nothing to sweep */ }
-    fs.rmSync(root, { recursive: true, force: true });
+  // The force-exit belongs in a `finally`, not after the loop: `force` suppresses
+  // ENOENT only, so an EPERM/EBUSY race in rmSync would both red this file AND skip
+  // the exit, leaving the process on createEngine's intervals until node times out —
+  // a suite hang with no message, which is far worse than the failure it reports.
+  try {
+    for (const root of TMP_ROOTS) {
+      const parent = path.dirname(root);
+      const prefix = `${path.basename(root)}-`;
+      try {
+        for (const name of fs.readdirSync(parent)) {
+          if (name.startsWith(prefix)) fs.rmSync(path.join(parent, name), { recursive: true, force: true });
+        }
+      } catch { /* parent unreadable — nothing to sweep */ }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  } finally {
+    setImmediate(() => process.exit(0));
   }
-  setImmediate(() => process.exit(0));
 });
