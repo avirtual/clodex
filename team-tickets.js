@@ -1337,26 +1337,44 @@ function createTicketMethods(deps, shared) {
         // about a ref that is gone, takes `fail()`, and stamps MERGE FAILED back
         // onto the row the accept just cleared.
         //
-        // `closedOut`, NOT `acceptedAt`: `finish()` stamps `acceptedAt` on all
-        // four accept arms including the two whose reply is "Merge it, then
-        // accept again", where the merge is still genuinely owed and a retry
-        // that lands it is the wanted outcome. `closedOut` is passed by the
-        // CALLING arm precisely to keep that distinction.
+        // `closedOut`, NOT `acceptedAt`: `finish()` stamps `acceptedAt` on EVERY
+        // accept arm, including the two whose reply is "Merge it, then accept
+        // again" (`!m.ok` and `!m.merged`), where the merge is still genuinely
+        // owed and a retry that lands it is the wanted outcome. `closedOut` is
+        // passed by the CALLING arm precisely to keep that distinction.
         //
-        // The one terminal arm that KEEPS the branch is t536's MERGE FAILED
-        // veto, so a retry can still be in flight under it — a stamp from an
-        // EARLIER merge run survives (cleared only by the green path or by a
-        // closing accept), so `mergeError` set and a retry pending do coexist.
-        // Suppressing there is still right, and for the veto's own reason: it is
-        // reachable only when the branch is ALREADY an ancestor of master, so
-        // the retry could only reach STEP 4 and exit `!merged.moved` — stamping
-        // a fresh, false MERGE FAILED for a merge that had nothing to do.
+        // TWO terminal arms keep the branch, so a retry can still be in flight
+        // under either — a stamp from an EARLIER merge run survives (cleared
+        // only by the green path or by a closing accept), so `mergeError` set
+        // and a retry pending do coexist. Named, not counted:
+        //
+        //   t536's MERGE FAILED veto   keeps tree and branch, closes out.
+        //   the merged arm's DIRTY     downgrade keeps the seat's worktree and
+        //                              skips `deleteBranch` entirely, and still
+        //                              closes out.
+        //
+        // Suppressing on both is right for one shared reason: each is reached
+        // only past `if (!m.merged) return`, so the branch is ALREADY an
+        // ancestor of the base that check compared against. A retry surviving
+        // this gate would clear STEPS 2 and 3 — the dirty tree is the SEAT's
+        // worktree, never `team.root` — and die at STEP 4's `!merged.moved`,
+        // stamping a fresh, false MERGE FAILED for a merge that had nothing to
+        // do.
         //
         // Silent like the reopen case above it, but not for its reason: there
         // nothing had been decided about the merge, here the lead's accept IS
         // the decision that ends it, and it is a decision they made knowing the
         // board showed the merge waiting. Logged, because a merge abandoned by
         // an accept is worth finding when a lead asks why a branch never landed.
+        //
+        // What the silence does NOT assert is that the merge was unwanted. The
+        // merge gate at the merged arm calls `isMerged(root, branch)` with no
+        // base, so it answers about the ROOT CHECKOUT'S CURRENT BRANCH: a root
+        // parked on another branch containing this one takes that arm, deletes
+        // the ref and closes out while master never received the work. The
+        // suppression is silent because the accept has already made the branch
+        // unmergeable, not because the loop can show the merge is not owed —
+        // the `log.info` is the only trace, and that is what it is for.
         if (ticket.closedOut) {
           log.info('ticket', `auto-merge for ${ticketId} ABANDONED: the ticket was ACCEPTED and closed out while the merge was pending — nothing was merged`);
           return;

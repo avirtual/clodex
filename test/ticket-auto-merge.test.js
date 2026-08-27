@@ -1650,8 +1650,8 @@ test('t538: an accept that closed the ticket out abandons a merge still waiting 
 });
 
 // The gate's OTHER direction, and the one that decides between the two candidate
-// fields. `finish()` stamps `acceptedAt` on all four accept arms — including
-// this one, whose own reply is "Merge it, then accept again" — so a gate on
+// fields. `finish()` stamps `acceptedAt` on EVERY accept arm — including this
+// one (`!m.merged`), whose own reply is "Merge it, then accept again" — so a gate on
 // `acceptedAt` would pass every assertion in the subject above and silently
 // abandon a merge the lead is still waiting for. `closedOut` is passed by the
 // calling arm precisely to keep the two apart, and this subject is what makes
