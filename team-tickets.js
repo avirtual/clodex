@@ -6679,6 +6679,13 @@ function createTicketMethods(deps, shared) {
       // exactly the conflation this parameter exists to prevent. Two of the four
       // arms end with "Merge it, then accept again" — they are not terminal, and
       // a reminder bound to the ticket is most wanted precisely there.
+      // What this accept actually ACTED ON, for the compare-and-clear in finish().
+      // Seeded from the snapshot (the no-branch arm closes out without ever
+      // computing a stamp) and re-pointed at the fresh read once the merged path
+      // has one. A plain `let` rather than a reference to `mergeStamp`, which is
+      // declared below this point and would be in its temporal dead zone on the
+      // three arms that call finish() before reaching it.
+      let actedStamp = (ticket.mergeError && String(ticket.mergeError)) || null;
       const finish = (msg, closedOut = false) => {
         ticket.acceptedAt = Date.now();
         ticket.acceptedBy = session.name;
@@ -6714,7 +6721,15 @@ function createTicketMethods(deps, shared) {
         // `revert -m 1` adds a commit, so a merge reverted off master after a
         // red suite, and one left standing deliberately, both still read merged
         // - and an accept that ends the ticket is the lead's answer to it.
-        if (closedOut) delete ticket.mergeError;
+        // COMPARE-and-clear, not an unconditional delete. The re-read below the
+        // merge gate closes the wide window, but a stamp can still land between
+        // that read and here — and this accept then neither saw it nor answered
+        // it, while deleting it outright would erase the board's only trace of a
+        // merge failure that is still true. The teardown race itself is not
+        // fixable by re-reading (a stamp can always arrive after destroy()); the
+        // silent ERASURE is. A mark that arrived mid-accept survives on the board
+        // instead of vanishing with the branch.
+        if (closedOut && ticket.mergeError && String(ticket.mergeError) === actedStamp) delete ticket.mergeError;
         // Re-read: the teardown below stamped revival onto its own copy.
         const fresh = ticketsStore.load(team.root);
         const row = fresh.find((t) => t.id === ticket.id);
@@ -6726,7 +6741,7 @@ function createTicketMethods(deps, shared) {
           row.lastActivityAt = ticket.lastActivityAt;
           delete row.loopStep;
           delete row.verifyHold;
-          if (closedOut) delete row.mergeError;
+          if (closedOut && row.mergeError && String(row.mergeError) === actedStamp) delete row.mergeError;
           ticketsStore.save(team.root, fresh);
         } else {
           ticketsStore.save(team.root, tickets);
@@ -6957,6 +6972,7 @@ function createTicketMethods(deps, shared) {
       // read error cannot silently disarm the veto.
       const freshTicket = this._loadTicket(team, ticket.id) || ticket;
       const mergeStamp = (freshTicket.mergeError && String(freshTicket.mergeError)) || null;
+      actedStamp = mergeStamp;
       if (mergeStamp && !(c.ok && measured && c.count === 0)) {
         // No `mergedInto`, deliberately: this arm exists because the merge cannot
         // be shown, and stamping m.base there would store the very claim the reply
@@ -6969,6 +6985,25 @@ function createTicketMethods(deps, shared) {
         // already the hand-read fallback the lead prompt points at for the
         // worktree path, so the trace belongs on it rather than in a new field.
         if (seatName) this._stampTicketRevival(team, seatName, { accepted: true, mergeVetoed: mergeStamp });
+        // …but `_stampTicketRevival` is write-once (`!t.revival`), so on a ticket
+        // ALREADY stamped by an earlier retire the call above writes nothing, and
+        // the trace would be missing on exactly the tickets that have been round
+        // the loop before. A caveat in the prompt would document that hole rather
+        // than close it, and the comment above would still over-claim; this is one
+        // targeted field write, the same shape as the merged arm's supersede.
+        // Only `mergeVetoed` is touched — the earlier stamp's seat, session id and
+        // branch are the record of who did the work and must not be overwritten.
+        try {
+          const board = ticketsStore.load(team.root);
+          const row = board.find((t) => t.id === ticket.id);
+          if (row && row.revival && row.revival.mergeVetoed !== mergeStamp) {
+            row.revival.mergeVetoed = mergeStamp;
+            row.lastActivityAt = Date.now();
+            ticketsStore.save(team.root, board);
+          }
+        } catch (e) {
+          log.error('ticket', `stamping the merge veto trace on ${ticket.id} failed: ${e.message}`);
+        }
         await archiveIfEphemeral();
         // Split on `measured` for the same reason the merged arm's outcomes are,
         // and it matters MORE here. An unmeasured count on this arm is not merely
@@ -6985,17 +7020,29 @@ function createTicketMethods(deps, shared) {
           : measured
             ? `Its ${c.count} commit${c.count === 1 ? '' : 's'} beyond ${c.base} may be off ${m.base} entirely.`
             : `How much it carries is UNKNOWN: ${why()}, where an empty branch and one already merged both count 0.`;
-        // THREE repositories, not two, because the steps do not describe the same
-        // one — and the middle case is the dangerous one.
+        // FOUR repositories, because the steps do not describe the same one — and
+        // `revert-blocked` is the dangerous one.
         //
         //   revert-blocked  the loop merged and deliberately did NOT revert: a
         //                   suite was running in the root, so undoing would have
         //                   rewritten files under it. Its own escalation tells the
         //                   lead to run `git revert -m 1` once that suite ends, on
         //                   a master that is RED or carries an unverified merge.
-        //   suite/unexpected  a merge was made and then reverted, or its fate is
-        //                   unknown — there the ancestor answer may be its trace.
-        //   everything else  fails BEFORE mergeNoFf, so no merge commit exists.
+        //   suite           a merge was made and then reverted, so the ancestor
+        //                   answer may be that merge's surviving trace.
+        //   unexpected      the catch-all, and it is NOT the same case: it fires
+        //                   for a throw before `mergeNoFf` as readily as after
+        //                   one, and its own escalation says `nothing was merged`
+        //                   on that path. So a merge MAY exist — which is not the
+        //                   same claim as one that does, and the sentence must not
+        //                   send the lead hunting a revert that never existed.
+        //   everything else  no merge commit came out of the step. Not always
+        //                   because it ran before the merge: `merge` itself fails
+        //                   AFTER `mergeNoFf` returned — either failing outright
+        //                   (aborted, nothing committed) or exiting 0 with HEAD
+        //                   unmoved, whose own message reads `no merge commit
+        //                   exists`. The load-bearing half holds either way; the
+        //                   causal half is what over-claimed.
         //
         // Asking "does master still carry that merge?" on revert-blocked is worse
         // than useless: it answers YES BY CONSTRUCTION, the lead reads a confirmed
@@ -7009,25 +7056,31 @@ function createTicketMethods(deps, shared) {
         // maintain, and a step added later would default to not vetoing, which is
         // default-unsafe. Only the sentences narrow.
         const mergeStandsByDesign = mergeStamp === 'revert-blocked';
-        const mergeWasAttempted = ['suite', 'unexpected'].includes(mergeStamp);
+        const mergeWasReverted = mergeStamp === 'suite';
+        const mergeFateUnknown = mergeStamp === 'unexpected';
         const explain = mergeStandsByDesign
           ? `and that step means the loop MERGED and deliberately did not revert — ${m.base} was left carrying it because a suite was running, so it is red or unverified and an undo is still owed.`
-          : mergeWasAttempted
+          : mergeWasReverted
             ? 'and an ancestor test cannot tell a merge that still stands from one that was reverted: `git revert -m 1` ADDS a commit, so the merge stays an ancestor either way.'
-            : 'and that step fails BEFORE the merge runs, so the loop made no merge commit here and the ancestor answer is not evidence from it.';
+            : mergeFateUnknown
+              ? 'and that step is the loop\'s catch-all, which fires whether or not a merge was ever made — so whether one exists at all is unknown, and the ancestor answer does not settle it.'
+              : 'and no merge commit came out of that step — either it failed before the merge ran, or the merge left none behind — so the ancestor answer is not evidence from it.';
         const confirm = mergeStandsByDesign
           ? `Do NOT read the ancestor answer as a landing — it is yes by construction here. Decide the revert first: if you still intend to undo it, revert and re-review instead of accepting again`
-          : mergeWasAttempted
+          : mergeWasReverted
             ? `Confirm by hand that ${m.base} still carries that merge — a revert of it lands as a later \`Revert "Merge …"\` commit`
-            : `The loop never merged this branch, so if ${branch} is an ancestor of ${m.base} now, someone merged it by hand — confirm that`;
+            : mergeFateUnknown
+              ? `Read the escalation for this ticket first — it says whether a merge was made, and names its sha where there is one. Confirm against ${m.base} accordingly`
+              : `The loop never merged this branch, so if ${branch} is an ancestor of ${m.base} now, someone merged it by hand — confirm that`;
         // TERMINAL, and the second accept is the recovery. `closedOut` retires the
         // stamp through finish()'s existing rule, and that is what lets a second
         // accept differ from this one: nothing the lead can do to the REPOSITORY
         // clears a mergeError, so a non-terminal refusal here would re-refuse for
         // ever and no `task accept` could ever reclaim the tree — a gate whose
-        // input cannot change is a wall. The reply says outright that the second
-        // accept will delete the branch, so what this arm adds is an informed
-        // decision rather than a refusal. Cancelling reminders bound to a ticket
+        // input cannot change is a wall. The reply names the second accept as the
+        // way on — without promising what it will remove, since a standing seat
+        // or a dirty tree keeps the tree there too — so what this arm adds is an
+        // informed decision rather than a refusal. Cancelling reminders bound to a ticket
         // whose reply invites another accept is the cost, paid knowingly here the
         // same way the dirty-tree arm below pays it.
         finish(`ticket ${ticket.id} accepted — branch ${branch} is an ancestor of ${m.base}, but the merge loop stamped this ticket MERGE FAILED at "${mergeStamp}", `

@@ -124,8 +124,9 @@ visible rather than silently lost.
   reading it as one is how a merge that really happened gets recorded as
   nothing. Only "0 against the fork point" means demonstrably empty.
   **A ticket carrying `!! MERGE FAILED` tears down no tree and no branch (a
-  one-shot seat is still archived), unless its branch is demonstrably empty** — even though that branch passes the merge gate, which it
-  does for a reason that makes the pass worthless: the loop undoes a red merge
+  one-shot seat is still archived), unless its branch is demonstrably empty** —
+  even though that branch passes the merge gate, which it does for a reason
+  that makes the pass worthless: the loop undoes a red merge
   with `git revert -m 1`, which ADDS a commit, so the merge commit stays an
   ancestor and the ancestor test still answers merged over work that is no
   longer in master's tree. (The empty exemption is reachable, not a corner: a
@@ -134,13 +135,16 @@ visible rather than silently lost.
   accept reports the mark instead of a landing, keeps tree and branch, and
   closes the ticket out — which CLEARS the mark, so a second `task accept` takes
   the ordinary merged path. Before running that second accept, do what the reply
-  asks, and it asks three different things because the steps describe three
-  different repositories: where the loop merged and then reverted, confirm
-  master still carries the merge; where it failed before merging at all, confirm
-  someone else put the branch there by hand; and on `revert-blocked` confirm
+  asks, and it asks four different things because the failing steps leave four
+  different repositories behind. On `suite` the loop merged and then reverted,
+  so confirm master still carries the merge. On `revert-blocked` confirm
   nothing — the loop merged and deliberately did NOT revert (a suite was
-  running), so master carries it BY CONSTRUCTION and an undo is still owed.
-  **That last one is the trap**: the ancestor answer is yes for a reason that is
+  running), so master carries it BY CONSTRUCTION and an undo is still owed. On
+  `unexpected`, the catch-all, read the escalation first: it fires on both sides
+  of the merge and says whether one was made at all. On every other step no
+  merge commit came out of it, so if the branch is an ancestor now, someone
+  merged it by hand — confirm that.
+  **`revert-blocked` is the trap**: the ancestor answer is yes for a reason that is
   not a landing, and if you accept, let the branch go, and then run the revert
   the loop asked you for, the work is in neither master's tree nor any ref. If
   you still intend to revert, revert and re-review — do not accept again.
@@ -204,8 +208,10 @@ cwd IS a worktree is still on the team.
 
   The keys are anchored so that exactly one can match — a key that is a
   substring of another arm's sentence routes you to the wrong row, which is the
-  one failure a key table exists to prevent. Match on the punctuation too:
-  the arms that removed nothing open `accepted, but`, the rest `accepted —`.
+  one failure a key table exists to prevent. Match on the punctuation too, and
+  note what it actually tracks: the two arms that invite another accept open
+  `accepted, but`; the three terminal ones open `accepted —`. It is the third
+  column below, not the teardown — two of those terminal arms remove nothing.
 
   | reply says | arm | closes the ticket out? |
   |---|---|---|
@@ -270,7 +276,11 @@ cwd IS a worktree is still on the team.
     verb renders that field, and the stamp is write-once per ticket — a ticket
     already stamped by an earlier retire keeps that earlier path and the accept
     adds nothing. So copy it out of the reply rather than expecting to find it
-    later; `tickets.json` is a hand-read fallback, not a display.
+    later; `tickets.json` is a hand-read fallback, not a display — read
+    `revival.worktree` there for the path, and `revival.mergeVetoed` if a
+    MERGE FAILED accept is still owed a check. `revival.mergeVetoed` is written
+    even on an already-stamped ticket, so the write-once caveat above does not
+    carry onto it.
   - **"keeps the tree" is never "keeps everything".** Only row 2 keeps the
     branch DELIBERATELY — the delete is skipped there so that a second
     `task accept`, after you commit or clear that tree, can still find the ref
