@@ -419,3 +419,67 @@ test('the comment/string strip does not swallow a file tail', () => {
     + 'No scanned file did when this was written; if one does now, the canary needs that file taught to '
     + 'it — the strip is not wrong.');
 });
+
+test('no comment leaks through the strip un-blanked', () => {
+  // The OPPOSITE direction from the tail canary above, and invisible to it. A regex
+  // containing a quote (`/[']/`) or an unterminated quote desyncs the scanner: the
+  // quote branch runs to the next matching quote, which can be on a LATER line, so a
+  // `//` comment in between is never recognised as a comment and is copied through
+  // verbatim. The strip stays offset-preserving throughout, so neither the length
+  // assert nor the tail read above can see it — the tail is over-copied, not blanked.
+  //
+  // A leaked comment is read as CODE by every scan in this file. Measured on a
+  // planted copy: the three-line shape below made `rawCount` see 2 sites in a file
+  // with 1, and the parse returned `-1, 'SIGKILL'` — a broadcast call site conjured
+  // out of prose. That direction is loud (it lands as uncensused). The quiet one is
+  // the ENTER subject's `total >= 16`, which leaked prose can hold green over a scan
+  // that has stopped reaching real source.
+  //
+  // This detects the CONSEQUENCE, not the cause: teaching stripNonCode to model
+  // regex literals or `${…}` is a real parser and a third divergent copy of one, and
+  // that fence stands (t493, t497). A line whose trimmed form starts with `//` is a
+  // comment under every lexical reading but one, and that one is named in the message
+  // below — no parsing required to say so.
+  const suspect = [];
+  const leaked = [];
+  for (const f of sourceFiles()) {
+    const raw = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    const code = codeOf(f);
+    if (code.length !== raw.length) continue; // the subject above owns that failure
+
+    let off = 0;
+    for (const line of raw.split('\n')) {
+      const t = line.trim();
+      // Narrowed to the prose that can actually satisfy a scan here. A leak of any
+      // other comment is equally real but harmless to THIS file's checks, and a
+      // detector that fired on all of them would be reporting the strip's whole
+      // imprecision rather than a defect anyone must act on.
+      if (t.startsWith('//') && t.includes('process.kill')) {
+        suspect.push(`${f}: ${t.slice(0, 60)}`);
+        if (code.slice(off, off + line.length).trim() !== '') leaked.push(`${f}: ${t.slice(0, 60)}`);
+      }
+      off += line.length + 1;
+    }
+  }
+
+  // ENTER: the reduction above sits between the strip and an emptiness assert, so a
+  // matcher that stopped selecting lines would vacuum out the check and leave it
+  // green. This file's own prose is the floor — it quotes process.kill in comments.
+  assert.ok(suspect.length >= 3,
+    `only ${suspect.length} comment lines mentioning process.kill were found across the scanned set; `
+    + 'there were 5 when this was written and this file itself carries several. The line matcher or the '
+    + 'file list has stopped selecting, so the emptiness assert below proves nothing.');
+
+  assert.deepStrictEqual(leaked, [],
+    'these COMMENT lines survived stripNonCode un-blanked:\n  ' + leaked.join('\n  ')
+    + '\n\nSomething above each line desynced the scanner — most likely a regex literal containing a '
+    + "quote (`/[']/`, `/can't/`) or an unterminated quote — so the strip is inside a string scan where "
+    + 'the source is inside a comment, and every scan in this file now reads that prose as CODE.\n'
+    + 'Fix the SOURCE line, not the strip: hoist the offending literal, escape the quote, or use a '
+    + 'character class that does not contain one. Teaching stripNonCode to parse regex literals or '
+    + '`${…}` interpolation is deliberately not the answer — it is a real parser, and it would be the '
+    + 'third divergent copy of one across this suite.\n'
+    + 'ONE false positive is possible and is the only one: a line reading `// …process.kill…` inside a '
+    + 'multi-line TEMPLATE LITERAL is not a comment, and is correctly copied through. If that is what '
+    + 'this is, the strip is right — move the assertion, not the strip.');
+});
