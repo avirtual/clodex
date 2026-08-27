@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — your checkouts, your cost history, and three hostile values
+## Unreleased
+
+## 5.18.0 — 2026-08-27 — your checkouts, your cost history, and three hostile values
 
 - **Voice input has a switch in Preferences.** The Claude CLI's voice mode —
   off, tap-to-talk, or hold-to-talk — was reachable only by typing `/voice` into
