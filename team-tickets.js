@@ -1358,10 +1358,11 @@ function createTicketMethods(deps, shared) {
         //                              defer, lead merges by hand, accept, seat
         //                              tree dirty. It coexists trivially.
         //
-        // Suppressing on both is right for one shared reason: each is reached
-        // only past `if (!m.merged) return`, so the branch is ALREADY an
-        // ancestor of the base that check compared against, and no merge the
-        // retry could still run would produce a commit. It would clear STEP 2 —
+        // Suppressing on the veto and on the dirty downgrade is right for one
+        // shared reason: each is reached only past `if (!m.merged) return`, so
+        // the branch is ALREADY an ancestor of the base that check compared
+        // against, and no merge the retry could still run would produce a
+        // commit. It would clear STEP 2 —
         // the dirty tree is the SEAT's worktree, never `team.root` — and then
         // die either at STEP 3's `on-master`, if the root is parked off master,
         // or at STEP 4's `!merged.moved`. Either way with a fresh, false MERGE
@@ -1369,9 +1370,10 @@ function createTicketMethods(deps, shared) {
         //
         // Silent like the reopen case above it, but not for its reason: there
         // nothing had been decided about the merge, here the lead's accept IS
-        // the decision that ends it, and the board carries that merge as waiting
-        // on the row they accepted. Logged, because a merge abandoned by an
-        // accept is worth finding when a lead asks why a branch never landed.
+        // the decision that ends it, and where the merge had already deferred,
+        // the board carries it as waiting on the row they accepted. Logged,
+        // because a merge abandoned by an accept is worth finding when a lead
+        // asks why a branch never landed.
         //
         // What the silence does NOT assert is that the merge was unwanted. The
         // merge gate at the merged arm calls `isMerged(root, branch)` with no
@@ -1380,9 +1382,9 @@ function createTicketMethods(deps, shared) {
         // the ref and closes out while master never received the work. The
         // suppression is silent because the accept has already made the merge
         // unable to produce anything — on the teardown path the ref is gone, on
-        // the two arms above it survives but is already an ancestor — not
-        // because the loop can show the merge is not owed. The `log.info` is the
-        // only trace, and that is what it is for.
+        // the veto and dirty-downgrade arms it survives but is already an
+        // ancestor — not because the loop can show the merge is not owed. The
+        // `log.info` is the only trace, and that is what it is for.
         if (ticket.closedOut) {
           log.info('ticket', `auto-merge for ${ticketId} ABANDONED: the ticket was ACCEPTED and closed out while the merge was pending — nothing was merged`);
           return;
@@ -1581,9 +1583,25 @@ function createTicketMethods(deps, shared) {
         // board's `editSpec`, which is state-agnostic by design; the latter can
         // leave the merge subject stale relative to the board, but cannot make
         // an abandoned merge land, since nothing below this line awaits.
+        //
+        // `closedOut` alongside `state`, and the reason it is not redundant with
+        // the top gate: an ACCEPT leaves `state` at `done`, so state alone is
+        // blind to it, and the accept arms tear the tree down and delete the
+        // branch. One landing in the awaits above — the ancestor check, the
+        // suite, the lock wait — reaches this line with the ref already gone and
+        // stamps a MERGE FAILED onto a row the lead has just closed. Sub-second
+        // rather than the retry's ten minutes, but the same defect the top gate
+        // closes for the deferred entry.
+        //
+        // A SYNCHRONOUS field read, and that is what makes it safe here: the pin
+        // below forbids any `await` in this stretch, and re-checking a condition
+        // an await could have changed is exactly what an await here would break.
         const stillDone = this._loadTicket(team, ticketId);
-        if (!stillDone || stillDone.state !== 'done') {
-          log.info('ticket', `auto-merge for ${ticketId} ABANDONED at the merge step: the ticket is ${stillDone ? stillDone.state : 'gone'}, not done — nothing was merged`);
+        if (!stillDone || stillDone.state !== 'done' || stillDone.closedOut) {
+          const why = !stillDone ? 'gone'
+            : stillDone.state !== 'done' ? `${stillDone.state}, not done`
+            : 'still done but ACCEPTED and closed out';
+          log.info('ticket', `auto-merge for ${ticketId} ABANDONED at the merge step: the ticket is ${why} — nothing was merged`);
           return;
         }
         //
