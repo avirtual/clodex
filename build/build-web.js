@@ -69,9 +69,9 @@ function writePluginRegistry(plugins) {
   if (a < 0 || b < 0) throw new Error('build-web: the generated block markers moved in renderer/web/plugin-registry.js');
   const body = plugins.map((p) => `  ${JSON.stringify(p.id)}: require(${JSON.stringify(p.spec)}),`).join('\n');
   const next = `${src.slice(0, a + GEN_START.length)}\n${body ? `${body}\n` : ''}${src.slice(b)}`;
-  // Written unconditionally but byte-identically when nothing changed, so the
-  // release script's staleness guard (a dirty tree = a stale bundle) stays a
-  // signal rather than firing on every build.
+  // Rewritten only when the plugin set changed, and the discovery sort keeps
+  // those bytes deterministic: the release script's staleness guard (a dirty
+  // tree = a stale bundle) would fire on every build if this varied run to run.
   if (next !== src) fs.writeFileSync(REGISTRY, next);
   return plugins.map((p) => p.id);
 }
