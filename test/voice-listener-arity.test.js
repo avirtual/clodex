@@ -90,9 +90,11 @@ function paramsOfNamed(src, name) {
 }
 
 // Every DOM-event/observer callback registration in `src`, as
-// { kind, callback, params, resolved }. `params` is null only when the callback
-// is a name this file does not declare — reported separately, since an unchecked
-// registration is the same blind spot the pin exists to close.
+// { kind, event, callback, params, resolved }. `params` is null only when the
+// callback is a name this file does not declare — reported separately, since an
+// unchecked registration is the same blind spot the pin exists to close.
+// `event` is the quoted first argument, or '' for a MutationObserver, which has
+// none; it exists so the inventory can name its members rather than count them.
 function registrations(src) {
   const found = [];
   const push = (kind, open) => {
@@ -101,14 +103,20 @@ function registrations(src) {
     const parts = splitArgs(args);
     const cb = kind === 'MutationObserver' ? parts[0] : parts[1];
     if (!cb) return;
+    // The event name as written, unquoted. A registration whose event is a
+    // computed expression reports '' rather than the expression text — it would
+    // not match an inventory entry, which is the correct outcome for a shape this
+    // pin cannot statically read.
+    const evm = kind === 'MutationObserver' ? null : (parts[0] || '').match(/^['"`]([^'"`]*)['"`]$/);
+    const event = kind === 'MutationObserver' ? '' : (evm ? evm[1] : '');
     const expr = paramsOfExpression(cb);
-    if (expr !== null) { found.push({ kind, callback: cb.slice(0, 40), params: expr.trim(), resolved: 'inline' }); return; }
+    if (expr !== null) { found.push({ kind, event, callback: cb.slice(0, 40), params: expr.trim(), resolved: 'inline' }); return; }
     if (/^[A-Za-z0-9_$.]+$/.test(cb)) {
       const named = paramsOfNamed(src, cb.replace(/^.*\./, ''));
-      found.push({ kind, callback: cb, params: named === null ? null : named.trim(), resolved: named === null ? 'unresolved' : 'named' });
+      found.push({ kind, event, callback: cb, params: named === null ? null : named.trim(), resolved: named === null ? 'unresolved' : 'named' });
       return;
     }
-    found.push({ kind, callback: cb.slice(0, 40), params: null, resolved: 'unresolved' });
+    found.push({ kind, event, callback: cb.slice(0, 40), params: null, resolved: 'unresolved' });
   };
 
   for (const m of src.matchAll(/\.addEventListener\s*\(/g)) push('addEventListener', m.index + m[0].length - 1);
@@ -126,10 +134,27 @@ test('the voice island registers no DOM listener that accepts a parameter', () =
   // ENTER: the reduction above must not have emptied the set. Every assertion
   // below is a universal over `all`, and a universal is TRUE of an empty list —
   // so a regex that stopped matching the registration syntax would vacuum out
-  // the whole pin and leave it green. The count is the guard: the island's
-  // registrations are few and deliberate, and one appearing or disappearing
-  // should be a decision someone makes on purpose.
-  assert.strictEqual(all.length, 8, `expected 8 registrations, found ${all.length}: ${JSON.stringify(all, null, 2)}`);
+  // the whole pin and leave it green.
+  //
+  // The members, not a count of them. A count is a referent a later edit breaks
+  // without naming what it broke: "expected 8, found 7" does not say WHICH
+  // registration went, and the reader has to reconstruct the inventory to find
+  // out. Listing them makes the diff itself the answer, and still fails on the
+  // empty set this ENTER is guarding against.
+  assert.deepStrictEqual(
+    all.map((r) => `${r.file} ${r.kind}(${r.event || ''})`).sort(),
+    [
+      'renderer/popovers/voice-popover.js addEventListener(click)',   // body: a row pick
+      'renderer/popovers/voice-popover.js addEventListener(click)',   // close button
+      'renderer/popovers/voice-popover.js addEventListener(keydown)', // Escape dismiss
+      'renderer/popovers/voice-popover.js addEventListener(mousedown)', // outside-click dismiss
+      'renderer/voice-control.js MutationObserver()',                 // the sessionList observer
+      'renderer/voice-control.js addEventListener(blur)',             // picker blur repaint
+      'renderer/voice-control.js addEventListener(change)',           // Preferences pick
+      'renderer/voice-control.js addEventListener(focus)',            // window refocus refresh
+    ],
+    'the voice island\'s DOM registrations — add or remove one on purpose, and say which here',
+  );
 
   // Every callback must be resolvable, or the pin is silently not checking it.
   const unresolved = all.filter((r) => r.resolved === 'unresolved');
@@ -170,20 +195,22 @@ test('the voice island registers no DOM listener that accepts a parameter', () =
 // own rule would only assert that it agrees with itself.
 test('the scanner reads the registration shapes it has to tell apart', () => {
   const CASES = [
-    { what: 'wrapped arrow, no params', src: "x.addEventListener('focus', () => { r(); });", expect: [{ params: '', resolved: 'inline' }] },
-    { what: 'arrow taking the event — legal, but the scanner must still report the arity', src: "x.addEventListener('focus', (e) => r(e));", expect: [{ params: 'e', resolved: 'inline' }] },
-    { what: 'bare arrow param, no parens', src: "x.addEventListener('focus', e => r(e));", expect: [{ params: 'e', resolved: 'inline' }] },
-    { what: 'function expression taking the event', src: "x.addEventListener('focus', function (e) { r(e); });", expect: [{ params: 'e', resolved: 'inline' }] },
-    { what: 'bare name declared with no params', src: "function close() {}\nx.addEventListener('click', close);", expect: [{ params: '', resolved: 'named' }] },
-    { what: 'bare name declared WITH a param — the r4 shape exactly', src: "function render(force) {}\nx.addEventListener('blur', render);", expect: [{ params: 'force', resolved: 'named' }] },
-    { what: 'const arrow name with a param', src: "const render = (force) => {};\nx.addEventListener('blur', render);", expect: [{ params: 'force', resolved: 'named' }] },
-    { what: 'MutationObserver wrapped', src: 'const o = new MutationObserver(() => emit());', expect: [{ params: '', resolved: 'inline' }] },
-    { what: 'MutationObserver handed a parameterised name', src: 'function render(force) {}\nconst o = new MutationObserver(render);', expect: [{ params: 'force', resolved: 'named' }] },
-    { what: 'a name from another module cannot be checked here', src: "x.addEventListener('click', other.thing);", expect: [{ params: null, resolved: 'unresolved' }] },
-    { what: 'commas inside the arrow body do not split the argument', src: "x.addEventListener('click', () => { f(1, 2); });", expect: [{ params: '', resolved: 'inline' }] },
+    { what: 'wrapped arrow, no params', src: "x.addEventListener('focus', () => { r(); });", expect: [{ event: 'focus', params: '', resolved: 'inline' }] },
+    { what: 'arrow taking the event — legal, but the scanner must still report the arity', src: "x.addEventListener('focus', (e) => r(e));", expect: [{ event: 'focus', params: 'e', resolved: 'inline' }] },
+    { what: 'bare arrow param, no parens', src: "x.addEventListener('focus', e => r(e));", expect: [{ event: 'focus', params: 'e', resolved: 'inline' }] },
+    { what: 'function expression taking the event', src: "x.addEventListener('focus', function (e) { r(e); });", expect: [{ event: 'focus', params: 'e', resolved: 'inline' }] },
+    { what: 'bare name declared with no params', src: "function close() {}\nx.addEventListener('click', close);", expect: [{ event: 'click', params: '', resolved: 'named' }] },
+    { what: 'bare name declared WITH a param — the r4 shape exactly', src: "function render(force) {}\nx.addEventListener('blur', render);", expect: [{ event: 'blur', params: 'force', resolved: 'named' }] },
+    { what: 'const arrow name with a param', src: "const render = (force) => {};\nx.addEventListener('blur', render);", expect: [{ event: 'blur', params: 'force', resolved: 'named' }] },
+    { what: 'MutationObserver wrapped', src: 'const o = new MutationObserver(() => emit());', expect: [{ event: '', params: '', resolved: 'inline' }] },
+    { what: 'MutationObserver handed a parameterised name', src: 'function render(force) {}\nconst o = new MutationObserver(render);', expect: [{ event: '', params: 'force', resolved: 'named' }] },
+    { what: 'a name from another module cannot be checked here', src: "x.addEventListener('click', other.thing);", expect: [{ event: 'click', params: null, resolved: 'unresolved' }] },
+    { what: 'commas inside the arrow body do not split the argument', src: "x.addEventListener('click', () => { f(1, 2); });", expect: [{ event: 'click', params: '', resolved: 'inline' }] },
+    { what: 'a double-quoted event name reads the same as a single-quoted one', src: 'x.addEventListener("keydown", () => r());', expect: [{ event: 'keydown', params: '', resolved: 'inline' }] },
+    { what: 'a computed event name is reported as unnamed rather than as its expression text', src: 'x.addEventListener(EV, () => r());', expect: [{ event: '', params: '', resolved: 'inline' }] },
   ];
   for (const c of CASES) {
-    const got = registrations(c.src).map((r) => ({ params: r.params, resolved: r.resolved }));
+    const got = registrations(c.src).map((r) => ({ event: r.event, params: r.params, resolved: r.resolved }));
     assert.deepStrictEqual(got, c.expect, c.what);
   }
 });

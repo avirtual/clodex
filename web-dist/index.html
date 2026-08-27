@@ -26510,12 +26510,23 @@ helper=${d.helperPath}`;
           closeVoicePopover();
         });
         let lastKey = null;
+        let failedOnce = false;
         core.subscribe((snap) => {
           const key = `${snap.pending || ""}|${snap.mode || ""}|${snap.target || ""}|${snap.anyClaudeRow}`;
           if (key === lastKey) return;
-          if (!pop.classList.contains("hidden")) renderRows();
-          renderProxyBar();
+          try {
+            if (!pop.classList.contains("hidden")) renderRows();
+            renderProxyBar();
+          } catch (e) {
+            if (!failedOnce) {
+              failedOnce = true;
+              throw e;
+            }
+            lastKey = key;
+            throw e;
+          }
           lastKey = key;
+          failedOnce = false;
         });
         document.addEventListener("mousedown", (e) => {
           if (pop.classList.contains("hidden")) return;
