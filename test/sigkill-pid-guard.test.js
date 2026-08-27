@@ -207,7 +207,12 @@ test('every process.kill in session-manager.js is guarded against a broadcast pi
   // that needs a real parser, which is deliberately not written here (it would be
   // duplicated in two files). This buys the one property one line can buy: the scan
   // reached the end of the file.
-  assert.match(code, /module\.exports\s*=\s*\{[^}]*createSessionManager/,
+  //
+  // Bounded rather than `[^}]*`: a `}` between the two anchors is not a signal of
+  // anything (an inline object in the export list is legal), while an unbounded
+  // `[\s\S]*` would let a hypothetical earlier `module.exports` satisfy this and
+  // destroy the reached-EOF property. There is exactly one today.
+  assert.match(code, /module\.exports\s*=[\s\S]{0,400}?createSessionManager/,
     'the string-aware scan did not reach the end of session-manager.js — a quote or template it '
     + 'mis-paired has blanked the tail, so the allowlist below is scanning a truncated file and '
     + 'passes over anything in the eaten span; or the final `module.exports` line was reformatted');

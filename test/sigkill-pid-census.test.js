@@ -64,8 +64,10 @@ function sourceFiles() {
 // It diverges from the guard file's version by KEEPING string bodies: `callsIn`
 // reads each site's signal argument as a literal (`'SIGKILL'`) and every CENSUS row
 // keys on it, so blanking strings would empty the `sig` of every row that keys on a
-// quoted signal and the census would key nothing. Skipping the literal is enough to fix the line-eating;
-// blanking it is not needed for that and costs the census its identity.
+// quoted signal and the census would key nothing.
+//
+// Skipping the literal is enough to fix the line-eating; blanking it is not needed
+// for that and costs the census its identity.
 function stripNonCode(src) {
   let out = '';
   let i = 0;
@@ -368,22 +370,25 @@ test('the comment/string strip does not swallow a file tail', () => {
   // reached from the inside: for a file carrying a CENSUS row the blanking is loud
   // (its row stops being found and `missing` fires), so the real exposure is a file
   // with NO row that later gains a call site — invisible rather than uncensused.
-  // CENSUS names 9 of the files scanned here, so a canary over censused files would
-  // miss precisely the gap. This runs over `sourceFiles()`, the scan's real input.
+  // CENSUS names only a small subset of the files scanned here, so a canary over
+  // censused files would miss precisely the gap. This runs over `sourceFiles()`,
+  // the scan's real input.
   //
   // Measured, not assumed: an unterminated quote or a regex containing a quote does
   // NOT blank a tail in this copy of the strip — it keeps string bodies (`:90`), so a
   // mis-paired quote leaks a COMMENT through un-blanked instead. That is a false
   // POSITIVE (prose can satisfy a scan), the opposite direction, and no tail canary
   // of any shape catches it.
+  const blanked = [];
   for (const f of sourceFiles()) {
     const raw = fs.readFileSync(path.join(ROOT, f), 'utf8');
     const code = codeOf(f);
 
-    // The premise the offset comparison stands on. stripNonCode replaces comments
-    // with equal-length runs of spaces and copies strings verbatim, so it is
-    // offset-preserving; if an edit ever breaks that, the check below would go on
-    // comparing offsets that no longer line up and silently stop meaning anything.
+    // The premise the offset comparison stands on, and the one check here that DOES
+    // abort the run: once the strip stops being offset-preserving the tail read below
+    // is comparing offsets that no longer line up, so collecting its verdicts would
+    // just be collecting noise. stripNonCode replaces comments with equal-length runs
+    // of spaces and copies strings verbatim.
     assert.strictEqual(code.length, raw.length,
       `stripNonCode is no longer offset-preserving on ${f} (${raw.length} in, ${code.length} out). `
       + 'The tail check below compares the two by OFFSET, so it reads the wrong character once this '
@@ -397,15 +402,109 @@ test('the comment/string strip does not swallow a file tail', () => {
     // No literal from any scanned file appears here on purpose: a hardcoded last
     // line per file is 9+ literals that go stale on any refactor of any of them,
     // and a stale canary gets deleted rather than fixed.
-    assert.ok(!/\s/.test(code[last]),
-      `stripNonCode blanked the tail of ${f}: the last non-blank character of the source is blank after `
-      + 'the strip, so every scan in this file reads a truncated version of it and PASSES over anything '
-      + 'in the eaten span. Two causes this check cannot tell apart — rule out the second before touching '
-      + 'the strip:\n'
-      + '  1. an unterminated `/*` ran to EOF (the defect; no other shape blanks a tail in this copy of '
-      + 'the strip, which keeps string bodies).\n'
-      + `  2. ${f} legitimately now ENDS with a comment or a string, which the strip blanks correctly. `
-      + 'No scanned file did when this was written; if one does now, the canary needs that file taught to '
-      + 'it — the strip is not wrong.');
+    if (/\s/.test(code[last])) blanked.push(f);
   }
+
+  // Collected rather than asserted in the loop: a tree-wide breakage — the shape an
+  // edit to the strip itself produces — is one failure naming every affected file,
+  // not one file per run.
+  assert.deepStrictEqual(blanked, [],
+    'stripNonCode blanked the tail of these files:\n  ' + blanked.join('\n  ')
+    + '\n\nThe last non-blank character of the source is blank after the strip, so every scan in this '
+    + 'file reads a truncated version of it and PASSES over anything in the eaten span. Two causes this '
+    + 'check cannot tell apart — rule out the second before touching the strip:\n'
+    + '  1. an unterminated `/*` ran to EOF (the defect; no other shape blanks a tail in this copy of '
+    + 'the strip, which keeps string bodies).\n'
+    + '  2. the file legitimately now ENDS with a comment, which the strip blanks correctly. '
+    + 'No scanned file did when this was written; if one does now, the canary needs that file taught to '
+    + 'it — the strip is not wrong.');
+});
+
+test('no comment leaks through the strip un-blanked', () => {
+  // The OPPOSITE direction from the tail canary above, and invisible to it. A regex
+  // containing a quote (`/[']/`) or an unterminated quote desyncs the scanner: the
+  // quote branch runs to the next matching quote, which can be on a LATER line, so a
+  // `//` comment in between is never recognised as a comment and is copied through
+  // verbatim. The strip stays offset-preserving throughout, so neither the length
+  // assert nor the tail read above can see it — the tail is over-copied, not blanked.
+  //
+  // A leaked comment is read as CODE by every scan in this file. Measured on a planted
+  // copy — three lines, in this order, are enough:
+  //
+  //     const re = /[']/;
+  //     // process.kill(-1, 'SIGKILL')   <- prose, not a call
+  //     const x = 1;
+  //
+  // `rawCount` then saw 2 sites in a file with 1, and the parse returned `-1, 'SIGKILL'`
+  // — a broadcast call site conjured out of prose.
+  //
+  // Measured, not reasoned, on which direction is quiet. A leak also lands in `found`,
+  // so it usually fires `uncensused` loudly; a key that COLLIDES with an existing CENSUS
+  // row still reds it, because the row's `count` doubles. The silent case is narrow and
+  // real: prose conjuring back a site that was REMOVED from the file, at the same key and
+  // the same count. Planted, every other subject here stayed green — including the ENTER
+  // floor, whose `total >= 16` the prose was holding up — and only this one fired.
+  //
+  // This detects the CONSEQUENCE, not the cause: teaching stripNonCode to model
+  // regex literals or `${…}` is a real parser and a third divergent copy of one, and
+  // that fence stands (t493, t497). A line whose trimmed form starts with `//` is a
+  // comment under every lexical reading but one, and that one is named in the message
+  // below — no parsing required to say so.
+  const suspect = [];
+  const leaked = [];
+  for (const f of sourceFiles()) {
+    const raw = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    const code = codeOf(f);
+    if (code.length !== raw.length) continue; // the subject above owns that failure
+
+    let off = 0;
+    for (const line of raw.split('\n')) {
+      const t = line.trim();
+      // Narrowed to the prose that can actually satisfy a scan here. A leak of any
+      // other comment is equally real but harmless to THIS file's checks, and a
+      // detector that fired on all of them would be reporting the strip's whole
+      // imprecision rather than a defect anyone must act on.
+      //
+      // `//` only, and that is a real gap: a leaked `/* … process.kill … */` block is
+      // just as readable-as-code and passes here unseen. No scanned file has one today,
+      // so this is an unclosed hole rather than a live one — a leaked block comment is
+      // the case to extend this predicate for, not a reason to distrust a green run.
+      if (t.startsWith('//') && t.includes('process.kill')) {
+        suspect.push(`${f}: ${t.slice(0, 60)}`);
+        if (code.slice(off, off + line.length).trim() !== '') leaked.push(`${f}: ${t.slice(0, 60)}`);
+      }
+      off += line.length + 1;
+    }
+  }
+
+  // ENTER: the reduction above sits between the strip and an emptiness assert, so a
+  // matcher that stopped selecting lines would vacuum out the check and leave it
+  // green. NOT held by this file's own prose — `sourceFiles()` filters `test/`, so
+  // nothing here is scanned. It rides entirely on five guard comments in four
+  // production files (drawer-pty.js, session-manager.js, wirescope-supervisor.js,
+  // scripts/clodex-monitor.js twice), which is free-form prose nothing else pins:
+  // margin of 2, and a reword is a legitimate reason for this to move.
+  assert.ok(suspect.length >= 3,
+    `only ${suspect.length} comment lines mentioning process.kill were found across the scanned set; `
+    + 'there were 5 when this was written, in four production files — drawer-pty.js, session-manager.js, '
+    + 'wirescope-supervisor.js and scripts/clodex-monitor.js (twice). This test file is NOT among them: '
+    + 'sourceFiles() filters test/, so this file contributes nothing to the floor. Two causes:\n'
+    + '  1. the line matcher or the file list has stopped selecting, and the emptiness assert below '
+    + 'proves nothing — the scan is broken.\n'
+    + '  2. one of those guard comments was reworded to stop spelling `process.kill` (say, `kill()` '
+    + 'instead). Nothing is wrong: the prose moved, the scan is fine, and the FLOOR is what should '
+    + 'change. Re-grep the scanned set and set it to what is really there.');
+
+  assert.deepStrictEqual(leaked, [],
+    'these COMMENT lines survived stripNonCode un-blanked:\n  ' + leaked.join('\n  ')
+    + '\n\nSomething above each line desynced the scanner — most likely a regex literal containing a '
+    + "quote (`/[']/`, `/can't/`) or an unterminated quote — so the strip is inside a string scan where "
+    + 'the source is inside a comment, and every scan in this file now reads that prose as CODE.\n'
+    + 'Fix the SOURCE line, not the strip: hoist the offending literal, escape the quote, or use a '
+    + 'character class that does not contain one. Teaching stripNonCode to parse regex literals or '
+    + '`${…}` interpolation is deliberately not the answer — it is a real parser, and it would be the '
+    + 'third divergent copy of one across this suite.\n'
+    + 'ONE false positive is possible and is the only one: a line reading `// …process.kill…` inside a '
+    + 'multi-line TEMPLATE LITERAL is not a comment, and is correctly copied through. If that is what '
+    + 'this is, the strip is right — move the assertion, not the strip.');
 });
