@@ -91,13 +91,17 @@ which is worth reading before you hit the same corners.
 sidebar footer — if you want to see the overlay slot carrying real weight.
 
 **A renderer half needs a build step.** Clodex also ships as a browser bundle,
-which resolves modules at build time, so renderer halves are baked into a
-generated map: after **adding or removing** a `renderer.js` (not after every edit
-to one), run `npm run build:web` and commit the regenerated
-`renderer/web/plugin-registry.js`. Engine-only plugins need no build step. This
-applies to plugins **in this repo**; a plugin in `~/.clodex/plugins/` loads in
-the Electron app and does not appear in the browser frontend at all
-(`plugin-sources.md` §6).
+which resolves modules at build time, so renderer halves are baked in: run
+`npm run build:web` and commit everything it regenerates. Two artifacts, two
+triggers — `renderer/web/plugin-registry.js` is an id→module map, so it changes
+only when you **add or remove** a `renderer.js`; the tracked `web-dist/index.html`
+inlines each renderer half's own source, so it changes on **every edit** to one.
+Rebuild after an edit too: skip it and the committed bundle serves the old code
+while the sources read fixed (`test/web-dist-fresh.test.js` catches a stale
+bundle, `test/plugin-web-parity.test.js` a stale map). Engine-only plugins need
+no build step. This applies to plugins **in this repo**; a plugin in
+`~/.clodex/plugins/` loads in the Electron app and does not appear in the browser
+frontend at all (`plugin-sources.md` §6).
 
 ## What to expect from the host
 

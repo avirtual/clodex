@@ -52,17 +52,23 @@ The directory name **is** the plugin id. They may not differ.
 
 **A renderer half needs a build step.** Clodex also ships as a browser bundle,
 which cannot resolve a module path at runtime the way Electron can, so renderer
-halves are baked into a generated map at build time. After adding or removing a
-`renderer.js` — not after every edit to one — run:
+halves are baked in at build time. After **every** edit to a `renderer.js` — not
+only after adding or removing one — run:
 
 ```
 npm run build:web
 ```
 
-and commit the regenerated `renderer/web/plugin-registry.js` along with your
-plugin. Skip it and `test/plugin-web-parity.test.js` fails, naming the remedy;
-the Electron app itself will not notice, which is exactly why it is easy to miss.
-An engine-only plugin needs no build step at all.
+and commit both regenerated artifacts along with your plugin. Their triggers
+differ, and knowing which is which saves re-deriving it:
+`renderer/web/plugin-registry.js` is an id→module map, so only adding or removing
+a `renderer.js` changes it (`test/plugin-web-parity.test.js` fails when it is
+stale); `web-dist/index.html` is tracked and inlines the renderer half's own
+source, so editing that source changes it (`test/web-dist-fresh.test.js` fails
+when it is stale). Skip the rebuild after an edit and the committed bundle serves
+the old code while the sources read fixed; the Electron app itself will not
+notice, which is exactly why it is easy to miss. An engine-only plugin needs no
+build step at all.
 
 Discovery scans two roots in precedence order — the plugins directory shipped
 with the app, then `~/.clodex/plugins/`, which is where **your** plugin goes if
