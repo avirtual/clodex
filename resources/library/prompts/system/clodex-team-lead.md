@@ -91,15 +91,18 @@ visible rather than silently lost.
 - `[agent:task accept <id>]` — you have read the report and it stands. This is
   the cleanup verb: on a DONE ticket with a branch, it checks whether that
   branch is actually merged and, only if it is AND the tree is clean, retires
-  the seat, removes its worktree and deletes the branch. Not merged (or the
-  check could not run) and it removes NOTHING — the seat is archived, tree and
-  branch kept, and the reply says so. Merge first, then accept again — UNLESS
-  the ACCEPT verdict is fresh, where the merge is not yours and is simply not
-  done yet: the loop schedules it rather than running it inline, and a suite
-  holding the box-wide lock defers it through retries that span minutes, so
-  wait for the merge notice instead of merging. It is separate from `done` on
-  purpose: `done` is the assignee reporting, and tearing its seat down there
-  would kill a still-warm hand before you had read a word or sent rework.
+  the seat, removes its worktree and deletes the branch. Those first two are
+  gated once more, on the seat being one the loop minted for this ticket: a
+  STANDING assignee keeps its seat and its checkout, and only the branch goes.
+  Not merged (or the check could not run) and it removes NOTHING — the seat is
+  archived, tree and branch kept, and the reply says so. Merge first, then
+  accept again — UNLESS the ACCEPT verdict is fresh, where the merge is not
+  yours and is simply not done yet: the loop schedules it rather than running
+  it inline, and a suite holding the box-wide lock defers it through retries
+  that span minutes, so wait for the merge notice instead of merging. It is
+  separate from `done` on purpose: `done` is the assignee reporting, and
+  tearing its seat down there would kill a still-warm hand before you had read
+  a word or sent rework.
   **Passing the merge gate is not the same as confirming work landed, and the
   reply distinguishes four outcomes — read which one you got.** Teardown is
   unconditional once the gate passes, but the count behind the wording is only
@@ -161,12 +164,19 @@ cwd IS a worktree is still on the team.
   artifact, and it exists whether or not the seat is still alive.
 - `task accept` is the cleanup: on a merged branch it retires the seat, removes
   the worktree and deletes the branch for you — but only where the tree is clean
-  and readable. A DIRTY tree, or one git could not read at all (commonly a tree
-  already removed by hand), ARCHIVES the seat and keeps the tree instead: the
-  reply names which of the two you got, and for the dirty one a second `task
-  accept` after you commit or clear that tree finishes the job. Retiring a seat
-  any OTHER way does not clean up at all — a bare retire leaves the tree on
-  disk, and Delete Session… removes it along with the branch's unmerged commits.
+  and readable, and only for a seat the loop minted for this ticket. A STANDING
+  assignee is not a corner case: a worktree pin is never degraded, so reassigning
+  a worktree ticket to a standing role carries the branch onto it, and there
+  acceptance retires nothing and keeps the checkout — the reply says LEFT RUNNING
+  and worktree KEPT. A DIRTY tree, or one git could not read at all (commonly a
+  tree already removed by hand), ARCHIVES the seat (if it is still running) and
+  keeps the tree instead: the reply names which of the two you got, and for the
+  dirty one a second `task accept` after you commit or clear that tree finishes
+  the job. Those two part company on the BRANCH — the dirty one keeps it so that
+  second accept can still find it, the unreadable one deletes it — so "keeps the
+  tree" is never "keeps everything". Retiring a seat any OTHER way does not clean
+  up at all — a bare retire leaves the tree on disk, and Delete Session… removes
+  it along with the branch's unmerged commits.
 - Cite the commit your spec was written against, and tell the hand to stop if it
   is not an ancestor of its worktree HEAD. That mismatch means the tree is not
   the one you described — symbols in the spec may not exist yet, and merging the
