@@ -59,7 +59,7 @@ only after adding or removing one — run:
 npm run build:web
 ```
 
-and commit both regenerated artifacts along with your plugin. Their triggers
+and commit whatever it regenerates along with your plugin. Their triggers
 differ, and knowing which is which saves re-deriving it:
 `renderer/web/plugin-registry.js` is an id→module map, so only adding or removing
 a `renderer.js` changes it (`test/plugin-web-parity.test.js` fails when it is
