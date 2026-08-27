@@ -24,7 +24,9 @@ blocks a release.
   refuses that teardown on any ticket the loop marked `MERGE FAILED`: it keeps
   the tree and the branch, says which step the loop gave up at and that an
   ancestor test cannot tell a standing merge from a reverted one, and tells you
-  to confirm master still carries the merge. That accept still closes the ticket
+  what to confirm — that master still carries the merge, or, where the loop gave
+  up before merging at all, that whoever put the branch there did it by hand.
+  That accept still closes the ticket
   out, which clears the mark, so once you have checked, a second `task accept`
   cleans up as before. A branch measurably empty against its recorded fork point
   is exempt — there is no work there to lose.
