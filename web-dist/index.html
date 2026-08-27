@@ -22556,11 +22556,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const stateEl = document.getElementById("prefs-voice-state");
         if (!sel || !stateEl) return { refresh() {
         }, render() {
+        }, start() {
+        }, stop() {
         } };
         let state = null;
         let pending = null;
         let pendingTarget = null;
         let injectTimer = null;
+        let pollTimer = null;
         function injectTarget() {
           const active = getActiveSession();
           if (active && sessionTypeOf(active) === "claude") return active;
@@ -22574,13 +22577,16 @@ ${m[2].replace(/^\r?\n/, "")}`;
         function anyClaudeRow() {
           return !!sessionList.querySelector('.session-item[data-type="claude"]');
         }
-        function render() {
+        function render(force = false) {
           const target = injectTarget();
           const hadPending = pending !== null;
-          if (target !== pendingTarget) pending = null;
+          if (target !== pendingTarget) {
+            pending = null;
+            pendingTarget = null;
+          }
           const pickJustDied = hadPending && pending === null;
           const mode = pending || state && state.effective;
-          if (document.activeElement !== sel || pickJustDied) {
+          if (force || document.activeElement !== sel || pickJustDied) {
             sel.value = VOICE_ITEMS.some((i) => i.mode === mode) ? mode : "";
           }
           sel.disabled = !target;
@@ -22628,7 +22634,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (pending !== mode) return;
             pending = null;
             pendingTarget = null;
-            render();
+            render(true);
             showToast(`Setting voice to ${mode} failed: ${r && r.error || "unknown error"}`);
             return;
           }
@@ -22637,12 +22643,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
         sel.addEventListener("change", () => {
           const mode = sel.value;
           if (!VOICE_ITEMS.some((i) => i.mode === mode)) {
-            render();
+            render(true);
             return;
           }
           const target = injectTarget();
           if (!target) {
-            render();
+            render(true);
             return;
           }
           pending = mode;
@@ -22655,11 +22661,21 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }, CHOICE_DEBOUNCE_MS);
         });
         window.addEventListener("focus", refresh);
-        sel.addEventListener("blur", render);
-        setInterval(refresh, POLL_MS);
-        new MutationObserver(render).observe(sessionList, { childList: true, subtree: true });
-        refresh();
-        return { refresh, render };
+        sel.addEventListener("blur", () => render());
+        const observer = new MutationObserver(() => render());
+        function start() {
+          if (!pollTimer) pollTimer = setInterval(refresh, POLL_MS);
+          observer.observe(sessionList, { childList: true, subtree: true });
+          refresh();
+        }
+        function stop() {
+          if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+          }
+          observer.disconnect();
+        }
+        return { refresh, render, start, stop };
       }
       module.exports = { createVoiceControl, VOICE_ITEMS };
     }
@@ -36091,7 +36107,7 @@ ${res.stderr}` : "");
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
         restorePrefsGroups();
         applyPrefsGate();
-        voiceControl.refresh();
+        voiceControl.start();
         prefsRemoteEnabled.checked = !!s.remoteEnabled;
         if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
         prefsRemoteToken.value = "";
@@ -36116,6 +36132,7 @@ ${res.stderr}` : "");
           clearInterval(wsPollTimer);
           wsPollTimer = null;
         }
+        voiceControl.stop();
       }
       function collectChecked(container) {
         return [...container.querySelectorAll('input[type="checkbox"]:checked')].map((el) => el.value);

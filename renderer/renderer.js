@@ -5509,10 +5509,12 @@ async function openPrefs() {
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
   applyPrefsGate();
-  // Re-read the voice mode on open rather than trusting the 15s poll: a `/voice`
-  // typed in a terminal since the last read would otherwise show stale for up to
-  // that long, on the one screen that claims to say what the mode IS.
-  voiceControl.refresh();
+  // Starts the island's poll + session-row observer and does the open-time read:
+  // the row lives in this dialog, so neither has anything to watch while it is
+  // closed. Reading here rather than trusting the 15s poll matters because a
+  // `/voice` typed in a terminal would otherwise show stale for up to that long,
+  // on the one screen that claims to say what the mode IS.
+  voiceControl.start();
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
   if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
   prefsRemoteToken.value = '';
@@ -5535,6 +5537,7 @@ async function openPrefs() {
 function closePrefs() {
   prefsOverlay.classList.add('hidden');
   if (wsPollTimer) { clearInterval(wsPollTimer); wsPollTimer = null; }
+  voiceControl.stop();
 }
 
 function collectChecked(container) {

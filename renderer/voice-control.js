@@ -42,12 +42,13 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
   // Both no-ops: a caller that finds `render` on one branch and not the other
   // gets a TypeError only on the markup-missing path, which is the one nobody
   // exercises.
-  if (!sel || !stateEl) return { refresh() {}, render() {} };
+  if (!sel || !stateEl) return { refresh() {}, render() {}, start() {}, stop() {} };
 
   let state = null;        // the last read of settings.json
   let pending = null;      // a mode injected but not yet observed in the file
   let pendingTarget = null; // the session `pending` was queued into
   let injectTimer = null;  // debounce handle: only the final choice is sent
+  let pollTimer = null;    // runs only while the dialog is open
 
   // Which live LOCAL Claude session to inject into: the active tab when it is
   // one, else the first in the sidebar. A peer row is skipped — its `/voice`
@@ -69,29 +70,25 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
     return !!sessionList.querySelector('.session-item[data-type="claude"]');
   }
 
-  function render() {
+  // `force` paints even while the picker holds focus. Pass it ONLY from a branch
+  // the operator just initiated: they committed the action, so painting its
+  // result is not reaching in under them. The guard is there to stop BACKGROUND
+  // writes, and an operator-initiated repaint is not one.
+  function render(force = false) {
     const target = injectTarget();
-    // A pending injection is bound to the SESSION it was queued into, so the
-    // test is target CHANGE, not target loss: the command sits in that session's
-    // queue, and if the row now points at a different session — the first one
-    // died and another Claude session is live — the parked command will never
-    // flush and no file read will ever equal it, so the state is permanently
-    // false. Clearing HERE rather than at the read site below is what keeps the
-    // row's promise that what it shows came from the file.
+    // The row no longer points at the session the command is parked in, so the
+    // affordance can no longer describe anything this row can observe.
     const hadPending = pending !== null;
-    if (target !== pendingTarget) pending = null;
+    if (target !== pendingTarget) { pending = null; pendingTarget = null; }
     const pickJustDied = hadPending && pending === null;
     const mode = pending || (state && state.effective);
     // Never move the selection out from under an open/keyboard-driven picker: a
     // session-row repaint fires this on its own schedule, and rewriting `value`
     // mid-interaction would drag the operator's highlighted option elsewhere.
-    // The exception is the pick dying UNDER the operator — the row is about to be
-    // disabled, or the command is parked in a session this row no longer points
-    // at — where skipping the write would leave that dead pick on screen beneath
-    // a line saying the value came from the file. Only that case overrides the
-    // focus guard: a plain background read must not reach in and move the
-    // highlighted option, which is what the guard exists to prevent.
-    if (document.activeElement !== sel || pickJustDied) {
+    // The exception is the pick dying UNDER the operator — where skipping the
+    // write would leave that dead pick on screen beneath a line saying the value
+    // came from the file.
+    if (force || document.activeElement !== sel || pickJustDied) {
       sel.value = VOICE_ITEMS.some((i) => i.mode === mode) ? mode : '';
     }
     sel.disabled = !target;
@@ -138,7 +135,7 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
       if (pending !== mode) return;
       pending = null;
       pendingTarget = null;
-      render();
+      render(true);
       showToast(`Setting voice to ${mode} failed: ${(r && r.error) || 'unknown error'}`);
       return;
     }
@@ -152,9 +149,9 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
     const mode = sel.value;
     // "Not set" is a READING of the file, not a mode — there is no `/voice ` to
     // send for it, so re-picking it is a no-op rather than an injection.
-    if (!VOICE_ITEMS.some((i) => i.mode === mode)) { render(); return; }
+    if (!VOICE_ITEMS.some((i) => i.mode === mode)) { render(true); return; }
     const target = injectTarget();
-    if (!target) { render(); return; }
+    if (!target) { render(true); return; }
     pending = mode;
     pendingTarget = target;
     render();
@@ -176,16 +173,31 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
   // arrived meanwhile — a failed injection reverting the pick, or an external
   // `/voice` the poll read — is unpainted until something repaints. Blur is that
   // moment; without it the row can sit showing a mode the file contradicts.
-  sel.addEventListener('blur', render);
-  setInterval(refresh, POLL_MS);
+  // Wrapped, not passed directly: a listener hands its Event to the first
+  // parameter, which would arrive as a truthy `force`.
+  sel.addEventListener('blur', () => render());
+
   // Enablement is a function of the session ROWS, and the island owns that watch
   // rather than being re-rendered from a call site in renderer.js: the dialog is
   // modal but a session can still die under it (a PTY exit needs no focus), and
-  // the row would then stay enabled over a target that is gone.
-  new MutationObserver(render).observe(sessionList, { childList: true, subtree: true });
+  // the row would then stay enabled over a target that is gone. That reason
+  // holds only while the dialog is OPEN — the row is inside #prefs-overlay, so
+  // a subtree observer and a poll running behind a closed dialog are watching
+  // for nothing. Started and stopped with it, like `wsPollTimer` in renderer.js.
+  const observer = new MutationObserver(() => render());
 
-  refresh();
-  return { refresh, render };
+  function start() {
+    if (!pollTimer) pollTimer = setInterval(refresh, POLL_MS);
+    observer.observe(sessionList, { childList: true, subtree: true });
+    refresh();
+  }
+
+  function stop() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    observer.disconnect();
+  }
+
+  return { refresh, render, start, stop };
 }
 
 module.exports = { createVoiceControl, VOICE_ITEMS };
