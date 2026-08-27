@@ -39,10 +39,14 @@ const CHOICE_DEBOUNCE_MS = 250;
 function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, showToast }) {
   const sel = document.getElementById('prefs-voice-mode');
   const stateEl = document.getElementById('prefs-voice-state');
-  if (!sel || !stateEl) return { refresh() {} };
+  // Both no-ops: a caller that finds `render` on one branch and not the other
+  // gets a TypeError only on the markup-missing path, which is the one nobody
+  // exercises.
+  if (!sel || !stateEl) return { refresh() {}, render() {} };
 
   let state = null;        // the last read of settings.json
   let pending = null;      // a mode injected but not yet observed in the file
+  let pendingTarget = null; // the session `pending` was queued into
   let injectTimer = null;  // debounce handle: only the final choice is sent
 
   // Which live LOCAL Claude session to inject into: the active tab when it is
@@ -67,21 +71,27 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
 
   function render() {
     const target = injectTarget();
-    // A pending injection with nowhere to land can never flush: the queue that
-    // would carry it belongs to a session that is gone or unreachable, so the
-    // intent is dead rather than merely unshowable. Clearing it HERE, not at the
-    // one read site below, is what keeps the row's promise that what it shows
-    // came from the file — a surviving `pending` would be displayed as the
-    // current mode while nothing will ever make it true.
-    if (!target) pending = null;
+    // A pending injection is bound to the SESSION it was queued into, so the
+    // test is target CHANGE, not target loss: the command sits in that session's
+    // queue, and if the row now points at a different session — the first one
+    // died and another Claude session is live — the parked command will never
+    // flush and no file read will ever equal it, so the state is permanently
+    // false. Clearing HERE rather than at the read site below is what keeps the
+    // row's promise that what it shows came from the file.
+    const hadPending = pending !== null;
+    if (target !== pendingTarget) pending = null;
+    const pickJustDied = hadPending && pending === null;
     const mode = pending || (state && state.effective);
     // Never move the selection out from under an open/keyboard-driven picker: a
     // session-row repaint fires this on its own schedule, and rewriting `value`
     // mid-interaction would drag the operator's highlighted option elsewhere.
-    // Losing the target is the exception — the row is about to be disabled, which
-    // blurs it anyway, and skipping the write there would leave the operator's
-    // dead pick on screen under a line saying the value came from the file.
-    if (document.activeElement !== sel || !target) {
+    // The exception is the pick dying UNDER the operator — the row is about to be
+    // disabled, or the command is parked in a session this row no longer points
+    // at — where skipping the write would leave that dead pick on screen beneath
+    // a line saying the value came from the file. Only that case overrides the
+    // focus guard: a plain background read must not reach in and move the
+    // highlighted option, which is what the guard exists to prevent.
+    if (document.activeElement !== sel || pickJustDied) {
       sel.value = VOICE_ITEMS.some((i) => i.mode === mode) ? mode : '';
     }
     sel.disabled = !target;
@@ -110,14 +120,14 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
       // The file caught up with what we injected — drop the pending affordance.
       // Only an EQUAL reading clears it: a differing one means the command has
       // not landed yet, not that it was rejected.
-      if (pending && r.effective === pending) pending = null;
+      if (pending && r.effective === pending) { pending = null; pendingTarget = null; }
     }
     render();
   }
 
   async function sendMode(mode) {
     const target = injectTarget();
-    if (!target) { pending = null; render(); return; }
+    if (!target) { pending = null; pendingTarget = null; render(); return; }
     let r = null;
     try { r = await window.api.injectPrompt(target, `/voice ${mode}`); } catch (err) { r = { ok: false, error: err.message }; }
     if (!r || !r.ok) {
@@ -127,6 +137,7 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
       // the operator has already moved on from.
       if (pending !== mode) return;
       pending = null;
+      pendingTarget = null;
       render();
       showToast(`Setting voice to ${mode} failed: ${(r && r.error) || 'unknown error'}`);
       return;
@@ -145,6 +156,7 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
     const target = injectTarget();
     if (!target) { render(); return; }
     pending = mode;
+    pendingTarget = target;
     render();
     // Coalesce to the FINAL value. On the platforms the web-dist frontend is
     // served to, a closed <select> cycles through its options on arrow keys and
@@ -160,6 +172,11 @@ function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, show
   // any kind, so focus is the cheapest moment to notice; the poll covers a
   // window that never loses focus.
   window.addEventListener('focus', refresh);
+  // The value write above is skipped while the picker holds focus, so whatever
+  // arrived meanwhile — a failed injection reverting the pick, or an external
+  // `/voice` the poll read — is unpainted until something repaints. Blur is that
+  // moment; without it the row can sit showing a mode the file contradicts.
+  sel.addEventListener('blur', render);
   setInterval(refresh, POLL_MS);
   // Enablement is a function of the session ROWS, and the island owns that watch
   // rather than being re-rendered from a call site in renderer.js: the dialog is

@@ -22555,9 +22555,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const sel = document.getElementById("prefs-voice-mode");
         const stateEl = document.getElementById("prefs-voice-state");
         if (!sel || !stateEl) return { refresh() {
+        }, render() {
         } };
         let state = null;
         let pending = null;
+        let pendingTarget = null;
         let injectTimer = null;
         function injectTarget() {
           const active = getActiveSession();
@@ -22574,9 +22576,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         function render() {
           const target = injectTarget();
-          if (!target) pending = null;
+          const hadPending = pending !== null;
+          if (target !== pendingTarget) pending = null;
+          const pickJustDied = hadPending && pending === null;
           const mode = pending || state && state.effective;
-          if (document.activeElement !== sel || !target) {
+          if (document.activeElement !== sel || pickJustDied) {
             sel.value = VOICE_ITEMS.some((i) => i.mode === mode) ? mode : "";
           }
           sel.disabled = !target;
@@ -22599,7 +22603,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (r && r.ok) {
             state = r;
-            if (pending && r.effective === pending) pending = null;
+            if (pending && r.effective === pending) {
+              pending = null;
+              pendingTarget = null;
+            }
           }
           render();
         }
@@ -22607,6 +22614,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           const target = injectTarget();
           if (!target) {
             pending = null;
+            pendingTarget = null;
             render();
             return;
           }
@@ -22619,6 +22627,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (!r || !r.ok) {
             if (pending !== mode) return;
             pending = null;
+            pendingTarget = null;
             render();
             showToast(`Setting voice to ${mode} failed: ${r && r.error || "unknown error"}`);
             return;
@@ -22637,6 +22646,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             return;
           }
           pending = mode;
+          pendingTarget = target;
           render();
           if (injectTimer) clearTimeout(injectTimer);
           injectTimer = setTimeout(() => {
@@ -22645,6 +22655,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }, CHOICE_DEBOUNCE_MS);
         });
         window.addEventListener("focus", refresh);
+        sel.addEventListener("blur", render);
         setInterval(refresh, POLL_MS);
         new MutationObserver(render).observe(sessionList, { childList: true, subtree: true });
         refresh();
