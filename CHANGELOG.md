@@ -15,20 +15,21 @@ blocks a release.
 
 ## 5.18.0 — 2026-08-27 — your checkouts, your cost history, and three hostile values
 
-- **Voice input has a switch in Preferences.** The Claude CLI's voice mode —
-  off, tap-to-talk, or hold-to-talk — was reachable only by typing `/voice` into
-  a terminal, so nothing on screen said which one you were in. There is now a
-  Voice input group in Preferences that shows the current mode and switches it.
-  There is also a `🎤` button on the session bar of every Claude session, showing
-  the mode it is in and opening the same three choices — the dialog states the
-  setting in full, the button answers it at a glance. The setting is one per
-  machine either way: every Claude session here shares it, so both places show
-  the same value. Choosing a mode sends `/voice` to a live session rather than
-  editing the settings file, since a session already running would not notice
-  the edit — pick one mid-turn and it is queued until the agent is between
-  turns, and both places say so. A `/voice` you type yourself is picked up too:
-  they read the file, not what Clodex last sent. Sessions started before a
-  change keep the mode they launched with until they restart.
+- **Voice input has a switch — in Preferences and on the session bar.** The
+  Claude CLI's voice mode — off, tap-to-talk, or hold-to-talk — was reachable
+  only by typing `/voice` into a terminal, so nothing on screen said which one
+  you were in. There is now a Voice input group in Preferences that shows the
+  current mode and switches it. There is also a `🎤` button on the session bar
+  of every Claude session, showing the mode it is in and opening the same
+  three choices — the dialog states the setting in full, the button answers it
+  at a glance. The setting is one per machine either way: every Claude session
+  running here shares it, so both places show the same value. Choosing a mode
+  sends `/voice` to a live session rather than editing the settings file,
+  since a session already running would not notice the edit — pick one
+  mid-turn and it is queued until the agent is between turns, and both places
+  say so. A `/voice` you type yourself is picked up too: they read the file,
+  not what Clodex last sent. Sessions started before a change keep the mode
+  they launched with until they restart.
 
 - **`SendFeedback` can now be switched off.** The tool arrived in a recent CLI
   drop and Clodex did not know about it, and a tool Clodex has never heard of

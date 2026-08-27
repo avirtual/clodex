@@ -22676,7 +22676,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
             pickJustDied: hadPending && pending === null,
             force
           };
-          for (const fn of [...listeners]) fn(snap);
+          for (const fn of [...listeners]) {
+            try {
+              fn(snap);
+            } catch (e) {
+              console.error("[voice] surface paint failed", e);
+            }
+          }
         }
         async function refresh() {
           let r = null;
@@ -26501,9 +26507,9 @@ helper=${d.helperPath}`;
         core.subscribe((snap) => {
           const key = `${snap.pending || ""}|${snap.mode || ""}|${snap.target || ""}|${snap.anyClaudeRow}`;
           if (key === lastKey) return;
-          lastKey = key;
           if (!pop.classList.contains("hidden")) renderRows();
           renderProxyBar();
+          lastKey = key;
         });
         document.addEventListener("mousedown", (e) => {
           if (pop.classList.contains("hidden")) return;
