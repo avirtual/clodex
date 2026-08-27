@@ -47,10 +47,10 @@
 
 const { test, after } = require('node:test');
 const assert = require('node:assert');
-const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const { createEngine } = require('../engine');
 const gitWorktree = require('../git-worktree');
 const { createMemoryStore } = require('../memory-store');
@@ -62,14 +62,8 @@ function gitAvailable() {
   try { execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
 }
 
-// Every tmpdir this file mints, reaped by the `after` hook at the bottom. The
-// ORPHAN subject deliberately leaves a checkout on disk — that IS its assertion —
-// so nothing here may run before it; see the hook for why it is where it is.
-const TMP_ROOTS = [];
-
 function mkEngine() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-wt-'));
-  TMP_ROOTS.push(tmp);
+  const tmp = mkTmpRoot('clx-wt-');
   // registryDir, or the engine seeds the operator's live ~/.clodex (t359).
   const registryDir = path.join(tmp, 'clodex-home');
   const eng = createEngine({
@@ -88,10 +82,7 @@ function mkEngine() {
 // A real repo with one real commit — `git worktree add` refuses to fork from a
 // repo with no commits, so the commit is load-bearing, not scene-setting.
 function mkRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-repo-'));
-  // Both the repo AND the `<dir>-<branch>` checkouts createWorktree puts beside
-  // it (git-worktree.js derives the sibling path from this one).
-  TMP_ROOTS.push(dir);
+  const dir = mkTmpRoot('clx-repo-');
   const run = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
   run('init', '-q', '-b', 'main');
   run('config', 'user.email', 't489@example.invalid');
@@ -439,59 +430,13 @@ test('a fresh conversation is still owed its digest — the preserved list canno
     + 'here: unlike rosterSentAt, a carried value can only suppress a delivery that already happened');
 });
 
-// MEASURED, not assumed (t492): before this hook, one run of this file left 19
-// directories in os.tmpdir() — 9 mkEngine roots, 6 mkRepo roots and the 4
-// checkouts the subjects do not remove. 816 of them had accumulated across ~44
-// runs in a single day (~35M), so the OS was not reaping them on any timescale
-// that matters. The orphan subject is only 2 of the 19; the rest is ordinary
-// fixture litter. Those 816 are this file's `clx-repo-*`/`clx-wt-*` share of a
-// repo-wide leak (38 test files, each its own prefix, measured at 47,122 `clx-*`
-// dirs / 989 MB in one $TMPDIR) that has its own ticket (`test/lib/tmp-roots.js`,
-// t498; this file has not been migrated to it) — this hook does not fix it, so do
-// not read 816 as the total and conclude the leak is closed.
-//
-// A top-level `after` is the ONLY correct place for this. The orphan subject's
-// whole assertion is that a checkout is STILL on disk after destroy(), so a
-// cleanup that ran any earlier would delete the evidence and leave the test
-// passing for the wrong reason. Runs before the force-exit below, or nothing
-// is reaped at all.
-//
-// Sibling checkouts are globbed rather than collected from each `wt.path`
-// because git-worktree.js derives them (`<repoName>-<branch>`, plus a `-2`
-// collision suffix) — matching the derivation here would go stale silently,
-// while a prefix sweep of a directory this file minted cannot touch anything
-// it did not make.
-// Every removal is guarded, which is the actual fix and not the `finally` below.
-// `force` suppresses ENOENT only, so an EPERM/EBUSY race throws; an unguarded
-// rmSync in a top-level `after` then turns cleanup into a red file AND abandons
-// roots #2..n unswept. Cleanup failing to clean is a leak; cleanup failing loudly
-// is a broken suite, which is worse — the same reasoning as test/lib/tmp-roots.js's
-// rmQuiet, which this mirrors rather than reinvents.
-function rmQuiet(target) {
-  try { fs.rmSync(target, { recursive: true, force: true }); } catch { /* not ours to force */ }
-}
-
+// Force-exit past createEngine's background timers, which no host stops here.
+// The tmpdir sweep is test/lib/tmp-roots.js's own top-level `after`, registered
+// at require time and therefore BEFORE this one — which is the ordering this
+// file needs: the orphan subject's assertion is that a checkout is STILL on
+// disk after destroy(), so a sweep running any earlier would delete the
+// evidence and leave that test passing for the wrong reason. Do not sweep here,
+// and do not queue the exit anywhere the sweep would land after it.
 after(() => {
-  // The `finally` is belt-and-braces on top of that, not the mechanism: a throw
-  // escaping here would queue no force-exit, and the process would sit on
-  // createEngine's intervals until node timed out. Note it cannot be relied on
-  // ALONE — node:test records the hook failure, but the queued exit(0) fires on
-  // the next check phase and the child reports over a pipe (scripts/run-tests.js),
-  // where stdout is async on POSIX: the failure event can be dropped and the parent
-  // sees exit 0. A messageless hang traded for a silent green is not a fix, so the
-  // sweep must not throw in the first place.
-  try {
-    for (const root of TMP_ROOTS) {
-      const parent = path.dirname(root);
-      const prefix = `${path.basename(root)}-`;
-      try {
-        for (const name of fs.readdirSync(parent)) {
-          if (name.startsWith(prefix)) rmQuiet(path.join(parent, name));
-        }
-      } catch { /* parent unreadable — nothing to sweep */ }
-      rmQuiet(root);
-    }
-  } finally {
-    setImmediate(() => process.exit(0));
-  }
+  setImmediate(() => process.exit(0));
 });
