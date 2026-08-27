@@ -1544,7 +1544,7 @@ test('seed: the lead prompt qualifies accept — merge window and the dirty/unre
     'and the unreadable tree its own, whose delete is an attempt rather than an outcome');
   assert.doesNotMatch(lead, /tree UNREADABLE \| archived, only if still running \| KEPT \| deleted \|/,
     'lead prompt must not still claim the unreadable row deletes the branch outright');
-  assert.match(lead, /`git branch -d` refuses to delete a\s+branch that any worktree still has checked out/,
+  assert.match(lead, /`git branch -d` refuses to delete a branch that any worktree still has\s+checked out/,
     'and says WHY those deletes fail, so a surviving ref is not read as a bug');
   assert.match(lead, /only `git worktree prune` releases it — which this path never\s+runs/,
     'and covers the removed-by-hand case, where a stale registration blocks it just the same');
@@ -1552,8 +1552,21 @@ test('seed: the lead prompt qualifies accept — merge window and the dirty/unre
   // `could NOT be deleted` to "rows 3 and 4" mis-sent row 1's failure sub-case —
   // where the removal failed, the tree is still checked out and the delete is
   // refused identically. Both halves pinned: the rule, and the row-1 cell.
-  assert.match(lead, /it fails wherever the TREE SURVIVED/,
-    'lead prompt gives one rule for every branch cell rather than a per-row list');
+  // t532 r3: the bold rule said "fails" while its own body said "ordinarily
+  // fails" — the counter-cases are named above `const del = …` in team-tickets.js
+  // (the kept tree may have a different branch checked out, or its registration
+  // may have been pruned). The qualifier is pinned INSIDE the match, since the
+  // unqualified sentence is the one a hurried lead reads.
+  assert.match(lead, /it ordinarily fails wherever the TREE\s+SURVIVED/,
+    'lead prompt gives one rule for the attempted branch cells, and does not overstate it');
+  assert.doesNotMatch(lead, /and it fails wherever the TREE SURVIVED/,
+    'lead prompt must not state that rule without its qualifier');
+  // Row 2's KEPT is `del.skipped`, set only for `downgrade.kind === 'dirty'` — a
+  // deliberate skip, not a failed attempt, so the rule covers three cells.
+  assert.match(lead, /the one rule behind all three ATTEMPTED cells/,
+    'and scopes it to the attempted cells, excluding row 2\'s deliberate skip');
+  assert.doesNotMatch(lead, /the one rule behind every branch cell/,
+    'lead prompt must not claim that rule covers row 2 as well');
   assert.match(lead, /\| REMOVED \| deleted — refused if that removal failed \|/,
     'and row 1\'s branch cell carries its own failure sub-case');
   assert.doesNotMatch(lead, /\| REMOVED \| deleted \|/,

@@ -197,12 +197,16 @@ cwd IS a worktree is still on the team.
     ref: **the teardown gate never opens on a second accept either**, so no
     `task accept` will ever remove that tree, however often you run it. Clean it
     up yourself.
-  - **A delete is an ATTEMPT, and it fails wherever the TREE SURVIVED.** That is
-    the one rule behind every branch cell: `git branch -d` refuses to delete a
-    branch that any worktree still has checked out, merged or not. Rows 3 and 4
-    keep the tree by design, so their delete ordinarily fails; row 1 succeeds
-    only because it removed the tree first, and where that removal failed it is
-    refused exactly the same way. Worse on row 3's commonest case, a tree removed
+  - **A delete is an ATTEMPT, and it ordinarily fails wherever the TREE
+    SURVIVED.** That is the one rule behind all three ATTEMPTED cells — row 2 is
+    not one of them, its `KEPT` being a deliberate skip rather than a failure.
+    `git branch -d` refuses to delete a branch that any worktree still has
+    checked out, merged or not. Rows 3 and 4 keep the tree by design, so their
+    delete ordinarily fails; row 1 succeeds only because it removed the tree
+    first, and where that removal failed it is refused exactly the same way.
+    "Ordinarily", not always: the kept tree may have a different branch checked
+    out, or its registration may have been pruned, and then the delete succeeds
+    and the ref really is gone. Worse on row 3's commonest case, a tree removed
     BY HAND: the stale worktree registration blocks the delete just as a live
     tree would, and only `git worktree prune` releases it — which this path never
     runs. Wherever you see `could NOT be deleted`, treat the ref as still live.
@@ -218,9 +222,9 @@ cwd IS a worktree is still on the team.
     session is not running)` instead of `LEFT RUNNING`. Nothing else moves.
 
   Not merged, or the merge check could not run: nothing is removed on any row (a
-  loop-minted seat is archived, if it is still running). Retiring a seat any OTHER way does not clean up
-  at all — a bare retire leaves the tree on disk, and Delete Session… removes it
-  along with the branch's unmerged commits.
+  loop-minted seat is archived, if it is still running). Retiring a seat any
+  OTHER way does not clean up at all — a bare retire leaves the tree on disk,
+  and Delete Session… removes it along with the branch's unmerged commits.
 - Cite the commit your spec was written against, and tell the hand to stop if it
   is not an ancestor of its worktree HEAD. That mismatch means the tree is not
   the one you described — symbols in the spec may not exist yet, and merging the

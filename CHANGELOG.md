@@ -43,9 +43,9 @@ blocks a release.
   corrections in the same pass: accept's cleanup only runs on a tree that is
   clean and readable — a dirty tree, or one already removed by hand, keeps the
   tree, and the prompt now says so and names the second accept that finishes a
-  dirty one — and the dispatch self-reminder is now
-  described alongside the loop's own stall nudge, so a lead can tell which
-  covers what instead of assuming either is the only net.
+  dirty one — and the dispatch self-reminder is now described alongside the
+  loop's own stall nudge, so a lead can tell which covers what instead of
+  assuming either is the only net.
 - **Accept has a third condition the prompt never stated: whose seat it is.**
   Cleanup is gated not only on the branch being merged and the tree being clean,
   but on the seat being one the ticket loop minted. Assign a ticket that carries a
