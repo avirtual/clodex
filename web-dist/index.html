@@ -2440,6 +2440,74 @@ body {
 #bust-popover .bust-list + .cost-note {
   margin-top: 10px;
 }
+#voice-popover {
+  position: fixed;
+  z-index: 50;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  background: var(--sidebar-bg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+#voice-popover.hidden {
+  display: none;
+}
+#voice-popover .popover-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.voice-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.voice-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.voice-row:hover {
+  background: var(--active-bg);
+}
+.voice-row-mark {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.voice-row-on .voice-row-mark {
+  color: var(--accent);
+}
+.voice-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+.voice-row-name {
+  color: var(--text);
+  font-weight: 600;
+}
+.voice-row-on .voice-row-name {
+  color: var(--accent);
+}
+.voice-row-desc {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.voice-rows-off {
+  opacity: 0.5;
+  pointer-events: none;
+}
+#proxy-actions .px-action.px-voice-off {
+  opacity: 0.45;
+}
 #files-popover {
   position: fixed;
   z-index: 50;
@@ -6322,6 +6390,10 @@ body {
     <div id="files-popover" class="hidden">
       <div class="popover-title"><span>Touched Files — <span id="files-popover-name"></span></span><button type="button" class="popover-close" id="files-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div id="files-popover-body"></div>
+    </div>
+    <div id="voice-popover" class="hidden">
+      <div class="popover-title"><span>Voice input</span><button type="button" class="popover-close" id="voice-popover-close" title="Close" aria-label="Close">&times;</button></div>
+      <div id="voice-popover-body"></div>
     </div>
     <div id="selection-popover" class="hidden">
       <div class="popover-title"><span>Riding your next message — <span id="selection-popover-name"></span></span><button type="button" class="popover-close" id="selection-popover-close" title="Close" aria-label="Close">&times;</button></div>
@@ -22551,19 +22623,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
       ];
       var POLL_MS = 15e3;
       var CHOICE_DEBOUNCE_MS = 250;
-      function createVoiceControl({ getActiveSession, sessionTypeOf, sessionList, showToast }) {
-        const sel = document.getElementById("prefs-voice-mode");
-        const stateEl = document.getElementById("prefs-voice-state");
-        if (!sel || !stateEl) return { refresh() {
-        }, render() {
-        }, start() {
-        }, stop() {
-        } };
+      function createVoiceCore({ getActiveSession, sessionTypeOf, sessionList, showToast }) {
         let state = null;
         let pending = null;
         let pendingTarget = null;
         let injectTimer = null;
         let pollTimer = null;
+        let holds = 0;
+        const listeners = /* @__PURE__ */ new Set();
         function injectTarget() {
           const active = getActiveSession();
           if (active && sessionTypeOf(active) === "claude") return active;
@@ -22577,28 +22644,39 @@ ${m[2].replace(/^\r?\n/, "")}`;
         function anyClaudeRow() {
           return !!sessionList.querySelector('.session-item[data-type="claude"]');
         }
-        function render(force = false) {
+        function isMode(m) {
+          return VOICE_ITEMS.some((i) => i.mode === m);
+        }
+        function snapshot() {
+          const target = injectTarget();
+          const live = target === pendingTarget ? pending : null;
+          return {
+            target,
+            state,
+            pending: live,
+            mode: live || state && state.effective,
+            anyClaudeRow: anyClaudeRow(),
+            pickJustDied: false,
+            force: false
+          };
+        }
+        function emit(force = false) {
           const target = injectTarget();
           const hadPending = pending !== null;
           if (target !== pendingTarget) {
             pending = null;
             pendingTarget = null;
           }
-          const pickJustDied = hadPending && pending === null;
-          const mode = pending || state && state.effective;
-          if (force || document.activeElement !== sel || pickJustDied) {
-            sel.value = VOICE_ITEMS.some((i) => i.mode === mode) ? mode : "";
-          }
-          sel.disabled = !target;
-          if (!target) {
-            stateEl.textContent = anyClaudeRow() ? "No Claude session can be reached right now \u2014 the mode is shown from the file but cannot be changed from here." : "No Claude session on this machine \u2014 start one to change the mode. The value shown is read from the settings file.";
-          } else if (pending) {
-            stateEl.textContent = `Switching to ${pending} \u2014 queued until ${target} is between turns.`;
-          } else if (!VOICE_ITEMS.some((i) => i.mode === mode)) {
-            stateEl.textContent = state && state.source === "legacy" ? "Only the legacy voiceEnabled key is set in the settings file \u2014 pick a mode to set one." : "Not set in the settings file yet \u2014 pick a mode to set one.";
-          } else {
-            stateEl.textContent = "";
-          }
+          const snap = {
+            target,
+            state,
+            pending,
+            mode: pending || state && state.effective,
+            anyClaudeRow: anyClaudeRow(),
+            pickJustDied: hadPending && pending === null,
+            force
+          };
+          for (const fn of [...listeners]) fn(snap);
         }
         async function refresh() {
           let r = null;
@@ -22614,14 +22692,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
               pendingTarget = null;
             }
           }
-          render();
+          emit();
         }
         async function sendMode(mode) {
           const target = injectTarget();
           if (!target) {
             pending = null;
             pendingTarget = null;
-            render();
+            emit();
             return;
           }
           let r = null;
@@ -22634,50 +22712,96 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (pending !== mode) return;
             pending = null;
             pendingTarget = null;
-            render(true);
+            emit(true);
             showToast(`Setting voice to ${mode} failed: ${r && r.error || "unknown error"}`);
             return;
           }
           setTimeout(refresh, 1500);
         }
-        sel.addEventListener("change", () => {
-          const mode = sel.value;
-          if (!VOICE_ITEMS.some((i) => i.mode === mode)) {
-            render(true);
-            return;
+        function choose(mode) {
+          if (!isMode(mode)) {
+            emit(true);
+            return false;
           }
           const target = injectTarget();
           if (!target) {
-            render(true);
-            return;
+            emit(true);
+            return false;
           }
           pending = mode;
           pendingTarget = target;
-          render();
+          emit();
           if (injectTimer) clearTimeout(injectTimer);
           injectTimer = setTimeout(() => {
             injectTimer = null;
             sendMode(mode);
           }, CHOICE_DEBOUNCE_MS);
-        });
-        window.addEventListener("focus", refresh);
-        sel.addEventListener("blur", () => render());
-        const observer = new MutationObserver(() => render());
+          return true;
+        }
+        const observer = new MutationObserver(() => emit());
         function start() {
-          if (!pollTimer) pollTimer = setInterval(refresh, POLL_MS);
-          observer.observe(sessionList, { childList: true, subtree: true });
+          holds++;
+          if (holds === 1) {
+            if (!pollTimer) pollTimer = setInterval(refresh, POLL_MS);
+            observer.observe(sessionList, { childList: true, subtree: true });
+          }
           refresh();
         }
         function stop() {
+          if (holds > 0) holds--;
+          if (holds > 0) return;
           if (pollTimer) {
             clearInterval(pollTimer);
             pollTimer = null;
           }
           observer.disconnect();
         }
-        return { refresh, render, start, stop };
+        function subscribe(fn) {
+          listeners.add(fn);
+          return () => listeners.delete(fn);
+        }
+        window.addEventListener("focus", () => {
+          if (holds > 0) refresh();
+        });
+        return { snapshot, subscribe, choose, refresh, repaint: emit, start, stop, isMode };
       }
-      module.exports = { createVoiceControl, VOICE_ITEMS };
+      function createVoiceControl({ core }) {
+        const sel = document.getElementById("prefs-voice-mode");
+        const stateEl = document.getElementById("prefs-voice-state");
+        if (!sel || !stateEl) return { refresh() {
+        }, render() {
+        }, start() {
+        }, stop() {
+        } };
+        function paint(snap) {
+          const { target, state, pending, mode, pickJustDied, force } = snap;
+          if (force || document.activeElement !== sel || pickJustDied) {
+            sel.value = core.isMode(mode) ? mode : "";
+          }
+          sel.disabled = !target;
+          if (!target) {
+            stateEl.textContent = snap.anyClaudeRow ? "No Claude session can be reached right now \u2014 the mode is shown from the file but cannot be changed from here." : "No Claude session on this machine \u2014 start one to change the mode. The value shown is read from the settings file.";
+          } else if (pending) {
+            stateEl.textContent = `Switching to ${pending} \u2014 queued until ${target} is between turns.`;
+          } else if (!core.isMode(mode)) {
+            stateEl.textContent = state && state.source === "legacy" ? "Only the legacy voiceEnabled key is set in the settings file \u2014 pick a mode to set one." : "Not set in the settings file yet \u2014 pick a mode to set one.";
+          } else {
+            stateEl.textContent = "";
+          }
+        }
+        core.subscribe(paint);
+        sel.addEventListener("change", () => {
+          core.choose(sel.value);
+        });
+        sel.addEventListener("blur", () => core.repaint());
+        return {
+          refresh: () => core.refresh(),
+          render: (force) => core.repaint(!!force),
+          start: () => core.start(),
+          stop: () => core.stop()
+        };
+      }
+      module.exports = { createVoiceCore, createVoiceControl, VOICE_ITEMS };
     }
   });
 
@@ -26314,6 +26438,82 @@ helper=${d.helperPath}`;
         return { openFilesPopover, openFilePeek, isFilesPopoverForKey };
       }
       module.exports = { initFilesPopover };
+    }
+  });
+
+  // renderer/popovers/voice-popover.js
+  var require_voice_popover = __commonJS({
+    "renderer/popovers/voice-popover.js"(exports, module) {
+      var { esc } = require_format();
+      var { VOICE_ITEMS } = require_voice_control();
+      function initVoicePopover({ core, renderProxyBar }) {
+        const pop = document.getElementById("voice-popover");
+        const body = document.getElementById("voice-popover-body");
+        if (!pop || !body) return { actionHtml: () => "", closeVoicePopover() {
+        }, openVoicePopover() {
+        } };
+        function closeVoicePopover() {
+          pop.classList.add("hidden");
+        }
+        function actionHtml() {
+          const snap = core.snapshot();
+          const mode = snap.pending || snap.mode;
+          const known = core.isMode(mode);
+          const label = known ? mode : "voice";
+          const dim = known && mode === "off" ? " px-voice-off" : "";
+          const tip = snap.pending ? `Voice input: switching to ${snap.pending}, queued until ${snap.target} is between turns` : "Voice input mode for every Claude session on this machine \u2014 click to change";
+          return `<button class="px-action${dim}" data-act="voice" data-tip="${esc(tip)}">\u{1F3A4} ${esc(label)}</button>`;
+        }
+        function renderRows() {
+          const snap = core.snapshot();
+          const mode = snap.pending || snap.mode;
+          const rows = VOICE_ITEMS.map((i) => {
+            const on = i.mode === mode ? " voice-row-on" : "";
+            const mark = i.mode === mode ? "\u25CF" : "\u25CB";
+            return `<div class="voice-row${on}" data-mode="${i.mode}"><span class="voice-row-mark">${mark}</span><span class="voice-row-main"><span class="voice-row-name">${esc(i.name)}</span><span class="voice-row-desc">${esc(i.desc)}</span></span></div>`;
+          }).join("");
+          let note = "";
+          if (!snap.target) {
+            note = snap.anyClaudeRow ? "No Claude session can be reached right now \u2014 the mode is read from the settings file but cannot be changed from here." : "No Claude session on this machine \u2014 start one to change the mode.";
+          } else if (snap.pending) {
+            note = `Switching to ${esc(snap.pending)} \u2014 queued until ${esc(snap.target)} is between turns.`;
+          } else {
+            note = "One setting for every Claude session on this machine. Sessions already running keep the mode they started with until they restart.";
+          }
+          body.innerHTML = `<div class="voice-rows${snap.target ? "" : " voice-rows-off"}">${rows}</div><div class="cost-note">${note}</div>`;
+        }
+        function openVoicePopover(anchor) {
+          if (!pop.classList.contains("hidden")) return closeVoicePopover();
+          const r = anchor.getBoundingClientRect();
+          renderRows();
+          pop.classList.remove("hidden");
+          const w = pop.offsetWidth;
+          pop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+          pop.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
+        }
+        body.addEventListener("click", (e) => {
+          const row = e.target.closest(".voice-row");
+          if (!row || !row.dataset.mode) return;
+          core.choose(row.dataset.mode);
+          closeVoicePopover();
+        });
+        core.subscribe(() => {
+          if (!pop.classList.contains("hidden")) renderRows();
+          renderProxyBar();
+        });
+        document.addEventListener("mousedown", (e) => {
+          if (pop.classList.contains("hidden")) return;
+          if (pop.contains(e.target)) return;
+          if (e.target.closest('[data-act="voice"]')) return;
+          closeVoicePopover();
+        });
+        document.addEventListener("keydown", (e) => {
+          if (e.key === "Escape" && !pop.classList.contains("hidden")) closeVoicePopover();
+        });
+        document.getElementById("voice-popover-close").addEventListener("click", closeVoicePopover);
+        return { actionHtml, openVoicePopover, closeVoicePopover };
+      }
+      module.exports = { initVoicePopover };
     }
   });
 
@@ -31044,7 +31244,7 @@ ${detail}` });
       var { createDrawerHost } = require_drawer_host();
       var { createIpcLog } = require_ipc_log();
       var { createInboxDrawer } = require_inbox_drawer();
-      var { createVoiceControl } = require_voice_control();
+      var { createVoiceCore, createVoiceControl } = require_voice_control();
       var { createTermSearch } = require_term_search();
       var { createIntentHighlight } = require_intent_highlight();
       var { initBanners } = require_banners();
@@ -31061,6 +31261,7 @@ ${detail}` });
       var { initBustPopover } = require_bust_popover();
       var { initSessionInfoPopover } = require_session_info_popover();
       var { initFilesPopover } = require_files_popover();
+      var { initVoicePopover } = require_voice_popover();
       var { initSelectionPopover } = require_selection_popover();
       var { initChecklistPopovers } = require_checklist_popovers();
       var { initTeamRolesPopover } = require_team_roles_popover();
@@ -33485,6 +33686,7 @@ ${detail}` });
           if (pluginId !== "_host") pluginBar.deliverEvent(pluginId, topic, payload);
         });
       }
+      var voiceBarActionHtml = () => "";
       function renderSessionActions(holdHtml = "") {
         const el = document.getElementById("proxy-actions");
         if (!el) return;
@@ -33497,6 +33699,7 @@ ${detail}` });
             const unseen = filesUnseen.has(activeSession) ? " px-files-new" : "";
             btns.push(`<button class="px-action${unseen}" data-act="files" data-tip="Files this agent's tools touched \u2014 click to view or diff">${label}</button>`);
           }
+          if (type === "claude") btns.push(voiceBarActionHtml());
           btns.push('<button class="px-action" data-act="session-menu" data-tip="Session actions \u2014 tools, skills, agents, intents, settings, history, reload">\u2699 session \u25BE</button>');
         }
         if (activePeerQueryable()) {
@@ -33928,6 +34131,7 @@ Click for live activity`;
               return;
             }
             if (action.dataset.act === "files") openFilesPopover(activeSession, action);
+            else if (action.dataset.act === "voice") openVoicePopover(action);
             else if (action.dataset.act === "peer-edit") {
               openPeerArgs(activeSession);
             } else if (action.dataset.act === "session-menu") {
@@ -34160,12 +34364,19 @@ Click for live activity`;
         }
       });
       createInboxDrawer({ openFilePeek, showToast });
-      var voiceControl = createVoiceControl({
+      var voiceCore = createVoiceCore({
         getActiveSession: () => activeSession,
         sessionTypeOf,
         sessionList,
         showToast
       });
+      var voiceControl = createVoiceControl({ core: voiceCore });
+      var { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
+        core: voiceCore,
+        renderProxyBar
+      });
+      voiceBarActionHtml = voiceActionHtml;
+      voiceCore.start();
       var {
         typeToTakeControl,
         renderPeerBar,

@@ -342,6 +342,12 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/popovers/bust-popover.js',
   'renderer/popovers/session-info-popover.js',
   'renderer/popovers/files-popover.js',
+  // The session bar's voice button (t517). Scanned for the reason every popover
+  // is, with one extra: it is the SECOND surface over voice-control's core, and
+  // the whole point of that split is that neither surface keeps voice state of
+  // its own. Reaching for a renderer.js name here is the first sign it started
+  // reading session state directly instead of through the core's snapshot.
+  'renderer/popovers/voice-popover.js',
   'renderer/popovers/checklist-popovers.js',
   'renderer/popovers/team-roles-popover.js',
   'renderer/popovers/context-popover.js',

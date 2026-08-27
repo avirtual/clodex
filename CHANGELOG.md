@@ -17,8 +17,11 @@ blocks a release.
   off, tap-to-talk, or hold-to-talk — was reachable only by typing `/voice` into
   a terminal, so nothing on screen said which one you were in. There is now a
   Voice input group in Preferences that shows the current mode and switches it.
-  It sits there, not on a session's bar, because the setting is one per machine:
-  every Claude session here shares it. Choosing a mode sends `/voice` to a live
+  There is also a `🎤` button on the session bar of every Claude session, showing
+  the mode it is in and opening the same three choices — the dialog states the
+  setting in full, the button answers it at a glance. The setting is one per
+  machine either way: every Claude session here shares it, so both places show
+  the same value. Choosing a mode sends `/voice` to a live
   session rather than editing the settings file, since a session already running
   would not notice the edit — pick one mid-turn and it is queued until the agent
   is between turns, and the row says so. A `/voice` you type yourself is picked

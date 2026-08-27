@@ -46,7 +46,7 @@ const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
 const { createDrawerHost } = require('./drawer-host');
 const { createIpcLog } = require('./ipc-log');
 const { createInboxDrawer } = require('./inbox-drawer');
-const { createVoiceControl } = require('./voice-control');
+const { createVoiceCore, createVoiceControl } = require('./voice-control');
 const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
 const { initBanners } = require('./banners');
@@ -63,6 +63,7 @@ const { initCostPopover } = require('./popovers/cost-popover');
 const { initBustPopover } = require('./popovers/bust-popover');
 const { initSessionInfoPopover } = require('./popovers/session-info-popover');
 const { initFilesPopover } = require('./popovers/files-popover');
+const { initVoicePopover } = require('./popovers/voice-popover');
 const { initSelectionPopover } = require('./popovers/selection-popover');
 const { initChecklistPopovers } = require('./popovers/checklist-popovers');
 const { initTeamRolesPopover } = require('./popovers/team-roles-popover');
@@ -2697,6 +2698,11 @@ if (window.api.onPluginEvent) {
   });
 }
 
+// Assigned when the voice popover island is initialised, far below. A direct
+// reference to that const would be a TDZ throw: renderSessionActions is hoisted
+// and the bar can be painted by a restore before the island exists.
+let voiceBarActionHtml = () => '';
+
 function renderSessionActions(holdHtml = '') {
   const el = document.getElementById('proxy-actions');
   if (!el) return;
@@ -2709,6 +2715,9 @@ function renderSessionActions(holdHtml = '') {
       const unseen = filesUnseen.has(activeSession) ? ' px-files-new' : '';
       btns.push(`<button class="px-action${unseen}" data-act="files" data-tip="Files this agent's tools touched — click to view or diff">${label}</button>`);
     }
+    // Claude only: Codex has no `/voice`, so the button would name a setting
+    // that seat cannot have.
+    if (type === 'claude') btns.push(voiceBarActionHtml());
     btns.push('<button class="px-action" data-act="session-menu" data-tip="Session actions — tools, skills, agents, intents, settings, history, reload">⚙ session ▾</button>');
   }
   if (activePeerQueryable()) {
@@ -3233,6 +3242,7 @@ setInterval(() => {
         return;
       }
       if (action.dataset.act === 'files') openFilesPopover(activeSession, action);
+      else if (action.dataset.act === 'voice') openVoicePopover(action);
       else if (action.dataset.act === 'peer-edit') {
         openPeerArgs(activeSession);
       }
@@ -3504,9 +3514,20 @@ createTermTab({
 
 createInboxDrawer({ openFilePeek, showToast });
 
-const voiceControl = createVoiceControl({
+const voiceCore = createVoiceCore({
   getActiveSession: () => activeSession, sessionTypeOf, sessionList, showToast,
 });
+const voiceControl = createVoiceControl({ core: voiceCore });
+
+const { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
+  core: voiceCore, renderProxyBar,
+});
+voiceBarActionHtml = voiceActionHtml;
+// The bar holds the core open for the life of the window: unlike the
+// Preferences row, its label is on screen with no dialog to open, so the poll
+// and the row observer behind it must keep running. Preferences takes a second,
+// refcounted hold while its dialog is up.
+voiceCore.start();
 
 
 

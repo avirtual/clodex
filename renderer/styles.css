@@ -1761,6 +1761,40 @@ html, body {
 #bust-popover .bust-list + .cost-note { margin-top: 10px; }
 
 /* Touched-files popover — same shell as the bust popover. */
+/* Voice-mode popover: same box as #files-popover, narrower — it holds three
+   fixed rows, not a list that grows. */
+#voice-popover {
+  position: fixed;
+  z-index: 50;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  background: var(--sidebar-bg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+#voice-popover.hidden { display: none; }
+#voice-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.voice-rows { display: flex; flex-direction: column; gap: 2px; }
+.voice-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 11px;
+}
+.voice-row:hover { background: var(--active-bg); }
+.voice-row-mark { flex: none; color: var(--text-dim); font-size: 10px; }
+.voice-row-on .voice-row-mark { color: var(--accent); }
+.voice-row-main { display: flex; flex-direction: column; gap: 1px; overflow: hidden; }
+.voice-row-name { color: var(--text); font-weight: 600; }
+.voice-row-on .voice-row-name { color: var(--accent); }
+.voice-row-desc { color: var(--text-dim); font-size: 10px; }
+/* No live Claude session to inject into: the rows stay VISIBLE so the current
+   mode still reads, but nothing here can be picked. */
+.voice-rows-off { opacity: 0.5; pointer-events: none; }
+/* Off is the same glyph dimmed — there is no muted-microphone codepoint in
+   Unicode, so the word carries the precise state and this carries the glance. */
+#proxy-actions .px-action.px-voice-off { opacity: 0.45; }
+
 #files-popover {
   position: fixed;
   z-index: 50;
