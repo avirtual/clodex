@@ -234,6 +234,52 @@ test('the board row shows a corrected ticket as respec`d, with a count', () => {
   assert.match(f.reply(), /respec'd ×2/, 'the count tracks');
 });
 
+// ── t531: the merge-waiting mark on the same rows ──────────────────────────
+// Filed here rather than in ticket-auto-merge.test.js, which owns the STAMP's
+// lifecycle: this is the reader, and its precedent in both mechanism and shape
+// is the respec suffix above — a board fact riding the title on both row shapes.
+//
+// Driven through `_stampMergeWaiting` rather than by writing `mergeWaiting` onto
+// the record by hand. A hand-written field would pin the renderer against this
+// test's belief about the field name, which is the one thing a rename breaks
+// invisibly; going through the writer makes the two halves fail together.
+test('t531: a deferred merge is VISIBLE on the board — open row and closed row', () => {
+  const f = mkRespec();
+  openPinned(f);
+  const lead = f.seat('lead');
+
+  f.m._handleTask(lead, { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  assert.doesNotMatch(f.reply(), /merge waiting/, 'ENTER: a ticket with no deferred merge carries no mark');
+
+  // The OPEN row. Rare in practice (the ticket was reopened while the merge was
+  // deferred) but it is the shape `row` renders.
+  f.m._stampMergeWaiting(f.team, 't1', 'suite-in-flight');
+  assert.strictEqual(f.one('t1').mergeWaiting, 'suite-in-flight',
+    'ENTER: the stamp really landed on the record — otherwise the assertion below reads an unstamped board');
+  f.m._handleTask(lead, { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  assert.match(f.reply(), /t1 \[open\].*merge waiting: suite-in-flight/,
+    'the open row states the deferred merge');
+
+  // The CLOSED row, which is the shape that actually occurs: the loop stamps
+  // after `task done` has already written state `done`, so a lead judging
+  // ACCEPT freshness reads it in the recently-closed block.
+  const t = f.one('t1');
+  t.state = 'done';
+  t.closedAt = Date.now();
+  f.tstore.save(f.team.root, f.load().map((x) => (x.id === 't1' ? t : x)));
+  f.m._handleTask(lead, { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  assert.match(f.reply(), /recently closed:/, 'ENTER: the row reached the recently-closed block, not the open list');
+  assert.match(f.reply(), /t1 \[done\].*closed.*merge waiting: suite-in-flight/,
+    'the closed row states it too — this is the row the lead actually reads');
+
+  // And it goes away with the stamp: a mark that outlived the field would tell
+  // the lead to wait forever for a merge that already landed.
+  f.m._stampMergeWaiting(f.team, 't1', null);
+  assert.ok(!('mergeWaiting' in f.one('t1')), 'ENTER: the stamp was cleared');
+  f.m._handleTask(lead, { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  assert.doesNotMatch(f.reply(), /merge waiting/, 'the mark is gone once the merge is no longer deferred');
+});
+
 // The guard t339 must not lose: an open ticket silently rewritten into
 // different work, with no record that it changed, is the failure mode.
 test('respec records the supersession — that it happened, and by whom', () => {

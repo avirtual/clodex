@@ -7136,10 +7136,22 @@ function createTicketMethods(deps, shared) {
       // without it the row silently changes text between two listings and the lead
       // has no way to tell a corrected ticket from one it misremembers.
       const respecMark = (t) => (Array.isArray(t.respecs) && t.respecs.length ? ` (respec'd ×${t.respecs.length})` : '');
+      // A ticket whose merge is deferred is otherwise indistinguishable from one
+      // the loop has finished with — and the difference decides whether the lead
+      // waits or merges by hand. `_stampMergeWaiting` clears the field on every
+      // exit but the defer arm, so the mark's presence IS the live claim; it
+      // renders the stored value rather than a phrase of its own, or the row
+      // would assert a state the record does not carry.
+      //
+      // On BOTH row shapes because the stamp lands on a ticket already in state
+      // `done` (the loop merges after `task done` and an ACCEPT verdict), so the
+      // recently-closed block is where it is normally read; an `open` row can
+      // carry it too when the ticket was reopened while the merge was deferred.
+      const mergeWaitingMark = (t) => (t.mergeWaiting ? ` (merge waiting: ${t.mergeWaiting})` : '');
       const row = (t) =>
-        `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${respecMark(t)}`;
+        `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}`;
       const closedRow = (t) =>
-        `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}`;
+        `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}`;
       const lines = shown.map(row);
       const head = filter === 'open' ? `tickets on ${team.name}` : `tickets on ${team.name} [${filter}]`;
       const closed = filter === 'open' ? tickets.filter((t) => t.state !== 'open') : [];
