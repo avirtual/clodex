@@ -1362,11 +1362,11 @@ function createTicketMethods(deps, shared) {
         // shared reason: each is reached only past `if (!m.merged) return`, so
         // the branch is ALREADY an ancestor of the base that check compared
         // against, and no merge the retry could still run would produce a
-        // commit. It would clear STEP 2 —
-        // the dirty tree is the SEAT's worktree, never `team.root` — and then
-        // die either at STEP 3's `on-master`, if the root is parked off master,
-        // or at STEP 4's `!merged.moved`. Either way with a fresh, false MERGE
-        // FAILED for a merge that had nothing to do.
+        // commit. Such a retry would clear STEP 2 — the dirty tree is the
+        // SEAT's worktree, never `team.root` — and then die either at STEP 3's
+        // `on-master`, if the root is parked off master, or at STEP 4's
+        // `!merged.moved`. Either way with a fresh, false MERGE FAILED for a
+        // merge that had nothing to do.
         //
         // Silent like the reopen case above it, but not for its reason: there
         // nothing had been decided about the merge, here the lead's accept IS
@@ -1586,12 +1586,19 @@ function createTicketMethods(deps, shared) {
         //
         // `closedOut` alongside `state`, and the reason it is not redundant with
         // the top gate: an ACCEPT leaves `state` at `done`, so state alone is
-        // blind to it, and the accept arms tear the tree down and delete the
-        // branch. One landing in the awaits above — the ancestor check, the
-        // suite, the lock wait — reaches this line with the ref already gone and
-        // stamps a MERGE FAILED onto a row the lead has just closed. Sub-second
-        // rather than the retry's ten minutes, but the same defect the top gate
-        // closes for the deferred entry.
+        // blind to it. The arm that makes that blindness cost something is the
+        // MERGED one — an accept after the lead has landed the branch by hand,
+        // which removes the worktree and deletes the ref this merge is about to
+        // name. It can interleave at any of the three git awaits this window is
+        // made of — `isMerged`, `isDirty`, `currentBranch` — and then this line
+        // merges a branch that is gone and stamps MERGE FAILED onto a row the
+        // lead has just closed.
+        //
+        // The retry's lock wait is NOT in this window and needs nothing here:
+        // the defer arm schedules and returns, so a retry re-enters through
+        // `_queueAutoMerge` and meets the TOP gate. This one exists for the
+        // first-run entry, which never passes that gate again — sub-second
+        // rather than the retry's ten minutes, and the same defect.
         //
         // A SYNCHRONOUS field read, and that is what makes it safe here: the pin
         // below forbids any `await` in this stretch, and re-checking a condition

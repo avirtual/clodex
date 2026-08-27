@@ -1949,11 +1949,16 @@ test('t542: a lead ACCEPT landing inside the merge, after the gates have passed,
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   let f = null;
   let accepted = null;
+  // Set BEFORE the inner work, not after the await resolves: nothing on today's
+  // accept path calls currentBranch, but a future one that did would re-enter a
+  // guard keyed on the RESULT and recurse forever instead of failing.
+  let entered = false;
   const realCurrentBranch = require('../git-worktree').currentBranch;
   const gitOver = {
     currentBranch: async (root) => {
       const out = await realCurrentBranch(root);
-      if (accepted) return out;
+      if (entered) return out;
+      entered = true;
       // What makes the accept take the MERGED arm — the tear-down arm that
       // deletes the ref the merge below is about to name.
       git(repo.dir, ['merge', '--no-ff', '-q', '-m', 'Merge tl-1 by hand', 'tl-1']);
@@ -1982,6 +1987,11 @@ test('t542: a lead ACCEPT landing inside the merge, after the gates have passed,
     'no MERGE FAILED is stamped onto a row the lead had just accepted and closed out');
   assert.deepStrictEqual(f.esc(), [], 'and nothing escalated about a finished ticket');
   assert.deepStrictEqual(f.landed(), [], 'nothing was announced as merged either');
+  // The thing itself, not its side effect: today an unfixed build fails anyway
+  // because the ref is gone, but on the dirty-downgrade arm — which KEEPS the
+  // branch — it would actually land.
+  assert.doesNotMatch(f.masterLog(), /Merge t1:/,
+    'and no loop merge commit exists for the accepted ticket');
   assert.ok(f.logs.some((l) => /ABANDONED at the merge step/.test(l.msg) && /closed out/.test(l.msg)),
     'and the log says WHICH condition fired — closed out, not a state change');
 });
