@@ -36,8 +36,9 @@
 // non-Claude seat — an always-present bar button would claim the seat under it
 // has a voice mode when Codex has no `/voice` at all.
 //
-// DOM-bound, so no unit tests per the R1 rule; the read behind it is
-// test/voice-settings.test.js.
+// `createVoiceCore` is DOM-free and unit-tested in test/voice-core.test.js; only
+// `createVoiceControl`'s paint is DOM-bound per the R1 rule. The read behind
+// both is test/voice-settings.test.js.
 
 const VOICE_ITEMS = [
   { mode: 'off', name: 'Off', desc: 'No voice input' },
@@ -224,10 +225,10 @@ function createVoiceCore({ getActiveSession, sessionTypeOf, sessionList, showToa
 function createVoiceControl({ core }) {
   const sel = document.getElementById('prefs-voice-mode');
   const stateEl = document.getElementById('prefs-voice-state');
-  // Both no-ops: a caller that finds `render` on one branch and not the other
-  // gets a TypeError only on the markup-missing path, which is the one nobody
-  // exercises.
-  if (!sel || !stateEl) return { refresh() {}, render() {}, start() {}, stop() {} };
+  // The same SHAPE as the real return below: a method present on one branch and
+  // missing on the other gets a TypeError only on the markup-missing path, which
+  // is the one nobody exercises.
+  if (!sel || !stateEl) return { start() {}, stop() {} };
 
   function paint(snap) {
     const { target, state, pending, mode, pickJustDied, force } = snap;
@@ -268,9 +269,11 @@ function createVoiceControl({ core }) {
   // moment; without it the row can sit showing a mode the file contradicts.
   sel.addEventListener('blur', () => core.repaint());
 
+  // start/stop ONLY. `refresh` and `render` were exported here with no caller in
+  // renderer.js; `render`'s `(force)` parameter was the r4 shape itself, a
+  // parameterised function sitting ready for a by-name registration to hand it
+  // an Event as `force`. Painting is driven by the core's subscription above.
   return {
-    refresh: () => core.refresh(),
-    render: (force) => core.repaint(!!force),
     start: () => core.start(),
     stop: () => core.stop(),
   };

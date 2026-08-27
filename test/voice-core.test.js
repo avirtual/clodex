@@ -19,8 +19,9 @@ const assert = require('node:assert');
 
 const { createVoiceCore } = require('../renderer/voice-control');
 
-const POLL_MS = 15000;          // must match voice-control.js
-const CHOICE_DEBOUNCE_MS = 250; // must match voice-control.js
+const POLL_MS = 15000;            // must match voice-control.js
+const CHOICE_DEBOUNCE_MS = 250;   // must match voice-control.js
+const INJECT_READBACK_MS = 1500;  // must match voice-control.js
 
 // A settings read as the main side really returns it. `ok` is load-bearing:
 // `refresh` gates on `r && r.ok`, so a fixture missing it leaves `state` null
@@ -79,8 +80,12 @@ function harness({ rows = [], active = null, voice = null, inject } = {}) {
     observe() { calls.observe++; this.observing = true; }
     disconnect() { calls.disconnect++; this.observing = false; }
   };
+  const focusHandlers = [];
   global.window = {
-    addEventListener(ev) { if (ev === 'focus') calls.focusListeners++; },
+    // The callback is CAPTURED, not counted and dropped. Counting alone is what
+    // let the `holds > 0` guard inside it go unexercised while a test named for
+    // that guard stayed green.
+    addEventListener(ev, cb) { if (ev === 'focus') { calls.focusListeners++; focusHandlers.push(cb); } },
     api: {
       async getVoiceMode() { calls.getVoiceMode++; return state.voice; },
       async injectPrompt(target, text) { calls.injectPrompt.push([target, text]); return state.inject(target, text); },
@@ -99,6 +104,8 @@ function harness({ rows = [], active = null, voice = null, inject } = {}) {
 
   return {
     core, emits, calls, toasts, list, state,
+    // Fires the window `focus` event the way the browser does.
+    focus() { for (const fn of focusHandlers) fn(); },
     // Replaces the rows and delivers the change the way the real DOM does —
     // through the core's own MutationObserver, and only while it is observing.
     // Reaching for `repaint()` instead would test a path the app does not take
@@ -278,6 +285,20 @@ test('the debounce coalesces to the FINAL pick — one injection, not one per op
     t.mock.timers.tick(CHOICE_DEBOUNCE_MS);
     await flush();
     assert.deepStrictEqual(h.calls.injectPrompt, [['a', '/voice off']]);
+
+    // A SUCCESSFUL injection schedules its own short read-back, because the
+    // quiet gate means the file changes only once the CLI has actually run the
+    // command and nothing else announces that. Delete the read-back and the
+    // pending affordance sits until the 15s poll instead of ~1.5s — ten times
+    // longer, on the exact affordance this island exists for.
+    assert.strictEqual(h.last().pending, 'off', 'the affordance stands until a read agrees');
+    h.state.voice = fileSays('off');
+    const beforeReadback = h.calls.getVoiceMode;
+    t.mock.timers.tick(INJECT_READBACK_MS);
+    await flush();
+    assert.strictEqual(h.calls.getVoiceMode, beforeReadback + 1,
+      'the successful injection must re-read the file on its own short delay');
+    assert.strictEqual(h.last().pending, null, 'and that read retires the affordance');
   } finally { h.restore(); }
 });
 
@@ -474,10 +495,34 @@ test('an unbalanced stop cannot drive the refcount negative and wedge a later st
   } finally { h.restore(); }
 });
 
-test('the focus listener only reads while a surface is holding the core open', () => {
+test('the focus listener only reads while a surface is holding the core open', async () => {
   const h = harness({ rows: [row('a')], active: 'a', voice: fileSays('tap') });
   try {
     assert.strictEqual(h.calls.focusListeners, 1, 'exactly one window focus listener per core');
+
+    // The guard is `if (holds > 0) refresh()`, so the listener has to be CALLED
+    // to exercise it. Asserting the registration count alone leaves the guard
+    // deletable with this test still green under a name that claims to cover it.
+    const beforeHold = h.calls.getVoiceMode;
+    h.focus();
+    await flush();
+    assert.strictEqual(h.calls.getVoiceMode, beforeHold,
+      'no surface is holding the core open, so a focus must not read the file');
+
+    h.core.start();
+    await flush();
+    const holding = h.calls.getVoiceMode;
+    h.focus();
+    await flush();
+    assert.strictEqual(h.calls.getVoiceMode, holding + 1,
+      'while a surface holds it open, a focus re-reads the file');
+
+    h.core.stop();
+    const afterRelease = h.calls.getVoiceMode;
+    h.focus();
+    await flush();
+    assert.strictEqual(h.calls.getVoiceMode, afterRelease,
+      'the last release closes the core again: focus stops reading');
   } finally { h.restore(); }
 });
 
