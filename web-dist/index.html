@@ -22784,9 +22784,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function createVoiceControl({ core }) {
         const sel = document.getElementById("prefs-voice-mode");
         const stateEl = document.getElementById("prefs-voice-state");
-        if (!sel || !stateEl) return { refresh() {
-        }, render() {
-        }, start() {
+        if (!sel || !stateEl) return { start() {
         }, stop() {
         } };
         function paint(snap) {
@@ -22811,8 +22809,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
         });
         sel.addEventListener("blur", () => core.repaint());
         return {
-          refresh: () => core.refresh(),
-          render: (force) => core.repaint(!!force),
           start: () => core.start(),
           stop: () => core.stop()
         };
