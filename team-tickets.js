@@ -1328,6 +1328,39 @@ function createTicketMethods(deps, shared) {
         // decided is not finished. Silent, like the no-branch case — the lead who
         // reopened it does not need to be told the loop noticed.
         if (ticket.state !== 'done') return;
+        // The lead ACCEPTED it in that same gap, and an accept that closed the
+        // ticket out ends the merge the loop was told to perform. `state` cannot
+        // see this: accept leaves it at `done`, so the gate above passes and a
+        // deferred retry walks into a teardown that already happened — the
+        // worktree removed, the branch deleted, `ticket.worktree` never cleared
+        // (only `_spawnTicketSeat`'s rollback deletes it). STEP 2 then asks git
+        // about a ref that is gone, takes `fail()`, and stamps MERGE FAILED back
+        // onto the row the accept just cleared.
+        //
+        // `closedOut`, NOT `acceptedAt`: `finish()` stamps `acceptedAt` on all
+        // four accept arms including the two whose reply is "Merge it, then
+        // accept again", where the merge is still genuinely owed and a retry
+        // that lands it is the wanted outcome. `closedOut` is passed by the
+        // CALLING arm precisely to keep that distinction.
+        //
+        // The one terminal arm that KEEPS the branch is t536's MERGE FAILED
+        // veto, so a retry can still be in flight under it — a stamp from an
+        // EARLIER merge run survives (cleared only by the green path or by a
+        // closing accept), so `mergeError` set and a retry pending do coexist.
+        // Suppressing there is still right, and for the veto's own reason: it is
+        // reachable only when the branch is ALREADY an ancestor of master, so
+        // the retry could only reach STEP 4 and exit `!merged.moved` — stamping
+        // a fresh, false MERGE FAILED for a merge that had nothing to do.
+        //
+        // Silent like the reopen case above it, but not for its reason: there
+        // nothing had been decided about the merge, here the lead's accept IS
+        // the decision that ends it, and it is a decision they made knowing the
+        // board showed the merge waiting. Logged, because a merge abandoned by
+        // an accept is worth finding when a lead asks why a branch never landed.
+        if (ticket.closedOut) {
+          log.info('ticket', `auto-merge for ${ticketId} ABANDONED: the ticket was ACCEPTED and closed out while the merge was pending — nothing was merged`);
+          return;
+        }
         const wt = ticket.worktree || {};
         const branch = wt.branch;
         const baseSha = wt.baseSha;
