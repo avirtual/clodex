@@ -12,7 +12,8 @@
 //
 // NO jsdom, and none is needed: t517 extracted `createVoiceCore`, which never
 // touches `document`. Its whole environment is three stubs below. What that
-// leaves untested is deliberate and listed at the bottom of this file.
+// leaves untested is deliberate: everything `document`-bound lives in
+// `createVoiceControl`.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -275,7 +276,10 @@ test('picking a mode with no reachable target is refused and forces a repaint', 
 
 test('the debounce coalesces to the FINAL pick — one injection, not one per option passed over', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
-  const h = harness({ rows: [row('a')], active: 'a', voice: fileSays('off') });
+  // The file starts at `tap` and the pick is `off`, so the read-back below
+  // observes a file that genuinely CHANGED. Starting them equal would make the
+  // retire unfailable while reading like it had been earned.
+  const h = harness({ rows: [row('a')], active: 'a', voice: fileSays('tap') });
   try {
     await h.core.refresh();
     h.core.choose('tap');
@@ -292,9 +296,17 @@ test('the debounce coalesces to the FINAL pick — one injection, not one per op
     // pending affordance sits until the 15s poll instead of ~1.5s — ten times
     // longer, on the exact affordance this island exists for.
     assert.strictEqual(h.last().pending, 'off', 'the affordance stands until a read agrees');
-    h.state.voice = fileSays('off');
+    h.state.voice = fileSays('off');    // the CLI has now run the command
     const beforeReadback = h.calls.getVoiceMode;
-    t.mock.timers.tick(INJECT_READBACK_MS);
+    // The advance is SPLIT either side of the constant. A single
+    // tick(INJECT_READBACK_MS) fires every timer scheduled within the window, so
+    // it would bind only "at most 1500ms" and stay green if the delay were
+    // SHORTENED — which is the direction a careless edit takes it.
+    t.mock.timers.tick(INJECT_READBACK_MS - 1);
+    await flush();
+    assert.strictEqual(h.calls.getVoiceMode, beforeReadback,
+      'nothing may re-read before the read-back delay elapses');
+    t.mock.timers.tick(1);
     await flush();
     assert.strictEqual(h.calls.getVoiceMode, beforeReadback + 1,
       'the successful injection must re-read the file on its own short delay');
