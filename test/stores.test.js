@@ -1537,9 +1537,21 @@ test('seed: the lead prompt qualifies accept — merge window and the dirty/unre
     'lead prompt must not still promise the tree stays named after a failed removal');
   assert.doesNotMatch(lead, /\| RETIRED, record dropped \| REMOVED \|/,
     'lead prompt must not still claim the record drop is unconditional');
-  assert.match(lead, /`kill\(\)` drops the record\s+unconditionally, before the tree is touched/,
+  // t532 r5: "unconditionally" was itself an absolute of the class this ticket
+  // keeps killing — `kill()` returns at `if (!s)` before the remove, so it drops
+  // nothing for a seat that already exited. The quantifier is the claim, so it is
+  // inside the match and the old wording carries a doesNotMatch.
+  assert.match(lead, /`kill\(\)` drops the record for any\s+seat still running, before the tree is touched/,
     'and gives the mechanism, so the live-seat case is not read as an edge case');
-  assert.match(lead, /copy it out of\s+the reply rather than expecting to find it later/,
+  assert.doesNotMatch(lead, /drops the record\s+unconditionally/,
+    'lead prompt must not claim kill() drops a record for a seat that already exited');
+  // `destroy()` REJECTING (rather than returning ok:false) is caught in
+  // _taskAccept with no path, and the reply degrades to "remove it by hand".
+  assert.match(lead, /The reply names the path where it has one/,
+    'and does not promise a path the rejected-destroy arm cannot supply');
+  assert.doesNotMatch(lead, /Either way the\s+reply names the path/,
+    'lead prompt must not still promise the path unconditionally');
+  assert.match(lead, /copy it out of the reply rather than expecting to find it\s+later/,
     'and tells the lead what to DO about it, which is the only actionable half');
   assert.doesNotMatch(lead, /only where the tree is clean\s+and readable/,
     'lead prompt must not still state the gate as a prose clause');
@@ -1674,7 +1686,7 @@ test('seed: the lead prompt qualifies the downgrade — the archive is condition
   // seat column of the two downgrade rows ("only if still running"), asserted in
   // the t525 test above; what is pinned HERE is the prose that reads the
   // condition back out — which reply sentence a seat that already exited gets.
-  assert.match(lead, /archived by nothing: rows 2 and 3 then say `was NOT retired`/,
+  assert.match(lead, /archived by nothing: rows 2 and 3 then say `was NOT\s+retired`/,
     'lead prompt conditions the archive on the seat still running');
   assert.doesNotMatch(lead, /ARCHIVES the seat and keeps the tree instead/,
     'lead prompt must not still claim the downgrade always archives');
@@ -1682,6 +1694,17 @@ test('seed: the lead prompt qualifies the downgrade — the archive is condition
     'lead prompt must not still state the archive condition as a parenthetical');
   assert.match(lead, /"keeps the tree" is never "keeps everything"/,
     'lead prompt warns that keeping the tree is not keeping the branch');
+  // t532 r5: r4 gave row 1's record fate a dependence on liveness, which turned
+  // the unscoped "never the teardown" into a contradiction of the bullet seven
+  // lines above it — a lead reading the absolute concludes the tree stays
+  // findable, the exact belief that bullet exists to destroy. Pinned because
+  // nothing pinned the headline before, which is why r4 could falsify it.
+  assert.match(lead, /Below row 1, liveness changes the SENTENCE, not the teardown/,
+    'lead prompt scopes the liveness rule below row 1');
+  assert.doesNotMatch(lead, /never the teardown/,
+    'lead prompt must not state the liveness rule as an unscoped absolute');
+  assert.match(lead, /Row 1's record,\s+above, is the one place liveness decides an OUTCOME/,
+    'and names row 1 as the exception rather than leaving the reader to spot it');
   // t532 r1: only row 2 SKIPS the delete. Row 3 attempts one and usually fails,
   // so a ref surviving there is git refusing, not a recovery held open — the
   // round-1 wording ("the unreadable one deletes it") asserted the outcome.

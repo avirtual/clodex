@@ -213,23 +213,27 @@ cwd IS a worktree is still on the team.
     tree would, and only `git worktree prune` releases it — which this path never
     runs. Wherever you see `could NOT be deleted`, treat the ref as still live.
   - **A failed removal on row 1 can leave the tree with NOTHING naming it, and
-    the reply is your only copy of the path.** `kill()` drops the record
-    unconditionally, before the tree is touched, so a LIVE seat — the ordinary
-    case, since accept usually lands on a still-warm hand — has already lost its
-    record by the time `removeWorktree` fails. The record is deliberately KEPT
-    through that failure only for a seat that had already exited. Either way the
-    reply names the path; on the live path nothing else does, so copy it out of
-    the reply rather than expecting to find it later.
+    the reply is your only copy of the path.** `kill()` drops the record for any
+    seat still running, before the tree is touched, so a LIVE seat — the
+    ordinary case, since accept usually lands on a still-warm hand — has already
+    lost its record by the time `removeWorktree` fails. The record is
+    deliberately KEPT through that failure only for a seat that had already
+    exited. The reply names the path where it has one; on the live path nothing
+    else does, so copy it out of the reply rather than expecting to find it
+    later.
   - **"keeps the tree" is never "keeps everything".** Only row 2 keeps the
     branch DELIBERATELY — the delete is skipped there so that a second
     `task accept`, after you commit or clear that tree, can still find the ref
     and finish the job. Row 3 skips nothing: it tries, and the bullet above is
     why that usually fails. A ref surviving row 3 is an accident of git's
     refusal, not a recovery anything is holding open for you.
-  - **Liveness changes the SENTENCE, never the teardown.** A seat that already
-    exited is archived by nothing: rows 2 and 3 then say `was NOT retired`
-    instead of `was ARCHIVED, not retired`, and row 4 says `left alone (its
-    session is not running)` instead of `LEFT RUNNING`. Nothing else moves.
+  - **Below row 1, liveness changes the SENTENCE, not the teardown.** A seat
+    that already exited is archived by nothing: rows 2 and 3 then say `was NOT
+    retired` instead of `was ARCHIVED, not retired`, and row 4 says `left alone
+    (its session is not running)` instead of `LEFT RUNNING`. Nothing else moves
+    on those rows — though the archive that DOES run on 2 and 3 stamps the
+    record too, so even there the split is not purely cosmetic. Row 1's record,
+    above, is the one place liveness decides an OUTCOME rather than a wording.
 
   Not merged, or the merge check could not run: nothing is removed on any row (a
   loop-minted seat is archived, if it is still running). Retiring a seat any
