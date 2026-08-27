@@ -93,7 +93,9 @@ visible rather than silently lost.
   branch is actually merged and, only if it is AND the tree is clean, retires
   the seat, removes its worktree and deletes the branch. Those first two are
   gated once more, on the seat being one the loop minted for this ticket: a
-  STANDING assignee keeps its seat and its checkout, and only the branch goes.
+  STANDING assignee keeps its seat and its checkout, and only the branch is even
+  attempted — an attempt the kept checkout ordinarily defeats. The table further
+  down is the authority on which of those you get.
   Not merged (or the check could not run) and it removes NOTHING — the seat is
   archived, tree and branch kept, and the reply says so. Merge first, then
   accept again — UNLESS the ACCEPT verdict is fresh, where the merge is not
@@ -162,21 +164,58 @@ cwd IS a worktree is still on the team.
   hatch), or the loop escalated AT the merge step and is waiting on you.
 - Review the BRANCH, not the hand's prose: the diff against the base is the
   artifact, and it exists whether or not the seat is still alive.
-- `task accept` is the cleanup: on a merged branch it retires the seat, removes
-  the worktree and deletes the branch for you — but only where the tree is clean
-  and readable, and only for a seat the loop minted for this ticket. A STANDING
-  assignee is not a corner case: a worktree pin is never degraded, so reassigning
-  a worktree ticket to a standing role carries the branch onto it, and there
-  acceptance retires nothing and keeps the checkout — the reply says LEFT RUNNING
-  and worktree KEPT. A DIRTY tree, or one git could not read at all (commonly a
-  tree already removed by hand), ARCHIVES the seat (if it is still running) and
-  keeps the tree instead: the reply names which of the two you got, and for the
-  dirty one a second `task accept` after you commit or clear that tree finishes
-  the job. Those two part company on the BRANCH — the dirty one keeps it so that
-  second accept can still find it, the unreadable one deletes it — so "keeps the
-  tree" is never "keeps everything". Retiring a seat any OTHER way does not clean
-  up at all — a bare retire leaves the tree on disk, and Delete Session… removes
-  it along with the branch's unmerged commits.
+- `task accept` is the cleanup, and what it tears down is a FUNCTION OF FOUR
+  FACTS, not one: whether the branch merged, whose seat the assignee is, what
+  the tree holds, and whether the seat is running. Prose describes one path
+  through that and silently universalises the rest, so read the row:
+
+  | on a MERGED branch | seat | worktree | branch |
+  |---|---|---|---|
+  | loop-minted seat, tree clean (or no tree recorded) | RETIRED, record dropped (kept if the removal fails, so the tree stays named) | REMOVED | deleted |
+  | loop-minted seat, tree DIRTY | archived, only if still running | KEPT | KEPT |
+  | loop-minted seat, tree UNREADABLE | archived, only if still running | KEPT | delete ATTEMPTED — usually refused |
+  | STANDING assignee, or no record — tree never inspected | untouched | KEPT | delete ATTEMPTED — usually refused |
+
+  Which row you got, in the reply's own words: `retired and its worktree
+  removed` (or `retired but its worktree could NOT be removed`, where the tree
+  is still there and named) → row 1 · `has uncommitted work` → row 2 · `could
+  not be inspected` → row 3 · `LEFT RUNNING` or `left alone` → row 4. The branch
+  clause is a separate sentence with three forms, and you may get any of them:
+  `branch X deleted`, `branch X was KEPT (the accept above is unfinished)` on
+  row 2, and `branch X could NOT be deleted (…)` — the ordinary result on rows 3
+  and 4. Four things the rows say that a sentence about "the tree" cannot:
+
+  - **The tree is only inspected on the loop-minted rows.** A STANDING assignee
+    is not a corner case — a worktree pin is never degraded, so reassigning a
+    worktree ticket to a standing role carries the branch onto it — and on that
+    row a dirty tree buys no protection at all: the dirty skip sits inside a gate
+    that never opened, so the delete is ATTEMPTED regardless of what the tree
+    holds. Row 2's recovery does not exist there either, and not because of the
+    ref: **the teardown gate never opens on a second accept either**, so no
+    `task accept` will ever remove that tree, however often you run it. Clean it
+    up yourself.
+  - **A delete is an ATTEMPT, and on rows 3 and 4 it ordinarily FAILS.**
+    `git branch -d` refuses to delete a branch that any worktree still has
+    checked out, merged or not — and those rows keep the tree, so the branch is
+    normally still checked out in it. Worse on row 3's commonest case, a tree
+    removed BY HAND: the stale worktree registration blocks the delete just the
+    same, and only `git worktree prune` releases it, which this path never runs.
+    Expect `could NOT be deleted` there and treat the ref as still live.
+  - **"keeps the tree" is never "keeps everything".** Only row 2 keeps the
+    branch DELIBERATELY — the delete is skipped there so that a second
+    `task accept`, after you commit or clear that tree, can still find the ref
+    and finish the job. Row 3 skips nothing: it tries, and the bullet above is
+    why that usually fails. A ref surviving row 3 is an accident of git's
+    refusal, not a recovery anything is holding open for you.
+  - **Liveness changes the SENTENCE, never the teardown.** A seat that already
+    exited is archived by nothing: rows 2 and 3 then say `was NOT retired`
+    instead of `was ARCHIVED, not retired`, and row 4 says `left alone (its
+    session is not running)` instead of `LEFT RUNNING`. Nothing else moves.
+
+  Not merged, or the merge check could not run: nothing is removed on any row (a
+  loop-minted seat is archived). Retiring a seat any OTHER way does not clean up
+  at all — a bare retire leaves the tree on disk, and Delete Session… removes it
+  along with the branch's unmerged commits.
 - Cite the commit your spec was written against, and tell the hand to stop if it
   is not an ancestor of its worktree HEAD. That mismatch means the tree is not
   the one you described — symbols in the spec may not exist yet, and merging the

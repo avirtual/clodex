@@ -51,21 +51,31 @@ blocks a release.
   of the file. It now says to wait for the merge notice there. Two smaller
   corrections in the same pass: accept's cleanup only runs on a tree that is
   clean and readable — a dirty tree, or one already removed by hand, keeps the
-  tree instead of removing it, and the prompt now says so and names the second
-  accept that finishes a dirty one — and the dispatch self-reminder is now
+  tree, and the prompt now says so and names the second accept that finishes a
+  dirty one — and the dispatch self-reminder is now
   described alongside the loop's own stall nudge, so a lead can tell which
   covers what instead of assuming either is the only net.
-- **And accept has a third condition the prompt never stated: whose seat it is.**
+- **Accept has a third condition the prompt never stated: whose seat it is.**
   Cleanup is gated not only on the branch being merged and the tree being clean,
   but on the seat being one the ticket loop minted. Assign a ticket that carries a
   worktree to a STANDING seat — which an ordinary reassignment does, since a
   worktree pin is never degraded — and acceptance retires nothing and keeps the
   checkout, while the reply says so and neither prompt paragraph explained why.
-  It does now. Two smaller corrections alongside it: the archive on a dirty or
-  unreadable tree only runs if the seat is still up (one that already exited is
-  simply left alone), and "keeps the tree" no longer reads as "keeps everything"
-  — the dirty tree keeps its branch so a second accept can find it, the
-  unreadable one does not.
+  It does now — as a TABLE. What acceptance tears down turns on four independent
+  facts (branch merged, whose seat, what the tree holds, whether the seat is
+  running), and three rounds of describing that in flowing prose each left a new
+  claim that was true of one path and false of another. The paragraph is now a
+  four-row matrix of seat, worktree and branch, with the reply wording that tells
+  a lead which row it got. Two things the prose kept getting wrong are now
+  visible per row: on a standing assignee a dirty tree buys no protection at all,
+  and no number of repeat accepts will ever clean that tree up, because the gate
+  that would do it never opens; and deleting the branch is an ATTEMPT rather than
+  an outcome — `git branch -d` refuses while any worktree still has the branch
+  checked out, so on exactly the rows that keep the tree the delete ordinarily
+  fails and the ref survives. The archive on a dirty or unreadable tree only runs
+  if the seat is still up (one that already exited is simply left alone), and
+  "keeps the tree" no longer reads as "keeps everything" — the dirty tree keeps
+  its branch deliberately, so a second accept can find it.
 
 ## 5.18.0 — 2026-08-27 — your checkouts, your cost history, and three hostile values
 
