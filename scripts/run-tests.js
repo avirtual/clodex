@@ -201,6 +201,21 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-test-'));
 const tapFile = path.join(tmpDir, 'run.tap');
+// Unconditional, because the refusal paths between here and the analysis below
+// exit through die() -> process.exit and would otherwise each leak this dir: a
+// missing tap file and a spawn failure both do, and the suite DRIVES those
+// deliberately (test/test-escapes.test.js), so the leak scaled with the number
+// of test runs — 179 dirs on the box this was found on. Registered as a handler
+// rather than fixed up at each exit site so a future refusal added in that
+// window cannot reopen it. Only synchronous work is possible here, which rmSync
+// already is; throwing would suppress every listener registered after this one,
+// hence the catch. Independent of releaseLock: different paths, and that one is
+// registered earlier so it still runs first.
+process.on('exit', () => {
+  try {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  } catch { /* a leftover temp dir is not a reason to fail a run */ }
+});
 
 // Both lock variables are scrubbed from the child environment. They are a
 // decision about THIS process's lock, and every nested runner is by contract a
@@ -231,10 +246,6 @@ try {
 } catch (e) {
   die(`the tap stream is missing (${e.message}) — cannot tell whether anything escaped`);
 }
-try {
-  fs.rmSync(tmpDir, { recursive: true, force: true });
-} catch { /* a leftover temp dir is not a reason to fail a run */ }
-
 if (!tap.trim()) die('the tap stream is empty — cannot tell whether anything escaped');
 
 const counter = (name) => {
