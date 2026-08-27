@@ -193,19 +193,24 @@ test('every process.kill in session-manager.js is guarded against a broadcast pi
   // while explaining the incident, and a scan that counted prose would report it.
   const code = stripNonCode(src);
 
-  // Tail canary. stripNonCode understands neither `${…}` interpolation nor regex
-  // literals, and session-manager.js has nested templates whose backticks pair
-  // 1-2/3-4 — so one apostrophe inside a nested template's literal text starts a
-  // quote scan that blanks an arbitrary span to EOF, hiding every process.kill
-  // below it. The allowlist below cannot notice: it asserts an ABSENCE, which an
-  // eaten tail satisfies trivially, and both ENTER subjects live at the helper
-  // (session-manager.js:282-287), upstream of every template in the file. Matching
-  // the last line proves only that the scan reached the end — which is the property
-  // that fails first, and the cheap half of a real parser nobody should write twice.
-  assert.match(code, /module\.exports = \{ createSessionManager/,
+  // Tail canary, covering TAIL LOSS specifically. stripNonCode understands neither
+  // `${…}` interpolation nor regex literals, and session-manager.js has nested
+  // templates whose backticks pair 1-2/3-4 — so one apostrophe inside a nested
+  // template's literal text starts a quote scan that blanks a span. The allowlist
+  // below cannot notice: it asserts an ABSENCE, which blanked code satisfies
+  // trivially, and both ENTER subjects live at the helper (session-manager.js:282-287),
+  // upstream of every template in the file.
+  //
+  // What this does NOT cover: a desync that blanks a MIDDLE span and re-syncs — an
+  // apostrophe closed by a later `'` before EOF — leaves the tail intact, so the
+  // canary stays green while a process.kill inside that span is hidden. Catching
+  // that needs a real parser, which is deliberately not written here (it would be
+  // duplicated in two files). This buys the one property one line can buy: the scan
+  // reached the end of the file.
+  assert.match(code, /module\.exports\s*=\s*\{[^}]*createSessionManager/,
     'the string-aware scan did not reach the end of session-manager.js — a quote or template it '
     + 'mis-paired has blanked the tail, so the allowlist below is scanning a truncated file and '
-    + 'passes over anything in the eaten span');
+    + 'passes over anything in the eaten span; or the final `module.exports` line was reformatted');
 
   const calls = [...code.matchAll(/process\.kill\(([^,)]+)/g)].map((m) => m[1].trim());
   assert.ok(calls.length >= 1,
