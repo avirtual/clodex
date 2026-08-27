@@ -579,13 +579,26 @@ test('both merge classes are styled, and not styled alike (t534)', () => {
   for (const cls of ['.tv-merge-error', '.tv-merge-waiting', '.tv-ticket.tv-merge-failed']) {
     assert.ok(css.includes(cls), `${cls} must be styled, or the mark is invisible`);
   }
+  // The DECLARATIONS of a rule, found by the rule itself rather than by
+  // slicing between two indexOf hits: the comments here name neighbouring
+  // selectors (that is what makes them useful), so a bare indexOf can land in
+  // prose ABOUT a class instead of on the class, and slice a block that is
+  // empty or belongs to something else. That is not hypothetical — the first
+  // version of this test did exactly that and reported an empty block.
+  const blockOf = (sel) => {
+    const m = new RegExp(`(?:^|\\n)\\s*${sel.replace(/[.]/g, '\\.')}\\s*\\{([^}]*)\\}`).exec(css);
+    assert.ok(m, `no rule found for ${sel}`);
+    return m[1];
+  };
   // The failure takes the error red the board already uses for .tv-error; the
   // deferral must NOT, or the two badges are one mark wearing two names.
-  const errorBlock = css.slice(css.indexOf('.tv-merge-error'), css.indexOf('.tv-merge-waiting'));
-  assert.match(errorBlock, /rgb\(230, 110, 110\)/, 'the failure badge is the error red');
-  const waitingBlock = css.slice(css.indexOf('.tv-merge-waiting'));
-  assert.doesNotMatch(waitingBlock.slice(0, 120), /rgb\(230, 110, 110\)/,
+  assert.match(blockOf('.tv-merge-error'), /rgb\(230, 110, 110\)/,
+    'the failure badge is the error red');
+  assert.doesNotMatch(blockOf('.tv-merge-waiting'), /rgb\(230, 110, 110\)/,
     'the waiting badge must not wear the failure colour');
+  // The row edge is the same red as the badge — one state, one colour.
+  assert.match(blockOf('.tv-ticket.tv-merge-failed'), /rgb\(230, 110, 110\)|rgba\(230, 110, 110/,
+    'the row edge matches the badge it belongs to');
 });
 
 // Both marks survive into the RECENTLY-CLOSED block. This is the case the
