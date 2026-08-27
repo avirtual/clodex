@@ -118,7 +118,6 @@ function initVoicePopover({ core, renderProxyBar }) {
   core.subscribe((snap) => {
     const key = `${snap.pending || ''}|${snap.mode || ''}|${snap.target || ''}|${snap.anyClaudeRow}`;
     if (key === lastKey) return;
-    lastKey = key;
     // Equally a no-op rebuild of a live picker: the rows are detached under the
     // pointer, so an ungated repaint swallows the pick it is meant to show.
     if (!pop.classList.contains('hidden')) renderRows();
@@ -126,6 +125,10 @@ function initVoicePopover({ core, renderProxyBar }) {
     // other rebuild path, so skipping a no-change repaint cannot leave the bar
     // stale.
     renderProxyBar();
+    // After the paints, never before: a mid-paint throw must not leave the key
+    // claiming a DOM that was not painted, which would skip every identical emit
+    // until an unrelated change moved the key.
+    lastKey = key;
   });
 
   document.addEventListener('mousedown', (e) => {

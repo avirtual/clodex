@@ -113,7 +113,14 @@ function createVoiceCore({ getActiveSession, sessionTypeOf, sessionList, showToa
       pickJustDied: hadPending && pending === null,
       force,
     };
-    for (const fn of [...listeners]) fn(snap);
+    // Per-listener guard: the surfaces are notified in subscription order, so an
+    // unguarded throw in Preferences (listener #1) permanently starves the bar
+    // (#2). Not a bare `catch {}` — before the core/surface split a painter throw
+    // reached the console on its own, and swallowing it here would trade one
+    // visible bug for a surface that silently stops updating.
+    for (const fn of [...listeners]) {
+      try { fn(snap); } catch (e) { console.error('[voice] surface paint failed', e); }
+    }
   }
 
   async function refresh() {
