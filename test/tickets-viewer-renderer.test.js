@@ -12,6 +12,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const viewer = require('../plugins/tickets-viewer/renderer');
 const { humanizeAge, ageLine, summaryText } = viewer;
@@ -193,7 +195,11 @@ function shaped(id, over = {}) {
     id, title: `title ${id}`, spec: `spec of ${id}`, state: 'open', assignee: 'hand', taskDir: '',
     role: '',
     opener: 'lead', closedBy: '', openedAt: 1, closedAt: null, lastActivityAt: 1,
-    ageMs: HOUR, quietMs: HOUR, nudged: false, stalled: false, backlog: false, ...over,
+    ageMs: HOUR, quietMs: HOUR, nudged: false, stalled: false, backlog: false,
+    // Empty strings, matching what the engine emits for a ticket carrying
+    // neither stamp — so the merge cases below are the only rows that differ
+    // from an ordinary one, and an accidental mark elsewhere fails there.
+    mergeWaiting: '', mergeError: '', ...over,
   };
   // Derived AFTER the overrides, mirroring the engine (`role || assignee`), so a
   // case that overrides `assignee` alone — the unassigned row, every pre-t295
@@ -451,6 +457,178 @@ test('a PARKED ticket is marked parked, never stalled or backlog (t174)', async 
     assert.match(text, /1 quiet longer than 30m/, 'the parked row is not in the stall count');
     assert.match(text, /1 parked/, 'the head counts it separately');
     assert.match(classes, /tv-team-backlog/, 'the sidebar chip renders');
+  });
+});
+
+// ── the two merge marks (t534) ──────────────────────────────────────────────
+//
+// The parity `deepStrictEqual` that guards the two TEXT boards does not reach
+// this renderer, so these are the only pins on what the GUI draws for either
+// field. They assert the mark is VISIBLE and, separately, that the two are
+// DISTINGUISHABLE without reading the words — the property t533 shaped the text
+// board's ` !! MERGE FAILED: …` around, restated in this board's badge idiom.
+
+test('a ticket whose merge FAILED is marked, and says which step (t534)', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({
+      open: [shaped('t1', { mergeError: 'clean-tree' })],
+      counts: { ...boardRes().counts, open: 1 },
+    }),
+  }, ({ root }) => {
+    const text = textOf(root).join('\n');
+    const classes = classesOf(root).join(' ');
+    assert.match(text, /merge failed/i, 'the row says the merge did not happen');
+    // The stored STEP, verbatim: the board's claim is core's, not one of its
+    // own, and the step is what tells the lead where to pick the merge up.
+    assert.match(text, /clean-tree/, 'and names the step it gave up at');
+    assert.match(classes, /tv-merge-error/);
+    // The row-level mark, not just the badge: a failed merge is normally read
+    // in the recently-closed block, and one small badge on an otherwise
+    // ordinary row is easy to scan past.
+    assert.match(classes, /tv-merge-failed/);
+  });
+});
+
+test('a ticket whose merge is WAITING is marked, and says why (t534)', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({
+      open: [shaped('t1', { mergeWaiting: 'suite-in-flight' })],
+      counts: { ...boardRes().counts, open: 1 },
+    }),
+  }, ({ root }) => {
+    const text = textOf(root).join('\n');
+    const classes = classesOf(root).join(' ');
+    assert.match(text, /merge waiting/i, 'the row says the merge is still coming');
+    assert.match(text, /suite-in-flight/, 'and names the reason core stamped');
+    assert.match(classes, /tv-merge-waiting/);
+  });
+});
+
+// The DISTINCTION, which is the reason core keeps two fields rather than one.
+// Both directions, because each half fails a different way: a waiting row
+// painted as a failure sends the lead to a merge that needs nothing, and a
+// failed row painted quietly leaves the one state requiring intervention
+// looking like the one requiring none.
+test('waiting and failed are told apart by their MARKS, not only their words (t534)', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 2 })]),
+    board: boardRes({
+      open: [shaped('t1', { mergeWaiting: 'suite-in-flight' }), shaped('t2', { mergeError: 'clean-tree' })],
+      counts: { ...boardRes().counts, open: 2 },
+    }),
+  }, ({ root }) => {
+    const rows = allByClass(root, 'tv-ticket');
+    // ENTER: both rows rendered. Every assertion below is about a difference
+    // BETWEEN them, and all of those hold vacuously over a board with one row.
+    assert.equal(rows.length, 2, 'both rows reached the board');
+    const waitingRow = rows.find((r) => textOf(r).join('\n').includes('t1'));
+    const failedRow = rows.find((r) => textOf(r).join('\n').includes('t2'));
+    assert.ok(waitingRow && failedRow, 'ENTER: each row is identifiable by its id');
+
+    // The waiting row gets NO row-level mark: it resolves by itself, and a
+    // painted row would recreate here the "looks like it needs a human"
+    // confusion that made core split the fields in the first place.
+    assert.doesNotMatch(classesOf(waitingRow).join(' '), /tv-merge-failed/,
+      'a deferred merge must not paint the row like a failed one');
+    assert.match(classesOf(failedRow).join(' '), /tv-merge-failed/);
+    // And the badges are different classes, so the styling that separates them
+    // at a glance has something to key on.
+    assert.match(classesOf(waitingRow).join(' '), /tv-merge-waiting/);
+    assert.doesNotMatch(classesOf(waitingRow).join(' '), /tv-merge-error/);
+    assert.match(classesOf(failedRow).join(' '), /tv-merge-error/);
+    assert.doesNotMatch(classesOf(failedRow).join(' '), /tv-merge-waiting/);
+  });
+});
+
+// The precedence, which the row-class expression makes load-bearing. `stalled`
+// is NOT gated on the row being open, so a merge that failed and then sat past
+// the threshold satisfies both conditions at once, and only one row class can
+// win. If the stall took it, the amber edge would cover the red one on exactly
+// the rows most needing the lead — and chasing the seat does not clear a merge
+// the loop gave up on.
+test('a failed merge takes the row edge from a stall it coincides with (t534)', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1, stalled: 1 })]),
+    board: boardRes({
+      open: [shaped('t1', { stalled: true, mergeError: 'clean-tree' })],
+      counts: { ...boardRes().counts, open: 1 },
+    }),
+  }, ({ root }) => {
+    const rows = allByClass(root, 'tv-ticket');
+    // ENTER: the row rendered AND really carries both states, so the class
+    // assertions below are about a conflict rather than about a fixture that
+    // only ever had one of them.
+    assert.equal(rows.length, 1, 'the row reached the board');
+    const text = textOf(rows[0]).join('\n');
+    assert.match(text, /stalled/, 'ENTER: the stall is genuinely present');
+    assert.match(text, /clean-tree/, 'ENTER: and so is the merge failure');
+    const classes = classesOf(rows[0]).join(' ');
+    assert.match(classes, /tv-merge-failed/, 'the failure wins the row edge');
+    assert.doesNotMatch(classes, /tv-stalled/, 'and the stall does not also paint it');
+  });
+});
+
+// The stylesheet is what makes the previous test's class distinction VISIBLE,
+// and a class nothing styles is a mark the lead cannot see. Read as source
+// because no fixture here computes styles.
+test('both merge classes are styled, and not styled alike (t534)', () => {
+  const css = fs.readFileSync(
+    path.join(__dirname, '..', 'plugins', 'tickets-viewer', 'style.css'), 'utf8');
+  for (const cls of ['.tv-merge-error', '.tv-merge-waiting', '.tv-ticket.tv-merge-failed']) {
+    assert.ok(css.includes(cls), `${cls} must be styled, or the mark is invisible`);
+  }
+  // The failure takes the error red the board already uses for .tv-error; the
+  // deferral must NOT, or the two badges are one mark wearing two names.
+  const errorBlock = css.slice(css.indexOf('.tv-merge-error'), css.indexOf('.tv-merge-waiting'));
+  assert.match(errorBlock, /rgb\(230, 110, 110\)/, 'the failure badge is the error red');
+  const waitingBlock = css.slice(css.indexOf('.tv-merge-waiting'));
+  assert.doesNotMatch(waitingBlock.slice(0, 120), /rgb\(230, 110, 110\)/,
+    'the waiting badge must not wear the failure colour');
+});
+
+// Both marks survive into the RECENTLY-CLOSED block. This is the case the
+// open-only `stalled`/`parked`/`backlog` chain does not cover and the one the
+// text boards call the normal reading: the loop merges after `task done`, so a
+// merge that failed or deferred is usually read on a row that is already done.
+test('both merge marks render on a recently-CLOSED row too (t534)', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 0 })]),
+    board: boardRes({
+      recent: [
+        shaped('t1', { state: 'done', closedAt: 1, closedBy: 'hand', mergeError: 'clean-tree' }),
+        shaped('t2', { state: 'done', closedAt: 1, closedBy: 'hand', mergeWaiting: 'suite-in-flight' }),
+      ],
+      counts: { ...boardRes().counts, done: 2 },
+    }),
+  }, ({ root }) => {
+    const text = textOf(root).join('\n');
+    // ENTER: the closed block rendered at all. Without this the two matches
+    // below could be satisfied by a board that painted nothing.
+    assert.match(text, /Recently closed/, 'the closed section is on screen');
+    assert.match(text, /clean-tree/, 'the failure reaches a closed row');
+    assert.match(text, /suite-in-flight/, 'and so does the deferral');
+    assert.match(classesOf(root).join(' '), /tv-merge-failed/,
+      'the row-level mark is not gated on the row being open');
+  });
+});
+
+test('an ordinary row carries NEITHER merge mark (t534)', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({
+      open: [shaped('t1')],
+      counts: { ...boardRes().counts, open: 1 },
+    }),
+  }, ({ root }) => {
+    // ENTER: the row is there. `doesNotMatch` over an empty board is true of
+    // everything, which is exactly the shape CLAUDE.md warns about.
+    assert.match(textOf(root).join('\n'), /t1/, 'the ordinary row rendered');
+    const classes = classesOf(root).join(' ');
+    assert.doesNotMatch(classes, /tv-merge-error|tv-merge-waiting|tv-merge-failed/,
+      'a ticket with no merge stamp must not claim one');
+    assert.doesNotMatch(textOf(root).join('\n'), /merge/i);
   });
 });
 

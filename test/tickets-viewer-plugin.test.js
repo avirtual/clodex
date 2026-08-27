@@ -724,6 +724,67 @@ test('tickets-viewer: a PARKED open ticket is parked, never stalled (t174)', asy
   } finally { cleanup(); }
 });
 
+// t534. `shape()` is an allowlist, so a field core writes reaches this board
+// only by being named in it — and neither merge field was, which is how the GUI
+// came to show neither mark after t531 and t533 put both on the two TEXT boards.
+//
+// Asserted on OPEN and CLOSED rows alike because the closed one is not an edge
+// case here: the loop merges after `task done` and an ACCEPT verdict, so a
+// deferred or failed merge is normally read in the recently-closed block, and a
+// pin that only covered `res.open` would leave the common case unguarded.
+test('tickets-viewer: both merge fields cross to the board, open and closed alike (t534)', async () => {
+  const { host, teams, cleanup } = boot();
+  try {
+    const dir = mkTeam(teams, 'alpha');
+    const now = Date.now();
+    writeTickets(dir, [
+      ticket('t1', { mergeWaiting: 'suite-in-flight' }),
+      ticket('t2', { mergeError: 'clean-tree' }),
+      // Both at once: the retry re-entered, deferred once, then hit a terminal
+      // arm. Nothing in core forbids the pair, so the board must carry both
+      // rather than letting one field stand in for the other.
+      ticket('t3', { mergeWaiting: 'suite-in-flight', mergeError: 'suite-red' }),
+      // The ordinary row, and the control for every assertion below: it proves
+      // the two fields read EMPTY rather than proving the fixture never landed.
+      ticket('t4'),
+      ticket('t5', { state: 'done', closedAt: now - HOUR, mergeError: 'push-failed' }),
+      ticket('t6', { state: 'done', closedAt: now - HOUR, mergeWaiting: 'suite-in-flight' }),
+    ]);
+
+    const res = await host.dispatch('tickets-viewer', 'board', [keyOfTeam(dir)], 'desktop');
+    const byId = Object.fromEntries([...res.open, ...res.recent].map((t) => [t.id, t]));
+    // ENTER: every assertion below reads through this reduction, and two of the
+    // six rows are CLOSED — a board that dropped the recent block would leave
+    // the closed-row assertions asserting nothing.
+    for (const id of ['t1', 't2', 't3', 't4', 't5', 't6']) {
+      assert.ok(byId[id], `${id} must survive into the board`);
+    }
+
+    assert.strictEqual(byId.t1.mergeWaiting, 'suite-in-flight');
+    assert.strictEqual(byId.t2.mergeError, 'clean-tree');
+    assert.strictEqual(byId.t3.mergeWaiting, 'suite-in-flight');
+    assert.strictEqual(byId.t3.mergeError, 'suite-red');
+    assert.strictEqual(byId.t5.mergeError, 'push-failed', 'a closed row carries the failure');
+    assert.strictEqual(byId.t6.mergeWaiting, 'suite-in-flight', 'and a closed row the deferral');
+
+    // The stored string VERBATIM, not a phrase of the viewer's own: both text
+    // boards render the step and the reason as core wrote them, and a board
+    // that substituted its own wording would assert a state the record does not
+    // carry.
+    assert.strictEqual(byId.t2.mergeError, 'clean-tree', 'the failing STEP, not a rephrasing');
+
+    // Absent means empty string, not undefined — the renderer branches on
+    // truthiness, and `undefined` would render the same but leaves the row
+    // shape disagreeing with every other string field shape() emits.
+    assert.strictEqual(byId.t4.mergeWaiting, '');
+    assert.strictEqual(byId.t4.mergeError, '');
+    // And the two stay INDEPENDENT: a waiting merge must not read as a failed
+    // one, which is the whole reason core keeps them as separate fields.
+    assert.strictEqual(byId.t1.mergeError, '', 'a deferred merge is not a failure');
+    assert.strictEqual(byId.t2.mergeWaiting, '', 'and a failed one is not still queued');
+  } finally { cleanup(); }
+});
+
 test('tickets-viewer: an UNSTARTED open ticket is never stalled, however assigned (t329)', async () => {
   const { host, teams, cleanup } = boot();
   try {
