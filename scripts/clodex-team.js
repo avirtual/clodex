@@ -296,10 +296,16 @@ function doTickets(payload) {
   // text between two listings unless it says it was corrected. On BOTH row
   // shapes — "recently closed" is where a lead reconstructs what shipped.
   const respecMark = (t) => (Array.isArray(t.respecs) && t.respecs.length ? ` (respec'd ×${t.respecs.length})` : '');
+  // Mirrors _taskList's `mergeWaitingMark`: a deferred merge is otherwise
+  // indistinguishable from a finished one, and the difference decides whether
+  // the lead waits or merges by hand. The stored value renders verbatim — a
+  // phrase of this leaf's own would make the two boards describe the same record
+  // differently. On BOTH row shapes: the stamp lands on a ticket already `done`.
+  const mergeWaitingMark = (t) => (t.mergeWaiting ? ` (merge waiting: ${t.mergeWaiting})` : '');
   const row = (t) =>
-    `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${respecMark(t)}`;
+    `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}`;
   const closedRow = (t) =>
-    `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}`;
+    `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}`;
   const lines = shown.map(row);
   const closed = filter === 'open' ? tickets.filter((t) => t.state !== 'open') : [];
   const doneAll = closed.filter((t) => t.state === 'done');

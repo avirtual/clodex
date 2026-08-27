@@ -391,7 +391,13 @@ function parityBoard() {
       respecs: [{ at: now - 5 * HOUR, by: 'lead', title: 'before it was dropped' }] },
     // t174: open AND assigned AND parked — the row that renders identically to
     // t1 unless both implementations carry the marker.
-    { id: 't16', title: 'held back', assignee: 'hand', state: 'open', parked: true, openedAt: now - 40 * HOUR, closedAt: null },
+    // t531: and it carries `mergeWaiting` too, as the `row` carrier for that
+    // mark. An open ticket holds the stamp only when it was reopened while a
+    // merge was deferred — rare, but it is the shape `row` renders, and without
+    // a carrier here the two implementations render t16 identically whether or
+    // not both copy the mark.
+    { id: 't16', title: 'held back', assignee: 'hand', state: 'open', parked: true, openedAt: now - 40 * HOUR, closedAt: null,
+      mergeWaiting: 'suite-in-flight' },
   ];
   for (let i = 0; i < 12; i++) {
     rows.push({
@@ -402,6 +408,13 @@ function parityBoard() {
       // `doneAll` is sliced into it), so marking t3 alone would leave closedRow
       // uncompared in the default view.
       ...(i === 0 ? { respecs: [{ at: now - 5 * HOUR, by: 'lead', title: 'before it shipped' }] } : {}),
+      // t531: the `closedRow` carrier for the merge-waiting mark, and the shape
+      // that actually occurs — the stamp lands on a ticket the loop already
+      // wrote `done`, so the recently-closed block is where a lead reads it. A
+      // DIFFERENT row from the respec carrier on purpose: sharing one row cannot
+      // distinguish an implementation that renders both marks from one that
+      // renders whichever it reaches first.
+      ...(i === 1 ? { mergeWaiting: 'suite-in-flight' } : {}),
     });
   }
   return rows;
@@ -437,6 +450,14 @@ test('listing parity: the two implementations RENDER the same board (t100 — no
     `ENTER: a respec'd OPEN row reaches the reduced facts: ${mine.join(' / ')}`);
   assert.ok(mine.some((f) => /^t4\|.*closed\|.*respec'd ×1/.test(f)),
     `ENTER: a respec'd CLOSED row reaches the reduced facts: ${mine.join(' / ')}`);
+  // t531: same reasoning as the respec guards for the merge-waiting mark, which
+  // also rides the title and so is only comparable if a stamped row survives the
+  // reduction. Both shapes again: t16 proves `row` carries it, t5 (the second
+  // recent close) proves `closedRow` does.
+  assert.ok(mine.some((f) => /^t16\|.*merge waiting: suite-in-flight/.test(f)),
+    `ENTER: a merge-waiting OPEN row reaches the reduced facts: ${mine.join(' / ')}`);
+  assert.ok(mine.some((f) => /^t5\|.*closed\|.*merge waiting: suite-in-flight/.test(f)),
+    `ENTER: a merge-waiting CLOSED row reaches the reduced facts: ${mine.join(' / ')}`);
 
   assert.deepStrictEqual(theirs, mine,
     'the two listing implementations drifted — the exec pull and [agent:task list] now disagree about the board');

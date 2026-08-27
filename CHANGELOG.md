@@ -13,6 +13,14 @@ blocks a release.
 
 ## Unreleased
 
+- **A ticket whose merge is waiting now says so on the board.** When the loop
+  defers an auto-merge because a suite is already running in the root checkout,
+  it stamps the ticket — but nothing rendered that stamp, so the lead could only
+  reach it by opening `tickets.json` by hand and had to judge by feel whether an
+  ACCEPT was fresh enough that the merge was still coming. `[agent:task list]`
+  and the `clodex-team` exec pull now both show `(merge waiting: …)` on the row,
+  open and recently-closed alike.
+
 - **The team lead prompt no longer tells the lead to merge and clean up by
   hand.** Both steps have been automated for a while: an ACCEPT verdict makes
   the ticket loop merge the branch to master and run a suite behind that merge,
