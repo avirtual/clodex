@@ -131,11 +131,15 @@ function scratch(body) {
 // and a `node --test` that sees it inherited refuses to run files ("run() is
 // being called recursively within a test file"). We are spawning an
 // INDEPENDENT runner, not nesting one, so the child gets a clean env.
-function runWrapper(...args) {
-  const env = { ...process.env };
+function runWrapperIn(runner, extraEnv, ...args) {
+  const env = { ...process.env, ...extraEnv };
   delete env.NODE_TEST_CONTEXT;
-  const r = spawnSync(process.execPath, [RUNNER, '--reporter=dot', ...args], { encoding: 'utf8', env });
+  const r = spawnSync(process.execPath, [runner, '--reporter=dot', ...args], { encoding: 'utf8', env });
   return { out: `${r.stdout}${r.stderr}`, code: r.status };
+}
+
+function runWrapper(...args) {
+  return runWrapperIn(RUNNER, {}, ...args);
 }
 
 test('THE t25 CASE: an escape alongside a real failure in the same file is named', () => {
@@ -224,6 +228,43 @@ test('a run that produced no tap stream says so LOUDLY and claims NO verdict', (
     assert.match(out, /run-tests: the tap stream is missing/);
     assert.doesNotMatch(out, /ESCAPES:/, 'a run it could not read must not be given an escape verdict');
     assert.notStrictEqual(code, 0);
+  } finally { s.clean(); }
+});
+
+test('a refusing run removes its own tmp dir — the silent leak (t500)', () => {
+  // The runner mints a `clodex-test-*` dir for the tap file before it can know
+  // whether the run will refuse, and every refusal between that mint and the
+  // analysis leaves through die() -> process.exit. Before t500 those paths
+  // leaked it, and nothing anywhere said so: no error, no failed test, no
+  // symptom — the pool was found by noticing directories on the box. The
+  // subject above DRIVES that exact path once per suite run, so the defect
+  // scaled with the number of runs while staying invisible. A regression would
+  // be equally silent, which is why the property is pinned rather than trusted.
+  //
+  // Measured in both directions against the tap-missing refusal: the fixed
+  // runner leaves the private TMPDIR empty, the runner with t500's
+  // `process.on('exit')` handler deleted leaves exactly one dir.
+  //
+  // TMPDIR is PRIVATE to this child, and that is the whole measurement method:
+  // os.tmpdir() honours it, so the child's dir lands somewhere only this
+  // subject can have written. A before/after count of the shared $TMPDIR would
+  // be a delta against a directory other agents on this box are also filling,
+  // and has already produced one false regression here. Emptiness of a
+  // directory we own is attributable by construction.
+  const privateTmp = mkTmpRoot('clodex-leakpin-');
+  // Same driving trick as the subject above, and for the same reason: a bad
+  // node flag to force the refusal, plus a real scratch file so the run is not
+  // classified as a sweep and does not block on the parent run's suite lock.
+  const s = scratch("require('node:test').test('never runs', () => {});");
+  try {
+    const { out } = runWrapperIn(RUNNER, { TMPDIR: privateTmp }, '--bogus-node-flag', s.file);
+    // ENTER: the leaking path was actually reached. A run that REPORTS cleans
+    // its dir up on the ordinary path too, so without this the assertion below
+    // would still pass if `--bogus-node-flag` ever stopped being refused — a
+    // green over a case nothing exercised.
+    assert.match(out, /run-tests: the tap stream is missing/, 'did not reach the refusal being pinned');
+    const left = fs.readdirSync(privateTmp).filter((n) => n.startsWith('clodex-test-'));
+    assert.deepStrictEqual(left, [], 'a refusing run left its tmp dir behind');
   } finally { s.clean(); }
 });
 
