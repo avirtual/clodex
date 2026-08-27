@@ -242,19 +242,21 @@ test('a refusing run removes its own tmp dir — the silent leak (t500)', () => 
   // be equally silent, which is why the property is pinned rather than trusted.
   //
   // Measured in both directions against the tap-missing refusal: the fixed
-  // runner leaves the private TMPDIR empty, the runner with t500's
+  // runner leaves the private temp root empty, the runner with t500's
   // `process.on('exit')` handler deleted leaves exactly one dir.
   //
   // The temp root is PRIVATE to this child, and that is the whole measurement
   // method: os.tmpdir() honours it, so the child's dir lands somewhere only
-  // this subject can have written. Set all three vars — os.tmpdir() reads
-  // TMPDIR on POSIX but TEMP/TMP on Windows, and dropping either Windows name
-  // aims the measurement at the SHARED temp while the assertion reads an
-  // empty private dir. The ENTER assertion does not catch that: the run still
-  // refuses correctly, only the count is pointed elsewhere.
-  // A before/after count of the shared temp dir would
-  // be a delta against a directory other agents on this box are also filling,
-  // and has already produced one false regression here. Emptiness of a
+  // this subject can have written. Set all three vars: os.tmpdir() ignores
+  // TMPDIR entirely on Windows, so at least one of TEMP/TMP must be set — both,
+  // so neither can be dropped as redundant; POSIX prefers TMPDIR but falls back
+  // to TMP then TEMP, so all three naming the same dir is the same dir either
+  // way. Leave the applicable ones unset and the child builds under the SHARED
+  // temp while the assertion reads a private dir it never touched. The ENTER
+  // assertion does not catch that: the run still refuses correctly, only the
+  // count is pointed elsewhere. A before/after count of the shared temp dir
+  // would be a delta against a directory other agents on this box are also
+  // filling, and has already produced one false regression here. Emptiness of a
   // directory we own is attributable by construction.
   const privateTmp = mkTmpRoot('clodex-leakpin-');
   // Same driving trick as the subject above, and for the same reason: a bad
