@@ -248,8 +248,8 @@ cwd IS a worktree is still on the team.
     ticket first (`revival.worktree` in `tickets.json`), but no board, viewer or
     verb renders that field, and the stamp is write-once per ticket — a ticket
     already stamped by an earlier retire keeps that earlier path and the accept
-    adds nothing. So copy the path out of the reply rather than expecting to
-    find it later; `tickets.json` is a hand-read fallback, not a display.
+    adds nothing. So copy it out of the reply rather than expecting to find it
+    later; `tickets.json` is a hand-read fallback, not a display.
   - **"keeps the tree" is never "keeps everything".** Only row 2 keeps the
     branch DELIBERATELY — the delete is skipped there so that a second
     `task accept`, after you commit or clear that tree, can still find the ref
