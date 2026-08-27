@@ -494,8 +494,9 @@ test('no comment leaks through the strip un-blanked', () => {
     + '  2. one of those guard comments was reworded to stop spelling `process.kill` (say, `kill()` '
     + 'instead). Nothing is wrong: the prose moved, the scan is fine, and the FLOOR is what should '
     + 'change. Re-grep the scanned set and set it to what is really there.\n'
-    + '  3. stripNonCode stopped preserving offsets on one of those four files, so the length guard '
-    + 'at the top of this loop skipped it before any line was examined — it counted toward neither '
+    + '  3. stripNonCode stopped preserving offsets on those files (scripts/clodex-monitor.js holds '
+    + 'two of the five, so a single file never drops the count this far), so the length guard at the '
+    + 'top of the loop above skipped them before any line was examined — they counted toward neither '
     + 'number. The matcher and the prose are both fine; the strip is what broke. Do not start here: '
     + "the subject above ('the comment/string strip does not swallow a file tail') asserts that "
     + 'condition directly and names the offending file and its two lengths. Fix what IT reports, and '
