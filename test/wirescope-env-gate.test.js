@@ -245,6 +245,15 @@ test('pidfile: an ABSENT pid is neither warned about nor discarded', () => {
 
   assert.strictEqual(sup._survivorPid(), null);
   assert.deepStrictEqual(logs, [], 'an absent pid is the ordinary case and must not log');
+  // The "nor discarded" half of the title. The `logs` check above does NOT already
+  // cover it: it only catches a regression that widens the gate, because the warn
+  // and the release sit in one branch. What it cannot see is the release being
+  // hoisted OUT of that branch — a plausible refactor, since _releasePidFile
+  // re-reads and looks safe to call unconditionally. It is not: `rec.pid !== pid`
+  // is `undefined !== undefined` = false, so it falls through to the unlink and
+  // deletes a record that was never corrupt, silently, on every watchdog tick.
+  assert.ok(fs.existsSync(pidFile),
+    'an absent pid is not corruption — the record must be left alone');
 });
 
 // ── re-adopting a survivor whose record was lost ────────────────────────────

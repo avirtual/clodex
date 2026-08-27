@@ -63,8 +63,8 @@ function sourceFiles() {
 //
 // It diverges from the guard file's version by KEEPING string bodies: `callsIn`
 // reads each site's signal argument as a literal (`'SIGKILL'`) and every CENSUS row
-// keys on it, so blanking strings would empty the `sig` of 8 of the 14 rows and the
-// census would key nothing. Skipping the literal is enough to fix the line-eating;
+// keys on it, so blanking strings would empty the `sig` of every row that keys on a
+// quoted signal and the census would key nothing. Skipping the literal is enough to fix the line-eating;
 // blanking it is not needed for that and costs the census its identity.
 function stripNonCode(src) {
   let out = '';
@@ -363,13 +363,49 @@ test('no censused liveness probe has become a real signal', () => {
 });
 
 test('the comment/string strip does not swallow a file tail', () => {
-  // stripNonCode models neither `${…}` interpolation nor regex literals, so a
-  // mis-parse blanks an arbitrary TAIL span rather than one line — and every scan
-  // above then reads an empty file and passes. wirescope-supervisor.js is the
-  // canary because it carries the interpolated-URL shape that broke the strip this
-  // replaced; its last line contains no comment and no string, so it must survive.
-  assert.ok(codeOf('wirescope-supervisor.js').includes('module.exports = { createWirescopeSupervisor'),
-    'stripNonCode blanked the tail of wirescope-supervisor.js: an unterminated quote or comment ran to EOF, '
-    + 'which silently empties every scan in this file rather than failing one. Fix the strip — do not delete '
-    + 'this canary.');
+  // An unterminated `/*` blanks every byte to EOF, and every scan above then reads
+  // an empty file and PASSES. That is the failure this whole file exists to prevent,
+  // reached from the inside: for a file carrying a CENSUS row the blanking is loud
+  // (its row stops being found and `missing` fires), so the real exposure is a file
+  // with NO row that later gains a call site — invisible rather than uncensused.
+  // CENSUS names 9 of the files scanned here, so a canary over censused files would
+  // miss precisely the gap. This runs over `sourceFiles()`, the scan's real input.
+  //
+  // Measured, not assumed: an unterminated quote or a regex containing a quote does
+  // NOT blank a tail in this copy of the strip — it keeps string bodies (`:90`), so a
+  // mis-paired quote leaks a COMMENT through un-blanked instead. That is a false
+  // POSITIVE (prose can satisfy a scan), the opposite direction, and no tail canary
+  // of any shape catches it.
+  for (const f of sourceFiles()) {
+    const raw = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    const code = codeOf(f);
+
+    // The premise the offset comparison stands on. stripNonCode replaces comments
+    // with equal-length runs of spaces and copies strings verbatim, so it is
+    // offset-preserving; if an edit ever breaks that, the check below would go on
+    // comparing offsets that no longer line up and silently stop meaning anything.
+    assert.strictEqual(code.length, raw.length,
+      `stripNonCode is no longer offset-preserving on ${f} (${raw.length} in, ${code.length} out). `
+      + 'The tail check below compares the two by OFFSET, so it reads the wrong character once this '
+      + 'holds and stops being a canary at all. Restore length preservation — comments must become '
+      + 'equal-length spaces, strings must be copied through — before touching that check.');
+
+    let last = raw.length - 1;
+    while (last >= 0 && /\s/.test(raw[last])) last -= 1;
+    if (last < 0) continue; // a whitespace-only file has no tail to lose
+
+    // No literal from any scanned file appears here on purpose: a hardcoded last
+    // line per file is 9+ literals that go stale on any refactor of any of them,
+    // and a stale canary gets deleted rather than fixed.
+    assert.ok(!/\s/.test(code[last]),
+      `stripNonCode blanked the tail of ${f}: the last non-blank character of the source is blank after `
+      + 'the strip, so every scan in this file reads a truncated version of it and PASSES over anything '
+      + 'in the eaten span. Two causes this check cannot tell apart — rule out the second before touching '
+      + 'the strip:\n'
+      + '  1. an unterminated `/*` ran to EOF (the defect; no other shape blanks a tail in this copy of '
+      + 'the strip, which keeps string bodies).\n'
+      + `  2. ${f} legitimately now ENDS with a comment or a string, which the strip blanks correctly. `
+      + 'No scanned file did when this was written; if one does now, the canary needs that file taught to '
+      + 'it — the strip is not wrong.');
+  }
 });
