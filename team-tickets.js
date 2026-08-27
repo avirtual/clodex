@@ -6946,7 +6946,17 @@ function createTicketMethods(deps, shared) {
       // recorded fork point means there is none to lose — nothing landed, so
       // nothing can have been reverted. What the TREE holds uncommitted is
       // protected by the isDirty gate below, which this arm never reaches anyway.
-      const mergeStamp = (ticket.mergeError && String(ticket.mergeError)) || null;
+      // RE-READ, not the snapshot loaded at the top of this method. Two awaits
+      // sit between that load and here (isMerged, commitsOnBranch), and the
+      // auto-merge loop can stamp inside that window — leaving the veto reading
+      // an un-stamped snapshot and taking the teardown, which is the residual
+      // shape of the very failure this arm exists to prevent. Same "re-read the
+      // state one last time" discipline `_autoMergeTicket` applies at its own
+      // pre-merge gate, and for the same reason. Snapshot-on-failure: an
+      // unreadable board falls back to the snapshot rather than to `null`, so a
+      // read error cannot silently disarm the veto.
+      const freshTicket = this._loadTicket(team, ticket.id) || ticket;
+      const mergeStamp = (freshTicket.mergeError && String(freshTicket.mergeError)) || null;
       if (mergeStamp && !(c.ok && measured && c.count === 0)) {
         // No `mergedInto`, deliberately: this arm exists because the merge cannot
         // be shown, and stamping m.base there would store the very claim the reply
@@ -6975,24 +6985,41 @@ function createTicketMethods(deps, shared) {
           : measured
             ? `Its ${c.count} commit${c.count === 1 ? '' : 's'} beyond ${c.base} may be off ${m.base} entirely.`
             : `How much it carries is UNKNOWN: ${why()}, where an empty branch and one already merged both count 0.`;
-        // The confirmation is branched on the STEP, because the steps do not all
-        // describe the same repository. `suite`, `revert-blocked` and `unexpected`
-        // are the ones where a merge was actually made — reverted, left standing,
-        // or unknown — and there the ancestor answer may be the trace of that
-        // merge. Every other step fails BEFORE `mergeNoFf`, so the loop never
-        // merged this branch at all: telling that lead to check master still
-        // carries "that merge" sends them looking for a commit the loop never
-        // made, on the canonical recovery where they merged by hand themselves.
+        // THREE repositories, not two, because the steps do not describe the same
+        // one — and the middle case is the dangerous one.
+        //
+        //   revert-blocked  the loop merged and deliberately did NOT revert: a
+        //                   suite was running in the root, so undoing would have
+        //                   rewritten files under it. Its own escalation tells the
+        //                   lead to run `git revert -m 1` once that suite ends, on
+        //                   a master that is RED or carries an unverified merge.
+        //   suite/unexpected  a merge was made and then reverted, or its fate is
+        //                   unknown — there the ancestor answer may be its trace.
+        //   everything else  fails BEFORE mergeNoFf, so no merge commit exists.
+        //
+        // Asking "does master still carry that merge?" on revert-blocked is worse
+        // than useless: it answers YES BY CONSTRUCTION, the lead reads a confirmed
+        // landing, the second accept deletes the branch, and then they perform the
+        // revert the loop asked them for — leaving the work in neither master's
+        // tree nor any ref. That is t537 reached through this arm's own advice,
+        // and the comment above already says so; this sentence used to contradict
+        // it. The owed action there is a DECISION about the revert, not a check.
+        //
         // The VETO stays broad on purpose — an allowlist is a list someone must
         // maintain, and a step added later would default to not vetoing, which is
-        // default-unsafe. Only the sentence narrows.
-        const mergeWasAttempted = ['suite', 'revert-blocked', 'unexpected'].includes(mergeStamp);
-        const explain = mergeWasAttempted
-          ? 'and an ancestor test cannot tell a merge that still stands from one that was reverted: `git revert -m 1` ADDS a commit, so the merge stays an ancestor either way.'
-          : 'and that step fails BEFORE the merge runs, so the loop made no merge commit here and the ancestor answer is not evidence from it.';
-        const confirm = mergeWasAttempted
-          ? `Confirm by hand that ${m.base} still carries that merge — a revert of it lands as a later \`Revert "Merge …"\` commit`
-          : `The loop never merged this branch, so if ${branch} is an ancestor of ${m.base} now, someone merged it by hand — confirm that`;
+        // default-unsafe. Only the sentences narrow.
+        const mergeStandsByDesign = mergeStamp === 'revert-blocked';
+        const mergeWasAttempted = ['suite', 'unexpected'].includes(mergeStamp);
+        const explain = mergeStandsByDesign
+          ? `and that step means the loop MERGED and deliberately did not revert — ${m.base} was left carrying it because a suite was running, so it is red or unverified and an undo is still owed.`
+          : mergeWasAttempted
+            ? 'and an ancestor test cannot tell a merge that still stands from one that was reverted: `git revert -m 1` ADDS a commit, so the merge stays an ancestor either way.'
+            : 'and that step fails BEFORE the merge runs, so the loop made no merge commit here and the ancestor answer is not evidence from it.';
+        const confirm = mergeStandsByDesign
+          ? `Do NOT read the ancestor answer as a landing — it is yes by construction here. Decide the revert first: if you still intend to undo it, revert and re-review instead of accepting again`
+          : mergeWasAttempted
+            ? `Confirm by hand that ${m.base} still carries that merge — a revert of it lands as a later \`Revert "Merge …"\` commit`
+            : `The loop never merged this branch, so if ${branch} is an ancestor of ${m.base} now, someone merged it by hand — confirm that`;
         // TERMINAL, and the second accept is the recovery. `closedOut` retires the
         // stamp through finish()'s existing rule, and that is what lets a second
         // accept differ from this one: nothing the lead can do to the REPOSITORY
@@ -7007,7 +7034,7 @@ function createTicketMethods(deps, shared) {
           + `${explain} `
           + `${carries} Nothing was removed: ${seatClause('archived (resumable)')}worktree and branch were KEPT. `
           + `${confirm} — because this reply ANSWERS the mark, and a second `
-          + `[agent:task accept ${ticket.id}] takes the ordinary merged path and DELETES the branch.`, true);
+          + `[agent:task accept ${ticket.id}] takes the ordinary merged path.`, true);
         return;
       }
 
@@ -7026,6 +7053,27 @@ function createTicketMethods(deps, shared) {
       if (seatName) {
         this._stampTicketRevival(team, seatName,
           { accepted: true, mergedInto: (measured && c.count === 0) ? null : m.base });
+        // Retire a `mergeVetoed` left by an earlier accept on this same ticket.
+        // `_stampTicketRevival` is write-once (`!t.revival`), so the call above
+        // is a NO-OP on the second accept — and without this the veto's trace
+        // would outlive the check it asked for, on a ticket whose branch is now
+        // gone. That is the stale-mark class t535 fixed for `mergeError`: a mark
+        // on a durable record is read as current, and the whole reason this arm
+        // is reached is that the lead answered it. Superseded rather than merely
+        // deleted, so what survives says the check completed and what it found.
+        try {
+          const fresh = ticketsStore.load(team.root);
+          const row = fresh.find((t) => t.id === ticket.id);
+          if (row && row.revival && row.revival.mergeVetoed) {
+            row.revival.mergeVetoedClearedAt = Date.now();
+            row.revival.mergedInto = (measured && c.count === 0) ? null : m.base;
+            delete row.revival.mergeVetoed;
+            row.lastActivityAt = Date.now();
+            ticketsStore.save(team.root, fresh);
+          }
+        } catch (e) {
+          log.error('ticket', `clearing the merge veto trace on ${ticket.id} failed: ${e.message}`);
+        }
       }
 
       // TWO independent gates stand between a merge fact and a destroy(), and

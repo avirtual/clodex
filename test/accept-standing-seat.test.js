@@ -923,7 +923,7 @@ test('the vetoed accept is terminal and CLEARS the mark, so a second accept can 
 
   assert.strictEqual(f.one('t1').mergeError, 'revert-blocked', 'ENTER: the mark is on the ticket to be answered');
 
-  await accept(f, 't1');
+  const reply1 = await accept(f, 't1');
 
   // Terminality is the recovery, not a detail. Nothing the lead does to the
   // REPOSITORY clears a mergeError — only an accept that closes out does — so a
@@ -938,6 +938,22 @@ test('the vetoed accept is terminal and CLEARS the mark, so a second accept can 
     'and leaves the step it vetoed on the revival stamp, which outlives the cleared mark');
   assert.ok(!('mergedInto' in f.one('t1').revival),
     'while withholding mergedInto — the whole arm exists because that merge cannot be shown');
+  // This fixture has run `revert-blocked` since the arm was written and asserted
+  // nothing about its advice, which is how it emitted the WRONG advice for two
+  // rounds. `revert-blocked` is the one step where the loop merged and
+  // deliberately did not revert, so "confirm master still carries that merge"
+  // answers yes by construction — the lead reads a landing, lets the branch go,
+  // then runs the revert the loop asked them for, and the work is in neither
+  // master's tree nor a ref. Asserted as a pair: the decision this arm owes, and
+  // the absence of the check that would mislead.
+  assert.match(reply1, /Decide the revert first/,
+    'the revert-blocked arm asks for a DECISION about the owed undo, not a confirmation');
+  assert.match(reply1, /deliberately did not revert/,
+    'and says why master carries the merge — by design, not as evidence of a landing');
+  assert.doesNotMatch(reply1, /still carries that merge/,
+    'and never asks the lead to confirm something that is true by construction here');
+  assert.doesNotMatch(reply1, /DELETES the branch/,
+    'nor promises a delete the second accept may refuse on a kept tree');
   assert.strictEqual(exists(wt), true, 'ENTER: the tree is still there for the second accept to reclaim');
 
   const second = await accept(f, 't1');
@@ -946,6 +962,15 @@ test('the vetoed accept is terminal and CLEARS the mark, so a second accept can 
   assert.strictEqual(exists(wt), false, 'and removes the tree the first one preserved');
   assert.strictEqual(branches(f).includes('landed'), false, 'and deletes the branch');
   assert.match(second, /retired and its worktree removed/, 'the second reply reports the teardown it performed');
+  // The veto's trace must not outlive the check it asked for. `_stampTicketRevival`
+  // is write-once, so the merged arm's own stamp call is a no-op here and the
+  // supersede is a separate write — without it the ticket keeps saying a merge
+  // check is owed on a branch that is now deleted, the stale-mark class t535
+  // fixed for `mergeError`.
+  assert.ok(!('mergeVetoed' in f.one('t1').revival),
+    'the second accept retires the veto trace it answered');
+  assert.strictEqual(f.one('t1').revival.mergedInto, 'master',
+    'and records the landing in its place, so the stamp says the check completed rather than going silent');
 });
 
 test('a demonstrably EMPTY branch is exempt from the veto — there is no work to protect', async (t) => {
@@ -1005,4 +1030,45 @@ test('a step that DID merge still gets the revert-confirmation sentence', async 
   assert.match(msg, /still carries that merge/, 'the suite step merged before it failed, so the confirmation is about that merge');
   assert.match(msg, /Revert "Merge …"/, 'and names the shape a revert of it leaves behind');
   assert.doesNotMatch(msg, /The loop never merged this branch/, 'and never claims the loop skipped the merge');
+});
+
+// The window nit 1 closes. `_taskAccept` loads the board at its top, then awaits
+// `isMerged` and `commitsOnBranch` before the veto reads the stamp — and the
+// auto-merge loop can stamp inside that window. Reading the stale snapshot there
+// takes the TEARDOWN on a ticket that was marked MERGE FAILED microseconds ago,
+// which is the residual form of the failure this whole ticket exists to prevent.
+//
+// Staged through a gitWorktree override rather than a timer: the stamp lands
+// from inside the awaited `commitsOnBranch`, which is exactly where a real
+// interleaving lands it, and it is deterministic. `isMerged` and `isDirty` are
+// the real implementations so the arm still reaches the veto for real reasons.
+test('a stamp landing DURING the accept is still seen — the veto re-reads the board', async (t) => {
+  const real = require('../git-worktree');
+  let stamped = false;
+  const f = mkFixture(t, {
+    gitWorktree: {
+      ...real,
+      commitsOnBranch: async (root, branch, base) => {
+        // The loop stamps while accept is awaiting the count.
+        if (!stamped) { stamped = true; f.m._stampMergeError(f.team, 't1', 'suite'); }
+        return real.commitsOnBranch(root, branch, base);
+      },
+    },
+  });
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+
+  assert.ok(!('mergeError' in f.one('t1')),
+    'ENTER: the ticket is UNSTAMPED when accept starts, so the snapshot it loads says teardown is fine');
+
+  const msg = await accept(f, 't1');
+
+  assert.strictEqual(f.one('t1').mergeError, undefined,
+    'ENTER: the stamp really landed mid-accept and was then cleared by the terminal close');
+  assert.ok(stamped, 'ENTER: the interleaving actually ran');
+  assert.deepStrictEqual(f.killed, [], 'the veto sees the fresh stamp, not the snapshot, and destroys nothing');
+  assert.strictEqual(exists(wt), true, 'so the tree survives a stamp that arrived mid-flight');
+  assert.ok(branches(f).includes('landed'), 'and so does the branch');
+  assert.match(msg, /MERGE FAILED at "suite"/, 'and the reply reports the mark that landed during the accept');
 });

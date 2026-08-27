@@ -106,7 +106,9 @@ visible rather than silently lost.
   tearing its seat down there would kill a still-warm hand before you had read
   a word or sent rework.
   **Passing the merge gate is not the same as confirming work landed, and the
-  reply distinguishes four outcomes — read which one you got.** On an unmarked
+  MERGED reply distinguishes four outcomes — read which one you got.** (Four
+  outcomes of the merged arm, which is one of the five ARMS keyed below; both
+  counts are right about different things.) On an unmarked
   ticket teardown does not turn on that COUNT: a branch reported empty is torn
   down exactly as one reported merged, and it should be — an empty branch has
   nothing to lose. What it DOES turn on is the four facts the table below rows
@@ -121,8 +123,8 @@ visible rather than silently lost.
   case says UNKNOWN on purpose — it is not a quieter way of saying empty, and
   reading it as one is how a merge that really happened gets recorded as
   nothing. Only "0 against the fork point" means demonstrably empty.
-  **A ticket carrying `!! MERGE FAILED` tears down NOTHING, unless its branch is
-  demonstrably empty** — even though that branch passes the merge gate, which it
+  **A ticket carrying `!! MERGE FAILED` tears down no tree and no branch (a
+  one-shot seat is still archived), unless its branch is demonstrably empty** — even though that branch passes the merge gate, which it
   does for a reason that makes the pass worthless: the loop undoes a red merge
   with `git revert -m 1`, which ADDS a commit, so the merge commit stays an
   ancestor and the ancestor test still answers merged over work that is no
@@ -131,10 +133,17 @@ visible rather than silently lost.
   a stamped failure — and there is no work for a revert to have taken.) That
   accept reports the mark instead of a landing, keeps tree and branch, and
   closes the ticket out — which CLEARS the mark, so a second `task accept` takes
-  the ordinary merged path and deletes the branch. Before running that second
-  accept, confirm what the reply asks you to: that master still carries the
-  merge where the loop made one, or, where it failed before merging, that the
-  branch you are looking at got onto master by some other hand.
+  the ordinary merged path. Before running that second accept, do what the reply
+  asks, and it asks three different things because the steps describe three
+  different repositories: where the loop merged and then reverted, confirm
+  master still carries the merge; where it failed before merging at all, confirm
+  someone else put the branch there by hand; and on `revert-blocked` confirm
+  nothing — the loop merged and deliberately did NOT revert (a suite was
+  running), so master carries it BY CONSTRUCTION and an undo is still owed.
+  **That last one is the trap**: the ancestor answer is yes for a reason that is
+  not a landing, and if you accept, let the branch go, and then run the revert
+  the loop asked you for, the work is in neither master's tree nor any ref. If
+  you still intend to revert, revert and re-review — do not accept again.
 - `[agent:task list]` — the OPEN board, then the tickets closed most recently
   (a capped handful, so it stays short), then a count of everything else it
   hid, done and cancelled separately. The board only grows, so add a filter to
