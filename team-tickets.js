@@ -6701,6 +6701,20 @@ function createTicketMethods(deps, shared) {
         // sweep would keep alarming that someone owes an action on work that has
         // been accepted and whose tree is gone.
         delete ticket.verifyHold;
+        // The merge failure goes too, but ONLY on an arm that closed the ticket
+        // out, and the split is not the one above: `mergeError` is not loop
+        // state that an accept falsifies by itself. It has no reader but the
+        // two boards, so it is a rendered claim about the REPOSITORY - branch X
+        // did not land, a human must merge it - and the two arms that invite
+        // another accept have just re-measured that claim and found it still
+        // true or unmeasurable; clearing there would blank the mark on the very
+        // ticket whose reply says someone still owes the merge. It is retired
+        // on the closing arms as ANSWERED rather than as untrue: the stamp may
+        // still describe something real - `isMerged` is an ancestor test and
+        // `revert -m 1` adds a commit, so a merge reverted off master after a
+        // red suite, and one left standing deliberately, both still read merged
+        // - and an accept that ends the ticket is the lead's answer to it.
+        if (closedOut) delete ticket.mergeError;
         // Re-read: the teardown below stamped revival onto its own copy.
         const fresh = ticketsStore.load(team.root);
         const row = fresh.find((t) => t.id === ticket.id);
@@ -6712,6 +6726,7 @@ function createTicketMethods(deps, shared) {
           row.lastActivityAt = ticket.lastActivityAt;
           delete row.loopStep;
           delete row.verifyHold;
+          if (closedOut) delete row.mergeError;
           ticketsStore.save(team.root, fresh);
         } else {
           ticketsStore.save(team.root, tickets);

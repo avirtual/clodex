@@ -329,6 +329,13 @@ test('t533: a FAILED merge is visible on the board — open row and closed row',
 // keeps them apart in the record on purpose. A board that renders them alike
 // throws that distinction away at the last step, so the shapes are pinned as
 // DIFFERENT here rather than left to whichever wording a later edit prefers.
+//
+// The record built below is SYNTHETIC and the loop cannot produce it:
+// `_autoMergeTicket`'s `finally` clears `mergeWaiting` on every non-defer exit,
+// so the two stamps never coexist in the wild, and ticket-auto-merge.test.js
+// pins that they must not. Setting both here is legitimate for its own purpose
+// — comparing the two mark SHAPES needs them on ONE line — but it is not
+// licence to treat the pair as a reachable state anywhere else.
 test('t533: waiting and failed are visually distinguishable on one row', () => {
   const f = mkRespec();
   openPinned(f);

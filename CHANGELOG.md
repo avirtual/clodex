@@ -23,6 +23,13 @@ blocks a release.
   me" from "waiting its turn". The **tickets viewer** shows it too, as a red
   badge with a red row edge — its own idiom rather than the text boards'
   suffix, keeping that same separation without the reader parsing the words.
+  The mark now also CLEARS when the lead accepts a ticket whose branch landed,
+  or one that never had a branch: the canonical recovery is that the lead
+  merges by hand and accepts, which used to leave the finished ticket shouting
+  `!! MERGE FAILED` from the recently-closed block for the whole 24h window. It
+  deliberately survives an accept on a ticket whose branch is still unmerged —
+  there the accept's own reply says to merge and accept again, so the mark is
+  still true.
 
 - **A ticket whose merge is waiting now says so on the board.** When the loop
   defers an auto-merge because a suite is already running in the root checkout,

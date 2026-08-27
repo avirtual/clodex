@@ -7121,6 +7121,96 @@ test('task accept: an empty branch is NOT stamped as merged', async () => {
   assert.strictEqual(f.one('t1').revival.mergedInto, null, 'and the acceptance write does not restore the claim');
 });
 
+// ── t535: a recovered merge failure must stop shouting, but only where it is
+// actually over ────────────────────────────────────────────────────────────
+// The canonical recovery from a failed auto-merge is: the loop stamps the
+// failing step and escalates, the lead merges by hand, the lead accepts. Before
+// this, `finish()` cleared `loopStep` and `verifyHold` and left `mergeError`
+// standing, so that ticket's recently-closed row read `!! MERGE FAILED: …` for
+// the whole 24h window — the one row that violated the premise t531 and t533
+// were both built on, that a stamp on a board is read as current.
+//
+// Driven through `_stampMergeError` rather than a hand-written field, for the
+// reason task-respec.test.js's t533 tests give: a hand-written one pins the
+// clear against this test's belief about the field name, which is what a rename
+// breaks invisibly. The BOARD is asserted, not just the record, because the
+// board is where the staleness was actually costing the lead something.
+test('t535: accepting a merged ticket clears the stale merge failure, on the record and the board', async () => {
+  const f = mkAccept({ ok: true, merged: true, base: 'master' });
+  openAndDone(f);
+  f.m._stampMergeError(f.team, 't1', 'clean-tree');
+  assert.strictEqual(f.one('t1').mergeError, 'clean-tree',
+    'ENTER: the stamp really landed — otherwise the absence below is a stamp that never happened');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  assert.match(f.injected[f.injected.length - 1], /MERGE FAILED: clean-tree/,
+    'ENTER: and the board really renders it, or the board assertion below cannot fail');
+  f.injected.length = 0;
+
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+
+  assert.ok(!('mergeError' in f.one('t1')),
+    'the stale failure is gone from the record the accept re-read and saved');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  const board = f.injected[f.injected.length - 1];
+  assert.match(board, /recently closed:/, 'ENTER: the row reached the recently-closed block, where the lead reads it');
+  assert.match(board, /t1 \[done\].*closed/, 'ENTER: and t1 is the row in it, not some other ticket');
+  assert.doesNotMatch(board, /MERGE FAILED/, 'and the board no longer sends the lead after a merge that has landed');
+});
+
+// The other direction, and the one that costs more to get wrong. `finish()` runs
+// on all four accept arms and two of them are NOT terminal: their own reply says
+// "Merge it, then accept again". `mergeError` is not loop state an accept can
+// overrule — its only readers are the two board renderers, so it is a claim
+// about the REPOSITORY, and on this arm the accept has just re-measured that
+// claim and found it still true. Clearing here would blank the mark on the one
+// ticket whose accept message says a human still owes the merge.
+test('t535: accepting an UNMERGED ticket leaves the merge failure standing', async () => {
+  const f = mkAccept({ ok: true, merged: false, base: 'master' });
+  openAndDone(f);
+  f.m._stampMergeError(f.team, 't1', 'clean-tree');
+  assert.strictEqual(f.one('t1').mergeError, 'clean-tree', 'ENTER: a stamp is there to survive');
+  f.injected.length = 0;
+
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+
+  assert.match(f.injected.join('\n'), /accept t1\] again/,
+    'ENTER: this arm really is the one that invites another accept — otherwise it is not the case under test');
+  assert.strictEqual(f.one('t1').mergeError, 'clean-tree',
+    'the stamp survives an accept that did not close the ticket out');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  assert.match(f.injected[f.injected.length - 1], /MERGE FAILED: clean-tree/,
+    'and the board still says a human owes this merge, which is still true');
+});
+
+// The fourth arm, which is terminal for a different reason: there is no branch,
+// so there was never a merge for the stamp to be about. Separate from the merged
+// arm above because it reaches `finish()` by a different route — an early
+// `return` before `isMerged` is ever called — and a clear placed in the merged
+// arm rather than in `finish()` would pass that test and fail this one.
+test('t535: accepting a no-branch ticket clears it too — terminal by a different route', async () => {
+  const f = mkAccept({ ok: true, merged: true, base: 'master' }, {
+    getPersistence: () => ({
+      list: () => [],
+      get: (n) => (n === 'team-hand' ? { name: 'team-hand', sessionId: 'sess-abc', ephemeral: true } : null),
+    }),
+  });
+  openAndDone(f);
+  f.m._stampMergeError(f.team, 't1', 'on-master');
+  assert.strictEqual(f.one('t1').mergeError, 'on-master', 'ENTER: a stamp is there to clear');
+  f.injected.length = 0;
+
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+
+  assert.match(f.injected.join('\n'), /no ticket branch recorded/,
+    'ENTER: the no-branch arm is the one that ran, not the merged arm');
+  assert.deepStrictEqual(f.asked, [],
+    'ENTER: and it returned before the merge check, which is what makes this a distinct route to finish()');
+  assert.ok(!('mergeError' in f.one('t1')), 'the stamp is cleared on this terminal arm as well');
+});
+
 // ---------------------------------------------------------------------------
 // t89: the COMPLETION edge. t82 made ticket DISPATCH wake the assignee — the
 // ARRIVAL edge — but a seat already holding a queue received those specs turns
