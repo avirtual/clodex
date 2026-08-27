@@ -207,6 +207,7 @@ test('every process.kill in session-manager.js is guarded against a broadcast pi
   // that needs a real parser, which is deliberately not written here (it would be
   // duplicated in two files). This buys the one property one line can buy: the scan
   // reached the end of the file.
+  //
   // Bounded rather than `[^}]*`: a `}` between the two anchors is not a signal of
   // anything (an inline object in the export list is legal), while an unbounded
   // `[\s\S]*` would let a hypothetical earlier `module.exports` satisfy this and

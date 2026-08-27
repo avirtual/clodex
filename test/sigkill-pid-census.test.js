@@ -428,12 +428,22 @@ test('no comment leaks through the strip un-blanked', () => {
   // verbatim. The strip stays offset-preserving throughout, so neither the length
   // assert nor the tail read above can see it — the tail is over-copied, not blanked.
   //
-  // A leaked comment is read as CODE by every scan in this file. Measured on a
-  // planted copy: the three-line shape below made `rawCount` see 2 sites in a file
-  // with 1, and the parse returned `-1, 'SIGKILL'` — a broadcast call site conjured
-  // out of prose. That direction is loud (it lands as uncensused). The quiet one is
-  // the ENTER subject's `total >= 16`, which leaked prose can hold green over a scan
-  // that has stopped reaching real source.
+  // A leaked comment is read as CODE by every scan in this file. Measured on a planted
+  // copy — three lines, in this order, are enough:
+  //
+  //     const re = /[']/;
+  //     // process.kill(-1, 'SIGKILL')   <- prose, not a call
+  //     const x = 1;
+  //
+  // `rawCount` then saw 2 sites in a file with 1, and the parse returned `-1, 'SIGKILL'`
+  // — a broadcast call site conjured out of prose.
+  //
+  // Measured, not reasoned, on which direction is quiet. A leak also lands in `found`,
+  // so it usually fires `uncensused` loudly; a key that COLLIDES with an existing CENSUS
+  // row still reds it, because the row's `count` doubles. The silent case is narrow and
+  // real: prose conjuring back a site that was REMOVED from the file, at the same key and
+  // the same count. Planted, every other subject here stayed green — including the ENTER
+  // floor, whose `total >= 16` the prose was holding up — and only this one fired.
   //
   // This detects the CONSEQUENCE, not the cause: teaching stripNonCode to model
   // regex literals or `${…}` is a real parser and a third divergent copy of one, and
@@ -454,6 +464,11 @@ test('no comment leaks through the strip un-blanked', () => {
       // other comment is equally real but harmless to THIS file's checks, and a
       // detector that fired on all of them would be reporting the strip's whole
       // imprecision rather than a defect anyone must act on.
+      //
+      // `//` only, and that is a real gap: a leaked `/* … process.kill … */` block is
+      // just as readable-as-code and passes here unseen. No scanned file has one today,
+      // so this is an unclosed hole rather than a live one — a leaked block comment is
+      // the case to extend this predicate for, not a reason to distrust a green run.
       if (t.startsWith('//') && t.includes('process.kill')) {
         suspect.push(`${f}: ${t.slice(0, 60)}`);
         if (code.slice(off, off + line.length).trim() !== '') leaked.push(`${f}: ${t.slice(0, 60)}`);
@@ -464,11 +479,21 @@ test('no comment leaks through the strip un-blanked', () => {
 
   // ENTER: the reduction above sits between the strip and an emptiness assert, so a
   // matcher that stopped selecting lines would vacuum out the check and leave it
-  // green. This file's own prose is the floor — it quotes process.kill in comments.
+  // green. NOT held by this file's own prose — `sourceFiles()` filters `test/`, so
+  // nothing here is scanned. It rides entirely on five guard comments in four
+  // production files (drawer-pty.js, session-manager.js, wirescope-supervisor.js,
+  // scripts/clodex-monitor.js twice), which is free-form prose nothing else pins:
+  // margin of 2, and a reword is a legitimate reason for this to move.
   assert.ok(suspect.length >= 3,
     `only ${suspect.length} comment lines mentioning process.kill were found across the scanned set; `
-    + 'there were 5 when this was written and this file itself carries several. The line matcher or the '
-    + 'file list has stopped selecting, so the emptiness assert below proves nothing.');
+    + 'there were 5 when this was written, in four production files — drawer-pty.js, session-manager.js, '
+    + 'wirescope-supervisor.js and scripts/clodex-monitor.js (twice). This test file is NOT among them: '
+    + 'sourceFiles() filters test/, so this file contributes nothing to the floor. Two causes:\n'
+    + '  1. the line matcher or the file list has stopped selecting, and the emptiness assert below '
+    + 'proves nothing — the scan is broken.\n'
+    + '  2. one of those guard comments was reworded to stop spelling `process.kill` (say, `kill()` '
+    + 'instead). Nothing is wrong: the prose moved, the scan is fine, and the FLOOR is what should '
+    + 'change. Re-grep the scanned set and set it to what is really there.');
 
   assert.deepStrictEqual(leaked, [],
     'these COMMENT lines survived stripNonCode un-blanked:\n  ' + leaked.join('\n  ')
