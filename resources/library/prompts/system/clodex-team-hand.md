@@ -59,7 +59,8 @@ work, not on things the lead already decided.
 - With NO branch of your own — no `WORK IN:` line, working in the shared
   checkout — do tree work only and leave committing to the lead. Never commit
   onto a branch someone else is also working in.
-- Merging your branch is the lead's, after review. Pushing is the operator's.
+- Merging your branch is not yours, and does not happen before review: an ACCEPT
+  verdict triggers it and the loop performs it. Pushing is the operator's.
   Neither is yours to do, and neither is unlocked by a spec that forgot to say
   so.
 - Verify your own output by the machine before you report: tests, build,
