@@ -24,20 +24,31 @@ blocks a release.
   lead really does still merge (no ticket carries the verdict, or the loop
   escalated at the merge step), and points cleanup at `task accept`. The hand
   prompt's matching sentence was corrected the same way.
-- **…and it no longer tells the lead to merge by hand in the one window where
-  the merge is already on its way.** The same prompt's `task accept` paragraph
-  still ended "merge first, then accept again" — correct for the two cases where
-  a lead owns the merge, wrong right after an ACCEPT verdict, where the loop has
-  scheduled the merge and a test suite holding the machine-wide lock can defer it
-  for minutes. A lead accepting into that window was told to hand-merge, which is
-  the failure the entry above removed from the other half of the file. It now
-  says to wait for the merge notice there. Two smaller corrections in the same
-  pass: accept's cleanup only runs on a tree that is clean and readable — a dirty
-  tree, or one already removed by hand, archives the seat and keeps the tree, and
-  the prompt now says so and names the second accept that finishes a dirty one —
-  and the dispatch self-reminder is now described alongside the loop's own stall
-  nudge, so a lead can tell which covers what instead of assuming either is the
-  only net.
+- **The team lead prompt no longer tells the lead to merge by hand in the one
+  window where the merge is already on its way.** That prompt's `task accept`
+  paragraph still ended "merge first, then accept again" — correct for the two
+  cases where a lead owns the merge, wrong right after an ACCEPT verdict, where
+  the loop has scheduled the merge and a test suite holding the machine-wide
+  lock can defer it for minutes. A lead accepting into that window was told to
+  hand-merge, which is the failure the entry above removed from the other half
+  of the file. It now says to wait for the merge notice there. Two smaller
+  corrections in the same pass: accept's cleanup only runs on a tree that is
+  clean and readable — a dirty tree, or one already removed by hand, keeps the
+  tree instead of removing it, and the prompt now says so and names the second
+  accept that finishes a dirty one — and the dispatch self-reminder is now
+  described alongside the loop's own stall nudge, so a lead can tell which
+  covers what instead of assuming either is the only net.
+- **And accept has a third condition the prompt never stated: whose seat it is.**
+  Cleanup is gated not only on the branch being merged and the tree being clean,
+  but on the seat being one the ticket loop minted. Assign a ticket that carries a
+  worktree to a STANDING seat — which an ordinary reassignment does, since a
+  worktree pin is never degraded — and acceptance retires nothing and keeps the
+  checkout, while the reply says so and neither prompt paragraph explained why.
+  It does now. Two smaller corrections alongside it: the archive on a dirty or
+  unreadable tree only runs if the seat is still up (one that already exited is
+  simply left alone), and "keeps the tree" no longer reads as "keeps everything"
+  — the dirty tree keeps its branch so a second accept can find it, the
+  unreadable one does not.
 
 ## 5.18.0 — 2026-08-27 — your checkouts, your cost history, and three hostile values
 

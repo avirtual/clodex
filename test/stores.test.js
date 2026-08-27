@@ -1502,8 +1502,13 @@ test('seed: the lead prompt briefs accept as a four-outcome verb, not a two-outc
 // readable tree: `isDirty` returning dirty OR `ok:false` archives the seat and
 // keeps the tree instead. Pinned by MEANING in both directions; the `doesNotMatch`
 // arms are the exact prior sentences, so a revert cannot restore a green suite.
-// Whitespace-tolerant because the prompt is hard-wrapped and a reflow must not
-// read as a reversal.
+//
+// t529: the `\s+` here is NOT whitespace tolerance, as this comment used to
+// claim. Each one sits at a wrap point the prompt has TODAY, so a reflow that
+// moves a break still red-lines. Left as is deliberately: the failure is a false
+// RED on a reflow, never a false green on a reversal, and a regex loose enough
+// to survive any reflow would stop pinning the sentence. Re-wrap the prompt and
+// these move with it.
 test('seed: the lead prompt qualifies accept — merge window and the dirty/unreadable downgrade', () => {
   const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
   assert.match(lead, /UNLESS\s+the ACCEPT verdict is\s+fresh/,
@@ -1514,10 +1519,62 @@ test('seed: the lead prompt qualifies accept — merge window and the dirty/unre
     'lead prompt must not still tell the lead to merge unconditionally before accepting');
   assert.match(lead, /only where the tree is clean\s+and readable/,
     'lead prompt gates accept\'s teardown on a clean, readable tree');
-  assert.match(lead, /ARCHIVES the seat and keeps the tree/,
+  // t529 moved this pin with the sentence it asserts: t525's wording claimed the
+  // archive is unconditional, and `:6930` runs it only `if (this.sessions.has(…))`.
+  // The `\s\S` middle keeps this arm about the DOWNGRADE existing at all; the
+  // liveness qualifier itself is pinned in the t529 test below.
+  assert.match(lead, /ARCHIVES the seat[\s\S]{0,32}and\s+keeps the tree instead/,
     'and names the downgrade the two failing shapes actually take');
   assert.doesNotMatch(lead, /deletes the branch for you\.\s+Retiring a seat/,
     'lead prompt must not still state accept\'s teardown as unconditional');
+});
+
+// t529: a THIRD gate sits above the two t525 pinned, and it is the one an
+// ordinary lead move reaches. `_taskAccept` wraps the whole destroy in
+// `if (seatName && ephemeralSeat)`, where `ephemeralSeat` is `!!(rec &&
+// rec.ephemeral)` off the RECORD — so a merged, clean ticket assigned to a
+// STANDING seat removes nothing and the reply says LEFT RUNNING. Reachable
+// because `_ticketAssigneeSeat` refuses to degrade a worktree pin, so
+// reassigning a worktree ticket to a standing role carries the branch across.
+//
+// The branch is pinned OUT of that gate deliberately: `deleteBranch` runs on the
+// standing-seat path too — the skip is only for `dirty` — so a prompt that swept
+// the branch in with the seat and the tree would be wrong in the other direction.
+//
+// Appended as its own test rather than folded into t525's, so both t524's and
+// t525's pins keep matching the sentences they were written against. Each
+// assertion carries a `doesNotMatch` arm on the EXACT prior text, so reverting
+// this commit goes red instead of quietly green.
+test('seed: the lead prompt states accept\'s third gate — a standing seat is never torn down', () => {
+  const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
+  assert.match(lead, /only for a seat the loop minted for this ticket/,
+    'lead prompt gates accept\'s teardown on the seat being one the loop minted');
+  assert.match(lead, /STANDING assignee keeps its seat and its checkout/,
+    'and says what a standing assignee gets instead of a teardown');
+  assert.match(lead, /a worktree pin is never degraded/,
+    'and names the ordinary lead move that puts a branch on a standing seat');
+  assert.doesNotMatch(lead, /but only where the tree is clean\s+and readable\.\s+A DIRTY tree/,
+    'lead prompt must not still state the clean+readable pair as the only gates');
+});
+
+// t529, item 2: t525's own new sentence over-claimed on two counts, both verified
+// at source. The archive is inside `if (this.sessions.has(seatName))`, so a seat
+// that already exited gets NO archive — the reply drops to "was NOT retired and
+// its worktree was KEPT" off `downgrade.archived`. And "keeps the tree" invites
+// the reader to hear "keeps everything", which is false for the BRANCH on the
+// unreadable path: the delete is skipped only for `dirty`, precisely so the
+// second accept that finishes a dirty tree can still find the ref.
+//
+// Pinned as two separate claims because the fix is two separate clauses. Merging
+// them into one sentence vague enough to cover both is how this defect recurred.
+test('seed: the lead prompt qualifies the downgrade — the archive is conditional, the branch is not the tree', () => {
+  const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
+  assert.match(lead, /ARCHIVES the seat \(if it is still running\)/,
+    'lead prompt conditions the archive on the seat still running');
+  assert.doesNotMatch(lead, /ARCHIVES the seat and keeps the tree instead/,
+    'lead prompt must not still claim the downgrade always archives');
+  assert.match(lead, /the dirty one keeps it so that\s+second accept can still find it, the unreadable one deletes it/,
+    'lead prompt splits the branch\'s fate from the tree\'s across the two downgrades');
 });
 
 // t525, item 3: the dispatch self-reminder and the loop's stall nudge overlap,
