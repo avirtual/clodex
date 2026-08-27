@@ -13,6 +13,27 @@ blocks a release.
 
 ## Unreleased
 
+- **`task accept` no longer deletes a branch whose merge was undone.** The
+  cleanup asked git whether the branch was an ancestor of master and read a yes
+  as "the work landed". Those are not the same question: when the merge loop
+  undoes a bad merge it runs `git revert -m 1`, which ADDS a commit rather than
+  removing one, so the merge commit stays an ancestor and the check still
+  answered yes over work that was no longer on master. Accept then reported a
+  clean landing, removed the worktree and deleted the branch — leaving the only
+  copy of the change in the reflog. It happened once for real. Accept now
+  refuses that teardown on any ticket the loop marked `MERGE FAILED`: it keeps
+  the tree and the branch, says which step the loop gave up at and that an
+  ancestor test cannot tell a standing merge from a reverted one, and tells you
+  what the mark actually owes you — which differs by step: confirm master still
+  carries the merge where the loop reverted one, confirm someone merged by hand
+  where it never got that far, and where it merged but was blocked from
+  reverting, decide that undo before anything else (master carries that merge by
+  construction, so reading it as a landing and then reverting later would strand
+  the work in no branch at all). That accept still closes the ticket
+  out, which clears the mark, so once you have checked, a second `task accept`
+  cleans up as before. A branch measurably empty against its recorded fork point
+  is exempt — there is no work there to lose.
+
 - **A ticket whose auto-merge FAILED now says so on the board.** When the merge
   loop gives up on a ticket it stamps the failing step, and that stamp means the
   ticket needs the lead by hand — but no board showed it, so the one state that

@@ -106,15 +106,44 @@ visible rather than silently lost.
   tearing its seat down there would kill a still-warm hand before you had read
   a word or sent rework.
   **Passing the merge gate is not the same as confirming work landed, and the
-  reply distinguishes four outcomes — read which one you got.** Teardown is
-  unconditional once the gate passes, but the count behind the wording is only
-  evidence when it was measured against the ticket's recorded fork point: a
+  MERGED reply distinguishes four outcomes — read which one you got.** (Four
+  outcomes of the merged arm, which is one of the five ARMS keyed below; both
+  counts are right about different things.) On an unmarked
+  ticket teardown does not turn on that COUNT: a branch reported empty is torn
+  down exactly as one reported merged, and it should be — an empty branch has
+  nothing to lose. What it DOES turn on is the four facts the table below rows
+  out, plus the MERGE FAILED mark, which refuses teardown UNLESS the branch is
+  demonstrably empty — 0 against the recorded fork point, where there is no work
+  a reverted merge could have taken. That is the one place the count decides a
+  teardown rather than only a sentence. The count is only evidence when
+  it was measured against the ticket's recorded fork point: a
   branch with no recorded fork point, or one whose recorded SHA was rebased or
   gc'd away, is counted against a fallback base, and there an already
   fast-forwarded branch and a branch that never committed both count 0. That
   case says UNKNOWN on purpose — it is not a quieter way of saying empty, and
   reading it as one is how a merge that really happened gets recorded as
   nothing. Only "0 against the fork point" means demonstrably empty.
+  **A ticket carrying `!! MERGE FAILED` tears down no tree and no branch (a
+  one-shot seat is still archived), unless its branch is demonstrably empty** — even though that branch passes the merge gate, which it
+  does for a reason that makes the pass worthless: the loop undoes a red merge
+  with `git revert -m 1`, which ADDS a commit, so the merge commit stays an
+  ancestor and the ancestor test still answers merged over work that is no
+  longer in master's tree. (The empty exemption is reachable, not a corner: a
+  hand that committed nothing leaves the loop nothing to merge, which is itself
+  a stamped failure — and there is no work for a revert to have taken.) That
+  accept reports the mark instead of a landing, keeps tree and branch, and
+  closes the ticket out — which CLEARS the mark, so a second `task accept` takes
+  the ordinary merged path. Before running that second accept, do what the reply
+  asks, and it asks three different things because the steps describe three
+  different repositories: where the loop merged and then reverted, confirm
+  master still carries the merge; where it failed before merging at all, confirm
+  someone else put the branch there by hand; and on `revert-blocked` confirm
+  nothing — the loop merged and deliberately did NOT revert (a suite was
+  running), so master carries it BY CONSTRUCTION and an undo is still owed.
+  **That last one is the trap**: the ancestor answer is yes for a reason that is
+  not a landing, and if you accept, let the branch go, and then run the revert
+  the loop asked you for, the work is in neither master's tree nor any ref. If
+  you still intend to revert, revert and re-review — do not accept again.
 - `[agent:task list]` — the OPEN board, then the tickets closed most recently
   (a capped handful, so it stays short), then a count of everything else it
   hid, done and cancelled separately. The board only grows, so add a filter to
@@ -167,7 +196,24 @@ cwd IS a worktree is still on the team.
 - `task accept` is the cleanup, and what it tears down is a FUNCTION OF FOUR
   FACTS, not one: whether the branch merged, whose seat the assignee is, what
   the tree holds, and whether the seat is running. Prose describes one path
-  through that and silently universalises the rest, so read the row:
+  through that and silently universalises the rest, so read the row.
+
+  FIRST decide which of five arms you are in — only the last reaches the row
+  table, and the other four tear down NO tree and NO branch whatever the rows
+  say. Each is named by the words its own reply uses:
+
+  The keys are anchored so that exactly one can match — a key that is a
+  substring of another arm's sentence routes you to the wrong row, which is the
+  one failure a key table exists to prevent. Match on the punctuation too:
+  the arms that removed nothing open `accepted, but`, the rest `accepted —`.
+
+  | reply says | arm | closes the ticket out? |
+  |---|---|---|
+  | `accepted — no ticket branch recorded` | no branch at all — the ticket was worked in the shared checkout, so there is never a tree or a ref to remove. A one-shot seat is ARCHIVED (resumable, and anything it left uncommitted is in the shared checkout); any other seat is left as it is | yes — terminal, there is no second accept to invite |
+  | `accepted, but the merge check could NOT run` | git could not answer, treated as NOT merged | no — accept again once it can |
+  | `accepted, but branch X is NOT merged into` | the branch is genuinely not in | no — merge it, then accept again |
+  | `stamped this ticket MERGE FAILED at` | the branch IS an ancestor but the loop gave up at a merge step, so the ancestor answer proves nothing | yes — and that CLEARS the mark, so a second accept tears down normally |
+  | `accepted — merged into`, `accepted — branch X has 0 commits beyond`, or `is an ancestor of` with NO `MERGE FAILED` clause | merged: read the row table below | yes |
 
   | on a MERGED branch | seat | worktree | branch |
   |---|---|---|---|
@@ -218,9 +264,13 @@ cwd IS a worktree is still on the team.
     ordinary case, since accept usually lands on a still-warm hand — has already
     lost its record by the time `removeWorktree` fails. The record is
     deliberately KEPT through that failure only for a seat that had already
-    exited. The reply names the path where it has one; on the live path nothing
-    else does, so copy it out of the reply rather than expecting to find it
-    later.
+    exited. The reply names the path where it has one, and on the live path it
+    is the only thing that SHOWS it to you: accept stamps the path onto the
+    ticket first (`revival.worktree` in `tickets.json`), but no board, viewer or
+    verb renders that field, and the stamp is write-once per ticket — a ticket
+    already stamped by an earlier retire keeps that earlier path and the accept
+    adds nothing. So copy it out of the reply rather than expecting to find it
+    later; `tickets.json` is a hand-read fallback, not a display.
   - **"keeps the tree" is never "keeps everything".** Only row 2 keeps the
     branch DELIBERATELY — the delete is skipped there so that a second
     `task accept`, after you commit or clear that tree, can still find the ref

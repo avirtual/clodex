@@ -7156,6 +7156,44 @@ test('t535: accepting a merged ticket clears the stale merge failure, on the rec
   assert.match(board, /recently closed:/, 'ENTER: the row reached the recently-closed block, where the lead reads it');
   assert.match(board, /t1 \[done\].*closed/, 'ENTER: and t1 is the row in it, not some other ticket');
   assert.doesNotMatch(board, /MERGE FAILED/, 'and the board no longer sends the lead after a merge that has landed');
+  // Which ARM cleared it, asserted rather than assumed. t536 added a veto that
+  // also takes a stamped ticket, is also terminal, and therefore also clears the
+  // mark — so the subject above now runs through the VETO and would keep passing
+  // if the merged arm's clear were deleted outright. The teardown is what tells
+  // the two apart: only the merged arm destroys.
+  assert.deepStrictEqual(f.destroyed, [],
+    'ENTER: a stamped ticket takes t536\'s veto, which clears the mark WITHOUT tearing down — so this subject alone no longer covers the merged arm');
+});
+
+// The MERGED arm's own clear. Split out of the subject above rather than
+// replacing it: that one is the canonical recovery (loop stamps, lead merges by
+// hand, lead accepts) and its path is worth keeping pinned, but after t536 it
+// runs through the veto and no longer reaches the teardown the header describes.
+//
+// Reaching the merged arm with a stamp STILL SET takes the one shape t536 exempts
+// from the veto: a branch measuring 0 against its recorded fork point. That is
+// not a contrivance to satisfy this test — it is the whole exempted path (a hand
+// that committed nothing leaves the loop nothing to merge, which is itself a
+// stamped failure), and it is now the only way the merged arm's clear does any
+// work at all. A subject on a stamp-free ticket would assert the absence of a
+// field that was never present, which is true of a build with no clear in it.
+test('t535: the MERGED arm clears the stale failure too, on the empty branch t536 exempts from the veto', async () => {
+  // count 0 against the record's own baseSha — `measured && count === 0`, the
+  // veto's exemption, so this reaches the teardown WITH the mark still standing.
+  const f = mkAccept({ ok: true, merged: true, base: 'master' }, {}, { ok: true, count: 0, base: 'deadbeef' });
+  openAndDone(f);
+  f.m._stampMergeError(f.team, 't1', 'clean-tree');
+  assert.strictEqual(f.one('t1').mergeError, 'clean-tree',
+    'ENTER: the stamp is on the ticket when accept starts — otherwise the clear below is asserting an absence that was always there');
+
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+
+  assert.deepStrictEqual(f.destroyed, ['team-hand'],
+    'ENTER: the teardown RAN, which is what identifies the merged arm rather than t536\'s veto');
+  assert.ok(!('mergeError' in f.one('t1')),
+    'and the merged arm cleared the stale failure it closed out over');
+  assert.strictEqual(f.one('t1').closedOut, true, 'on the terminal arm');
 });
 
 // The other direction, and the one that costs more to get wrong. `finish()` runs
