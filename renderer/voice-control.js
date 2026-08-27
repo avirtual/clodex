@@ -36,8 +36,9 @@
 // non-Claude seat — an always-present bar button would claim the seat under it
 // has a voice mode when Codex has no `/voice` at all.
 //
-// DOM-bound, so no unit tests per the R1 rule; the read behind it is
-// test/voice-settings.test.js.
+// `createVoiceCore` is DOM-free and unit-tested in test/voice-core.test.js; only
+// `createVoiceControl`'s paint is DOM-bound per the R1 rule. The read behind
+// both is test/voice-settings.test.js.
 
 const VOICE_ITEMS = [
   { mode: 'off', name: 'Off', desc: 'No voice input' },

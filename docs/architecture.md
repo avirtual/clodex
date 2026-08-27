@@ -713,7 +713,8 @@ Own state + DOM, `init*(deps)`:
   and `popovers/voice-popover.js` (the session bar's 🎤 button) are surfaces over
   it that own only their own painting. The setting is box-wide, so both surfaces
   show the same value; the split exists because that reconciliation must have
-  exactly one copy. `start`/`stop` are REFCOUNTED: the bar holds for the
+  exactly one copy, and keeping the core DOM-free is what lets
+  `test/voice-core.test.js` pin it with no jsdom. `start`/`stop` are REFCOUNTED: the bar holds for the
   window's life, Preferences only while its dialog is open. The Preferences row
   is never hidden, only disabled when there is no session to inject into (a row
   that vanishes from a settings dialog reads as a missing feature); the bar
