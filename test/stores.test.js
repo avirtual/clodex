@@ -1526,7 +1526,7 @@ test('seed: the lead prompt qualifies accept — merge window and the dirty/unre
   // t532 r1: the record drop is NOT unconditional — a failed removal keeps the
   // record deliberately, since it is the only thing still naming the tree
   // (pinned against a real tree in accept-standing-seat.test.js). The row says so.
-  assert.match(lead, /\| loop-minted seat, tree clean \(or no tree recorded\) \| RETIRED, record dropped \(kept if the removal fails, so the tree stays named\) \| REMOVED \| deleted \|/,
+  assert.match(lead, /\| loop-minted seat, tree clean \(or no tree recorded\) \| RETIRED, record dropped \(kept if the removal fails, so the tree stays named\) \| REMOVED \| deleted — refused if that removal failed \|/,
     'lead prompt gates accept\'s full teardown on a loop-minted seat and a clean, readable tree');
   assert.doesNotMatch(lead, /\| RETIRED, record dropped \| REMOVED \|/,
     'lead prompt must not still claim the record drop is unconditional');
