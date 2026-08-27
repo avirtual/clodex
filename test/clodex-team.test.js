@@ -380,8 +380,14 @@ function parityBoard() {
     // implementations carry the suffix, and the parity pin goes green over the
     // drift. Two entries, so the count itself has to match and not merely its
     // presence.
+    // t533: and `mergeError`, making t1 the ORDERING carrier for `row` — t531
+    // put each mark on a row of its own, which pins presence but leaves the
+    // suffix ORDER uncompared, since an implementation emitting them in the
+    // other sequence still renders one mark per row identically. Two marks on
+    // one row is what makes the sequence observable.
     { id: 't1', title: 'still going', assignee: 'team-hand-9', role: 'hand', state: 'open', openedAt: now - 40 * HOUR, closedAt: null,
-      respecs: [{ at: now - 3 * HOUR, by: 'lead', title: 'first cut' }, { at: now - 2 * HOUR, by: 'lead', title: 'second cut' }] },
+      respecs: [{ at: now - 3 * HOUR, by: 'lead', title: 'first cut' }, { at: now - 2 * HOUR, by: 'lead', title: 'second cut' }],
+      mergeError: 'clean-tree' },
     { id: 't2', title: 'old close', assignee: 'team-hand-9', role: 'hand', state: 'done', openedAt: now - 40 * HOUR, closedAt: now - 30 * HOUR },
     // Respec'd and cancelled: carried so the explicit-`cancelled` filter run
     // compares a marked row too (that path renders every shown ticket through
@@ -408,6 +414,12 @@ function parityBoard() {
       // `doneAll` is sliced into it), so marking t3 alone would leave closedRow
       // uncompared in the default view.
       ...(i === 0 ? { respecs: [{ at: now - 5 * HOUR, by: 'lead', title: 'before it shipped' }] } : {}),
+      // t533: t4 carries `mergeWaiting` ON TOP of its respec, as the ordering
+      // carrier for `closedRow`. t5 below stays deliberately single-marked, so
+      // the presence property t531 pinned survives alongside the new sequence
+      // pin — a fixture where every marked row carries two marks could not tell
+      // a mark that renders only in company from one that renders at all.
+      ...(i === 0 ? { mergeWaiting: 'suite-in-flight' } : {}),
       // t531: the `closedRow` carrier for the merge-waiting mark, and the shape
       // that actually occurs — the stamp lands on a ticket the loop already
       // wrote `done`, so the recently-closed block is where a lead reads it. A
@@ -415,6 +427,13 @@ function parityBoard() {
       // distinguish an implementation that renders both marks from one that
       // renders whichever it reaches first.
       ...(i === 1 ? { mergeWaiting: 'suite-in-flight' } : {}),
+      // t533: the `closedRow` carrier for the merge-error mark, and the shape
+      // that actually occurs — the merge runs after `task done`, so a failure
+      // lands on a ticket already closed. Paired with `mergeWaiting` so the
+      // waiting/error sequence is compared too: with t1 pinning respec→error
+      // and t4 pinning respec→waiting, every adjacent pair of the three marks
+      // is now ordered by some row.
+      ...(i === 2 ? { mergeWaiting: 'suite-in-flight', mergeError: 'suite-red' } : {}),
     });
   }
   return rows;
@@ -458,6 +477,23 @@ test('listing parity: the two implementations RENDER the same board (t100 — no
     `ENTER: a merge-waiting OPEN row reaches the reduced facts: ${mine.join(' / ')}`);
   assert.ok(mine.some((f) => /^t5\|.*closed\|.*merge waiting: suite-in-flight/.test(f)),
     `ENTER: a merge-waiting CLOSED row reaches the reduced facts: ${mine.join(' / ')}`);
+  // t533: the merge-error mark, on both shapes — t1 for `row`, t6 for
+  // `closedRow`, which is the shape a failed merge actually lands on.
+  assert.ok(mine.some((f) => /^t1\|.*MERGE FAILED: clean-tree/.test(f)),
+    `ENTER: a merge-error OPEN row reaches the reduced facts: ${mine.join(' / ')}`);
+  assert.ok(mine.some((f) => /^t6\|.*closed\|.*MERGE FAILED: suite-red/.test(f)),
+    `ENTER: a merge-error CLOSED row reaches the reduced facts: ${mine.join(' / ')}`);
+  // t533 item 2: and the ORDERING guards — every adjacent pair of the three
+  // suffixes reaches the facts on ONE row, in sequence. Without these the
+  // deepStrictEqual below compares two boards that agree on which marks appear
+  // and cannot see them disagree about the order, since t531's fixture never
+  // put two marks on the same row.
+  assert.ok(mine.some((f) => /^t1\|.*respec'd ×2 !! MERGE FAILED: clean-tree/.test(f)),
+    `ENTER: respec then merge-error, adjacent on ONE row: ${mine.join(' / ')}`);
+  assert.ok(mine.some((f) => /^t4\|.*respec'd ×1 \(merge waiting: suite-in-flight\)/.test(f)),
+    `ENTER: respec then merge-waiting, adjacent on ONE row: ${mine.join(' / ')}`);
+  assert.ok(mine.some((f) => /^t6\|.*\(merge waiting: suite-in-flight\) !! MERGE FAILED: suite-red/.test(f)),
+    `ENTER: merge-waiting then merge-error, adjacent on ONE row: ${mine.join(' / ')}`);
 
   assert.deepStrictEqual(theirs, mine,
     'the two listing implementations drifted — the exec pull and [agent:task list] now disagree about the board');

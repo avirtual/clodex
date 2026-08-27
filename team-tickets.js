@@ -7148,10 +7148,26 @@ function createTicketMethods(deps, shared) {
       // recently-closed block is where it is normally read; an `open` row can
       // carry it too when the ticket was reopened while the merge was deferred.
       const mergeWaitingMark = (t) => (t.mergeWaiting ? ` (merge waiting: ${t.mergeWaiting})` : '');
+      // `_stampMergeError`'s own comment says the field "reads as 'this ticket
+      // needs a human'", and `_autoMergeTicket`'s deferred arm refuses to stamp
+      // it for exactly that reason — so the mark is the board's only claim that
+      // the loop has GIVEN UP and is waiting on the lead.
+      //
+      // Shaped UNLIKE the two parenthetical marks beside it on purpose: a lead
+      // scanning a board has to separate "needs me" from "waiting its turn"
+      // without reading the words, and both of those render as a lowercase
+      // parenthetical. The stored step renders verbatim for the same reason
+      // mergeWaiting's does — a phrase of the row's own would assert a state the
+      // record does not carry.
+      //
+      // On BOTH row shapes, and here the closed one is not the edge case: the
+      // merge runs after `task done`, so a failed merge is normally read in the
+      // recently-closed block.
+      const mergeErrorMark = (t) => (t.mergeError ? ` !! MERGE FAILED: ${t.mergeError}` : '');
       const row = (t) =>
-        `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}`;
+        `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
       const closedRow = (t) =>
-        `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}`;
+        `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
       const lines = shown.map(row);
       const head = filter === 'open' ? `tickets on ${team.name}` : `tickets on ${team.name} [${filter}]`;
       const closed = filter === 'open' ? tickets.filter((t) => t.state !== 'open') : [];
