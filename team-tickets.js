@@ -1343,38 +1343,46 @@ function createTicketMethods(deps, shared) {
         // owed and a retry that lands it is the wanted outcome. `closedOut` is
         // passed by the CALLING arm precisely to keep that distinction.
         //
-        // TWO terminal arms keep the branch, so a retry can still be in flight
-        // under either — a stamp from an EARLIER merge run survives (cleared
-        // only by the green path or by a closing accept), so `mergeError` set
-        // and a retry pending do coexist. Named, not counted:
+        // The terminal arms that KEEP the branch are, by name — so a retry can
+        // still be in flight under either, for a reason of its own:
         //
-        //   t536's MERGE FAILED veto   keeps tree and branch, closes out.
+        //   t536's MERGE FAILED veto   keeps tree and branch, closes out. It is
+        //                              reached only WITH `mergeError` set, and a
+        //                              stamp from an EARLIER merge run survives
+        //                              (cleared only by the green path or by a
+        //                              closing accept) — so a stamped ticket and
+        //                              a pending retry do coexist.
         //   the merged arm's DIRTY     downgrade keeps the seat's worktree and
         //                              skips `deleteBranch` entirely, and still
-        //                              closes out.
+        //                              closes out. No stamp is involved at all:
+        //                              defer, lead merges by hand, accept, seat
+        //                              tree dirty. It coexists trivially.
         //
         // Suppressing on both is right for one shared reason: each is reached
         // only past `if (!m.merged) return`, so the branch is ALREADY an
-        // ancestor of the base that check compared against. A retry surviving
-        // this gate would clear STEPS 2 and 3 — the dirty tree is the SEAT's
-        // worktree, never `team.root` — and die at STEP 4's `!merged.moved`,
-        // stamping a fresh, false MERGE FAILED for a merge that had nothing to
-        // do.
+        // ancestor of the base that check compared against, and no merge the
+        // retry could still run would produce a commit. It would clear STEP 2 —
+        // the dirty tree is the SEAT's worktree, never `team.root` — and then
+        // die either at STEP 3's `on-master`, if the root is parked off master,
+        // or at STEP 4's `!merged.moved`. Either way with a fresh, false MERGE
+        // FAILED for a merge that had nothing to do.
         //
         // Silent like the reopen case above it, but not for its reason: there
         // nothing had been decided about the merge, here the lead's accept IS
-        // the decision that ends it, and it is a decision they made knowing the
-        // board showed the merge waiting. Logged, because a merge abandoned by
-        // an accept is worth finding when a lead asks why a branch never landed.
+        // the decision that ends it, and the board carries that merge as waiting
+        // on the row they accepted. Logged, because a merge abandoned by an
+        // accept is worth finding when a lead asks why a branch never landed.
         //
         // What the silence does NOT assert is that the merge was unwanted. The
         // merge gate at the merged arm calls `isMerged(root, branch)` with no
         // base, so it answers about the ROOT CHECKOUT'S CURRENT BRANCH: a root
         // parked on another branch containing this one takes that arm, deletes
         // the ref and closes out while master never received the work. The
-        // suppression is silent because the accept has already made the branch
-        // unmergeable, not because the loop can show the merge is not owed —
-        // the `log.info` is the only trace, and that is what it is for.
+        // suppression is silent because the accept has already made the merge
+        // unable to produce anything — on the teardown path the ref is gone, on
+        // the two arms above it survives but is already an ancestor — not
+        // because the loop can show the merge is not owed. The `log.info` is the
+        // only trace, and that is what it is for.
         if (ticket.closedOut) {
           log.info('ticket', `auto-merge for ${ticketId} ABANDONED: the ticket was ACCEPTED and closed out while the merge was pending — nothing was merged`);
           return;
