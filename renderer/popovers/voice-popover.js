@@ -17,7 +17,8 @@
 // So off is the SAME glyph dimmed by a class, and the word carries the precise
 // state.
 //
-// DOM-bound, so no unit tests per the R1 rule.
+// The painters are DOM-bound, so no unit tests per the R1 rule; the
+// subscriber's gate and latch are pinned by test/voice-popover-latch.test.js.
 
 const { esc } = require('../lib/format');
 const { VOICE_ITEMS } = require('../voice-control');

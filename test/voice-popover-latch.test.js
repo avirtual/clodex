@@ -90,7 +90,16 @@ function harness({ paint } = {}) {
   // below counts what `emit()` causes, and with no subscriber every count is 0 —
   // which is TRUE of "the latch suppressed it" too, so the whole file would go
   // green over a harness that wired nothing.
-  assert.strictEqual(typeof subscriber, 'function', 'the harness must have reached core.subscribe');
+  try {
+    assert.strictEqual(typeof subscriber, 'function', 'the harness must have reached core.subscribe');
+  } catch (e) {
+    // Restore on the THROW path ONLY: `harness()` does not return here, so no
+    // caller ever binds `h` and no `finally` runs `restore()` — without this the
+    // fake globals leak into whatever runs next in the file. The success path
+    // must NOT restore: every test drives the popover through these globals.
+    global.document = prevDoc; global.window = prevWin;
+    throw e;
+  }
 
   return {
     api, pop, body,
