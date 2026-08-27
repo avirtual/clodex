@@ -124,8 +124,9 @@ visible rather than silently lost.
   reading it as one is how a merge that really happened gets recorded as
   nothing. Only "0 against the fork point" means demonstrably empty.
   **A ticket carrying `!! MERGE FAILED` tears down no tree and no branch (a
-  one-shot seat is still archived), unless its branch is demonstrably empty** — even though that branch passes the merge gate, which it
-  does for a reason that makes the pass worthless: the loop undoes a red merge
+  one-shot seat is still archived), unless its branch is demonstrably empty** —
+  even though that branch passes the merge gate, which it does for a reason
+  that makes the pass worthless: the loop undoes a red merge
   with `git revert -m 1`, which ADDS a commit, so the merge commit stays an
   ancestor and the ancestor test still answers merged over work that is no
   longer in master's tree. (The empty exemption is reachable, not a corner: a
@@ -204,8 +205,10 @@ cwd IS a worktree is still on the team.
 
   The keys are anchored so that exactly one can match — a key that is a
   substring of another arm's sentence routes you to the wrong row, which is the
-  one failure a key table exists to prevent. Match on the punctuation too:
-  the arms that removed nothing open `accepted, but`, the rest `accepted —`.
+  one failure a key table exists to prevent. Match on the punctuation too, and
+  note what it actually tracks: the two arms that invite another accept open
+  `accepted, but`; the three terminal ones open `accepted —`. It is the third
+  column below, not the teardown — two of those terminal arms remove nothing.
 
   | reply says | arm | closes the ticket out? |
   |---|---|---|
@@ -270,7 +273,9 @@ cwd IS a worktree is still on the team.
     verb renders that field, and the stamp is write-once per ticket — a ticket
     already stamped by an earlier retire keeps that earlier path and the accept
     adds nothing. So copy it out of the reply rather than expecting to find it
-    later; `tickets.json` is a hand-read fallback, not a display.
+    later; `tickets.json` is a hand-read fallback, not a display — read
+    `revival.worktree` there for the path, and `revival.mergeVetoed` if a
+    MERGE FAILED accept is still owed a check.
   - **"keeps the tree" is never "keeps everything".** Only row 2 keeps the
     branch DELIBERATELY — the delete is skipped there so that a second
     `task accept`, after you commit or clear that tree, can still find the ref

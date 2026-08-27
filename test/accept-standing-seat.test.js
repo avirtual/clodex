@@ -1013,6 +1013,16 @@ test('a never-merged step does not advise confirming a merge the loop never made
   assert.match(msg, /The loop never merged this branch/, 'the reply says the loop made no merge commit here');
   assert.doesNotMatch(msg, /Revert "Merge/, 'and does not send the lead hunting a revert of a merge that never happened');
   assert.doesNotMatch(msg, /still carries that merge/, 'nor ask them to confirm one');
+  // The CAUSAL half, which over-claimed for two rounds. This arm covers every
+  // step that is not one of the three named ones, and `merge` is among them —
+  // `fail('merge', …)` fires AFTER `mergeNoFf` returned, both on an outright
+  // failure and on exit-0-with-HEAD-unmoved. "Fails before the merge runs" is
+  // therefore false of it, while "no merge commit came out of it" holds on every
+  // step this arm serves. The load-bearing half was never wrong; the reason was.
+  assert.match(msg, /no merge commit came out of that step/,
+    'the reply claims only the absence of a merge commit, which holds for every step on this arm');
+  assert.doesNotMatch(msg, /fails BEFORE the merge runs/,
+    'and not the causal claim, which is false of the `merge` step that fails after mergeNoFf returned');
   // The VETO is unchanged by the wording split — this step still refuses teardown.
   assert.deepStrictEqual(f.killed, [], 'the veto still fires: a broad veto is the fail-safe direction');
 });
@@ -1071,4 +1081,64 @@ test('a stamp landing DURING the accept is still seen — the veto re-reads the 
   assert.strictEqual(exists(wt), true, 'so the tree survives a stamp that arrived mid-flight');
   assert.ok(branches(f).includes('landed'), 'and so does the branch');
   assert.match(msg, /MERGE FAILED at "suite"/, 'and the reply reports the mark that landed during the accept');
+});
+
+// nit 2: `unexpected` is the loop's CATCH-ALL and had no subject at all. It fires
+// for a throw before `mergeNoFf` as readily as after one — its own escalation
+// reads `nothing was merged` on that path — so grouping it with `suite` told the
+// lead to confirm a merge, and to look for a `Revert "Merge …"` commit, that may
+// never have existed. It gets its own arm: a merge MAY exist, which is not the
+// same claim as one that does.
+test('the catch-all step claims only that a merge MAY exist, and points at the escalation', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed', over: { mergeError: 'unexpected' } });
+
+  const msg = await accept(f, 't1');
+
+  assert.match(msg, /MERGE FAILED at "unexpected"/, 'ENTER: the catch-all step is the one being reported');
+  assert.match(msg, /whether one exists at all is unknown/,
+    'the reply hedges: the catch-all fires on both sides of the merge, so a merge may or may not exist');
+  assert.match(msg, /Read the escalation for this ticket first/,
+    'and points at the one place that says which — the escalation names the sha where there is one');
+  // Neither of the two confident sentences: not the reverted-merge confirmation
+  // (there may be no merge), and not the never-merged claim (there may be one).
+  assert.doesNotMatch(msg, /still carries that merge/, 'it does not assert a merge exists to be confirmed');
+  assert.doesNotMatch(msg, /Revert "Merge …"/, 'nor name a revert commit that may never have existed');
+  assert.doesNotMatch(msg, /The loop never merged this branch/, 'nor claim no merge was made, which it cannot know either');
+  assert.deepStrictEqual(f.killed, [], 'and the veto still fires — the sentence narrows, the gate does not');
+});
+
+// nit 3: the silent erasure. The re-read closes the wide window, but a stamp can
+// still land between it and `finish()`, which used to `delete row.mergeError`
+// unconditionally on the closed-out arm — acting on the mark as absent and then
+// erasing it, so a merge failure that is still true vanished from the board along
+// with the branch. The teardown race itself is not fixable by re-reading (a stamp
+// can always arrive after destroy()); this erasure is, by comparing before clearing.
+test('a stamp landing after the veto read is not silently erased by the close', async (t) => {
+  const real = require('../git-worktree');
+  let stamped = false;
+  const f = mkFixture(t, {
+    gitWorktree: {
+      ...real,
+      // AFTER the veto's re-read: isDirty runs on the teardown path, below it.
+      isDirty: async (p) => {
+        if (!stamped) { stamped = true; f.m._stampMergeError(f.team, 't1', 'suite'); }
+        return real.isDirty(p);
+      },
+    },
+  });
+  f.seat('lead');
+  f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+
+  assert.ok(!('mergeError' in f.one('t1')), 'ENTER: unstamped when accept starts, so the veto correctly does not fire');
+
+  await accept(f, 't1');
+
+  assert.ok(stamped, 'ENTER: the interleaving actually ran, after the veto had already read the board');
+  assert.strictEqual(f.one('t1').mergeError, 'suite',
+    'the mark this accept never saw SURVIVES the close — clearing it would erase a merge failure that is still true');
+  assert.strictEqual(f.one('t1').closedOut, true, 'ENTER: on the terminal arm, where the clear runs at all');
 });

@@ -29,8 +29,8 @@ blocks a release.
   where it never got that far, and where it merged but was blocked from
   reverting, decide that undo before anything else (master carries that merge by
   construction, so reading it as a landing and then reverting later would strand
-  the work in no branch at all). That accept still closes the ticket
-  out, which clears the mark, so once you have checked, a second `task accept`
+  the work in no branch at all). That accept still closes the ticket out, which
+  clears the mark, so once you have checked, a second `task accept`
   cleans up as before. A branch measurably empty against its recorded fork point
   is exempt — there is no work there to lose.
 
