@@ -705,13 +705,19 @@ Own state + DOM, `init*(deps)`:
   the sidebar-footer unread badge; no core state, but takes `openFilePeek`
   and `showToast` by injection so a link in a note lands in the same peek
   modal and toasts the same miss a path click in the terminal does.
-- **voice-control.js** — the Preferences voice-mode selector (off · tap ·
-  hold), reading `voice-settings.js` over `getVoiceMode` and writing by
-  INJECTING `/voice <mode>` into a live Claude session. Box-wide, so it sits in
-  #prefs-dialog rather than on the per-session proxy bar — every setting in that
-  dialog already means "this machine". Never hidden, only disabled when there is
-  no session to inject into: it is a modal settings dialog, where a row that
-  vanishes reads as a missing feature.
+- **voice-control.js** — the voice-mode state machine (off · tap · hold),
+  reading `voice-settings.js` over `getVoiceMode` and writing by INJECTING
+  `/voice <mode>` into a live Claude session. `createVoiceCore` owns all of it —
+  state, the pending affordance, the inject target, the poll and the row
+  observer — and publishes snapshots; `createVoiceControl` (the Preferences row)
+  and `popovers/voice-popover.js` (the session bar's 🎤 button) are surfaces over
+  it that own only their own painting. The setting is box-wide, so both surfaces
+  show the same value; the split exists because that reconciliation must have
+  exactly one copy. `start`/`stop` are REFCOUNTED: the bar holds for the
+  window's life, Preferences only while its dialog is open. The Preferences row
+  is never hidden, only disabled when there is no session to inject into (a row
+  that vanishes from a settings dialog reads as a missing feature); the bar
+  button is absent outright for a non-Claude seat, since Codex has no `/voice`.
 - **plugin-host.js** — the renderer-side plugin host. Plugins hand it data or
   callbacks, NEVER HTML: everything user-supplied is escaped here, and every
   registered id becomes `"<pluginId>:<id>"` before it reaches the DOM, so a
@@ -747,6 +753,11 @@ optional restart only to refresh the seat's prompt),
 it goes direct rather than through the local-vs-peer seam).
 `selection-popover.js` also lives here but is the drawer's 📋 inspector on
 `window.api.drawerInspectSelection`, a different subsystem, not a seam bypass.
+`voice-popover.js` is likewise off the seam by design: it is the session bar's
+🎤 button and its three-mode picker, and it holds no state of its own — every
+value comes from voice-control.js's shared core, which reads a box-wide file
+rather than session state, so there is nothing for the local-vs-peer seam to
+answer differently.
 
 ### Peer runtime
 
