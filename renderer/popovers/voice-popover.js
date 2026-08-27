@@ -115,20 +115,48 @@ function initVoicePopover({ core, renderProxyBar }) {
   // value the file contradicts, which is the exact bug its blur listener exists
   // to fix.
   let lastKey = null;
+  // Consecutive-failure latch. The subscriber has no try/catch of its own by
+  // default: a throw from either painter escapes to the core's per-listener
+  // guard, so `lastKey = key` is never reached and the gate above never closes.
+  // On a painter that throws EVERY time, that turns the >=1 Hz emit stream into
+  // a 1 Hz innerHTML rebuild of #proxy-actions — the click-eating mechanism the
+  // gate exists to prevent, arrived at from the other side.
+  let failedOnce = false;
   core.subscribe((snap) => {
     const key = `${snap.pending || ''}|${snap.mode || ''}|${snap.target || ''}|${snap.anyClaudeRow}`;
     if (key === lastKey) return;
-    // Equally a no-op rebuild of a live picker: the rows are detached under the
-    // pointer, so an ungated repaint swallows the pick it is meant to show.
-    if (!pop.classList.contains('hidden')) renderRows();
-    // `actionHtml()` is called synchronously by renderSessionActions on every
-    // other rebuild path, so skipping a no-change repaint cannot leave the bar
-    // stale.
-    renderProxyBar();
+    try {
+      // Equally a no-op rebuild of a live picker: the rows are detached under the
+      // pointer, so an ungated repaint swallows the pick it is meant to show.
+      if (!pop.classList.contains('hidden')) renderRows();
+      // `actionHtml()` is called synchronously by renderSessionActions on every
+      // other rebuild path, so skipping a no-change repaint cannot leave the bar
+      // stale.
+      renderProxyBar();
+    } catch (e) {
+      // The FIRST failure leaves the key unlatched, exactly as before this catch
+      // existed: the next identical emit retries and a transient throw heals
+      // itself, which is what t519 moved the assignment down here for.
+      if (!failedOnce) { failedOnce = true; throw e; }
+      // The SECOND consecutive failure latches instead. Recovery does not need a
+      // timer and must not rely on one: `PROXY_POLL_MS` builds no interval, and
+      // the 5 s `session-proxy` emit that does exist is skipped for any session
+      // without a wirescope proxy configured, so a timer-based recovery would
+      // work on some boxes and not others.
+      lastKey = key;
+      // Re-thrown, not swallowed: the core's guard is the deliberate diagnostic
+      // and dropping it would trade a visible bug for a surface that silently
+      // stops updating. Bounded rather than silenced — the latch closes the gate
+      // above, so identical emits stop arriving here and the log stops with them.
+      throw e;
+    }
     // After the paints, never before: a mid-paint throw must not leave the key
     // claiming a DOM that was not painted, which would skip every identical emit
     // until an unrelated change moved the key.
     lastKey = key;
+    // A paint that worked ends the streak, so a later transient throw gets its
+    // own free retry rather than latching on the strength of an old failure.
+    failedOnce = false;
   });
 
   document.addEventListener('mousedown', (e) => {

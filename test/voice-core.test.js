@@ -330,6 +330,21 @@ test('injection failed: the pick is dropped, the operator is told, and the repai
       anyClaudeRow: true, pickJustDied: false, force: true,
     }, 'the row must fall back to the file, forced past a focused picker');
     assert.deepStrictEqual(h.toasts, ['Setting voice to hold failed: agent is wedged']);
+
+    // And it schedules NO read-back. The success path re-reads the file 1500ms
+    // later to retire the affordance; the failure path has nothing to retire —
+    // it already dropped `pending` and toasted — so a read here would re-enter
+    // the state machine over a pick the operator has been told did not happen.
+    // The only thing preventing it is `sendMode`'s early `return` on the failure
+    // arm, which is one line an edit could fall through without changing
+    // anything a test names. Advancing past the read-back window is how that
+    // becomes visible at all: nothing else distinguishes the two arms.
+    const beforeReadback = h.calls.getVoiceMode;
+    t.mock.timers.tick(INJECT_READBACK_MS);
+    await flush();
+    assert.strictEqual(h.calls.getVoiceMode, beforeReadback,
+      'a failed injection must not schedule the success path read-back');
+    assert.strictEqual(h.last().pending, null, 'and the affordance stays dropped');
   } finally { h.restore(); }
 });
 
