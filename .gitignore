@@ -45,6 +45,12 @@ tasks/
 # plugins/git-branches/NOTES.md and any future docs/SPEC.md. If you legitimately
 # want one of these at the root, `git add -f` it; it is ignored here by design,
 # not missing.
+# The cost this CREATES, named here because this is where a sixth name gets
+# added: a root artifact matched above is invisible to `git status
+# --porcelain`, so git-worktree.js `isDirty` reads a worktree holding only
+# that artifact as CLEAN and team-retire --discard force-removes it. A journal
+# left at the root is destroyed silently, not shipped by accident — which is
+# why seats journal into the task dir (clodex-paths.taskDirFor) instead.
 /JOURNAL.md
 /SPEC.md
 /NOTES.md
