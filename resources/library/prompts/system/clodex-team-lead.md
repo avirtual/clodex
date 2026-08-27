@@ -106,11 +106,14 @@ visible rather than silently lost.
   tearing its seat down there would kill a still-warm hand before you had read
   a word or sent rework.
   **Passing the merge gate is not the same as confirming work landed, and the
-  reply distinguishes four outcomes — read which one you got.** Teardown does
-  not turn on that COUNT: a branch reported empty is torn down exactly as one
-  reported merged, and it should be — an empty branch has nothing to lose. What
-  it DOES turn on is the three facts the table below rows out, plus the
-  MERGE FAILED mark, which refuses it outright. The count is only evidence when
+  reply distinguishes four outcomes — read which one you got.** On an unmarked
+  ticket teardown does not turn on that COUNT: a branch reported empty is torn
+  down exactly as one reported merged, and it should be — an empty branch has
+  nothing to lose. What it DOES turn on is the four facts the table below rows
+  out, plus the MERGE FAILED mark, which refuses teardown UNLESS the branch is
+  demonstrably empty — 0 against the recorded fork point, where there is no work
+  a reverted merge could have taken. That is the one place the count decides a
+  teardown rather than only a sentence. The count is only evidence when
   it was measured against the ticket's recorded fork point: a
   branch with no recorded fork point, or one whose recorded SHA was rebased or
   gc'd away, is counted against a fallback base, and there an already
@@ -118,16 +121,20 @@ visible rather than silently lost.
   case says UNKNOWN on purpose — it is not a quieter way of saying empty, and
   reading it as one is how a merge that really happened gets recorded as
   nothing. Only "0 against the fork point" means demonstrably empty.
-  **A ticket carrying `!! MERGE FAILED` tears down NOTHING, even though its
-  branch passes the merge gate** — and it passes for a reason that makes the
-  pass worthless: the loop undoes a red merge with `git revert -m 1`, which ADDS
-  a commit, so the merge commit stays an ancestor and the ancestor test still
-  answers merged over work that is no longer in master's tree. That accept
-  reports the mark instead of a landing, keeps tree and branch, and closes the
-  ticket out — which CLEARS the mark, so a second `task accept` takes the
-  ordinary merged path and deletes the branch. Check that master still carries
-  the merge (a revert of it lands as a later `Revert "Merge …"` commit) BEFORE
-  running that second accept.
+  **A ticket carrying `!! MERGE FAILED` tears down NOTHING, unless its branch is
+  demonstrably empty** — even though that branch passes the merge gate, which it
+  does for a reason that makes the pass worthless: the loop undoes a red merge
+  with `git revert -m 1`, which ADDS a commit, so the merge commit stays an
+  ancestor and the ancestor test still answers merged over work that is no
+  longer in master's tree. (The empty exemption is reachable, not a corner: a
+  hand that committed nothing leaves the loop nothing to merge, which is itself
+  a stamped failure — and there is no work for a revert to have taken.) That
+  accept reports the mark instead of a landing, keeps tree and branch, and
+  closes the ticket out — which CLEARS the mark, so a second `task accept` takes
+  the ordinary merged path and deletes the branch. Before running that second
+  accept, confirm what the reply asks you to: that master still carries the
+  merge where the loop made one, or, where it failed before merging, that the
+  branch you are looking at got onto master by some other hand.
 - `[agent:task list]` — the OPEN board, then the tickets closed most recently
   (a capped handful, so it stays short), then a count of everything else it
   hid, done and cancelled separately. The board only grows, so add a filter to
@@ -186,13 +193,18 @@ cwd IS a worktree is still on the team.
   table, and the other four tear down NO tree and NO branch whatever the rows
   say. Each is named by the words its own reply uses:
 
+  The keys are anchored so that exactly one can match — a key that is a
+  substring of another arm's sentence routes you to the wrong row, which is the
+  one failure a key table exists to prevent. Match on the punctuation too:
+  the arms that removed nothing open `accepted, but`, the rest `accepted —`.
+
   | reply says | arm | closes the ticket out? |
   |---|---|---|
-  | `no ticket branch recorded` | no branch at all — the ticket was worked in the shared checkout, so there is never a tree or a ref to remove. A one-shot seat is ARCHIVED (resumable, and anything it left uncommitted is in the shared checkout); any other seat is left as it is | yes — terminal, there is no second accept to invite |
-  | `the merge check could NOT run` | git could not answer, treated as NOT merged | no — accept again once it can |
-  | `is NOT merged into` | the branch is genuinely not in | no — merge it, then accept again |
-  | `stamped this ticket MERGE FAILED` | the branch IS an ancestor but the loop gave up at a merge step, so the ancestor answer proves nothing | yes — and that CLEARS the mark, so a second accept tears down normally |
-  | `merged into`, `has 0 commits beyond`, or `is an ancestor of` | merged: read the row table below | yes |
+  | `accepted — no ticket branch recorded` | no branch at all — the ticket was worked in the shared checkout, so there is never a tree or a ref to remove. A one-shot seat is ARCHIVED (resumable, and anything it left uncommitted is in the shared checkout); any other seat is left as it is | yes — terminal, there is no second accept to invite |
+  | `accepted, but the merge check could NOT run` | git could not answer, treated as NOT merged | no — accept again once it can |
+  | `accepted, but branch X is NOT merged into` | the branch is genuinely not in | no — merge it, then accept again |
+  | `stamped this ticket MERGE FAILED at` | the branch IS an ancestor but the loop gave up at a merge step, so the ancestor answer proves nothing | yes — and that CLEARS the mark, so a second accept tears down normally |
+  | `accepted — merged into`, `accepted — branch X has 0 commits beyond`, or `is an ancestor of` with NO `MERGE FAILED` clause | merged: read the row table below | yes |
 
   | on a MERGED branch | seat | worktree | branch |
   |---|---|---|---|

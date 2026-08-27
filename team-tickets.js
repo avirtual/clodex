@@ -6861,11 +6861,14 @@ function createTicketMethods(deps, shared) {
         return;
       }
 
-      // How many commits the branch actually carries — for the REPLY ONLY. The
-      // count must never become a teardown gate: an empty branch has nothing to
-      // lose, and refusing to clean it up leaves dead trees accumulating. (What
-      // DOES gate the teardown below is whose seat it is and whether its tree is
-      // dirty — both facts about what would be destroyed, not about the work.)
+      // How many commits the branch actually carries — for the REPLY, and for
+      // exactly ONE gate. The count gates teardown in a single place: the
+      // MERGE FAILED veto below, where 0-against-the-recorded-fork-point is the
+      // evidence that there is no work a reverted merge could have taken.
+      // Nowhere else — an empty branch is otherwise torn down like any other,
+      // since it has nothing to lose and refusing leaves dead trees
+      // accumulating. So THREE facts gate the teardown below, not two: whose
+      // seat it is, whether its tree is dirty, and that veto.
       //
       // Counted HERE, before the teardown: destroy() removes the worktree and
       // deleteBranch() drops the ref, and after either the count is unobtainable
@@ -6894,6 +6897,25 @@ function createTicketMethods(deps, shared) {
       // "committed and already merged". Those need opposite sentences, so the
       // undecidable case gets its own rather than borrowing either.
       const measured = c.ok && baseSha && c.base === String(baseSha).trim();
+
+      // WHY the count fell back, split on the record rather than asserted. There
+      // are two ways to reach an unmeasured count and they need different
+      // remediation: no fork point was ever recorded, versus one was recorded and
+      // has since been rebased or gc'd away (commitsOnBranch drops a SHA that no
+      // longer resolves). Saying "none was recorded" about a record that plainly
+      // carries one sends the reader hunting a stamping bug that does not exist.
+      // A function, not a binding: on the `!c.ok` arm `c.base` is undefined, and
+      // an eagerly-built string sits one careless edit away from reporting
+      // "counted against undefined" — the same unverified claim this arm exists
+      // to remove. Called only where the count came back and fell back.
+      //
+      // Defined HERE rather than beside the outcome strings it was written for:
+      // the veto arm below needs the same sentence, and the alternative was a
+      // second vocabulary for one condition — which reads as two different
+      // findings, the mistake the merged arm's own comment names.
+      const why = () => (baseSha
+        ? `its recorded fork point ${baseSha} no longer resolves, so its commits could only be counted against ${c.base}`
+        : `no fork point was recorded, so its commits could only be counted against ${c.base}`);
 
       // The merge gate answered an ANCESTOR question, and one class of failure
       // makes that answer read as "landed" over work that is not in the base's
@@ -6929,11 +6951,48 @@ function createTicketMethods(deps, shared) {
         // No `mergedInto`, deliberately: this arm exists because the merge cannot
         // be shown, and stamping m.base there would store the very claim the reply
         // below refuses to make.
-        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
+        // `mergedInto` is withheld above; `mergeVetoed` is what replaces it. This
+        // arm is TERMINAL and therefore clears the mark it just acted on, so
+        // without a stamp nothing durable would say a check is still owed — a
+        // lead interrupted before the second accept would find a closed-out
+        // ticket, a live branch, and no trace of why. The revival stamp is
+        // already the hand-read fallback the lead prompt points at for the
+        // worktree path, so the trace belongs on it rather than in a new field.
+        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true, mergeVetoed: mergeStamp });
         await archiveIfEphemeral();
-        const carries = c.ok
-          ? `Its ${c.count} commit${c.count === 1 ? '' : 's'} beyond ${c.base} may be off ${m.base} entirely.`
-          : `Its commit count could NOT be obtained (${c.error || 'unknown error'}), so how much is at stake is unknown.`;
+        // Split on `measured` for the same reason the merged arm's outcomes are,
+        // and it matters MORE here. An unmeasured count on this arm is not merely
+        // unreliable, it is deterministically 0: the veto is only reached when the
+        // branch is an ancestor of the main checkout's HEAD, and with no usable
+        // fork point commitsOnBranch falls back to merge-base(defaultBranch,
+        // branch) — which for an ancestor IS the branch tip. So the unsplit
+        // sentence read "Its 0 commits beyond <sha> may be off master entirely"
+        // on precisely the reply whose job is to say the work may exist nowhere
+        // else, and a lead reads 0 as nothing at stake. That is the phantom merge
+        // restated inside its own fix.
+        const carries = !c.ok
+          ? `Its commit count could NOT be obtained (${c.error || 'unknown error'}), so how much is at stake is UNKNOWN.`
+          : measured
+            ? `Its ${c.count} commit${c.count === 1 ? '' : 's'} beyond ${c.base} may be off ${m.base} entirely.`
+            : `How much it carries is UNKNOWN: ${why()}, where an empty branch and one already merged both count 0.`;
+        // The confirmation is branched on the STEP, because the steps do not all
+        // describe the same repository. `suite`, `revert-blocked` and `unexpected`
+        // are the ones where a merge was actually made — reverted, left standing,
+        // or unknown — and there the ancestor answer may be the trace of that
+        // merge. Every other step fails BEFORE `mergeNoFf`, so the loop never
+        // merged this branch at all: telling that lead to check master still
+        // carries "that merge" sends them looking for a commit the loop never
+        // made, on the canonical recovery where they merged by hand themselves.
+        // The VETO stays broad on purpose — an allowlist is a list someone must
+        // maintain, and a step added later would default to not vetoing, which is
+        // default-unsafe. Only the sentence narrows.
+        const mergeWasAttempted = ['suite', 'revert-blocked', 'unexpected'].includes(mergeStamp);
+        const explain = mergeWasAttempted
+          ? 'and an ancestor test cannot tell a merge that still stands from one that was reverted: `git revert -m 1` ADDS a commit, so the merge stays an ancestor either way.'
+          : 'and that step fails BEFORE the merge runs, so the loop made no merge commit here and the ancestor answer is not evidence from it.';
+        const confirm = mergeWasAttempted
+          ? `Confirm by hand that ${m.base} still carries that merge — a revert of it lands as a later \`Revert "Merge …"\` commit`
+          : `The loop never merged this branch, so if ${branch} is an ancestor of ${m.base} now, someone merged it by hand — confirm that`;
         // TERMINAL, and the second accept is the recovery. `closedOut` retires the
         // stamp through finish()'s existing rule, and that is what lets a second
         // accept differ from this one: nothing the lead can do to the REPOSITORY
@@ -6945,9 +7004,9 @@ function createTicketMethods(deps, shared) {
         // whose reply invites another accept is the cost, paid knowingly here the
         // same way the dirty-tree arm below pays it.
         finish(`ticket ${ticket.id} accepted — branch ${branch} is an ancestor of ${m.base}, but the merge loop stamped this ticket MERGE FAILED at "${mergeStamp}", `
-          + 'and an ancestor test cannot tell a merge that still stands from one that was reverted: `git revert -m 1` ADDS a commit, so the merge stays an ancestor either way. '
-          + `${carries} NOTHING was torn down: ${seatClause('archived (resumable)')}worktree and branch were KEPT. `
-          + `Confirm by hand that ${m.base} still carries that merge — a revert of it lands as a later \`Revert "Merge …"\` commit — because this reply ANSWERS the mark, and a second `
+          + `${explain} `
+          + `${carries} Nothing was removed: ${seatClause('archived (resumable)')}worktree and branch were KEPT. `
+          + `${confirm} — because this reply ANSWERS the mark, and a second `
           + `[agent:task accept ${ticket.id}] takes the ordinary merged path and DELETES the branch.`, true);
         return;
       }
@@ -7099,19 +7158,6 @@ function createTicketMethods(deps, shared) {
       // `c.base`, not `baseSha`: commitsOnBranch falls through to a merge-base
       // when the mint-time SHA was rebased or gc'd, and naming a base it did not
       // measure against is the same class of false report as the phantom merge.
-      // WHY the count fell back, split on the record rather than asserted. There
-      // are two ways to reach an unmeasured count and they need different
-      // remediation: no fork point was ever recorded, versus one was recorded and
-      // has since been rebased or gc'd away (commitsOnBranch drops a SHA that no
-      // longer resolves). Saying "none was recorded" about a record that plainly
-      // carries one sends the reader hunting a stamping bug that does not exist.
-      // A function, not a binding: on the `!c.ok` arm `c.base` is undefined, and
-      // an eagerly-built string sits one careless edit away from reporting
-      // "counted against undefined" — the same unverified claim this arm exists
-      // to remove. Called only where the count came back and fell back.
-      const why = () => (baseSha
-        ? `its recorded fork point ${baseSha} no longer resolves, so its commits could only be counted against ${c.base}`
-        : `no fork point was recorded, so its commits could only be counted against ${c.base}`);
       const outcome = !c.ok
         ? `accepted — branch ${branch} is an ancestor of ${m.base}, but its commit count could NOT be obtained (${c.error || 'unknown error'}), so whether it carried any work is UNKNOWN`
         : c.count === 0 && measured

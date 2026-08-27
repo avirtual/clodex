@@ -899,8 +899,20 @@ test('a MERGE FAILED stamp keeps the tree and the branch on a branch that IS an 
   assert.strictEqual(exists(wt), true, 'the worktree survives — it may hold the only copy of the change');
   assert.ok(branches(f).includes('landed'), 'and so does the branch');
   assert.match(msg, /stamped this ticket MERGE FAILED at "suite"/, 'the reply names the mark it is acting on');
-  assert.match(msg, /NOTHING was torn down/, 'and says plainly that it removed nothing');
+  assert.match(msg, /Nothing was removed/, 'and says plainly that it removed nothing');
   assert.doesNotMatch(msg, /merged into master;/, 'and never claims the landing the ancestor test would have supported');
+  // This fixture records NO baseSha, which is the shape that reaches the
+  // unmeasured count — and on this arm that count is deterministically 0, not
+  // merely unreliable: the veto is only entered when the branch is an ancestor
+  // of master, and with no usable fork point `commitsOnBranch` falls back to
+  // merge-base(master, branch), which for an ancestor IS the branch tip. The
+  // reply must therefore never quantify what is at stake here. Asserted as a
+  // pair: the UNKNOWN wording, and the absence of the "0 commits" sentence a
+  // lead reads as "nothing to lose" on the one reply whose job is the opposite.
+  assert.match(msg, /How much it carries is UNKNOWN/,
+    'the unmeasured count is reported as UNKNOWN, in the merged arm\'s own vocabulary');
+  assert.doesNotMatch(msg, /Its 0 commits beyond/,
+    'and never as "0 commits", which is what a fallback base always yields for an ancestor — the phantom merge restated');
 });
 
 test('the vetoed accept is terminal and CLEARS the mark, so a second accept can finish the job', async (t) => {
@@ -919,6 +931,13 @@ test('the vetoed accept is terminal and CLEARS the mark, so a second accept can 
   // could ever reclaim this tree.
   assert.strictEqual(f.one('t1').closedOut, true, 'the vetoed accept closes the ticket out');
   assert.ok(!('mergeError' in f.one('t1')), 'and retires the mark it just answered');
+  // Terminality clears the mark, so the stamp is the ONLY durable trace that a
+  // check is still owed. Without it a lead interrupted before the second accept
+  // finds a closed-out ticket and a live branch with nothing saying why.
+  assert.strictEqual(f.one('t1').revival.mergeVetoed, 'revert-blocked',
+    'and leaves the step it vetoed on the revival stamp, which outlives the cleared mark');
+  assert.ok(!('mergedInto' in f.one('t1').revival),
+    'while withholding mergedInto — the whole arm exists because that merge cannot be shown');
   assert.strictEqual(exists(wt), true, 'ENTER: the tree is still there for the second accept to reclaim');
 
   const second = await accept(f, 't1');
@@ -947,4 +966,43 @@ test('a demonstrably EMPTY branch is exempt from the veto — there is no work t
   assert.match(msg, /has 0 commits beyond/, 'ENTER: the count really was measured against the recorded fork point');
   assert.doesNotMatch(msg, /MERGE FAILED/, 'the veto does not fire: an empty branch carries nothing a revert could have taken');
   assert.strictEqual(exists(wt), false, 'so the empty tree is still reclaimed');
+});
+
+// The confirmation sentence is branched on the STEP, and this is the half the
+// broad veto makes reachable. `clean-tree` fails before `mergeNoFf` ever runs,
+// so the loop made no merge commit at all — and the canonical recovery from it
+// (session-manager.test.js's t535 subject) is the lead merging BY HAND and then
+// accepting. Telling that lead to check master still carries "that merge", and
+// to look for a `Revert "Merge …"` commit, describes a repository that never
+// existed. The veto itself stays broad: an allowlist of vetoing steps would
+// default a newly-added step to NOT vetoing, which is the unsafe direction.
+test('a never-merged step does not advise confirming a merge the loop never made', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed', over: { mergeError: 'clean-tree' } });
+
+  const msg = await accept(f, 't1');
+
+  assert.match(msg, /stamped this ticket MERGE FAILED at "clean-tree"/, 'ENTER: the never-merged step is the one being reported');
+  assert.match(msg, /The loop never merged this branch/, 'the reply says the loop made no merge commit here');
+  assert.doesNotMatch(msg, /Revert "Merge/, 'and does not send the lead hunting a revert of a merge that never happened');
+  assert.doesNotMatch(msg, /still carries that merge/, 'nor ask them to confirm one');
+  // The VETO is unchanged by the wording split — this step still refuses teardown.
+  assert.deepStrictEqual(f.killed, [], 'the veto still fires: a broad veto is the fail-safe direction');
+});
+
+// The other side of that split, so "does not mention a revert" above is not
+// equally true of a build that dropped the revert sentence everywhere.
+test('a step that DID merge still gets the revert-confirmation sentence', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed', over: { mergeError: 'suite' } });
+
+  const msg = await accept(f, 't1');
+
+  assert.match(msg, /still carries that merge/, 'the suite step merged before it failed, so the confirmation is about that merge');
+  assert.match(msg, /Revert "Merge …"/, 'and names the shape a revert of it leaves behind');
+  assert.doesNotMatch(msg, /The loop never merged this branch/, 'and never claims the loop skipped the merge');
 });
