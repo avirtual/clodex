@@ -274,7 +274,7 @@ test('picking a mode with no reachable target is refused and forces a repaint', 
   } finally { h.restore(); }
 });
 
-test('the debounce coalesces to the FINAL pick — one injection, not one per option passed over', async (t) => {
+test('the debounce coalesces to the FINAL pick, and the successful send re-reads on its own short delay', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   // The file starts at `tap` and the pick is `off`, so the read-back below
   // observes a file that genuinely CHANGED. Starting them equal would make the
@@ -507,7 +507,13 @@ test('an unbalanced stop cannot drive the refcount negative and wedge a later st
   } finally { h.restore(); }
 });
 
-test('the focus listener only reads while a surface is holding the core open', async () => {
+// Mock timers like every other `core.start()` in this file: the hold arms a real
+// setInterval(refresh, POLL_MS) otherwise, and an assertion failing before
+// `stop()` would leave it running past `restore()`. `refresh` swallows the
+// resulting `window.api` throw, so the run would HANG on a live event loop
+// instead of going red — on the very mutation this test exists to catch.
+test('the focus listener only reads while a surface is holding the core open', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   const h = harness({ rows: [row('a')], active: 'a', voice: fileSays('tap') });
   try {
     assert.strictEqual(h.calls.focusListeners, 1, 'exactly one window focus listener per core');
