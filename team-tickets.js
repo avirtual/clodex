@@ -6174,7 +6174,14 @@ function createTicketMethods(deps, shared) {
       // sha ran would assert most confidently on the runs where it is most
       // likely wrong, which is t518's harmful direction wearing a new label.
       // What the two reads DO know is the pair and which end each came from.
-      const movedLine = headSha && endSha && endSha !== headSha
+      //
+      // Gated on `suite.head`, the CARRIED field, not on `headSha` — which may
+      // have come from the write-time fallback re-read above. This line says
+      // "HEAD was X when this run was QUEUED", a claim only the pre-run capture
+      // can support; sourcing X from a report-time read would state t518's
+      // harmful direction as fact. Unreachable today (a suite carrying `headEnd`
+      // always carries `head`), and structural precisely so it stays that way.
+      const movedLine = suite && suite.head && headSha && endSha && endSha !== headSha
         ? [`# moved: HEAD was ${headSha} when this run was queued and ${endSha} when it finished — `
           + 'the lock wait sits between, so neither is proof of what the suite measured']
         : [];

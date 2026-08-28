@@ -2576,9 +2576,32 @@ test('t549: a run whose HEAD MOVED underneath it says so, on its own line', asyn
   assert.match(movedLine[0], new RegExp(shaAtStart.slice(0, 12)), 'and the sha HEAD carried when the run was queued');
   // NEITHER sha may be claimed as the measured one. Both reads are outside the
   // child that takes the suite mutex, so the line that fires exactly when the
-  // lock wait bit is the line that must not assert the queue-time sha ran.
-  assert.ok(!/\bmeasured \w*[0-9a-f]{7}/.test(movedLine[0]),
-    `the line must not name either sha as the one measured (got: ${JSON.stringify(movedLine[0])})`);
+  // lock wait bit is the line that must not assert either sha ran.
+  //
+  // PROXIMITY, not a token shape. The first version of this guard was
+  // `/\bmeasured \w*[0-9a-f]{7}/`, which pins one exact adjacency: `\w*` cannot
+  // cross a space, so `measured at <sha>`, `measured, <sha>` and `measured the
+  // tree at <sha>` all re-introduce the over-claim with the pin still green —
+  // while the assertion MESSAGE went on claiming the broad invariant, which is
+  // the coverage claim a later reader trusts when deciding a reword is safe.
+  // Distance in WORDS between a measurement claim and either real sha is the
+  // property, so a reword has to put the two genuinely far apart to pass.
+  //
+  // The shipped line has 17 words between its last sha and its single
+  // `measured`, so the threshold is not tuned to let it through by a hair.
+  const words = movedLine[0].split(/\s+/);
+  const near = (a, b) => {
+    const at = (pred) => words.map((w, i) => (pred(w) ? i : -1)).filter((i) => i >= 0);
+    const claims = at((w) => /measur/i.test(w));
+    const shas = at((w) => w.includes(a) || w.includes(b));
+    assert.ok(claims.length && shas.length,
+      'ENTER: the line really carries both a measurement word and a sha — with either '
+      + 'absent this pin passes vacuously');
+    return Math.min(...claims.flatMap((c) => shas.map((h) => Math.abs(c - h))));
+  };
+  assert.ok(near(shaAtStart.slice(0, 12), shaAfter.slice(0, 12)) > 4,
+    'no sha on this line may sit next to a claim that something was measured — neither '
+    + `read can see when the suite started (got: ${JSON.stringify(movedLine[0])})`);
   // The t518 guarantee is unchanged by the addition, asserted here as well as in
   // that subject: the new sha must not leak into the field naming what ran.
   // Anchored: the preserved BODY is appended below the header and a failing
@@ -2620,7 +2643,7 @@ test('t549: an UNMOVED run carries no moved line at all, rather than one saying 
     `an unmoved run says nothing about movement (header: ${JSON.stringify(dump.slice(0, 400))})`);
   // ENTER for the absence above: the dump really does carry the surrounding
   // header, so this is not asserting emptiness over a file that never got one.
-  assert.match(dump, new RegExp(`# head: +tl-1 ${shaAtStart.slice(0, 12)}`),
+  assert.match(dump, new RegExp(`^# head: +tl-1 ${shaAtStart.slice(0, 12)}$`, 'm'),
     'ENTER: the header itself is present and exact on this run');
 });
 
