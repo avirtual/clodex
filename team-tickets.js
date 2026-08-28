@@ -5381,7 +5381,7 @@ function createTicketMethods(deps, shared) {
       // its pid is still in the lock dir (a killed runner never runs its exit
       // handler). Without this the revert gate blames a process that no longer
       // exists and tells the lead to wait for a suite that will never finish.
-      const out = { ran: false, green: false, code: null, summary: '', failing: '', output: '', cwd, error: null, runnerPid: null, head: null };
+      const out = { ran: false, green: false, code: null, summary: '', failing: '', output: '', cwd, error: null, runnerPid: null, head: null, startedAt: null, headEnd: null };
       if (!cwd) { out.error = 'the ticket has no worktree path to run in'; return out; }
 
       const runner = path.join(cwd, 'scripts', 'run-tests.js');
@@ -5477,12 +5477,20 @@ function createTicketMethods(deps, shared) {
       // still reds at my sha" edits correct work on it. scripts/test-digest.sh
       // captures at the same point for the same reason.
       //
-      // THE LOCK WAIT IS NOT COVERED, deliberately, and this is the one gap:
-      // the mutex is taken by the CHILD (CLODEX_TEST_LOCK_WAIT_MS below), so a
-      // run that queues behind another begins measuring after this line. Moving
-      // the read into the child would mean reading it back out of
-      // scripts/run-tests.js. What is left is bounded by the WAIT instead of the
-      // wait plus the run, and the uncontended case is exact.
+      // THE LOCK WAIT IS STILL NOT COVERED, and this read must NOT move to close
+      // it: the mutex is taken by the CHILD (CLODEX_TEST_LOCK_WAIT_MS below), so
+      // a run that queues behind another begins measuring up to that wait after
+      // this line, and the header can name a real commit that was not the one
+      // measured. Moving the read later would trade that for the direction t518
+      // removed — a sha NEWER than what ran, which a hand acts on by editing
+      // correct work. Older-than-measured is re-read and discarded; newer is not.
+      //
+      // What closes the READER's exposure instead of the window is below: the
+      // instant of this read is carried out as `startedAt`, and HEAD is re-read
+      // after the child exits as `headEnd`. The two answer different questions
+      // and neither substitutes for the other — the span says how long the tree
+      // had to move, the re-read says whether it did.
+      out.startedAt = new Date().toISOString();
       out.head = await gitWorktree.currentBranch(cwd).catch(() => null);
 
       const res = await new Promise((resolve) => {
@@ -5586,6 +5594,21 @@ function createTicketMethods(deps, shared) {
         child.on('error', (e) => finish({ error: `the runner could not start: ${e.message}`, stdout, stderr }));
         child.on('close', (code) => finish({ code, stdout, stderr }));
       });
+
+      // The SECOND read, and it never overwrites the first — `head` is what the
+      // header claims and stays the pre-run capture. This one exists only to let
+      // the writer say "HEAD moved during the run", which is the difference
+      // between a reader who distrusts every header and one who is told which
+      // header to distrust. A `# start:`/`# when:` span alone cannot do that: a
+      // contended run whose HEAD never moved has a long span and an exact
+      // header, so the span teaches distrust of headers that are right.
+      //
+      // Before the `res.error` return below, so the timeout and crash arms —
+      // which preserve their output exactly as the red arm does — are covered
+      // too. A failure here is swallowed to null and the writer treats null as
+      // "not known to have moved": this is legibility, and it must never turn a
+      // preserved dump into no dump.
+      out.headEnd = await gitWorktree.currentBranch(cwd).catch(() => null);
 
       const text = `${res.stdout || ''}\n${res.stderr || ''}`;
       // The capture rides the UNRAN arms too, not the red one alone. A post-merge
@@ -6125,10 +6148,52 @@ function createTicketMethods(deps, shared) {
       const headLine = head && head.ok && headSha
         ? `${head.branch} ${headSha}`
         : `${(head && head.branch) || (ticket.worktree && ticket.worktree.branch) || 'unknown'} (commit unresolved)`;
+      // ITS OWN LINE, not a suffix on `# head:`. `# head:` is the field a reader
+      // greps to learn which tree ran — putting both shas there makes the answer
+      // depend on parsing the prose between them, which is the ambiguity t518
+      // removed rather than a new way to state it. Kept adjacent because it
+      // qualifies `# head:`.
+      //
+      // Absent, not `no`, on the unmoved run: a line that appears only when
+      // something happened is read; one that says `no` every time is skipped,
+      // and this exists to be noticed on the rare contended run.
+      const endSha = suite && suite.headEnd && suite.headEnd.ok
+        ? String(suite.headEnd.head || '').slice(0, 12) : '';
+      // Compared on the SHA, not on the objects: a re-read of an unmoved tree
+      // returns an equal-but-distinct object, so `!==` on those is true for
+      // every run and the line would print always. BOTH shas must be present,
+      // and requiring `headSha` is what keeps this off the degraded arm: an end
+      // read that resolved while the start read did not would otherwise print a
+      // movement line beside a `# head:` admitting it has no commit, which is a
+      // claim about a span whose origin is unknown.
+      //
+      // NEITHER SHA MAY BE CALLED THE MEASURED ONE. Both reads happen outside
+      // the child, and the child takes the suite mutex — so nothing on either
+      // side of it can see the moment measurement began, and the queued read is
+      // exactly the one the lock wait can invalidate. A line claiming the start
+      // sha ran would assert most confidently on the runs where it is most
+      // likely wrong, which is t518's harmful direction wearing a new label.
+      // What the two reads DO know is the pair and which end each came from.
+      const movedLine = headSha && endSha && endSha !== headSha
+        ? [`# moved: HEAD was ${headSha} when this run was queued and ${endSha} when it finished — `
+          + 'the lock wait sits between, so neither is proof of what the suite measured']
+        : [];
+      // `# start:` is the capture instant carried out of _runTicketSuite, NOT a
+      // second clock read here: the point of the line is the span from the read
+      // of `# head:` to this write, so a value minted here would measure nothing
+      // and always read as zero elapsed. Absent for a synthetic suite object
+      // that never ran (the direct callers in test/ticket-loop-verify.test.js),
+      // and omitted entirely rather than printed as `unknown` — a header line
+      // whose only job is to be subtracted from another timestamp is noise when
+      // it holds no timestamp. The sh side prints its own directly above
+      // `# when:`; this keeps the two dumps' line order the same.
+      const startLine = suite && suite.startedAt ? [`# start: ${suite.startedAt}`] : [];
       const header = [
         `# clodex ticket loop — preserved output of the FAILING suite run for ${ticket.id}.`,
         `# tree:  ${(suite && suite.cwd) || 'unknown'}`,
         `# head:  ${headLine}`,
+        ...movedLine,
+        ...startLine,
         `# when:  ${new Date().toISOString()}`,
         `# count: ${(suite && suite.summary) || 'unknown'}`,
         '',

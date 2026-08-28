@@ -13,6 +13,16 @@ blocks a release.
 
 ## Unreleased
 
+- **A preserved ticket-suite dump now tells you when the branch moved out from
+  under the run.** The `# head:` line records HEAD as it was when the run was
+  queued, read before the run starts — but the suite then waits for a box-wide
+  lock, so on a contended run the tree can move before measurement begins and
+  that sha may not be the one the suite saw. The dump now carries a `# moved:`
+  line giving both commits, HEAD at queue time and HEAD at finish, and saying
+  that the lock wait sits between them; it appears only when the two differ. The
+  dump also gained a `# start:` line, so the existing `# when:` has something to
+  be a span against, matching the header the test digest already writes.
+
 - **Accepting a ticket whose merge was still queued no longer leaves it
   advertising `(merge waiting: suite-in-flight)` for good.** When a merge finds
   the test-suite lock held it waits and retries, and marks the row so the wait
