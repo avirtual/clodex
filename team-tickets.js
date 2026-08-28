@@ -6944,10 +6944,14 @@ function createTicketMethods(deps, shared) {
         if (closedOut && ticket.mergeError && String(ticket.mergeError) === actedStamp) delete ticket.mergeError;
         // `mergeWaiting` goes on the same gate, and it is a SECOND clearing site
         // for a field whose own clear lives in `_autoMergeTicket`'s finally.
-        // That finally only runs when the deferred retry WAKES — up to 30s per
-        // attempt and ten minutes across them — so a crash or an [agent:reboot]
-        // inside that window freezes `(merge waiting: suite-in-flight)` onto an
-        // accepted row, and nothing re-examines the field at boot.
+        // That finally runs on every exit, the deferring pass included — but on
+        // that pass `deferred` is true and it declines to clear, which is the
+        // whole point of the flag. So what a deferred merge is left waiting for
+        // is not the finally running but a LATER pass reaching it with the flag
+        // false, and that needs the retry to wake: up to 30s per attempt, ten
+        // minutes across them. A crash or an [agent:reboot] inside that window
+        // freezes `(merge waiting: suite-in-flight)` onto an accepted row, and
+        // nothing re-examines the field at boot.
         //
         // It does not weaken the invariant that finally states. That invariant
         // is over the EXITS OF `_autoMergeTicket` — set on the defer arm, clear
