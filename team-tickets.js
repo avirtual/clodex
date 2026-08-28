@@ -2300,7 +2300,13 @@ function createTicketMethods(deps, shared) {
     // return: `{queued:true}` says only that the text is in the ready loop, so a
     // stamp taken from it survives a write the boot re-render wiped, and the record
     // then suppresses every later redelivery on the strength of it.
-    _deliverTicketSpec(team, ticket, specText, fromName, urgent = false, replay = false, respec = false, onWrite = null) {
+    // `fromBacklog` is board-derived and CALLER-SUPPLIED, never re-derived here: by
+    // the time this runs `ticket.assignee` has been reassigned and saved, so the
+    // state it describes no longer exists on the record. It is also deliberately
+    // not stamped on the ticket — a flag that reached disk would resurface on a
+    // replay months later and tell a seat the board said "start" about a state
+    // long gone.
+    _deliverTicketSpec(team, ticket, specText, fromName, urgent = false, replay = false, respec = false, onWrite = null, fromBacklog = false) {
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (!seat) return { undelivered: true };
       if (seat === team.lead) return { self: true }; // self-assign — the lead just wrote it
@@ -2368,6 +2374,31 @@ function createTicketMethods(deps, shared) {
           + `current revision is below — the earlier ones are recorded on the ticket but are NOT reproduced here, so a `
           + `correction written as a delta reads as the whole job. If work is already in the tree that the text below never `
           + `mentions, it is more likely a superseded instruction than stray work: do not delete it on that basis, report it.\n`
+        : '';
+      // A backlog ticket's body is a FILING-TIME snapshot, and a lead filing one
+      // routinely writes its gate into that prose ("do not start without Bogdan's
+      // word"). The go then arrives through another channel and `assign` delivers
+      // the original body verbatim, so the head says start and the body says stop.
+      // Both readings are wrong: the seat that asks costs a round-trip, the seat
+      // that reads the gate as live silently sits on dispatched work.
+      //
+      // Board-derived, never parsed. There is no grammar for these lines — they are
+      // free prose in different words each time — and a regex over prose deciding
+      // which part of a dispatch to suppress fails worse than the defect. `!prev` at
+      // the assign is the whole signal.
+      //
+      // The wording's SCOPE is the load-bearing part. It speaks only to whether to
+      // BEGIN; a line that generalises to "the caveats below are stale" would
+      // discharge scope fences and hazards the body still means, which is a worse
+      // failure than the one this fixes. The residual clause is what keeps a
+      // specific unverifiable condition from being assumed discharged.
+      const backlogLine = fromBacklog
+        ? `This ticket sat in the BACKLOG until this dispatch, so its body was written while it was still parked and may `
+          + `tell you it is blocked, parked, or awaiting someone's word before you start. On that ONE question — whether to `
+          + `begin — the board is current and the body is a filing-time snapshot: the board says start, so start. This `
+          + `discharges nothing else. Every other caveat, constraint, scope fence and hazard in the body stands exactly as `
+          + `written. And if the body gates on a specific condition you cannot confirm was met, report that rather than `
+          + `assuming it was discharged.\n`
         : '';
       // A ticket with its own worktree: the seat's cwd is the REPO, so the tree is
       // somewhere it would not otherwise look (git puts a worktree BESIDE the repo).
@@ -2457,7 +2488,7 @@ function createTicketMethods(deps, shared) {
       // attached", which would put the close verb behind the very turn this line
       // exists to save. The verb is safe here for the same reason as in the body:
       // `[agent:from <sender>] ` precedes the tag, so it is never at column 1.
-      const r = this._gatedDeliver(seat, fromName, `${head}${supersededLine}${wtLine}${areaLine}${sharedLine}${taskDirLine}${closeLine}${specText}`, urgent,
+      const r = this._gatedDeliver(seat, fromName, `${head}${supersededLine}${backlogLine}${wtLine}${areaLine}${sharedLine}${taskDirLine}${closeLine}${specText}`, urgent,
         replay
           ? `[ticket ${ticket.id} REPLAY] close with ${ticketCloseVerb(ticket.id)}`
           : respec
@@ -4124,7 +4155,11 @@ function createTicketMethods(deps, shared) {
     // git call may sit on the DISPATCH path. Elsewhere in the ticket's life some
     // still run and degrade cleanly — `_writeTicketCost`'s orphan sweep is one —
     // so the claim is about this path, not about the mode as a whole.
-    _spawnTicketSeat(opener, team, ticket, roleKey, seat, mode = 'worktree') {
+    // `fromBacklog` defaults FALSE so `_taskStart`'s call is correct by construction
+    // rather than by a caller-name special case: `_taskStart` refuses a backlog
+    // ticket outright (`!ticket.assignee` → "use assign"), so nothing reaching a
+    // start dispatch was backlog a moment earlier.
+    _spawnTicketSeat(opener, team, ticket, roleKey, seat, mode = 'worktree', fromBacklog = false) {
       const isSpawn = mode === 'spawn';
       const reply = (msg) => this._injectText(opener, `[agent:task] ${msg}`, { parkable: true });
       // Reserved SYNCHRONOUSLY, before any await: two tickets opened in one lead
@@ -4342,7 +4377,7 @@ function createTicketMethods(deps, shared) {
             noWire: !!(this.sessions.get(seat.name) || {}).noWire,
             background: true,
           });
-          const d = this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true);
+          const d = this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true, false, false, null, fromBacklog);
           this._broadcast('ipc-message', {
             type: 'task', from: opener.name, to: seat.name, body: `ticket ${ticket.id} → ${seat.name} @ ${wt ? wt.path : shape.cwd}`,
           });
@@ -4733,7 +4768,7 @@ function createTicketMethods(deps, shared) {
           ticket.role = assignee;
           ticket.assignee = minted.name;
           ticketsStore.save(team.root, tickets);
-          this._spawnTicketSeat(session, team, ticket, assignee, minted, dispatchMode);
+          this._spawnTicketSeat(session, team, ticket, assignee, minted, dispatchMode, !prev);
           this._reconcileTickets(team);
           log.info('intent', dispatchMode === 'spawn'
             ? `task assign by ${session.name}: ${ticket.id} → seat ${minted.name}, shared checkout`
@@ -4752,7 +4787,7 @@ function createTicketMethods(deps, shared) {
       // re-send and the mint both keep a pin whose role is still the filed one.
       if (!this._repinTicketToSeat(team, ticket)) delete ticket.role;
       ticketsStore.save(team.root, tickets);
-      const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
+      const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true, false, false, null, !prev);
       const suffix = this._ticketDeliverySuffix(d, assignee);
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: assignee, body: `ticket ${ticket.id} assigned` });
