@@ -2594,9 +2594,15 @@ test('t549: a run whose HEAD MOVED underneath it says so, on its own line', asyn
     const at = (pred) => words.map((w, i) => (pred(w) ? i : -1)).filter((i) => i >= 0);
     const claims = at((w) => /measur/i.test(w));
     const shas = at((w) => w.includes(a) || w.includes(b));
-    assert.ok(claims.length && shas.length,
-      'ENTER: the line really carries both a measurement word and a sha — with either '
-      + 'absent this pin passes vacuously');
+    // Only `shas` is an ENTER. A line with no measurement word cannot over-claim
+    // what was measured, so it satisfies this invariant outright — reddening on
+    // it would accuse an author who SIMPLIFIED the sentence of breaking the pin,
+    // and the obvious repair is to put the measurement word back, pushing the
+    // prose toward the shape this subject exists to prevent.
+    if (!claims.length) return Infinity;
+    assert.ok(shas.length,
+      'ENTER: the line really carries a sha — without one the distance below is '
+      + 'measured against nothing and the pin passes vacuously');
     return Math.min(...claims.flatMap((c) => shas.map((h) => Math.abs(c - h))));
   };
   assert.ok(near(shaAtStart.slice(0, 12), shaAfter.slice(0, 12)) > 4,
