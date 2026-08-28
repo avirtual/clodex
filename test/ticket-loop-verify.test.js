@@ -2471,6 +2471,64 @@ test('t370 r2: the header records the COMMIT, so two rounds are distinguishable'
     'the two headers are distinguishable, which is the whole point');
 });
 
+test('t518: the header names HEAD when the run STARTED, not when the dump is written', async () => {
+  // The defect this replaces: `# head:` was read inside the writer, one whole
+  // suite after the run began, so a commit landing mid-run was reported as the
+  // commit that was measured. Observed on t517 with 21 seconds between the two —
+  // and the harm is not the mislabel, it is that a hand reading "my fix is
+  // committed and the suite still reds at MY sha" concludes the fix was wrong
+  // and edits correct work.
+  //
+  // THE MID-RUN COMMIT IS THE SUBJECT. A run with no concurrent commit reports
+  // the same sha either way and would pass against the defect, so the fixture's
+  // whole job is to move the branch WHILE the suite is in flight. The stub
+  // runner does it itself rather than a timer racing it: the stub is spawned
+  // after the capture and its commit is therefore ordered after it by
+  // construction, which a sleep can only approximate.
+  const repo = mkRepo();
+  const shaAtStart = commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work the run measures\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+
+  // A REAL worktree, for t370 r2's reason: a plain directory inside the repo
+  // resolves to the repo root and would report `master`, making this measure the
+  // fixture instead of the header.
+  const realWt = pathReal.join(repo.dir, 'realwt');
+  git(repo.dir, ['worktree', 'add', '-q', realWt, 'tl-1']);
+  fsReal.mkdirSync(pathReal.join(realWt, 'scripts'), { recursive: true });
+  // The red stub, plus a commit IN THE WORKTREE before it reports. Committed
+  // through git in the tree that is checked out on the branch, which is both
+  // what a hand actually does and the only thing that works here — a root-side
+  // checkout of tl-1 is refused while the worktree holds it.
+  const midRunCommit = 'require("child_process").execFileSync("git", ["commit", "-q", "-m", "landed UNDER the run"], { cwd: __dirname + "/.." });\n';
+  fsReal.writeFileSync(pathReal.join(realWt, 'scripts', 'run-tests.js'),
+    'require("fs").writeFileSync(__dirname + "/../mid.txt", "landed mid-run\\n");\n'
+    + 'require("child_process").execFileSync("git", ["add", "mid.txt"], { cwd: __dirname + "/.." });\n'
+    + midRunCommit
+    + SUITE_STUBS.redWithDiff);
+  assert.strictEqual(git(realWt, ['rev-parse', 'HEAD']), shaAtStart,
+    'ENTER: the worktree starts the run at the sha the run must report');
+
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand',
+    worktree: { ...f.one().worktree, path: realWt },
+  }]);
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const shaAfter = git(realWt, ['rev-parse', 'HEAD']);
+  assert.notStrictEqual(shaAfter, shaAtStart,
+    'ENTER: the branch really moved DURING the run — without this the two shas are '
+    + 'the same and the subject passes against the defect it exists to catch');
+
+  const kept = keptFiles(f, f.home);
+  assert.strictEqual(kept.length, 1, 'ENTER: a dump was preserved to read the header off');
+  const head = /# head: .*/.exec(fsReal.readFileSync(kept[0], 'utf8'))[0];
+  assert.match(head, new RegExp(shaAtStart.slice(0, 12)),
+    `the header names HEAD as it was when the run started (got: ${JSON.stringify(head)})`);
+  assert.ok(!new RegExp(shaAfter.slice(0, 12)).test(head),
+    `and NOT the commit that landed under it (got: ${JSON.stringify(head)})`);
+});
+
 test('t370 r3: an UNDELIVERABLE rejection says WHY there is no file, not just when there is one', async () => {
   // The mirror of the round-1 fix. Naming the file when it exists and going
   // silent when it does not leaves the lead — the only reader on this arm —
