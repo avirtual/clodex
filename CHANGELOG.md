@@ -15,18 +15,18 @@ blocks a release.
 
 - **A ticket released from the backlog now tells its seat that the "do not
   start" line in its own spec is spent.** A backlog ticket's spec is written
-  when it is FILED, so it routinely carries its own gate — "parked until
-  Bogdan says go". When the go arrives in chat and you run `task assign`, that
-  body was delivered word for word, so the dispatch told the agent to start and
-  the spec told it to wait. Agents that stopped to ask cost a round-trip each;
-  the quiet failure is the one that reads the gate as still live and sits on
-  work you have already released. The dispatch now carries an extra line
-  whenever the ticket had no assignee until that moment, and it is deliberately
-  narrow: it settles only whether to BEGIN, leaves every other caveat and scope
-  fence in the spec standing, and tells the agent to report rather than assume
-  if the spec gates on some specific condition it cannot confirm. Nothing
-  parses your prose — the signal is the board's own state, so the wording you
-  file a gate in does not matter.
+  when it is FILED, so it routinely carries its own gate — "do not start until
+  the operator says go". When the go arrives in chat and you run `task
+  assign`, that body was delivered word for word, so the dispatch told the
+  agent to start and the spec told it to wait. Agents that stopped to ask cost
+  a round-trip each; the quiet failure is the one that reads the gate as still
+  live and sits on work you have already released. The dispatch now carries an
+  extra line whenever the ticket had no assignee until that moment, and it is
+  deliberately narrow: it settles only whether to BEGIN, leaves every other
+  caveat and scope fence in the spec standing, and tells the agent to report
+  rather than assume if the spec gates on some specific condition it cannot
+  confirm. Nothing parses your prose — the signal is the board's own state, so
+  the wording you file a gate in does not matter.
 
 - **A preserved test-failure dump now names the commit its run STARTED at.**
   Both writers — the `run-tests` digest and the ticket loop's own per-round dump

@@ -5650,7 +5650,7 @@ const specBody = (id, spec) => `[ticket ${id}] ${CLOSE_LINE(id)}${spec}`;
 // re-read across. Rides ONLY a dispatch whose ticket was backlog (`!prev` at the
 // assign) — every specBody() pin above is a case where it must be ABSENT, so an
 // unconditional line would red them en masse rather than silently widening.
-const BACKLOG_LINE = 'This ticket sat in the BACKLOG until this dispatch, so its body was written while it was still parked and may '
+const BACKLOG_LINE = 'This ticket had no assignee until this dispatch, so its body was written while nobody was on it and may '
   + 'tell you it is blocked, parked, or awaiting someone\'s word before you start. On that ONE question — whether to '
   + 'begin — the board is current and the body is a filing-time snapshot: the board says start, so start. This '
   + 'discharges nothing else. Every other caveat, constraint, scope fence and hazard in the body stands exactly as '
@@ -5862,7 +5862,11 @@ test('t522: the backlog line is ABSENT when the ticket was reassigned, not relea
   const toNew = f.gated.filter((g) => g.target === 'team-reviewer-1');
   assert.deepStrictEqual(toNew, [{ target: 'team-reviewer-1', sender: 'lead', body: specBody('t1', 'the spec') }],
     'the reassigned body is the plain one — no backlog line');
-  assert.ok(!toNew[0].body.includes('sat in the BACKLOG'), 'and the line is nowhere in it');
+  // Tied to the constant, never to a hardcoded phrase: the literal that used to sit
+  // here (`sat in the BACKLOG`) outlived the production wording it was copied from and
+  // went vacuously true — the review-round-1 fix updated BACKLOG_LINE and left this
+  // behind. A sentinel that cannot fail reads as coverage while providing none.
+  assert.ok(!toNew[0].body.includes(BACKLOG_LINE.trimEnd()), 'and the line is nowhere in it');
 });
 
 test('task reassign: TWO deliveries — old-assignee notice ORDERED BEFORE new-assignee spec', () => {
