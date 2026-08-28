@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- **A preserved test-failure dump now names the commit its run STARTED at.**
+  Both writers — the `run-tests` digest and the ticket loop's own per-round dump
+  — read `git HEAD` while writing the file, which is one whole suite after the
+  run began, so a commit landing mid-run was reported as the commit that had
+  been measured. The mislabel was not the damage: "my fix is committed and the
+  suite still reds at MY sha" reads as conclusive, and the obvious response is
+  to edit work that was already correct. It cost a real debugging round. Both
+  now capture HEAD before the suite starts, and the digest's dump carries a
+  `# start:` line beside its `# when:` so a stale run is legible without having
+  to already suspect one.
+
 - **`task accept` no longer deletes a branch whose merge was undone.** The
   cleanup asked git whether the branch was an ancestor of master and read a yes
   as "the work landed". Those are not the same question: when the merge loop
