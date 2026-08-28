@@ -76,6 +76,15 @@ blocks a release.
   does NOT close it out is untouched: those replies say to merge and accept
   again, so the merge is still owed and the retry still lands it.
 
+- **And an accept landing during the merge itself no longer does it either.**
+  The same blind spot existed a second time, at the last check before the merge
+  runs: that check also read only `state`, which acceptance leaves at `done`, so
+  an accept arriving in the sub-second gap between the pre-merge gates and the
+  merge command walked into a deleted branch and stamped the same false
+  `!! MERGE FAILED` — on a first-run merge, with no deferral or retry involved.
+  That check now reads the closed-out mark too, and the log line says which of
+  the conditions ended the merge.
+
 - **The team lead prompt no longer tells the lead to merge and clean up by
   hand.** Both steps have been automated for a while: an ACCEPT verdict makes
   the ticket loop merge the branch to master and run a suite behind that merge,

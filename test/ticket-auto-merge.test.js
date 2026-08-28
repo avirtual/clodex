@@ -1935,6 +1935,67 @@ test('a lead reject landing INSIDE the merge, after the gates have passed, still
     'the abandoned merge is findable in the log');
 });
 
+test('t542: a lead ACCEPT landing inside the merge, after the gates have passed, leaves no MERGE FAILED behind', async () => {
+  // The t538 defect at its OTHER entry, and the one `state` cannot see. The top
+  // gate's `closedOut` check covers the queue→start gap and the deferred retry;
+  // this covers the gates→merge gap, which is sub-second rather than ten minutes
+  // and reachable on a FIRST run.
+  //
+  // Interleaved at `currentBranch` — the LAST await before the merge — through
+  // the REAL `_taskAccept`, for the same reason the reject subject above does:
+  // `closedOut` is set by the accept's merged arm, and hand-writing the field
+  // would pin this against a belief about which arm sets it.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  let f = null;
+  let accepted = null;
+  // Set BEFORE the inner work, not after the await resolves: nothing on today's
+  // accept path calls currentBranch, but a future one that did would re-enter a
+  // guard keyed on the RESULT and recurse forever instead of failing.
+  let entered = false;
+  const realCurrentBranch = require('../git-worktree').currentBranch;
+  const gitOver = {
+    currentBranch: async (root) => {
+      const out = await realCurrentBranch(root);
+      if (entered) return out;
+      entered = true;
+      // What makes the accept take the MERGED arm — the tear-down arm that
+      // deletes the ref the merge below is about to name.
+      git(repo.dir, ['merge', '--no-ff', '-q', '-m', 'Merge tl-1 by hand', 'tl-1']);
+      const replies = [];
+      await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
+        { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => replies.push(msg));
+      accepted = replies.join('\n');
+      return out;
+    },
+  };
+  f = mkMerge({ repo, gitOver });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  // These ENTERs are read AFTER the run, not thrown from inside the stub: the
+  // call site wraps `currentBranch` in `.catch(e => ({ ok: false, error }))`, so
+  // an AssertionError raised in there is swallowed into an `on-master` failure
+  // and reports the wrong line. Same hazard as the reject subject above.
+  assert.match(String(accepted), /branch tl-1 deleted/,
+    'ENTER: the accept really landed mid-merge and took the arm that deletes the ref');
+  assert.strictEqual(f.one().closedOut, true, 'ENTER: and it closed the ticket out');
+  assert.strictEqual(f.one().state, 'done',
+    'ENTER: while leaving state at done — which is why the state-only check could not see it');
+
+  assert.ok(!('mergeError' in f.one()),
+    'no MERGE FAILED is stamped onto a row the lead had just accepted and closed out');
+  assert.deepStrictEqual(f.esc(), [], 'and nothing escalated about a finished ticket');
+  assert.deepStrictEqual(f.landed(), [], 'nothing was announced as merged either');
+  // The thing itself, not its side effect: today an unfixed build fails anyway
+  // because the ref is gone, but on the dirty-downgrade arm — which KEEPS the
+  // branch — it would actually land.
+  assert.doesNotMatch(f.masterLog(), /Merge t1:/,
+    'and no loop merge commit exists for the accepted ticket');
+  assert.ok(f.logs.some((l) => /ABANDONED at the merge step/.test(l.msg) && /closed out/.test(l.msg)),
+    'and the log says WHICH condition fired — closed out, not a state change');
+});
+
 test('a ticket reopened between the verdict and the merge is not merged', async () => {
   // The gap is async (an ancestor check, then a whole suite) and the loop
   // re-loads across every other such gap. A `task reject`/`cancel` landing in it
