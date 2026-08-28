@@ -1771,22 +1771,31 @@ test('seed: the lead prompt splits the stall nudge from the dispatch reminder', 
 // pin (losing the guard) or reword around it (never learning why). So what is
 // forbidden here is the phrase UNSCOPED, not the phrase.
 //
-// A unit is one sentence, cut at table-cell walls as well, so scope words in a
-// neighbouring sentence or cell cannot be read as scoping this one. Whitespace
-// is flattened inside a unit before matching — that is this pin's form of the
-// `\s+`-at-every-gap rule above, and it covers every gap rather than the gaps
-// someone remembered to write.
+// A unit is one sentence, cut at table-cell walls and list-item markers as well,
+// so scope words in a neighbouring sentence, cell or bullet cannot be read as
+// scoping this one. All three carry the same reason: each is edited independently
+// of the ones beside it, so scope read across the boundary goes stale silently.
+// The bullet cut is not decoration — unpunctuated list items do not end in `.`,
+// so without it a true bullet and a false one flatten into ONE unit and the true
+// one's `row 2` launders the false one. Whitespace is flattened inside a unit
+// before matching — that is this pin's form of the `\s+`-at-every-gap rule above,
+// and it covers every gap rather than the gaps someone remembered to write.
 //
 // `total` counts the phrase across the whole file with whitespace flattened and
 // `seen` counts it across the units, so the caller can pin that every occurrence
 // reached a unit. A phrase the splitter loses would otherwise vanish into an
 // empty `unscoped` and read as a pass. Both are OCCURRENCE counts on purpose:
-// comparing `hits.length` (units carrying the phrase) to `total` reds correct
+// comparing a count of units carrying the phrase against `total` reds correct
 // text the moment one unit carries two occurrences.
 //
 // The residual hole is a sentence that names both scope words and then negates
 // one ("not only when the seat is loop-minted and the tree dirty"). No phrase
 // scan can catch that; the defect actually observed — scope OMITTED — it can.
+//
+// Every cut errs toward SMALLER units on purpose. A unit that is too small can
+// only lose scope it should have kept, which reds a true sentence its author can
+// fix by naming the scope where the claim is; a unit that is too large launders a
+// false claim green, and nobody is told. When the two trade off, take the red.
 function unscopedRemovesNothingClaims(text) {
   const PHRASE = /merged arm removes nothing/i;
   // `i` here and in `scoped` below must agree: a case-sensitive phrase against a
@@ -1796,6 +1805,10 @@ function unscopedRemovesNothingClaims(text) {
   const units = text
     .split(/\n[ \t]*\n/)                                  // paragraphs, table blocks
     .flatMap((block) => block.split('|'))                 // one cell never scopes another
+    // ...nor does a neighbouring LIST ITEM, for the same reason: an item is edited
+    // independently of the items around it. This cut must precede the flatten
+    // below, which destroys the newline the marker is anchored to.
+    .flatMap((chunk) => chunk.split(/\n[ \t]*(?:[-*+]|\d+[.)])[ \t]+/))
     .map((chunk) => chunk.replace(/\s+/g, ' ').trim())
     .flatMap((chunk) => chunk.split(/(?<=[.!?]) /))
     .map((u) => u.trim())
@@ -1803,14 +1816,13 @@ function unscopedRemovesNothingClaims(text) {
   const scoped = (u) => /\brow 2\b/i.test(u) || (/loop-minted/i.test(u) && /dirty/i.test(u));
   return {
     units,
-    // `seen` counts OCCURRENCES inside units, not units-carrying-the-phrase. The
-    // two differ on correct text — two bullets in one paragraph with no terminal
-    // punctuation are ONE unit with TWO occurrences — and comparing the unit count
-    // to `total` reds a fully scoped, true passage, which is the exact defect this
-    // pin exists to remove.
+    // `seen` counts OCCURRENCES inside units, never units-carrying-the-phrase. The
+    // two differ on correct text — one unit can carry two occurrences — and
+    // comparing a unit count to `total` reds a fully scoped, true passage, which
+    // is the exact defect this pin exists to remove. Do not reintroduce a
+    // units-carrying-the-phrase field for the caller to reach for.
     seen: units.reduce((n, u) => n + count(u), 0),
     total: count(text.replace(/\s+/g, ' ')),
-    hits: units.filter((u) => PHRASE.test(u)),
     unscoped: units.filter((u) => PHRASE.test(u) && !scoped(u)),
   };
 }
@@ -1844,7 +1856,7 @@ test('seed: the lead prompt splits accept\'s two reply prefixes by whether the t
   assert.strictEqual(removesNothing.seen, removesNothing.total,
     'every occurrence of the phrase must land in a sentence unit — one the splitter drops is one the forbid above cannot judge, and it reads as a pass');
   assert.ok(removesNothing.units.some((u) => u.startsWith('What a merged arm removes depends on the seat and the tree')),
-    'ENTER: the splitter cuts the live merged-arm sentence out as a unit of its own — the forbid above is an absence, so a splitter that never reached this paragraph would satisfy it silently. Matched by PREFIX: a tail edit to that sentence is the content pin above\'s red to report, not this one\'s');
+    'ENTER: the splitter cuts the live merged-arm sentence out as a unit of its own — the forbid above is an absence, so a splitter that never reached this paragraph would satisfy it silently. Matched by PREFIX: a tail edit to that sentence is the content pin above\'s red to report, not this one\'s. If this fires alone, either the splitter stopped reaching the paragraph or the sentence before it stopped ending in a period');
   assert.doesNotMatch(lead, /no-branch\s+arm\s+has\s+nothing\s+to\s+remove\s+and\s+the\s+veto\s+refuses\s+to\s+remove\s+anything/,
     'lead prompt must not close that clause on the two-item list again');
 });
@@ -1881,8 +1893,16 @@ test('t548: the unscoped `removes nothing` predicate separates the false claim f
     ['What a merged arm removes depends on the seat and the tree — read the rows.', false],
     // r1 nit 1: two scoped bullets in one paragraph with no terminal punctuation are
     // ONE unit carrying TWO occurrences. Correct prose, and the version of this pin
-    // that counted units rather than occurrences reddened it.
+    // that counted units rather than occurrences reddened it. Each bullet is scoped
+    // on its own, so the list-item cut must NOT change this verdict.
     ['  - on row 2 the merged arm removes nothing\n  - on a loop-minted seat with a dirty tree the merged arm removes nothing\n', false],
+    // r2 nit: the same shape with the second bullet FALSE. Unpunctuated items do not
+    // end in `.`, so before the list-item cut both flattened into one unit and the
+    // first bullet's `row 2` laundered the second — green on a false claim, which is
+    // the one outcome this pin may never produce.
+    ['  - on row 2 the merged arm removes nothing\n  - the merged arm removes nothing whatever the tree\n', true],
+    // Ordered markers cut too, and the laundering direction is what is pinned.
+    ['1. on row 2 the merged arm removes nothing\n2. the merged arm removes nothing whatever the tree\n', true],
     // Case: the forbid must see a sentence-initial occurrence, since `scoped` is
     // case-insensitive and a case-sensitive phrase would skip the unit entirely.
     ['Merged arm removes nothing.', true],
