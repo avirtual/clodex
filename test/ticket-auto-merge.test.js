@@ -1675,7 +1675,20 @@ test('t544: a closing accept clears the WAITING stamp before the retry ever wake
   const replies = [];
   await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
     { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => replies.push(msg));
+  // WHICH closing arm, off the reply rather than off `closedOut` alone: three
+  // arms set that flag, and the two this fixture excludes today it excludes only
+  // by construction — a branch IS recorded, and no `mergeError` is stamped, so
+  // neither the no-branch arm nor t536's veto is reachable. Both of those are
+  // properties of the fixture, not of the code, and a later change that routed
+  // it down one of them would leave every assertion below still passing over a
+  // path this subject was never written about. `merged into master` is the
+  // merged arm; `branch tl-1 deleted` additionally excludes its dirty downgrade,
+  // which closes out while skipping the teardown.
   assert.strictEqual(f.one().closedOut, true, 'ENTER: the accept took a closing arm');
+  assert.match(replies.join('\n'), /merged into master/,
+    'ENTER: and specifically the MERGED arm, not the other two that close out');
+  assert.match(replies.join('\n'), /branch tl-1 deleted/,
+    'ENTER: with the ordinary teardown, not the dirty downgrade that keeps the branch');
 
   // The retry is deliberately NOT drained: this is the state a crash freezes.
   assert.strictEqual(r.scheduled.length, 1, 'ENTER: the retry is still armed and has not run');
