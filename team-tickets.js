@@ -1338,9 +1338,11 @@ function createTicketMethods(deps, shared) {
         // onto the row the accept just cleared.
         //
         // `closedOut`, NOT `acceptedAt`: `finish()` stamps `acceptedAt` on EVERY
-        // accept arm, including the two whose reply is "Merge it, then accept
-        // again" (`!m.ok` and `!m.merged`), where the merge is still genuinely
-        // owed and a retry that lands it is the wanted outcome. `closedOut` is
+        // accept arm, including the two that invite a second accept — `!m.merged`,
+        // whose reply ends "Merge it, then [agent:task accept <id>] again to clean
+        // up", and `!m.ok`, whose reply says the merge check could not run and
+        // nothing was removed. On both the merge is still genuinely owed and a
+        // retry that lands it is the wanted outcome. `closedOut` is
         // passed by the CALLING arm precisely to keep that distinction.
         //
         // The terminal arms that KEEP the branch are, by name — so a retry can
@@ -6748,7 +6750,7 @@ function createTicketMethods(deps, shared) {
 
       // Whether the ASSIGNEE is a seat this loop minted, and therefore a seat
       // acceptance may retire. Read once here because every arm below reads it,
-      // by four separate routes — only the no-branch arm used to resolve it, and
+      // by the routes named here — only the no-branch arm used to resolve it, and
       // the branch-carrying arms tore down whatever `ticket.assignee` named:
       //
       //   no-branch     archives on it directly
@@ -6775,8 +6777,8 @@ function createTicketMethods(deps, shared) {
       // `closedOut` is passed by the CALLING ARM, never derived here: finish()
       // runs on every accept path and cannot tell them apart, and that is exactly
       // the conflation this parameter exists to prevent. The arms, each carrying
-      // the reason its own terminality is what it is — this is the one place that
-      // enumerates them, and the comments below name arms rather than re-count:
+      // the reason its own terminality is what it is — the only enumeration inside
+      // `_taskAccept`, and the comments below name arms rather than re-count:
       //
       //   no-branch     TERMINAL. Nothing to merge and no second accept to
       //                 invite, so acceptance is the whole story.
@@ -6832,8 +6834,8 @@ function createTicketMethods(deps, shared) {
         // the second. Clearing there would blank the mark on the very ticket whose
         // reply says someone still owes the merge. The gate is `closedOut`, NOT
         // "invites another accept" - the veto and the dirty downgrade invite one
-        // too and close out anyway. It is retired
-        // on the closing arms as ANSWERED rather than as untrue: the stamp may
+        // too and close out anyway. It is retired on the closing arms as ANSWERED
+        // rather than as untrue: the stamp may
         // still describe something real - `isMerged` is an ancestor test and
         // `revert -m 1` adds a commit, so a merge reverted off master after a
         // red suite, and one left standing deliberately, both still read merged
@@ -6931,14 +6933,15 @@ function createTicketMethods(deps, shared) {
       // Called by `!m.ok`, `!m.merged` and the veto: the arms that keep the tree
       // AND say so in one sentence. The merged arm keeps it too on its dirty and
       // unreadable downgrades, but builds that sentence itself in `parts`, so a
-      // caller added here does not reach it.
+      // new `seatClause` caller does not extend to it.
       //
       // Split on `ephemeralSeat` FIRST, then on liveness — never on whether an
       // archive ran. Those come apart on a seat that is one-shot but already
       // gone, which is not exotic: a hand exits naturally after `task done` and
       // keeps its record (session-manager.js `onExit` drops records only for
-      // `!agentType` seats), and the second accept THIS ARM INVITES arrives
-      // after the first one's archive() removed it from `this.sessions`. Keyed
+      // `!agentType` seats), and the second accept invited by `!m.merged` — or by
+      // `!m.ok`, which invites one once the merge fact can be established —
+      // arrives after the first one's archive() removed it from `this.sessions`. Keyed
       // on the archive, both of those get told the seat is standing and still
       // running — false twice over, and false about precisely the distinction
       // this verb now makes. The merged arm splits the same way.
@@ -6988,10 +6991,10 @@ function createTicketMethods(deps, shared) {
       if (!m.merged) {
         if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
         await archiveIfEphemeral();
-        // NOT terminal (no `closedOut`), same reasoning: "Merge it, then accept
-        // again" is an explicit invitation to come back. Cancelling a bound
-        // reminder in the message that reports the branch did NOT land is the
-        // worst possible moment for it.
+        // NOT terminal (no `closedOut`), same reasoning: the reply below ends
+        // "Merge it, then [agent:task accept <id>] again to clean up", an explicit
+        // invitation to come back. Cancelling a bound reminder in the message that
+        // reports the branch did NOT land is the worst possible moment for it.
         finish(`ticket ${ticket.id} accepted, but branch ${branch} is NOT merged into ${m.base} — `
           + `${seatClause('archived (resumable)')}worktree and branch were KEPT. `
           + `Merge it, then [agent:task accept ${ticket.id}] again to clean up.`);

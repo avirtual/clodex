@@ -379,8 +379,9 @@ test('the reviewer goes on the NON-terminal accept arm as well', async () => {
   const f = mkFixture();
   reviewingTicket(f);
   // An unmerged branch: the accept archives the hand and invites a second accept.
-  // The review round is over either way — `finish()` deletes `loopStep` on all
-  // four arms — so a per-arm teardown would leak on exactly this one.
+  // The review round is over either way — `finish()` deletes `loopStep` on every
+  // accept arm, including this non-terminal one — so a per-arm teardown would
+  // leak on exactly this one.
   const all = f.tstore.load(f.team.root);
   all[0].worktree = { branch: 'pending' };
   f.tstore.save(f.team.root, all);

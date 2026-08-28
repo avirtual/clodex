@@ -479,10 +479,11 @@ function ticketInFlight(ticket) {
 //   * `cancelled` — _taskCancel refuses any non-open ticket, so nothing can
 //     name it again.
 //   * `closedOut` — stamped by the accept arms that genuinely close the ticket
-//     out (merged, and no-branch-recorded). It CANNOT be inferred from
+//     out: merged, no-branch-recorded, and t536's MERGE FAILED veto, which keeps
+//     tree and branch yet still closes out. It CANNOT be inferred from
 //     `acceptedAt`: that is stamped on every accept arm including the two that
-//     invite a second accept ("Merge it, then accept again"), so a ticket
-//     awaiting its merge would read as terminal while it is still live.
+//     invite a second accept (`!m.ok`, `!m.merged`), so a ticket awaiting its
+//     merge would read as terminal while it is still live.
 function ticketTerminalReason(ticket) {
   if (!ticket) return null;
   if (ticket.state === 'cancelled') return 'cancelled';
