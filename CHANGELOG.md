@@ -15,8 +15,8 @@ blocks a release.
 
 - **A ticket released from the backlog now tells its seat that the "do not
   start" line in its own spec is spent.** A backlog ticket's spec is written
-  when it is FILED, so it routinely carries its own gate — "parked until
-  Bogdan says go". When the go arrives in chat and you run `task assign`, that
+  when it is FILED, so it routinely carries its own gate — "do not start until
+  the operator says go". When the go arrives in chat and you run `task assign`, that
   body was delivered word for word, so the dispatch told the agent to start and
   the spec told it to wait. Agents that stopped to ask cost a round-trip each;
   the quiet failure is the one that reads the gate as still live and sits on

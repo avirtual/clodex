@@ -2393,7 +2393,7 @@ function createTicketMethods(deps, shared) {
       // failure than the one this fixes. The residual clause is what keeps a
       // specific unverifiable condition from being assumed discharged.
       const backlogLine = fromBacklog
-        ? `This ticket sat in the BACKLOG until this dispatch, so its body was written while it was still parked and may `
+        ? `This ticket had no assignee until this dispatch, so its body was written while nobody was on it and may `
           + `tell you it is blocked, parked, or awaiting someone's word before you start. On that ONE question — whether to `
           + `begin — the board is current and the body is a filing-time snapshot: the board says start, so start. This `
           + `discharges nothing else. Every other caveat, constraint, scope fence and hazard in the body stands exactly as `

@@ -5650,7 +5650,7 @@ const specBody = (id, spec) => `[ticket ${id}] ${CLOSE_LINE(id)}${spec}`;
 // re-read across. Rides ONLY a dispatch whose ticket was backlog (`!prev` at the
 // assign) — every specBody() pin above is a case where it must be ABSENT, so an
 // unconditional line would red them en masse rather than silently widening.
-const BACKLOG_LINE = 'This ticket sat in the BACKLOG until this dispatch, so its body was written while it was still parked and may '
+const BACKLOG_LINE = 'This ticket had no assignee until this dispatch, so its body was written while nobody was on it and may '
   + 'tell you it is blocked, parked, or awaiting someone\'s word before you start. On that ONE question — whether to '
   + 'begin — the board is current and the body is a filing-time snapshot: the board says start, so start. This '
   + 'discharges nothing else. Every other caveat, constraint, scope fence and hazard in the body stands exactly as '
