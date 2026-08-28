@@ -1649,6 +1649,50 @@ test('t538: an accept that closed the ticket out abandons a merge still waiting 
   assert.doesNotMatch(board, /merge waiting/, 'and does not claim a merge is still coming');
 });
 
+// ── t544: the accept itself must clear the WAITING stamp ───────────────────
+// The subject above drains the retry before it looks, so it passes on a tree
+// where only `_autoMergeTicket`'s finally ever clears the field — the clear it
+// observes can be the retry's. What it cannot see is the window BETWEEN the
+// accept returning and the retry waking: 30s per attempt, ten minutes across
+// them, with the whole retry state in one unref'd timer closure. A crash or an
+// [agent:reboot] in there freezes the stamp on the row for good, because
+// nothing re-examines the field at boot.
+//
+// So this asserts with the retry ARMED AND UNFIRED. That is the only state in
+// which the accept's own clear is the thing being measured.
+test('t544: a closing accept clears the WAITING stamp before the retry ever wakes', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  plantLock(repo);
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  assert.strictEqual(f.one().mergeWaiting, 'suite-in-flight', 'ENTER: it deferred and stamped');
+  assert.strictEqual(r.scheduled.length, 1, 'ENTER: and armed the retry that would otherwise clear it');
+
+  git(repo.dir, ['merge', '--no-ff', '-q', '-m', 'Merge tl-1 by hand', 'tl-1']);
+  const replies = [];
+  await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
+    { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => replies.push(msg));
+  assert.strictEqual(f.one().closedOut, true, 'ENTER: the accept took a closing arm');
+
+  // The retry is deliberately NOT drained: this is the state a crash freezes.
+  assert.strictEqual(r.scheduled.length, 1, 'ENTER: the retry is still armed and has not run');
+
+  assert.ok(!('mergeWaiting' in f.one()),
+    'the accept cleared the stamp itself, rather than leaving it for a retry that may never wake');
+
+  // The stored row is what all three boards render off, so the record being
+  // clean is the whole fix; this checks the one a lead actually reads.
+  f.injected.length = 0;
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  const board = f.injected[f.injected.length - 1];
+  assert.match(board, /t1 \[done\].*closed/, 'ENTER: the accepted row reached the board');
+  assert.doesNotMatch(board, /merge waiting/,
+    'and it does not advertise a merge that the accept has already ended');
+});
+
 // The gate's OTHER direction, and the one that decides between the two candidate
 // fields. `finish()` stamps `acceptedAt` on EVERY accept arm — including this
 // one (`!m.merged`), whose own reply ends "Merge it, then [agent:task accept
