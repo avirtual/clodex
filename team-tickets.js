@@ -6069,12 +6069,15 @@ function createTicketMethods(deps, shared) {
       // run that could not have seen it, and a hand reading "my fix is
       // committed and the suite still reds at my sha" edits correct work.
       //
-      // The re-read survives as the fallback for a suite carrying no capture,
-      // which is a REACHABLE state, not just defensive: _runTicketSuite returns
-      // early on its no-worktree, no-runner and changed-deps arms without ever
-      // reaching the capture, and the post-merge caller preserves output on
-      // `ran:false` too. Nothing was measured on those arms, so there is no
-      // earlier moment to prefer and a late read is the only value there is.
+      // The re-read is the fallback for a caller that did not come through
+      // _runTicketSuite — a synthetic suite object, which today means the direct
+      // callers in test/ticket-loop-verify.test.js. NOT a production path: the
+      // capture precedes every `out.output` assignment, so a suite carrying a
+      // body has necessarily passed it, and the arms that return before the
+      // capture carry no body and are refused by the empty-body guard above.
+      // Kept because a late sha still beats none for such a caller: without it
+      // the degraded arm below takes over and every synthetic-suite dump reads
+      // `(commit unresolved)` — correct, but blank where a sha was available.
       const head = (suite && suite.head !== undefined && suite.head !== null)
         ? suite.head
         : await gitWorktree.currentBranch((suite && suite.cwd) || '').catch(() => null);
