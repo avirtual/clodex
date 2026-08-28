@@ -6747,9 +6747,15 @@ function createTicketMethods(deps, shared) {
       const branch = (rec && rec.worktree && rec.worktree.branch) || (ticket.worktree && ticket.worktree.branch) || null;
 
       // Whether the ASSIGNEE is a seat this loop minted, and therefore a seat
-      // acceptance may retire. Read once here because all four arms below need
-      // it: only the no-branch arm used to resolve it, and the three
-      // branch-carrying arms tore down whatever `ticket.assignee` named.
+      // acceptance may retire. Read once here because every arm below reads it,
+      // by four separate routes — only the no-branch arm used to resolve it, and
+      // the branch-carrying arms tore down whatever `ticket.assignee` named:
+      //
+      //   no-branch     archives on it directly
+      //   !m.ok         `archiveIfEphemeral`, and `seatClause` for the prose
+      //   !m.merged     the same two
+      //   veto          the same two
+      //   merged/dirty  gates destroy(), and the "left running" prose beside it
       //
       // A standing seat reaches those arms by two ordinary lead moves, not by
       // misuse: `_resolveAssignee` takes a live seat NAME, and when a worktree
@@ -6767,16 +6773,33 @@ function createTicketMethods(deps, shared) {
       const ephemeralSeat = !!(rec && rec.ephemeral);
 
       // `closedOut` is passed by the CALLING ARM, never derived here: finish()
-      // runs on all four accept paths and cannot tell them apart, and that is
-      // exactly the conflation this parameter exists to prevent. Two of the four
-      // arms end with "Merge it, then accept again" — they are not terminal, and
-      // a reminder bound to the ticket is most wanted precisely there.
+      // runs on every accept path and cannot tell them apart, and that is exactly
+      // the conflation this parameter exists to prevent. The arms, each carrying
+      // the reason its own terminality is what it is — this is the one place that
+      // enumerates them, and the comments below name arms rather than re-count:
+      //
+      //   no-branch     TERMINAL. Nothing to merge and no second accept to
+      //                 invite, so acceptance is the whole story.
+      //   !m.ok         NOT terminal. The merge fact could not be established;
+      //                 the reply reports that, and that nothing was removed.
+      //   !m.merged     NOT terminal. Its reply ends "Merge it, then
+      //                 [agent:task accept <id>] again to clean up".
+      //   veto          TERMINAL, and its own comment says why: nothing the lead
+      //                 can do to the repository clears a `mergeError`, so a
+      //                 non-terminal refusal would re-refuse for ever.
+      //   merged/dirty  TERMINAL. Terminality here is the merge fact, not the
+      //                 cleanup, so the dirty path invites a second accept
+      //                 without ceasing to be terminal.
+      //
+      // A reminder bound to the ticket is most wanted on the NOT-terminal pair,
+      // which is why finish() gates its cancellation on this flag.
       // What this accept actually ACTED ON, for the compare-and-clear in finish().
       // Seeded from the snapshot (the no-branch arm closes out without ever
       // computing a stamp) and re-pointed at the fresh read once the merged path
       // has one. A plain `let` rather than a reference to `mergeStamp`, which is
       // declared below this point and would be in its temporal dead zone on the
-      // three arms that call finish() before reaching it.
+      // no-branch, `!m.ok` and `!m.merged` arms, each of which calls finish()
+      // before reaching it.
       let actedStamp = (ticket.mergeError && String(ticket.mergeError)) || null;
       const finish = (msg, closedOut = false) => {
         ticket.acceptedAt = Date.now();
@@ -6804,10 +6827,12 @@ function createTicketMethods(deps, shared) {
         // out, and the split is not the one above: `mergeError` is not loop
         // state that an accept falsifies by itself. It has no reader but the
         // two boards, so it is a rendered claim about the REPOSITORY - branch X
-        // did not land, a human must merge it - and the two arms that invite
-        // another accept have just re-measured that claim and found it still
-        // true or unmeasurable; clearing there would blank the mark on the very
-        // ticket whose reply says someone still owes the merge. It is retired
+        // did not land, a human must merge it - and `!m.ok` and `!m.merged` have
+        // just re-measured that claim: unmeasurable on the first, still true on
+        // the second. Clearing there would blank the mark on the very ticket whose
+        // reply says someone still owes the merge. The gate is `closedOut`, NOT
+        // "invites another accept" - the veto and the dirty downgrade invite one
+        // too and close out anyway. It is retired
         // on the closing arms as ANSWERED rather than as untrue: the stamp may
         // still describe something real - `isMerged` is an ancestor test and
         // `revert -m 1` adds a commit, so a merge reverted off master after a
@@ -6844,18 +6869,20 @@ function createTicketMethods(deps, shared) {
         // `ephemeral` + `reviewTicket` and never appears as an assignee. So this
         // is an addition, not a second teardown of the same seat.
         //
-        // In `finish()` rather than in one arm, because all four accept arms run
-        // it and all four delete `loopStep`: the two that invite another accept
-        // end the review round just as terminally as the two that do not, and a
-        // per-arm call would leak on whichever arm a later edit forgot.
+        // In `finish()` rather than in one arm, because every accept arm runs it
+        // and every one deletes `loopStep`: `!m.ok` and `!m.merged` end the review
+        // round just as terminally as the arms that close out, despite inviting
+        // another accept, and a per-arm call would leak on whichever arm a later
+        // edit forgot.
         this._retireReviewSeatsFor(team, ticket.id, 'accepted');
         this._broadcast('ipc-message', { type: 'task', from: session.name, to: seatName || '(unassigned)', body: `ticket ${ticket.id} accepted` });
         log.info('intent', `task accept ${ticket.id} by ${session.name}: ${msg}`);
         // Cancellation is gated on the SAME fact the stamp is: only an accept
-        // that closed the ticket out collects its reminders. On the other two
-        // arms the reply says "Merge it, then accept again" — cancelling there
-        // would drop "check the branch landed" in the very message reporting
-        // that it did not.
+        // that closed the ticket out collects its reminders. `!m.merged` replies
+        // "Merge it, then [agent:task accept <id>] again to clean up"; `!m.ok`
+        // replies that the merge check could NOT run and nothing was removed.
+        // Cancelling on either would drop "check the branch landed" in the very
+        // message saying the landing has not been shown.
         const dropped = closedOut ? this._cancelTicketReminders(session.name, ticket.id) : '';
         reply(dropped ? `${msg} ${dropped}` : msg);
       };
@@ -6899,9 +6926,12 @@ function createTicketMethods(deps, shared) {
 
       const m = await gitWorktree.isMerged(team.root, branch).catch((e) => ({ ok: false, error: e.message }));
 
-      // What happened to the SEAT on the two arms that keep the tree, as a
-      // sentence fragment ending in "and its " so each arm can finish with its
-      // own "worktree and branch were KEPT".
+      // What happened to the SEAT, as a sentence fragment ending in "and its " so
+      // each caller can finish with its own "worktree and branch were KEPT".
+      // Called by `!m.ok`, `!m.merged` and the veto: the arms that keep the tree
+      // AND say so in one sentence. The merged arm keeps it too on its dirty and
+      // unreadable downgrades, but builds that sentence itself in `parts`, so a
+      // caller added here does not reach it.
       //
       // Split on `ephemeralSeat` FIRST, then on liveness — never on whether an
       // archive ran. Those come apart on a seat that is one-shot but already
