@@ -229,7 +229,12 @@ head_commit=$(git -C "$measure" log -1 --format='%h %s' 2>/dev/null)
 # one: a `head:` a reader distrusts is a `head:` they cannot act on, and the
 # span between these two timestamps is the only thing that says how far the
 # tree could have moved underneath it.
-started=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
+# NOT `started`: lock_refusal() assigns that name an ELAPSED TIME from
+# `ps -o etime=`, and sh has no locals, so the two would be one variable. It is
+# safe today only because that function's sole call site exits immediately after
+# it — a future non-exiting refusal arm, or any lock_refusal call after this
+# point, would silently make `# start:` read `01:23`.
+run_started=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
 
 # A worktree has no node_modules and nothing creates one, so the ~7 files
 # requiring electron/node-pty/ws would fail MODULE_NOT_FOUND and the digest
@@ -298,7 +303,7 @@ save_failing_output() {
     printf '# ONE fixed file, overwritten by the next failing run on this box.\n'
     printf '# tree:  %s\n' "$measure"
     printf '# head:  %s %s\n' "$head_branch" "$head_commit"
-    printf '# start: %s\n' "$started"
+    printf '# start: %s\n' "$run_started"
     printf '# when:  %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
     printf '# count: %s/%s green, %s failing (exit %s)\n\n' "$pass" "$tests" "$fail" "$code"
     # Two sections, buffered and emitted separately so the caps cannot evict the

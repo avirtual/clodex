@@ -102,20 +102,24 @@ test('t518: `# head:` names the commit the run STARTED at, not one that landed u
   );
   const shaAtStart = git(dir, ['rev-parse', 'HEAD']);
 
-  const dump = runDigest(dir);
+  // try/finally, as every scratch-root subject in test-digest-lock.test.js does
+  // it: cleanup on the success path alone leaks a repo under TMPDIR on every
+  // RED run, which is exactly when a box is already accumulating them.
+  try {
+    const dump = runDigest(dir);
 
-  const shaAfter = git(dir, ['rev-parse', 'HEAD']);
-  assert.notStrictEqual(shaAfter, shaAtStart,
-    'ENTER: the branch really moved DURING the run — with one sha the subject would '
-    + 'pass against the very defect it exists to catch');
+    const shaAfter = git(dir, ['rev-parse', 'HEAD']);
+    assert.notStrictEqual(shaAfter, shaAtStart,
+      'ENTER: the branch really moved DURING the run — with one sha the subject would '
+      + 'pass against the very defect it exists to catch');
 
-  const head = /^# head: .*$/m.exec(dump);
-  assert.ok(head, `ENTER: the dump carries a head line at all (got: ${dump.slice(0, 300)})`);
-  assert.match(head[0], new RegExp(shaAtStart.slice(0, 7)),
-    `the header names HEAD as it was when the run started (got: ${JSON.stringify(head[0])})`);
-  assert.ok(!new RegExp(shaAfter.slice(0, 7)).test(head[0]),
-    `and NOT the commit that landed under it (got: ${JSON.stringify(head[0])})`);
-  fs.rmSync(dir, { recursive: true, force: true });
+    const head = /^# head: .*$/m.exec(dump);
+    assert.ok(head, `ENTER: the dump carries a head line at all (got: ${dump.slice(0, 300)})`);
+    assert.match(head[0], new RegExp(shaAtStart.slice(0, 7)),
+      `the header names HEAD as it was when the run started (got: ${JSON.stringify(head[0])})`);
+    assert.ok(!new RegExp(shaAfter.slice(0, 7)).test(head[0]),
+      `and NOT the commit that landed under it (got: ${JSON.stringify(head[0])})`);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('t518: the dump carries a START time as well as a write time, so a stale run is legible', () => {
@@ -123,17 +127,31 @@ test('t518: the dump carries a START time as well as a write time, so a stale ru
   // moved under a run. `# when:` alone cannot: a reader comparing it to a commit
   // timestamp has to already suspect the run is stale to think of looking, which
   // is exactly what nobody did on t517.
+  // THE TEST SLEEPS, and that is what makes this subject discriminate. A bare
+  // `start <= when` is true of two stamps at the same instant, and `date -u`
+  // has 1s resolution — so it would stay green with the capture moved back
+  // inside save_failing_output, i.e. against the defect. A run held open for
+  // >1s forces the two stamps apart, and the assertion is on the GAP.
   const dir = mkScratch(
     'const { test } = require("node:test");\n'
-    + 'test("deliberately red", () => { throw new Error("red by design"); });\n',
+    + 'test("deliberately red, and slow enough to separate the two stamps", async () => {\n'
+    + '  await new Promise((r) => setTimeout(r, 2500));\n'
+    + '  throw new Error("red by design");\n'
+    + '});\n',
   );
-  const dump = runDigest(dir);
-  const start = /^# start: (\S+)$/m.exec(dump);
-  const when = /^# when: {2}(\S+)$/m.exec(dump);
-  assert.ok(start, `the dump records when the run STARTED (got: ${dump.slice(0, 300)})`);
-  assert.ok(when, `and when it was written (got: ${dump.slice(0, 300)})`);
-  // Both are `date -u` ISO-Z stamps, and the start cannot be after the write.
-  assert.ok(Date.parse(start[1]) <= Date.parse(when[1]),
-    `the start must not be later than the write (start ${start[1]}, when ${when[1]})`);
-  fs.rmSync(dir, { recursive: true, force: true });
+  try {
+    const dump = runDigest(dir);
+    const start = /^# start: (\S+)$/m.exec(dump);
+    const when = /^# when: {2}(\S+)$/m.exec(dump);
+    assert.ok(start, `the dump records when the run STARTED (got: ${dump.slice(0, 300)})`);
+    assert.ok(when, `and when it was written (got: ${dump.slice(0, 300)})`);
+    // >=1000ms, not merely ordered: the suite demonstrably ran for ~2.5s
+    // between the two, so a `# start:` captured at write time cannot satisfy
+    // this. One second of slack against a 2.5s sleep absorbs the 1s stamp
+    // resolution without letting the equal-instant case through.
+    const gap = Date.parse(when[1]) - Date.parse(start[1]);
+    assert.ok(gap >= 1000,
+      `the start must precede the write by the run's duration, not merely not follow it `
+      + `(start ${start[1]}, when ${when[1]}, gap ${gap}ms)`);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
