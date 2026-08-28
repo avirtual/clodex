@@ -6148,12 +6148,11 @@ function createTicketMethods(deps, shared) {
       const headLine = head && head.ok && headSha
         ? `${head.branch} ${headSha}`
         : `${(head && head.branch) || (ticket.worktree && ticket.worktree.branch) || 'unknown'} (commit unresolved)`;
-      // ITS OWN LINE, not a suffix on `# head:`. The end sha is the one commit
-      // on this header the run did NOT measure, and `# head:` is the field a
-      // reader greps to learn what ran — putting both shas there makes the
-      // answer depend on parsing the prose between them, which is the ambiguity
-      // t518 removed rather than a new way to state it. Kept adjacent because it
-      // qualifies `# head:`, and it says outright which of the two ran.
+      // ITS OWN LINE, not a suffix on `# head:`. `# head:` is the field a reader
+      // greps to learn which tree ran — putting both shas there makes the answer
+      // depend on parsing the prose between them, which is the ambiguity t518
+      // removed rather than a new way to state it. Kept adjacent because it
+      // qualifies `# head:`.
       //
       // Absent, not `no`, on the unmoved run: a line that appears only when
       // something happened is read; one that says `no` every time is skipped,
@@ -6162,11 +6161,23 @@ function createTicketMethods(deps, shared) {
         ? String(suite.headEnd.head || '').slice(0, 12) : '';
       // Compared on the SHA, not on the objects: a re-read of an unmoved tree
       // returns an equal-but-distinct object, so `!==` on those is true for
-      // every run and the line would print always. BOTH shas must be present —
-      // an unresolvable read on either end is "not known to have moved", never
-      // "moved", so the degraded arm (which has no start sha) never emits this.
+      // every run and the line would print always. BOTH shas must be present,
+      // and requiring `headSha` is what keeps this off the degraded arm: an end
+      // read that resolved while the start read did not would otherwise print a
+      // movement line beside a `# head:` admitting it has no commit, which is a
+      // claim about a span whose origin is unknown.
+      //
+      // NEITHER SHA MAY BE CALLED THE MEASURED ONE. Both reads happen outside
+      // the child, and the child takes the suite mutex — so nothing on either
+      // side of it can see the moment measurement began, and the queued read is
+      // exactly the one the lock wait can invalidate. A line claiming the start
+      // sha ran would assert most confidently on the runs where it is most
+      // likely wrong, which is t518's harmful direction wearing a new label.
+      // What the two reads DO know is the pair and which end each came from.
       const movedLine = headSha && endSha && endSha !== headSha
-        ? [`# moved: HEAD moved during the run — now ${endSha}; this run measured ${headSha}`] : [];
+        ? [`# moved: HEAD was ${headSha} when this run was queued and ${endSha} when it finished — `
+          + 'the lock wait sits between, so neither is proof of what the suite measured']
+        : [];
       // `# start:` is the capture instant carried out of _runTicketSuite, NOT a
       // second clock read here: the point of the line is the span from the read
       // of `# head:` to this write, so a value minted here would measure nothing

@@ -2567,17 +2567,26 @@ test('t549: a run whose HEAD MOVED underneath it says so, on its own line', asyn
   const kept = keptFiles(f, f.home);
   assert.strictEqual(kept.length, 1, 'ENTER: a dump was preserved to read the header off');
   const dump = fsReal.readFileSync(kept[0], 'utf8');
-  const movedLine = /# moved: .*/.exec(dump);
+  const movedLine = /^# moved: .*$/m.exec(dump);
   assert.ok(movedLine, `the moved run is announced (header: ${JSON.stringify(dump.slice(0, 400))})`);
-  // BOTH shas, and the sentence says which is which: a line carrying only the
-  // new one tells a reader their tree changed without telling them what ran.
+  // BOTH shas, and the sentence says which END each came from: a line carrying
+  // only the new one tells a reader their tree changed without telling them
+  // what the header's sha was.
   assert.match(movedLine[0], new RegExp(shaAfter.slice(0, 12)), 'it names where HEAD is now');
-  assert.match(movedLine[0], new RegExp(shaAtStart.slice(0, 12)), 'and the sha this run actually measured');
+  assert.match(movedLine[0], new RegExp(shaAtStart.slice(0, 12)), 'and the sha HEAD carried when the run was queued');
+  // NEITHER sha may be claimed as the measured one. Both reads are outside the
+  // child that takes the suite mutex, so the line that fires exactly when the
+  // lock wait bit is the line that must not assert the queue-time sha ran.
+  assert.ok(!/\bmeasured \w*[0-9a-f]{7}/.test(movedLine[0]),
+    `the line must not name either sha as the one measured (got: ${JSON.stringify(movedLine[0])})`);
   // The t518 guarantee is unchanged by the addition, asserted here as well as in
   // that subject: the new sha must not leak into the field naming what ran.
-  const head = /# head: .*/.exec(dump)[0];
+  // Anchored: the preserved BODY is appended below the header and a failing
+  // test's own output can contain anything, including a line shaped like this
+  // one. An unanchored match could read the body and assert about the wrong text.
+  const head = /^# head: .*$/m.exec(dump)[0];
   assert.ok(!new RegExp(shaAfter.slice(0, 12)).test(head),
-    `# head: still names only the measured commit (got: ${JSON.stringify(head)})`);
+    `# head: still carries only the queue-time sha, not the post-run one (got: ${JSON.stringify(head)})`);
 });
 
 test('t549: an UNMOVED run carries no moved line at all, rather than one saying "no"', async () => {
@@ -2607,7 +2616,7 @@ test('t549: an UNMOVED run carries no moved line at all, rather than one saying 
   const kept = keptFiles(f, f.home);
   assert.strictEqual(kept.length, 1, 'ENTER: a dump was preserved to read the header off');
   const dump = fsReal.readFileSync(kept[0], 'utf8');
-  assert.ok(!/# moved:/.test(dump),
+  assert.ok(!/^# moved:/m.test(dump),
     `an unmoved run says nothing about movement (header: ${JSON.stringify(dump.slice(0, 400))})`);
   // ENTER for the absence above: the dump really does carry the surrounding
   // header, so this is not asserting emptiness over a file that never got one.
@@ -2628,7 +2637,17 @@ test('t549: the dump carries # start:, so # when: has something to be a span aga
   const realWt = pathReal.join(repo.dir, 'realwt');
   git(repo.dir, ['worktree', 'add', '-q', realWt, 'tl-1']);
   fsReal.mkdirSync(pathReal.join(realWt, 'scripts'), { recursive: true });
-  fsReal.writeFileSync(pathReal.join(realWt, 'scripts', 'run-tests.js'), SUITE_STUBS.redWithDiff);
+  // THE STUB SLEEPS, and that is what makes this subject discriminate — the same
+  // shape test/test-digest-head-stamp.test.js's `# start:` subject uses, and for
+  // the reason its comment names: a bare `start <= when` is satisfied by two
+  // stamps at the same instant, so it stays green against a `# start:` minted at
+  // WRITE time, which is precisely the shape the writer's comment claims to rule
+  // out. The assertion is on the GAP, so only an instant carried from before the
+  // run can satisfy it. Sync sleep rather than a timer: the stub must hold the
+  // RUN open, not yield inside it.
+  fsReal.writeFileSync(pathReal.join(realWt, 'scripts', 'run-tests.js'),
+    'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);\n'
+    + SUITE_STUBS.redWithDiff);
 
   f.tstore.save(f.team.root, [{
     ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand',
@@ -2640,19 +2659,23 @@ test('t549: the dump carries # start:, so # when: has something to be a span aga
   const kept = keptFiles(f, f.home);
   assert.strictEqual(kept.length, 1, 'ENTER: a dump was preserved to read the header off');
   const dump = fsReal.readFileSync(kept[0], 'utf8');
-  const start = /# start: (\S+)/.exec(dump);
+  const start = /^# start: (\S+)$/m.exec(dump);
   assert.ok(start, `the dump carries a start instant (header: ${JSON.stringify(dump.slice(0, 400))})`);
-  const when = /# when: +(\S+)/.exec(dump);
+  const when = /^# when: {2}(\S+)$/m.exec(dump);
   assert.ok(when, 'ENTER: the when line it is a span against is present too');
-  // The CAPTURE instant, not a second clock read in the writer. A value minted
-  // beside `# when:` would measure nothing and the two would be equal; the
-  // ordering below is what distinguishes a carried value from a fresh one.
   assert.ok(Number.isFinite(Date.parse(start[1])), `# start: parses as a time (got: ${start[1]})`);
-  assert.ok(Date.parse(start[1]) <= Date.parse(when[1]),
-    `the run started no later than it was written up (start: ${start[1]}, when: ${when[1]})`);
-  // Line ORDER, matching the sh digest's dump so the two are read the same way.
-  assert.match(dump, /# head: .*\n# start: .*\n# when: /,
-    'and it sits between # head: and # when:, as the sh digest prints it');
+  // >=1000ms, not merely ordered. The stub demonstrably held the run open ~1.5s,
+  // and both stamps have millisecond resolution, so a value minted beside
+  // `# when:` cannot reach this gap — it would read a few ms.
+  const gap = Date.parse(when[1]) - Date.parse(start[1]);
+  assert.ok(gap >= 1000,
+    `# start: must precede the write by the run's duration, not merely not follow it `
+    + `(start ${start[1]}, when ${when[1]}, gap ${gap}ms)`);
+  // Line ORDER as the sh digest prints it. Asserted on THIS run, which is
+  // uncontended — a `# moved:` line legitimately sits between `# head:` and
+  // `# start:` when HEAD moved, so this is not a general header invariant.
+  assert.match(dump, /^# head: .*\n# start: .*\n# when: /m,
+    'and on an unmoved run it sits directly between # head: and # when:');
 });
 
 test('t370 r3: an UNDELIVERABLE rejection says WHY there is no file, not just when there is one', async () => {
