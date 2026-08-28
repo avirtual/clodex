@@ -214,9 +214,8 @@ cwd IS a worktree is still on the team.
   the ones that do (no branch recorded, the MERGE FAILED veto, merged) open
   `accepted —`. Inviting a second accept is not the distinction — the veto and
   the dirty downgrade invite one and close out anyway. It is the third column
-  below, not the teardown: closing out does not mean anything was removed — the
-  no-branch arm has nothing to remove, the veto refuses to remove anything, and
-  the merged arm removes nothing either when its tree is dirty.
+  below, not the teardown: closing out is not a claim that anything was removed.
+  What a merged arm removes depends on the seat and the tree — read the rows.
 
   | reply says | arm | closes the ticket out? |
   |---|---|---|

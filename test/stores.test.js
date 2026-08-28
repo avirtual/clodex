@@ -1738,8 +1738,27 @@ test('seed: the lead prompt splits the stall nudge from the dispatch reminder', 
 // three `accepted —` arms are no-branch-recorded, the MERGE FAILED veto, and
 // merged. It is NOT whether another accept is invited (the veto and the dirty
 // downgrade invite one and close out anyway) and NOT whether anything was
-// removed — the merged arm's dirty downgrade skips the branch delete and keeps
-// the tree, so a closed-out arm can remove nothing there too.
+// removed.
+//
+// t546 r1: that last point had been written as "the merged arm removes nothing
+// when its tree is dirty", which the code falsifies. The dirty skip at
+// `team-tickets.js:7328` is reachable only through the `if (seatName &&
+// ephemeralSeat)` gate at :7291, so on a STANDING assignee the tree is never
+// inspected, `downgrade` stays null, and the delete is attempted whatever the
+// tree holds. The prompt already says so at its own "The tree is only inspected
+// on the loop-minted rows" bullet, so the clause contradicted the file two
+// screens down. The replacement states the rule and routes to the rows instead
+// of enumerating: naming the predicate beats extending the list, and a
+// three-item list reads as exhaustive at three exactly as a two-item one reads
+// as exhaustive at two. The false sentence carries a `doesNotMatch` of its own.
+//
+// The `doesNotMatch` patterns below take `\s+` at EVERY inter-word gap, not just
+// at today's wrap points. A `match` can key to the current wrap because the text
+// is there to read; absent text has no wrap, so a revert that reflows across a
+// line break would slip a literal-space pattern silently. That narrows the
+// escape rather than widening the pin. Same reason the old-clause pattern stops
+// before its sentence-final period: a revert that reinstates the list and
+// continues the sentence must not pass.
 //
 // `\s+` at the wrap points, as above: a reflow is a false red to be fixed in the
 // whitespace, a changed claim is a re-pin to be made deliberately.
@@ -1749,25 +1768,27 @@ test('seed: the lead prompt splits accept\'s two reply prefixes by whether the t
     'lead prompt opens the two non-closing arms with `accepted, but`');
   assert.match(lead, /the ones that do \(no branch recorded, the MERGE FAILED veto, merged\) open\s+`accepted —`/,
     'and the three closing-out arms with `accepted —`');
-  assert.doesNotMatch(lead, /two arms that invite another accept/,
+  assert.doesNotMatch(lead, /two\s+arms\s+that\s+invite\s+another\s+accept/,
     'lead prompt must not label the `accepted, but` group by an invitation the veto and the dirty downgrade also carry');
-  assert.doesNotMatch(lead, /three terminal ones/,
+  assert.doesNotMatch(lead, /three\s+terminal\s+ones/,
     'and must not count the other half instead of naming it');
   // Nit 1 (t545 r1): `!m.ok` / `!m.merged` were the only code identifiers in any
   // shipped prompt, and named the half the reader could not resolve without the
   // source while the other half used the row-table's own words. Pinned as an
   // absence so the identifiers cannot come back.
-  assert.doesNotMatch(lead, /`!m\.ok`, `!m\.merged`/,
+  assert.doesNotMatch(lead, /`!m\.ok`,\s+`!m\.merged`/,
     'lead prompt must not name one half of the split by source identifiers the other half does not use');
   // Nit 2 (t545 r1): the closing clause listed two arms that remove nothing with
   // no quantifier, and a reader arriving from the counted wording could take it
   // as the complete set. The merged arm's dirty downgrade is a third
   // (team-tickets.js: `del.skipped`, tree kept, seat archived), so it is named.
-  assert.match(lead, /closing out does not mean anything was removed/,
-    'lead prompt states the removal point as a rule rather than an unquantified list');
-  assert.match(lead, /the merged arm removes nothing either when its tree is dirty/,
-    'and names the dirty downgrade, so the list is not read as exhaustive at two');
-  assert.doesNotMatch(lead, /no-branch arm has nothing to remove and the veto refuses to remove anything\./,
+  assert.match(lead, /closing out is not a claim that anything was removed\./,
+    'lead prompt states the removal point as a rule rather than an enumeration of arms');
+  assert.match(lead, /What a merged arm removes depends on the seat and the tree/,
+    'and makes the merged arm\'s teardown depend on the SEAT as well as the tree, since the dirty skip sits behind the loop-minted gate');
+  assert.doesNotMatch(lead, /merged\s+arm\s+removes\s+nothing/,
+    'lead prompt must not claim a dirty tree stops the merged arm removing anything: on a standing assignee the tree is never inspected and the delete is attempted regardless');
+  assert.doesNotMatch(lead, /no-branch\s+arm\s+has\s+nothing\s+to\s+remove\s+and\s+the\s+veto\s+refuses\s+to\s+remove\s+anything/,
     'lead prompt must not close that clause on the two-item list again');
 });
 
