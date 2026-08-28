@@ -358,13 +358,15 @@ test('an accept retires the reviewer, which its own teardowns never reach', asyn
 
   await accept(f, 't1');
 
-  // `closedOut`, not `acceptedAt`: finish() stamps acceptedAt on ALL FOUR arms,
-  // so an ENTER on it would pass just as happily from the not-merged arm and
-  // silently relabel this subject if isMerged ever regressed. Only the merged arm
-  // is terminal.
-  assert.strictEqual(f.one('t1').closedOut, true, 'ENTER: the accept took the terminal MERGED arm');
+  // `closedOut`, not `acceptedAt`: finish() stamps acceptedAt on EVERY accept
+  // arm, so an ENTER on it would pass just as happily from `!m.ok` or
+  // `!m.merged` and silently relabel this subject if isMerged ever regressed.
+  // `closedOut` narrows it to the arms that close out — but does NOT reach the
+  // merged arm on its own, since the no-branch arm and t536's veto close out
+  // too. The branch deletion below is what identifies this one.
+  assert.strictEqual(f.one('t1').closedOut, true, 'ENTER: the accept closed the ticket out');
   assert.match(f.injected.join('\n'), /branch landed deleted/,
-    'ENTER: the branch was DELETED, which only the merged arm does — the other two keep it');
+    'ENTER: the branch was DELETED, which only the merged arm does — every other arm leaves the ref alone (the no-branch arm has none to delete)');
   assert.strictEqual(f.one('t1').loopStep, undefined, 'ENTER: and ended the round');
   // The accept teardowns all target `seatName` — the ticket's ASSIGNEE. A
   // reviewer is resolved off `ephemeral` + `reviewTicket` and never appears as an
