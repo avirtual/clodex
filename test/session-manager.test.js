@@ -11837,6 +11837,36 @@ function mkOnDataProbe(overrides = {}) {
   return { m, PENDING_DIR, fireData: (d) => onDataCb(d), getSession: (n) => m.sessions.get(n) };
 }
 
+// A POSITIVE settling signal for the boot edge, for the subjects below that assert
+// an ABSENCE. You cannot poll for something to stay absent: an absence assertion
+// that runs early is trivially true, so a fixed wall-clock wait in front of one
+// passes whether or not the edge ever fired — with `fireData('\x1b[?2004h')`
+// deleted outright from the two absence subjects, both stayed GREEN. Two stages,
+// both load-bearing:
+//   1. production nulls `session._bootDrainTimer` as the FIRST line of the deferred
+//      callback, so `null` proves that callback RAN. The other two states are
+//      distinct: `undefined` = never armed (the edge never fired), a Timeout object
+//      = still pending. The rest of the callback is synchronous, so once a poll
+//      observes null, any enqueue the drain made is already on the queue's chain.
+//   2. `InjectQueue._chain` is a serial FIFO (`_chain = _chain.then(run, run)`), so
+//      a sentinel enqueued after stage 1 settles only once everything the boot edge
+//      queued has itself finished draining.
+// The caller then asserts the sentinel's bytes AND NOTHING ELSE — a positive
+// assertion. An early run has no sentinel either; a payload that was wrongly
+// drained appears ahead of it. Both fail loudly instead of passing vacuously.
+const SETTLE_SENTINEL = 'boot-edge settle sentinel';
+async function settleBootEdge(m, s) {
+  try {
+    await waitFor(() => s._bootDrainTimer === null);
+  } catch {
+    assert.fail('the boot-ready deferred drain never ran (_bootDrainTimer '
+      + `${s._bootDrainTimer === undefined ? 'was never armed — the rising edge never fired' : 'is still pending'})`
+      + ' — the absence asserted next would have been vacuously true, so this is a broken'
+      + ' mechanism, not a clean run');
+  }
+  await m._injectQueueFor(s).enqueue(SETTLE_SENTINEL);
+}
+
 test('T35 latch (production onData): a real mode-2004h chunk flips _bootReadySeen', async () => {
   const { m, fireData, getSession } = mkOnDataProbe();
   await bashCreate(m, 'boot-a', null);
@@ -11893,7 +11923,23 @@ test('T54 (production onData): the boot-ready rising edge DRAINS an active-parke
   assert.deepStrictEqual(writes, [], 'silent while booting — no spawn-time write (T40/T42 stance)');
   assert.strictEqual(s._bootReadySeen ? true : false, false, 'not ready before any 2004 output');
   fireData('\x1b[?2004h');                       // the rising edge — the whole fix
-  await new Promise((r) => setTimeout(r, 50));   // let the InjectQueue drain
+  // Bounded poll, NOT a widened deadline: it returns the instant the drain lands, so
+  // the pass path has no deadline left in it at all. The old fixed 50ms sleep failed
+  // 16 times in 48 runs at concurrency 24 on a 14-core box, always with `['\x15']`.
+  // That partial is the whole diagnostic, and it is observable only because
+  // InjectQueue._drain writes the Ctrl-U, the text and the \r as THREE separate PTY
+  // writes with sleeps between them. The three states are distinct evidence:
+  //   []          the rising edge never drained at all — mechanism broken
+  //   ['\x15']    the drain started and the assertion ran early — a load flake
+  //   the triple  pass
+  try {
+    await waitFor(() => writes.length >= 3);
+  } catch {
+    assert.fail(`the boot-edge drain did not complete: writes=${JSON.stringify(writes)} — `
+      + (writes.length === 0
+        ? 'EMPTY means the rising edge never drained the active scope at all (mechanism broken — this is a real regression, not a slow box)'
+        : 'a PARTIAL drain (the leading Ctrl-U with no text/Enter) means the drain was still in flight when the poll expired, i.e. this box was too loaded, not that the edge is broken'));
+  }
   assert.strictEqual(s._bootReadySeen, true, 'boot-ready latched');
   assert.deepStrictEqual(writes, ['\x15', '[agent:from lead] review the fix', '\r'],
     'the rising edge drained the active scope to the pane — no human ✉-click, no idle turn');
@@ -11911,8 +11957,13 @@ test('T54 (production onData): the rising edge leaves a PASSIVE-only store parke
   s.agentType = 'claude';
   parkDelivery(PENDING_DIR, 'boot-e', '[agent:from team] roster delta', '1', null, true); // passive
   fireData('\x1b[?2004h');
-  await new Promise((r) => setTimeout(r, 50));
-  assert.deepStrictEqual(writes, [], 'a passive-only store is not drained by the boot-ready edge');
+  // Positive settling signal, then a positive assertion: the sentinel's bytes are the
+  // ONLY thing on the pane. Under the old fixed sleep this subject stayed green with
+  // the rising edge deleted, because an absence that is asserted early is trivially
+  // true — measured, not assumed.
+  await settleBootEdge(m, s);
+  assert.deepStrictEqual(writes, ['\x15', SETTLE_SENTINEL, '\r'],
+    'a passive-only store is not drained by the boot-ready edge — only the later sentinel reached the pane');
   assert.ok(hasPending(PENDING_DIR, 'boot-e'), 'the passive delta stays parked for an organic carrier');
 });
 
@@ -11935,8 +11986,13 @@ test('T54 (fix) INVARIANT: a boot-edge drain that cannot land leaves the scope R
   s.lastUserInputTs = Date.now();
   s.lastUserSubmitTs = 0;
   fireData('\x1b[?2004h');                       // boot-ready edge, the only trigger
-  await new Promise((r) => setTimeout(r, 50));
-  assert.deepStrictEqual(writes, [], 'draft open → not injected (no splice)');
+  // Same reason as boot-e: the absence below was vacuous behind a fixed sleep. Note
+  // the sentinel still lands with the draft open — the draft gate lives in
+  // _drainPendingAtBootReady's producer, not in the queue, so an ordinary enqueue is
+  // unaffected and stays a valid settling signal here.
+  await settleBootEdge(m, s);
+  assert.deepStrictEqual(writes, ['\x15', SETTLE_SENTINEL, '\r'],
+    'draft open → the parked scope was not injected (no splice); only the later sentinel reached the pane');
   assert.ok(hasPending(PENDING_DIR, 'boot-f'), 'INVARIANT: scope stays recoverable on disk (✉ survives) — never claimed-and-lost');
 });
 
