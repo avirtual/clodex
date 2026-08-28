@@ -4,12 +4,13 @@
 // t482 — `task accept` retires only the seats the ticket loop MINTED, and never
 // force-removes a tree that still holds work.
 //
-// The defect: `_taskAccept` resolved `ephemeral` off the record in exactly one
-// of its four arms (the no-branch one). The three branch-carrying arms tore down
-// whatever `ticket.assignee` named — the two non-terminal arms with archive()
-// (kills the pty), the merged arm with destroy(), which kills the seat, drops
-// its persistence record and `git worktree remove --force`s the checkout the
-// record names, with no dirty-check at all.
+// The defect, as it stood at t482, when `_taskAccept` had four arms (t536 later
+// added a fifth, the MERGE FAILED veto): it resolved `ephemeral` off the record
+// in exactly one of those four (the no-branch one). The three branch-carrying
+// arms tore down whatever `ticket.assignee` named — the two non-terminal arms
+// with archive() (kills the pty), the merged arm with destroy(), which kills the
+// seat, drops its persistence record and `git worktree remove --force`s the
+// checkout the record names, with no dirty-check at all.
 //
 // A standing seat reaches those arms by two ORDINARY lead moves, which is why
 // this is not a corner: `_resolveAssignee` accepts a live seat name, and when a

@@ -7197,8 +7197,10 @@ test('t535: the MERGED arm clears the stale failure too, on the empty branch t53
 });
 
 // The other direction, and the one that costs more to get wrong. `finish()` runs
-// on all four accept arms and two of them are NOT terminal: their own reply says
-// "Merge it, then accept again". `mergeError` is not loop state an accept can
+// on every accept arm, and two of the five do NOT close the ticket out: `!m.ok`,
+// whose reply says the merge check could not run and nothing was removed, and
+// `!m.merged` — this subject — whose reply ends "Merge it, then [agent:task
+// accept <id>] again to clean up". `mergeError` is not loop state an accept can
 // overrule — its only readers are the two board renderers, so it is a claim
 // about the REPOSITORY, and on this arm the accept has just re-measured that
 // claim and found it still true. Clearing here would blank the mark on the one
@@ -7222,9 +7224,9 @@ test('t535: accepting an UNMERGED ticket leaves the merge failure standing', asy
     'and the board still says a human owes this merge, which is still true');
 });
 
-// The fourth arm, which is terminal for a different reason: there is no branch,
-// so there was never a merge for the stamp to be about. Separate from the merged
-// arm above because it reaches `finish()` by a different route — an early
+// The no-branch arm, which closes out for a reason of its own: there is no
+// branch, so there was never a merge for the stamp to be about. Separate from the
+// merged arm above because it reaches `finish()` by a different route — an early
 // `return` before `isMerged` is ever called — and a clear placed in the merged
 // arm rather than in `finish()` would pass that test and fail this one.
 test('t535: accepting a no-branch ticket clears it too — terminal by a different route', async () => {
