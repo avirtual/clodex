@@ -1178,3 +1178,110 @@ test('the veto stamps its trace even on a ticket an earlier retire already stamp
   assert.strictEqual(f.one('t1').revival.worktree, '/earlier/path',
     'and so does its path — that is the record of who did the work');
 });
+
+// ── t540: the stamp must find the ticket by ID, not by seat name ──────────────
+//
+// `_stampTicketRevival` located its ticket with
+// `tickets.find((t) => t.assignee === seatName && !t.revival)`. Seat names
+// recycle, so once a name is reused while an EARLIER ticket carrying it is still
+// un-stamped, `find` returns the older row and the ticket actually being accepted
+// gets nothing.
+//
+// A subject that stamps one ticket and asserts it got stamped passes against the
+// unfixed code and proves nothing — the collision is the whole test, so it is
+// built explicitly below and its ENTERs assert it really was built.
+//
+// The merge-veto arm is chosen deliberately over the plainer arms: there the
+// stamp is the ONLY durable trace that a check is still owed (the arm is terminal
+// and clears the `MERGE FAILED` mark it just acted on), and the targeted fallback
+// write beneath it is guarded on `row.revival` ALREADY existing — so a misrouted
+// write-once stamp takes the fallback down with it. Both paths fail together, on
+// exactly the tickets the arm's comment claims are covered.
+test('the stamp lands on the ACCEPTED ticket, not on an older one sharing the recycled seat name', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+
+  // The collision, built by hand rather than through doneTicket (which writes a
+  // one-ticket board): an OLDER ticket the same seat name once worked, still
+  // un-stamped, sitting AHEAD of the accepted ticket in board order — which is
+  // what makes the un-narrowed `find` return it.
+  f.tstore.save(f.team.root, [
+    {
+      id: 't0', state: 'done', spec: 'the earlier ticket this seat name once worked',
+      assignee: 'team-hand-t1', role: 'hand', taskDir: 'tasks/t0-fixture/SPEC.md',
+      openedAt: 1, startedAt: 1, closedAt: 2, closedBy: 'team-hand-t1', lastActivityAt: 2,
+      worktree: { branch: 'landed' },
+    },
+    {
+      id: 't1', state: 'done', spec: 'spec for t1',
+      assignee: 'team-hand-t1', role: 'hand', taskDir: 'tasks/t1-fixture/SPEC.md',
+      openedAt: 10, startedAt: 10, closedAt: 20, closedBy: 'team-hand-t1', lastActivityAt: 20,
+      worktree: { branch: 'landed' }, mergeError: 'suite',
+    },
+  ]);
+
+  const board = f.tstore.load(f.team.root);
+  assert.deepStrictEqual(board.map((x) => x.id), ['t0', 't1'],
+    'ENTER: the older ticket really is ahead of the accepted one, so a seat-name find returns IT first');
+  assert.deepStrictEqual(board.map((x) => x.assignee), ['team-hand-t1', 'team-hand-t1'],
+    'ENTER: and both carry the same recycled seat name — without this there is no collision to route around');
+  assert.ok(!('revival' in board[0]) && !('revival' in board[1]),
+    'ENTER: neither is stamped yet, so the write-once guard excludes neither from the find');
+  assert.strictEqual(f.one('t1').mergeError, 'suite',
+    'ENTER: the accepted ticket carries the mark that reaches the merge-veto arm, where the stamp is the only durable trace');
+
+  const msg = await accept(f, 't1');
+
+  assert.match(msg, /stamped this ticket MERGE FAILED at "suite"/,
+    'ENTER: the veto arm really ran — the arm whose trace the stamp is');
+  assert.strictEqual(f.one('t1').closedOut, true,
+    'ENTER: and it is terminal, so it cleared the mark and nothing but the stamp still says a check is owed');
+
+  assert.ok(f.one('t1').revival, 'the ACCEPTED ticket is stamped');
+  assert.strictEqual(f.one('t1').revival.mergeVetoed, 'suite',
+    'and carries the veto trace — the fallback write beneath it is guarded on revival existing, so a misrouted stamp loses this too');
+  assert.strictEqual(f.one('t1').revival.seat, 'team-hand-t1', 'naming the seat that did the work');
+  // The other direction, and the half that fails against the unfixed code: an
+  // assertion that t1 is stamped is equally true of a build that stamped BOTH.
+  assert.ok(!('revival' in f.one('t0')),
+    'while the older ticket is left alone — it is not the ticket this accept was about');
+});
+
+// The constraint that shapes the fix: team-retire has no ticket id to narrow
+// with. It is retiring a SEAT, and the seat name is its only handle on the
+// ticket — so `ticketId` had to be an optional narrowing rather than a
+// replacement. Without this subject an id-scoped signature that quietly stamped
+// nothing on retire would ship green, and a discard's stamp is the ONLY
+// surviving trace of the session and branch a hotfix would start from.
+test('team-retire still stamps by seat name, with no ticket id available to narrow with', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  // `team-hand-1` rather than `team-hand-t1`: matchSeatRole strips a numeric
+  // tail, so this resolves to the `hand` role and the retire takes the ARCHIVE
+  // disposition — no real tree is destroyed by this subject.
+  f.worktreeSeat('team-hand-1', 'landed', { ephemeral: false });
+  // The id bears no relation to the seat name: nothing at the retire call site
+  // could reconstruct it, which is the point.
+  f.tstore.save(f.team.root, [{
+    id: 't7', state: 'done', spec: 'spec for t7',
+    assignee: 'team-hand-1', role: 'hand', taskDir: 'tasks/t7-fixture/SPEC.md',
+    openedAt: 1, startedAt: 1, closedAt: 2, closedBy: 'team-hand-1', lastActivityAt: 2,
+    worktree: { branch: 'landed' },
+  }]);
+
+  assert.ok(!('revival' in f.one('t7')),
+    'ENTER: the ticket is un-stamped, so a stamp appearing below was written by this retire');
+  assert.strictEqual(f.one('t7').assignee, 'team-hand-1',
+    'ENTER: and the seat name is the only handle the retire path has on it');
+
+  await f.m._handleTeamRetire('team-hand-1', 'lead');
+
+  assert.ok(f.one('t7').revival, 'the retire found its ticket by seat name alone');
+  assert.strictEqual(f.one('t7').revival.disposition, 'archive',
+    'ENTER: on the archive disposition — this subject destroys no tree');
+  assert.strictEqual(f.one('t7').revival.seat, 'team-hand-1',
+    'and the stamp names the seat, which on a discard is the only surviving trace of it');
+  assert.strictEqual(f.one('t7').revival.branch, 'landed',
+    'along with the branch a hotfix would start from');
+});
