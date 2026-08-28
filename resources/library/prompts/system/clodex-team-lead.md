@@ -209,12 +209,13 @@ cwd IS a worktree is still on the team.
   The keys are anchored so that exactly one can match — a key that is a
   substring of another arm's sentence routes you to the wrong row, which is the
   one failure a key table exists to prevent. Match on the punctuation too, and
-  note what it actually tracks: the arms that do NOT close the ticket out
-  (`!m.ok`, `!m.merged`) open `accepted, but`; the ones that do (no branch
-  recorded, the MERGE FAILED veto, merged) open `accepted —`. Inviting a second
-  accept is not the distinction — the veto and the dirty downgrade invite one
-  and close out anyway. It is the third column below, not the teardown: the
-  no-branch arm has nothing to remove and the veto refuses to remove anything.
+  note what it actually tracks: the arms that do NOT close the ticket out (the
+  merge check could not run, the branch is not merged in) open `accepted, but`;
+  the ones that do (no branch recorded, the MERGE FAILED veto, merged) open
+  `accepted —`. Inviting a second accept is not the distinction — the veto and
+  the dirty downgrade invite one and close out anyway. It is the third column
+  below, not the teardown: closing out is not a claim that anything was removed.
+  What a merged arm removes depends on the seat and the tree — read the rows.
 
   | reply says | arm | closes the ticket out? |
   |---|---|---|
