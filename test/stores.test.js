@@ -1762,6 +1762,45 @@ test('seed: the lead prompt splits the stall nudge from the dispatch reminder', 
 //
 // Either way: a reflow is a false red to be fixed in the whitespace, a changed
 // claim is a re-pin to be made deliberately.
+// t548: the forbid inside the test below used to be a file-wide
+// `doesNotMatch(/merged\s+arm\s+removes\s+nothing/)`. It stopped t546 r1's false
+// clause, but it forbade the phrase outright, and the phrase has a TRUE scoped
+// form: "on row 2 the merged arm removes nothing" is correct, row 2 being the
+// loop-minted-plus-dirty row where tree and branch are both KEPT. An author
+// writing that got a red suite that named no scope, and would either delete the
+// pin (losing the guard) or reword around it (never learning why). So what is
+// forbidden here is the phrase UNSCOPED, not the phrase.
+//
+// A unit is one sentence, cut at table-cell walls as well, so scope words in a
+// neighbouring sentence or cell cannot be read as scoping this one. Whitespace
+// is flattened inside a unit before matching — that is this pin's form of the
+// `\s+`-at-every-gap rule above, and it covers every gap rather than the gaps
+// someone remembered to write.
+//
+// `total` counts the phrase across the whole file with whitespace flattened, so
+// the caller can pin that every occurrence reached a unit. A phrase the splitter
+// loses would otherwise vanish into an empty `unscoped` and read as a pass.
+//
+// The residual hole is a sentence that names both scope words and then negates
+// one ("not only when the seat is loop-minted and the tree dirty"). No phrase
+// scan can catch that; the defect actually observed — scope OMITTED — it can.
+function unscopedRemovesNothingClaims(text) {
+  const PHRASE = /merged arm removes nothing/;
+  const units = text
+    .split(/\n[ \t]*\n/)                                  // paragraphs, table blocks
+    .flatMap((block) => block.split('|'))                 // one cell never scopes another
+    .map((chunk) => chunk.replace(/\s+/g, ' ').trim())
+    .flatMap((chunk) => chunk.split(/(?<=[.!?]) /))
+    .map((u) => u.trim())
+    .filter(Boolean);
+  const scoped = (u) => /\brow 2\b/i.test(u) || (/loop-minted/i.test(u) && /dirty/i.test(u));
+  return {
+    units,
+    total: (text.replace(/\s+/g, ' ').match(new RegExp(PHRASE.source, 'g')) || []).length,
+    hits: units.filter((u) => PHRASE.test(u)),
+    unscoped: units.filter((u) => PHRASE.test(u) && !scoped(u)),
+  };
+}
 test('seed: the lead prompt splits accept\'s two reply prefixes by whether the ticket closes out', () => {
   const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
   assert.match(lead, /the arms that do NOT close the ticket out \(the\s+merge check could not run, the branch is not merged in\) open `accepted, but`;/,
@@ -1786,10 +1825,55 @@ test('seed: the lead prompt splits accept\'s two reply prefixes by whether the t
     'lead prompt states the removal point as a rule rather than an enumeration of arms');
   assert.match(lead, /What a merged arm removes depends on the seat and the tree/,
     'and makes the merged arm\'s teardown depend on the SEAT as well as the tree, since the dirty skip sits behind the loop-minted gate');
-  assert.doesNotMatch(lead, /merged\s+arm\s+removes\s+nothing/,
-    'lead prompt must not claim a dirty tree stops the merged arm removing anything: on a standing assignee the tree is never inspected and the delete is attempted regardless');
+  const removesNothing = unscopedRemovesNothingClaims(lead);
+  assert.deepStrictEqual(removesNothing.unscoped, [],
+    'lead prompt must not claim the merged arm removes nothing without naming the loop-minted scope: on a standing assignee the tree is never inspected and the delete is attempted whatever the tree holds');
+  assert.strictEqual(removesNothing.hits.length, removesNothing.total,
+    'every occurrence of the phrase must land in a sentence unit — one the splitter drops is one the forbid above cannot judge, and it reads as a pass');
+  assert.ok(removesNothing.units.includes('What a merged arm removes depends on the seat and the tree — read the rows.'),
+    'ENTER: the splitter cuts the live merged-arm sentence out whole — the forbid above is an absence, so a splitter that never reached this paragraph would satisfy it silently');
   assert.doesNotMatch(lead, /no-branch\s+arm\s+has\s+nothing\s+to\s+remove\s+and\s+the\s+veto\s+refuses\s+to\s+remove\s+anything/,
     'lead prompt must not close that clause on the two-item list again');
+});
+
+// The forbid above is an ABSENCE over the shipped file, so on the shipped file it
+// is green whether the predicate discriminates or not. These fixtures are where it
+// is seen to fail: the false clause reddens, the true scoped ones pass, and both
+// happen in the same run. Each row carries its own expectation as a literal — the
+// predicate must not be re-applied here to compute what it should say.
+test('t548: the unscoped `removes nothing` predicate separates the false claim from the true scoped ones', () => {
+  const cases = [
+    // t546 r1's clause, verbatim and rewrapped — the claim the pin exists to stop.
+    ['the merged arm removes nothing either when its tree is dirty.', true],
+    ['the merged arm removes\n  nothing either when its tree is dirty.', true],
+    ['closing out does not mean anything was removed — the no-branch arm has\n  nothing to remove, the veto refuses to remove anything, and the merged arm\n  removes nothing either when its tree is dirty.', true],
+    // Unscoped in every other dress.
+    ['A merged arm removes nothing.', true],
+    ['The merged arm removes nothing when the tree is dirty.', true],
+    // TRUE and scoped — must pass.
+    ['On row 2 the merged arm removes nothing.', false],
+    ['On a loop-minted seat with a dirty tree the merged arm removes nothing.', false],
+    ['| tree DIRTY | on row 2 the merged arm removes nothing — tree and branch are both KEPT |', false],
+    // A cell scoped only by its ROW LABEL is flagged, even though a human reads the
+    // row as scoping it. Deliberate and conservative: a label is edited independently
+    // of the cell beside it, so scope read across a cell wall is scope that can go
+    // stale silently — and the author's fix is one word inside the cell that makes
+    // the claim. This row is the cost of that choice, stated so it is a decision and
+    // not a gap.
+    ['| loop-minted seat, tree DIRTY | the merged arm removes nothing |', true],
+    // Scope in a NEIGHBOURING unit does not launder the claim.
+    ['Row 2 is the loop-minted, dirty one. The merged arm removes nothing.', true],
+    ['| loop-minted seat, tree DIRTY | KEPT |\n| the merged arm removes nothing | KEPT |', true],
+    // The live sentence, which does not carry the phrase at all.
+    ['What a merged arm removes depends on the seat and the tree — read the rows.', false],
+  ];
+  for (const [text, shouldFlag] of cases) {
+    const got = unscopedRemovesNothingClaims(text);
+    assert.strictEqual(got.unscoped.length > 0, shouldFlag,
+      `${shouldFlag ? 'must be flagged' : 'must pass'}: ${JSON.stringify(text)}`);
+    assert.strictEqual(got.hits.length, got.total,
+      `every phrase occurrence must reach a unit: ${JSON.stringify(text)}`);
+  }
 });
 
 // t353: three hands in a row reported by dm and left the ticket open, one of
