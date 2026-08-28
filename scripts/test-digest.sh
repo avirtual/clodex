@@ -219,8 +219,9 @@ tree=${PWD##*/}
 #
 # AFTER the lock, which is taken above and held across the cd, so this is the
 # tree state the run below actually measures rather than the state it was
-# queued at. Two subshells now instead of two subshells then; nothing new is
-# spawned, and the header promise (sh + awk + git) is unchanged.
+# queued at. The two git reads MOVED rather than multiplied; the header promise
+# (sh + awk + git) is unchanged. They now run on every invocation instead of
+# only failing ones, which is two git reads against a suite measured in minutes.
 head_branch=$(git -C "$measure" rev-parse --abbrev-ref HEAD 2>/dev/null)
 head_commit=$(git -C "$measure" log -1 --format='%h %s' 2>/dev/null)
 # Paired with the `# when:` line the dump already carries. The two together are
