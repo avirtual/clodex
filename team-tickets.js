@@ -1338,11 +1338,13 @@ function createTicketMethods(deps, shared) {
         // onto the row the accept just cleared.
         //
         // `closedOut`, NOT `acceptedAt`: `finish()` stamps `acceptedAt` on EVERY
-        // accept arm, including the two that invite a second accept — `!m.merged`,
-        // whose reply ends "Merge it, then [agent:task accept <id>] again to clean
-        // up", and `!m.ok`, whose reply says the merge check could not run and
-        // nothing was removed. On both the merge is still genuinely owed and a
-        // retry that lands it is the wanted outcome. `closedOut` is
+        // accept arm, including the two that do NOT close out — `!m.merged`, whose
+        // reply ends "Merge it, then [agent:task accept <id>] again to clean up",
+        // and `!m.ok`, whose reply says the merge check could not run and nothing
+        // was removed. On both the merge is still genuinely owed and a retry that
+        // lands it is the wanted outcome. Inviting a second accept is NOT the
+        // distinction — the veto and the dirty downgrade invite one and close out
+        // anyway. `closedOut` is
         // passed by the CALLING arm precisely to keep that distinction.
         //
         // The terminal arms that KEEP the branch are, by name — so a retry can
@@ -6750,8 +6752,8 @@ function createTicketMethods(deps, shared) {
 
       // Whether the ASSIGNEE is a seat this loop minted, and therefore a seat
       // acceptance may retire. Read once here because every arm below reads it,
-      // by the routes named here — only the no-branch arm used to resolve it, and
-      // the branch-carrying arms tore down whatever `ticket.assignee` named:
+      // by the routes named here. Before t482 only the no-branch arm resolved it,
+      // and the branch-carrying arms tore down whatever `ticket.assignee` named:
       //
       //   no-branch     archives on it directly
       //   !m.ok         `archiveIfEphemeral`, and `seatClause` for the prose
@@ -6777,8 +6779,9 @@ function createTicketMethods(deps, shared) {
       // `closedOut` is passed by the CALLING ARM, never derived here: finish()
       // runs on every accept path and cannot tell them apart, and that is exactly
       // the conflation this parameter exists to prevent. The arms, each carrying
-      // the reason its own terminality is what it is — the only enumeration inside
-      // `_taskAccept`, and the comments below name arms rather than re-count:
+      // the reason its own terminality is what it is — the terminality
+      // enumeration; the route list above names the same five arms for a
+      // different fact, and the comments below name arms rather than re-count:
       //
       //   no-branch     TERMINAL. Nothing to merge and no second accept to
       //                 invite, so acceptance is the whole story.
@@ -6835,8 +6838,8 @@ function createTicketMethods(deps, shared) {
         // reply says someone still owes the merge. The gate is `closedOut`, NOT
         // "invites another accept" - the veto and the dirty downgrade invite one
         // too and close out anyway. It is retired on the closing arms as ANSWERED
-        // rather than as untrue: the stamp may
-        // still describe something real - `isMerged` is an ancestor test and
+        // rather than as untrue: the stamp may still describe something real -
+        // `isMerged` is an ancestor test and
         // `revert -m 1` adds a commit, so a merge reverted off master after a
         // red suite, and one left standing deliberately, both still read merged
         // - and an accept that ends the ticket is the lead's answer to it.

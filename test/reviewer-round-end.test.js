@@ -366,7 +366,7 @@ test('an accept retires the reviewer, which its own teardowns never reach', asyn
   // too. The branch deletion below is what identifies this one.
   assert.strictEqual(f.one('t1').closedOut, true, 'ENTER: the accept closed the ticket out');
   assert.match(f.injected.join('\n'), /branch landed deleted/,
-    'ENTER: the branch was DELETED, which only the merged arm does — every other arm leaves the ref alone (the no-branch arm has none to delete)');
+    'ENTER: the branch was DELETED, which only the merged arm does, and only with a clean tree — every other arm leaves the ref alone (the no-branch arm has none to delete)');
   assert.strictEqual(f.one('t1').loopStep, undefined, 'ENTER: and ended the round');
   // The accept teardowns all target `seatName` — the ticket's ASSIGNEE. A
   // reviewer is resolved off `ephemeral` + `reviewTicket` and never appears as an
