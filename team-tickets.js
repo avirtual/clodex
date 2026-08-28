@@ -6715,6 +6715,7 @@ function createTicketMethods(deps, shared) {
     // Called BEFORE teardown on BOTH dispositions. On discard the stamp is the
     // only surviving trace, and it still names the branch and commit a hotfix
     // would start from.
+    //
     // `ticketId` NARROWS the lookup; it does not replace it. Seat names recycle,
     // so seat-name-alone picks the OLDEST un-stamped ticket carrying that
     // assignee — which is the wrong one the moment a name is reused while an
@@ -6738,7 +6739,14 @@ function createTicketMethods(deps, shared) {
       // that did the work, and a later retire must not overwrite its seat,
       // session id or branch. The two targeted field writes in `_taskAccept`
       // exist precisely because this call no-ops on an already-stamped ticket.
-      const ticket = ticketId
+      // `!= null`, not truthiness: absence of an id is a legitimate caller state
+      // (the retire path, which omits it) while a FALSY id is a caller bug, and
+      // the two must not take the same branch — under `ticketId ?` a bad id
+      // silently reinstates the ambiguous seat-name lookup this parameter exists
+      // to avoid, and the misroute surfaces as a stamp on the wrong ticket long
+      // after. An explicitly-passed bad id fails CLOSED: the find matches
+      // nothing and the stamp is skipped.
+      const ticket = ticketId != null
         ? tickets.find((t) => t.id === ticketId && !t.revival)
         : tickets.find((t) => t.assignee === seatName && !t.revival);
       if (!ticket) return null;
