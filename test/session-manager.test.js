@@ -5645,6 +5645,19 @@ const CLOSE_LINE = (id) => `CLOSE WITH: [agent:task done ${id}] <your report> �
 // The whole delivered body for an ordinary (non-worktree, non-replay) dispatch.
 const specBody = (id, spec) => `[ticket ${id}] ${CLOSE_LINE(id)}${spec}`;
 
+// t522. Copied from `_deliverTicketSpec` for the same reason CLOSE_LINE is: the
+// pins here assert whole bodies, so a production edit reds them until it is
+// re-read across. Rides ONLY a dispatch whose ticket was backlog (`!prev` at the
+// assign) — every specBody() pin above is a case where it must be ABSENT, so an
+// unconditional line would red them en masse rather than silently widening.
+const BACKLOG_LINE = 'This ticket sat in the BACKLOG until this dispatch, so its body was written while it was still parked and may '
+  + 'tell you it is blocked, parked, or awaiting someone\'s word before you start. On that ONE question — whether to '
+  + 'begin — the board is current and the body is a filing-time snapshot: the board says start, so start. This '
+  + 'discharges nothing else. Every other caveat, constraint, scope fence and hazard in the body stands exactly as '
+  + 'written. And if the body gates on a specific condition you cannot confirm was met, report that rather than '
+  + 'assuming it was discharged.\n';
+const backlogSpecBody = (id, spec) => `[ticket ${id}] ${BACKLOG_LINE}${CLOSE_LINE(id)}${spec}`;
+
 // t351: the ADVANCE delivers a spec the seat has already been sent once —
 // `_openTicketsFor` only yields started tickets, and both dispatch verbs deliver
 // on start — so every advance is a redelivery and carries the REPLAY head. Copied
@@ -5828,8 +5841,28 @@ test('task assign: a backlog ticket gets an assignee and the spec is delivered',
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'hand', body: '' });
   assert.strictEqual(f.one('t1').assignee, 'team-hand', 'pinned to the seat the spec reached');
   assert.strictEqual(f.one('t1').role, 'hand', 'filed under the role');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: specBody('t1', 'the spec') }]);
+  // t522: this is the backlog→assigned dispatch, so the body carries the gate-
+  // discharge line. Byte-asserted through backlogSpecBody rather than matched,
+  // so the line's exact scope wording is pinned and not just its presence.
+  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: backlogSpecBody('t1', 'the spec') }]);
   assert.ok(f.injected.some((x) => /ticket t1 → hand/.test(x)));
+});
+
+// t522, the ABSENT direction. Presence alone passes if the line is
+// unconditional, so the two halves are only meaningful as a pair. A REASSIGNMENT
+// between two roles is the worked case: `prev` is the old role, so the ticket was
+// never in the backlog and its body was written under an assignee.
+test('t522: the backlog line is ABSENT when the ticket was reassigned, not released from backlog', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand'); f.seat('team-reviewer-1');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  assert.strictEqual(f.one('t1').assignee, 'hand', 'ENTER: filed WITH an assignee — never backlog, which is the arm under test');
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't1', who: 'reviewer', body: '' });
+  const toNew = f.gated.filter((g) => g.target === 'team-reviewer-1');
+  assert.deepStrictEqual(toNew, [{ target: 'team-reviewer-1', sender: 'lead', body: specBody('t1', 'the spec') }],
+    'the reassigned body is the plain one — no backlog line');
+  assert.ok(!toNew[0].body.includes('sat in the BACKLOG'), 'and the line is nowhere in it');
 });
 
 test('task reassign: TWO deliveries — old-assignee notice ORDERED BEFORE new-assignee spec', () => {
@@ -14284,6 +14317,34 @@ test('task assign: releasing a parked ticket mints the worktree and seat too', a
   const body = f.gated.map((g) => g.body).join('\n');
   assert.match(body, new RegExp(`WORK IN: ${wtPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `),
     'the spec must name the tree — the seat boots in the repo and would otherwise edit the shared one');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+// t522: the route this team's `hand` role actually takes. `_taskAssign` has three
+// delivery sites and a `worktree`/`spawn` role reaches NONE of the direct ones —
+// it calls `_spawnTicketSeat`, which delivers from inside a `setImmediate` after
+// `_taskAssign` has already returned. A flag that only reached the fall-through
+// would be invisible on exactly this dispatch shape while its test still passed,
+// so the async route is pinned separately rather than trusted to the same plumbing.
+test('t522: the backlog line survives the ASYNC worktree spawn route, not just the fall-through', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  // who:null → filed with NO assignee, which is what backlog IS (it is derived,
+  // not stored). The parked release case above is a different shape: it files
+  // WITH a role, so `prev` is truthy there and no line is owed.
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: null, id: null, body: 'deferred work' });
+  assert.strictEqual(f.one('t1').assignee, null, 'ENTER: backlog is the absence of an assignee — the state under test');
+  f.gated.length = 0;
+
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'assign', who: 'hand', id: 't1', body: '' });
+  await until(() => f.gated.length > 0);
+
+  const body = f.gated.map((g) => g.body).join('\n');
+  assert.match(body, /WORK IN: /, 'ENTER: the worktree dispatch shape is the one under test, not the standing fall-through');
+  assert.ok(body.includes(BACKLOG_LINE.trimEnd()),
+    'the backlog line reached the seat through the setImmediate boundary');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
