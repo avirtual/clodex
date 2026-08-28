@@ -1760,8 +1760,8 @@ test('seed: the lead prompt splits the stall nudge from the dispatch reminder', 
 // before its sentence-final period: a revert that reinstates the list and
 // continues the sentence must not pass.
 //
-// `\s+` at the wrap points, as above: a reflow is a false red to be fixed in the
-// whitespace, a changed claim is a re-pin to be made deliberately.
+// Either way: a reflow is a false red to be fixed in the whitespace, a changed
+// claim is a re-pin to be made deliberately.
 test('seed: the lead prompt splits accept\'s two reply prefixes by whether the ticket closes out', () => {
   const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
   assert.match(lead, /the arms that do NOT close the ticket out \(the\s+merge check could not run, the branch is not merged in\) open `accepted, but`;/,
