@@ -9,9 +9,8 @@
 // in exactly one of those four (the no-branch one). The three branch-carrying
 // arms tore down whatever `ticket.assignee` named — the two non-terminal arms
 // with archive() (kills the pty), the merged arm with destroy(), which kills the
-// seat, drops
-// its persistence record and `git worktree remove --force`s the checkout the
-// record names, with no dirty-check at all.
+// seat, drops its persistence record and `git worktree remove --force`s the
+// checkout the record names, with no dirty-check at all.
 //
 // A standing seat reaches those arms by two ORDINARY lead moves, which is why
 // this is not a corner: `_resolveAssignee` accepts a live seat name, and when a

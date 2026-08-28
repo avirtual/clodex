@@ -1344,8 +1344,8 @@ function createTicketMethods(deps, shared) {
         // was removed. On both the merge is still genuinely owed and a retry that
         // lands it is the wanted outcome. Inviting a second accept is NOT the
         // distinction — the veto and the dirty downgrade invite one and close out
-        // anyway. `closedOut` is
-        // passed by the CALLING arm precisely to keep that distinction.
+        // anyway. `closedOut` is passed by the CALLING arm precisely to keep that
+        // distinction.
         //
         // The terminal arms that KEEP the branch are, by name — so a retry can
         // still be in flight under either, for a reason of its own:
@@ -6781,7 +6781,7 @@ function createTicketMethods(deps, shared) {
       // the conflation this parameter exists to prevent. The arms, each carrying
       // the reason its own terminality is what it is — the terminality
       // enumeration; the route list above names the same five arms for a
-      // different fact, and the comments below name arms rather than re-count:
+      // different fact, and the comments below name arms rather than re-count them:
       //
       //   no-branch     TERMINAL. Nothing to merge and no second accept to
       //                 invite, so acceptance is the whole story.
@@ -6839,8 +6839,8 @@ function createTicketMethods(deps, shared) {
         // "invites another accept" - the veto and the dirty downgrade invite one
         // too and close out anyway. It is retired on the closing arms as ANSWERED
         // rather than as untrue: the stamp may still describe something real -
-        // `isMerged` is an ancestor test and
-        // `revert -m 1` adds a commit, so a merge reverted off master after a
+        // `isMerged` is an ancestor test and `revert -m 1` adds a commit, so a
+        // merge reverted off master after a
         // red suite, and one left standing deliberately, both still read merged
         // - and an accept that ends the ticket is the lead's answer to it.
         // COMPARE-and-clear, not an unconditional delete. The re-read below the
@@ -6934,9 +6934,10 @@ function createTicketMethods(deps, shared) {
       // What happened to the SEAT, as a sentence fragment ending in "and its " so
       // each caller can finish with its own "worktree and branch were KEPT".
       // Called by `!m.ok`, `!m.merged` and the veto: the arms that keep the tree
-      // AND say so in one sentence. The merged arm keeps it too on its dirty and
-      // unreadable downgrades, but builds that sentence itself in `parts`, so a
-      // new `seatClause` caller does not extend to it.
+      // AND say so in one sentence. The merged arm keeps it too wherever it does
+      // not destroy — a standing seat, a dirty tree, an unreadable one — but
+      // builds that sentence itself in `parts`, so a new `seatClause` caller does
+      // not extend to it.
       //
       // Split on `ephemeralSeat` FIRST, then on liveness — never on whether an
       // archive ran. Those come apart on a seat that is one-shot but already
