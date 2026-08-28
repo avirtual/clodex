@@ -1286,8 +1286,9 @@ function createTicketMethods(deps, shared) {
     // can be waiting on the same lock at once, and a single field on the manager
     // would have one of them inherit the other's attempt count and deadline.
     async _autoMergeTicket(team, ticketId, landedOn, verdictText, retry = null) {
-      // THE mergeWaiting INVARIANT: set on the defer arm, false on EVERY other
-      // exit from this function.
+      // THE mergeWaiting INVARIANT: set ONLY on the defer arm, and there only
+      // when that arm's own re-read still finds the ticket live; false on EVERY
+      // other exit from this function.
       //
       // Held in a `finally` rather than by clearing at each exit, because the
       // exits are not only the ones that are easy to remember. A retry re-enters
@@ -1534,8 +1535,45 @@ function createTicketMethods(deps, shared) {
             // and no DM. `deferred` is what exempts this arm from the finally's
             // clear — set BEFORE the stamp so an exception between the two
             // cannot leave the field set with the flag false.
-            deferred = true;
-            this._stampMergeWaiting(team, ticketId, 'suite-in-flight');
+            //
+            // RE-READ FIRST, for the window the top gate cannot cover. This pass
+            // is already past that gate, and reaching here crossed three awaited
+            // git calls — `isMerged`, `isDirty`, `currentBranch` — at any of
+            // which a closing `task accept` can land. That accept clears
+            // `mergeWaiting` itself, so an unguarded stamp here writes the field
+            // back after it was cleared, and `deferred` then tells the finally to
+            // leave it there. The re-read below the lock check does not cover
+            // this: THIS ARM RETURNS, so control never reaches it.
+            //
+            // SYNCHRONOUS, like that one and for the same reason: an await inside
+            // a check whose whole job is to close an await window would reopen
+            // one. `_loadTicket` is a store read plus a find, and nothing
+            // separates it from the stamp below, so this pair cannot interleave
+            // with the accept's own load-mutate-save.
+            //
+            // Same predicate as that re-read, not `closedOut` alone: a `task
+            // reject` or `task cancel` in the same window reopens the ticket, and
+            // a row in rework advertising a pending merge is the same false claim
+            // by the other verb.
+            //
+            // BOTH statements are skipped together. Setting `deferred` without
+            // stamping would change what the flag means — from "this pass wrote
+            // the field" to "this pass reached the defer point" — and the finally
+            // would then decline to clear on behalf of a write that never
+            // happened. Skipping both leaves the finally clearing a field that is
+            // already absent, which `_stampMergeWaiting` returns on before it
+            // saves.
+            //
+            // The retry stays SCHEDULED above either way: it re-enters through
+            // `_queueAutoMerge` and meets the top gate, which is where an
+            // abandoned merge is logged. Suppressing the scheduling here would
+            // change when the retry chain terminates, which this arm does not
+            // decide.
+            const stillPending = this._loadTicket(team, ticketId);
+            if (stillPending && stillPending.state === 'done' && !stillPending.closedOut) {
+              deferred = true;
+              this._stampMergeWaiting(team, ticketId, 'suite-in-flight');
+            }
             return;
           }
           // EXHAUSTED. The escalation is the old one WORD FOR WORD, including the
@@ -1607,10 +1645,13 @@ function createTicketMethods(deps, shared) {
         //                             MERGE FAILED on the same closed-out row.
         //
         // The retry's lock wait is NOT in this window and needs nothing here:
-        // the defer arm schedules and returns, so a retry re-enters through
-        // `_queueAutoMerge` and meets the TOP gate. This one exists for the
-        // gates-to-merge window on either entry — sub-second, rather than the
-        // retry's ten minutes, and the same defect.
+        // the defer arm returns, so control never reaches this line on that
+        // path, and a retry re-enters through `_queueAutoMerge` and meets the
+        // TOP gate. What that arm DOES need it carries itself — the same three
+        // awaits run before it too, so it re-reads at its own site before
+        // stamping. This one exists for the gates-to-merge window on either
+        // entry — sub-second, rather than the retry's ten minutes, and the same
+        // defect.
         //
         // A SYNCHRONOUS field read, and that is what makes it safe here: the pin
         // below forbids any `await` in this stretch, and re-checking a condition
@@ -1804,9 +1845,11 @@ function createTicketMethods(deps, shared) {
             ? `the merge commit ${merged.sha} IS on ${MERGE_TARGET_BRANCH} and was NOT verified — \`git -C ${team.root} revert -m 1 ${merged.sha}\` undoes it`
             : 'nothing was merged');
       } finally {
-        // Only the defer arm leaves it set. This runs on that arm too — where
-        // `deferred` is true and the stamp must SURVIVE — so the clear is
-        // conditional, not unconditional.
+        // Only the defer arm leaves it set, and only on the pass where it
+        // stamped. This runs on that arm too — where `deferred` is true and the
+        // stamp must SURVIVE — so the clear is conditional, not unconditional.
+        // A defer arm that declined to stamp leaves the flag false and is
+        // cleared here like any other exit.
         if (!deferred) this._stampMergeWaiting(team, ticketId, null);
       }
     },
@@ -7034,9 +7077,12 @@ function createTicketMethods(deps, shared) {
         // It does not weaken the invariant that finally states. That invariant
         // is over the EXITS OF `_autoMergeTicket` — set on the defer arm, clear
         // on every other way out — and this clear is not an exit of it; no arm
-        // is added there and none stops clearing. A retry waking later still
-        // runs its own finally over an already-absent field, which
-        // `_stampMergeWaiting` treats as a no-op rather than a save.
+        // is added there and none stops clearing. Nor can a merge pass put the
+        // field back afterwards, by either entry: one that has not started meets
+        // the top gate, and one already past it re-reads at the defer arm and
+        // declines to stamp (t551). Either way the pass runs its own finally
+        // over an already-absent field, which `_stampMergeWaiting` treats as a
+        // no-op rather than a save.
         //
         // UNCONDITIONAL, unlike the compare-and-clear above it, and the
         // asymmetry is not an oversight in either direction:
