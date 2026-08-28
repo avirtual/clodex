@@ -6179,8 +6179,14 @@ function createTicketMethods(deps, shared) {
       // have come from the write-time fallback re-read above. This line says
       // "HEAD was X when this run was QUEUED", a claim only the pre-run capture
       // can support; sourcing X from a report-time read would state t518's
-      // harmful direction as fact. Unreachable today (a suite carrying `headEnd`
-      // always carries `head`), and structural precisely so it stays that way.
+      // harmful direction as fact.
+      //
+      // The blocked condition is CONCRETE, not defensive padding: the capture
+      // swallows its own failure (`.catch(() => null)` at `out.head`), and the
+      // post-child read is a separate call that can succeed on that same run. So
+      // `head` null alongside a resolved `headEnd` needs nothing but the first
+      // read throwing, and without this gate the fallback would then date "when
+      // this run was queued" from a sha read minutes later, at write time.
       const movedLine = suite && suite.head && headSha && endSha && endSha !== headSha
         ? [`# moved: HEAD was ${headSha} when this run was queued and ${endSha} when it finished — `
           + 'the lock wait sits between, so neither is proof of what the suite measured']
