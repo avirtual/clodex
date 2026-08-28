@@ -12015,11 +12015,13 @@ test('T54 (fix) INVARIANT: a draft opening AFTER enqueue, BEFORE the producer fi
   // absence and an absence asserted early is trivially true: with
   // `fireData('\x1b[?2004h')` deleted outright this subject passed 1/1, all four
   // assertions surviving — the region's strongest invariant measuring nothing.
-  // The queue's own length is what proves the producer is enqueued AND still
-  // parked (InjectQueue.enqueue increments it immediately and only decrements in
-  // _drain's finally), which is exactly what the first pair claims and never
-  // checked; `hasPending` alone cannot tell "held at the gate" from "never
-  // enqueued at all".
+  // The queue's own length is what proves the producer reached the queue at all
+  // (InjectQueue.enqueue increments immediately, and only _drain's finally
+  // decrements), which `hasPending` alone cannot tell from "never enqueued".
+  // Length 1 does NOT by itself prove the producer has not fired — it is equally
+  // true mid-write — so the assertions on `writes` and the store are what carry
+  // that half; the length assertion's message points at them rather than
+  // claiming it.
   const { m, PENDING_DIR, fireData, getSession } = mkOnDataProbe();
   await bashCreate(m, 'boot-g', null);
   const s = getSession('boot-g');
@@ -12036,12 +12038,23 @@ test('T54 (fix) INVARIANT: a draft opening AFTER enqueue, BEFORE the producer fi
   try {
     await waitFor(() => m._injectQueueFor(s).length === 1);
   } catch {
-    assert.fail('the boot edge never enqueued the producer (queue length '
-      + `${m._injectQueueFor(s).length}, expected 1) — with nothing on the queue the`
-      + ' absences below are vacuously true, so this is a broken mechanism, not a clean run');
+    // An empty queue does not have one cause, so the timer decides which finding
+    // this is rather than the message asserting one. Three states, three
+    // different readings — and only the middle one is a loaded box, which is why
+    // the resource reading cannot be spread across "non-null".
+    const t = s._bootDrainTimer;
+    assert.fail(`the producer never reached the queue (length ${m._injectQueueFor(s).length}, expected 1): `
+      + (t === null
+        ? 'the deferred drain RAN and enqueued nothing — it bailed at one of its own gates, '
+          + 'so the absences below would be vacuously true. A broken mechanism, not a slow box.'
+        : t === undefined
+          ? 'the drain was never even armed (_bootDrainTimer undefined) — the rising edge never fired. '
+            + 'A broken mechanism, not a slow box.'
+          : 'the deferred drain is still pending (_bootDrainTimer is a live Timeout) — it was armed '
+            + 'but this box was too loaded to run it inside the poll. A RESOURCE failure, not a broken edge.'));
   }
   assert.strictEqual(m._injectQueueFor(s).length, 1,
-    'producer held at the ready-gate — enqueued (length 1) and not yet fired, so nothing claimed yet');
+    'the producer is enqueued and still on the queue; the two assertions below are what say it has not fired');
   assert.deepStrictEqual(writes, [], 'and nothing written yet');
   assert.ok(hasPending(PENDING_DIR, 'boot-g'), 'nothing claimed off disk while it waits');
   // Operator opens a draft in the enqueue→fire window, THEN the loop signals ready.
