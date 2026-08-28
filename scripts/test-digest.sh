@@ -209,6 +209,28 @@ cd "$measure" || exit 1
 # keep the dependency-free promise in the header literal.
 tree=${PWD##*/}
 
+# HEAD IS READ HERE, BEFORE THE SUITE, and only rendered later by
+# save_failing_output. Read at save time it names whatever HEAD points at when
+# the dump is WRITTEN — one whole suite later — so a commit landing mid-run is
+# reported as the commit that was measured. That is not a cosmetic mislabel: a
+# hand reads "my fix is committed and the suite still reds at my sha", concludes
+# the fix was wrong, and edits correct work. Observed on t517 with 21s between
+# the commit and the report.
+#
+# AFTER the lock, which is taken above and held across the cd, so this is the
+# tree state the run below actually measures rather than the state it was
+# queued at. The two git reads MOVED rather than multiplied; the header promise
+# (sh + awk + git) is unchanged. They now run on every invocation instead of
+# only failing ones, which is two git reads against a suite measured in minutes.
+head_branch=$(git -C "$measure" rev-parse --abbrev-ref HEAD 2>/dev/null)
+head_commit=$(git -C "$measure" log -1 --format='%h %s' 2>/dev/null)
+# Paired with the `# when:` line the dump already carries. The two together are
+# what make a stale run legible without the reader having to already suspect
+# one: a `head:` a reader distrusts is a `head:` they cannot act on, and the
+# span between these two timestamps is the only thing that says how far the
+# tree could have moved underneath it.
+started=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
+
 # A worktree has no node_modules and nothing creates one, so the ~7 files
 # requiring electron/node-pty/ws would fail MODULE_NOT_FOUND and the digest
 # would report a red suite for a defect in its own harness. A symlink to the
@@ -275,9 +297,8 @@ save_failing_output() {
     printf '# clodex test-digest — preserved output of a FAILING run.\n'
     printf '# ONE fixed file, overwritten by the next failing run on this box.\n'
     printf '# tree:  %s\n' "$measure"
-    printf '# head:  %s %s\n' \
-      "$(git -C "$measure" rev-parse --abbrev-ref HEAD 2>/dev/null)" \
-      "$(git -C "$measure" log -1 --format='%h %s' 2>/dev/null)"
+    printf '# head:  %s %s\n' "$head_branch" "$head_commit"
+    printf '# start: %s\n' "$started"
     printf '# when:  %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
     printf '# count: %s/%s green, %s failing (exit %s)\n\n' "$pass" "$tests" "$fail" "$code"
     # Two sections, buffered and emitted separately so the caps cannot evict the

@@ -5311,7 +5311,7 @@ function createTicketMethods(deps, shared) {
     },
 
     // Run the suite in the ticket's WORKTREE while holding the ROOT checkout's
-    // lock. Returns { ran, green, code, summary, failing, output, cwd, error }.
+    // lock. Returns { ran, green, code, summary, failing, output, cwd, error, head }.
     //
     // `output` is the run's captured text, carried out ONLY when the suite is
     // red, for _writeTicketSuiteFailure to preserve. The reduction to `failing`
@@ -5346,7 +5346,7 @@ function createTicketMethods(deps, shared) {
       // its pid is still in the lock dir (a killed runner never runs its exit
       // handler). Without this the revert gate blames a process that no longer
       // exists and tells the lead to wait for a suite that will never finish.
-      const out = { ran: false, green: false, code: null, summary: '', failing: '', output: '', cwd, error: null, runnerPid: null };
+      const out = { ran: false, green: false, code: null, summary: '', failing: '', output: '', cwd, error: null, runnerPid: null, head: null };
       if (!cwd) { out.error = 'the ticket has no worktree path to run in'; return out; }
 
       const runner = path.join(cwd, 'scripts', 'run-tests.js');
@@ -5434,6 +5434,21 @@ function createTicketMethods(deps, shared) {
           return out;
         }
       }
+
+      // HEAD BEFORE THE RUN, carried out for _writeTicketSuiteFailure to render.
+      // Read where the dump is WRITTEN it names whatever HEAD points at a whole
+      // suite later, so a commit landing mid-run is reported as the commit that
+      // was measured — and a hand reading "my fix is committed and the suite
+      // still reds at my sha" edits correct work on it. scripts/test-digest.sh
+      // captures at the same point for the same reason.
+      //
+      // THE LOCK WAIT IS NOT COVERED, deliberately, and this is the one gap:
+      // the mutex is taken by the CHILD (CLODEX_TEST_LOCK_WAIT_MS below), so a
+      // run that queues behind another begins measuring after this line. Moving
+      // the read into the child would mean reading it back out of
+      // scripts/run-tests.js. What is left is bounded by the WAIT instead of the
+      // wait plus the run, and the uncontended case is exact.
+      out.head = await gitWorktree.currentBranch(cwd).catch(() => null);
 
       const res = await new Promise((resolve) => {
         let child;
@@ -6044,12 +6059,25 @@ function createTicketMethods(deps, shared) {
       // The COMMIT, not just the branch name. Two rounds of one ticket differ
       // only by timestamp otherwise, yet the branch MOVED between them and that
       // movement is the entire content of a round — a hand comparing r1 to r2
-      // could not tell which tree each measured. Read from the worktree that
-      // actually ran (test-digest.sh's `# head:` does the same with rev-parse),
-      // and degraded to the branch name alone rather than failing the write: a
-      // preserved dump with a vaguer header beats no dump.
-      const head = await gitWorktree.currentBranch((suite && suite.cwd) || '')
-        .catch(() => null);
+      // could not tell which tree each measured. Degraded to the branch name
+      // alone rather than failing the write: a preserved dump with a vaguer
+      // header beats no dump.
+      //
+      // TAKEN FROM THE RUN, which read it BEFORE the suite started
+      // (_runTicketSuite), not re-read here. Re-reading names HEAD at REPORT
+      // time — minutes later — so a commit landing mid-run is attributed to a
+      // run that could not have seen it, and a hand reading "my fix is
+      // committed and the suite still reds at my sha" edits correct work.
+      //
+      // The re-read survives as the fallback for a suite carrying no capture,
+      // which is a REACHABLE state, not just defensive: _runTicketSuite returns
+      // early on its no-worktree, no-runner and changed-deps arms without ever
+      // reaching the capture, and the post-merge caller preserves output on
+      // `ran:false` too. Nothing was measured on those arms, so there is no
+      // earlier moment to prefer and a late read is the only value there is.
+      const head = (suite && suite.head !== undefined && suite.head !== null)
+        ? suite.head
+        : await gitWorktree.currentBranch((suite && suite.cwd) || '').catch(() => null);
       // `ok:true` with a NULL head is reachable — currentBranch tolerates a
       // failed `rev-parse HEAD` (git-worktree.js) — and interpolating it yields
       // `# head:  tl-1 `, a line that claims a commit and carries none. The sha
