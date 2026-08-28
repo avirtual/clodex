@@ -141,6 +141,35 @@ async function withShell(run, { profile, env: envOver } = {}) {
 
 const opts = { skip: SKIP, timeout: 120000 };
 
+// An exit-code assertion can be answering a question nobody asked. exec() writes
+// ^C and the command as two writes, and bash discards pending input when SIGINT
+// lands, so under load the command's leading bytes go with it — the truncated
+// remainder still RUNS and still reports. Measured here at 32 concurrent runs of
+// this file: `sh -c "exit 7"` arrived as `h -c "exit 7"` and answered 127, with
+// PATH verifiably intact and `command -v sh` answering /bin/sh in the same shell.
+// It is the swallowed-byte race drawer-pty.js exec() documents against its own
+// two writes (measured there as `cho: command not found`), not an environment
+// failure and not the shell failing to start.
+//
+// Same reasoning, and the same SHORTER-THAN test, as the compound-command subject
+// below — see its comment for why length beats endsWith and why an empty
+// (deliberately unnamed) record must fall through to be judged by the real
+// assertion. Kept as a shared helper because the cost it prevents is specific:
+// reading a corrupted write as a defect in the property under test is what cost
+// t418 a false rejection, and a 127 landing on the PROMPT_COMMAND subject accuses
+// an ordering regression that reports 0 when it genuinely happens, never 127.
+function assertRanIntact(res, typed, expected, message) {
+  const got = res.record && res.record.command;
+  if (got && got.length < typed.length) {
+    assert.fail('the command was CORRUPTED in transit — the shell received '
+      + `${JSON.stringify(got)}, shorter than the ${JSON.stringify(typed)} that was typed, `
+      + `and ran that instead (exit ${res.record.exitCode}, output ${JSON.stringify((res.record.output || '').trim())}). `
+      + 'That is the swallowed-byte race in drawer-pty.js exec(), a LOAD failure of the '
+      + `two-write abandon handshake — NOT a defect in what this test asserts (${message}).`);
+  }
+  assert.strictEqual(res.record.exitCode, expected, message);
+}
+
 test('a real bash reports a command, its text and its exit code', opts, async () => {
   await withShell(async ({ exec }) => {
     const res = await exec('echo hello');
@@ -166,7 +195,7 @@ test('a command with spaces and quotes round-trips EXACTLY', opts, async () => {
 test('a non-zero exit arrives as that exact code', opts, async () => {
   await withShell(async ({ exec }) => {
     const res = await exec('sh -c "exit 7"');
-    assert.strictEqual(res.record.exitCode, 7, 'not 0, not 1, not null');
+    assertRanIntact(res, 'sh -c "exit 7"', 7, 'not 0, not 1, not null');
   });
 });
 
@@ -236,7 +265,7 @@ test("an operator's own PROMPT_COMMAND still runs, and ours runs first", opts, a
       // Their hook leads with `true`, which destroys `$?` for anything after
       // it. Reporting 3 is only possible if ours ran first.
       const res = await exec('sh -c "exit 3"');
-      assert.strictEqual(res.record.exitCode, 3,
+      assertRanIntact(res, 'sh -c "exit 3"', 3,
         'ours ran before theirs — appending would have reported 0');
       assert.ok(fs.existsSync(marker), 'their PROMPT_COMMAND still ran');
     }, { profile: `PROMPT_COMMAND='true; echo ran >> ${marker}'\n` });
