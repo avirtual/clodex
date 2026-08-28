@@ -6684,16 +6684,32 @@ function createTicketMethods(deps, shared) {
     // Called BEFORE teardown on BOTH dispositions. On discard the stamp is the
     // only surviving trace, and it still names the branch and commit a hotfix
     // would start from.
-    _stampTicketRevival(team, seatName, extra = null) {
+    // `ticketId` NARROWS the lookup; it does not replace it. Seat names recycle,
+    // so seat-name-alone picks the OLDEST un-stamped ticket carrying that
+    // assignee — which is the wrong one the moment a name is reused while an
+    // earlier ticket is still un-stamped, and the veto arm below then loses the
+    // only durable trace that a check is owed. Every `_taskAccept` caller knows
+    // the id and passes it; the team-retire caller genuinely does not — it is
+    // retiring a SEAT, and the seat name is its only handle on the ticket — so
+    // that path keeps the unnarrowed lookup rather than inventing an id, which
+    // would move the same ambiguity one level up where it is harder to see.
+    //
+    // Not a key on `extra`: `extra` is spread whole into the stamp below, so a
+    // control key placed there would persist as a stamp field unless every
+    // future caller remembered to strip it.
+    _stampTicketRevival(team, seatName, extra = null, ticketId = null) {
       if (!team || !team.root || !seatName) return null;
       let rec = null;
       try { rec = getPersistence().get(seatName); } catch { rec = null; }
       let tickets;
       try { tickets = ticketsStore.load(team.root); } catch { return null; }
-      // The ticket this seat was minted for: the pin is the seat name, and a
-      // ticket already accepted is not re-stamped by a later retire of the same
-      // seat — the first stamp names the session that did the work.
-      const ticket = tickets.find((t) => t.assignee === seatName && !t.revival);
+      // `!t.revival` holds on BOTH branches: the first stamp names the session
+      // that did the work, and a later retire must not overwrite its seat,
+      // session id or branch. The two targeted field writes in `_taskAccept`
+      // exist precisely because this call no-ops on an already-stamped ticket.
+      const ticket = ticketId
+        ? tickets.find((t) => t.id === ticketId && !t.revival)
+        : tickets.find((t) => t.assignee === seatName && !t.revival);
       if (!ticket) return null;
       const wt = rec && rec.worktree ? rec.worktree : null;
       ticket.revival = {
@@ -6911,7 +6927,7 @@ function createTicketMethods(deps, shared) {
       // recoverable; destroy is not. Same treatment the `!m.merged` arm gives a
       // worktree seat, for the same reason.
       if (!branch) {
-        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
+        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true }, ticket.id);
         let archived = false;
         if (ephemeralSeat && seatName && this.sessions.has(seatName)) {
           await this.archive(seatName);
@@ -6979,7 +6995,7 @@ function createTicketMethods(deps, shared) {
       };
 
       if (!m.ok) {
-        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
+        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true }, ticket.id);
         // Archive only a seat the loop minted. A standing seat is the operator's
         // and keeps running: acceptance is a judgement about the WORK, and on
         // this arm it has not even established the merge fact.
@@ -6993,7 +7009,7 @@ function createTicketMethods(deps, shared) {
       }
 
       if (!m.merged) {
-        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true });
+        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true }, ticket.id);
         await archiveIfEphemeral();
         // NOT terminal (no `closedOut`), same reasoning: the reply below ends
         // "Merge it, then [agent:task accept <id>] again to clean up", an explicit
@@ -7113,7 +7129,7 @@ function createTicketMethods(deps, shared) {
         // ticket, a live branch, and no trace of why. The revival stamp is
         // already the hand-read fallback the lead prompt points at for the
         // worktree path, so the trace belongs on it rather than in a new field.
-        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true, mergeVetoed: mergeStamp });
+        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true, mergeVetoed: mergeStamp }, ticket.id);
         // …but `_stampTicketRevival` is write-once (`!t.revival`), so on a ticket
         // ALREADY stamped by an earlier retire the call above writes nothing, and
         // the trace would be missing on exactly the tickets that have been round
@@ -7234,7 +7250,7 @@ function createTicketMethods(deps, shared) {
       // the reply says UNKNOWN precisely because neither side is established.
       if (seatName) {
         this._stampTicketRevival(team, seatName,
-          { accepted: true, mergedInto: (measured && c.count === 0) ? null : m.base });
+          { accepted: true, mergedInto: (measured && c.count === 0) ? null : m.base }, ticket.id);
         // Retire a `mergeVetoed` left by an earlier accept on this same ticket.
         // `_stampTicketRevival` is write-once (`!t.revival`), so the call above
         // is a NO-OP on the second accept — and without this the veto's trace
