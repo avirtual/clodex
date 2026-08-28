@@ -31,6 +31,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
+const { trackTmpRoot } = require('./lib/tmp-roots');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'test-digest.sh');
 
@@ -42,7 +43,14 @@ function git(cwd, args) {
 // test is required, not incidental: the dump is written ONLY on a failing run,
 // so a green fixture would assert about a file that is never created.
 function mkScratch(testBody) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t518-')));
+  // Registered AT MINT TIME, not by the callers' try/finally: those open on the
+  // line AFTER this function returns, so a throw below (git absent, `git init`
+  // failing, a full TMPDIR) leaks the repo the finally was added to reap.
+  //
+  // trackTmpRoot around the realpath'd mint rather than mkTmpRoot, which does
+  // not realpath: $TMPDIR is under a /var symlink on macOS, and runDigest
+  // compares the dump's `# tree:` against this string.
+  const dir = trackTmpRoot(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'clx-t518-'))));
   fs.mkdirSync(path.join(dir, 'scripts'));
   fs.mkdirSync(path.join(dir, 'test'));
   fs.copyFileSync(SCRIPT, path.join(dir, 'scripts', 'test-digest.sh'));

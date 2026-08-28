@@ -2529,6 +2529,132 @@ test('t518: the header names HEAD when the run STARTED, not when the dump is wri
     `and NOT the commit that landed under it (got: ${JSON.stringify(head)})`);
 });
 
+test('t549: a run whose HEAD MOVED underneath it says so, on its own line', async () => {
+  // The residual gap t518 left open and deliberately did not close: the capture
+  // precedes the spawn, the suite mutex is taken inside the CHILD, so a queued
+  // run names HEAD as it was up to the lock wait before the tree it measured.
+  // That sha is a real commit that was not the one measured — not merely
+  // imprecise — and the reader had nothing telling them which case they were in.
+  //
+  // Same mid-run-commit fixture as the t518 subject above, for its reason: a run
+  // with no concurrent commit reports one sha either way and would pass against
+  // the unfixed code.
+  const repo = mkRepo();
+  const shaAtStart = commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work the run measures\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+
+  const realWt = pathReal.join(repo.dir, 'realwt');
+  git(repo.dir, ['worktree', 'add', '-q', realWt, 'tl-1']);
+  fsReal.mkdirSync(pathReal.join(realWt, 'scripts'), { recursive: true });
+  fsReal.writeFileSync(pathReal.join(realWt, 'scripts', 'run-tests.js'),
+    'require("fs").writeFileSync(__dirname + "/../mid.txt", "landed mid-run\\n");\n'
+    + 'require("child_process").execFileSync("git", ["add", "mid.txt"], { cwd: __dirname + "/.." });\n'
+    + 'require("child_process").execFileSync("git", ["commit", "-q", "-m", "landed UNDER the run"], { cwd: __dirname + "/.." });\n'
+    + SUITE_STUBS.redWithDiff);
+
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand',
+    worktree: { ...f.one().worktree, path: realWt },
+  }]);
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const shaAfter = git(realWt, ['rev-parse', 'HEAD']);
+  assert.notStrictEqual(shaAfter, shaAtStart,
+    'ENTER: the branch really moved DURING the run — with one sha this subject '
+    + 'passes against the code it exists to catch');
+
+  const kept = keptFiles(f, f.home);
+  assert.strictEqual(kept.length, 1, 'ENTER: a dump was preserved to read the header off');
+  const dump = fsReal.readFileSync(kept[0], 'utf8');
+  const movedLine = /# moved: .*/.exec(dump);
+  assert.ok(movedLine, `the moved run is announced (header: ${JSON.stringify(dump.slice(0, 400))})`);
+  // BOTH shas, and the sentence says which is which: a line carrying only the
+  // new one tells a reader their tree changed without telling them what ran.
+  assert.match(movedLine[0], new RegExp(shaAfter.slice(0, 12)), 'it names where HEAD is now');
+  assert.match(movedLine[0], new RegExp(shaAtStart.slice(0, 12)), 'and the sha this run actually measured');
+  // The t518 guarantee is unchanged by the addition, asserted here as well as in
+  // that subject: the new sha must not leak into the field naming what ran.
+  const head = /# head: .*/.exec(dump)[0];
+  assert.ok(!new RegExp(shaAfter.slice(0, 12)).test(head),
+    `# head: still names only the measured commit (got: ${JSON.stringify(head)})`);
+});
+
+test('t549: an UNMOVED run carries no moved line at all, rather than one saying "no"', async () => {
+  // A line printed on every run is skipped by the reader it exists to alert, and
+  // this fires on the rare contended run. Also the direct pin on the comparison:
+  // the two reads return equal-but-DISTINCT objects, so an object-identity check
+  // would emit this on every run in the suite and the subject above would still
+  // pass.
+  const repo = mkRepo();
+  const shaAtStart = commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+
+  const realWt = pathReal.join(repo.dir, 'realwt');
+  git(repo.dir, ['worktree', 'add', '-q', realWt, 'tl-1']);
+  fsReal.mkdirSync(pathReal.join(realWt, 'scripts'), { recursive: true });
+  fsReal.writeFileSync(pathReal.join(realWt, 'scripts', 'run-tests.js'), SUITE_STUBS.redWithDiff);
+
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand',
+    worktree: { ...f.one().worktree, path: realWt },
+  }]);
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(git(realWt, ['rev-parse', 'HEAD']), shaAtStart,
+    'ENTER: HEAD really did NOT move — otherwise this asserts the absence for the wrong reason');
+  const kept = keptFiles(f, f.home);
+  assert.strictEqual(kept.length, 1, 'ENTER: a dump was preserved to read the header off');
+  const dump = fsReal.readFileSync(kept[0], 'utf8');
+  assert.ok(!/# moved:/.test(dump),
+    `an unmoved run says nothing about movement (header: ${JSON.stringify(dump.slice(0, 400))})`);
+  // ENTER for the absence above: the dump really does carry the surrounding
+  // header, so this is not asserting emptiness over a file that never got one.
+  assert.match(dump, new RegExp(`# head: +tl-1 ${shaAtStart.slice(0, 12)}`),
+    'ENTER: the header itself is present and exact on this run');
+});
+
+test('t549: the dump carries # start:, so # when: has something to be a span against', async () => {
+  // The JS header was tree/head/when/count: a reader who suspected the head was
+  // stale had nothing to measure the staleness against. The sh digest carries
+  // `# start:` for exactly this reason. The span does NOT say whether HEAD moved
+  // — the `# moved:` line above answers that — it says how long the tree had in
+  // which to move.
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'redWithDiff' });
+
+  const realWt = pathReal.join(repo.dir, 'realwt');
+  git(repo.dir, ['worktree', 'add', '-q', realWt, 'tl-1']);
+  fsReal.mkdirSync(pathReal.join(realWt, 'scripts'), { recursive: true });
+  fsReal.writeFileSync(pathReal.join(realWt, 'scripts', 'run-tests.js'), SUITE_STUBS.redWithDiff);
+
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand',
+    worktree: { ...f.one().worktree, path: realWt },
+  }]);
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const kept = keptFiles(f, f.home);
+  assert.strictEqual(kept.length, 1, 'ENTER: a dump was preserved to read the header off');
+  const dump = fsReal.readFileSync(kept[0], 'utf8');
+  const start = /# start: (\S+)/.exec(dump);
+  assert.ok(start, `the dump carries a start instant (header: ${JSON.stringify(dump.slice(0, 400))})`);
+  const when = /# when: +(\S+)/.exec(dump);
+  assert.ok(when, 'ENTER: the when line it is a span against is present too');
+  // The CAPTURE instant, not a second clock read in the writer. A value minted
+  // beside `# when:` would measure nothing and the two would be equal; the
+  // ordering below is what distinguishes a carried value from a fresh one.
+  assert.ok(Number.isFinite(Date.parse(start[1])), `# start: parses as a time (got: ${start[1]})`);
+  assert.ok(Date.parse(start[1]) <= Date.parse(when[1]),
+    `the run started no later than it was written up (start: ${start[1]}, when: ${when[1]})`);
+  // Line ORDER, matching the sh digest's dump so the two are read the same way.
+  assert.match(dump, /# head: .*\n# start: .*\n# when: /,
+    'and it sits between # head: and # when:, as the sh digest prints it');
+});
+
 test('t370 r3: an UNDELIVERABLE rejection says WHY there is no file, not just when there is one', async () => {
   // The mirror of the round-1 fix. Naming the file when it exists and going
   // silent when it does not leaves the lead — the only reader on this arm —
