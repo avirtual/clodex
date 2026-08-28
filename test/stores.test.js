@@ -1777,15 +1777,22 @@ test('seed: the lead prompt splits the stall nudge from the dispatch reminder', 
 // `\s+`-at-every-gap rule above, and it covers every gap rather than the gaps
 // someone remembered to write.
 //
-// `total` counts the phrase across the whole file with whitespace flattened, so
-// the caller can pin that every occurrence reached a unit. A phrase the splitter
-// loses would otherwise vanish into an empty `unscoped` and read as a pass.
+// `total` counts the phrase across the whole file with whitespace flattened and
+// `seen` counts it across the units, so the caller can pin that every occurrence
+// reached a unit. A phrase the splitter loses would otherwise vanish into an
+// empty `unscoped` and read as a pass. Both are OCCURRENCE counts on purpose:
+// comparing `hits.length` (units carrying the phrase) to `total` reds correct
+// text the moment one unit carries two occurrences.
 //
 // The residual hole is a sentence that names both scope words and then negates
 // one ("not only when the seat is loop-minted and the tree dirty"). No phrase
 // scan can catch that; the defect actually observed — scope OMITTED — it can.
 function unscopedRemovesNothingClaims(text) {
-  const PHRASE = /merged arm removes nothing/;
+  const PHRASE = /merged arm removes nothing/i;
+  // `i` here and in `scoped` below must agree: a case-sensitive phrase against a
+  // case-insensitive scope test makes a sentence-initial "Merged arm removes
+  // nothing" invisible to the forbid while its scope words still register.
+  const count = (s) => (s.match(new RegExp(PHRASE.source, 'gi')) || []).length;
   const units = text
     .split(/\n[ \t]*\n/)                                  // paragraphs, table blocks
     .flatMap((block) => block.split('|'))                 // one cell never scopes another
@@ -1796,7 +1803,13 @@ function unscopedRemovesNothingClaims(text) {
   const scoped = (u) => /\brow 2\b/i.test(u) || (/loop-minted/i.test(u) && /dirty/i.test(u));
   return {
     units,
-    total: (text.replace(/\s+/g, ' ').match(new RegExp(PHRASE.source, 'g')) || []).length,
+    // `seen` counts OCCURRENCES inside units, not units-carrying-the-phrase. The
+    // two differ on correct text — two bullets in one paragraph with no terminal
+    // punctuation are ONE unit with TWO occurrences — and comparing the unit count
+    // to `total` reds a fully scoped, true passage, which is the exact defect this
+    // pin exists to remove.
+    seen: units.reduce((n, u) => n + count(u), 0),
+    total: count(text.replace(/\s+/g, ' ')),
     hits: units.filter((u) => PHRASE.test(u)),
     unscoped: units.filter((u) => PHRASE.test(u) && !scoped(u)),
   };
@@ -1827,11 +1840,11 @@ test('seed: the lead prompt splits accept\'s two reply prefixes by whether the t
     'and makes the merged arm\'s teardown depend on the SEAT as well as the tree, since the dirty skip sits behind the loop-minted gate');
   const removesNothing = unscopedRemovesNothingClaims(lead);
   assert.deepStrictEqual(removesNothing.unscoped, [],
-    'lead prompt must not claim the merged arm removes nothing without naming the loop-minted scope: on a standing assignee the tree is never inspected and the delete is attempted whatever the tree holds');
-  assert.strictEqual(removesNothing.hits.length, removesNothing.total,
+    'lead prompt must not claim the merged arm removes nothing without naming the loop-minted scope, and the scope must be named INSIDE the same sentence or table cell — `row 2`, or both `loop-minted` and `dirty`. Unscoped the claim is false: on a standing assignee the tree is never inspected and the delete is attempted whatever the tree holds');
+  assert.strictEqual(removesNothing.seen, removesNothing.total,
     'every occurrence of the phrase must land in a sentence unit — one the splitter drops is one the forbid above cannot judge, and it reads as a pass');
-  assert.ok(removesNothing.units.includes('What a merged arm removes depends on the seat and the tree — read the rows.'),
-    'ENTER: the splitter cuts the live merged-arm sentence out whole — the forbid above is an absence, so a splitter that never reached this paragraph would satisfy it silently');
+  assert.ok(removesNothing.units.some((u) => u.startsWith('What a merged arm removes depends on the seat and the tree')),
+    'ENTER: the splitter cuts the live merged-arm sentence out as a unit of its own — the forbid above is an absence, so a splitter that never reached this paragraph would satisfy it silently. Matched by PREFIX: a tail edit to that sentence is the content pin above\'s red to report, not this one\'s');
   assert.doesNotMatch(lead, /no-branch\s+arm\s+has\s+nothing\s+to\s+remove\s+and\s+the\s+veto\s+refuses\s+to\s+remove\s+anything/,
     'lead prompt must not close that clause on the two-item list again');
 });
@@ -1866,14 +1879,32 @@ test('t548: the unscoped `removes nothing` predicate separates the false claim f
     ['| loop-minted seat, tree DIRTY | KEPT |\n| the merged arm removes nothing | KEPT |', true],
     // The live sentence, which does not carry the phrase at all.
     ['What a merged arm removes depends on the seat and the tree — read the rows.', false],
+    // r1 nit 1: two scoped bullets in one paragraph with no terminal punctuation are
+    // ONE unit carrying TWO occurrences. Correct prose, and the version of this pin
+    // that counted units rather than occurrences reddened it.
+    ['  - on row 2 the merged arm removes nothing\n  - on a loop-minted seat with a dirty tree the merged arm removes nothing\n', false],
+    // Case: the forbid must see a sentence-initial occurrence, since `scoped` is
+    // case-insensitive and a case-sensitive phrase would skip the unit entirely.
+    ['Merged arm removes nothing.', true],
   ];
   for (const [text, shouldFlag] of cases) {
     const got = unscopedRemovesNothingClaims(text);
     assert.strictEqual(got.unscoped.length > 0, shouldFlag,
       `${shouldFlag ? 'must be flagged' : 'must pass'}: ${JSON.stringify(text)}`);
-    assert.strictEqual(got.hits.length, got.total,
+    assert.strictEqual(got.seen, got.total,
       `every phrase occurrence must reach a unit: ${JSON.stringify(text)}`);
   }
+
+  // r1 nit 1: every row above expects `seen === total` to HOLD, so the invariant
+  // was pinned but never seen to fail — the thing this file's own header warns
+  // about for the forbid, one level in. This case is deliberately OUTSIDE the loop
+  // and carries its own literal pair: routed through the loop it would assert
+  // exactly the equality it exists to falsify.
+  const lost = unscopedRemovesNothingClaims('the merged arm removes\n\nnothing.');
+  assert.strictEqual(lost.total, 1, 'the phrase is there when the text is flattened whole');
+  assert.strictEqual(lost.seen, 0, 'and the splitter loses it across the blank line, so the caller\'s seen === total fires');
+  assert.deepStrictEqual(lost.unscoped, [],
+    'and it is invisible to the forbid — which is why the count guard, not the forbid, is what catches it');
 });
 
 // t353: three hands in a row reported by dm and left the ticket open, one of
