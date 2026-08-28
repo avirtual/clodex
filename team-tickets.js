@@ -6942,6 +6942,37 @@ function createTicketMethods(deps, shared) {
         // silent ERASURE is. A mark that arrived mid-accept survives on the board
         // instead of vanishing with the branch.
         if (closedOut && ticket.mergeError && String(ticket.mergeError) === actedStamp) delete ticket.mergeError;
+        // `mergeWaiting` goes on the same gate, and it is a SECOND clearing site
+        // for a field whose own clear lives in `_autoMergeTicket`'s finally.
+        // That finally only runs when the deferred retry WAKES — up to 30s per
+        // attempt and ten minutes across them — so a crash or an [agent:reboot]
+        // inside that window freezes `(merge waiting: suite-in-flight)` onto an
+        // accepted row, and nothing re-examines the field at boot.
+        //
+        // It does not weaken the invariant that finally states. That invariant
+        // is over the EXITS OF `_autoMergeTicket` — set on the defer arm, clear
+        // on every other way out — and this clear is not an exit of it; no arm
+        // is added there and none stops clearing. A retry waking later still
+        // runs its own finally over an already-absent field, which
+        // `_stampMergeWaiting` treats as a no-op rather than a save.
+        //
+        // UNCONDITIONAL, unlike the compare-and-clear above it, and the
+        // asymmetry is not an oversight in either direction:
+        //   `mergeError` carries a distinguishing value, so comparing against
+        //   what this accept read is what keeps it from erasing a DIFFERENT
+        //   stamp that landed mid-accept and is still true of the repository.
+        //   `mergeWaiting` has one writer that writes one value, so a compare
+        //   cannot tell a stamp this accept never saw from the one it did —
+        //   the conditionality is not expressible for this field.
+        //   A stale value here is also not a claim a human must answer: the
+        //   retry's own `closedOut` gate returns before any git work and logs
+        //   the merge ABANDONED, so past a closing accept no `mergeWaiting`
+        //   describes a merge still able to produce a commit.
+        // The gate is `closedOut` for the reason the line above it is: on
+        // `!m.ok` the merge fact could not be measured, on `!m.merged` it was
+        // measured and the branch has not landed. A retry may still land either,
+        // so clearing there would erase a claim that is live and true.
+        if (closedOut) delete ticket.mergeWaiting;
         // Re-read: the teardown below stamped revival onto its own copy.
         const fresh = ticketsStore.load(team.root);
         const row = fresh.find((t) => t.id === ticket.id);
@@ -6954,6 +6985,10 @@ function createTicketMethods(deps, shared) {
           delete row.loopStep;
           delete row.verifyHold;
           if (closedOut && row.mergeError && String(row.mergeError) === actedStamp) delete row.mergeError;
+          // Both copies, or the board reads the one that was missed: `fresh` is
+          // what gets saved on this path, and the `ticket` snapshot is what gets
+          // saved on the else branch below.
+          if (closedOut) delete row.mergeWaiting;
           ticketsStore.save(team.root, fresh);
         } else {
           ticketsStore.save(team.root, tickets);

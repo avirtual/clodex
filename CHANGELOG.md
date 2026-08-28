@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- **Accepting a ticket whose merge was still queued no longer leaves it
+  advertising `(merge waiting: suite-in-flight)` for good.** When a merge finds
+  the test-suite lock held it waits and retries, and marks the row so the wait
+  is visible rather than invisible. If you landed the branch yourself and
+  accepted the ticket during that wait, the mark was only ever taken off when
+  the retry next woke — up to ten minutes later — and quitting or crashing
+  Clodex in between froze it on the row permanently, since nothing rechecks the
+  mark at startup. The accept now clears it as it closes the ticket out, on
+  every board that shows it. Accepts that leave the merge genuinely owed — the
+  branch has not landed, or the check could not run — still keep the mark,
+  because there a retry may yet land it.
+
 - **A ticket released from the backlog now tells its seat that the "do not
   start" line in its own spec is spent.** A backlog ticket's spec is written
   when it is FILED, so it routinely carries its own gate — "do not start until
