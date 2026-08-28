@@ -6075,8 +6075,9 @@ function createTicketMethods(deps, shared) {
       // capture precedes every `out.output` assignment, so a suite carrying a
       // body has necessarily passed it, and the arms that return before the
       // capture carry no body and are refused by the empty-body guard above.
-      // Kept because a late sha still beats none for such a caller, and because
-      // the alternative is a crash on a shape that used to work.
+      // Kept because a late sha still beats none for such a caller: without it
+      // the degraded arm below takes over and every synthetic-suite dump reads
+      // `(commit unresolved)` — correct, but blank where a sha was available.
       const head = (suite && suite.head !== undefined && suite.head !== null)
         ? suite.head
         : await gitWorktree.currentBranch((suite && suite.cwd) || '').catch(() => null);
