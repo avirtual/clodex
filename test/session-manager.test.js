@@ -12010,6 +12010,16 @@ test('T54 (fix) INVARIANT: a draft opening AFTER enqueue, BEFORE the producer fi
   // producer parked mid-queue (as a still-booting readline loop would), open the
   // draft in that window, then flip it true to release the producer. This is the
   // only deterministic way to interleave a draft between enqueue and fire.
+  //
+  // Both halves wait on a POSITIVE observable, because every assertion here is an
+  // absence and an absence asserted early is trivially true: with
+  // `fireData('\x1b[?2004h')` deleted outright this subject passed 1/1, all four
+  // assertions surviving — the region's strongest invariant measuring nothing.
+  // The queue's own length is what proves the producer is enqueued AND still
+  // parked (InjectQueue.enqueue increments it immediately and only decrements in
+  // _drain's finally), which is exactly what the first pair claims and never
+  // checked; `hasPending` alone cannot tell "held at the gate" from "never
+  // enqueued at all".
   const { m, PENDING_DIR, fireData, getSession } = mkOnDataProbe();
   await bashCreate(m, 'boot-g', null);
   const s = getSession('boot-g');
@@ -12023,14 +12033,27 @@ test('T54 (fix) INVARIANT: a draft opening AFTER enqueue, BEFORE the producer fi
   // Immediately re-hold the queue's ready-gate: the deferred drain (settle 0) will
   // enqueue the producer, which then parks on this gate instead of firing.
   s._bootReadySeen = false;
-  await new Promise((r) => setTimeout(r, 20));  // let the drain enqueue the (now-held) producer
-  assert.ok(hasPending(PENDING_DIR, 'boot-g'), 'producer held at the ready-gate — nothing claimed yet');
+  try {
+    await waitFor(() => m._injectQueueFor(s).length === 1);
+  } catch {
+    assert.fail('the boot edge never enqueued the producer (queue length '
+      + `${m._injectQueueFor(s).length}, expected 1) — with nothing on the queue the`
+      + ' absences below are vacuously true, so this is a broken mechanism, not a clean run');
+  }
+  assert.strictEqual(m._injectQueueFor(s).length, 1,
+    'producer held at the ready-gate — enqueued (length 1) and not yet fired, so nothing claimed yet');
   assert.deepStrictEqual(writes, [], 'and nothing written yet');
+  assert.ok(hasPending(PENDING_DIR, 'boot-g'), 'nothing claimed off disk while it waits');
   // Operator opens a draft in the enqueue→fire window, THEN the loop signals ready.
   s.lastUserInputTs = Date.now();               // isDraftOpen → true at fire time
   s._bootReadySeen = true;                       // release the producer (fires within a ready-poll)
-  await new Promise((r) => setTimeout(r, 400));  // > readyPollMs (250) so the producer definitely fires
-  assert.deepStrictEqual(writes, [], 'fire-time re-check saw the draft → claimed nothing, wrote nothing');
+  // The sentinel queues BEHIND the held producer on the serial _chain, so it can
+  // only settle once the producer was released and its fire-time re-check returned
+  // null. If that re-check ever regressed and claimed, the payload would land ahead
+  // of the sentinel and the deepEqual below fails loudly instead of silently.
+  await settleBootEdge(m, s);
+  assert.deepStrictEqual(writes, ['\x15', SETTLE_SENTINEL, '\r'],
+    'fire-time re-check saw the draft → claimed nothing, wrote nothing; only the later sentinel reached the pane');
   assert.ok(hasPending(PENDING_DIR, 'boot-g'), 'INVARIANT (fire-time claim path): scope NOT claimed off disk — stays recoverable');
 });
 

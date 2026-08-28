@@ -159,7 +159,16 @@ const opts = { skip: SKIP, timeout: 120000 };
 // t418 a false rejection, and a 127 landing on the PROMPT_COMMAND subject accuses
 // an ordering regression that reports 0 when it genuinely happens, never 127.
 function assertRanIntact(res, typed, expected, message) {
-  const got = res.record && res.record.command;
+  // `timeout` and `lost` settle with NO record at all (drawer-pty.js settle()),
+  // and both are reachable under exactly the load this helper exists for — so
+  // dereferencing the record first would answer a diagnosis with a TypeError,
+  // which is this ticket's own failure class one layer over.
+  if (!res.record) {
+    assert.fail(`the command never produced a result record (status ${JSON.stringify(res.status)}) — `
+      + `the shell did not answer \`${typed}\` within exec's deadline. That is a LOAD failure, `
+      + `NOT a defect in what this test asserts (${message}).`);
+  }
+  const got = res.record.command;
   if (got && got.length < typed.length) {
     assert.fail('the command was CORRUPTED in transit — the shell received '
       + `${JSON.stringify(got)}, shorter than the ${JSON.stringify(typed)} that was typed, `
@@ -194,8 +203,9 @@ test('a command with spaces and quotes round-trips EXACTLY', opts, async () => {
 
 test('a non-zero exit arrives as that exact code', opts, async () => {
   await withShell(async ({ exec }) => {
-    const res = await exec('sh -c "exit 7"');
-    assertRanIntact(res, 'sh -c "exit 7"', 7, 'not 0, not 1, not null');
+    const cmd = 'sh -c "exit 7"';
+    const res = await exec(cmd);
+    assertRanIntact(res, cmd, 7, 'not 0, not 1, not null');
   });
 });
 
@@ -264,8 +274,9 @@ test("an operator's own PROMPT_COMMAND still runs, and ours runs first", opts, a
     await withShell(async ({ exec }) => {
       // Their hook leads with `true`, which destroys `$?` for anything after
       // it. Reporting 3 is only possible if ours ran first.
-      const res = await exec('sh -c "exit 3"');
-      assertRanIntact(res, 'sh -c "exit 3"', 3,
+      const cmd = 'sh -c "exit 3"';
+      const res = await exec(cmd);
+      assertRanIntact(res, cmd, 3,
         'ours ran before theirs — appending would have reported 0');
       assert.ok(fs.existsSync(marker), 'their PROMPT_COMMAND still ran');
     }, { profile: `PROMPT_COMMAND='true; echo ran >> ${marker}'\n` });
