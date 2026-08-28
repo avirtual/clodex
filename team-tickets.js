@@ -1586,19 +1586,27 @@ function createTicketMethods(deps, shared) {
         //
         // `closedOut` alongside `state`, and the reason it is not redundant with
         // the top gate: an ACCEPT leaves `state` at `done`, so state alone is
-        // blind to it. The arm that makes that blindness cost something is the
-        // MERGED one — an accept after the lead has landed the branch by hand,
-        // which removes the worktree and deletes the ref this merge is about to
-        // name. It can interleave at any of the three git awaits this window is
-        // made of — `isMerged`, `isDirty`, `currentBranch` — and then this line
-        // merges a branch that is gone and stamps MERGE FAILED onto a row the
-        // lead has just closed.
+        // blind to it. An accept can interleave at any of the three git awaits
+        // this window is made of — `isMerged`, `isDirty`, `currentBranch` — and
+        // every closing arm costs something past this line, by two routes:
+        //
+        //   the MERGED arm            deletes the ref, so the merge below names
+        //                             a branch that is gone and STEP 4's
+        //                             `fail('merge')` stamps MERGE FAILED on
+        //                             the closed-out row. This is the arm the
+        //                             pin drives.
+        //   the VETO arm and the      keep the branch, so the merge below reaches
+        //   DIRTY downgrade           `mergeNoFf` on a live ref already contained
+        //                             in master: git says "Already up to date",
+        //                             `ok` is true and `moved` false, and
+        //                             `!merged.moved` stamps the same false
+        //                             MERGE FAILED on the same closed-out row.
         //
         // The retry's lock wait is NOT in this window and needs nothing here:
         // the defer arm schedules and returns, so a retry re-enters through
         // `_queueAutoMerge` and meets the TOP gate. This one exists for the
-        // first-run entry, which never passes that gate again — sub-second
-        // rather than the retry's ten minutes, and the same defect.
+        // gates-to-merge window on either entry — sub-second, rather than the
+        // retry's ten minutes, and the same defect.
         //
         // A SYNCHRONOUS field read, and that is what makes it safe here: the pin
         // below forbids any `await` in this stretch, and re-checking a condition
