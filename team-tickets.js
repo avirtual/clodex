@@ -5038,42 +5038,37 @@ function createTicketMethods(deps, shared) {
       // suite-red arm rejects, and the catch-all throws. A stamp left behind on
       // any of them is a ticket that alarms forever about a check that passed.
       let held = false;
-      // A verify escalation is a HOLD, not an exit. Before t345 a DELIVERED one
-      // deleted `loopStep`, which left `state=done` with nothing in flight: the
-      // stall sweep skipped it forever (ticketInFlight is false), `task done`
-      // bounced as "is done, not open", and the ONLY verb that moved it was
-      // `task reject` — which bumps `reworkRound` and records a rejection nobody
-      // made. The asymmetry was inside this function: the suite-red arm below
-      // rejects and reaches the hand, these arms stranded.
+      // A verify escalation is a HOLD, not an exit. Deleting `loopStep` on a
+      // DELIVERED one leaves `state=done` with nothing in flight: the stall sweep
+      // skips it forever (ticketInFlight is false), `task done` bounces as "is done,
+      // not open", and the only verb that moves it is `task reject` — which bumps
+      // `reworkRound` and records a rejection nobody made.
       //
-      // `keepHold` already meant "something can still act on this ticket" — it
-      // was introduced for a live reviewer whose verdict may land. A pending
-      // escalation is the same claim about a different actor, so this extends
-      // that axis rather than opening a second one. The ticket stays `done` and
-      // stays at `verify`; `_taskDone` re-enters the loop from here once the
-      // condition the escalation named is fixed.
+      // `keepHold` already meant "something can still act on this ticket", so a
+      // pending escalation extends that axis rather than opening a second one. The
+      // ticket stays `done` and stays at `verify`; `_taskDone` re-enters the loop
+      // from here once the condition the escalation named is fixed.
       //
-      // STAMPED BEFORE the DM, for the reason `_stampMergeError`'s call site
-      // gives: the delivery is the arm that can fail, and the board must carry
-      // what the message may not.
-      // `recovery` is the CLASS of actor who can clear this hold, and it is a
-      // required argument on every verify arm rather than a defaulted one: the
-      // classes differ in whether the recovery terminates at all, so a defaulted
-      // class is a wrong instruction rather than a vague one. `HOLD_RECOVERY`
-      // renders it for all four readers.
+      // STAMPED BEFORE the DM, for the reason `_stampMergeError`'s call site gives:
+      // the delivery is the arm that can fail, and the board must carry what the
+      // message may not.
       //
-      // The stamp is GATED ON A VERIFY STEP. `fail()` is also the catch-all's
-      // exit, where `atStep` may be `'review'` — and a hold stamped there leaves
-      // `loopStep: 'review'` with `verifyHold` set, which the re-entry gate
-      // refuses (it requires `verify`) while the sweep tells the lead to close
-      // the ticket again: an alarm whose named recovery the handler bounces.
+      // `recovery` is the CLASS of actor who can clear this hold, and it is required
+      // on every verify arm rather than defaulted: the classes differ in whether the
+      // recovery terminates at all, so a defaulted class is a wrong instruction
+      // rather than a vague one. `HOLD_RECOVERY` renders it for all four readers.
+      //
+      // The stamp is GATED ON A VERIFY STEP. `fail()` is also the catch-all's exit,
+      // where `atStep` may be `'review'` — and a hold stamped there leaves
+      // `loopStep: 'review'` with `verifyHold` set, which the re-entry gate refuses
+      // (it requires `verify`) while the sweep tells the lead to close the ticket
+      // again: an alarm whose named recovery the handler bounces.
       //
       // The fix is HERE and not at the re-entry gate. Widening that gate to
       // `verifyHold` alone would let a throw AFTER `_spawnTicketReview` already
-      // succeeded re-run verify and put a SECOND reviewer on one branch — the
-      // failure a seat had to be retired by hand to prevent. A review-step throw
-      // keeps `keepHold` and the pre-existing "stuck at review" alarm, which is
-      // accurate there: the loop really did die mid-review.
+      // succeeded re-run verify and put a SECOND reviewer on one branch. A
+      // review-step throw keeps `keepHold` and the pre-existing "stuck at review"
+      // alarm, which is accurate there: the loop really did die mid-review.
       const fail = (step, evidence, tried, recovery) => {
         held = true;
         // ONE predicate for the stamp AND the message, deliberately a single
