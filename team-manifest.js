@@ -1,4 +1,4 @@
-// Pure leaf — no electron, injected fs. A team is defined entirely under
+// Pure leaf — no electron, injected fs. A team lives entirely under
 // ~/.clodex/teams/<name>/, never inside project files.
 
 'use strict';
@@ -9,14 +9,13 @@ const { defaultClodexHome } = require('./clodex-paths');
 
 const TEAM_FILE = 'team.json';
 const ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
-// A team name is BOTH a directory under ~/.clodex/teams/ AND the `<team>-`
-// seat-name prefix, so it must satisfy the session-name grammar (CLAUDE.md).
+// A team name is BOTH a directory name AND the `<team>-` seat-name prefix, so it
+// must satisfy the session-name grammar (CLAUDE.md).
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
-// Bumped when the role schema loses or gains a key.
 const MANIFEST_VERSION = 3;
 
-// Anything else is dropped at load with a warning, never a throw: every caller
+// Unmodeled keys are dropped at load with a warning, never a throw: every caller
 // resolves teams inside a best-effort catch, so a throw reads as "no team".
 const ROLE_KEYS = new Set(['template', 'prompt', 'brief', 'dispatch', 'cwd']);
 
@@ -24,24 +23,23 @@ const ROLE_DISPATCH_VALUES = new Set(['standing', 'spawn', 'worktree']);
 const DEFAULT_ROLE_DISPATCH = 'standing';
 
 // The legibility test asserts EDITABLE_ROLE_FIELDS ∪ this ≡ ROLE_KEYS, so a new
-// field is either reachable or listed here — never merely absent. Empty is the
-// steady state; do not delete the constant.
+// field is either reachable or listed here. Empty is the steady state; do not
+// delete the constant.
 const UNREACHABLE_ROLE_FIELDS = new Set([]);
 
 // Named rather than derived as "anything not in ROLE_KEYS": the mutators DELETE
-// these from disk, so a derived set would grow to include hand-authored keys and
-// the migration would become data loss.
+// these from disk, so a derived set would swallow hand-authored keys and the
+// migration would become data loss.
 const CUT_ROLE_FIELDS = ['instantiate', 'standing', 'tools', 'type', 'ephemeral', 'worktree'];
 
 // Membership is only a gate — "this key can be honored, so measure whether it
-// was", never "this occurrence is honored". The remedy travels with the key so
-// the map cannot grow a member whose advice nobody wrote.
+// was", never "this occurrence is honored".
 const HONORED_CUT_FIELDS = new Map([['worktree', 'dispatch: "worktree"']]);
 
 const EDITABLE_ROLE_FIELDS = ['brief', 'cwd', 'dispatch', 'prompt', 'template'];
 
 // team.json is agent-writable and these keys are trusted downstream: the mutators
-// below must never create, destroy or rename them.
+// must never create, destroy or rename them.
 const RESERVED_ROLE_KEYS = new Set(['lead', 'reviewer']);
 
 const WATCHDOG_MIN_MS = 5 * 60 * 1000;
@@ -49,15 +47,15 @@ const WATCHDOG_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 const STOCK_ROLE_DEFS = {
   lead: { prompt: 'clodex-team-lead', brief: 'team lead; holds durable context, dispatches specs, verifies and integrates the work.' },
-  // The hand's template is what gives its seat a working directory: the shipped
+  // The template is what gives the hand's seat a working directory: the shipped
   // clodex-team-hand.json writes "${TEAM_ROOT}", so a new team's hand boots in
-  // its own root rather than the project the template was authored against.
+  // its own root, not the project the template was authored against.
   hand: { prompt: 'clodex-team-hand', brief: 'implementer; executes a spec to done, one distilled report per task.', template: 'clodex-team-hand' },
   reviewer: { prompt: 'clodex-team-reviewer', brief: 'reviewer; an independent verification pass, invoked on demand.' },
 };
 
 // A field may live here only if exactly one resolver consumes it and every spawn
-// path reaches that resolver. Variation belongs in a template.
+// path reaches that resolver; variation belongs in a template.
 //
 // Fixed key order: addRole's no-op check compares JSON.stringify of two
 // normalized defs, so reordering these keys breaks equality.
@@ -107,8 +105,7 @@ function assertDispatchAllowed(roleName, def, file) {
 }
 
 // Returned rather than warned in place: normalizeRoleDef runs on the write paths
-// too, where a drop is the caller's answer, not a console line. `worktree` must
-// not be excluded to spare it the warning.
+// too, where a drop is the caller's answer, not a console line.
 function unknownRoleKeys(def) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) return [];
   return Object.keys(def).filter((k) => !ROLE_KEYS.has(k));
@@ -116,7 +113,7 @@ function unknownRoleKeys(def) {
 
 // Every mutator writes through this: dropping a key only on the way OUT leaves it
 // on disk, where `tools: ["Read"]` reads as a restriction nothing enforces. A
-// non-object is returned untouched so a malformed def still reaches the
+// non-object passes through untouched so a malformed def still reaches the
 // validators that throw on it, rather than being laundered into a valid `{}`.
 function pickRoleKeys(def) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) return def;
@@ -124,7 +121,7 @@ function pickRoleKeys(def) {
   for (const [k, v] of Object.entries(def)) {
     // Trimmed so the bytes on disk are the ones assertRoleCwd validated, which
     // checks the trimmed form. Only this field: `brief`/`prompt` are prose whose
-    // surrounding whitespace is the author's.
+    // whitespace is the author's.
     if (ROLE_KEYS.has(k)) out[k] = (k === 'cwd' && typeof v === 'string') ? v.trim() : v;
   }
   return out;
@@ -170,8 +167,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       }
       roles[roleName] = def;
     }
-    // Still conditional: a hand-authored key outside the cut set is not ours to
-    // delete, and a file carrying one has not finished migrating.
+    // Conditional: a hand-authored key outside the cut set is not ours to delete,
+    // and a file carrying one has not finished migrating.
     const clean = Object.values(roles).every((d) => unknownRoleKeys(d).length === 0);
     if (clean) raw.version = MANIFEST_VERSION;
     return raw;
@@ -225,9 +222,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     }
     const roles = {};
     // Built once and rendered twice — the warns below and formatRoster both read
-    // it. A surface that re-decides `honored` for itself is the drift this
-    // prevents. 'ignored' and 'honored' may never be merged or rendered in one
-    // line: the second's text is the negation of the first's.
+    // it; a surface that re-decides `honored` for itself is the drift this
+    // prevents. 'ignored' and 'honored' may never be merged into one line: the
+    // second's text is the negation of the first's.
     //
     // This rides on the object `team:get` returns, so it crosses into the
     // nodeIntegration renderer. `field` is safe by construction only for the two
@@ -268,9 +265,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       }
       roles[roleName] = normalized;
     }
-    // A rendering of the classification above, never a second pass over the defs:
-    // a warn that decides membership for itself is how the console and the roster
-    // disagree about one key.
     const named = (st) => droppedFields
       .filter((d) => d.status === st)
       // Keyed on status, never on `remedy`'s truthiness: an empty remedy would
@@ -492,7 +486,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       // createTeam takes an arbitrary caller `roles` object, so it is a write path
       // too: without this a new file could be born naming lead a worktree role.
       assertDispatchAllowed(k, seedRoles[k], file);
-      // Against `resolvedRoot`: there is no manifest to load yet.
       assertRoleCwd(k, seedRoles[k], resolvedRoot, file);
     }
     const manifest = {
@@ -528,7 +521,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       // write path that would not otherwise refuse a reserved role paired with
       // `dispatch: "worktree"`.
       assertDispatchAllowed(roleName, rawMint.roles[roleName], team.file);
-      // Inert and present for the reason above: no stock def carries a cwd.
       assertRoleCwd(roleName, rawMint.roles[roleName], team.root, team.file);
       atomicWrite(team.file, JSON.stringify(migrateRoles(rawMint), null, 2));
       return loadManifest(teamName);
@@ -588,8 +580,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if ('template' in clean && (typeof clean.template !== 'string' || !NAME_RE.test(clean.template))) {
       throw new Error(`role "${roleName}" template must be a library-template name matching ${NAME_RE} (${team.file})`);
     }
-    // Validated here as well as in normalizeRoleDef below: a caller that sends a
-    // junk value should be refused by the door it knocked on.
     if ('dispatch' in clean && !ROLE_DISPATCH_VALUES.has(clean.dispatch)) {
       throw new Error(`role "${roleName}" dispatch must be one of ${[...ROLE_DISPATCH_VALUES].join(', ')} (${team.file})`);
     }
@@ -792,8 +782,6 @@ function retiredFieldLines(team, role) {
     lines.push(`  retired, configures nothing: ${inert.map((f) => `${role}.${f}`).join(', ')} — this schema does not read ${inert.length > 1 ? 'them' : 'it'}`);
   }
   for (const d of mine.filter((x) => x.status === 'honored')) {
-    // Per occurrence, not folded: the remedy is per-key, so a joined line would
-    // carry one key's advice over another key's occurrence.
     lines.push(`  retired but STILL READ here: ${role}.${d.field} — deleting it CHANGES BEHAVIOUR; write \`${d.remedy}\` instead`);
   }
   return lines;
@@ -833,8 +821,6 @@ function formatRoster(team, liveSeats = [], { seat = null } = {}) {
       ? ` · live: ${live.join(', ')}`
       : ' · no live seat — role definition only, not addressable';
     lines.push(`- ${role} (${cls}${tmpl})${brief}${liveStr}`);
-    // Under the row it belongs to: a footnote at the bottom is read after the
-    // decision it exists to change.
     for (const l of retiredFieldLines(team, role)) lines.push(l);
   }
   if (roleless.length) lines.push(`also live, no role: ${roleless.join(', ')}`);
