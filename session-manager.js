@@ -4691,31 +4691,27 @@ function createSessionManager(deps) {
       }
     }
 
-    // The disabled-intent gate's payload suffix. Separate from the t166 ticket
-    // sites (_spillRejectedPayload above) for two reasons that are properties of
-    // THIS gate, not of spilling:
+    // The disabled-intent gate's payload suffix. Separate from the ticket sites
+    // (_spillRejectedPayload above) for two reasons that are properties of THIS
+    // gate, not of spilling:
     //
-    // A denial is not a mistake. Every t166 site rejects an input the sender can
+    // A denial is not a mistake. The ticket sites reject an input the sender can
     // correct — wrong id, not your ticket — so telling it to copy the body out and
     // retry is actionable. Here retrying is guaranteed to bounce identically; only
-    // the operator can change the seat's allowlist, from the local GUI. Any copy
-    // that reads as "fix it and try again" sends the sender into a loop it cannot
-    // exit, so this path says whose call it is instead.
+    // the operator can change the seat's allowlist, so this path says whose call
+    // it is instead.
     //
-    // And a denial REPEATS without bound. A t166 bounce is a rare error; a seat
-    // that has not internalised a denied verb emits one every turn, forever, and an
-    // unconditional spill would write a file each time. sweepSpilledMessages bounds
-    // spill AGE (MSG_MAX_AGE), not RATE, and engine.js's sweep header explicitly
-    // rules against adding a second expiry policy that could disagree with parking
-    // — so the rate has to be capped at the source. Hence the per-(seat, verb)
-    // budget: keyed by verb because a seat can be denied several capabilities and
-    // one must not eat another's budget, and held on the live Session so a respawn
-    // (fresh context, has not read the earlier bounces) starts over.
+    // And a denial REPEATS without bound: a seat that has not internalised a
+    // denied verb emits one every turn, forever, and an unconditional spill would
+    // write a file each time. sweepSpilledMessages bounds spill AGE, not RATE, so
+    // the rate has to be capped at the source. Hence the per-(seat, verb) budget:
+    // keyed by verb because a seat can be denied several capabilities and one must
+    // not eat another's budget, and held on the live Session so a respawn starts
+    // over.
     //
     // Past the budget the sender is still told the body is gone. The
-    // saved/not-saved outcomes stay distinguishable in the reply for the same
-    // reason _spillRejectedPayload distinguishes them: a sender that reads "saved"
-    // stops holding the only copy.
+    // saved/not-saved outcomes stay distinguishable in the reply: a sender that
+    // reads "saved" stops holding the only copy.
     _deniedIntentPayload(session, intent) {
       const { how, label } = deniedBodyDisposition(intent);
       if (how === 'none') return '';
@@ -4922,16 +4918,15 @@ function createSessionManager(deps) {
 
     // Inject a reloaded session's mandatory handoff body as turn-one, once the
     // FRESH process is actually listening. Same-process restart, so the body rides
-    // a closure variable across kill→create — no disk needed. Readiness gate: the
-    // SessionStart hook repoints run/<name>/transcript.jsonl at CLI boot, and kill()'s
-    // cleanup unlinked the old link before we respawned — so link-present = fresh
-    // CLI booted. Probe with readlinkSync, NOT session.sessionId: the watcher only
+    // a closure variable across kill→create. Readiness gate: the SessionStart hook
+    // repoints run/<name>/transcript.jsonl at CLI boot, and kill()'s cleanup
+    // unlinked the old link before we respawned — so link-present = fresh CLI
+    // booted. Probe with readlinkSync, NOT session.sessionId: the watcher only
     // sets sessionId once the transcript FILE exists, and Claude creates it lazily
     // on the first user turn — gating turn-one injection on it deadlocks and the
-    // timeout eats the handoff (bit us live 2026-07-02). Then a settle delay so
-    // the input loop is up, then inject. If the session dies or the link never
-    // appears (CLI failed to boot), bail rather than inject blind into a half-dead
-    // PTY — but surface the drop in the IPC log, not just the dev console.
+    // timeout eats the handoff. Then a settle delay so the input loop is up, then
+    // inject. If the session dies or the link never appears, bail rather than
+    // inject blind into a half-dead PTY — but surface the drop in the IPC log.
     async _injectReloadHandoff(session, handoff, timeoutMs = 30000) {
       const linkPath = pathFor(REGISTRY_DIR, session.name, 'transcript');
       const start = Date.now();
@@ -4990,23 +4985,20 @@ function createSessionManager(deps) {
       return { queued: true };
     }
 
-    // ── The plain-dm delivery latch (t388) ──────────────────────────────────
+    // The plain-dm delivery latch.
     //
-    // A dm written into an idle seat that then never starts a turn was, until
-    // now, invisible in every direction: the sender is told "queued", the
-    // operator's log shows a delivery, and mode-2004 stays on in the swallowing
-    // state, so `_bootReadySeen` latches and the queue's ready-gate is a no-op
-    // true. Every signal this process has reads healthy while the message
-    // vanishes. That is why this exists at a failure nobody can put a frequency
-    // on: you cannot measure a silent failure without a detector.
+    // A dm written into an idle seat that then never starts a turn was invisible
+    // in every direction: the sender is told "queued", the operator's log shows a
+    // delivery, and mode-2004 stays on in the swallowing state, so
+    // `_bootReadySeen` latches and the queue's ready-gate is a no-op true. Every
+    // signal this process has reads healthy while the message vanishes.
     //
     // It DETECTS AND REPORTS. It does not retry, dedupe, order, or confirm
-    // per-unit, and it must not grow any of those (DESIGN.md §3): the content of
-    // a dm is arbitrary, so a duplicate can be expensive to execute and no board
-    // record proves the copy identical; and dms arrive concurrently, so with two
-    // units outstanding the second's leading Ctrl-U destroys the first's eaten
-    // draft and one turn-edge cannot say which unit cleared. Detection is what
-    // survives those two; nothing more does.
+    // per-unit, and it must not grow any of those: the content of a dm is
+    // arbitrary, so a duplicate can be expensive to execute and no board record
+    // proves the copy identical; and dms arrive concurrently, so with two units
+    // outstanding the second's leading Ctrl-U destroys the first's eaten draft and
+    // one turn-edge cannot say which unit cleared.
     //
     // Armed ONLY from the `'dm'` arm of _handleIntent, and deliberately not from
     // inside _gatedDeliver: there it would cover all 16 delivery sites including
@@ -5034,12 +5026,10 @@ function createSessionManager(deps) {
       // one. Restarting on each push starves the detector into silence in
       // exactly its own case: a wedged seat is the seat people keep dm-ing, and
       // `urgent` short-circuits shouldHoldDm ahead of the idle band, so urgent
-      // dms keep being INJECTED into a wedged seat forever — including the
-      // resends this mechanism's own notice tells senders to make. A stream
-      // faster than one per window would push the deadline out indefinitely
-      // while entries accumulate and nobody is ever told. Each unit still gets
-      // its full window: _checkDmConfirm reports only the units that are
-      // actually ripe and re-arms for the remainder.
+      // dms keep being INJECTED into a wedged seat forever. A stream faster than
+      // one per window would push the deadline out indefinitely while entries
+      // accumulate and nobody is ever told. Each unit still gets its full window:
+      // _checkDmConfirm reports only the units that are actually ripe.
       if (!s._dmConfirmTimer) this._armDmConfirmTimer(s);
     }
 
