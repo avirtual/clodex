@@ -1967,7 +1967,7 @@ function createTicketMethods(deps, shared) {
       const reply = (msg) => this._injectText(session, `[agent:task] ${msg}${stale}`, { parkable: true });
       let team;
       try { team = resolveTeam(session.cwd); } catch { team = null; }
-      // No team is the SOLO case, not an error (t303): tickets are the primitive
+      // No team is the SOLO case, not an error: tickets are the primitive
       // and teams consume them, so a lone operator must be able to file one
       // without instantiating a team to be their own lead. `_soloContext` returns
       // a stand-in with the same shape the verbs already read.
@@ -2024,31 +2024,25 @@ function createTicketMethods(deps, shared) {
     // otherwise take its whole queue with it — the tickets name something nothing
     // answers for, and no sibling of the same role can be handed them.
     //
-    // So the pin degrades to `ticket.role` once the pinned seat is not live. It
-    // lives HERE, in the one resolver, and not in the callers: a lister that
-    // degrades while this does not makes a ticket visible but undeliverable, and
-    // `_advanceSeat` then reports a hand-off it never performed — the sibling is
-    // starved of its real next ticket and told each time that it got one.
+    // So the pin degrades to `ticket.role` once the pinned seat is not live, and it
+    // lives HERE, in the one resolver, not in the callers: a lister that degrades
+    // while this does not makes a ticket visible but undeliverable, and
+    // `_advanceSeat` then reports a hand-off it never performed.
     //
     // Gated on `!ticket.worktree`, which keeps the worktree flow's one-shot
     // property: a tree is bound to the seat holding it, so handing a worktree
     // ticket to a sibling would drop it in another branch's checkout. A dead
-    // worktree seat has its own explicit recovery, which names the two real exits
-    // rather than guessing a new holder.
+    // worktree seat has its own explicit recovery.
     //
-    // A `spawn` ticket therefore degrades like a standing one, and that is
-    // deliberate: there is no tree to misroute into, so the reason for the
-    // worktree refusal does not apply. The cost is that a one-shot TICKET can be
-    // picked up by a second one-shot seat after the first dies — accepted, since
-    // the alternative is a ticket nothing can answer for. Second consequence of
-    // the same choice, equally intended: _advanceSeat hands a CLOSING spawn seat
-    // the next ticket degrading to its role, so accepting the first ticket can
-    // archive a seat that is mid-work on a second — recoverable, since unarchiving
-    // resumes it.
+    // A `spawn` ticket therefore degrades like a standing one: there is no tree to
+    // misroute into. The accepted cost is that a one-shot ticket can be picked up by
+    // a second one-shot seat after the first dies, and that `_advanceSeat` can hand a
+    // CLOSING spawn seat the next ticket degrading to its role — so accepting the
+    // first can archive a seat mid-work on a second, recoverable by unarchiving.
     //
     // `liveNames` lets a caller in a LOOP walk the live seats once instead of once
-    // per ticket. Both reads here are filesystem work, and `_touchTicketActivity`
-    // runs on every non-idle activity edge — much hotter than the listers.
+    // per ticket: both reads here are filesystem work, and `_touchTicketActivity`
+    // runs on every non-idle activity edge.
     _ticketAssigneeSeat(team, ticket, liveNames = null) {
       const a = ticket && ticket.assignee;
       if (!a) return null;
@@ -2442,7 +2436,7 @@ function createTicketMethods(deps, shared) {
       // So this is not a case for a second watcher: there is nothing left to
       // observe. It is owed a redelivery, and REPLACE-not-stack above is untouched
       // — at most one latch is ever live, so the single-composer argument and
-      // t349's `thinking` => no-latch invariant both still hold.
+      // `thinking` => no-latch invariant both still hold.
       if (prior && prior.ticketId !== ticketId) this._oweDisplacedSpec(s, prior);
       clearTimeout(s._specConfirmTimer);
       // Where this seat's transcript ended when the write went out — the anchor the
@@ -2452,8 +2446,8 @@ function createTicketMethods(deps, shared) {
       // write". A respawned seat's transcript already holds THIS ticket's marker
       // from the incarnation that died; without the anchor every later turn matches
       // it and the latch clears over a spec the seat never re-received.
-      // A seat with NO transcript yet anchors at 0, not at -1. That is the whole
-      // t408 shape — a freshly minted seat has written nothing when its spec goes
+      // A seat with NO transcript yet anchors at 0, not at -1: a freshly
+      // minted seat has written nothing when its spec goes
       // out — and treating "no file" as an unknown baseline would answer "cannot
       // say" for every fresh dispatch, which is precisely the population this
       // mechanism exists to protect. Anchoring at 0 is also exactly right there:
@@ -2557,50 +2551,29 @@ function createTicketMethods(deps, shared) {
       if (!session._specOwedTimer) this._armSpecOwedTimer(session);
     },
 
-    // The other end of `_specOwedSpent`. The set must outlive the LATCH (that is
-    // its whole job — the redelivery arms a fresh latch whose `retried` is false)
-    // but it must not outlive the EPISODE, or a ticket dispatched to one seat
-    // twice over a long session gets one redelivery ever instead of one each time
-    // its draft is destroyed. Unpruned it grew for the life of the seat.
+    // The other end of `_specOwedSpent`. The set must outlive the LATCH (the
+    // redelivery arms a fresh latch whose `retried` is false) but not the EPISODE,
+    // or a ticket dispatched to one seat twice gets one redelivery ever instead of
+    // one each time its draft is destroyed.
     //
-    // THE RULE: the budget is spent on a DESTROYABLE write, and released once that
-    // write is no longer at risk. The set does not exist to prove the seat READ
-    // anything — it exists to stop a third copy entering a composer that swallowed
-    // two (_checkSpecConfirm's escalation says so in as many words). So the three
+    // THE RULE: the budget is spent on a DESTROYABLE write and released once that
+    // write is no longer at risk — not on proof the seat READ anything. The three
     // release sites are the three ways a write stops being destroyable:
     //   receipt, attributed turn      (_emitActivity)
     //   receipt, deadline re-probe    (_checkSpecConfirm)
     //   park                          (_armSpecConfirm's non-injected branch)
-    // The park site fires for a FRESH dispatch that parks too, not only a
-    // redelivery, and that is safe rather than merely harmless: a parked arm
-    // creates no latch, so nothing is displaceable until some later INJECTED write
-    // arms one — and that write is a genuine new destroyable copy.
-    // Receipt qualifies because the seat provably holds the write. A PARK qualifies
-    // for a different reason and just as strongly: the bytes are a file on disk, no
-    // later Ctrl-U can destroy them, and the park's own drains own them from there.
-    // Reading the rule as "receipt and nothing else" is what left every ticket whose
-    // first repair parked escalating on a budget spent in the previous episode.
+    // A park qualifies as strongly as a receipt: the bytes are a file on disk, no
+    // later Ctrl-U can destroy them. Reading the rule as "receipt and nothing
+    // else" left every ticket whose first repair parked escalating on a budget
+    // spent in the previous episode.
     //
-    // Deliberately NOT called on the escalation exits. An escalation is the
-    // opposite finding — two writes produced no turn, with the second still at risk
-    // in the composer — and restoring the budget there would let the next
-    // displacement spray a third copy at a composer that has demonstrably swallowed
-    // both, against the rule the whole latch rests on.
-    // The lead's re-dispatch after an escalation is not stranded by that: if the
-    // seat turns, this prunes and the next episode is fresh; if it stays silent,
-    // escalating again is the correct outcome.
+    // Deliberately NOT called on the escalation exits: there two writes produced no
+    // turn with the second still at risk, so restoring the budget would spray a
+    // third copy at a composer that has demonstrably swallowed both.
     //
     // Keyed on ONE ticket+kind, never a wholesale clear. A turn taken over t2 is no
-    // evidence at all about the t1 draft that t2's Ctrl-U destroyed, and t1's key is
-    // the one thing bounding a ticket the seat has still never seen.
-    //
-    // At the receipt sites this rides the latch clear rather than re-testing the
-    // probe for `=== true`, and the three-valued care the drain's drop needs is
-    // inverse in direction here: there a wrong YES SWALLOWS a real redelivery, while
-    // a generous prune at worst grants some future episode the same single budget an
-    // undisplaced dispatch already gets. It cannot reopen the loop either — a
-    // redelivery loop needs a LIVE latch to displace, and every releasing path has
-    // just cleared one or (the park) armed none at all.
+    // evidence about the t1 draft that t2's Ctrl-U destroyed, and t1's key is the
+    // one thing bounding a ticket the seat has still never seen.
     _pruneOwedSpent(session, u) {
       if (!session._specOwedSpent || !u) return;
       session._specOwedSpent.delete(`${u.ticketId}:${u.kind}`);
@@ -2741,22 +2714,16 @@ function createTicketMethods(deps, shared) {
 
     // A reviewer seat that never takes its first turn, and nothing says so.
     //
-    // Measured twice: `clodex-reviewer-365-r2` sat alive and idle for ~30 minutes,
-    // `clodex-reviewer-375-r1` for 4 — the second caught by the operator, not by
-    // any alarm. Both had their scope: since the scope moved into the seat's
-    // system prompt it cannot be lost in delivery, so what goes missing is the
-    // contentless START nudge, and a reviewer with no nudge has no other traffic
-    // to earn a turn from. The park's own two drain edges (boot-ready rising edge,
-    // `_armParkedDrainFallback`) are the recovery for that, and when both miss the
-    // seat is silent and permanent with nothing watching.
+    // The scope lives in the seat's system prompt and cannot be lost in delivery,
+    // so what goes missing is the contentless START nudge — and a reviewer with no
+    // nudge has no other traffic to earn a turn from. The park's two drain edges
+    // (boot-ready rising edge, `_armParkedDrainFallback`) are the recovery; when
+    // both miss, the seat is silent and permanent with nothing watching.
     //
     // The tell is the TRANSCRIPT, not the clock: the hook creates
     // `run/<name>/transcript.jsonl` as a symlink at spawn and its target file only
-    // appears once the CLI writes a turn. Measured in both directions on the same
-    // night — t375's target still absent 4 minutes after the link was created,
-    // while a healthy `clodex-reviewer-371-r1` had 254KB with a moving mtime
-    // inside five. So absence of the target is not a proxy for "no first turn",
-    // it is the same event.
+    // appears once the CLI writes a turn. So absence of the target is not a proxy
+    // for "no first turn", it is the same event.
     //
     // `activityState` is required as well, and it is the conservative term: a seat
     // whose hook never installed would have no transcript however hard it works,
@@ -2770,12 +2737,10 @@ function createTicketMethods(deps, shared) {
     // to begin twice. That is what makes this safe where a spec redelivery needs
     // _checkSpecConfirm's whole latch argument to be.
     //
-    // Measured, 3/3, against the real CLI (scripts/t381-injection-repro): a seat
+    // Measured 3/3 against the real CLI (scripts/t381-injection-repro): a seat
     // sitting in a single modal swallows one delivery WHOLE — text and Enter both —
-    // and the NEXT delivery lands. That is exactly the recovery this check used to
-    // ask the lead to perform by hand, and the operator's one-poke rescue of
-    // clodex-reviewer-377-r1 is the same event. Chained modals (first-run
-    // onboarding) still defeat it; that is a boot-time shape, not this one.
+    // and the NEXT delivery lands. Chained modals (first-run onboarding) still
+    // defeat it; that is a boot-time shape, not this one.
     _armReviewStartCheck(seatName, leadName) {
       const s = this.sessions.get(seatName);
       // Claude-only, because the artifact is: `transcript.jsonl` is written by the
@@ -2876,7 +2841,7 @@ function createTicketMethods(deps, shared) {
     },
 
     // The same probe, read as a NUMBER instead of a boolean. Split out rather
-    // than duplicated: t384's liveness test needs growth between two sweeps, and
+    // than duplicated: the liveness test needs growth between two sweeps, and
     // a second resolver would be free to disagree with this one about where a
     // seat's transcript is — silently, and in the direction that alarms.
     //
@@ -2901,7 +2866,7 @@ function createTicketMethods(deps, shared) {
     // from the previous incarnation — that is how it got the spec the first time —
     // so an unanchored search attributes every later turn to the stale copy, and
     // the replay path (the one this ticket's stamp fix touches) is exactly where
-    // that bites: t156's whole case is a respawned seat. Callers pass the size
+    // that bites: a respawned seat is the whole case. Callers pass the size
     // captured when the latch armed, which _armSpecConfirm takes at WRITE time —
     // after any resume content exists and before this write can be consumed.
     //
@@ -2950,7 +2915,7 @@ function createTicketMethods(deps, shared) {
     // _emitActivity): reaching a turn over the delivered text means the seat
     // submitted, and submitting is exactly what a lost write prevents. A turn the
     // transcript cannot attribute leaves the latch armed, so this still fires for a
-    // seat that turned for something else — t408's shape.
+    // seat that turned for something else.
     //
     // The three shapes that must NOT alarm are silent for structural reasons rather
     // than tuned ones:
@@ -3139,10 +3104,9 @@ function createTicketMethods(deps, shared) {
     },
 
     // Every open ticket resolving to `seatName`, oldest first — advance takes the
-    // head, replay takes the whole list. ONE resolver on purpose: a second copy of
-    // the role-or-name match would let advance and replay disagree about which
-    // tickets are a seat's, and the disagreement would be invisible (each would
-    // look right in isolation).
+    // head, replay takes the whole list. ONE resolver on purpose: a second copy
+    // of the role-or-name match would let advance and replay disagree about which
+    // tickets are a seat's, invisibly.
     // Order is FIFO by openedAt, ties broken by numeric id — array order is not
     // deterministic for two tickets minted in the same ms.
     // Backlog (`assignee == null`) is excluded here, so it can never be replayed
@@ -3154,10 +3118,9 @@ function createTicketMethods(deps, shared) {
     // would make dispatch order depend on it.
     // The degraded pin (a dead seat's ticket falling back to its role) is NOT a
     // second clause here: it is `_ticketAssigneeSeat`'s, and this asks that
-    // resolver rather than re-deriving liveness. A copy of the rule here could
-    // disagree with the one delivery uses, and the disagreement is invisible —
-    // this would list a ticket the delivery then refuses, and `_advanceSeat`
-    // would report a hand-off that never happened.
+    // resolver rather than re-deriving liveness — a copy could list a ticket the
+    // delivery then refuses, and `_advanceSeat` would report a hand-off that
+    // never happened.
     // `ticketStarted` is the third exclusion, alongside backlog and parked, and it
     // is here rather than in the badge filters on purpose. Both callers DISPATCH
     // what this returns — advance pushes the head at a seat that just closed one,
@@ -3437,7 +3400,7 @@ function createTicketMethods(deps, shared) {
       // A recorded branch WINS over the derived one: a branch is an identity
       // minted once, not a view of the ticket's current first line. Re-deriving
       // here is safe only while the slug's inputs never move, and they move two
-      // ways — the slug rule itself changed (t463), and `_taskRespec` / the
+      // ways — the slug rule itself changed, and `_taskRespec` / the
       // viewer's `editSpec` rewrite the spec TEXT. When _existingTicketTree
       // rejects the recorded tree (prunable, locked, no .git, held), the fresh
       // createWorktree below takes THIS name, so a re-derived one forks a second
@@ -4167,7 +4130,7 @@ function createTicketMethods(deps, shared) {
             // from the template here. A ticket seat is one Clodex spawns on the
             // lead's behalf with no operator checkbox behind it, and a template is
             // agent-writable — so honoring it would let a template silently blind
-            // the wire that measures what this seat costs. Pinned by t189.
+            // the wire that measures what this seat costs.
             shape.env, true,
           );
           this._applyTemplatePersistence(seat.name, shape.tpl);
@@ -4267,9 +4230,8 @@ function createTicketMethods(deps, shared) {
           if (unpinned) unpin();
           log.error('intent', `ticket ${ticket.id} seat ${seat.name} failed: ${err.message}`);
           // Branched on the predicate rather than asserting the un-pin happened:
-          // it is now skipped in more states than it used to be, and the commonest
-          // failure (create() seats, a later step throws) keeps the pin while this
-          // line used to say the ticket had gone back to the role.
+          // it is skipped in several states, and the commonest failure (create()
+          // seats, a later step throws) keeps the pin.
           // "whose tree is kept" is only true when there IS one. A spawn seat's
           // pin is kept for the same reason (the record outlives the failure and
           // must not be minted over), but naming a tree it never had tells the
@@ -4560,7 +4522,7 @@ function createTicketMethods(deps, shared) {
       // reason start does — an assigned-but-unstamped ticket is still `start`able,
       // and starting it mints a second seat onto the tree this assign just sent a
       // hand into. Not re-stamped when it is already set: this is the moment work
-      // FIRST started, and a re-send must not restate it (§4/§5 measure from it).
+      // FIRST started, and a re-send must not restate it.
       if (!ticketStarted(ticket)) ticket.startedAt = ticket.lastActivityAt;
       // Stay pinned to the live seat. Un-pinning would route the spec, and the
       // WORK IN: line naming this ticket's tree, to whichever seat answers for the
@@ -4621,7 +4583,7 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task done', report)}`); return; }
-      // RE-ENTRY, the recovery from a verify escalation (t345). The ticket is
+      // RE-ENTRY, the recovery from a verify escalation. The ticket is
       // already `done` and still held at `verify` with a `verifyHold` on the
       // record: the loop told the lead a check failed and stopped there. Closing
       // again is how the hand says the condition is fixed, and it re-runs the
@@ -4834,42 +4796,37 @@ function createTicketMethods(deps, shared) {
       // suite-red arm rejects, and the catch-all throws. A stamp left behind on
       // any of them is a ticket that alarms forever about a check that passed.
       let held = false;
-      // A verify escalation is a HOLD, not an exit. Before t345 a DELIVERED one
-      // deleted `loopStep`, which left `state=done` with nothing in flight: the
-      // stall sweep skipped it forever (ticketInFlight is false), `task done`
-      // bounced as "is done, not open", and the ONLY verb that moved it was
-      // `task reject` — which bumps `reworkRound` and records a rejection nobody
-      // made. The asymmetry was inside this function: the suite-red arm below
-      // rejects and reaches the hand, these arms stranded.
+      // A verify escalation is a HOLD, not an exit. Deleting `loopStep` on a
+      // DELIVERED one leaves `state=done` with nothing in flight: the stall sweep
+      // skips it forever (ticketInFlight is false), `task done` bounces as "is done,
+      // not open", and the only verb that moves it is `task reject` — which bumps
+      // `reworkRound` and records a rejection nobody made.
       //
-      // `keepHold` already meant "something can still act on this ticket" — it
-      // was introduced for a live reviewer whose verdict may land. A pending
-      // escalation is the same claim about a different actor, so this extends
-      // that axis rather than opening a second one. The ticket stays `done` and
-      // stays at `verify`; `_taskDone` re-enters the loop from here once the
-      // condition the escalation named is fixed.
+      // `keepHold` already meant "something can still act on this ticket", so a
+      // pending escalation extends that axis rather than opening a second one. The
+      // ticket stays `done` and stays at `verify`; `_taskDone` re-enters the loop
+      // from here once the condition the escalation named is fixed.
       //
-      // STAMPED BEFORE the DM, for the reason `_stampMergeError`'s call site
-      // gives: the delivery is the arm that can fail, and the board must carry
-      // what the message may not.
-      // `recovery` is the CLASS of actor who can clear this hold, and it is a
-      // required argument on every verify arm rather than a defaulted one: the
-      // classes differ in whether the recovery terminates at all, so a defaulted
-      // class is a wrong instruction rather than a vague one. `HOLD_RECOVERY`
-      // renders it for all four readers.
+      // STAMPED BEFORE the DM, for the reason `_stampMergeError`'s call site gives:
+      // the delivery is the arm that can fail, and the board must carry what the
+      // message may not.
       //
-      // The stamp is GATED ON A VERIFY STEP. `fail()` is also the catch-all's
-      // exit, where `atStep` may be `'review'` — and a hold stamped there leaves
-      // `loopStep: 'review'` with `verifyHold` set, which the re-entry gate
-      // refuses (it requires `verify`) while the sweep tells the lead to close
-      // the ticket again: an alarm whose named recovery the handler bounces.
+      // `recovery` is the CLASS of actor who can clear this hold, and it is required
+      // on every verify arm rather than defaulted: the classes differ in whether the
+      // recovery terminates at all, so a defaulted class is a wrong instruction
+      // rather than a vague one. `HOLD_RECOVERY` renders it for all four readers.
+      //
+      // The stamp is GATED ON A VERIFY STEP. `fail()` is also the catch-all's exit,
+      // where `atStep` may be `'review'` — and a hold stamped there leaves
+      // `loopStep: 'review'` with `verifyHold` set, which the re-entry gate refuses
+      // (it requires `verify`) while the sweep tells the lead to close the ticket
+      // again: an alarm whose named recovery the handler bounces.
       //
       // The fix is HERE and not at the re-entry gate. Widening that gate to
       // `verifyHold` alone would let a throw AFTER `_spawnTicketReview` already
-      // succeeded re-run verify and put a SECOND reviewer on one branch — the
-      // failure a seat had to be retired by hand to prevent. A review-step throw
-      // keeps `keepHold` and the pre-existing "stuck at review" alarm, which is
-      // accurate there: the loop really did die mid-review.
+      // succeeded re-run verify and put a SECOND reviewer on one branch. A
+      // review-step throw keeps `keepHold` and the pre-existing "stuck at review"
+      // alarm, which is accurate there: the loop really did die mid-review.
       const fail = (step, evidence, tried, recovery) => {
         held = true;
         // ONE predicate for the stamp AND the message, deliberately a single
@@ -4990,12 +4947,10 @@ function createTicketMethods(deps, shared) {
           // (intent-registry parseTask), and the ticket is already `done` here,
           // which `_taskDone` refuses. `task reject` is what reopens it.
           // The FIX belongs to the `spec` recovery arm rendered below this
-          // evidence, and must not be restated with a different route: this arm
-          // used to say "reject, then re-file" while the arm two lines down said
-          // "do NOT reject — edit the spec in place, then close again". Two
-          // contradictory instructions in one message, one of which counts a
-          // rework round against a hand that did not write the spec. Name the
-          // DEFECT here; the route is the arm's job.
+          // evidence, and must not be restated with a different route: two
+          // contradictory instructions in one message can count a rework round
+          // against a hand that did not write the spec. Name the DEFECT here;
+          // the route is the arm's job.
           const fix = ticket.taskDir
             ? `The path is named but escapes the projects root.`
             : `Its spec names no \`tasks/…\` path on any line.`;
@@ -5824,46 +5779,28 @@ function createTicketMethods(deps, shared) {
       return { ok: true, dir: taskDir, error: null };
     },
 
-    // The ticket's task dir as it is SHOWN to an agent — the one renderer behind
-    // both the hand's dispatch and the reviewer's scope.
+    // ONE function, not two call sites passing the same arguments: the invariant is
+    // that the hand's dispatch and the reviewer's scope AGREE — same directory,
+    // same rule, under the same condition. Two sites that agree today diverge the
+    // moment one is edited.
     //
-    // ONE function, not two call sites passing the same arguments, because the
-    // invariant is that the two renderings AGREE: same directory, same rule,
-    // under the same condition. Two sites that agree today diverge the moment
-    // one is edited — which is exactly how this bug existed, with dispatch
-    // resolving the pointer while the scope passed `t.taskDir` verbatim into a
-    // reviewer whose cwd is the repo the decoy lives in.
+    // `rule` is empty for a `~`- or `/`-prefixed pointer: that one already means
+    // the same thing to an agent as it does here. The gate lives in
+    // taskDirRuleClause, beside the prose it gates.
     //
-    // Resolution and the RULE CLAUSE are two decisions, deliberately — and the
-    // three fields exist because the two renderers need different combinations
-    // of them, while the CONTENT of each must be identical:
-    //  - `dir` resolves whenever it can. An already-absolute pointer resolves to
-    //    itself, so there is never a reason to show a reviewer the raw one. The
-    //    scope always names a task dir, so this is what it uses.
-    //  - `rule` is the FACT, and it is empty for a `~`- or `/`-prefixed pointer:
-    //    that one already means the same thing to an agent as it does here, so
-    //    the clause would be telling ~100 live seats what they already know.
-    //    The gate lives in taskDirRuleClause, beside the prose it gates.
-    //  - `line` is the dispatch's whole rendering and is empty on the same
-    //    condition, because there it is the entire line rather than a suffix:
-    //    every dispatch already spills past the 500-byte threshold, so a
-    //    redundant line costs each of those seats a Read turn. The scope pays no
-    //    such cost — it names the dir regardless — which is why it takes `dir`
-    //    and `rule` rather than `line`.
-    //    The `rule ?` guard below looks like it duplicates the clause computed
-    //    inside ticketTaskDirLine, and must stay: the helper self-gates only the
-    //    clause, so without the outer guard a `~`/absolute pointer still emits a
-    //    bare `TASK DIR: <dir>` line to EVERY dispatch. The guard is what
-    //    suppresses the whole line, not a redundant recomputation.
-    // What must NOT differ is the wording of the fact, and that is why both come
-    // from here. `line` additionally carries "so create it", which `rule` must
-    // not: the scope's reader is a read-only seat.
+    // The `rule ?` guard below looks like it duplicates the clause computed inside
+    // ticketTaskDirLine, and must stay: the helper self-gates only the clause, so
+    // without the outer guard a `~`/absolute pointer still emits a bare
+    // `TASK DIR: <dir>` line to EVERY dispatch.
     //
-    // Through _ticketDiffDest, so the confinement guarding the diff and
-    // COST.json guards this too: a second resolver could name a directory
-    // Clodex itself would refuse to write, which is worse than naming none. A
-    // refusal drops the rendering and NEVER fails the caller — neither a
-    // dispatch nor a spawn may die over a display line.
+    // `line` additionally carries "so create it", which `rule` must not: the
+    // scope's reader is a read-only seat.
+    //
+    // Through _ticketDiffDest, so the confinement guarding the diff and COST.json
+    // guards this too: a second resolver could name a directory Clodex itself would
+    // refuse to write, which is worse than naming none. A refusal drops the
+    // rendering and NEVER fails the caller — neither a dispatch nor a spawn may die
+    // over a display line.
     _ticketTaskDirRender(team, ticket) {
       const raw = String((ticket && ticket.taskDir) || '').trim();
       if (!raw) return { dir: null, rule: '', line: '' };
@@ -5962,9 +5899,8 @@ function createTicketMethods(deps, shared) {
         : `${(head && head.branch) || (ticket.worktree && ticket.worktree.branch) || 'unknown'} (commit unresolved)`;
       // ITS OWN LINE, not a suffix on `# head:`. `# head:` is the field a reader
       // greps to learn which tree ran — putting both shas there makes the answer
-      // depend on parsing the prose between them, which is the ambiguity t518
-      // removed rather than a new way to state it. Kept adjacent because it
-      // qualifies `# head:`.
+      // depend on parsing the prose between them — an ambiguity, not a new
+      // way to state it. Kept adjacent because it qualifies `# head:`.
       //
       // Absent, not `no`, on the unmoved run: a line that appears only when
       // something happened is read; one that says `no` every time is skipped,
@@ -5984,13 +5920,13 @@ function createTicketMethods(deps, shared) {
       // side of it can see the moment measurement began, and the queued read is
       // exactly the one the lock wait can invalidate. A line claiming the start
       // sha ran would assert most confidently on the runs where it is most
-      // likely wrong, which is t518's harmful direction wearing a new label.
+      // likely wrong.
       // What the two reads DO know is the pair and which end each came from.
       //
       // Gated on `suite.head`, the CARRIED field, not on `headSha` — which may
       // have come from the write-time fallback re-read above. This line says
       // "HEAD was X when this run was QUEUED", a claim only the pre-run capture
-      // can support; sourcing X from a report-time read would state t518's
+      // can support; sourcing X from a report-time read would state that
       // harmful direction as fact.
       //
       // The blocked condition is CONCRETE, not defensive padding: the capture
@@ -6145,7 +6081,7 @@ function createTicketMethods(deps, shared) {
     // drains — so `parked` counts as reached and `held` does not.
     //
     // On failure the hold STAYS, which is what hands the ticket to the watchdog:
-    // it re-surfaces once the lead is reachable, which is the whole point of §E.
+    // it re-surfaces once the lead is reachable.
     //
     // `keepHold` is for the arms that escalate while a REVIEWER SEAT IS STILL
     // LIVE and still carries `reviewTicket`. Releasing the hold there looks
@@ -6281,7 +6217,7 @@ function createTicketMethods(deps, shared) {
       return { seatName: null, entry: null, attribution: 'unknown' };
     },
 
-    // COST.json — the per-ticket rollup (DESIGN.md §7.1), written at close.
+    // COST.json — the per-ticket rollup, written at close.
     //
     // Deferred and fully best-effort: the commit count shells out to git, and a
     // rollup is a measurement, never a reason a ticket fails to close. Every
@@ -6403,7 +6339,7 @@ function createTicketMethods(deps, shared) {
       }
       ticket.state = 'open';
       ticket.closedAt = null;
-      ticket.closedBy = null;          // cleared alongside closedAt — it is open again
+      ticket.closedBy = null;
       // A reopened ticket is not terminal. Left set, `ticketTerminalReason` keeps
       // reading it as closed out and refuses a `for <id>` reminder binding on the
       // rework round, which is a round the reminder is wanted for.
@@ -6492,10 +6428,6 @@ function createTicketMethods(deps, shared) {
         reply(`error: respec replaces the spec of an OPEN ticket; ${intent.id} is ${ticket.state}${route}${this._spillRejectedPayload(session, 'task respec', spec)}`);
         return;
       }
-      // The supersession record, so the board can show the spec CHANGED and by whom
-      // — an open ticket silently rewritten into different work is the loss this
-      // verb exists to prevent.
-      //
       // The full superseded BODY is kept, not the title alone. A respec is usually
       // written as a delta against the spec the seat is holding, and the line below
       // is the only copy of what it was a delta against: once it is gone, a REPLAY
@@ -6832,43 +6764,33 @@ function createTicketMethods(deps, shared) {
         // silent ERASURE is. A mark that arrived mid-accept survives on the board
         // instead of vanishing with the branch.
         if (closedOut && ticket.mergeError && String(ticket.mergeError) === actedStamp) delete ticket.mergeError;
-        // `mergeWaiting` goes on the same gate, and it is a SECOND clearing site
-        // for a field whose own clear lives in `_autoMergeTicket`'s finally.
-        // That finally runs on every exit, the deferring pass included — but on
-        // that pass `deferred` is true and it declines to clear, which is the
-        // whole point of the flag. So what a deferred merge is left waiting for
-        // is not the finally running but a LATER pass reaching it with the flag
-        // false, and that needs the retry to wake: up to 30s per attempt, ten
-        // minutes across them. A crash or an [agent:reboot] inside that window
-        // freezes `(merge waiting: suite-in-flight)` onto an accepted row, and
-        // nothing re-examines the field at boot.
+        // `mergeWaiting` goes on the same gate, and it is a SECOND clearing site for
+        // a field whose own clear lives in `_autoMergeTicket`'s finally. That finally
+        // declines to clear on the deferring pass, so what a deferred merge waits for
+        // is a LATER pass reaching it with the flag false — and that needs the retry
+        // to wake. A crash or an [agent:reboot] inside that window freezes
+        // `(merge waiting: suite-in-flight)` onto an accepted row, and nothing
+        // re-examines the field at boot.
         //
-        // It does not weaken the invariant that finally states. That invariant
-        // is over the EXITS OF `_autoMergeTicket` — set on the defer arm, clear
-        // on every other way out — and this clear is not an exit of it; no arm
-        // is added there and none stops clearing. Nor can a merge pass put the
-        // field back afterwards, by either entry: one that has not started meets
-        // the top gate, and one already past it re-reads at the defer arm and
-        // declines to stamp (t551). Either way the pass runs its own finally
-        // over an already-absent field, which `_stampMergeWaiting` treats as a
-        // no-op rather than a save.
+        // It does not weaken the invariant that finally states: that invariant is over
+        // the EXITS OF `_autoMergeTicket`, and this clear is not one of them. Nor can a
+        // merge pass put the field back — one that has not started meets the top gate,
+        // one already past it declines to stamp at the defer arm.
         //
-        // UNCONDITIONAL, unlike the compare-and-clear above it, and the
-        // asymmetry is not an oversight in either direction:
-        //   `mergeError` carries a distinguishing value, so comparing against
-        //   what this accept read is what keeps it from erasing a DIFFERENT
-        //   stamp that landed mid-accept and is still true of the repository.
-        //   `mergeWaiting` has one writer that writes one value, so a compare
-        //   cannot tell a stamp this accept never saw from the one it did —
-        //   the conditionality is not expressible for this field.
-        //   A stale value here is also not a claim a human must answer: the
-        //   retry's own `closedOut` gate returns before any git work and logs
-        //   the merge ABANDONED, so past a closing accept no `mergeWaiting`
-        //   describes a merge still able to produce a commit.
-        // The gate is `closedOut` for the reason the line above it is: on
-        // `!m.ok` the merge fact could not be measured, on `!m.merged` it was
-        // measured and the branch has not landed. A retry may still land either,
-        // so clearing there would erase a claim that is live and true.
+        // UNCONDITIONAL, unlike the compare-and-clear above it, and the asymmetry is
+        // deliberate: `mergeError` carries a distinguishing value, so comparing against
+        // what this accept read keeps it from erasing a DIFFERENT stamp that landed
+        // mid-accept and is still true. `mergeWaiting` has one writer writing one
+        // value, so a compare cannot tell a stamp this accept never saw from the one it
+        // did — the conditionality is not expressible for this field. A stale value is
+        // also not a claim a human must answer: the retry's own `closedOut` gate returns
+        // before any git work, so past a closing accept no `mergeWaiting` describes a
+        // merge still able to produce a commit.
+        //
+        // The gate is `closedOut` for the reason the line above it is: on `!m.ok` the
+        // merge fact could not be measured, on `!m.merged` it was measured and the
+        // branch has not landed. A retry may still land either, so clearing there
+        // would erase a claim that is live and true.
         if (closedOut) delete ticket.mergeWaiting;
         // Re-read: the teardown below stamped revival onto its own copy.
         const fresh = ticketsStore.load(team.root);
@@ -7088,12 +7010,11 @@ function createTicketMethods(deps, shared) {
       // tree at all: the loop merges, its post-merge suite goes red, and it undoes
       // the merge with `git revert -m 1` — which ADDS a commit rather than
       // removing one. The merge commit stays an ancestor, `isMerged` still says
-      // merged, and the teardown below then destroyed the tree and deleted the
-      // branch holding the only copy of the work. It happened on t537: the branch
-      // was deleted and the change survived only as a reverted commit in the
-      // reflog. `revert-blocked` is the same shape without the revert — the merge
-      // is left standing on a red or unverified master for a human to undo — so an
-      // accept there reports a clean landing AND removes the tree that undo needs.
+      // merged, and the teardown below then destroys the tree and deletes the
+      // branch holding the only copy of the work. `revert-blocked` is the same
+      // shape without the revert — the merge is left standing on a red or
+      // unverified master for a human to undo — so an accept there reports a clean
+      // landing AND removes the tree that undo needs.
       //
       // The evidence is the loop's OWN stamp, not a content comparison of the
       // branch's changed files against the base. That comparison answers the
@@ -7139,9 +7060,8 @@ function createTicketMethods(deps, shared) {
         // …but `_stampTicketRevival` is write-once (`!t.revival`), so on a ticket
         // ALREADY stamped by an earlier retire the call above writes nothing, and
         // the trace would be missing on exactly the tickets that have been round
-        // the loop before. A caveat in the prompt would document that hole rather
-        // than close it, and the comment above would still over-claim; this is one
-        // targeted field write, the same shape as the merged arm's supersede.
+        // the loop before. This is one targeted field write, the same shape as
+        // the merged arm's supersede.
         // Only `mergeVetoed` is touched — the earlier stamp's seat, session id and
         // branch are the record of who did the work and must not be overwritten.
         try {
@@ -7192,16 +7112,14 @@ function createTicketMethods(deps, shared) {
         //                   AFTER `mergeNoFf` returned — either failing outright
         //                   (aborted, nothing committed) or exiting 0 with HEAD
         //                   unmoved, whose own message reads `no merge commit
-        //                   exists`. The load-bearing half holds either way; the
-        //                   causal half is what over-claimed.
+        //                   exists`. The load-bearing half holds either way.
         //
         // Asking "does master still carry that merge?" on revert-blocked is worse
         // than useless: it answers YES BY CONSTRUCTION, the lead reads a confirmed
         // landing, the second accept deletes the branch, and then they perform the
         // revert the loop asked them for — leaving the work in neither master's
-        // tree nor any ref. That is t537 reached through this arm's own advice,
-        // and the comment above already says so; this sentence used to contradict
-        // it. The owed action there is a DECISION about the revert, not a check.
+        // tree nor any ref. The owed action there is a DECISION about the revert,
+        // not a check.
         //
         // The VETO stays broad on purpose — an allowlist is a list someone must
         // maintain, and a step added later would default to not vetoing, which is
@@ -7385,8 +7303,7 @@ function createTicketMethods(deps, shared) {
         }
       }
       // `skipped` before `ok`: the skip returns ok:true so nothing downstream
-      // reads it as a failure, but reporting it as "deleted" would be the same
-      // over-claim this ticket exists to remove — and here it would send the
+      // reads it as a failure, but reporting it as "deleted" would send the
       // lead looking for a ref that is deliberately still there.
       parts.push(del.skipped ? `branch ${branch} was KEPT (the accept above is unfinished)`
         : del.ok ? `branch ${branch} deleted`
@@ -7668,9 +7585,8 @@ function createTicketMethods(deps, shared) {
     // guessing. The alarm's whole job is to be trustworthy enough to act on
     // without a hand probe; a wrong field spends that trust to save a git call.
     //
-    // `dirty` is never returned without `tool` being attempted, because dirty
-    // alone is what the lead reasoned from on t312 and it is identical for a seat
-    // writing and a seat killed mid-write.
+    // `dirty` is never returned without `tool` being attempted: dirty alone is
+    // identical for a seat writing and a seat killed mid-write.
     async _stallEvidence(team, ticket) {
       const out = { tool: null, commits: null, dirty: null, apiError: null };
       const seat = this._ticketAssigneeSeat(team, ticket);
@@ -7683,7 +7599,7 @@ function createTicketMethods(deps, shared) {
           // read from two different moments, presented as one reading.
           const tail = readTail(fs, fs.realpathSync(link));
           out.tool = lastToolFrom(tail);
-          // Measured (t389, ~97k transcripts): the error record sits at most
+          // Measured: the error record sits at most
           // 2957 bytes from EOF when a transcript ends on one — p90 1985 —
           // so the existing 64KB window reaches it in every observed case and
           // is not widened for it.
@@ -8076,19 +7992,15 @@ function createTicketMethods(deps, shared) {
         // UNSTARTED is the exemption, not unassigned: `add` writes the ROLE NAME
         // into `assignee`, so a ticket the lead filed as backlog and never
         // dispatched is indistinguishable from a live one under an `assignee`
-        // test. Seven such tickets alarmed in one burst before ticketStarted
-        // drew the line here — and against the t322 ladder each would have gone
-        // on repeating at 30m/60m/120m/240m forever, since no seat exists to go
-        // quiet. `parked` stays as its own term: a parked ticket can already
-        // have started, so ticketStarted does not cover it. The `assignee` term
-        // stays too, narrowed to what it was always meant to catch: a legacy
-        // record with no `startedAt` key reads as STARTED, so an unassigned one
-        // would newly alarm about a seat that cannot be resolved.
-        // `done` stopped being terminal when the loop started running past it: a
-        // done ticket with a live `loopStep` has checks running or a review in
-        // flight, and if that step dies nothing else ever nudges anyone. The
-        // predicate is shared with the stamp below and with the verdict landing —
-        // see ticketInFlight; divergence between them is silent, not loud.
+        // test. `parked` stays as its own term: a parked ticket can already have
+        // started, so ticketStarted does not cover it. The `assignee` term stays
+        // too: a legacy record with no `startedAt` key reads as STARTED, so an
+        // unassigned one would newly alarm about a seat that cannot be resolved.
+        // `done` is not terminal while the loop runs past it: a done ticket with a
+        // live `loopStep` has checks running or a review in flight, and if that step
+        // dies nothing else nudges anyone. The predicate is shared with the stamp
+        // below and with the verdict landing — see ticketInFlight; divergence
+        // between them is silent, not loud.
         if (!ticketInFlight(t) || t.assignee == null || !ticketStarted(t) || t.parked) continue; // unstarted/unassigned/parked/closed exempt
         const last = t.lastActivityAt || t.openedAt || now;
         if (now - last < stallMs) continue;
@@ -8097,10 +8009,7 @@ function createTicketMethods(deps, shared) {
         // there, and asking whether a seat is live would classify every loop-held
         // ticket as unassigned and replace the alarm that names the stuck step.
         const loopHeld = t.state === 'done' && !!t.loopStep;
-        // ORPHAN: the assignee resolves to no live seat. Measured on t376 — a
-        // retired hand's ticket alarmed "hand quiet 31m", then "STILL stalled
-        // (repeat 1): hand quiet 1h" about a seat that had not existed for an hour.
-        // Nothing was quiet; nothing was there.
+        // ORPHAN: the assignee resolves to no live seat.
         //
         // Resolution goes through the SAME `_ticketAssigneeSeat` the dispatch uses,
         // so "no seat" here means exactly what "undeliverable" means there. A
@@ -8108,10 +8017,10 @@ function createTicketMethods(deps, shared) {
         // would be silent in the worse direction: a ticket the sweep calls orphaned
         // while dispatch still routes it stops alarming about a seat that IS there.
         //
-        // Note this is reachable for a worktree ticket in a way a role ticket is
-        // not: `_ticketAssigneeSeat` deliberately refuses to degrade a worktree pin
-        // to its role, so a retired worktree seat resolves to null permanently
-        // rather than being re-answered by a sibling.
+        // Reachable for a worktree ticket in a way a role ticket is not:
+        // `_ticketAssigneeSeat` refuses to degrade a worktree pin to its role, so a
+        // retired worktree seat resolves to null permanently rather than being
+        // re-answered by a sibling.
         // ANOTHER TEAM'S ticket, seen because the stall sweep is deduped per BOARD
         // while the board is per PROJECT — the hazard `_sweepTickets` already
         // documents for `watchdogMs`. Team A wins the dedup and resolves team B's
@@ -8138,16 +8047,14 @@ function createTicketMethods(deps, shared) {
         // ONE ORPHAN alarm, ever — not the geometric ladder below. The ladder
         // re-escalates because a stall can end and the seat can come back; an
         // orphan cannot resolve itself, so every repeat carries identical
-        // information and the whole cost of the t376 defect was the repeating.
+        // information.
         //
         // BOTH terms are load-bearing, and gating on `nudgedAt` ALONE is a defect
-        // that deletes the alarm rather than de-duplicating it. The live->orphan
-        // transition is the ticket's own motivating trace: t376 alarmed first as a
-        // live-but-quiet stall, which stamps `nudgedAt`, and the seat was retired
-        // only afterwards. With one term, every later sweep sees a truthy stamp and
-        // `continue`s forever — and `nudgedAt` is cleared only by activity
-        // (unreachable: there is no seat), assign, respec, park or a verdict. The
-        // lead would hear "hand quiet 31m" and then nothing, ever.
+        // that deletes the alarm rather than de-duplicating it: a ticket that
+        // alarmed first as a live-but-quiet stall already carries the stamp, so
+        // with one term every later sweep sees it truthy and `continue`s forever
+        // — and `nudgedAt` is cleared only by activity (unreachable: there is no
+        // seat), assign, respec, park or a verdict.
         //
         // `orphanNudgedAt` records that the ORPHAN message specifically has been
         // sent. Keeping `nudgedAt` in the gate is what makes it need no new clearing
@@ -8155,11 +8062,9 @@ function createTicketMethods(deps, shared) {
         // respec) already reopens the ticket to alarming, so a reassignment starts a
         // clean episode exactly as before.
         if (orphan && t.nudgedAt && t.orphanNudgedAt) continue;
-        // NOT one nudge per episode any more (t322). `nudgedAt` is cleared only by
-        // seat ACTIVITY, which by definition never comes during a stall, so a
-        // single alarm the lead dismissed bought permanent silence: measured on
-        // t312, where the 30m alarm was waved off and the remaining 28 minutes of
-        // a 55.7m stall raised nothing at all.
+        // NOT one nudge per episode: `nudgedAt` is cleared only by seat ACTIVITY,
+        // which by definition never comes during a stall, so a single alarm the
+        // lead dismissed bought permanent silence.
         //
         // Geometric instead: re-alarm once the quiet has DOUBLED since the alarm
         // that was already sent. Lands at 30m, 60m, 120m, 240m — log2 in stall
@@ -8227,13 +8132,11 @@ function createTicketMethods(deps, shared) {
         // it and the loop-held arm never re-resolves.
         let orphanNow = orphan;
         if (loopHeld) {
-          // THE REVIEW STEP IS THE ONE LOOP STEP WITH A LIVE SEAT BEHIND IT, and
-          // until t384 it was the only step with no seat-liveness input at all:
-          // the orphan test excludes loop-held tickets (correctly — they name a
-          // step, not an assignee), so `loopStep` age was the whole signal. A 39KB
-          // diff takes longer than the window, so the longest-running step was
-          // also the one that cried wolf. Measured on t377: the alarm fired at 30m
-          // while the reviewer was demonstrably working.
+          // THE REVIEW STEP IS THE ONE LOOP STEP WITH A LIVE SEAT BEHIND IT. The
+          // orphan test excludes loop-held tickets (correctly — they name a step,
+          // not an assignee), so `loopStep` age was the whole signal: a large diff
+          // takes longer than the window, making the longest-running step also the
+          // one that cried wolf.
           //
           // Suppression requires BOTH signals to say alive, and the probe is
           // consulted ONLY at `review` — the other steps have no seat to ask
@@ -8259,13 +8162,12 @@ function createTicketMethods(deps, shared) {
             // `unknown` defers too, and that is the whole point rather than a
             // convenience: it means a reviewer seat IS live but this is the first
             // sample, so there is no baseline to read growth against. Alarming
-            // there is the blind pre-t384 alarm — the measured false positive,
-            // fired at the first sweep past the window at a seat nobody asked
-            // about. Deferring costs ONE sweep (60s) against a 30m window, and it
-            // is bounded: the sample is stored below, so the next sweep has a
-            // baseline and either classifies or alarms. A seat that is not live
-            // returns null and never reaches this, so nothing can defer forever
-            // on a seat that no longer exists.
+            // there is the blind alarm, fired at the first sweep past the window
+            // at a seat nobody asked about. Deferring costs ONE sweep (60s)
+            // against a 30m window, and it is bounded: the sample is stored
+            // below, so the next sweep has a baseline and either classifies or
+            // alarms. A seat that is not live returns null and never reaches
+            // this, so nothing can defer forever on a seat that no longer exists.
             if (seatInfo && (seatInfo.verdict === 'moving' || seatInfo.verdict === 'unknown')) continue;
           }
           const head = repeat > 0 ? `[ticket ${tid}] STILL stalled (repeat ${repeat}): ` : `[ticket ${tid}] stalled: `;
@@ -8349,8 +8251,8 @@ function createTicketMethods(deps, shared) {
             // holds forever, so an ungated wake could fire hours in — after the
             // lead already owns the recovery.
             const graceLeft = (now - last) < (stallMs + WAKE_GRACE_MS);
-            // ANY structural refusal alarms now rather than deferring, against
-            // §7 — permanent ones (codex, unreadable transcript, the lead) can
+            // ANY structural refusal alarms now rather than deferring:
+            // permanent ones (codex, unreadable transcript, the lead) can
             // never become eligible by waiting, and the transient ones (dialog,
             // latch, draft, mid-turn) are chosen to alarm too: that is exactly
             // the pre-rung-2 behaviour, and the overlap is narrow because
@@ -8430,7 +8332,7 @@ function createTicketMethods(deps, shared) {
               // stay the same one: this guard decides whether the one nudge is
               // spent, so a shape the loop nudges but this refuses to stamp
               // re-nudges every single sweep — the one-nudge-per-episode rule,
-              // inverted, on precisely the in-flight tickets §E added.
+              // inverted, on precisely the in-flight tickets.
               if (!ticketInFlight(rec)) return;
               if ((rec.lastActivityAt || null) !== seenAt) return;
               // `now`, not Date.now(): the doubling gate reads this back as
