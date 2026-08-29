@@ -111,10 +111,10 @@ INVERTED, which code identity and a green suite both pass over. A surviving
 block must still open at a sentence boundary — flag an opening line that starts
 lowercase, starts on a clause connector, or is a bare `//` with no prose;
 identifier-initial openers are exempt. Implementation, do not inline it:
-`~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/decomment-team-tickets-a/boundary-check.js`.
-Its author's caveat, unsoftened: the check is a lint that needs a human ruling
-per flag, not a gate. It does not distinguish a severed head from a
-lowercase-but-complete sentence; it only narrows where to look.
+`scripts/boundary-check.js`. Its author's caveat, unsoftened: the check is a
+lint that needs a human ruling per flag, not a gate. It does not distinguish a
+severed head from a lowercase-but-complete sentence; it only narrows where to
+look.
 
 ## Checkpointing (why an unjournaled marathon is expensive)
 

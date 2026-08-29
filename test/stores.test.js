@@ -1488,10 +1488,23 @@ test('seed: the hand prompt carries the decomment sweep and the post-cut boundar
   assert.match(hand, /boundary-check\.js/, 'and points at the implementation');
   assert.doesNotMatch(hand, /const CONNECTOR|require\('fs'\)/,
     'by POINTER, not by pasting the code into a prompt every hand reads on every ticket');
-  assert.match(hand, /the check is a lint that needs a human ruling\s+per flag, not a gate/,
+  assert.match(hand, /the check is a\s+lint that needs a human ruling per flag, not a gate/,
     "the author's precision caveat, unsoftened: a lint, not a gate");
-  assert.match(hand, /It does not distinguish a severed head from a\s+lowercase-but-complete sentence; it only narrows where to look/,
+  assert.match(hand, /It does not distinguish a\s+severed head from a lowercase-but-complete sentence; it only narrows where to\s+look/,
     'including the half that says what it cannot do — each flag still needs a human ruling');
+  // The pointer is the one claim in this section that rots on its own: the tool
+  // can move or go away and the prose stays confident. Resolving the path OUT of
+  // the prompt (not repeating it here) is what makes this a check rather than a
+  // second copy of the same claim — the earlier version cited an untracked
+  // ~/.clodex path that existed only on its author's box, which is the exact
+  // "documents not in this repo" category the section three paragraphs up tells
+  // hands to grep for and verify with git ls-files.
+  const cited = hand.match(/Implementation, do not inline it:\s+`([^`]+)`/);
+  assert.ok(cited, 'the prompt names its implementation in a form a test can resolve');
+  assert.ok(!cited[1].startsWith('~') && !path.isAbsolute(cited[1]),
+    `cited tool path must be repo-relative so it resolves for every reader, got: ${cited[1]}`);
+  assert.ok(fs.existsSync(path.join(__dirname, '..', cited[1])),
+    `the prompt cites a tool that is not in the repo: ${cited[1]}`);
 });
 
 // A prompt is a claim on a path no execution passes through: nothing throws when
