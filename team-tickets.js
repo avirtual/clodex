@@ -1019,11 +1019,9 @@ function createTicketMethods(deps, shared) {
     // lead that does not know a review finished is a lead not merging it.
     //
     // Summary rather than fall-through, against the measured alternative: one
-    // real verdict was 15839 bytes, and posting that to the inbox on every
-    // review is the flooding the record/dm split was built to prevent. The
-    // fields here are the ones the lead acts on — which ticket, which way it
-    // went, which round, and whether there is work to hand back — and they are
-    // exactly what a truncated dump of the record hides, since `verdict` sits
+    // real verdict was 15839 bytes, and posting that to the inbox on every review
+    // is the flooding the record/dm split was built to prevent. The fields here
+    // are exactly what a truncated dump of the record hides, since `verdict` sits
     // after a multi-KB `report`.
     //
     // Called AFTER _landVerdictOnTicket has returned, i.e. after the save: a
@@ -1841,12 +1839,9 @@ function createTicketMethods(deps, shared) {
         // always did.
         if (landedOn.verdict === 'ACCEPT') {
           // Re-resolved off the reviewer's cwd rather than threaded out of
-          // _landVerdictOnTicket: that function returns the verdict fields by
-          // contract, and widening its return to carry the team so one caller
-          // can avoid a resolve is how a narrow contract turns into a bag. A
-          // null is unreachable here (the verdict landed, so the team resolved
-          // moments ago) and is skipped rather than escalated — there would be
-          // no team to escalate to.
+          // _landVerdictOnTicket: widening that function's return to carry the
+          // team so one caller can avoid a resolve is how a narrow contract turns
+          // into a bag.
           let team = null;
           try { team = resolveTeam(session.cwd); } catch { team = null; }
           // QUEUED, not fired: see _queueAutoMerge for why two of these must
