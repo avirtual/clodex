@@ -998,24 +998,11 @@ function createSessionManager(deps) {
           // A failure disarm is PROVISIONAL: it stops the LIVE hold and writes
           // nothing. No ping failure — credential-shaped or not — may
           // erase a persisted keep-warm intent, because a rejected replay is not
-          // evidence about what the operator asked for. The 401 is the case that
-          // settled this: the CLI owns the OAuth file and refreshes it on its
-          // next real turn, so an overnight rejection is transient (measured
-          // recovery: ~12 minutes) while the erase was permanent and silent.
-          // A `holdUntil` deadline is not cleared here either — it expires by
-          // TIME, and rearmPlan's lapse branch is what notices that.
-          //
-          // Accepted cost: a genuinely dead credential burns the 2-ping strike
-          // budget once per re-arm rather than once per launch. Two warm
-          // cache-read pings beats discarding an explicit operator setting
-          // unattended. The bound is per-TURN, and NOT because a turn proves the
-          // credential works — a 401'd main-line turn emits turn.completed too
-          // (proxy.js tees any non-SSE /v1/messages POST regardless of status)
-          // and the re-arm probe never inspects it. It holds only because a
-          // re-arm needs a main-line turn at all: an idle seat earns none, and an
-          // actively-used seat with a dead credential burns two replays per turn
-          // until the operator notices — which they will, because their own turns
-          // are failing alongside.
+          // evidence about what the operator asked for. The CLI owns the OAuth
+          // file and refreshes it on its next real turn, so an overnight 401 is
+          // transient (measured recovery: ~12 minutes) while the erase was
+          // permanent and silent. A `holdUntil` deadline is not cleared here
+          // either — it expires by TIME, and rearmPlan's lapse branch notices that.
           //
           // Reopening the gate is what makes the surviving flag mean anything:
           // _maybeRearmHold latches _holdRearmed once an arm lands, so without
@@ -1199,11 +1186,9 @@ function createSessionManager(deps) {
         for (const e of getPersistence().list()) if (e.proxyAgent) taken.add(e.proxyAgent);
         for (const s of this.sessions.values()) if (s.proxyAgent) taken.add(s.proxyAgent);
         // The wire label, not the seat name, is what the id is minted FROM when
-        // the spawn path seeded one (team ticket seats and reviewers do, via
-        // their pre-create upsert). A seat name outlives its ticket — it is
+        // the spawn path seeded one. A seat name outlives its ticket — it is
         // recycled, retired, renamed — so spend keyed by it cannot be rolled up
-        // per ticket after the fact. `<team>.<ticket>.<role>` in the proxy route
-        // segment makes the attribution durable at the point it is billed.
+        // per ticket after the fact.
         //
         // Only the EXTERNAL proxy id carries this. The in-process wire's
         // registerAgent() keeps taking the bare name: `t.agent` is a sessions-map
@@ -1218,12 +1203,10 @@ function createSessionManager(deps) {
       // spawn-directive block for this seat's ROUTE. Fired here, before the PTY
       // spawn, because the block rides inside the marked system prefix and
       // carries the last system cache marker: a flip after the seat's first turn
-      // reshapes that prefix and costs a warm bust. Anything but off/on posts
-      // nothing, so the common path gains no traffic.
+      // reshapes that prefix and costs a warm bust.
       // Strict match, not a parser: this sits on an authority-adjacent path. The
       // likely typos ('0', 'OFF', ' off') would otherwise fail silently, their only
       // symptom a block reappearing in a prompt nobody reads — hence the warn.
-      // Unset stays silent, which is what keeps the common path quiet.
       const hintWant = mergedEnv.CLODEX_SPAWNER_HINT;
       const hintValid = hintWant === 'off' || hintWant === 'on';
       let spawnerHintSet = false;
@@ -1254,23 +1237,20 @@ function createSessionManager(deps) {
       // (restart/restore) rebuilds the record from spawn args, so preserve any
       // existing stamp rather than resetting it — the sidebar's "created" sort/
       // group depends on it being stable across restarts.
-      // This read is only HALF the invariant, and reading it as the whole thing is
-      // what let the bug live: the restore-on-launch path keeps the record, so
-      // existingEntry carries the stamp — but every kill()-based restart REMOVES
-      // the record first, so existingEntry is null here and the `|| Date.now()`
-      // re-mints. The restart callers must therefore re-seed createdAt via
-      // _preserveAcrossRestart (engine.restartSession / applySessionArgs, and the
-      // [agent:context reload] respawn) BEFORE reaching this line. Pinned in
-      // test/createdat-restart.test.js — do not "tidy" the field out of those lists.
+      // This read is only HALF the invariant: the restore-on-launch path keeps
+      // the record, so existingEntry carries the stamp — but every kill()-based
+      // restart REMOVES the record first, so existingEntry is null here and the
+      // `|| Date.now()` re-mints. The restart callers must therefore re-seed
+      // createdAt via _preserveAcrossRestart (engine.restartSession /
+      // applySessionArgs, and the [agent:context reload] respawn) BEFORE reaching
+      // this line — do not "tidy" the field out of those lists.
       //
-      // Computed HERE, ~400 lines above the upsert that consumes it, because the
-      // claude arm bakes it into the generated pending-drain hook (setupClaudeHook)
-      // and the hook is written before the spawn. The one expression must stay
-      // single: recomputing `(existing && existing.createdAt) || Date.now()` down
-      // in hook setup would be a second copy that drifts the first time either is
-      // touched — the exact construction this ticket exists to remove. Nothing
-      // between here and the upsert writes persistence, so the read is unchanged
-      // by the move.
+      // Computed HERE, above the upsert that consumes it, because the claude arm
+      // bakes it into the generated pending-drain hook (setupClaudeHook) and the
+      // hook is written before the spawn. The one expression must stay single:
+      // recomputing `(existing && existing.createdAt) || Date.now()` down in hook
+      // setup would be a second copy that drifts the first time either is
+      // touched. Nothing between here and the upsert writes persistence.
       const existingEntry = getPersistence().get(name);
       const createdAt = (existingEntry && existingEntry.createdAt) || Date.now();
 
@@ -1289,8 +1269,6 @@ function createSessionManager(deps) {
             this._shadowLog({ type: 'claude-onboarding-preseeded', agent: name });
           }
           const sysFile = resolveSystemPromptFile(systemPromptFile);
-          // Captured, not re-derived: refreshPrompt replays THIS object through
-          // the same _realIpcFor, which is what keeps the two paths byte-equal.
           promptRecipe = {
             extraArgs,
             intents,
@@ -1315,10 +1293,9 @@ function createSessionManager(deps) {
           const staleSettings = args.findIndex(
             (a, i) => a === '--settings' && (args[i + 1] || '').startsWith('/tmp/wb-wrap/'));
           if (staleSettings !== -1) args.splice(staleSettings, 2);
-          // Shadow mode: register the agent with the in-process wire BEFORE
-          // the PTY exists (spawn-bound identity — the wire is never blind to
-          // this agent), chaining to the external proxy when one is set. A
-          // wire failure falls back to the normal path: a tee must never
+          // Register the agent with the in-process wire BEFORE the PTY exists
+          // (spawn-bound identity), chaining to the external proxy when one is
+          // set. A wire failure falls back to the normal path: a tee must never
           // block a session from starting.
           let wireBase = null;
           if (WIRE_SHADOW && !wireOff) {
