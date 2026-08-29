@@ -3,7 +3,7 @@
 // The gap it closes: an applier guard that only checks "is this span all
 // comment lines" happily cuts the HEAD off a sentence and leaves the tail as
 // the paragraph's new opening line. The residue reads as a complete claim and
-// can invert the original one — t558 MF1 left "// createWorktree (it reaches
+// can invert the original one — a cut left "// createWorktree (it reaches
 // git argv), so this only rejects the empty form", which reverses which side
 // validates the branch name.
 //
@@ -26,22 +26,31 @@ function check(file, upto = Infinity) {
     if (!t.startsWith('//')) continue;
     const prev = (lines[i - 1] || '').trim();
     if (prev.startsWith('//')) continue;          // not the block's opening line
-    const body = t.replace(/^\/\/\s?/, '').trim();
+    let body = t.replace(/^\/\/\s?/, '').trim();
+    let at = i;
+    let text = t;
 
-    // orphaned separator: a bare `//` block with no prose at all
+    // A bare `//` opener is not itself the block's prose: when prose follows, the
+    // line below is the real opening line, and the `prev.startsWith('//')` skip
+    // above would otherwise retire it unexamined.
     if (!body) {
       const next = (lines[i + 1] || '').trim();
-      if (!next.startsWith('//') || !next.replace(/^\/\/\s?/, '').trim()) {
+      const nextBody = next.startsWith('//') ? next.replace(/^\/\/\s?/, '').trim() : '';
+      if (!nextBody) {
         flags.push({ line: i + 1, why: 'orphaned bare // with no prose', text: t });
+        continue;
       }
-      continue;
+      if (i + 1 >= Math.min(lines.length, upto)) continue;
+      body = nextBody;
+      at = i + 1;
+      text = next;
     }
     if (/^[─=—*]/.test(body)) continue;           // banner rule
     if (IDENTIFIERISH.test(body)) continue;       // `_loadTicket returns…`, `null, not…`
     if (CONNECTOR.test(body)) {
-      flags.push({ line: i + 1, why: `opens on connector "${body.split(/\s+/)[0]}"`, text: t });
+      flags.push({ line: at + 1, why: `opens on connector "${body.split(/\s+/)[0]}"`, text });
     } else if (/^[a-z]/.test(body)) {
-      flags.push({ line: i + 1, why: 'opens lowercase — likely a severed sentence head', text: t });
+      flags.push({ line: at + 1, why: 'opens lowercase — likely a severed sentence head', text });
     }
   }
   return flags;
