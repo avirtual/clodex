@@ -503,11 +503,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (typeof name !== 'string' || !NAME_RE.test(name)) {
       throw new Error(`team name "${name}" must match ${NAME_RE}`);
     }
-    // NAME_RE accepts `.hidden` (t115, deliberate for SESSION names), but listTeams
-    // skips dot-directories — so a dot-named team would be written and then never
-    // listed, never resolved for any cwd, and never shown in the Teams menu, while
-    // loadManifest still opens it by path. Refuse at the writer: the free-text name
-    // field in Create Team… (t288) makes that state reachable by typing.
+    // NAME_RE accepts `.hidden`, but listTeams skips dot-directories — so a
+    // dot-named team would be written and then never listed, never resolved for
+    // any cwd, while loadManifest still opens it by path. The free-text name field
+    // in Create Team… makes that state reachable by typing.
     if (name.startsWith('.')) {
       throw new Error(`team name "${name}" must not start with "." — listTeams skips dot-directories, so the team would be invisible`);
     }
@@ -533,23 +532,23 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       lead: { ...STOCK_ROLE_DEFS.lead },
       hand: { ...STOCK_ROLE_DEFS.hand },
       // No `tools` here: the reviewer's cap is REVIEWER_TOOL_CAP in
-      // session-manager, a code constant on the one path that can enforce it.
-      // Restating it as data made a manifest look like the authority it wasn't.
+      // session-manager, the one path that can enforce it. Restating it as data
+      // makes a manifest look like an authority it is not.
       reviewer: { ...STOCK_ROLE_DEFS.reviewer },
     };
     const callerRoles = roles && typeof roles === 'object' && !Array.isArray(roles) && Object.keys(roles).length
       ? roles : null;
-    // Caller roles are picked down to the schema for the same reason addRole's
-    // are: a brand-new file must not be born carrying a field no resolver reads.
+    // Picked down to the schema: a brand-new file must not be born carrying a
+    // field no resolver reads.
     const seedRoles = {};
     for (const [k, v] of Object.entries(callerRoles || defaultRoles)) {
       seedRoles[k] = pickRoleKeys(v);
       // createTeam takes an arbitrary caller `roles` object, so it is a write
-      // path too — without this a brand-new file could be born naming lead as a
-      // worktree role, which every other door refuses.
+      // path too: without this a new file could be born naming lead as a worktree
+      // role, which every other door refuses.
       assertDispatchAllowed(k, seedRoles[k], file);
-      // Against `resolvedRoot`, not the team on disk: there is no manifest to
-      // load yet, and this is the root the file is about to name.
+      // Against `resolvedRoot`: there is no manifest to load yet, and this is the
+      // root the file is about to name.
       assertRoleCwd(k, seedRoles[k], resolvedRoot, file);
     }
     const manifest = {
@@ -568,12 +567,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (!ROLE_RE.test(roleName)) {
       throw new Error(`role name "${roleName}" must match ${ROLE_RE} (${team.file})`);
     }
-    // Re-minting a reserved key the operator removed, and the reason the removal
-    // above is safe to offer at all. `def` is IGNORED, not merged and not
-    // validated: the only reachable definition of a reserved role is then the one
-    // Clodex ships, so remove-then-re-add gains an attacker nothing — which is
-    // exactly what the mint refusal further down was protecting. Do NOT "fix"
-    // this into honouring the caller's def; that hands back the bypass.
+    // Re-mints a reserved key the operator removed. `def` is IGNORED, not merged
+    // and not validated, so remove-then-re-add gains an attacker nothing. Do not
+    // "fix" this into honouring the caller's def; that hands back the bypass.
     //
     // Ahead of the def validation below because a def nobody reads must not be
     // able to refuse the write.
@@ -585,25 +581,20 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       const rawMint = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
       rawMint.roles = rawMint.roles || {};
       rawMint.roles[roleName] = pickRoleKeys({ ...stock });
-      // Inert while the stock defs carry only prompt/brief — but this is a WRITE
-      // path, and it is the only one that would not refuse a reserved role paired
-      // with `dispatch: "worktree"`. A stock def that ever grew one would land it
-      // here alone, through the door added to make reserved roles recoverable.
+      // Inert while the stock defs carry only prompt/brief, but this is the one
+      // write path that would not otherwise refuse a reserved role paired with
+      // `dispatch: "worktree"`.
       assertDispatchAllowed(roleName, rawMint.roles[roleName], team.file);
-      // Inert for the same reason as the line above (no stock def carries a cwd)
-      // and present for the same reason: this is a write path, and it is the one
-      // that would not otherwise refuse a stock def that grew one — including on
-      // `lead`, where the field is inert-but-believed.
+      // Inert and present for the same reason as the line above: no stock def
+      // carries a cwd, and this is the one write path that would not refuse one.
       assertRoleCwd(roleName, rawMint.roles[roleName], team.root, team.file);
       atomicWrite(team.file, JSON.stringify(migrateRoles(rawMint), null, 2));
       return loadManifest(teamName);
     }
-    // The legacy key is READ on the load path (a v2 file on disk must keep
-    // working), but it must never enter through a WRITE: pickRoleKeys drops it
-    // and emits no `dispatch`, so an addRole carrying `worktree: true` would
-    // store a standing role and answer {ok:true} — the opt-in discarded with no
-    // error. Throwing names the replacement instead of silently disagreeing
-    // with the caller.
+    // The legacy key is read on the load path but must never enter through a
+    // WRITE: pickRoleKeys drops it and emits no `dispatch`, so an addRole carrying
+    // `worktree: true` would store a standing role and answer {ok:true} — the
+    // opt-in discarded with no error.
     if (def && typeof def === 'object' && !Array.isArray(def) && 'worktree' in def) {
       throw new Error(`role "${roleName}": "worktree" was replaced by "dispatch" — use dispatch: "worktree" (${team.file})`);
     }
@@ -614,12 +605,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`role "${roleName}" template must be a library-template name matching ${NAME_RE} (${team.file})`);
     }
     const existing = team.roles[roleName];
-    // Never MINT an absent reserved key from a def: loadManifest only REQUIRES
+    // Never mint an absent reserved key from a def: loadManifest only requires
     // `lead`, so a hand-deleted `reviewer` could otherwise be re-added with an
-    // attacker-authored def. The `!existing` carve-out keeps join's no-op re-ride
-    // of a stock def. team:join reaches this WITHOUT the operator opt-in, so it
-    // keeps refusing; the operator's re-mint took the stock-def branch above and
-    // never arrives here.
+    // attacker-authored def. team:join reaches this without the operator opt-in,
+    // so it keeps refusing.
     if (RESERVED_ROLE_KEYS.has(roleName) && !existing) {
       throw new Error(`the "${roleName}" role is operator-owned topology; add it via the app, not an intent/mutator (${team.file})`);
     }
@@ -627,14 +616,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       if (JSON.stringify(existing) === JSON.stringify(normalized)) return team; // no-op
       throw new Error(`role "${roleName}" already exists on team "${teamName}" with a different definition`);
     }
-    // Re-read raw to preserve any hand-authored fields/formatting we don't model
-    // on the OTHER roles, then append the new role and write atomically.
-    //
-    // The new role is written through pickRoleKeys, not verbatim: this is the
-    // front door (`team:addRole` takes an arbitrary def), and a verbatim write
-    // lands `tools: ["Read"]` — a restriction enforced by nothing — in team.json,
-    // where read-back drops it but the file still reads as a policy. That
-    // preservation rule above is about roles this call did not author.
+    // Re-read raw to preserve hand-authored fields on the OTHER roles. The new
+    // role itself goes through pickRoleKeys, not verbatim: `team:addRole` takes an
+    // arbitrary def, and a verbatim write lands `tools: ["Read"]` in team.json,
+    // where read-back drops it but the file still reads as a policy.
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
     raw.roles[roleName] = pickRoleKeys(def);
