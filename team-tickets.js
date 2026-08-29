@@ -1462,62 +1462,32 @@ function createTicketMethods(deps, shared) {
         // RE-READ THE STATE ONE LAST TIME, and keep this the last statement
         // before the merge that can be reached across an `await`.
         //
-        // The read at the top of this function covers only the queue→start gap:
-        // a merge waiting its turn in _mergeChain, or waiting out the retry
-        // delay, re-enters and re-reads. It does NOT cover start→merge, and that
-        // window is three awaited git subprocesses wide — which is where a
-        // `task reject` was observed landing while the merge went ahead anyway,
-        // putting on master work the lead had just sent back for another round.
-        // Intent handlers are synchronous, so they can only interleave at an
-        // `await`; anything that adds one BELOW this line reopens the gap.
+        // The read at the top of this function covers only the queue→start gap.
+        // It does NOT cover start→merge, and that window is three awaited git
+        // subprocesses wide — which is where a `task reject` was observed landing
+        // while the merge went ahead anyway, putting on master work the lead had
+        // just sent back for another round. Intent handlers are synchronous, so
+        // they can only interleave at an `await`; anything that adds one BELOW
+        // this line reopens the gap. test/ticket-auto-merge.test.js pins that.
         //
-        // Fails CLOSED and silent, the same predicate and the same argument as
-        // the top read: `state !== 'done'` covers reject and cancel alike, the
-        // lead who reopened it does not need telling the loop noticed, and the
-        // merge is not lost — the next ACCEPT queues it again. Logged, because
-        // a merge abandoned this late is worth finding in the log.
+        // Fails CLOSED and silent: `state !== 'done'` covers reject and cancel
+        // alike, and the merge is not lost — the next ACCEPT queues it again.
+        // A reject landing during `mergeNoFf` or the post-merge suite is NOT
+        // closeable here; undoing that is `revert -m 1`, the lead's call.
         //
-        // What is NOT closed, and not closeable here: a reject landing during
-        // `mergeNoFf` or the post-merge suite lands on a merge already made.
-        // Undoing that is `revert -m 1`, the lead's call, not the loop's.
         // A GATE, not the record everything below reads: the merge message and
-        // the post-merge suite keep using the `ticket` snapshot on purpose. The
-        // verbs that rewrite `spec` while a merge is in flight are `_taskRespec`
-        // (gated to `state === 'open'`, so it trips this guard first) and the
-        // board's `editSpec`, which is state-agnostic by design; the latter can
-        // leave the merge subject stale relative to the board, but cannot make
-        // an abandoned merge land, since nothing below this line awaits.
+        // the post-merge suite keep using the `ticket` snapshot on purpose.
         //
-        // `closedOut` alongside `state`, and the reason it is not redundant with
-        // the top gate: an ACCEPT leaves `state` at `done`, so state alone is
-        // blind to it. An accept can interleave at any of the three git awaits
-        // this window is made of — `isMerged`, `isDirty`, `currentBranch` — and
-        // every closing arm costs something past this line, by two routes:
+        // `closedOut` alongside `state` is not redundant with the top gate: an
+        // ACCEPT leaves `state` at `done`, so state alone is blind to it, and
+        // every closing arm costs something past this line — the MERGED arm
+        // deletes the ref so the merge below names a branch that is gone, while
+        // the VETO and DIRTY arms keep it and reach `mergeNoFf` on a ref already
+        // contained in master. Both stamp a false MERGE FAILED on a closed-out row.
         //
-        //   the MERGED arm            deletes the ref, so the merge below names
-        //                             a branch that is gone and STEP 4's
-        //                             `fail('merge')` stamps MERGE FAILED on
-        //                             the closed-out row. This is the arm the
-        //                             pin drives.
-        //   the VETO arm and the      keep the branch, so the merge below reaches
-        //   DIRTY downgrade           `mergeNoFf` on a live ref already contained
-        //                             in master: git says "Already up to date",
-        //                             `ok` is true and `moved` false, and
-        //                             `!merged.moved` stamps the same false
-        //                             MERGE FAILED on the same closed-out row.
-        //
-        // The retry's lock wait is NOT in this window and needs nothing here:
-        // the defer arm returns, so control never reaches this line on that
-        // path, and a retry re-enters through `_queueAutoMerge` and meets the
-        // TOP gate. What that arm DOES need it carries itself — the same three
-        // awaits run before it too, so it re-reads at its own site before
-        // stamping. This one exists for the gates-to-merge window on either
-        // entry — sub-second, rather than the retry's ten minutes, and the same
-        // defect.
-        //
-        // A SYNCHRONOUS field read, and that is what makes it safe here: the pin
-        // below forbids any `await` in this stretch, and re-checking a condition
-        // an await could have changed is exactly what an await here would break.
+        // A SYNCHRONOUS field read, which is what makes it safe here: re-checking
+        // a condition an await could have changed is exactly what an await here
+        // would break.
         const stillDone = this._loadTicket(team, ticketId);
         if (!stillDone || stillDone.state !== 'done' || stillDone.closedOut) {
           const why = !stillDone ? 'gone'
@@ -1596,20 +1566,12 @@ function createTicketMethods(deps, shared) {
           // uses, not a second mechanism. This dump matters more than that one:
           // a red post-merge suite REVERTS master, and the revert is what makes
           // the evidence unreproducible — re-running the suite afterwards
-          // measures a tree the failure is no longer in.
+          // measures a tree the failure is no longer in. Attempted on the UNRAN
+          // arm as well, which reverts master exactly as a red one does.
           //
-          // Attempted on the UNRAN arm as well. A crashed or timed-out run
-          // reverts master exactly as a red one does, so its output is just as
-          // unreproducible — and `suite.error`, inlined in `why` above, is a
-          // 300-char last line standing in for a 64KB capture. Whether there is
-          // anything worth keeping is the writer's judgement, not this arm's: it
-          // refuses an empty capture, which is what a spawn failure carrying no
-          // streams produces.
-          //
-          // WRAPPED for the reason the verify arm is wrapped, and with more at
-          // stake: `.catch()` cannot catch a synchronous throw, and one escaping
-          // here would reach the method's catch-all — which escalates WITHOUT
-          // reverting, leaving a red master standing because the evidence
+          // WRAPPED because `.catch()` cannot catch a synchronous throw, and one
+          // escaping here would reach the method's catch-all — which escalates
+          // WITHOUT reverting, leaving a red master standing because the evidence
           // mechanism threw. Preservation must never outrank the undo.
           let kept;
           try {
@@ -1618,14 +1580,11 @@ function createTicketMethods(deps, shared) {
             kept = { ok: false, path: null, error: `the preservation threw: ${e && e.message ? e.message : String(e)}` };
             log.error('ticket', `ticket ${ticketId}: post-merge suite output could not be preserved — ${kept.error}`);
           }
-          // BOTH directions, the rule t370 r3 settled: naming the file when it
-          // exists and going silent when it does not leaves the lead — the only
-          // reader on either arm here — unable to tell "preservation failed"
-          // from "nobody thought to look".
-          // The "do not re-run" advice holds only where the revert SUCCEEDED.
-          // On the two arms that leave the merge standing, re-running really
-          // does reproduce, and those arms are exactly where the lead is acting
-          // by hand — so the clause is built per-arm rather than once.
+          // BOTH directions: naming the file when it exists and going silent when
+          // it does not leaves the lead unable to tell "preservation failed" from
+          // "nobody thought to look". The "do not re-run" advice holds only where
+          // the revert SUCCEEDED — on the arms that leave the merge standing,
+          // re-running really does reproduce, so the clause is built per-arm.
           const keptWhere = (reverted) => (kept.ok
             ? (reverted
               ? ` Full output (assertion text, diff and stack) preserved at ${kept.path} — read it instead of re-running, which would measure the reverted tree.`
@@ -1637,23 +1596,15 @@ function createTicketMethods(deps, shared) {
           // the path that reaches it is the one a live suite creates: our own run
           // waits TICKET_SUITE_LOCK_WAIT_MS for a lock the lead's exec grant is
           // holding, the runner dies, `ran` is false, and reverting here would
-          // rewrite the tree under that still-running child.
+          // rewrite the tree under that still-running child. An unverified merge
+          // on master is undone by one command the lead can run whenever they
+          // like; a torn write into a running suite costs a debugging session and
+          // reports a failure that was never in the code.
           //
-          // The asymmetry is the point. Today a red suite and a suite we were
-          // never allowed to run arrive here as the same value, and reverting
-          // treats them the same — the most destructive action available, taken
-          // on no evidence. An unverified merge on master is undone by one
-          // command the lead can run whenever they like; a torn write into a
-          // running suite costs a debugging session and reports a failure that
-          // was never in the code.
-          // The ran-TRUE case reaches here too, and it was priced rather than
-          // overlooked: our own runner releases the root lock at exit, so a
-          // ticket-B verify run spinning in run-tests.js's wait loop can take it
-          // in the sliver before this probe. That leaves a genuinely RED master
-          // standing, against the rule that red is always undone. The
-          // alternative trades it for a torn write into B's live run plus a
-          // spurious red on B, so the ruling stands — but the message below must
-          // then say RED, not merely unverified.
+          // The ran-TRUE case reaches here too and can leave a genuinely RED
+          // master standing, against the rule that red is always undone — which
+          // is why the message below must then say RED, not merely unverified.
+          //
           // Our OWN runner is not a blocker. On the timeout path it is SIGKILLed
           // and this probe runs before it is reaped, so isAlive answers true for
           // a corpse whose pid the killed runner never cleared from the lock dir
@@ -1683,12 +1634,10 @@ function createTicketMethods(deps, shared) {
         // forbids.
         this._stampMergeError(team, ticketId, null);
         // The CHANGELOG claim is MEASURED here rather than asserted in the
-        // notice. It was unconditional and wrong nine merges running (t470,
-        // t471): both branches wrote their entry in round 1, so every merge
-        // carried it and every notice still asked for one. The cost is not the
-        // noise — a lead who acts writes a duplicate entry, and a lead who
-        // learns to skip the line has been trained to skip it on the day it is
-        // true.
+        // notice. Unconditional, it was wrong nine merges running: every merge
+        // carried the entry and every notice still asked for one. A lead who acts
+        // writes a duplicate; a lead who learns to skip the line has been trained
+        // to skip it on the day it is true.
         //
         // The range is headBefore..sha — what THIS merge actually added to
         // master, not what the branch carries. The two disagree exactly when
@@ -1723,14 +1672,9 @@ function createTicketMethods(deps, shared) {
     // ships with no notes; reported as "one is owed" it retrains the lead to
     // ignore the line. Neither collapse is available from here.
     //
-    // The `^`-anchored `diff --git` header IS the detection. Every hunk body
-    // line carries a `+`, `-` or space prefix, so a file whose CONTENT quotes a
-    // diff header cannot spoof a match.
-    //
     // Whole-range diff TEXT for a one-filename question, deliberately: it is the
     // only range-diff git-worktree.js exports, and its `ok:false`-on-overflow
-    // lands in `known:false`, which is honest. A cheaper `--name-only` probe
-    // would be a new lent-or-withheld export, and that is the lead's call.
+    // lands in `known:false`, which is honest.
     async _mergeTouchedChangelog(team, base, head) {
       try {
         if (!base || !head) return { known: false, error: 'the merge did not report both ends of its range' };
@@ -1743,13 +1687,8 @@ function createTicketMethods(deps, shared) {
         // anything: a GLOBAL external driver (`GIT_EXTERNAL_DIFF`) replaces git's
         // whole output with the driver's and emits no headers. Reading that as
         // "no CHANGELOG.md here" answers touched:false on EVERY merge under such
-        // a config and reports it as a measurement — this method's own defect,
-        // arriving through the parser instead of the claim.
-        //
-        // GLOBAL is the word that matters: a PER-PATH driver (`.gitattributes`
-        // saying `CHANGELOG.md diff=x`) suppresses the header for that file while
-        // other files keep theirs, so this guard does not fire. That case is a
-        // residual, enumerated below with the others.
+        // a config and reports it as a measurement. A PER-PATH driver suppresses
+        // one file's header while others keep theirs, so this guard does not fire.
         //
         // It cannot mis-fire on a genuinely empty range: empty text means nothing
         // changed, where OWED is the correct answer, so the guard requires text
@@ -1773,26 +1712,12 @@ function createTicketMethods(deps, shared) {
         // silence. A wrong CHANGED costs a glance; a wrong "nothing to do" is a
         // release with no notes. That is the property to preserve when editing.
         //
-        // The shapes below are the ones MEASURED, not a closed set — and that
-        // wording is deliberate. This comment said "exactly one shape", then
-        // "THREE shapes", and a fourth turned up in the next round; the recurring
-        // defect is the exhaustiveness claim itself, not the count. Do not
-        // re-close the set. Observed so far:
-        //
-        //   - `diff.noprefix` + a NESTED `docs/CHANGELOG.md`: not distinguishable
-        //     FROM A PREFIXED ROOT FILE BY THIS PATTERN (the strings differ —
-        //     `docs/CHANGELOG.md docs/CHANGELOG.md` vs `a/CHANGELOG.md
-        //     b/CHANGELOG.md` — but both satisfy it). Reads as CHANGED.
-        //   - A RENAME into or out of the root file: `git mv NOTES.md
-        //     CHANGELOG.md` emits `diff --git a/NOTES.md b/CHANGELOG.md`, and the
-        //     root filename is required on BOTH sides. Reads as OWED.
-        //   - A MULTI-SEGMENT prefix (`diff.srcPrefix 'i/w/'`) emits
-        //     `diff --git i/w/CHANGELOG.md o/w/CHANGELOG.md`, which one optional
-        //     segment cannot cross. Reads as OWED.
-        //   - A PER-PATH external driver on `CHANGELOG.md` itself suppressed that
-        //     file's header while others kept theirs. Now unreachable through
-        //     `diffText`, which passes `--no-ext-diff`; listed because the guard
-        //     above still defends text arriving headerless by another route.
+        // The shapes it misreads are the ones MEASURED, not a closed set: this
+        // comment said "exactly one shape", then "THREE shapes", and a fourth
+        // turned up in the next round. Do not re-close the set. Known: a nested
+        // `docs/CHANGELOG.md` under `diff.noprefix` reads as CHANGED; a rename
+        // into or out of the root file, and a multi-segment prefix
+        // (`diff.srcPrefix 'i/w/'`), both read as OWED.
         //
         // The pattern is NOT widened to chase these: testing each side
         // independently, or allowing `[^\s]+\/`, swallows nested paths and trades
@@ -1830,11 +1755,9 @@ function createTicketMethods(deps, shared) {
       try {
         // Collapsed and capped BEFORE it reaches the array. git stderr is routinely
         // multi-line, and this body's safety property is that no line starts with
-        // `[agent:` — an invariant the hazard comment below reasons about as five
-        // lines each carrying a prose prefix. A multi-line interpolation breaks
-        // that silently. git prefixes its own diagnostics (`fatal:`, `error:`), so
-        // no real stderr is known to open a line with the bad token; this closes
-        // the class instead of re-deriving that argument each time the text moves.
+        // `[agent:` — an invariant the hazard comment above reasons about as lines
+        // each carrying a prose prefix. A multi-line interpolation breaks that
+        // silently.
         const oneLine = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 300);
         // `touched` must be a BOOLEAN, not merely present: see the note above the
         // method — a truthy `known` over an absent measurement is the one way an
@@ -1850,16 +1773,9 @@ function createTicketMethods(deps, shared) {
             : `A CHANGELOG.md entry is OWED — the merge carried none (the merge never writes one itself: it conflicts across every live branch).`)
           // `diff --stat <sha>^1 <sha>` rather than `show --stat <sha>`: it NAMES
           // the comparison — first parent against the merge, i.e. what the merge
-          // brought to master — instead of relying on how `git
-          // show` chooses to render a merge commit, which is a presentation
-          // default rather than a stated question. Same ground as the prefix
-          // tolerance above: do not hand the lead a command whose output depends
-          // on the lead's own git config.
-          //
-          // NOT because the combined diff omits paths matching a parent. That was
-          // the suggested reason and it did NOT reproduce here (git 2.52.0):
-          // `show --stat` on a real two-parent auto-merge printed the full
-          // diffstat, byte-identical to the `diff --stat` rows.
+          // brought to master — instead of relying on how `git show` chooses to
+          // render a merge commit. Do not hand the lead a command whose output
+          // depends on the lead's own git config.
           //
           // "the check could not RUN" is HOLD_RECOVERY's infra arm verbatim, and
           // hold-recovery-single-source.test.js's phrase scan reads a shared
