@@ -1,29 +1,23 @@
 'use strict';
 
-/**
- * tickets-viewer — engine half. The write surface must stay narrow: a plugin can
- * reach none of what `[agent:task …]` also does (_advanceSeat,
- * _reconcileTickets, COST.json, the lead-only gates), so a viewer write is the
- * operator's OWN edit, not an impersonation of the intent path. Spec delivery is
- * the one exception — an assignment nobody is told about looks like success.
- */
+// tickets-viewer — engine half. The write surface must stay narrow: a plugin can
+// reach none of what `[agent:task …]` also does (_advanceSeat, _reconcileTickets,
+// COST.json, the lead-only gates).
 
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-// The utilities below marked as core's are COPIED, not required: §12 of
-// plugins/plugin-api.md refuses a require leaving this directory. Each fails
-// SILENTLY when it drifts, so each is pinned against core's in
-// test/tickets-viewer-path-parity.test.js. Keep them byte-equivalent.
+// The utilities below marked as core's are COPIED, not required (§12 of
+// plugins/plugin-api.md). Each drifts SILENTLY, so each is pinned byte-for-byte
+// against core's in test/tickets-viewer-path-parity.test.js.
 
 let clodexHomeOverride = null;
 
 // Latched at the first test override, NEVER cleared: after one, a null override
-// means the test tree is GONE, not that we are in production, so every write
-// refuses rather than landing in the operator's real ~/.clodex, where there is no
-// undo. Reads stay unaffected on purpose.
+// means the test tree is GONE, not that we are in production, so writes refuse
+// rather than landing in the operator's real ~/.clodex.
 let everOverridden = false;
 
 // Must NOT honour CLODEX_HOME: core's REGISTRY_DIR does not, so reading it would
@@ -40,18 +34,16 @@ function projectsRoot() {
   return path.join(clodexHome(), 'projects');
 }
 
-// Core's clodex-paths.projectDirFor. The sha256 is over the RESOLVED path: a
-// "cleaner" realpath here hashes a symlink's target and points the board at a
-// directory nobody wrote.
+// The sha256 is over the RESOLVED path: a "cleaner" realpath here hashes a
+// symlink's target and points the board at a directory nobody wrote.
 function projectDirFor(root, projectPath) {
   const real = path.resolve(projectPath);
   const hash = crypto.createHash('sha256').update(real).digest('hex').slice(0, 8);
   return path.join(root, 'projects', `${path.basename(real)}-${hash}`);
 }
 
-// Core's tickets-store.nextTicketId / ticketTitle / extractTaskDir. nextTicketId
-// scans the WHOLE array, closed records included: an id is a public reference, so
-// a re-issued one still resolves — to the wrong work.
+// nextTicketId scans the WHOLE array, closed records included: an id is a public
+// reference, so a re-issued one still resolves — to the wrong work.
 function nextTicketId(tickets) {
   let max = 0;
   for (const t of tickets || []) {
@@ -73,9 +65,9 @@ function ticketTitle(specText) {
   return '(untitled)';
 }
 
-// Absolute form FIRST, because `tasks/` appears inside it — bare-first truncates
-// an absolute path to its tail. Line by line, earliest line wins: one match over
-// the whole text would apply abs-before-rel globally.
+// Absolute form FIRST, because `tasks/` appears inside it — bare-first truncates an
+// absolute path to its tail. Earliest LINE wins: one match over the whole text
+// would apply abs-before-rel globally.
 function extractTaskDir(specText) {
   const lines = String(specText == null ? '' : specText).split('\n');
   for (const line of lines) {
@@ -87,9 +79,9 @@ function extractTaskDir(specText) {
   return null;
 }
 
-// Core's tickets-store.ticketStarted. Keep every arm — the ABSENT-key one is the
-// legacy shape and the easy one to drop: those records were all dispatched, so
-// reading them as unstarted empties the stalled column of the oldest tickets.
+// Keep every arm — the ABSENT-key one is the legacy shape and the easy one to drop:
+// those records were all dispatched, so reading them as unstarted empties the
+// stalled column of the oldest tickets.
 function ticketStarted(ticket) {
   if (!ticket) return false;
   if (ticket.startedAt != null) return true;
@@ -98,20 +90,16 @@ function ticketStarted(ticket) {
   return false;
 }
 
-/**
- * Core's team-tickets `_ticketTaskDirRefusal`. `assign` below is the other
- * dispatch door: without this copy the same act is refused when typed and allowed
- * when clicked. The SENTENCE is as load-bearing as the predicate — it carries the
- * fix instruction the lead acts on.
- */
+// `assign` below is the other dispatch door: without this copy the same act is
+// refused when typed and allowed when clicked. The SENTENCE is as load-bearing as
+// the predicate — it carries the fix instruction.
 function ticketTaskDirRefusal(team, ticket, verb, reSend) {
   if (ticket.taskDir) return null;
-  // Core spells this `team.solo`, never persisted and unobservable here; "no team
-  // names this project" is the equivalent. A solo ticket mints no worktree, so it
-  // cannot reach the verify-time refusal this gate prevents.
+  // Core's `team.solo` is never persisted; "no team names this project" is the
+  // observable equivalent. A solo ticket mints no worktree, so it cannot reach the
+  // refusal this gate prevents.
   if (team && team.solo) return null;
-  // A re-send is a redelivery — refusing it strands the recovery a respawned or
-  // stuck seat depends on.
+  // A re-send is a redelivery — refusing it strands a respawned seat's recovery.
   if (reSend) return null;
   // `respec`, not `reject`: the ticket is still OPEN here.
   return `ticket ${ticket.id} has no task dir, so nothing was ${verb === 'start' ? 'started' : 'assigned'} — its spec names no \`tasks/…\` path on any line, `
@@ -119,13 +107,10 @@ function ticketTaskDirRefusal(team, ticket, verb, reSend) {
     + `Fix: re-file it with the artifact dir on the spec's first line, or \`[agent:task respec ${ticket.id}]\` <the corrected spec> to replace it in place.`;
 }
 
-/**
- * Core's fs-util.atomicWriteFileSync. Not simplifiable to a writeFileSync: the
- * board is one JSON array rewritten whole, so a torn write truncates the entire
- * registry. Temp in the SAME directory (rename is atomic only within a volume),
- * fsync contents, rename, then fsync the DIRECTORY — the rename must be durable,
- * not just the bytes.
- */
+// Not simplifiable to a writeFileSync: the board is one JSON array rewritten whole,
+// so a torn write truncates the entire registry. Temp in the SAME directory (rename
+// is atomic only within a volume), and fsync the DIRECTORY too — the rename must be
+// durable, not just the bytes.
 function atomicWriteFileSync(filePath, data) {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -154,30 +139,25 @@ function atomicWriteFileSync(filePath, data) {
 }
 
 const TICKETS_FILE = 'tickets.json';
-// A directory under teams/ is a team only when it carries this — without the
-// check the board lists any stray directory as an empty team.
+// A directory under teams/ is a team only when it carries this, or every stray
+// directory lists as an empty team.
 const TEAM_FILE = 'team.json';
-// A HINT, not a source of truth: one that exists may name a path that no longer
-// hashes to the directory holding it. Verified before believed — projectRootFor.
+// A HINT: one that exists may name a path that no longer hashes to the directory
+// holding it. Verified before believed — projectRootFor.
 const PROJECT_FILE = '.project';
 
-// Borrowing a seat's name would attribute the operator's decision to an agent; a
-// name no session can hold keeps the two distinguishable in the record forever.
+// A name no session can hold: borrowing a seat's would attribute the operator's
+// decision to an agent.
 const VIEWER_ACTOR = 'viewer';
 
-// Copied from core's _deliverTicketSpec. It denies BY NAME the two beliefs that
-// have left finished tickets open — that closing needs an exec grant, and that a
-// report-shaped dm closes one — so a paraphrase drops the point of the line.
+// Denies BY NAME the two beliefs that have left finished tickets open — that closing
+// needs an exec grant, and that a report-shaped dm closes one.
 const closeLine = (id) => `CLOSE WITH: [agent:task done ${id}] <your report> — one intent, at the end: it delivers the report to the lead AND marks the ticket done. `
   + `It is a line you emit yourself, like any [agent:…] intent — NOT an exec command, and nothing needs to be granted for it. `
   + `A dm carrying your report does NOT close the ticket: the ticket stays open, and everything downstream of the close (tree verify, review) never runs.\n`;
 
-/**
- * Core's path-confine.js. Positive containment, never a name pattern: `.` and `..`
- * are spelled entirely in legal name characters, so no charset filter can reject
- * them — resolve, then demand a DIRECT child. Both inputs arrive over IPC from the
- * renderer, and this is the only sanctioned way to turn either into a path.
- */
+// Positive containment, never a name pattern: `.` and `..` are spelled entirely in
+// legal name characters, so no charset filter can reject them.
 function confine(root, name) {
   if (typeof root !== 'string' || !root) return null;
   if (typeof name !== 'string' || !name) return null;
@@ -194,17 +174,12 @@ function confineOrThrow(root, name, label = 'name') {
   return dir;
 }
 
-/**
- * Core's team-cost `confineUnder` + `stripFileTail` + `resolveTaskDir`, copied
- * WHOLE and not narrowed to a "good enough" version: `taskDir` is spec TEXT an
- * agent wrote, and the viewer renders it into a dispatch a hand then cds into. A
- * reimplementation covering the shapes seen so far is how a traversal gets in.
- */
+// Copied WHOLE, not narrowed to a "good enough" version: `taskDir` is spec TEXT an
+// agent wrote, rendered into a dispatch a hand then cds into.
 
-// A task dir is `tasks/<name>[/…]` and path-confine admits ONE segment, so the
-// walk is segment by segment: a target outside the root produces leading `..`
-// segments, each failing the direct-child test at the step that introduces it. An
-// empty relative path is the root ITSELF, which is not a task dir.
+// path-confine admits ONE segment, so the walk is segment by segment: a target
+// outside the root produces leading `..` segments, each failing the direct-child
+// test at the step that introduces it.
 function confineUnder(root, target) {
   const base = path.resolve(root);
   const rel = path.relative(base, path.resolve(target));
@@ -215,8 +190,7 @@ function confineUnder(root, target) {
 }
 
 // CLOSED, never "any short alnum tail": a dir named `round.2` or `v2.beta` is a
-// directory, and eating its last level names a directory one level up where
-// nothing looks for it. Widen by adding an extension, never by loosening it.
+// directory, and eating its last level names one a level up where nothing looks.
 const FILE_TAIL_RE = /\.(?:md|json|txt|log|patch|diff)$/i;
 function stripFileTail(p) {
   const parts = p.split(path.sep);
@@ -244,13 +218,9 @@ function resolveTaskDir({ taskDir, projectDir, projectsRoot: root, homedir }) {
   return confineUnder(root, abs);
 }
 
-/**
- * Core's team-tickets `taskDirRuleClause` / `taskDirCreateClause` /
- * `ticketTaskDirLine`. The WORDING is the deliverable: most live pointers are
- * relative, the repo carries a gitignored `tasks/` decoy many collide with by
- * name, and this clause is the only thing stopping a hand resolving the pointer
- * against its cwd. A paraphrase passes a shape check and teaches a different rule.
- */
+// The WORDING is the deliverable: most live pointers are relative, the repo carries
+// a gitignored `tasks/` decoy many collide with by name, and this clause is the only
+// thing stopping a hand resolving the pointer against its cwd.
 const taskDirRelative = (raw) => !!raw && !raw.startsWith('~') && !path.isAbsolute(raw);
 
 const taskDirRuleClause = (raw) => (taskDirRelative(raw)
@@ -265,17 +235,10 @@ const ticketTaskDirLine = (dir, raw) => {
   return `TASK DIR: ${dir}${rule}${rule ? taskDirCreateClause : ''}\n`;
 };
 
-/**
- * The viewer's half of core's `_ticketTaskDirRender(...).line`.
- *
- * The outer `rule ?` guard is NOT a redundant recomputation of the clause inside
- * `ticketTaskDirLine`: it suppresses the WHOLE line for a `~`- or `/`-prefixed
- * pointer. Every dispatch already spills past the 500-byte threshold, so a line
- * restating what an absolute path means costs the seat a Read turn.
- *
- * Best effort: a taskDir that refuses confinement drops the line and never
- * throws — a dispatch must not die over a display line.
- */
+// The outer `rule ?` guard is NOT a redundant recomputation of the clause inside
+// `ticketTaskDirLine`: it suppresses the WHOLE line for an already-placed pointer.
+// A refusing taskDir drops the line rather than throwing — a dispatch must not die
+// over a display line.
 function ticketTaskDirLineFor(projectDir, ticket) {
   const raw = String((ticket && ticket.taskDir) || '').trim();
   if (!raw) return '';
@@ -295,36 +258,26 @@ function ticketTaskDirLineFor(projectDir, ticket) {
   return rule ? ticketTaskDirLine(dir, raw) : '';
 }
 
-// Core's TICKET_STALL_MS, from _sweepTickets: a board calling a ticket stalled on
-// a different threshold than the nudge uses would contradict the nudge the lead
-// already saw.
+// Core's TICKET_STALL_MS: a board calling a ticket stalled on a different
+// threshold than the nudge uses contradicts the nudge the lead already saw.
 const DEFAULT_STALL_MS = 30 * 60 * 1000;
 
-// team-manifest.js's WATCHDOG_MIN_MS / WATCHDOG_MAX_MS. team.json is
-// agent-writable and every other consumer clamps via loadManifest, which this
-// plugin cannot reach — so it must clamp itself. Unbounded is the dangerous
-// direction: `1e400` parses to Infinity, a number greater than zero, and an
-// unclamped board never calls anything stalled while core nudges on 30 minutes.
+// team.json is agent-writable and every other consumer clamps via loadManifest,
+// which this plugin cannot reach — so it clamps itself. `1e400` parses to Infinity,
+// a number greater than zero, and an unclamped board would never call anything
+// stalled while core kept nudging.
 const WATCHDOG_MIN_MS = 5 * 60 * 1000;
 const WATCHDOG_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Core's RECENT_DONE_MS / RECENT_DONE_CAP from _taskList.
 const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
 const RECENT_DONE_CAP = 10;
 
 let host = null;
 
-// ---------------------------------------------------------------------------
-// Reading
-// ---------------------------------------------------------------------------
-
-/**
- * NOT tickets-store.js's `load()`, which answers `[]` for a missing file, an
- * unreadable one, invalid JSON and a non-array alike: a broken tickets.json would
- * render like a project that never opened a ticket, and — since this file WRITES —
- * saving an array rebuilt from that `[]` erases the registry it failed to parse.
- * A missing file is the one read failure that genuinely IS empty.
- */
+// NOT tickets-store's `load()`, which answers `[]` for a missing file, an unreadable
+// one, invalid JSON and a non-array alike: since this file WRITES, saving an array
+// rebuilt from that `[]` erases the registry it failed to parse. A missing file is
+// the one read failure that genuinely IS empty.
 function readTicketsAt(boardDir) {
   let raw;
   try {
@@ -343,25 +296,21 @@ function readTicketsAt(boardDir) {
     return { ok: false, error: `${TICKETS_FILE} does not contain a ticket array` };
   }
   const tickets = parsed.filter((t) => t && typeof t === 'object' && !Array.isArray(t));
-  // Counted, not dropped: a registry half-eaten by a bad hand-edit would
-  // otherwise render as a shorter but perfectly healthy board.
+  // Counted, not dropped: a registry half-eaten by a hand-edit would otherwise
+  // render as a shorter but perfectly healthy board.
   return { ok: true, tickets, malformed: parsed.length - tickets.length };
 }
 
 function readTickets(projectRoot) {
   if (typeof projectRoot !== 'string' || !projectRoot) {
-    // A read FAILURE, not an empty board: "no tickets" here would report a board
-    // nobody can find as a project that never opened one.
     return { ok: false, error: `cannot locate ${TICKETS_FILE}: no project root` };
   }
   return readTicketsAt(projectDirFor(clodexHome(), projectRoot));
 }
 
-/**
- * Reading the file IS the existence probe, never an existsSync: that answers false
- * for EACCES, EPERM and ELOOP alike, making a team nobody can read
- * indistinguishable from one that was never created.
- */
+// Reading the file IS the existence probe, never an existsSync: that answers false
+// for EACCES, EPERM and ELOOP alike, making a team nobody can read
+// indistinguishable from one that was never created.
 function readManifest(teamDir) {
   let raw;
   try {
@@ -382,11 +331,9 @@ function readManifest(teamDir) {
   return { manifest: m, warning: manifestWarning(m) };
 }
 
-/**
- * A deliberate SUBSET of core's loadManifest checks, and one-directional: what it
- * names, core also rejects; what it misses renders with no warning. It must never
- * call a manifest good — a full copy here would be a third validator to drift.
- */
+// A deliberate SUBSET of core's loadManifest checks, one-directional: what it names,
+// core also rejects; what it misses renders with no warning. It must never call a
+// manifest good.
 function manifestWarning(m) {
   if (typeof m.root !== 'string' || !path.isAbsolute(m.root)) return `${TEAM_FILE} "root" is not an absolute path — core would refuse this team`;
   if (typeof m.lead !== 'string' || !m.lead) return `${TEAM_FILE} "lead" is not a seat name — core would refuse this team`;
@@ -396,22 +343,15 @@ function manifestWarning(m) {
   return null;
 }
 
-/**
- * Both halves are load-bearing: _sweepTickets's precedence keeps this board's
- * verdict equal to the watchdog's, and the clamp keeps a hand-edited `watchdogMs`
- * from silently emptying the stalled column.
- */
 function stallMsFor(manifest) {
   const raw = manifest && manifest.watchdogMs;
   if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return DEFAULT_STALL_MS;
   return Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, raw));
 }
 
-/**
- * Indexed by hashing each manifest's root FORWARD: a project key is not
- * invertible. A root claimed by two teams keeps the FIRST in sorted order, so the
- * pick is stable across reloads rather than readdir-order dependent.
- */
+// Hashes each manifest's root FORWARD: a project key is not invertible. A root
+// claimed by two teams keeps the FIRST in sorted order, so the pick is stable rather
+// than readdir-order dependent.
 function teamIndex() {
   const out = new Map();
   let entries;
@@ -431,12 +371,9 @@ function teamIndex() {
   return out;
 }
 
-/**
- * The ORDER is the point: a team manifest is core's and authoritative, while
- * `.project` is believed only when it still hashes to the directory holding it.
- * One naming another path is a stale file left by a moved checkout, and a board
- * displaying it would name a directory whose tickets it is not showing.
- */
+// The ORDER is the point: a team manifest is core's and authoritative, while
+// `.project` is believed only when it still hashes to the directory holding it —
+// one naming another path is a stale file left by a moved checkout.
 function projectRootFor(key, known) {
   if (known && known.root) return known.root;
   let raw;
@@ -456,10 +393,6 @@ function projectRootFor(key, known) {
   return path.basename(projectDirFor(clodexHome(), p)) === key ? p : '';
 }
 
-// ---------------------------------------------------------------------------
-// Shaping
-// ---------------------------------------------------------------------------
-
 function str(v) {
   return v == null ? '' : String(v);
 }
@@ -468,11 +401,6 @@ function num(v) {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
-/**
- * One board row. Timestamps cross as raw numbers alongside the engine's `now`, so
- * every age on screen is measured against the single clock reading the `stalled`
- * flag was computed from.
- */
 function shape(t, now, stallMs) {
   const openedAt = num(t.openedAt);
   // `??`, not `||`: a timestamp of 0 is not "no timestamp", and num() has already
@@ -481,7 +409,6 @@ function shape(t, now, stallMs) {
   const quietMs = lastActivityAt === null ? null : Math.max(0, now - lastActivityAt);
   // `shownFor` prefers the ROLE: core re-pins `assignee` to a concrete seat at
   // delivery, so rendering it raw names a seat where both boards name the role.
-  // `assignee` itself stays RAW — `stalled` and `backlog` key off it.
   const assignee = str(t.assignee);
   const role = str(t.role);
   return {
@@ -489,8 +416,8 @@ function shape(t, now, stallMs) {
     title: str(t.title) || '(untitled)',
     role,
     shownFor: role || assignee,
-    // Uncapped: the editor reads this field, so a truncation here would be saved
-    // back AS the spec. The renderer caps the HEIGHT in CSS instead.
+    // Uncapped: the editor reads this field, so a truncation here is saved back AS
+    // the spec. The renderer caps the HEIGHT in CSS instead.
     spec: str(t.spec),
     state: str(t.state) || '(no state)',
     assignee,
@@ -503,40 +430,27 @@ function shape(t, now, stallMs) {
     ageMs: openedAt === null ? null : Math.max(0, now - openedAt),
     quietMs,
     nudged: num(t.nudgedAt) !== null,
-    // Three exemptions, each mirroring one _sweepTickets makes: unassigned,
-    // parked, never-dispatched. Flagging any invents a stall core can neither
-    // produce nor clear. `ticketStarted` is the one `assignee` does not cover —
-    // `[agent:task add <role>]` writes the ROLE into `assignee`, so a
-    // filed-but-never-dispatched ticket reads as assigned and is quiet forever.
+    // Three exemptions, each mirroring one _sweepTickets makes. Flagging any invents
+    // a stall core can neither produce nor clear. `ticketStarted` is the one
+    // `assignee` does not cover — `add <role>` writes the ROLE into `assignee`, so a
+    // never-dispatched ticket reads as assigned.
     stalled: assignee !== '' && !t.parked && ticketStarted(t)
       && quietMs !== null && quietMs >= stallMs,
-    // Kept OUT of the stalled count and the section head: a backlog ticket's age
-    // is worth seeing, and it is not a stall.
+    // Kept OUT of the stalled count: a backlog ticket's age is worth seeing, and it
+    // is not a stall.
     backlog: assignee === '',
-    // Distinct from `backlog`: a parked ticket already names its seat, so the
-    // action is to release it rather than to decide who gets it.
     parked: t.parked === true,
-    // A COUNT, not the entries: shipping the array would put every superseded
-    // title on a surface that renders none of them.
     respecCount: Array.isArray(t.respecs) ? t.respecs.length : 0,
-    // The STORED strings verbatim: a phrase of the viewer's own would assert a
-    // state the record does not carry. Two fields and NOT one merge-state enum —
-    // mergeError reads as "needs a human" and a ticket waiting its turn does not,
-    // so collapsing them re-merges on the wire what core keeps apart on disk.
+    // Two fields and NOT one merge-state enum: mergeError reads as "needs a human"
+    // and a ticket waiting its turn does not, so collapsing them re-merges on the
+    // wire what core keeps apart on disk.
     mergeWaiting: str(t.mergeWaiting),
     mergeError: str(t.mergeError),
   };
 }
 
-// ---------------------------------------------------------------------------
-// Listing
-// ---------------------------------------------------------------------------
-
-/**
- * A missing projects/ directory is "no projects yet"; every other readdir failure
- * is reported as a failure. Per-project read failures do NOT fail the list — one
- * corrupt registry must not hide the projects that are fine.
- */
+// Per-project read failures do NOT fail the list — one corrupt registry must not
+// hide the projects that are fine.
 function projects() {
   const root = projectsRoot();
   let entries;
@@ -571,7 +485,6 @@ function projects() {
       ...row,
       open: open.length,
       stalled: open.filter((t) => t.stalled).length,
-      // Separate from `stalled`: an unassigned ticket needs assigning, not chasing.
       backlog: open.filter((t) => t.backlog).length,
       parked: open.filter((t) => t.parked).length,
     });
@@ -580,11 +493,8 @@ function projects() {
   return { ok: true, projects: out };
 }
 
-/**
- * NO team is a normal state: an empty list is `{ ok: true, teams: [] }`, never an
- * error, and a missing teams/ directory is the same — treating its ENOENT as a
- * failure would make the ordinary solo install look broken.
- */
+// NO team is a normal state, and so is a missing teams/ directory — treating its
+// ENOENT as a failure makes the ordinary solo install look broken.
 function teams() {
   const root = teamsRoot();
   let entries;
@@ -616,19 +526,11 @@ function teams() {
   return { ok: true, teams: out };
 }
 
-// ---------------------------------------------------------------------------
-// The board
-// ---------------------------------------------------------------------------
-
-/**
- * The only place a string from the renderer becomes a path.
- */
 function resolveProject(key) {
   const dir = confine(projectsRoot(), key);
   if (dir === null) return { ok: false, error: 'a valid project key is required' };
   // Containment is not existence: `confine` accepts any legal single path
-  // component, so without this probe a project that does not exist reads as one
-  // with nothing open.
+  // component, so without this probe a missing project reads as an empty one.
   let st;
   try {
     st = fs.statSync(dir);
@@ -656,8 +558,7 @@ function board(projectKey) {
     .filter((t) => t.state === 'open')
     .map((t) => shape(t, now, stallMs))
     // Newest first, NOT quietest-first: the stall flag, the `tv-stalled` class and
-    // the header count already surface stalls wherever the row sits, and ordering
-    // by quiet buried the ticket just filed. No usable openedAt sorts to the TOP.
+    // the header count already surface stalls wherever the row sits.
     .sort((a, b) => {
       if (a.openedAt === b.openedAt) return 0;
       if (a.openedAt === null) return -1;
@@ -668,8 +569,8 @@ function board(projectKey) {
   const doneAll = all.filter((t) => t.state === 'done');
   const cancelledAll = all.filter((t) => t.state === 'cancelled');
 
-  // done only, matching _taskList: mixing in cancelled gives a number answering
-  // neither "what got done" nor "what got dropped".
+  // done only: mixing in cancelled gives a number answering neither "what got
+  // done" nor "what got dropped".
   const recentAll = doneAll
     .filter((t) => num(t.closedAt) !== null && now - t.closedAt < RECENT_DONE_MS)
     .sort((a, b) => b.closedAt - a.closedAt);
@@ -682,8 +583,6 @@ function board(projectKey) {
     team: known ? known.team : '',
     now,
     stallMs,
-    // A manifest core would reject while the tickets read fine: a team the app
-    // cannot resolve must not look entirely healthy here.
     warning: known ? known.warning : '',
     open,
     recent,
@@ -695,22 +594,14 @@ function board(projectKey) {
       cancelled: cancelledAll.length,
       recentOver: Math.max(0, recentAll.length - recent.length),
       recentWindowMs: RECENT_DONE_MS,
-      // Surfaced rather than filtered: these records are invisible in every other
-      // listing too.
       unknownState: all.length - open.length - doneAll.length - cancelledAll.length,
       malformed: read.malformed,
     },
   };
 }
 
-// ---------------------------------------------------------------------------
-// Writing
-// ---------------------------------------------------------------------------
-
-/**
- * The refusal described at `everOverridden`. At the write choke point rather than
- * at each verb, so a verb added later cannot forget it.
- */
+// The refusal described at `everOverridden`. At the write choke point rather than
+// at each verb, so a verb added later cannot forget it.
 function writeEscapedTestTree() {
   if (everOverridden && clodexHomeOverride === null) {
     return {
@@ -722,17 +613,9 @@ function writeEscapedTestTree() {
   return null;
 }
 
-/**
- * The ONE path every write takes.
- *
- * The load happens HERE, not in the caller, and as late as it can: the whole array
- * is rewritten, so anything another writer added between the read and the save is
- * lost. There is no lock to take, so narrowing that window is the whole mitigation.
- *
- * `mutate` returns `{ error }` to refuse without writing, or `{ result }` to
- * commit — refusing BEFORE any save is what keeps a rejected edit from leaving
- * half a change on disk.
- */
+// The ONE path every write takes. The load happens HERE, not in the caller, and as
+// late as it can: the whole array is rewritten, so anything another writer added
+// between the read and the save is lost, and there is no lock to take.
 function mutateBoard(projectKey, mutate) {
   // Ahead of resolveProject, so the refusal cannot depend on what happens to exist
   // under the real home.
@@ -740,8 +623,6 @@ function mutateBoard(projectKey, mutate) {
   if (escaped) return escaped;
   const loc = resolveProject(projectKey);
   if (!loc.ok) return loc;
-  // Not tickets-store's best-effort load: saving an array rebuilt from a `[]`
-  // that actually meant "this file did not parse" would erase the registry.
   const read = readTicketsAt(loc.dir);
   if (!read.ok) return { ok: false, error: `refusing to write: ${read.error}` };
 
@@ -763,19 +644,12 @@ function findOpen(tickets, id) {
   return { ticket: t };
 }
 
-/**
- * Deliver the spec to a live session.
- *
- * Best effort, and it must stay that way: the record is already written when this
- * runs, so throwing would report a failed write over a board that did change. The
- * return value says whether the seat was told — the alternative is an assignment
- * that looks delivered and is not.
- *
- * Format and ORDER match core's `${taskDirLine}${closeLine}${specText}`: a seat
- * taught to close by one dispatch path and not the other learns the verb is
- * optional. `projectKey` is required, not optional — a defaulted-away key renders
- * nothing for the relative pointers this exists to serve, which are most of them.
- */
+// Best effort, and it must stay that way: the record is already written when this
+// runs, so throwing would report a failed write over a board that did change.
+//
+// Format and ORDER match core's `${taskDirLine}${closeLine}${specText}`: a seat
+// taught to close by one dispatch path and not the other learns the verb is
+// optional. `projectKey` is required, not defaulted — most pointers are relative.
 function deliverSpec(name, ticket, projectKey) {
   if (!name || !host || !host.sessions) return false;
   let handle;
@@ -785,11 +659,10 @@ function deliverSpec(name, ticket, projectKey) {
     return false;
   }
   if (!handle || !handle.isAlive()) return false;
-  // Resolved from the project dir the board was READ from, never from a cwd.
+  // The project dir the board was READ from, never a cwd.
   const loc = resolveProject(str(projectKey));
   // Unreachable from either live caller; here for a future one that forgets the
-  // argument, whose only other symptom is a dispatch silently missing its TASK DIR
-  // line — which is why this arm logs rather than returning quietly.
+  // argument, whose only other symptom is a silently missing TASK DIR line.
   if (!loc.ok) host.log.error(`no project dir for ${ticket.id} — the dispatch carries no TASK DIR line`);
   const taskDirLine = loc.ok ? ticketTaskDirLineFor(loc.dir, ticket) : '';
   try {
@@ -801,11 +674,8 @@ function deliverSpec(name, ticket, projectKey) {
   }
 }
 
-/**
- * Open a ticket, minted field for field as session-manager mints it: `parked` is
- * written ONLY when true (a stored `parked: false` is a state core refuses to
- * produce) and `taskDir` only when the spec names one.
- */
+// Minted field for field as session-manager mints it: `parked` is written ONLY when
+// true (a stored `parked: false` is a state core refuses to produce).
 function add(payload) {
   const { project, spec, assignee } = payload || {};
   const text = str(spec);
@@ -826,25 +696,22 @@ function add(payload) {
       closedAt: null,
       lastActivityAt: now,
       nudgedAt: null,
-      // An explicit key, never omitted: `ticketStarted` reads an ABSENT
-      // `startedAt` as a legacy record, so one minted without the key files as
-      // already STARTED. Stamped rather than null when an assignee is given —
-      // delivery happens HERE, and a delivered spec whose record says unstarted is
-      // exempt from the stall watchdog for as long as the seat holds it.
+      // An explicit key, never omitted: `ticketStarted` reads an ABSENT `startedAt`
+      // as a legacy record, so one minted without the key files as already STARTED.
+      // Stamped rather than null when an assignee is given — delivery happens HERE,
+      // and a delivered spec whose record says unstarted escapes the watchdog.
       startedAt: who ? now : null,
     };
     const taskDir = extractTaskDir(text);
     if (taskDir) ticket.taskDir = taskDir;
     // `add` WITH an assignee is a dispatch, so it is gated exactly as `assign` is:
     // otherwise a lead refused at assign re-files with the assignee already picked
-    // and reaches the state assign just refused. Only WITH one — a backlog `add`
-    // delivers nothing and cannot reach the verify-time refusal.
+    // and reaches the state assign just refused.
     //
-    // The shared predicate makes the DECISION; its SENTENCE must not be reused
-    // here. That sentence offers `respec <id>`, and the id above was minted but
-    // never filed: `nextTicketId` hands the same id to the next real add, so an
-    // operator following it would edit unrelated work. Nothing was written, so
-    // there is nothing to respec.
+    // The shared predicate makes the DECISION; its SENTENCE must NOT be reused. That
+    // sentence offers `respec <id>`, and the id above was minted but never filed —
+    // `nextTicketId` hands it to the next real add, so an operator following it
+    // would edit unrelated work.
     if (who && !taskDir) {
       const refuses = !!ticketTaskDirRefusal(
         teamIndex().get(str(project)) ? {} : { solo: true }, ticket, 'assign', false);
@@ -864,12 +731,9 @@ function add(payload) {
   return { ok: true, id: res.id, delivered };
 }
 
-/**
- * Title and taskDir are DERIVED, so both are recomputed: leaving either stale makes
- * the summary line and the artifact path describe a spec that no longer exists.
- * `taskDir` is DELETED when the new spec names none — a stale path into another
- * ticket's artifacts is worse than an absence the row knows how to render.
- */
+// Title and taskDir are DERIVED, so both are recomputed. `taskDir` is DELETED when
+// the new spec names none — a stale path into another ticket's artifacts is worse
+// than an absence the row knows how to render.
 function editSpec(payload) {
   const { project, id, spec } = payload || {};
   const ticketId = str(id);
@@ -891,11 +755,8 @@ function editSpec(payload) {
   });
 }
 
-/**
- * Assign or reassign an open ticket. `role` is DELETED, matching core's plain-name
- * assign branch: a stale one makes `shownFor` render the old role over the new
- * assignee, so the board names the wrong holder.
- */
+// `role` is DELETED, matching core's plain-name assign branch: a stale one makes
+// `shownFor` render the old role over the new assignee, naming the wrong holder.
 function assign(payload) {
   const { project, id, assignee } = payload || {};
   const ticketId = str(id);
@@ -908,28 +769,25 @@ function assign(payload) {
     if (found.error) return { error: found.error };
     const t = found.ticket;
     // Core's `_taskAssign` gate: assign is a DISPATCH here, so a ticket the intent
-    // verbs refuse must not be dispatchable by clicking. Must stay ABOVE the
-    // writes — placed after them it returns this string having already re-pointed
-    // the assignee, cleared the park and pushed `lastActivityAt` forward, while
-    // promising in words that nothing changed.
+    // verbs refuse must not be dispatchable by clicking. Must stay ABOVE the writes
+    // — placed after them it returns this string having already re-pointed the
+    // assignee and cleared the park, while promising nothing changed.
     //
     // `reSend` must NOT be widened to `ticketStarted`: a legacy record with no
-    // `startedAt` key and no `parked` flag reads as started while owning no seat
-    // and no tree, and an assign on it runs the whole job to a verify-time refusal.
+    // `startedAt` key and no `parked` flag reads as started while owning no seat and
+    // no tree.
     const refusal = ticketTaskDirRefusal(
       teamIndex().get(str(project)) ? {} : { solo: true },
       t, 'assign', !!(t.worktree && t.worktree.path));
     if (refusal) return { error: refusal };
     t.assignee = who;
     t.lastActivityAt = Date.now();
-    // The new holder has not been chased, whatever the old one had accrued.
     t.nudgedAt = null;
     delete t.role;
     delete t.parked;
     // Without this an undispatched ticket assigned FROM THE BOARD stays unstarted
-    // forever, exempt from both the stall flag above and core's watchdog: a seat
-    // holds it, goes quiet for a week, and nothing says so. Not re-stamped when
-    // already set — a re-send must not restate when work FIRST started.
+    // forever, exempt from both the stall flag above and core's watchdog. Not
+    // re-stamped when already set — a re-send must not restate when work started.
     if (!ticketStarted(t)) t.startedAt = t.lastActivityAt;
     return { result: { ticket: t } };
   });
@@ -937,10 +795,6 @@ function assign(payload) {
   return { ok: true, delivered: deliverSpec(who, res.ticket, project) };
 }
 
-/**
- * Close an open ticket. One shape across both verbs, differing only in the state —
- * which is what keeps "what got shipped" and "what got dropped" countable apart.
- */
 function closeTicket(payload, state) {
   const { project, id } = payload || {};
   const ticketId = str(id);
@@ -959,11 +813,8 @@ function closeTicket(payload, state) {
   });
 }
 
-/**
- * Live session names the assign picker can offer. Bash sessions are filtered out
- * because they are private — no registry, no socket, not DM-able — so offering one
- * produces an assignment whose spec can never be delivered.
- */
+// Bash sessions are filtered out because they are private — no registry, no socket,
+// not DM-able — so offering one produces an assignment that can never be delivered.
 function sessions() {
   if (!host || !host.sessions) return { ok: true, sessions: [] };
   let rows;
@@ -978,10 +829,6 @@ function sessions() {
   names.sort();
   return { ok: true, sessions: names };
 }
-
-// ---------------------------------------------------------------------------
-// Activation
-// ---------------------------------------------------------------------------
 
 module.exports.activate = (h) => {
   host = h;
@@ -1019,16 +866,12 @@ module.exports._internals = {
   VIEWER_ACTOR, closeLine,
   DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, RECENT_DONE_MS, RECENT_DONE_CAP,
   // Overrides the HOME rather than teams/ or projects/, which must move together:
-  // repointing only one reads fixture data against the operator's real boards.
-  // NOT on the host surface — hostApi is frozen at "1", and a plugin able to ask
-  // core where things live is a contract change. Pass null to restore.
+  // repointing only one reads fixture data against the operator's real boards. NOT
+  // on the host surface — hostApi is frozen at "1".
   setClodexHomeForTest(dir) {
     if (dir) everOverridden = true;
     clodexHomeOverride = dir || null;
   },
-  // Read back so a test can assert WHERE a write would land before making one.
   boardPathForTest(key) { return path.join(projectsRoot(), key, TICKETS_FILE); },
-  // `host` is module state, so a test driving the write path without the real
-  // plugin host needs a way to stand one in.
   setHostForTest(h) { host = h; },
 };
