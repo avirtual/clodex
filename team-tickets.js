@@ -2334,20 +2334,19 @@ function createTicketMethods(deps, shared) {
     // out-of-process PostToolUse hook mid-loop, and ActivityTracker._set dedupes on
     // unchanged state — so a seat that was already `thinking` when the spec parked
     // consumes it without ever producing a fresh edge. Arming there would redeliver
-    // a full spec into a seat actively working on it. The park has its own
-    // durability (park cap, idle drain, hook drain) and needs no watcher.
+    // a full spec into a seat actively working on it.
     //
     // And arming at ENQUEUE would start the clock before the bytes exist: the quiet
     // gate can hold a write for up to INJECT_QUIET_MAXWAIT (5 min), so a spec still
     // queued at the window would get a redelivery enqueued BEHIND it — the first
     // write then lands, starts a turn, clears the latch, and the second copy writes
     // anyway, because nothing cancels a queued unit.
+    //
     // `disposition` is REQUIRED and has no default: the unsafe value is `injected`,
     // so a caller that forgets to pass one would arm a 90s latch over text it never
-    // wrote. Defaulting is what made the hold-park's argument-less onWrite silent.
+    // wrote.
     //
-    // `redirect` present switches the latch to kind 'redirect' (a rejection or a
-    // follow-up must-fixes sent back to a working seat) and carries the text to
+    // `redirect` present switches the latch to kind 'redirect' and carries the text to
     // rebuild it with. The four properties that make the spec retry safe hold
     // verbatim at those sites — see _redirectDeliveryText — so this is one latch
     // with two kinds, not two latches.
