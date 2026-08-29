@@ -6185,9 +6185,8 @@ function createTicketMethods(deps, shared) {
         : `${(head && head.branch) || (ticket.worktree && ticket.worktree.branch) || 'unknown'} (commit unresolved)`;
       // ITS OWN LINE, not a suffix on `# head:`. `# head:` is the field a reader
       // greps to learn which tree ran — putting both shas there makes the answer
-      // depend on parsing the prose between them, which is the ambiguity t518
-      // removed rather than a new way to state it. Kept adjacent because it
-      // qualifies `# head:`.
+      // depend on parsing the prose between them — an ambiguity, not a new
+      // way to state it. Kept adjacent because it qualifies `# head:`.
       //
       // Absent, not `no`, on the unmoved run: a line that appears only when
       // something happened is read; one that says `no` every time is skipped,
@@ -6207,13 +6206,13 @@ function createTicketMethods(deps, shared) {
       // side of it can see the moment measurement began, and the queued read is
       // exactly the one the lock wait can invalidate. A line claiming the start
       // sha ran would assert most confidently on the runs where it is most
-      // likely wrong, which is t518's harmful direction wearing a new label.
+      // likely wrong.
       // What the two reads DO know is the pair and which end each came from.
       //
       // Gated on `suite.head`, the CARRIED field, not on `headSha` — which may
       // have come from the write-time fallback re-read above. This line says
       // "HEAD was X when this run was QUEUED", a claim only the pre-run capture
-      // can support; sourcing X from a report-time read would state t518's
+      // can support; sourcing X from a report-time read would state that
       // harmful direction as fact.
       //
       // The blocked condition is CONCRETE, not defensive padding: the capture
@@ -7886,9 +7885,8 @@ function createTicketMethods(deps, shared) {
     // guessing. The alarm's whole job is to be trustworthy enough to act on
     // without a hand probe; a wrong field spends that trust to save a git call.
     //
-    // `dirty` is never returned without `tool` being attempted, because dirty
-    // alone is what the lead reasoned from on t312 and it is identical for a seat
-    // writing and a seat killed mid-write.
+    // `dirty` is never returned without `tool` being attempted: dirty alone is
+    // identical for a seat writing and a seat killed mid-write.
     async _stallEvidence(team, ticket) {
       const out = { tool: null, commits: null, dirty: null, apiError: null };
       const seat = this._ticketAssigneeSeat(team, ticket);
@@ -7901,7 +7899,7 @@ function createTicketMethods(deps, shared) {
           // read from two different moments, presented as one reading.
           const tail = readTail(fs, fs.realpathSync(link));
           out.tool = lastToolFrom(tail);
-          // Measured (t389, ~97k transcripts): the error record sits at most
+          // Measured: the error record sits at most
           // 2957 bytes from EOF when a transcript ends on one — p90 1985 —
           // so the existing 64KB window reaches it in every observed case and
           // is not widened for it.
