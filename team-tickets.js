@@ -4493,9 +4493,8 @@ function createTicketMethods(deps, shared) {
           if (unpinned) unpin();
           log.error('intent', `ticket ${ticket.id} seat ${seat.name} failed: ${err.message}`);
           // Branched on the predicate rather than asserting the un-pin happened:
-          // it is now skipped in more states than it used to be, and the commonest
-          // failure (create() seats, a later step throws) keeps the pin while this
-          // line used to say the ticket had gone back to the role.
+          // it is skipped in several states, and the commonest failure (create()
+          // seats, a later step throws) keeps the pin.
           // "whose tree is kept" is only true when there IS one. A spawn seat's
           // pin is kept for the same reason (the record outlives the failure and
           // must not be minted over), but naming a tree it never had tells the
@@ -5216,12 +5215,10 @@ function createTicketMethods(deps, shared) {
           // (intent-registry parseTask), and the ticket is already `done` here,
           // which `_taskDone` refuses. `task reject` is what reopens it.
           // The FIX belongs to the `spec` recovery arm rendered below this
-          // evidence, and must not be restated with a different route: this arm
-          // used to say "reject, then re-file" while the arm two lines down said
-          // "do NOT reject — edit the spec in place, then close again". Two
-          // contradictory instructions in one message, one of which counts a
-          // rework round against a hand that did not write the spec. Name the
-          // DEFECT here; the route is the arm's job.
+          // evidence, and must not be restated with a different route: two
+          // contradictory instructions in one message can count a rework round
+          // against a hand that did not write the spec. Name the DEFECT here;
+          // the route is the arm's job.
           const fix = ticket.taskDir
             ? `The path is named but escapes the projects root.`
             : `Its spec names no \`tasks/…\` path on any line.`;
@@ -7364,9 +7361,8 @@ function createTicketMethods(deps, shared) {
         // …but `_stampTicketRevival` is write-once (`!t.revival`), so on a ticket
         // ALREADY stamped by an earlier retire the call above writes nothing, and
         // the trace would be missing on exactly the tickets that have been round
-        // the loop before. A caveat in the prompt would document that hole rather
-        // than close it, and the comment above would still over-claim; this is one
-        // targeted field write, the same shape as the merged arm's supersede.
+        // the loop before. This is one targeted field write, the same shape as
+        // the merged arm's supersede.
         // Only `mergeVetoed` is touched — the earlier stamp's seat, session id and
         // branch are the record of who did the work and must not be overwritten.
         try {
@@ -7417,8 +7413,7 @@ function createTicketMethods(deps, shared) {
         //                   AFTER `mergeNoFf` returned — either failing outright
         //                   (aborted, nothing committed) or exiting 0 with HEAD
         //                   unmoved, whose own message reads `no merge commit
-        //                   exists`. The load-bearing half holds either way; the
-        //                   causal half is what over-claimed.
+        //                   exists`. The load-bearing half holds either way.
         //
         // Asking "does master still carry that merge?" on revert-blocked is worse
         // than useless: it answers YES BY CONSTRUCTION, the lead reads a confirmed
@@ -7609,8 +7604,7 @@ function createTicketMethods(deps, shared) {
         }
       }
       // `skipped` before `ok`: the skip returns ok:true so nothing downstream
-      // reads it as a failure, but reporting it as "deleted" would be the same
-      // over-claim this ticket exists to remove — and here it would send the
+      // reads it as a failure, but reporting it as "deleted" would send the
       // lead looking for a ref that is deliberately still there.
       parts.push(del.skipped ? `branch ${branch} was KEPT (the accept above is unfinished)`
         : del.ok ? `branch ${branch} deleted`
