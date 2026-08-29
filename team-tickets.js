@@ -7314,12 +7314,11 @@ function createTicketMethods(deps, shared) {
       // tree at all: the loop merges, its post-merge suite goes red, and it undoes
       // the merge with `git revert -m 1` — which ADDS a commit rather than
       // removing one. The merge commit stays an ancestor, `isMerged` still says
-      // merged, and the teardown below then destroyed the tree and deleted the
-      // branch holding the only copy of the work. It happened on t537: the branch
-      // was deleted and the change survived only as a reverted commit in the
-      // reflog. `revert-blocked` is the same shape without the revert — the merge
-      // is left standing on a red or unverified master for a human to undo — so an
-      // accept there reports a clean landing AND removes the tree that undo needs.
+      // merged, and the teardown below then destroys the tree and deletes the
+      // branch holding the only copy of the work. `revert-blocked` is the same
+      // shape without the revert — the merge is left standing on a red or
+      // unverified master for a human to undo — so an accept there reports a clean
+      // landing AND removes the tree that undo needs.
       //
       // The evidence is the loop's OWN stamp, not a content comparison of the
       // branch's changed files against the base. That comparison answers the
@@ -7425,9 +7424,8 @@ function createTicketMethods(deps, shared) {
         // than useless: it answers YES BY CONSTRUCTION, the lead reads a confirmed
         // landing, the second accept deletes the branch, and then they perform the
         // revert the loop asked them for — leaving the work in neither master's
-        // tree nor any ref. That is t537 reached through this arm's own advice,
-        // and the comment above already says so; this sentence used to contradict
-        // it. The owed action there is a DECISION about the revert, not a check.
+        // tree nor any ref. The owed action there is a DECISION about the revert,
+        // not a check.
         //
         // The VETO stays broad on purpose — an allowlist is a list someone must
         // maintain, and a step added later would default to not vetoing, which is
