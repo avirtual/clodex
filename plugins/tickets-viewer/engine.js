@@ -9,9 +9,9 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-// The utilities below marked as core's are COPIED, not required (§12 of
-// plugins/plugin-api.md). Each drifts SILENTLY, so each is pinned byte-for-byte
-// against core's in test/tickets-viewer-path-parity.test.js.
+// MUST NOT require core: §12's lint refuses a require leaving this directory, so
+// the utilities below marked as core's are copied. Each drifts SILENTLY, so each
+// is pinned byte-for-byte in test/tickets-viewer-path-parity.test.js.
 
 let clodexHomeOverride = null;
 
