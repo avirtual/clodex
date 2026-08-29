@@ -4794,7 +4794,7 @@ function createTicketMethods(deps, shared) {
       // reason start does — an assigned-but-unstamped ticket is still `start`able,
       // and starting it mints a second seat onto the tree this assign just sent a
       // hand into. Not re-stamped when it is already set: this is the moment work
-      // FIRST started, and a re-send must not restate it (§4/§5 measure from it).
+      // FIRST started, and a re-send must not restate it.
       if (!ticketStarted(ticket)) ticket.startedAt = ticket.lastActivityAt;
       // Stay pinned to the live seat. Un-pinning would route the spec, and the
       // WORK IN: line naming this ticket's tree, to whichever seat answers for the
@@ -6379,7 +6379,7 @@ function createTicketMethods(deps, shared) {
     // drains — so `parked` counts as reached and `held` does not.
     //
     // On failure the hold STAYS, which is what hands the ticket to the watchdog:
-    // it re-surfaces once the lead is reachable, which is the whole point of §E.
+    // it re-surfaces once the lead is reachable.
     //
     // `keepHold` is for the arms that escalate while a REVIEWER SEAT IS STILL
     // LIVE and still carries `reviewTicket`. Releasing the hold there looks
@@ -6515,7 +6515,7 @@ function createTicketMethods(deps, shared) {
       return { seatName: null, entry: null, attribution: 'unknown' };
     },
 
-    // COST.json — the per-ticket rollup (DESIGN.md §7.1), written at close.
+    // COST.json — the per-ticket rollup, written at close.
     //
     // Deferred and fully best-effort: the commit count shells out to git, and a
     // rollup is a measurement, never a reason a ticket fails to close. Every
@@ -8583,8 +8583,8 @@ function createTicketMethods(deps, shared) {
             // holds forever, so an ungated wake could fire hours in — after the
             // lead already owns the recovery.
             const graceLeft = (now - last) < (stallMs + WAKE_GRACE_MS);
-            // ANY structural refusal alarms now rather than deferring, against
-            // §7 — permanent ones (codex, unreadable transcript, the lead) can
+            // ANY structural refusal alarms now rather than deferring:
+            // permanent ones (codex, unreadable transcript, the lead) can
             // never become eligible by waiting, and the transient ones (dialog,
             // latch, draft, mid-turn) are chosen to alarm too: that is exactly
             // the pre-rung-2 behaviour, and the overlap is narrow because
@@ -8664,7 +8664,7 @@ function createTicketMethods(deps, shared) {
               // stay the same one: this guard decides whether the one nudge is
               // spent, so a shape the loop nudges but this refuses to stamp
               // re-nudges every single sweep — the one-nudge-per-episode rule,
-              // inverted, on precisely the in-flight tickets §E added.
+              // inverted, on precisely the in-flight tickets.
               if (!ticketInFlight(rec)) return;
               if ((rec.lastActivityAt || null) !== seenAt) return;
               // `now`, not Date.now(): the doubling gate reads this back as
