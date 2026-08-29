@@ -2530,30 +2530,25 @@ function createSessionManager(deps) {
     // a CLI slow to die, and a CLI slow enough to hold it past waitForSessionExit's
     // 8s is precisely the one whose restart then throws.
     //
-    // THE WINDOW (t491, exhibited end to end in test/preserve-tree-handoff.test.js).
-    // kill() removes the record synchronously and the seat leaves this.sessions
-    // only at pty exit, so for the whole waitForSessionExit poll a restarting seat
-    // is live in its tree and named by no record — invisible to _ticketTreeHolder,
-    // which reads occupancy off the RECORD. A re-dispatch landing there reuses the
-    // tree, claimTree finds no record to clear, and writing the snapshot back then
-    // puts a SECOND record on it. That is the state claimTree's own comment calls
-    // worse than the orphan it fixes: session:kill removes the tree named by
-    // whichever row is deleted, so Delete Session… on the restarted seat
-    // force-removes the checkout the other seat is committing in.
+    // THE WINDOW. kill() removes the record synchronously and the seat leaves
+    // this.sessions only at pty exit, so for the whole waitForSessionExit poll a
+    // restarting seat is live in its tree and named by no record — invisible to
+    // _ticketTreeHolder, which reads occupancy off the RECORD. A re-dispatch
+    // landing there reuses the tree, claimTree finds no record to clear, and
+    // writing the snapshot back then puts a SECOND record on it: session:kill
+    // removes the tree named by whichever row is deleted, so Delete Session… on
+    // the restarted seat force-removes the checkout the other seat is committing
+    // in.
     //
     // ONE READER. _ticketTreeHolder is the same question the dispatch asked when
     // it decided the tree was free, so this guard cannot disagree with the
     // hand-off it is reacting to. A second scan — here or in engine.js — would be
-    // the second source of truth about who holds a tree that the design forbids,
-    // which is why this is a manager method and its callers in engine.js reach it
-    // through the manager they already hold.
+    // a second source of truth about who holds a tree.
     //
-    // It also carries what a raw record scan does not: the other seat must be
-    // LIVE. A stale pointer from an ARCHIVED seat is expected state on a real
-    // board (archive KEEPS the record; t488 found eight), and stripping for one
-    // would drop the pointer on an ORDINARY restart — landing in the ABSENT state
-    // ALWAYS_PRESERVE calls the dangerous one, to avoid a collision that is not
-    // happening.
+    // The other seat must be LIVE. A stale pointer from an ARCHIVED seat is
+    // expected state on a real board (archive KEEPS the record), and stripping
+    // for one would drop the pointer on an ORDINARY restart — landing in the
+    // ABSENT state ALWAYS_PRESERVE calls the dangerous one.
     //
     // `holder !== name` and NOT `holder != null`, and the difference is reachable:
     // on the catch arms create() can have SUCCEEDED and a later step thrown, which
@@ -2562,9 +2557,8 @@ function createSessionManager(deps) {
     // pointer nothing else holds.
     //
     // Stripping is safe precisely BECAUSE a different live seat holds it: that
-    // seat's record still names the checkout, so nothing is orphaned. The
-    // absent-is-dangerous asymmetry does not apply when someone else holds the
-    // pointer — and on any throw we keep it, because stale beats absent.
+    // seat's record still names the checkout, so nothing is orphaned. On any
+    // throw we keep it, because stale beats absent.
     _stripClaimedTree(entry) {
       if (!entry || !entry.name || !entry.worktree || !entry.worktree.path) return entry;
       if (typeof this._ticketTreeHolder !== 'function') return entry;
@@ -2573,40 +2567,33 @@ function createSessionManager(deps) {
       if (!holder || holder === entry.name) return entry;
       if (log) log.info('session', `restart of ${entry.name}: dropping worktree ${entry.worktree.path} from the restored record — ${holder} holds it now`);
       // Copy-and-delete rather than a `{ worktree, ...rest }` destructure: the
-      // free-identifier scanner (test/free-identifier-leaks.test.js) does not
-      // model an object rest binding and reads `rest` as a dangling reference.
-      // Not worth whitelisting a name in a guard that catches real extraction
-      // bugs to buy one line of style.
+      // free-identifier scanner does not model an object rest binding and reads
+      // `rest` as a dangling reference. Not worth whitelisting a name in a guard
+      // that catches real extraction bugs to buy one line of style.
       const stripped = { ...entry };
       delete stripped.worktree;
       return stripped;
     }
 
-    // Re-seed post-create persistence fields across a kill()+create restart (task
-    // 22 rework / MUST-FIX 2, generalized in task 24 / MUST-FIX 2). The APP-RELAUNCH
-    // restore path keeps the persistence record (never removed), so create()'s
+    // Re-seed post-create persistence fields across a kill()+create restart. The
+    // APP-RELAUNCH restore path keeps the persistence record, so create()'s
     // existingEntry carries these fields. But the IN-PLACE restart paths
     // (engine.restartSession / applySessionArgs) route through kill(), which
     // REMOVES the record — so create() rebuilds it from spawn args ONLY, dropping
-    // any field seeded AFTER create on the prior spawn: `rosterSentAt` (roster
-    // gate → re-injects the roster into a --resume'd context) and a reviewer seat's
-    // `ephemeral`/`reviewFor` (identity → review-done can no longer route/retire).
-    // Re-seeding AFTER create() is too late for the fields create() itself reads
-    // (rosterSentAt gates in create), so the restart callers capture the pre-kill
-    // entry and call this AFTER kill, BEFORE create: it re-seeds JUST the requested
-    // fields present on the prior entry, and create's own upsert then spread-merges
-    // the full record over this stub, preserving them. A prior entry lacking a
-    // field seeds nothing for it (a genuinely fresh seat gets its roster).
+    // any field seeded AFTER create on the prior spawn: `rosterSentAt` (re-injects
+    // the roster into a --resume'd context) and a reviewer seat's
+    // `ephemeral`/`reviewFor` (review-done can no longer route/retire).
+    // Re-seeding AFTER create() is too late for the fields create() itself reads,
+    // so the restart callers capture the pre-kill entry and call this AFTER kill,
+    // BEFORE create; create's own upsert then spread-merges the full record over
+    // this stub. A prior entry lacking a field seeds nothing for it.
     //
-    // ALWAYS_PRESERVE is carried whether or not a caller names it, and that is
-    // deliberate rather than a shortcut: `sessionIds` is the seat's session_id
-    // HISTORY, which is what the cost panel sums a name's whole spend over
-    // (session-info trackedSessionIds → sumAgentCost). Only setSessionId appends
-    // to it, and only on a CHANGE, so an array dropped here never regrows — the
-    // seat's lifetime cost silently restarts from the current id and reads as
-    // "agent total below session total". All three callers omitted it and none
-    // had a reason to; an opt-in field list makes a fourth caller repeat the
-    // same omission, so the invariant lives in the helper, not in its callers.
+    // ALWAYS_PRESERVE is carried whether or not a caller names it: `sessionIds` is
+    // the seat's session_id HISTORY, which is what the cost panel sums a name's
+    // whole spend over. Only setSessionId appends to it, and only on a CHANGE, so
+    // an array dropped here never regrows — the seat's lifetime cost silently
+    // restarts from the current id. All three callers omitted it, so the invariant
+    // lives in the helper, not in its callers.
     _preserveAcrossRestart(name, priorEntry, fields) {
       if (!priorEntry || !Array.isArray(fields)) return;
       let seed = { name };
@@ -2802,16 +2789,14 @@ function createSessionManager(deps) {
       return this.list().filter(s => s.workspaceId === workspaceId);
     }
 
-    // WORKSPACE TEARDOWN RUNS OVER PERSISTENCE, NOT OVER THE LIVE MAP (F005).
-    // listForWorkspace above filters list(), which maps `this.sessions` — the
-    // live map. An archived session is never spawned by design
-    // (session-restore.js), so it is never in that map: killing what
-    // listForWorkspace returns and then dropping the workspace record leaves
-    // persistence rows carrying a workspaceId no window will ever carry again.
-    // Those rows are then unreachable from every surface — every IPC listing is
-    // workspace-scoped, and discovery excludes any conversation whose sessionId
-    // is in trackedSessionIds(), which unions in the orphan itself. The
-    // conversation is stranded by the very record that was meant to keep it.
+    // Workspace teardown runs over PERSISTENCE, not over the live map.
+    // listForWorkspace above filters list(), which maps `this.sessions`. An
+    // archived session is never spawned by design, so it is never in that map:
+    // killing what listForWorkspace returns and then dropping the workspace record
+    // leaves persistence rows carrying a workspaceId no window will ever carry
+    // again. Those rows are then unreachable from every surface — every IPC
+    // listing is workspace-scoped, and discovery excludes any conversation whose
+    // sessionId is in trackedSessionIds(), which unions in the orphan itself.
     // Hence the two methods below: one to SEE that population, one to reap it.
 
     // The rows a workspace holds that listForWorkspace cannot see: archived, or
@@ -2875,11 +2860,9 @@ function createSessionManager(deps) {
     // 'pending-count' channel, driving the sidebar ✉ badge. Poll (not event) is
     // deliberate: the UserPromptSubmit hook drains the store OUT OF PROCESS with an
     // atomic dir-rename Node never observes, so Node-side park/drain call sites
-    // can't emit a complete signal — a reconcile poll is the only source of truth,
-    // and one mechanism beats two. Cheap: a readdir of a handful of tiny dirs per
-    // live Claude session per second (jsonl-watcher already polls at 250ms). A
-    // count returning to 0 drops the map entry so the map tracks only non-zero
-    // sessions. Claude-only: the store is a Claude-hook artifact (codex never parks).
+    // can't emit a complete signal. A count returning to 0 drops the map entry so
+    // the map tracks only non-zero sessions. Claude-only: the store is a
+    // Claude-hook artifact (codex never parks).
     startPendingPoll(intervalMs = 1000) {
       if (this._pendingPollTimer) return;
       const tick = () => {
