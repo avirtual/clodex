@@ -2676,7 +2676,7 @@ function createTicketMethods(deps, shared) {
       // So this is not a case for a second watcher: there is nothing left to
       // observe. It is owed a redelivery, and REPLACE-not-stack above is untouched
       // — at most one latch is ever live, so the single-composer argument and
-      // t349's `thinking` => no-latch invariant both still hold.
+      // `thinking` => no-latch invariant both still hold.
       if (prior && prior.ticketId !== ticketId) this._oweDisplacedSpec(s, prior);
       clearTimeout(s._specConfirmTimer);
       // Where this seat's transcript ended when the write went out — the anchor the
@@ -2686,8 +2686,8 @@ function createTicketMethods(deps, shared) {
       // write". A respawned seat's transcript already holds THIS ticket's marker
       // from the incarnation that died; without the anchor every later turn matches
       // it and the latch clears over a spec the seat never re-received.
-      // A seat with NO transcript yet anchors at 0, not at -1. That is the whole
-      // t408 shape — a freshly minted seat has written nothing when its spec goes
+      // A seat with NO transcript yet anchors at 0, not at -1: a freshly
+      // minted seat has written nothing when its spec goes
       // out — and treating "no file" as an unknown baseline would answer "cannot
       // say" for every fresh dispatch, which is precisely the population this
       // mechanism exists to protect. Anchoring at 0 is also exactly right there:
@@ -3110,7 +3110,7 @@ function createTicketMethods(deps, shared) {
     },
 
     // The same probe, read as a NUMBER instead of a boolean. Split out rather
-    // than duplicated: t384's liveness test needs growth between two sweeps, and
+    // than duplicated: the liveness test needs growth between two sweeps, and
     // a second resolver would be free to disagree with this one about where a
     // seat's transcript is — silently, and in the direction that alarms.
     //
@@ -3135,7 +3135,7 @@ function createTicketMethods(deps, shared) {
     // from the previous incarnation — that is how it got the spec the first time —
     // so an unanchored search attributes every later turn to the stale copy, and
     // the replay path (the one this ticket's stamp fix touches) is exactly where
-    // that bites: t156's whole case is a respawned seat. Callers pass the size
+    // that bites: a respawned seat is the whole case. Callers pass the size
     // captured when the latch armed, which _armSpecConfirm takes at WRITE time —
     // after any resume content exists and before this write can be consumed.
     //
@@ -3184,7 +3184,7 @@ function createTicketMethods(deps, shared) {
     // _emitActivity): reaching a turn over the delivered text means the seat
     // submitted, and submitting is exactly what a lost write prevents. A turn the
     // transcript cannot attribute leaves the latch armed, so this still fires for a
-    // seat that turned for something else — t408's shape.
+    // seat that turned for something else.
     //
     // The three shapes that must NOT alarm are silent for structural reasons rather
     // than tuned ones:
