@@ -7002,25 +7002,18 @@ function createTicketMethods(deps, shared) {
       // question we actually want, and answers it wrongly whenever a later commit
       // touched the same files — the ordinary case for a ticket accepted a day
       // after it merged — so it would refuse teardown on genuinely landed work
-      // with nothing in the reply to tell the two refusals apart. The stamp is
-      // narrow and exact instead: `_stampMergeError` is written by the merge loop
-      // alone and CLEARED by its own green path, so it is present here only where
-      // the loop gave up at a merge step, and every step it names leaves the
-      // ancestor answer unable to mean "the work is in the base's tree right now".
-      // On the clean path it costs one field read and no git.
+      // with nothing in the reply to tell the two refusals apart.
       //
       // A demonstrably EMPTY branch is exempt, and the exemption is not a
       // weakening: the veto protects WORK, and 0 commits measured against the
       // recorded fork point means there is none to lose — nothing landed, so
-      // nothing can have been reverted. What the TREE holds uncommitted is
-      // protected by the isDirty gate below, which this arm never reaches anyway.
+      // nothing can have been reverted.
+      //
       // RE-READ, not the snapshot loaded at the top of this method. Two awaits
       // sit between that load and here (isMerged, commitsOnBranch), and the
       // auto-merge loop can stamp inside that window — leaving the veto reading
       // an un-stamped snapshot and taking the teardown, which is the residual
-      // shape of the very failure this arm exists to prevent. Same "re-read the
-      // state one last time" discipline `_autoMergeTicket` applies at its own
-      // pre-merge gate, and for the same reason. Snapshot-on-failure: an
+      // shape of the very failure this arm exists to prevent. Snapshot-on-failure: an
       // unreadable board falls back to the snapshot rather than to `null`, so a
       // read error cannot silently disarm the veto.
       const freshTicket = this._loadTicket(team, ticket.id) || ticket;
