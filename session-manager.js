@@ -116,9 +116,7 @@ const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
-// module's path (test/solo-tickets.test.js, test/review-verdict-ticket.test.js).
-// A fixture that restated either body would drift from the real line in silence,
-// since several suites pin a delivered body byte-for-byte.
+// module's path. Removing the re-export as unused breaks those importers.
 const { createTicketMethods, ticketCloseLine, ticketTaskDirLine } = require('./team-tickets');
 
 // Process-life identity for a spawned session (ticket replay). Module-level and
