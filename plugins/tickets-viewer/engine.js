@@ -10,8 +10,23 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 // MUST NOT require core: §12's lint refuses a require leaving this directory, so
-// the utilities below marked as core's are copied. Each drifts SILENTLY, so each
-// is pinned byte-for-byte in test/tickets-viewer-path-parity.test.js.
+// core utilities are copied in below. A copy drifts SILENTLY — it returns a
+// different answer rather than throwing.
+//
+// COMPARED TO CORE, in test/tickets-viewer-path-parity.test.js: projectDirFor,
+// nextTicketId, ticketTitle, extractTaskDir, ticketStarted, ticketTaskDirRefusal,
+// resolveTaskDir, ticketTaskDirLine, ticketTaskDirLineFor, closeLine. Editing one
+// of these to disagree with core fails the suite. `confine`/`confineOrThrow` are
+// covered only INDIRECTLY, through resolveTaskDir's escaping-pointer row.
+//
+// NOT compared to core at all: DEFAULT_STALL_MS, RECENT_DONE_MS/CAP and
+// manifestWarning are merely frozen by viewer fixtures that hardcode the value —
+// that catches you changing the copy, never core changing underneath it. Nothing
+// at all guards atomicWriteFileSync or WATCHDOG_MIN/MAX_MS. Do not read a green
+// suite as agreement with core for anything in this paragraph.
+//
+// manifestWarning is additionally a deliberate SUBSET of core's validator, so it
+// must never be made byte-equal to it.
 
 let clodexHomeOverride = null;
 
@@ -175,11 +190,10 @@ function confineOrThrow(root, name, label = 'name') {
 }
 
 // Copied WHOLE, not narrowed to a "good enough" version: `taskDir` is spec TEXT an
-// agent wrote, rendered into a dispatch a hand then cds into.
-
-// path-confine admits ONE segment, so the walk is segment by segment: a target
-// outside the root produces leading `..` segments, each failing the direct-child
-// test at the step that introduces it.
+// agent wrote, rendered into a dispatch a hand then cds into. path-confine admits
+// ONE segment, so the walk is segment by segment: a target outside the root
+// produces leading `..` segments, each failing the direct-child test at the step
+// that introduces it.
 function confineUnder(root, target) {
   const base = path.resolve(root);
   const rel = path.relative(base, path.resolve(target));
@@ -526,6 +540,8 @@ function teams() {
   return { ok: true, teams: out };
 }
 
+// The ONLY place a renderer string becomes a path — every read and write goes
+// through it.
 function resolveProject(key) {
   const dir = confine(projectsRoot(), key);
   if (dir === null) return { ok: false, error: 'a valid project key is required' };
@@ -854,7 +870,6 @@ module.exports.deactivate = () => {
   host = null;
 };
 
-// Exported for the test suite, not part of the plugin contract.
 module.exports._internals = {
   confine, readTickets, readTicketsAt, readManifest, stallMsFor, shape,
   board, teams, projects, teamsRoot, projectsRoot, teamIndex, projectRootFor,
