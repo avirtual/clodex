@@ -1,8 +1,32 @@
 'use strict';
 
-// Storage: <clodexHome>/projects/<leaf>-<hash8>/tickets.json — clodex-paths
-// .projectDirFor owns that grammar, do not re-join it here. Under ~/.clodex and
-// not userData, because the standalone clodex-team exec reads it.
+// tickets-store.js — the PROJECT ticket registry (Task 25; moved off the team in
+// t301). Formal tickets let a LEAD attach tasks to members as tracked envelopes
+// (opened, assigned, closed by clodex itself) instead of
+// lifecycle-by-dm-and-lead-discipline. It FORMALIZES, not replaces, the
+// <task-dir>/spec.md + notes.md artifact convention: the ticket is registry +
+// lifecycle + notification; specs/journals stay files (an optional `taskDir`
+// links the two). Those files live outside the user's repo — see
+// clodex-paths.taskDirFor.
+//
+// Storage: <clodexHome>/projects/<leaf>-<hash8>/tickets.json — a flat array of
+// ticket records, keyed by the PROJECT ROOT and resolved through
+// clodex-paths.projectDirFor, which is the single authority on that grammar (do
+// not re-join it here). It sits beside the project's task artifacts because a
+// ticket is a durable unit of work that outlives, and does not require, any
+// team: teams are one source of assignees, not the reason the board exists. It
+// lives under ~/.clodex, NOT userData, because it must be shared/visible to the
+// clodex-team exec (a standalone process). Atomic temp+rename write
+// (fs-util.atomicWriteFileSync) per the stores.js persistence idiom. Pure leaf
+// (electron-free): required directly like team-manifest's formatters. fs/path
+// are injectable for tests but default to the real modules (tickets are real
+// on-disk state — tests point clodexHome at a temp dir).
+//
+// INVARIANT (single-board id resolution): id-only verbs resolve as (sender's
+// project, id) — NEVER a global scan. Two teams rooted at one project now share
+// this board, which is why ids are never renumbered on a merge: an id is a
+// PUBLIC reference (branch names, artifact dirs, commit messages), so a
+// re-issued one still resolves, just to the wrong work. See tickets-migrate.js.
 
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
 const { projectDirFor, defaultClodexHome } = require('./clodex-paths');
@@ -20,6 +44,8 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
     return path.join(boardDir(projectRoot), TICKETS_FILE);
   }
 
+  // Best-effort load: a missing/unreadable/invalid file is an empty registry (a
+  // project that has never opened a ticket has no file). Never throws.
   function load(projectRoot) {
     try {
       const arr = JSON.parse(fs.readFileSync(ticketsPath(projectRoot), 'utf-8'));
@@ -37,8 +63,10 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
   return { load, save, ticketsPath };
 }
 
-// Closed records stay in the array so max+1 never reuses an id: an id is a public
-// reference (branches, artifact dirs, commits) and a re-issued one still resolves.
+// Monotonic `t<N>` id: max existing N + 1. Records are KEPT on close (done/
+// cancelled stay in the array for history), so max+1 never reuses an id even
+// after cancels. A registry with a hand-broken id is ignored for the max, never
+// throws.
 function nextTicketId(tickets) {
   let max = 0;
   for (const t of tickets || []) {
@@ -51,8 +79,12 @@ function nextTicketId(tickets) {
   return `t${max + 1}`;
 }
 
-// Uncapped. ticketTitle's 80-char cap must not be pushed down here or branchSlug's
-// own 40-char word-boundary cap never engages.
+// The spec's first non-empty line, trimmed and UNCAPPED — '' when there is none.
+// Split out from ticketTitle because the two consumers want different strings:
+// the title is a display column and is capped at 80, while `branchSlug` must
+// see the whole line or its own 40-char word-boundary cap never engages (a
+// dispatch opens with a ~67-char task-dir path, so the 80-char cut left ~13
+// characters of prose and every branch minted since t453 was junk).
 function titleLine(specText) {
   const lines = String(specText == null ? '' : specText).split('\n');
   for (const line of lines) {
@@ -62,18 +94,43 @@ function titleLine(specText) {
   return '';
 }
 
+// The ticket TITLE = the first non-empty line of the spec text, trimmed and
+// capped (the list summary column). Empty spec → '(untitled)'.
 function ticketTitle(specText) {
   const t = titleLine(specText);
   if (!t) return '(untitled)';
   return t.length > 80 ? `${t.slice(0, 77)}…` : t;
 }
 
-// Abs before rel: `tasks/` appears inside an absolute path, so rel-first truncates
-// it to its tail. Per LINE, not against the whole text — globally, abs-before-rel
-// would let a path further down beat a bare `tasks/foo` on line 1.
+// Optional artifact link: the task dir named ANYWHERE in the spec text, captured
+// verbatim (string only — no fs validation). Links ticket → on-disk
+// spec/journal. Absent → null.
+//
+// Both forms are accepted because artifacts moved out of the project repo to
+// ~/.clodex/projects/<leaf>-<hash>/tasks/ (clodex-paths.taskDirFor), and every
+// ticket written before that move carries the bare `tasks/<dir>` form. Matching
+// the absolute form FIRST matters: `tasks/` appears inside it, so trying the
+// bare pattern first would truncate an absolute path to its tail.
 const TASK_DIR_ABS_RE = /(?:~|\/)[A-Za-z0-9._/-]*\/tasks\/[A-Za-z0-9._/-]+/;
 const TASK_DIR_REL_RE = /tasks\/[A-Za-z0-9._/-]+/;
 
+// Scanned LINE BY LINE, earliest line wins, abs-before-rel within each line.
+// Not a single match against the whole text, and the difference is not stylistic:
+// applied globally, abs-before-rel would let an absolute path further down beat a
+// bare `tasks/foo` on line 1, CHANGING the answer for tickets that resolve today.
+// Line-by-line is a strict superset — a spec whose first line matches gets the
+// byte-identical result it got when only that line was read.
+//
+// It reads the whole spec because a path under a title (line 3, the natural
+// place) was invisible: measured at ~86% of a live seven-ticket queue, and the
+// loop then computed a diff up to 78kB before finding it had nowhere to write it.
+//
+// The first line's OTHER two consumers are unaffected by construction, and that
+// is what makes this widening safe: `ticketTitle` reads line 1 itself, and
+// `branchSlug` sees line 1 and nothing else (it is called on `titleLine`, the
+// same line the title comes from, untruncated) — so nothing downstream of the
+// slug can see a path this function found on line 3. Handing the slug any
+// multi-line input would break that.
 function extractTaskDir(specText) {
   const lines = String(specText == null ? '' : specText).split('\n');
   for (const line of lines) {
@@ -85,8 +142,23 @@ function extractTaskDir(specText) {
   return null;
 }
 
-// Fix the SLUG, never the line: the same line is the display title and where
-// extractTaskDir reads the artifact link.
+// The branch-name half of the ticket's first line, which serves three consumers
+// with incompatible needs: it is the human title, it is where extractTaskDir
+// reads the artifact link, and it is what the branch is slugged from. Fixing
+// the SLUG rather than the line is deliberate — the line's shape is load-bearing
+// for the other two.
+//
+// Two spans are removed before slugging, both observed producing bad branches:
+//   - the task-dir path, because the documented dispatch format invites one onto
+//     exactly this line (it produced `t302-tasks-t302-migration-resync-spec-md-the`);
+//   - a LEADING ticket id, because the caller prepends the real id anyway. The
+//     lead cannot know the id before dispatch, so a title carrying one is either
+//     a duplicate or — as seen when a lead guessed the next id — a DIFFERENT id
+//     than the board minted, leaving a branch name that asserts two.
+// The id strip is case-INSENSITIVE, so a title legitimately opening with a
+// design label ("T5 — …") loses it. That is the accepted cost: a wrong id in a
+// branch name misroutes a `merge-base --is-ancestor` run by hand, a missing
+// label reads no worse than the rest of the slug.
 function branchSlug(title) {
   let s = String(title == null ? '' : title);
   s = s.replace(TASK_DIR_ABS_RE, ' ').replace(TASK_DIR_REL_RE, ' ');
@@ -95,20 +167,50 @@ function branchSlug(title) {
   if (s.length > 40) {
     const cut = s.slice(0, 41);
     const at = cut.lastIndexOf('-');
-    // Only when a boundary leaves something to read: a first word past the cap
-    // has no `-` to cut on, and one at position 0 would empty the slug.
+    // Word-boundary truncation, but only when a boundary leaves something to
+    // read: a first word longer than the cap has no `-` to cut on, and one at
+    // position 0 would empty the slug entirely.
     s = at > 0 ? cut.slice(0, at) : s.slice(0, 40);
   }
   return s.replace(/^-+|-+$/g, '');
 }
 
-// Sectioned by header LINE, never by scanning for a keyword anywhere: an item
-// routinely names `NITS`/`CHECKED` in its prose, and cutting there truncates the
-// blocking list. Header-vs-item is bullet-and-bold, not what follows the keyword.
+// The MUST-FIX section of a reviewer verdict, verbatim, or null when there is
+// none. Sectioned by HEADER LINE rather than by scanning for the first `NITS`
+// anywhere: a must-fix item routinely names the word (`this nit is blocking`,
+// `CHECKED nothing here`), and a substring cut there silently truncates the
+// blocking list — which is the half the rework round is built from.
+//
+// A section whose body is only a "none" placeholder returns null, so a reviewer
+// writing `MUST-FIX: none` beside an ACCEPT does not hand the loop an empty
+// rework body to deliver.
+// Header-vs-item is decided by BULLET AND BOLD, not by what follows the keyword.
+// A separator rule cannot do it: `- CHECKED: I could not verify this` (an item)
+// and `MUST-FIX: the ordering is wrong` (a header carrying its only item inline)
+// are the same shape under "keyword then punctuation", so any such rule either
+// drops the blocking list or stops reading inline headers. Six real item shapes
+// were extracting to null this way.
+//
+// The discriminator comes from the producer — resources/library/prompts/system/
+// clodex-team-reviewer.md's "Verdict format" section — where headers are bold and
+// unbulleted (`**MUST-FIX**`, `**VERDICT**: ACCEPT`) and items carry a bullet or
+// a number and are not bold-wrapped:
+//   bold-delimited keyword  -> header wherever it appears, bullet or not;
+//   bulleted/numbered       -> header only if the keyword is the WHOLE line;
+//   neither                 -> header unless a word follows the keyword, which is
+//                              prose (`VERDICT parsing accepts a quoted line`).
+// The third arm is the only one where the separator carries any weight, and it
+// is kept precisely because there is no bullet there to read instead.
+//
+// `*` is consumed as a bullet only when it is not the first half of `**`, or
+// `**MUST-FIX**` reads as a bulleted line whose remainder is `MUST-FIX**` and the
+// most common header form in the corpus stops matching.
 const LINE_MARKER_RE = /^[ \t]*(?:(?:[-+>]|\*(?!\*)|\d+[.)])[ \t]*)+/;
 const SECTION_KEYWORD_RE = /^(MUST[-\s]?FIX|NITS?|CHECKED|VERDICT)\b/i;
 const INLINE_LEAD_RE = /^[ \t]*(?:\*\*|__)?[ \t]*[:\-—]?[ \t]*/;
 
+// null for an item/prose line, else { keyword, tail } — `tail` is the inline
+// first item (`MUST-FIX: the guard is inverted`), '' when the header stands alone.
 function sectionHeader(line) {
   const s = String(line == null ? '' : line);
   const marker = LINE_MARKER_RE.exec(s);
@@ -143,48 +245,103 @@ function extractMustFix(verdictText) {
     const h = sectionHeader(line);
     if (h) {
       const isMustFix = /^MUST/i.test(h.keyword);
-      if (inSection && !isMustFix) break;
+      if (inSection && !isMustFix) break;   // the next section closes this one
       if (isMustFix) {
         inSection = true;
+        // The header line carries the first item when the reviewer wrote it
+        // inline (`MUST-FIX: the guard is inverted`), which is the common shape
+        // for a single-item list.
         if (h.tail) body.push(h.tail);
       }
       continue;
     }
     if (inSection) body.push(line);
   }
-  // The first item's indentation stays: a bare `.trim()` de-indents line 1 only,
-  // so countMustFix's relative-depth count collapses a multi-item verdict to 1.
+  // Leading BLANK LINES and trailing space go; the first item's own indentation
+  // stays. A bare `.trim()` de-indents the first line ONLY, which silently
+  // mutilates the shape `countMustFix` reads: item 1 arrives at column 0 while
+  // its true siblings keep their indent, so a relative-depth count demotes every
+  // sibling to a sub-bullet and collapses a multi-item verdict to 1. Every
+  // instance found in the live verdict corpus was an UNDERCOUNT — the direction
+  // is the point: a verdict silently reports fewer must-fixes than it carries.
+  // The placeholder tests below run on `.trim()` so their rules stay byte-exact.
   const out = body.join('\n').replace(/^(?:[ \t]*\r?\n)+/, '').replace(/\s+$/, '');
   if (!out.trim()) return null;
   return /^(?:none|n\/a|-+|—)\.?$/i.test(out.trim()) ? null : out;
 }
 
-// Derived on read: a stored count would disagree with `mustFix` after any edit.
-// The placeholder is re-tested here, wrapped — not redundant with extractMustFix's
-// bare-anchored one, and the two must not be merged.
+// How many must-fixes, for a notification that must state a NUMBER without
+// carrying the prose. Counts leading list markers (`- `, `* `, `1. `, `1) `)
+// because that is how the reviewer template asks for the section; an
+// unmarked block is one item, which is also the shape `extractMustFix`
+// documents for the inline `MUST-FIX: <text>` header.
+//
+// Derived on read rather than stored: a second field on the record could
+// disagree with `mustFix` after any edit, and the blob is the thing a human
+// acts on.
+//
+// A non-null blob can still mean NONE. `extractMustFix`'s placeholder test is
+// anchored bare (`none`, `n/a`, `-`), so any wrapping survives it: `(none)` —
+// the shape a live record actually carried — reaches here as a string with no
+// list marker, and an unguarded floor of 1 then announces `ACCEPT … 1 must-fix`.
+// A verdict that contradicts its own count is the false premise this
+// notification exists to stop, so the placeholder is re-tested here, wrapped.
+//
+// A must-fix list item: the marker spellings the reviewer template asks for.
+// Hoisted beside the placeholder regexes because it is the same family of
+// verdict-shape literal, and the capture is the indentation `countMustFix`
+// measures depth with.
 const MUSTFIX_ITEM_RE = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+\S/;
 
-// A markdown rule, which the item regex cannot tell from a list item.
+// `- - -`, `***`, `___` — a markdown horizontal rule, which the item regex
+// above cannot tell from a list item.
 const THEMATIC_BREAK_RE = /^[ \t]*(?:[-*_][ \t]*){3,}$/;
 
 const MUSTFIX_PLACEHOLDER_RE = /^[\s(\[]*(?:none|n\/a|nothing|-+|—)[\s.)\]]*$/i;
 
-// Drops the dash arms: a body OPENING with `---` is a rule above a real list, and
-// inheriting them would count `---\n- a\n- b` as zero.
+// The first-line form drops the dash arms. A body whose whole content is `---`
+// means no must-fixes, but a body OPENING with `---` is a markdown rule above a
+// real list — inheriting the dash arms there would count `---\n- item\n- item`
+// as zero and silence the gate over genuine must-fixes, which is the failure
+// this counter exists to prevent, arriving through its own fix.
 const MUSTFIX_PLACEHOLDER_WORD_RE = /^[\s(\[]*(?:none|n\/a|nothing)[\s.)\]]*$/i;
 
-// Normalized off the line rather than added to the patterns' character classes.
-// Every half is anti-widening; dropping any of it silences the gate:
-//   - balanced (`\1`), so `**MF1**: the guard is inverted` keeps its `**`;
-//   - the interior neither opens nor closes with space, keeping `* (none) *` an item;
-//   - bounded — a backreference under an unbounded greedy run backtracks cubically
-//     and stalled the main process for seconds (test-pinned); the loop below already
-//     unwraps longer runs a pass at a time, so `+` buys nothing;
-//   - the trailing class is whitespace-and-period only; `*`/`_`/backtick there would
-//     make an unbalanced run a wrapper;
-//   - the leading edge is anchored, so `> *(none)*` stays one must-fix.
+// Emphasis is normalized off the line before the patterns above see it, rather
+// than added to their character classes. `*(none)*` was the THIRD spelling to
+// refuse a live ACCEPT; the space of ways a model writes "nothing here" is
+// open-ended, so enumerating wrappers one incident at a time loses by
+// construction. Stripping collapses that family onto the two cases already
+// reasoned about.
+//
+// Both halves of the shape carry anti-widening weight, and dropping either one
+// silences the gate over genuine must-fixes:
+//   - the run is BALANCED (`\1`), so an unclosed run is not a wrapper —
+//     `**MF1**: the guard is inverted` keeps its leading `**` and stays one
+//     must-fix, and a bare `*` / `**` / backtick never becomes a placeholder;
+//   - the interior neither opens nor closes with whitespace, which is what
+//     keeps the LIST ITEM `* (none) *` a list item rather than a wrapper.
+//
+// The run is BOUNDED because a backreference under an unbounded greedy run
+// backtracks cubically, and `countMustFix` runs on the main process's verdict
+// path: an unbounded `[*_`]+` against a long run followed by a long non-matching
+// body stalled the app for seconds (test-pinned). Nothing is lost by the bound —
+// `stripEmphasis`'s loop already unwraps longer and nested runs a pass at a time,
+// so raising it back to `+` buys no spelling and re-arms the stall.
+//
+// The TRAILING edge tolerates `[\s.]*` outside the closing run, because
+// `**(none)**.` is a spelling a reviewer plausibly writes and the punctuation is
+// the same whack-a-mole family one layer out. It is not a widening: the class is
+// whitespace-and-period only, so `**(none)*` stays unbalanced and `*MF1*.` strips
+// to `MF1`, which is no placeholder word. Adding `*`/`_`/backtick here WOULD
+// widen it — an unbalanced run would become a wrapper.
+//
+// The LEADING edge is anchored by design: `> *(none)*` stays one must-fix. Line
+// decoration is the caller's to strip, and tolerating it here would make a
+// quoted or prefixed line a placeholder.
 const EMPHASIS_WRAP_RE = /^([*_`]{1,6})(\S(?:.*\S)?)\1[\s.]*$/;
 
+// Nested wrappers unwrap outside-in (`**_(none)_**`). Terminates by
+// construction: each pass returns a strictly shorter middle.
 function stripEmphasis(line) {
   let s = line;
   for (let m = EMPHASIS_WRAP_RE.exec(s); m; m = EMPHASIS_WRAP_RE.exec(s)) s = m[2];
@@ -195,40 +352,92 @@ function countMustFix(mustFixText) {
   if (mustFixText == null) return 0;
   const text = String(mustFixText);
   const lines = text.split('\n');
-  // Tested against the FIRST line, not the whole blob: prose written under a
-  // `MUST-FIX: (none)` header is closed by nothing, so its bullets count as items.
-  // First-line-only is what keeps this from being a widening.
+  // The placeholder is matched against the section's FIRST line, not the whole
+  // blob: a reviewer who writes `MUST-FIX: (none)` and then explains himself
+  // underneath leaves prose that no section header closes, so `extractMustFix`
+  // appends it to the same body and a whole-blob test stops firing. The bullets
+  // inside that prose then count as items — a live ACCEPT was refused for
+  // "6 items" over a body reading `(none)`. A section that OPENS with the
+  // placeholder declares no must-fixes, whatever follows it.
+  //
+  // Matching only the first line is what keeps this from being a widening: a
+  // real list still counts, so an ACCEPT that genuinely lists must-fixes is
+  // still the contradiction the merge gate refuses.
   const nonEmpty = lines.filter((l) => l.trim());
-  // Only the tested line is normalized, so a `*` marker stays a marker below.
+  // Only the line under TEST is normalized. The item count below still runs on
+  // the original lines, so a `*` list marker stays a list marker.
   const firstLine = nonEmpty.length ? stripEmphasis(nonEmpty[0].trim()) : '';
   const re = nonEmpty.length > 1 ? MUSTFIX_PLACEHOLDER_WORD_RE : MUSTFIX_PLACEHOLDER_RE;
   if (re.test(firstLine)) return 0;
-  // Minimum indentation present, not a fixed column, and RELATIVE because the
-  // direction worth protecting is undercounting: against column 0 a verdict whose
-  // items are all indented matches no marker and falls through to the floor below.
+  // Items are counted at the MINIMUM indentation present in the section, not at
+  // a fixed column. A must-fix that traces its mutant through indented
+  // sub-bullets is one finding, not one per bullet: a live one-item REWORK
+  // notified as "6 must-fixes" and sent the lead hunting five findings that did
+  // not exist. Sub-bullets are good reviewing, and a counter that penalises the
+  // more thorough verdict is the counter's bug, not the reviewer's.
+  //
+  // RELATIVE, because the direction worth protecting is UNDERCOUNTING.
+  // Reviewers indent inconsistently, so a verdict whose items are ALL indented
+  // is a real list; against a fixed column 0 it would match no marker at all and
+  // fall through to the bare-block floor below, announcing "1 must-fix" over
+  // three of them — an understated REWORK the lead triages as trivial, and one
+  // step from the zero that would disarm the ACCEPT-contradiction gate
+  // entirely. Overcounting is merely noisy; undercounting hides work.
   const widths = [];
   for (const line of lines) {
+    // A thematic break is not an item. `- - -` and `* * *` satisfy the item
+    // regex (marker, space, non-space), and one sitting at column 0 above an
+    // indented list becomes the sole top level and demotes every real item —
+    // a 3-item REWORK announced as 1, the undercount direction. No verdict in
+    // the recorded corpus does this today; the guard is here because the cost
+    // of it arriving is a silently understated REWORK.
     if (THEMATIC_BREAK_RE.test(line)) continue;
     const m = MUSTFIX_ITEM_RE.exec(line);
-    // CommonMark's tab stop, or raw counts make one tab shallower than two spaces
-    // and pick the sub-bullets as the top level.
+    // CommonMark's tab stop, so a tab-indented item and a space-indented one
+    // are comparable at all — raw character counts make one tab shallower than
+    // two spaces and pick the sub-bullets as the top level.
     if (m) { let w = 0; for (const ch of m[1]) w = ch === '\t' ? w + 4 - (w % 4) : w + 1; widths.push(w); }
   }
-  // Reduced, not `Math.min(...widths)`: one argument per line is a stack overflow
-  // on a long blob.
+  // Reduced, not `Math.min(...widths)`: this runs on the main process's verdict
+  // path and a spread of one argument per line is a stack overflow on a long
+  // blob, the same class of hazard as the bounded emphasis run above.
   let top = Infinity;
   for (const w of widths) if (w < top) top = w;
   let n = 0;
   for (const w of widths) if (w === top) n++;
-  // Reached only once the placeholder test above ruled out "no items at all".
+  // The floor: a bare unmarked item is one must-fix, not zero. Only reached
+  // once the placeholder test above has ruled out "no items at all".
   return n > 0 ? n : (text.trim() ? 1 : 0);
 }
 
+// Has this ticket been DISPATCHED? First-class state, because everything
+// downstream of the add/start split keys off it, and inferring it from
+// `dispatch:'worktree'` plus the absence of `ticket.worktree` is a derived
+// signal that goes silently wrong the moment a non-worktree role needs the same
+// distinction.
+//
+// The three legacy arms exist because every ticket in a live tickets.json was
+// dispatched by the OLD `add` and carries no `startedAt`. Reading those as
+// never-started drops them out of `_openTicketsFor`, so replay and `_advanceSeat`
+// stop seeing real in-flight work on the first launch after upgrade — strictly
+// worse than the collision being fixed here.
+//
 // The KEY'S PRESENCE is the format discriminator, which is why `_taskAdd` writes
-// `startedAt: null` explicitly: an unstarted ticket holds the key with null and a
-// pre-upgrade record has no key. Absent defaults to started because the errors are
-// asymmetric — a false "started" only refuses a `start`, a false "unstarted"
-// re-delivers specs into occupied trees.
+// `startedAt: null` explicitly: an unstarted new ticket carries the key holding
+// null, a pre-upgrade record has no key at all, and nothing else tells them
+// apart. Absent defaults to STARTED because the two errors are not symmetric —
+// a false "started" only refuses a `start` (and `assign` still re-sends), while
+// a false "unstarted" silently re-delivers in-flight specs into occupied trees.
+//
+// `parked` carves the one legacy shape that provably never dispatched: the old
+// `add` returned before delivering when parked. Without it the documented
+// park-then-release flow would refuse to start on the first post-upgrade launch.
+//
+// `role`/`worktree` are kept as a second reading, not as the primary one: they
+// are written only by a dispatch path, but `_repinTicketToSeat` declines to
+// write `role` when the assignee is a SEAT NAME rather than a role key, so an
+// old name-addressed ticket dispatched with neither field set. Those records are
+// caught by the absent-key arm, not by this one.
 function ticketStarted(ticket) {
   if (!ticket) return false;
   if (ticket.startedAt != null) return true;
@@ -237,21 +446,45 @@ function ticketStarted(ticket) {
   return false;
 }
 
-// `done` is not terminal: the loop closes the ticket before its checks and the
-// review spawn, so one carrying a `loopStep` still has work out. Single-sourced
-// deliberately — the stall sweep's eligibility test, its nudge stamp and the
-// verdict landing all read this, and a divergence between them is silent.
+// Is this ticket still in flight — i.e. is anyone expected to act on it?
+//
+// `open` is the ordinary case. `done` used to be terminal and no longer is: the
+// loop closes the ticket BEFORE it runs its checks and spawns the review, so a
+// done ticket carrying a `loopStep` has work outstanding, while one without has
+// genuinely finished.
+//
+// Single-sourced deliberately. Three call sites depend on this answer — the
+// stall sweep's eligibility test, the sweep's own nudge stamp, and the verdict
+// landing — and the failure mode of a divergence is not a wrong answer but a
+// silent one: a shape the sweep nudges but the stamp refuses to record re-nudges
+// every sweep, and a shape the sweep skips is a ticket nobody is ever told about.
+// Two literal copies were the state this replaced; a comment is not enough.
 function ticketInFlight(ticket) {
   if (!ticket) return false;
   if (ticket.state === 'open') return true;
   return ticket.state === 'done' && !!ticket.loopStep;
 }
 
-// Predicate and phrasing are one function on purpose: a caller testing the boolean
-// and one printing the reason cannot drift about which tickets are terminal. Not
-// the same question as ticketInFlight. `closedOut` cannot be inferred from
-// `acceptedAt`, which is stamped on accept arms that do NOT close out — a ticket
-// awaiting its merge would read as terminal while still live.
+// Is this ticket CLOSED OUT — past any point where a verb will name it again?
+// Returns the reason as a phrase (for the message that refuses to bind to it),
+// or null when the ticket is still live. Predicate and phrasing are one function
+// on purpose: a caller that tests the boolean and a caller that prints the
+// reason cannot drift into disagreeing about which tickets are terminal.
+//
+// NOT the same question as ticketInFlight, and the gap between them is real: a
+// `done` ticket is not in flight once its loop step is gone, but it is very much
+// still live — a reject reopens it, and an accept is still to come.
+//
+// Terminal is exactly two things:
+//   * `cancelled` — _taskCancel refuses any non-open ticket, so nothing can
+//     name it again.
+//   * `closedOut` — stamped by the accept arms that genuinely close the ticket
+//     out: merged, no-branch-recorded, and t536's MERGE FAILED veto, which keeps
+//     tree and branch yet still closes out. It CANNOT be inferred from
+//     `acceptedAt`: that is stamped on every accept arm including the two that
+//     do NOT close out (`!m.ok`, `!m.merged`), so a ticket awaiting its merge
+//     would read as terminal while it is still live. Not "the two that invite a
+//     second accept" — the veto and the dirty downgrade invite one too.
 function ticketTerminalReason(ticket) {
   if (!ticket) return null;
   if (ticket.state === 'cancelled') return 'cancelled';
