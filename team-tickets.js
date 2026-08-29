@@ -1450,9 +1450,6 @@ function createTicketMethods(deps, shared) {
         // A reject landing during `mergeNoFf` or the post-merge suite is NOT
         // closeable here; undoing that is `revert -m 1`, the lead's call.
         //
-        // A GATE, not the record everything below reads: the merge message and
-        // the post-merge suite keep using the `ticket` snapshot on purpose.
-        //
         // `closedOut` alongside `state` is not redundant with the top gate: an
         // ACCEPT leaves `state` at `done`, so state alone is blind to it, and
         // every closing arm costs something past this line — the MERGED arm
@@ -5559,21 +5556,14 @@ function createTicketMethods(deps, shared) {
     // With no live seat this must FAIL LOUDLY rather than reply success — same
     // reasoning as the loop's own pre-write seat check: rework nobody receives
     // must never read as delivered.
+    //
     // No reviewer teardown here, unlike the reopen arm that delegates to this:
     // its gate is a ticket ALREADY `open` for rework, and a review round only
     // exists while the ticket is `done` — both keepHold arms keep it there. There
     // is no round to end, and this path does not touch `loopStep` at all.
     //
-    // So a seat still resolving for an `open` ticket is one whose round something
-    // ELSE already ended, and retiring it here would destroy a review nobody
-    // ended. It cannot corrupt the board either: `_landVerdictOnTicket`'s
-    // `ticketInFlight` guard refuses a verdict on an open ticket, and it falls
-    // through to the lead in full instead.
-    //
     // NOT "it might be an ad-hoc review": an ad-hoc review can never carry
-    // `reviewTicket`, so it is invisible to the resolver. The intent path calls
-    // `_handleTeamReview` with NO opts (session-manager.js, the team-review arm);
-    // only `_spawnTicketReview` seeds the field.
+    // `reviewTicket`, so it is invisible to the resolver.
     _taskRejectFollowUp(session, team, tickets, ticket, reason, reply) {
       const seat = this._ticketAssigneeSeat(team, ticket);
       // Its own arm, because on a SOLO board `_soloContext` makes the lead its own
