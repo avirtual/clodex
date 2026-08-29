@@ -772,43 +772,32 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   };
 }
 
-// Seat name → role. Two forms answer: the lead SEAT, and `<team>-<role>` with an
-// optional numeric collision suffix.
+// Seat name → role: the lead SEAT, or `<team>-<role>` with an optional collision
+// suffix. A name this cannot decompose resolves to no role at all — off the
+// roster, no role prompt, and past the fail-CLOSED `_roleInUse` guard in
+// session-manager.js, which then cannot see the seat filling the role it is about
+// to let you remove.
 //
-// THE SUFFIX IS NOT ONLY `-N` (F008). The old strip was `/-\d+$/` — a hyphen
-// REQUIRED before the digits — so `shop-hand2` derived the key `hand2`, matched
-// no role, and resolved to null. That is not cosmetic: every team verb resolves
-// its target through this function, so an unresolved seat cannot be ticketed and
-// cannot be retired, and `_roleInUse` (session-manager.js) — a guard built to
-// fail CLOSED — does not see the seat filling the role it is about to let you
-// remove. The numbered form is the obvious way to make several seats of one
-// role, which is exactly why it must not be the form that silently fails.
+// The suffix is not only `-N`: `shop-hand2` must strip too, since the numbered
+// form is the obvious way to make several seats of one role.
 //
-// EXACT MATCH WINS, before any stripping: a role may legitimately be named with
-// a trailing digit (`hand2`), and a seat named for it must resolve to it rather
-// than to `hand`. The old code had the same hazard for a role named `hand-2`.
+// EXACT MATCH WINS, before any stripping: a role may legitimately be named with a
+// trailing digit (`hand2`), and a seat named for it must resolve to it.
 //
-// Only DIGIT suffixes strip. `shop-hand-wire` still resolves to nothing unless a
-// role of that name exists — a non-numeric tail names a different thing, and
-// waving it through to `hand` would make role resolution guess.
+// Only digit suffixes strip. `shop-hand-wire` resolves to nothing unless a role
+// of that name exists — waving a non-numeric tail through to `hand` would make
+// role resolution guess.
 //
-// `-rN` is the ONE lettered tail that strips, and only ahead of the numeric one:
-// a ticket's reviewer is named `<team>-reviewer-<ticket>-r<round>` so a watchdog
-// can address one review rather than whoever holds a recycled counter name. Both
-// tails must go or the key keeps the ticket number. This is a round, not a
-// second numbering scheme for collisions — the constraint at _mintTicketSeat
-// (session-manager.js) still holds, and a name this cannot decompose resolves to
-// no role at all: off the roster, no role prompt, and past the fail-CLOSED
-// _roleInUse guard.
+// `-rN` is the one lettered tail that strips, and only ahead of the numeric one:
+// a ticket's reviewer is `<team>-reviewer-<ticket>-r<round>`, and both tails must
+// go or the key keeps the ticket number.
 function matchSeatRole(team, seatName) {
   if (!team || !seatName || !team.roles) return null;
   if (seatName === team.lead) return 'lead' in team.roles ? 'lead' : null;
   const prefix = `${team.name}-`;
   if (!seatName.startsWith(prefix)) return null;
   // hasOwnProperty, not `in`: `in` walks the prototype, so a seat named
-  // `<team>-toString` would otherwise "resolve" to a role that is Object's
-  // method. The old code had this on its single lookup; adding a second lookup
-  // without fixing it would have widened it.
+  // `<team>-toString` would otherwise "resolve" to a role that is Object's method.
   const has = (k) => Object.prototype.hasOwnProperty.call(team.roles, k);
   const suffix = seatName.slice(prefix.length);
   if (has(suffix)) return suffix;
@@ -816,35 +805,19 @@ function matchSeatRole(team, seatName) {
   return key && has(key) ? key : null;
 }
 
-// The exec runner requires a payload on every call and this schema requires
-// both keys (resources/library/exec/clodex-team.json), so the bare word
-// `roster` bounces. Rendered concrete, with the reader's own name, so the line
-// can be copied rather than reconstructed.
+// The exec runner requires a payload on every call and this schema requires both
+// keys, so the bare word `roster` bounces. Rendered concrete so the line can be
+// copied rather than reconstructed.
 function rosterExecPayload(seatName) {
-  // Serialized, not interpolated: a seat name reaching here unvalidated would
-  // otherwise be able to break the JSON, and this pure leaf cannot see the
-  // caller's name grammar to know it never does.
+  // Serialized, not interpolated: a seat name reaching here unvalidated could
+  // break the JSON, and this pure leaf cannot see the caller's name grammar.
   return `[agent:exec clodex-team] ${JSON.stringify({ action: 'roster', agent: seatName || '<your name>' })}`;
 }
 
-// Per-role invariants ONLY — the roster listing must stay OUT: composition
+// Per-role invariants ONLY — the roster listing must stay out: composition
 // changes over a seat's life and this text is part of the cache-stable system
-// prompt. Live composition arrives as data.
-//
-// The OUTPUT must not carry the seat name, only the role `seatName` resolves
-// to, so same-role seats share this text verbatim. Scope of that,
-// measured rather than assumed: for a seat whose role prompt rides
-// --system-prompt-file (every ticket seat — session-manager's
-// `promptRidesAsSystem` skips the append) this block is the TAIL of the append
-// channel, so ~180 bytes are all there is to share and nothing trails it.
-// Where that append is NOT skipped, the concatenation strands the whole
-// role prompt behind a varying token instead. Worth doing for the
-// invariant, not for a KB-scale saving.
-//
-// The name is already conversation content — cli-hooks.js's SessionStart
-// additionalContext leads with it and re-fires on clear AND compact — and the
-// concrete copyable roster invocation is the hook roster's own
-// `Ground truth on demand:` line.
+// prompt. The output must not carry the seat name, only the role it resolves to,
+// so same-role seats share this text verbatim.
 function formatTeamBlock(team, seatName) {
   const mine = matchSeatRole(team, seatName);
   const yourRole = mine || 'none — not a manifest role';
@@ -855,31 +828,26 @@ function formatTeamBlock(team, seatName) {
   ].join('\n');
 }
 
-// How the lead reaches each class of role. Derived from the manifest rather
-// than stored on the def: reachability is a consequence of the reserved
-// `reviewer` key plus the code that routes the spawn, and a stored copy would
-// drift from it — which is exactly what the deleted `instantiate` field did.
+// Derived from the manifest rather than stored on the def: reachability is a
+// consequence of the reserved `reviewer` key plus the code that routes the spawn,
+// and a stored copy would drift from it.
 function leadActionLine(team) {
   const sessionRoles = [];
   let hasReviewer = false;
   for (const role of Object.keys(team.roles || {})) {
     // `team.lead` is a SEAT name, not a role key — comparing against it here
-    // would drop an unrelated role from a team whose lead seat happens to
-    // share its name.
+    // would drop an unrelated role from a team whose lead seat shares its name.
     if (role === 'lead') continue;
     if (role === 'reviewer') { hasReviewer = true; continue; }
-    // Every non-reserved role is staffable: a ticket assigned to it spawns a
-    // seat. There is no boolean gate any more.
     sessionRoles.push(role);
   }
   const parts = [];
   // The "Dispatch:" prefix is the token three roster tests assert the ABSENCE of
   // for a non-lead seat. Rewording the line without it defangs all three silently.
   if (sessionRoles.length) parts.push('Dispatch: TWO steps. [agent:task add <role>] <spec> writes the ticket and starts NOTHING, then [agent:task start <id>] mints its tree and seat and delivers the spec. A "do not start" line in the body is NOT read by anything — an unstarted ticket is simply one you have not started.');
-  // Spells out that the intent does the spawning. A lead reading "Review:
-  // [agent:team-review]" next to a roster line that said `reviewer (subagent)`
-  // reached for its harness subagent tool instead — which gets a reviewer with
-  // no tools cap, no verdict intent, and no seat the operator can see.
+  // Spells out that the intent does the spawning: a lead that reaches for its
+  // harness subagent tool instead gets a reviewer with no tools cap, no verdict
+  // intent, and no seat the operator can see.
   if (hasReviewer) parts.push('Review: [agent:team-review] <scope> — the intent spawns the cold reviewer seat itself; do NOT spawn or subagent one by hand.');
   if (sessionRoles.length) {
     parts.push(`New session seat: [agent:spawn name:${team.name}-<role> template:<tmpl>].`);
