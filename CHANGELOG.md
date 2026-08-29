@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.19.0 — 2026-08-30
+
 - **A preserved ticket-suite dump now tells you when the branch moved out from
   under the run.** The `# head:` line records HEAD as it was when the run was
   queued, read before the run starts — but the suite then waits for a box-wide
