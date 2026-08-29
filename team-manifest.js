@@ -1,5 +1,5 @@
-// No clodex resource lives inside project files: a team is defined entirely
-// under ~/.clodex/teams/<name>/. Pure leaf — no electron, injected fs.
+// Pure leaf — no electron, injected fs. A team is defined entirely under
+// ~/.clodex/teams/<name>/, never inside project files.
 
 'use strict';
 
@@ -9,47 +9,39 @@ const { defaultClodexHome } = require('./clodex-paths');
 
 const TEAM_FILE = 'team.json';
 const ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
-// Team names and seat names share the session-name grammar (CLAUDE.md): a team
-// name is BOTH a directory under ~/.clodex/teams/ AND the `<team>-` seat-name
-// prefix, so it must be name-legal; top-level `lead` is a seat name.
+// A team name is BOTH a directory under ~/.clodex/teams/ AND the `<team>-`
+// seat-name prefix, so it must satisfy the session-name grammar (CLAUDE.md).
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
 // Bumped when the role schema loses or gains a key.
 const MANIFEST_VERSION = 3;
 
-// Anything else is dropped at load with a warning rather than a throw: a hard
-// failure here would read as "no team" everywhere, since every caller resolves
-// teams inside a best-effort catch.
+// Anything else is dropped at load with a warning, never a throw: every caller
+// resolves teams inside a best-effort catch, so a throw reads as "no team".
 const ROLE_KEYS = new Set(['template', 'prompt', 'brief', 'dispatch', 'cwd']);
 
 const ROLE_DISPATCH_VALUES = new Set(['standing', 'spawn', 'worktree']);
 const DEFAULT_ROLE_DISPATCH = 'standing';
 
 // The legibility test asserts EDITABLE_ROLE_FIELDS ∪ this ≡ ROLE_KEYS, so a new
-// field is either reachable or listed here with a reason — never merely absent.
-// Empty is the steady state; do not delete the constant.
+// field is either reachable or listed here — never merely absent. Empty is the
+// steady state; do not delete the constant.
 const UNREACHABLE_ROLE_FIELDS = new Set([]);
 
-// The fields a version bump deleted. Named rather than derived as "anything not
-// in ROLE_KEYS", because the mutators delete these from disk: a derived set would
-// grow to include hand-authored keys nobody asked us to remove, and the migration
-// would become data loss.
+// Named rather than derived as "anything not in ROLE_KEYS": the mutators DELETE
+// these from disk, so a derived set would grow to include hand-authored keys and
+// the migration would become data loss.
 const CUT_ROLE_FIELDS = ['instantiate', 'standing', 'tools', 'type', 'ephemeral', 'worktree'];
 
-// Cut from the schema but sometimes still read, mapped to the remedy a reader
-// should write instead. A key belongs here for exactly as long as a compatibility
-// branch reads it. Membership is only a gate — it says "this key can be honored,
-// so measure whether it was", never "this occurrence is honored". The remedy
-// travels with the key so the map cannot grow a member whose advice nobody wrote.
+// Membership is only a gate — "this key can be honored, so measure whether it
+// was", never "this occurrence is honored". The remedy travels with the key so
+// the map cannot grow a member whose advice nobody wrote.
 const HONORED_CUT_FIELDS = new Map([['worktree', 'dispatch: "worktree"']]);
 
-// Every role field a front door (setRole, the Add Role form, the popover row
-// model) may set.
 const EDITABLE_ROLE_FIELDS = ['brief', 'cwd', 'dispatch', 'prompt', 'template'];
 
-// team.json is agent-writable and these role keys are trusted downstream, so the
-// mutators below must never create, destroy or rename them; only the operator
-// GUI/approval may.
+// team.json is agent-writable and these keys are trusted downstream: the mutators
+// below must never create, destroy or rename them.
 const RESERVED_ROLE_KEYS = new Set(['lead', 'reviewer']);
 
 const WATCHDOG_MIN_MS = 5 * 60 * 1000;
@@ -57,16 +49,15 @@ const WATCHDOG_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 const STOCK_ROLE_DEFS = {
   lead: { prompt: 'clodex-team-lead', brief: 'team lead; holds durable context, dispatches specs, verifies and integrates the work.' },
-  // The hand is the only stock role that names a template, because it is the only
-  // one whose seat needs a working directory: the shipped clodex-team-hand.json
-  // writes "${TEAM_ROOT}" there, so a new team's hand boots in its own root.
+  // The hand's template is what gives its seat a working directory: the shipped
+  // clodex-team-hand.json writes "${TEAM_ROOT}", so a new team's hand boots in
+  // its own root rather than the project the template was authored against.
   hand: { prompt: 'clodex-team-hand', brief: 'implementer; executes a spec to done, one distilled report per task.', template: 'clodex-team-hand' },
   reviewer: { prompt: 'clodex-team-reviewer', brief: 'reviewer; an independent verification pass, invoked on demand.' },
 };
 
 // A field may live here only if exactly one resolver consumes it and every spawn
-// path reaches that resolver — five fields failed that test and were cut.
-// Variation belongs in a template, which is data and cheap to vary.
+// path reaches that resolver. Variation belongs in a template.
 //
 // Fixed key order: addRole's no-op check compares JSON.stringify of two
 // normalized defs, so reordering these keys breaks equality.
@@ -93,26 +84,21 @@ function normalizeRoleDef(roleName, def, file) {
     template: def.template ?? null,
     prompt: def.prompt ?? null,
     brief: def.brief ?? null,
-    // The v2 `worktree: true` boolean is read here, not merely migrated: migration
+    // The v2 `worktree: true` boolean is READ here, not merely migrated: migration
     // runs on mutator writes, so a file nobody edits would keep opting a role into
-    // a worktree on disk while every dispatch quietly went to a standing seat —
-    // silent, because `standing` is a legitimate value nothing warns about.
-    // Not honored on a reserved role, matching migrateRoles.
+    // a worktree on disk while every dispatch silently went to a standing seat.
     dispatch: def.dispatch
       ?? ((def.worktree === true && !RESERVED_ROLE_KEYS.has(roleName)) ? 'worktree' : DEFAULT_ROLE_DISPATCH),
     // Relative to team.root: an absolute path would let an agent-writable
-    // team.json point a seat at another project, which assertRoleCwd refuses at
-    // every write. Blank normalizes to null — path.resolve(root, '') is root, so
-    // storing '' would mean exactly what its absence does.
+    // team.json point a seat at another project. Blank normalizes to null —
+    // path.resolve(root, '') is root, so '' would mean what its absence means.
     cwd: (typeof def.cwd === 'string' && def.cwd.trim()) ? def.cwd.trim() : null,
   };
 }
 
-// Refused where roles are DEFINED as well as at dispatch time: team.json is
-// hand-editable and a file that predates this check must not start minting trees.
-// Stated as an inversion — refuses anything that is not `standing` — so a future
-// fourth value is refused by default; a check that lists the bad values admits
-// every value nobody thought to list.
+// Refused where roles are DEFINED as well as at dispatch: team.json is
+// hand-editable. Stated as an inversion so a future fourth value is refused by
+// default; a check that lists the bad values admits every value nobody listed.
 function assertDispatchAllowed(roleName, def, file) {
   if (!def || typeof def !== 'object') return;
   if (RESERVED_ROLE_KEYS.has(roleName) && def.dispatch != null && def.dispatch !== DEFAULT_ROLE_DISPATCH) {
@@ -121,73 +107,61 @@ function assertDispatchAllowed(roleName, def, file) {
 }
 
 // Returned rather than warned in place: normalizeRoleDef runs on the write paths
-// too, where a drop is the caller's answer, not a console line.
-//
-// `worktree` is reported here like any other unmodeled key, and must not be
-// excluded to spare it the warning: the file would load silently while still
-// carrying a key whose meaning lives in a compatibility branch.
+// too, where a drop is the caller's answer, not a console line. `worktree` must
+// not be excluded to spare it the warning.
 function unknownRoleKeys(def) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) return [];
   return Object.keys(def).filter((k) => !ROLE_KEYS.has(k));
 }
 
 // Every mutator writes through this: dropping a key only on the way OUT leaves it
-// on disk, and `tools: ["Read"]` in team.json is a restriction nothing enforces.
-//
-// A non-object is returned untouched so a malformed def still reaches the
+// on disk, where `tools: ["Read"]` reads as a restriction nothing enforces. A
+// non-object is returned untouched so a malformed def still reaches the
 // validators that throw on it, rather than being laundered into a valid `{}`.
 function pickRoleKeys(def) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) return def;
   const out = {};
   for (const [k, v] of Object.entries(def)) {
-    // `cwd` is stored trimmed so the bytes on disk are the ones assertRoleCwd
-    // validated — it checks the trimmed form, and a stored "  api  " would be a
-    // value no gate ever saw. Only this field: `brief`/`prompt` are prose whose
+    // Trimmed so the bytes on disk are the ones assertRoleCwd validated, which
+    // checks the trimmed form. Only this field: `brief`/`prompt` are prose whose
     // surrounding whitespace is the author's.
     if (ROLE_KEYS.has(k)) out[k] = (k === 'cwd' && typeof v === 'string') ? v.trim() : v;
   }
   return out;
 }
 
-// One console line per (file, dropped-key-set), for the life of the process.
-// loadManifest has no cache and resolveTeam loads every team on every call
-// (_sweepTickets runs it every 60s per live seat), so an ungated warn is several
-// lines a minute forever for one legacy file.
+// One console line per (file, dropped-key-set), for the life of the process:
+// resolveTeam loads every team on every call and _sweepTickets runs it every 60s
+// per live seat, so an ungated warn is several lines a minute forever.
 const warnedDrops = new Set();
 
 function createTeamManifest({ fs, clodexHome } = {}) {
   const home = clodexHome || defaultClodexHome();
   const teamsDir = path.join(home, 'teams');
 
-  // Routed through fs-util's atomicWriteFileSync, not a local write+rename: a
-  // bare rename is atomic but not durable, and it fsyncs both the bytes and the
-  // directory entry. Deliberately not taken from the injected `fs` — durability
-  // is not a seam a caller gets to vary. The dir is still created 0700 first:
-  // atomicWriteFileSync's own mkdir carries no mode, and ~/.clodex/teams/<name>/
-  // must not widen to the umask default.
+  // fs-util's atomicWriteFileSync, not a local write+rename: a bare rename is
+  // atomic but not durable, and it fsyncs the bytes and the directory entry. Not
+  // taken from the injected `fs` — durability is not a seam a caller may vary.
+  // ensureDir stays: atomicWriteFileSync's own mkdir carries no mode, and
+  // ~/.clodex/teams/<name>/ must not widen to the umask default.
   function atomicWrite(file, data) {
     ensureDir(path.dirname(file));
     atomicWriteFileSync(file, data);
   }
 
   // Run on EVERY mutator write, not conditionally: a conditional stamp could
-  // never fire on a real legacy file, since every mutator refuses the reserved
-  // roles the v1 scaffold put the stale keys on.
-  //
-  // Scoped to CUT_ROLE_FIELDS, not ROLE_KEYS: this strips a named set this schema
-  // already drops at load, so it changes no read semantics. Keys we simply do not
-  // model are hand-authored data and must stay untouched.
+  // never fire on a legacy file, since every mutator refuses the reserved roles
+  // the v1 scaffold put the stale keys on. Scoped to CUT_ROLE_FIELDS, not
+  // ROLE_KEYS: keys we do not model are hand-authored data and stay untouched.
   function migrateRoles(raw) {
     const roles = (raw && raw.roles && typeof raw.roles === 'object' && !Array.isArray(raw.roles))
       ? raw.roles : null;
     if (!roles) return raw;
     for (const [roleName, def] of Object.entries(roles)) {
       if (!def || typeof def !== 'object' || Array.isArray(def)) continue;
-      // Carry-over must run BEFORE the delete loop below: `worktree` is in
-      // CUT_ROLE_FIELDS, so reading it afterwards yields undefined and every role
-      // that opted into a worktree quietly becomes standing, with no error.
-      // Reserved roles are excepted — `worktree: true` on lead/reviewer was
-      // already refused at dispatch.
+      // Must run BEFORE the delete loop: `worktree` is in CUT_ROLE_FIELDS, so
+      // reading it afterwards yields undefined and every role that opted into a
+      // worktree silently becomes standing, with no error anywhere.
       if (def.worktree === true && def.dispatch == null && !RESERVED_ROLE_KEYS.has(roleName)) {
         def.dispatch = 'worktree';
       }
