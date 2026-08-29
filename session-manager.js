@@ -4344,17 +4344,14 @@ function createSessionManager(deps) {
         const timer = setTimeout(() => {
           try { child.kill('SIGKILL'); } catch {}
           // A TIMEOUT IS NOT A FAILURE, and telling the two apart is the caller's
-          // whole decision (t440). A command that exits nonzero has ANSWERED —
-          // the right response is to read the answer. A command killed at the
-          // ceiling has not: the work may have completed and lost only its
-          // report, or may still be running right now, holding whatever it
-          // holds. `clodex-run-tests` is exactly that shape — its digest exists
-          // only on the wrapper's stderr, so a SIGKILL at the ceiling drops a
-          // green suite's number on the floor while the suite runs on and keeps
-          // the box-wide lock.
+          // whole decision. A command that exits nonzero has ANSWERED — the right
+          // response is to read the answer. A command killed at the ceiling has
+          // not: the work may have completed and lost only its report, or may
+          // still be running right now. `clodex-run-tests` is exactly that shape —
+          // its digest exists only on the wrapper's stderr, so a SIGKILL at the
+          // ceiling drops a green suite's number on the floor while the suite runs
+          // on and keeps the box-wide lock.
           //
-          // Said in seconds as well as ms because the number is chosen against
-          // wall-clock budgets and "420000ms" is not a duration a reader parses.
           // The "may still be running" clause is the load-bearing half: without
           // it the natural next move is to re-fire the command, which for a
           // lock-taking one queues a second run behind the first.
@@ -4411,18 +4408,15 @@ function createSessionManager(deps) {
     }
 
     // `[agent:term exec] <cmd>` — run one command on the agent's OWN terminal
-    // tab, where the operator can watch it happen, and report the result back to
-    // that agent alone.
+    // tab and report the result back to that agent alone.
     //
     // BOTH halves of the target are derived from the sender: the seat is the
     // session's name and the window is its workspace. The agent supplies
     // neither, so there is no seat string to validate and no way to reach
-    // another agent's terminal or the seatless workspace shell. That is stronger
-    // than the IPC path, which takes the seat from its payload.
+    // another agent's terminal or the seatless workspace shell.
     //
     // The result does NOT come back from here. It arrives later, on the seat's
-    // selection queue, when the shell's D mark says the command ended — see the
-    // onExecResult wiring where the drawer PTYs are built.
+    // selection queue, when the shell's D mark says the command ended.
     _handleTermIntent(session, sub, rawBody) {
       const reply = (msg) => this._injectText(session, `[agent:term] ${msg}`, { parkable: true });
       if (sub !== 'exec') {
@@ -4434,20 +4428,15 @@ function createSessionManager(deps) {
       // The same predicate the renderer uses to decide whether to DRAW the tab,
       // read from the shared leaf so the two answers cannot drift.
       //
-      // Today it cannot fire, and that is worth stating rather than leaving a
-      // reader to assume it is load-bearing: the switch above requires
-      // `agentType`, which is non-null only for claude/codex, and a peer is not
-      // a local session at all (nothing but create() writes `sessions`, and it
-      // only ever stores claude/codex/bash). The refusal that ACTUALLY fires for
-      // a seat with no terminal is `no-shell`, from the exec itself. This stays
-      // because the structural reason is an accident of two other decisions:
-      // make bash sessions intent-capable, or give a peer a local session
-      // record, and this becomes the only thing standing between them and a
-      // shell they should not have.
+      // Today it cannot fire: the switch above requires `agentType`, which is
+      // non-null only for claude/codex, and a peer is not a local session at all.
+      // The refusal that ACTUALLY fires for a seat with no terminal is `no-shell`,
+      // from the exec itself. This stays because the structural reason is an
+      // accident of two other decisions: make bash sessions intent-capable, or
+      // give a peer a local session record, and this becomes the only thing
+      // standing between them and a shell they should not have.
       // No truthiness guard on the dep. An unwired termAvailableFor must throw
-      // here rather than skip the check — the same posture termExec gets from
-      // its host stand-in above, where the fallback ANSWERS instead of silently
-      // doing nothing.
+      // here rather than skip the check.
       if (!termAvailableFor(session.type)) {
         reply(`a ${session.type} session has no terminal tab of its own, so there is nothing to run a command in`);
         return;
@@ -4574,10 +4563,7 @@ function createSessionManager(deps) {
         // Best-effort, and scoped to this statement on purpose: do not hoist it
         // to wrap the method. The unlink already happened and is permanent, so
         // a write failure returning { ok: false } invites a retry that fails
-        // with "no unit" and reads as a bug in the delete path. The digest is
-        // regenerated on next spawn; the delete is not. A throw also leaves the
-        // OLD hook-digest.json in place, so a digestNonEmpty left true still
-        // describes a digest that exists.
+        // with "no unit" and reads as a bug in the delete path.
         try { session.digestNonEmpty = writeClaudeDigestFile(agent); } catch { /* best-effort */ }
       }
       return { ok: true };
