@@ -8442,13 +8442,11 @@ function createTicketMethods(deps, shared) {
         // it and the loop-held arm never re-resolves.
         let orphanNow = orphan;
         if (loopHeld) {
-          // THE REVIEW STEP IS THE ONE LOOP STEP WITH A LIVE SEAT BEHIND IT, and
-          // until t384 it was the only step with no seat-liveness input at all:
-          // the orphan test excludes loop-held tickets (correctly — they name a
-          // step, not an assignee), so `loopStep` age was the whole signal. A 39KB
-          // diff takes longer than the window, so the longest-running step was
-          // also the one that cried wolf. Measured on t377: the alarm fired at 30m
-          // while the reviewer was demonstrably working.
+          // THE REVIEW STEP IS THE ONE LOOP STEP WITH A LIVE SEAT BEHIND IT. The
+          // orphan test excludes loop-held tickets (correctly — they name a step,
+          // not an assignee), so `loopStep` age was the whole signal: a large diff
+          // takes longer than the window, making the longest-running step also the
+          // one that cried wolf.
           //
           // Suppression requires BOTH signals to say alive, and the probe is
           // consulted ONLY at `review` — the other steps have no seat to ask
@@ -8474,9 +8472,9 @@ function createTicketMethods(deps, shared) {
             // `unknown` defers too, and that is the whole point rather than a
             // convenience: it means a reviewer seat IS live but this is the first
             // sample, so there is no baseline to read growth against. Alarming
-            // there is the blind pre-t384 alarm — the measured false positive,
-            // fired at the first sweep past the window at a seat nobody asked
-            // about. Deferring costs ONE sweep (60s) against a 30m window, and it
+            // there is the blind alarm, fired at the first sweep past the window
+            // at a seat nobody asked about. Deferring costs ONE sweep (60s)
+            // against a 30m window, and it
             // is bounded: the sample is stored below, so the next sweep has a
             // baseline and either classifies or alarms. A seat that is not live
             // returns null and never reaches this, so nothing can defer forever
