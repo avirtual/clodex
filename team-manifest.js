@@ -250,8 +250,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
           delete without[k];
           honored = JSON.stringify(normalizeRoleDef(roleName, without, file)) !== JSON.stringify(normalized);
         }
-        // Per occurrence, not per message: one line may name several keys, so a
-        // hardcoded "write X instead" is wrong once the map holds two entries.
+        // Per occurrence: one line may name several keys, so a hardcoded
+        // "write X instead" is wrong once the map holds two entries.
         if (honored) {
           droppedFields.push({
             role: roleName, field: k, status: 'honored', remedy: HONORED_CUT_FIELDS.get(k),
@@ -278,8 +278,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const version = (typeof m.version === 'number' && Number.isInteger(m.version) && m.version > 0)
       ? m.version : 1;
     // Warn, never throw: a manifest that refuses to load reads as "this cwd is on
-    // no team" at every call site. Version-gated because the warn exists for the
-    // migration, not as a linter.
+    // no team" at every call site. Version-gated: this is for the migration, not
+    // a linter.
     if (dropped.length && version < MANIFEST_VERSION) {
       const seen = `unknown|${file}|${dropped.join(',')}`;
       if (!warnedDrops.has(seen)) {
@@ -289,8 +289,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     }
     // NOT under the version gate, unlike the warn above: a file claiming the
     // current schema while carrying a retired field would drop it in silence.
-    // Must never reach a key whose removal changed the normalized def — the text
-    // would be a lie about a live opt-in.
     if (droppedCut.length) {
       const seen = `cut|${file}|${droppedCut.join(',')}`;
       if (!warnedDrops.has(seen)) {
@@ -322,13 +320,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   }
 
   // A security boundary: `cwd` flows to create() as a PTY working directory and
-  // team.json is agent-writable, so every mutator that can land one runs this.
-  // Confinement is decided by resolving and comparing (containsPath), never by a
-  // prefix match — a check for a leading ".." misses `api/../../elsewhere`.
-  //
-  // Not in normalizeRoleDef, because a LOAD must not throw on these: loadManifest
-  // runs inside every caller's best-effort catch, so a hand-edited bad cwd would
-  // read as "no team at all" everywhere.
+  // team.json is agent-writable. Confinement is decided by resolving and
+  // comparing (containsPath), never a prefix match — a check for a leading ".."
+  // misses `api/../../elsewhere`. Not in normalizeRoleDef, because a LOAD must
+  // not throw: loadManifest runs inside every caller's best-effort catch.
   function assertRoleCwd(roleName, def, root, file) {
     if (!def || typeof def !== 'object' || Array.isArray(def)) return;
     const raw = def.cwd;
@@ -350,19 +345,17 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (!containsPath(resolvedRoot, resolved)) {
       throw new Error(`role "${roleName}" cwd "${rel}" resolves outside the team root ${resolvedRoot} (${file})`);
     }
-    // Refused, never created: a seat working in an invented empty directory looks
-    // exactly like a seat working correctly.
+    // Refused, never created: a seat in an invented empty directory looks exactly
+    // like one working correctly.
     let isDir = false;
     try { isDir = fs.statSync(resolved).isDirectory(); } catch { isDir = false; }
     if (!isDir) {
       throw new Error(`role "${roleName}" cwd "${rel}" is not an existing directory under the team root (${resolvedRoot}) — create it first; Clodex never makes it for you (${file})`);
     }
-    // Confinement re-decided on the REAL paths: containsPath compares strings, so
-    // `cwd: "link"` pointing at another project satisfies it while aiming a PTY
-    // out of the tree (statSync follows the link, so the check above passes too).
+    // Re-decided on the REAL paths: containsPath compares strings, so `cwd: "link"`
+    // pointing at another project satisfies it while aiming a PTY out of the tree.
     // BOTH sides are realpath'd — a project root under /tmp is itself a symlink on
-    // macOS, and realpathing only the candidate would refuse every legitimate role
-    // cwd there.
+    // macOS, so realpathing only the candidate refuses every legitimate role cwd.
     let realRoot = null;
     let realCwd = null;
     try { realRoot = fs.realpathSync(resolvedRoot); } catch { realRoot = null; }
@@ -376,8 +369,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   }
 
   // A linked worktree's `.git` is a FILE reading `gitdir: <main>/.git/worktrees/
-  // <id>`, so the main checkout is derivable with one read. No `git` subprocess:
-  // resolveTeam runs on every roster render and every ticket resolution.
+  // <id>`, so one read derives the main checkout. No `git` subprocess: resolveTeam
+  // runs on every roster render and every ticket resolution.
   const WORKTREE_MARKER = `${path.sep}.git${path.sep}worktrees${path.sep}`;
   function mainCheckoutOf(cwd) {
     let dir = path.resolve(cwd);
@@ -478,8 +471,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     };
     const callerRoles = roles && typeof roles === 'object' && !Array.isArray(roles) && Object.keys(roles).length
       ? roles : null;
-    // Picked down to the schema: a brand-new file must not be born carrying a
-    // field no resolver reads.
     const seedRoles = {};
     for (const [k, v] of Object.entries(callerRoles || defaultRoles)) {
       seedRoles[k] = pickRoleKeys(v);
@@ -504,11 +495,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (!ROLE_RE.test(roleName)) {
       throw new Error(`role name "${roleName}" must match ${ROLE_RE} (${team.file})`);
     }
-    // Re-mints a reserved key the operator removed. `def` is IGNORED, not merged
-    // and not validated, so remove-then-re-add gains an attacker nothing. Do not
-    // "fix" this into honouring the caller's def; that hands back the bypass.
-    // Ahead of the def validation below: a def nobody reads must not refuse the
-    // write.
+    // `def` is IGNORED, not merged and not validated, so remove-then-re-add gains
+    // an attacker nothing. Do not "fix" this into honouring the caller's def; that
+    // hands back the bypass. Ahead of the def validation below, so a def nobody
+    // reads cannot refuse the write.
     if (operator && RESERVED_ROLE_KEYS.has(roleName) && !team.roles[roleName]) {
       const stock = STOCK_ROLE_DEFS[roleName];
       if (!stock) {
@@ -549,9 +539,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`role "${roleName}" already exists on team "${teamName}" with a different definition`);
     }
     // Re-read raw to preserve hand-authored fields on the OTHER roles. The new
-    // role goes through pickRoleKeys, not verbatim: `team:addRole` takes an
-    // arbitrary def, and a verbatim write lands `tools: ["Read"]` on disk, where
-    // read-back drops it but the file still reads as a policy.
+    // role goes through pickRoleKeys, not verbatim: a verbatim write lands
+    // `tools: ["Read"]` on disk, where read-back drops it but the file reads as
+    // a policy.
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
     raw.roles[roleName] = pickRoleKeys(def);
@@ -583,11 +573,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if ('dispatch' in clean && !ROLE_DISPATCH_VALUES.has(clean.dispatch)) {
       throw new Error(`role "${roleName}" dispatch must be one of ${[...ROLE_DISPATCH_VALUES].join(', ')} (${team.file})`);
     }
-    // Validated on `clean` (the patch), not the merged def: the merge preserves an
-    // EXISTING cwd a stale check could re-refuse. Gated on CHANGE, not presence —
+    // Validated on `clean` (the patch), not the merged def, which preserves an
+    // EXISTING cwd a stale check could re-refuse. Gated on CHANGE, not presence:
     // the popover's save patch always carries `cwd`, so re-validating an unchanged
-    // value makes an unrelated edit fail once that directory is deleted. A value
-    // already on disk is not a new grant, and it is refused the moment it changes.
+    // value makes an unrelated edit fail once that directory is deleted.
     const storedCwd = typeof team.roles[roleName].cwd === 'string' ? team.roles[roleName].cwd : '';
     const patchCwd = typeof clean.cwd === 'string' ? clean.cwd.trim() : null;
     if ('cwd' in clean && !(patchCwd !== null && patchCwd === storedCwd)) {
@@ -612,8 +601,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   }
 
   // `opts.operator` is the renderer's opt-in and nothing else passes it: the
-  // `[agent:team role-rm]` intent calls this with two args, so an agent still
-  // gets the refusal below.
+  // `[agent:team role-rm]` intent calls this with two args, so an agent still gets
+  // the refusal below.
   function removeRole(teamName, roleName, opts) {
     const team = loadManifest(teamName);
     const operator = !!(opts && opts.operator === true);
@@ -657,10 +646,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return loadManifest(teamName);
   }
 
-  // Re-points the lead SEAT pointer, NOT the `lead` role, which stays reserved:
-  // setRole('lead') still throws and this never touches raw.roles. Only the
-  // charset is gated — every team has a stopped lead sometimes, so an existence
-  // check would refuse the legitimate case.
+  // Re-points the lead SEAT pointer, NOT the `lead` role, which stays reserved.
+  // Only the charset is gated — every team has a stopped lead sometimes, so an
+  // existence check would refuse the legitimate case.
   function setLead(teamName, seatName) {
     const team = loadManifest(teamName); // throws if the team is missing
     if (typeof seatName !== 'string' || !NAME_RE.test(seatName)) {
@@ -692,14 +680,12 @@ function createTeamManifest({ fs, clodexHome } = {}) {
 }
 
 // A name this cannot decompose resolves to no role at all — off the roster, no
-// role prompt, and past the fail-CLOSED `_roleInUse` guard in session-manager.js,
-// which then cannot see the seat filling the role it is about to let you remove.
+// role prompt, and past the fail-CLOSED `_roleInUse` guard in session-manager.js.
 //
 // The collision suffix is not only `-N`: `shop-hand2` must strip too. EXACT MATCH
 // WINS before any stripping, since a role may be named `hand2`. Only digit
-// suffixes strip — waving a non-numeric tail through to `hand` would make role
-// resolution guess. `-rN` is the one lettered tail, stripped ahead of the numeric
-// one: a ticket's reviewer is `<team>-reviewer-<ticket>-r<round>` and both tails
+// suffixes strip. `-rN` is the one lettered tail, stripped ahead of the numeric
+// one — a ticket's reviewer is `<team>-reviewer-<ticket>-r<round>` and both tails
 // must go or the key keeps the ticket number.
 function matchSeatRole(team, seatName) {
   if (!team || !seatName || !team.roles) return null;
@@ -715,17 +701,15 @@ function matchSeatRole(team, seatName) {
   return key && has(key) ? key : null;
 }
 
-// The exec runner requires a payload on every call and this schema requires both
-// keys, so the bare word `roster` bounces.
 function rosterExecPayload(seatName) {
-  // Serialized, not interpolated: a seat name reaching here unvalidated could
-  // break the JSON, and this pure leaf cannot see the caller's name grammar.
+  // Serialized, not interpolated: this pure leaf cannot see the caller's name
+  // grammar, so an unvalidated seat name could break the JSON.
   return `[agent:exec clodex-team] ${JSON.stringify({ action: 'roster', agent: seatName || '<your name>' })}`;
 }
 
-// Per-role invariants ONLY — composition changes over a seat's life and this text
-// is part of the cache-stable system prompt, so the roster listing stays out and
-// the output carries the role, never the seat name.
+// Per-role invariants ONLY — this text is part of the cache-stable system prompt,
+// so the roster listing stays out and the output carries the role, never the
+// seat name.
 function formatTeamBlock(team, seatName) {
   const mine = matchSeatRole(team, seatName);
   const yourRole = mine || 'none — not a manifest role';
@@ -762,10 +746,8 @@ function leadActionLine(team) {
   return parts.length ? parts.join(' ') : null;
 }
 
-// Reads loadManifest's classification; decides nothing about membership itself.
-// A continuation line rather than a column, so a role with a clean def renders
-// byte-identically to before. The two statuses never share a line: 'ignored' says
-// the field configures nothing, 'honored' says deleting it changes behaviour.
+// The two statuses never share a line: 'ignored' says the field configures
+// nothing, 'honored' says deleting it changes behaviour.
 //
 // 'unknown' is rendered by neither, and that exclusion is what keeps this SAFE:
 // an 'unknown' field name is an arbitrary agent-authored string from team.json,
@@ -805,8 +787,7 @@ function formatRoster(team, liveSeats = [], { seat = null } = {}) {
   const lines = [`[team ${team.name}] roster (lead: ${team.lead})`];
   for (const [role, def] of Object.entries(team.roles)) {
     // Name [agent:team-review] ONLY to the seat allowed to use it:
-    // _handleTeamReview bounces a non-lead, so advertising it to a hand invites a
-    // wasted turn.
+    // _handleTeamReview bounces a non-lead.
     const cls = role !== 'reviewer' ? 'session'
       : (seat && seat === team.lead ? 'via [agent:team-review]' : 'lead-only');
     // Suppressed on the reviewer: [agent:team-review] resolves the template
@@ -814,8 +795,8 @@ function formatRoster(team, liveSeats = [], { seat = null } = {}) {
     const tmpl = (role !== 'reviewer' && def && typeof def.template === 'string' && def.template) ? `, tmpl ${def.template}` : '';
     const brief = def && def.brief ? ` — ${def.brief}` : '';
     // Liveness is STATED in this slot, never inferred from a missing tail: a
-    // definition row and a live row are otherwise identical in shape, and a reader
-    // scanning for teammates dm's a seat that does not exist.
+    // definition row and a live row are otherwise identical in shape, and a
+    // reader scanning for teammates dm's a seat that does not exist.
     const live = byRole.get(role);
     const liveStr = live && live.length
       ? ` · live: ${live.join(', ')}`
