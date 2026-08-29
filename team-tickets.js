@@ -8357,16 +8357,14 @@ function createTicketMethods(deps, shared) {
         // ONE ORPHAN alarm, ever — not the geometric ladder below. The ladder
         // re-escalates because a stall can end and the seat can come back; an
         // orphan cannot resolve itself, so every repeat carries identical
-        // information and the whole cost of the t376 defect was the repeating.
+        // information.
         //
         // BOTH terms are load-bearing, and gating on `nudgedAt` ALONE is a defect
-        // that deletes the alarm rather than de-duplicating it. The live->orphan
-        // transition is the ticket's own motivating trace: t376 alarmed first as a
-        // live-but-quiet stall, which stamps `nudgedAt`, and the seat was retired
-        // only afterwards. With one term, every later sweep sees a truthy stamp and
-        // `continue`s forever — and `nudgedAt` is cleared only by activity
-        // (unreachable: there is no seat), assign, respec, park or a verdict. The
-        // lead would hear "hand quiet 31m" and then nothing, ever.
+        // that deletes the alarm rather than de-duplicating it: a ticket that
+        // alarmed first as a live-but-quiet stall already carries the stamp, so
+        // with one term every later sweep sees it truthy and `continue`s forever
+        // — and `nudgedAt` is cleared only by activity (unreachable: there is no
+        // seat), assign, respec, park or a verdict.
         //
         // `orphanNudgedAt` records that the ORPHAN message specifically has been
         // sent. Keeping `nudgedAt` in the gate is what makes it need no new clearing
@@ -8374,11 +8372,9 @@ function createTicketMethods(deps, shared) {
         // respec) already reopens the ticket to alarming, so a reassignment starts a
         // clean episode exactly as before.
         if (orphan && t.nudgedAt && t.orphanNudgedAt) continue;
-        // NOT one nudge per episode any more. `nudgedAt` is cleared only by
-        // seat ACTIVITY, which by definition never comes during a stall, so a
-        // single alarm the lead dismissed bought permanent silence: measured on
-        // t312, where the 30m alarm was waved off and the remaining 28 minutes of
-        // a 55.7m stall raised nothing at all.
+        // NOT one nudge per episode: `nudgedAt` is cleared only by seat ACTIVITY,
+        // which by definition never comes during a stall, so a single alarm the
+        // lead dismissed bought permanent silence.
         //
         // Geometric instead: re-alarm once the quiet has DOUBLED since the alarm
         // that was already sent. Lands at 30m, 60m, 120m, 240m — log2 in stall
