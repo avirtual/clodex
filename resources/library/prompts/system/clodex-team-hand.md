@@ -101,16 +101,16 @@ each always-cut category across the WHOLE file and drive it to zero:
 - documents not in this repo — `[A-Z]{2,}\.md|§` (verify with `git ls-files`)
 - line-number pointers into other files — `:[0-9]{3,}`
 
-That list is a floor: a category you discover mid-pass must be swept globally
-before the pass is done. A coverage claim that is TRUE and CHECKABLE earns its
-place — the sweep is for finding them, not for deleting them unread.
+The list is a floor: a category found mid-pass gets swept globally too, and a
+coverage claim that is TRUE and CHECKABLE earns its place — the sweep finds
+them, it does not delete them unread.
 
 Then check what SURVIVES each cut, not only what it removed: cutting the head
 off a sentence leaves a tail that is grammatically valid and semantically
 INVERTED, which code identity and a green suite both pass over. A surviving
 block must still open at a sentence boundary — flag an opening line that starts
 lowercase, starts on a clause connector, or is a bare `//` with no prose;
-identifier-initial openers are exempt. Implementation:
+identifier-initial openers are exempt. Implementation, do not inline it:
 `~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/decomment-team-tickets-a/boundary-check.js`.
 Its author's caveat, unsoftened: the check is a lint that needs a human ruling
 per flag, not a gate. It does not distinguish a severed head from a

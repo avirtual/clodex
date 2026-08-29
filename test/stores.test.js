@@ -1477,9 +1477,9 @@ test('seed: the hand prompt carries the decomment sweep and the post-cut boundar
     ':[0-9]{3,}']) {
     assert.ok(hand.includes(pattern), `hand prompt ships the greppable pattern: ${pattern}`);
   }
-  assert.match(hand, /That list is a floor/,
+  assert.match(hand, /The list is a floor/,
     'the category list is a floor, so a category found mid-pass is swept too');
-  assert.match(hand, /TRUE and CHECKABLE earns its\s+place/,
+  assert.match(hand, /TRUE and CHECKABLE earns its place/,
     'and a true coverage claim survives the sweep — it finds them, it does not delete them unread');
   assert.match(hand, /check what SURVIVES each cut, not only what it removed/,
     'hand prompt states the post-cut half: the residue is the defect, not the deletion');
