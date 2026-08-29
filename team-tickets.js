@@ -1400,31 +1400,12 @@ function createTicketMethods(deps, shared) {
             //
             // SYNCHRONOUS, like that one and for the same reason: an await inside
             // a check whose whole job is to close an await window would reopen
-            // one. `_loadTicket` is a store read plus a find, and nothing
-            // separates it from the stamp below, so this pair cannot interleave
-            // with the accept's own load-mutate-save.
+            // one.
             //
             // Same predicate as that re-read, not `closedOut` alone: a `task
             // reject` or `task cancel` in the same window reopens the ticket, and
             // a row in rework advertising a pending merge is the same false claim
             // by the other verb.
-            //
-            // BOTH statements are skipped together. Setting `deferred` without
-            // stamping would change what the flag means — from "this pass wrote
-            // the field" to "this pass reached the defer point" — and the finally
-            // would then decline to clear on behalf of a write that never
-            // happened. What skipping both leaves the finally to clear differs by
-            // which half of the predicate declined: on a CLOSEOUT the accept has
-            // already deleted the field, so the clear returns before it saves; on
-            // a REOPEN nothing deleted it, so a stamp written by an EARLIER
-            // deferred pass may still be on the row and the clear removes it and
-            // does save — which is the invariant doing its job, not a cost.
-            //
-            // The retry stays SCHEDULED above either way: it re-enters through
-            // `_queueAutoMerge` and meets the top gates — logged ABANDONED on a
-            // closeout, silent on a reopen — which is where that decision already
-            // lives. Suppressing the scheduling here would change when the retry
-            // chain terminates, which this arm does not decide.
             const stillPending = this._loadTicket(team, ticketId);
             if (stillPending && stillPending.state === 'done' && !stillPending.closedOut) {
               deferred = true;
