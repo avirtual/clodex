@@ -164,9 +164,14 @@ function assertRanIntact(res, typed, expected, message) {
   // dereferencing the record first would answer a diagnosis with a TypeError,
   // which is this ticket's own failure class one layer over.
   if (!res.record) {
-    assert.fail(`the command never produced a result record (status ${JSON.stringify(res.status)}) — `
-      + `the shell did not answer \`${typed}\` within exec's deadline. That is a LOAD failure, `
-      + `NOT a defect in what this test asserts (${message}).`);
+    // "within exec's deadline" named ONE cause, but the record-less statuses are
+    // several and only `timeout`/`lost` are deadlines — `shell-exit`,
+    // `shell-gone` and `write-failed` are not. The status is the discriminator
+    // and it is already in hand, so the message reports it and stops there
+    // rather than attributing a cause the status may contradict.
+    assert.fail(`the command never produced a result record: exec settled \`${typed}\` as `
+      + `${JSON.stringify(res.status)} instead of answering it. That is one of the environment/load `
+      + `failures drawer-pty.js settles record-less, NOT a defect in what this test asserts (${message}).`);
   }
   const got = res.record.command;
   if (got && got.length < typed.length) {

@@ -11851,6 +11851,11 @@ function mkOnDataProbe(overrides = {}) {
 //   2. `InjectQueue._chain` is a serial FIFO (`_chain = _chain.then(run, run)`), so
 //      a sentinel enqueued after stage 1 settles only once everything the boot edge
 //      queued has itself finished draining.
+// On a SECOND call against the same seat stage 1 is already satisfied — the timer
+// was nulled by the first — so it returns at once and carries nothing. Stage 2 is
+// what does the work there: the sentinel still queues behind whatever the edge
+// left on the chain. That is the boot-g case, where the producer is released
+// between the two calls.
 // The caller then asserts the sentinel's bytes AND NOTHING ELSE — a positive
 // assertion. An early run has no sentinel either; a payload that was wrongly
 // drained appears ahead of it. Both fail loudly instead of passing vacuously.
@@ -11859,10 +11864,17 @@ async function settleBootEdge(m, s) {
   try {
     await waitFor(() => s._bootDrainTimer === null);
   } catch {
-    assert.fail('the boot-ready deferred drain never ran (_bootDrainTimer '
-      + `${s._bootDrainTimer === undefined ? 'was never armed — the rising edge never fired' : 'is still pending'})`
-      + ' — the absence asserted next would have been vacuously true, so this is a broken'
-      + ' mechanism, not a clean run');
+    // The verdict is per-arm, not just the parenthetical: a live Timeout is a
+    // loaded box and `undefined` is a dead edge, and calling both "a broken
+    // mechanism" is the false sentence this ticket exists to remove. Only the
+    // vacuity warning is shared, because it is true either way. `null` cannot
+    // reach here — it is what the poll waits for.
+    assert.fail('the boot-ready deferred drain never ran, so the absence asserted next '
+      + 'would have been vacuously true. '
+      + (s._bootDrainTimer === undefined
+        ? '_bootDrainTimer was never armed — the rising edge never fired. A broken mechanism, not a slow box.'
+        : '_bootDrainTimer is still pending (a live Timeout) — it was armed but this box was too '
+          + 'loaded to run it inside the poll. A RESOURCE failure, not a broken edge.'));
   }
   await m._injectQueueFor(s).enqueue(SETTLE_SENTINEL);
 }
@@ -11928,17 +11940,21 @@ test('T54 (production onData): the boot-ready rising edge DRAINS an active-parke
   // 16 times in 48 runs at concurrency 24 on a 14-core box, always with `['\x15']`.
   // That partial is the whole diagnostic, and it is observable only because
   // InjectQueue._drain writes the Ctrl-U, the text and the \r as THREE separate PTY
-  // writes with sleeps between them. The three states are distinct evidence:
-  //   []          the rising edge never drained at all — mechanism broken
-  //   ['\x15']    the drain started and the assertion ran early — a load flake
-  //   the triple  pass
+  // writes with sleeps between them.
   try {
     await waitFor(() => writes.length >= 3);
   } catch {
     assert.fail(`the boot-edge drain did not complete: writes=${JSON.stringify(writes)} — `
-      + (writes.length === 0
-        ? 'EMPTY means the rising edge never drained the active scope at all (mechanism broken — this is a real regression, not a slow box)'
-        : 'a PARTIAL drain (the leading Ctrl-U with no text/Enter) means the drain was still in flight when the poll expired, i.e. this box was too loaded, not that the edge is broken'));
+      + (writes.length !== 0
+        ? 'a PARTIAL drain means the drain was still in flight when the poll expired, i.e. this box was too loaded, not that the edge is broken'
+        // EMPTY is not one finding either: nothing was written because the drain
+        // never wrote, or because the deferred callback never ran at all. The
+        // timer separates them for free, same three states as boot-g.
+        : s._bootDrainTimer === null
+          ? 'EMPTY with the deferred drain already RUN (_bootDrainTimer null) means the rising edge did not drain the active scope at all — a real regression, not a slow box'
+          : s._bootDrainTimer === undefined
+            ? 'EMPTY and the drain was never armed (_bootDrainTimer undefined) — the rising edge never fired at all. A real regression, not a slow box'
+            : 'EMPTY but the deferred drain is still pending (_bootDrainTimer is a live Timeout) — this box was too loaded to run it inside the poll. A RESOURCE failure, not a broken edge'));
   }
   assert.strictEqual(s._bootReadySeen, true, 'boot-ready latched');
   assert.deepStrictEqual(writes, ['\x15', '[agent:from lead] review the fix', '\r'],
@@ -12040,8 +12056,8 @@ test('T54 (fix) INVARIANT: a draft opening AFTER enqueue, BEFORE the producer fi
   } catch {
     // An empty queue does not have one cause, so the timer decides which finding
     // this is rather than the message asserting one. Three states, three
-    // different readings — and only the middle one is a loaded box, which is why
-    // the resource reading cannot be spread across "non-null".
+    // different readings. Do not fold `undefined` into the resource arm as
+    // `t !== null`: that prints "never armed … so this box was too loaded".
     const t = s._bootDrainTimer;
     assert.fail(`the producer never reached the queue (length ${m._injectQueueFor(s).length}, expected 1): `
       + (t === null
