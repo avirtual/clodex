@@ -211,8 +211,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (typeof root !== 'string' || !path.isAbsolute(root)) {
       throw new Error(`team.json "root" must be an absolute path (${file})`);
     }
-    // `lead` here is a SEAT name, not a role key; the roles map is keyed by role
-    // name and always carries a literal `lead` role.
+    // A SEAT name, not a role key; the roles map is keyed by role name.
     const lead = m.lead;
     if (typeof lead !== 'string' || !NAME_RE.test(lead)) {
       throw new Error(`team.json "lead" must be a seat name matching ${NAME_RE} (${file})`);
@@ -225,15 +224,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`team.json roles must include a "lead" role (${file})`);
     }
     const roles = {};
-    // The classification as data, built once and rendered twice: the warn lines
-    // below derive from it and formatRoster reads it off the returned manifest.
-    // A surface that re-decides `honored` for itself is the drift this prevents.
-    //
-    //   'unknown' — a key this schema never modelled (version-gated warn)
-    //   'ignored' — a retired key that configures nothing
-    //   'honored' — retired but still read here, so deleting it changes behaviour
-    // 'ignored' and 'honored' may never be merged or rendered in one line: the
-    // second's text is the negation of the first's.
+    // Built once and rendered twice — the warns below and formatRoster both read
+    // it. A surface that re-decides `honored` for itself is the drift this
+    // prevents. 'ignored' and 'honored' may never be merged or rendered in one
+    // line: the second's text is the negation of the first's.
     //
     // This rides on the object `team:get` returns, so it crosses into the
     // nodeIntegration renderer. `field` is safe by construction only for the two
@@ -247,13 +241,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         throw new Error(`role name "${roleName}" must match ${ROLE_RE} (${file})`);
       }
       // Partitioned by MEASURED EFFECT, not by key name: honoring is conditional
-      // on the value, the role and the absence of an explicit `dispatch`, so a
-      // name-only test claims "this still takes effect" where it does not, and
-      // the remedy it carries is actively harmful there.
-      //
+      // on the value and the role, so a name-only test claims "this still takes
+      // effect" where it does not, and the remedy it carries is harmful there.
       // Sound because `without` is a subset of `def` and `k` is never in
-      // ROLE_KEYS, so no validator that passed on `def` can throw on `without`;
-      // and normalizeRoleDef returns a fixed-key-order literal.
+      // ROLE_KEYS, so no validator that passed on `def` can throw on `without`.
       const normalized = normalizeRoleDef(roleName, def, file);
       for (const k of unknownRoleKeys(def)) {
         let honored = false;
@@ -262,9 +253,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
           delete without[k];
           honored = JSON.stringify(normalizeRoleDef(roleName, without, file)) !== JSON.stringify(normalized);
         }
-        // The remedy rides with the occurrence, not the message: one line may
-        // name several keys, and a hardcoded "write X instead" is wrong the
-        // moment the map holds two entries.
+        // Per occurrence, not per message: one line may name several keys, so a
+        // hardcoded "write X instead" is wrong once the map holds two entries.
         if (honored) {
           droppedFields.push({
             role: roleName, field: k, status: 'honored', remedy: HONORED_CUT_FIELDS.get(k),
@@ -280,12 +270,11 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     }
     // A rendering of the classification above, never a second pass over the defs:
     // a warn that decides membership for itself is how the console and the roster
-    // end up disagreeing about one key.
+    // disagree about one key.
     const named = (st) => droppedFields
       .filter((d) => d.status === st)
-      // Keyed on status, never on `remedy`'s truthiness: an honored member whose
-      // remedy came out empty would drop the suffix here while the roster still
-      // rendered a bare "write `` instead".
+      // Keyed on status, never on `remedy`'s truthiness: an empty remedy would
+      // drop the suffix here while the roster rendered a bare "write `` instead".
       .map((d) => (d.status === 'honored' ? `${d.role}.${d.field} (write \`${d.remedy}\` instead)` : `${d.role}.${d.field}`));
     const dropped = named('unknown');
     const droppedCut = named('ignored');
@@ -295,9 +284,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const version = (typeof m.version === 'number' && Number.isInteger(m.version) && m.version > 0)
       ? m.version : 1;
     // Warn, never throw: a manifest that refuses to load reads as "this cwd is on
-    // no team" at every call site, so the whole team layer would vanish over a key
-    // nothing consumes any more. A current-version file with unknown keys is
-    // silent by design — the warn exists for the migration, not as a linter.
+    // no team" at every call site. Version-gated because the warn exists for the
+    // migration, not as a linter.
     if (dropped.length && version < MANIFEST_VERSION) {
       const seen = `unknown|${file}|${dropped.join(',')}`;
       if (!warnedDrops.has(seen)) {
@@ -305,14 +293,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         console.warn(`team "${name}": ignoring role keys this schema no longer models — ${dropped.join(', ')} (${file})`);
       }
     }
-    // NOT under the version gate, unlike the unknown-key warn above: a file
-    // claiming the current schema while still carrying a retired field would drop
-    // it in total silence. The gate's rationale holds for a key this schema never
-    // modelled, not for one it deliberately retired.
-    //
-    // Says IGNORED, not "dropped": the point of the line is that the field
-    // changes no behaviour anywhere. It must never reach a key whose removal
-    // changed the normalized def — that text would be a lie about a live opt-in.
+    // NOT under the version gate, unlike the warn above: a file claiming the
+    // current schema while carrying a retired field would drop it in silence.
+    // Must never reach a key whose removal changed the normalized def — the text
+    // would be a lie about a live opt-in.
     if (droppedCut.length) {
       const seen = `cut|${file}|${droppedCut.join(',')}`;
       if (!warnedDrops.has(seen)) {
@@ -320,9 +304,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         console.warn(`team "${name}": these role keys are IGNORED — they are retired fields this schema no longer honors, and setting them enforces or configures nothing: ${droppedCut.join(', ')} (${file})`);
       }
     }
-    // Ungated for the same reason as the line above, but the opposite message:
-    // this key still takes effect, so the only safe edit is a rewrite, not a
-    // delete.
+    // Ungated like the line above, but the opposite message: this key still takes
+    // effect, so the only safe edit is a rewrite, not a delete.
     if (droppedHonored.length) {
       const seen = `honored|${file}|${droppedHonored.join(',')}`;
       if (!warnedDrops.has(seen)) {
@@ -330,9 +313,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         console.warn(`team "${name}": these role keys are RETIRED but STILL READ — they are not modeled by this schema, yet a compatibility branch honors them HERE, so deleting one CHANGES BEHAVIOUR: ${droppedHonored.join(', ')}; a future schema will stop reading them (${file})`);
       }
     }
-    // team.json is agent-writable, so a hand-written watchdogMs is clamped at
-    // READ, the choke point every consumer passes. Never throw on a bad value —
-    // one bad number must not break the whole team's resolution.
+    // Clamped at READ, the choke point every consumer passes, since team.json is
+    // agent-writable. Never throw: one bad number must not break the whole team.
     const rawWatchdog = m.watchdogMs;
     const watchdogMs = (typeof rawWatchdog === 'number' && Number.isFinite(rawWatchdog) && rawWatchdog > 0)
       ? Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, rawWatchdog))
@@ -345,18 +327,14 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
   }
 
-  // The write-time gate on a role's `cwd`. Every mutator that can land one on
-  // disk runs it: the field flows to create() as a PTY working directory and
-  // team.json is agent-writable, so this is a security boundary.
-  //
+  // A security boundary: `cwd` flows to create() as a PTY working directory and
+  // team.json is agent-writable, so every mutator that can land one runs this.
   // Confinement is decided by resolving and comparing (containsPath), never by a
-  // prefix match on the raw string: a check for a leading ".." misses
-  // `api/../../elsewhere`.
+  // prefix match — a check for a leading ".." misses `api/../../elsewhere`.
   //
   // Not in normalizeRoleDef, because a LOAD must not throw on these: loadManifest
   // runs inside every caller's best-effort catch, so a hand-edited bad cwd would
-  // read as "no team at all" everywhere. On the load path it is neutralized at
-  // spawn time instead.
+  // read as "no team at all" everywhere.
   function assertRoleCwd(roleName, def, root, file) {
     if (!def || typeof def !== 'object' || Array.isArray(def)) return;
     const raw = def.cwd;
@@ -365,9 +343,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`role "${roleName}" cwd must be a string (${file})`);
     }
     const rel = raw.trim();
-    // resolveSeatShape is never called with roleKey 'lead', so a cwd here would
-    // be inert but believed. Refused at the door, with the reason: the operator
-    // can still set that directory when creating the seat.
+    // resolveSeatShape is never called with roleKey 'lead', so a cwd here would be
+    // inert but believed.
     if (roleName === 'lead') {
       throw new Error(`role "lead" cannot take a cwd: the lead's seat is not spawned by the team, so its directory is set when the operator creates the seat (${file})`);
     }
@@ -404,11 +381,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     }
   }
 
-  // The checkout a linked git worktree belongs to, or null. A linked worktree's
-  // `.git` is a FILE reading `gitdir: <main>/.git/worktrees/<id>`, so the main
-  // checkout is derivable with one read — no `git` subprocess, which is what makes
-  // this safe to call from resolveTeam, which runs on every roster render and
-  // every ticket resolution.
+  // A linked worktree's `.git` is a FILE reading `gitdir: <main>/.git/worktrees/
+  // <id>`, so the main checkout is derivable with one read. No `git` subprocess:
+  // resolveTeam runs on every roster render and every ticket resolution.
   const WORKTREE_MARKER = `${path.sep}.git${path.sep}worktrees${path.sep}`;
   function mainCheckoutOf(cwd) {
     let dir = path.resolve(cwd);
@@ -439,10 +414,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return null;
   }
 
-  // Path containment alone silently excludes worktrees: git's default puts one at
+  // Path containment alone excludes worktrees: git's default puts one at
   // `<repo>/../<repo>-<branch>`, a SIBLING of the root, so a seat working in one
-  // falls off its team entirely — no roster entry, and `_ticketAssigneeSeat`
-  // returns null, which surfaces as "no live seat yet".
+  // falls off its team — no roster entry, and `_ticketAssigneeSeat` returns null.
   function cwdInProject(cwd, root) {
     if (!cwd || !root) return false;
     if (containsPath(root, cwd)) return true;
