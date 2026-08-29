@@ -720,6 +720,25 @@ Own state + DOM, `init*(deps)`:
   session to inject into (a row that vanishes from a settings dialog reads as a
   missing feature); the bar button is absent outright for a non-Claude seat,
   since Codex has no `/voice`.
+- **voice-submit-watcher.js** + **lib/voice-submit.js** — hands-free submit: one
+  watcher per local Claude terminal sends Enter when the composer ENDS with the
+  configured trigger phrase. The composer is read from `terminal.buffer.active`
+  (the CLI redraws its input box with ANSI, so the text is screen state and not
+  recoverable from the PTY stream) and is identified by the prompt on the cursor
+  row — a row without one never matches, which is what keeps the agent's own
+  transcript from submitting on the operator's behalf. Declines on the ALTERNATE
+  buffer for intent-highlight.js's reason. Fires only after a QUIET WINDOW, since
+  transcription streams in segments and an immediate fire submits half an
+  utterance. The gate — feature on, voice mode `tap`, and no permission dialog —
+  is re-checked at FIRE time, because the dialog can open during that window and
+  the Enter would ANSWER it; the 'permission' signal is attention.js's existing
+  classification carried on `el.dataset.attention`, never a second detector, and
+  both failure paths of that read resolve to 'permission'. A refused match still
+  LATCHES, so a phrase spoken into a dialog is dropped rather than replayed once
+  it clears. Hold mode is excluded: the CLI's own autoSubmit covers it. All the
+  deciding lives in the DOM-free leaf, which is what lets
+  `test/voice-submit.test.js` pin the interlock with no jsdom. Disposed BEFORE
+  its terminal.
 - **plugin-host.js** — the renderer-side plugin host. Plugins hand it data or
   callbacks, NEVER HTML: everything user-supplied is escaped here, and every
   registered id becomes `"<pluginId>:<id>"` before it reaches the DOM, so a
