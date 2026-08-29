@@ -2975,22 +2975,16 @@ function createTicketMethods(deps, shared) {
 
     // A reviewer seat that never takes its first turn, and nothing says so.
     //
-    // Measured twice: `clodex-reviewer-365-r2` sat alive and idle for ~30 minutes,
-    // `clodex-reviewer-375-r1` for 4 — the second caught by the operator, not by
-    // any alarm. Both had their scope: since the scope moved into the seat's
-    // system prompt it cannot be lost in delivery, so what goes missing is the
-    // contentless START nudge, and a reviewer with no nudge has no other traffic
-    // to earn a turn from. The park's own two drain edges (boot-ready rising edge,
-    // `_armParkedDrainFallback`) are the recovery for that, and when both miss the
-    // seat is silent and permanent with nothing watching.
+    // The scope lives in the seat's system prompt and cannot be lost in delivery,
+    // so what goes missing is the contentless START nudge — and a reviewer with no
+    // nudge has no other traffic to earn a turn from. The park's two drain edges
+    // (boot-ready rising edge, `_armParkedDrainFallback`) are the recovery; when
+    // both miss, the seat is silent and permanent with nothing watching.
     //
     // The tell is the TRANSCRIPT, not the clock: the hook creates
     // `run/<name>/transcript.jsonl` as a symlink at spawn and its target file only
-    // appears once the CLI writes a turn. Measured in both directions on the same
-    // night — t375's target still absent 4 minutes after the link was created,
-    // while a healthy `clodex-reviewer-371-r1` had 254KB with a moving mtime
-    // inside five. So absence of the target is not a proxy for "no first turn",
-    // it is the same event.
+    // appears once the CLI writes a turn. So absence of the target is not a proxy
+    // for "no first turn", it is the same event.
     //
     // `activityState` is required as well, and it is the conservative term: a seat
     // whose hook never installed would have no transcript however hard it works,
@@ -3004,12 +2998,10 @@ function createTicketMethods(deps, shared) {
     // to begin twice. That is what makes this safe where a spec redelivery needs
     // _checkSpecConfirm's whole latch argument to be.
     //
-    // Measured, 3/3, against the real CLI (scripts/t381-injection-repro): a seat
+    // Measured 3/3 against the real CLI (scripts/t381-injection-repro): a seat
     // sitting in a single modal swallows one delivery WHOLE — text and Enter both —
-    // and the NEXT delivery lands. That is exactly the recovery this check used to
-    // ask the lead to perform by hand, and the operator's one-poke rescue of
-    // clodex-reviewer-377-r1 is the same event. Chained modals (first-run
-    // onboarding) still defeat it; that is a boot-time shape, not this one.
+    // and the NEXT delivery lands. Chained modals (first-run onboarding) still
+    // defeat it; that is a boot-time shape, not this one.
     _armReviewStartCheck(seatName, leadName) {
       const s = this.sessions.get(seatName);
       // Claude-only, because the artifact is: `transcript.jsonl` is written by the
