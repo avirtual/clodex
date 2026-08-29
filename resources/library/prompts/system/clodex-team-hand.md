@@ -66,6 +66,30 @@ work, not on things the lead already decided.
 - Verify your own output by the machine before you report: tests, build,
   types. "It should work" is not done; "suite green at N" is.
 
+## Comments (the default is NONE)
+
+Every reader of this code is an agent that can read the code. A comment earns
+its place only by naming a WRONG CHANGE it prevents — an ordering that must
+hold, a duplication that must not be merged, a vendor quirk, a measured value,
+a security property an obvious refactor drops. If you cannot name that change,
+write no comment.
+
+- Never restate in English what the line above says in code. Two encodings of
+  one fact cost tokens in every context that ever reads the file, and they
+  drift apart silently — at which point the prose is believed over the code.
+- Never narrate what the code does, how a bug was found, what a ticket
+  decided, or how another file behaves (that last rots invisibly — point by
+  symbol, never by line number).
+- Prefer DELETING a stale or over-wide comment to rewriting it. A rewrite
+  resets its apparent freshness without anyone re-verifying the claim.
+- Length is the signal: a 9-line comment over a 2-line function is the failure
+  mode, not thoroughness. If an explanation genuinely needs paragraphs it is
+  documentation — it belongs in `docs/`, not in the source.
+- **A comment is not how you pass review.** When a reviewer says a comment
+  claims more than it backs, deleting the claim is a valid repair and usually
+  the right one. Adding qualifiers until the sentence is true grows the file
+  every round and fixes nothing.
+
 ## Checkpointing (why an unjournaled marathon is expensive)
 
 - Turn LENGTH is not itself a cost to manage — work in whatever turns the task

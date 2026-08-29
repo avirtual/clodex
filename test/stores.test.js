@@ -1435,6 +1435,28 @@ test('seed: shipped team prompts brief their load-bearing protocol verbs', () =>
   assert.match(reviewer, /review-done/, 'reviewer prompt briefs the review-done closing intent');
 });
 
+// The comment rule lived only in .claude/CLAUDE.md, which is gitignored and absent
+// from every ticket worktree — so no hand had ever received it, and comment density
+// in the 31 files a July decomment pass stripped went 9.8% -> 22.3%. Pinned in BOTH
+// prompts because they cover different halves: the hand must not write them, and the
+// reviewer must not prescribe growing them. The reviewer half is the load-bearing
+// one — asking for qualifiers instead of a deletion is what grew the files while the
+// code stood still.
+test('seed: shipped team prompts carry the comment rule, in both directions', () => {
+  const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
+  assert.match(hand, /A comment earns\s+its place only by naming a WRONG CHANGE it prevents/,
+    'hand prompt states the earns-its-place bar');
+  assert.match(hand, /Never restate in English what the line above says in code/,
+    'hand prompt forbids the code-and-English duplication');
+  assert.match(hand, /it belongs in `docs\/`, not in the source/,
+    'hand prompt routes long explanation to docs/ rather than the source');
+  const reviewer = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-reviewer.md'), 'utf-8');
+  assert.match(reviewer, /DELETING IS THE DEFAULT REPAIR/,
+    'reviewer prompt makes deletion the default repair for an over-wide comment');
+  assert.match(reviewer, /Qualifying is the exception/,
+    'reviewer prompt marks qualifying as the exception, not the reflex');
+});
+
 // A prompt is a claim on a path no execution passes through: nothing throws when
 // it goes stale, and every seat that boots obeys it anyway. These pin the two
 // halves of the branch-per-ticket division of labour, which is exactly the kind
