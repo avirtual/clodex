@@ -3096,12 +3096,10 @@ function createTicketMethods(deps, shared) {
     // never happened.
     // `ticketStarted` is the third exclusion, alongside backlog and parked, and it
     // is here rather than in the badge filters on purpose. Both callers DISPATCH
-    // what this returns — advance pushes the head at a seat that just closed one,
-    // replay re-delivers on respawn — and an added-but-unstarted ticket assigned
+    // what this returns and an added-but-unstarted ticket assigned
     // to a ROLE matches every seat filling that role, so without this the spec of
     // a ticket that has no tree of its own is delivered into the checkout of one
-    // that does. That is `add` still dispatching, by a later edge; the seam
-    // `task start` exists to create leaks without it.
+    // that does.
     // The two badge filters (`_reconcileTickets` and the session-list builder)
     // deliberately do NOT carry this term: a filed ticket is worth showing on the
     // row, and those two must move together or the badge flickers between paints.
