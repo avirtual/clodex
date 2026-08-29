@@ -93,59 +93,26 @@ function normalizeRoleDef(roleName, def, file) {
     template: def.template ?? null,
     prompt: def.prompt ?? null,
     brief: def.brief ?? null,
-    // What a ticket dispatched to this role does. `standing` delivers the spec to
-    // the live seat holding the role; `spawn` mints a one-shot seat in the SHARED
-    // checkout (no branch, no tree — no git call on the DISPATCH path, so it works
-    // on a team whose root is not a repo); `worktree` does the same but on its own
-    // branch in its own git worktree. Both one-shot values re-pin the ticket from
-    // the ROLE to the seat. Enforced — session-manager reads it on the dispatch path.
-    //
-    // The v2 `worktree: true` boolean is READ here, not merely migrated. Migration
-    // runs on mutator WRITES, so a file nobody edits would otherwise keep opting a
-    // role into a worktree on disk while every dispatch quietly went to a standing
-    // seat — silent, because `standing` is a legitimate value nothing warns about.
-    // The reader has to understand the file it is handed; migrateRoles then makes
-    // the disk say what this already resolved. Delete this and a v2 team.json
-    // silently changes behaviour the moment it loads.
-    //
-    // The LEGACY key is not honored on a reserved role, matching migrateRoles:
-    // `worktree: true` on lead/reviewer was already refused at dispatch, so
-    // reading it now would invent an opt-in that never took effect. An EXPLICIT
-    // `dispatch: "worktree"` hand-written on lead is a different case and is
-    // returned as written — the write paths refuse it and the dispatch resolver
-    // refuses it, so scrubbing it here would only hide a hand-edit from view.
-    //
-    // Per-role and per-team on purpose, not a flag on `task add`: the lead would
-    // have to remember it on every dispatch, and the one dispatch that forgets
-    // lands a hand in the shared checkout holding a spec that assumes isolation.
+    // The v2 `worktree: true` boolean is read here, not merely migrated: migration
+    // runs on mutator writes, so a file nobody edits would keep opting a role into
+    // a worktree on disk while every dispatch quietly went to a standing seat —
+    // silent, because `standing` is a legitimate value nothing warns about.
+    // Not honored on a reserved role, matching migrateRoles.
     dispatch: def.dispatch
       ?? ((def.worktree === true && !RESERVED_ROLE_KEYS.has(roleName)) ? 'worktree' : DEFAULT_ROLE_DISPATCH),
-    // Where in the team this role's seats boot, RELATIVE to team.root. A role
-    // already knows its team, so "where in the team" is the only expressible
-    // thing; an absolute path would let an agent-writable team.json point a seat
-    // at another project entirely, which assertRoleCwd refuses at every write.
-    //
-    // Blank normalizes to null — the UI's cleared text input sends '', and
-    // path.resolve(root, '') is root, so storing '' would put a value on disk
-    // meaning exactly what its absence does. Trimmed for the same reason: a
-    // stray space is not a directory anyone meant to name.
+    // Relative to team.root: an absolute path would let an agent-writable
+    // team.json point a seat at another project, which assertRoleCwd refuses at
+    // every write. Blank normalizes to null — path.resolve(root, '') is root, so
+    // storing '' would mean exactly what its absence does.
     cwd: (typeof def.cwd === 'string' && def.cwd.trim()) ? def.cwd.trim() : null,
   };
 }
 
-// lead and reviewer are STANDING roles: the lead is the team's durable context
-// and the reviewer is invoked on demand against work that already exists, so
-// neither has a ticket that wants its own tree. Refused where roles are DEFINED
-// rather than only at dispatch time — but the dispatch-time resolver still holds
-// the same line, because team.json is hand-editable and a file that predates
-// this check must not start minting trees for them.
-// Refuses anything that is NOT `standing`, rather than naming the values it
-// knows to be wrong. A reserved role must not get a `spawn` dispatch either —
-// lead's seat is operator-created and reviewer is reached only through
-// [agent:team-review], so a one-shot ticket seat for either is inert-but-believed,
-// which is the exact failure shape `type` and `tools` were cut for. Stated as an
-// inversion so a FUTURE fourth value is refused by default: a check that lists
-// the bad values admits every value nobody thought to list.
+// Refused where roles are DEFINED as well as at dispatch time: team.json is
+// hand-editable and a file that predates this check must not start minting trees.
+// Stated as an inversion — refuses anything that is not `standing` — so a future
+// fourth value is refused by default; a check that lists the bad values admits
+// every value nobody thought to list.
 function assertDispatchAllowed(roleName, def, file) {
   if (!def || typeof def !== 'object') return;
   if (RESERVED_ROLE_KEYS.has(roleName) && def.dispatch != null && def.dispatch !== DEFAULT_ROLE_DISPATCH) {
@@ -153,32 +120,19 @@ function assertDispatchAllowed(roleName, def, file) {
   }
 }
 
-// Keys a role def carries that this schema no longer models, for the load-time
-// warning. Returned rather than warned in place: normalizeRoleDef runs on the
-// write paths too, where a drop is the caller's answer, not a console line.
+// Returned rather than warned in place: normalizeRoleDef runs on the write paths
+// too, where a drop is the caller's answer, not a console line.
 //
-// `worktree` is reported here like any other unmodeled key, which keeps a stale
-// v2 file loud until a mutator rewrites it. It must NOT be excluded to spare it
-// the warning: the file would then load silently while still carrying a key
-// whose meaning lives in a compatibility branch, which is the state the warning
-// exists for. It is SOMETIMES read (normalizeRoleDef resolves it onto
-// `dispatch`, but only for an exact `true` on a non-reserved role with no
-// explicit `dispatch`), so the caller partitions by MEASURED EFFECT — it
-// re-normalizes with the key removed and compares — and HONORED_CUT_FIELDS
-// membership only gates whether that measurement is worth making. Naming the
-// key would be wrong in both directions: "enforces nothing" makes deleting a
-// live opt-in look safe, and "still read" points the owner of an inert
-// occurrence at a change they never asked for.
+// `worktree` is reported here like any other unmodeled key, and must not be
+// excluded to spare it the warning: the file would load silently while still
+// carrying a key whose meaning lives in a compatibility branch.
 function unknownRoleKeys(def) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) return [];
   return Object.keys(def).filter((k) => !ROLE_KEYS.has(k));
 }
 
-// The write-path counterpart of the load-time drop: a def carrying only keys this
-// schema models. Every mutator writes through this, because dropping a key only on
-// the way OUT leaves it on disk — `tools: ["Read"]` in team.json is a restriction
-// nothing enforces, and a front door that accepts one is worse than a hand-edit,
-// which at least nobody mistakes for a supported feature.
+// Every mutator writes through this: dropping a key only on the way OUT leaves it
+// on disk, and `tools: ["Read"]` in team.json is a restriction nothing enforces.
 //
 // A non-object is returned untouched so a malformed def still reaches the
 // validators that throw on it, rather than being laundered into a valid `{}`.
@@ -186,7 +140,7 @@ function pickRoleKeys(def) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) return def;
   const out = {};
   for (const [k, v] of Object.entries(def)) {
-    // `cwd` is stored TRIMMED so the bytes on disk are the ones assertRoleCwd
+    // `cwd` is stored trimmed so the bytes on disk are the ones assertRoleCwd
     // validated — it checks the trimmed form, and a stored "  api  " would be a
     // value no gate ever saw. Only this field: `brief`/`prompt` are prose whose
     // surrounding whitespace is the author's.
@@ -196,29 +150,21 @@ function pickRoleKeys(def) {
 }
 
 // One console line per (file, dropped-key-set), for the life of the process.
-// loadManifest has no cache and resolveTeam loads EVERY team on EVERY call —
-// _sweepTickets alone runs it every 60s per live seat — so an ungated warn is a
-// line several times a minute, forever, for one legacy file anywhere on the
-// machine. A main-process log nobody can read is where a real error goes to hide.
+// loadManifest has no cache and resolveTeam loads every team on every call
+// (_sweepTickets runs it every 60s per live seat), so an ungated warn is several
+// lines a minute forever for one legacy file.
 const warnedDrops = new Set();
 
 function createTeamManifest({ fs, clodexHome } = {}) {
   const home = clodexHome || defaultClodexHome();
   const teamsDir = path.join(home, 'teams');
 
-  // Routed through fs-util's atomicWriteFileSync, not a local write+rename
-  // (F010). The pair here was the same shape but WITHOUT the fsyncs: the rename
-  // was atomic, so no reader ever saw a half file, but neither the bytes nor the
-  // directory entry were durable — a power loss after the rename could leave a
-  // team.json that names roles whose contents never reached the disk. fs-util is
-  // the audited choke point every other JSON store already uses, and it fsyncs
-  // both.
-  //
-  // The durability primitive is deliberately NOT taken from the injected `fs`:
-  // it is a single audited implementation, not a seam a caller gets to vary, and
-  // every caller (engine.js and every test) injects the real fs anyway. The dir
-  // is still created 0700 first — atomicWriteFileSync's own mkdir carries no
-  // mode, and ~/.clodex/teams/<name>/ must not widen to the umask default.
+  // Routed through fs-util's atomicWriteFileSync, not a local write+rename: a
+  // bare rename is atomic but not durable, and it fsyncs both the bytes and the
+  // directory entry. Deliberately not taken from the injected `fs` — durability
+  // is not a seam a caller gets to vary. The dir is still created 0700 first:
+  // atomicWriteFileSync's own mkdir carries no mode, and ~/.clodex/teams/<name>/
+  // must not widen to the umask default.
   function atomicWrite(file, data) {
     ensureDir(path.dirname(file));
     atomicWriteFileSync(file, data);
