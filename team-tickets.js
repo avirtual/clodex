@@ -5608,9 +5608,7 @@ function createTicketMethods(deps, shared) {
     // latch works there and cannot here.
     //
     // Best-effort by construction, and that is the whole reason it is a separate
-    // function rather than a branch inside `fail()`. The lead's escalation and the
-    // record stamp are the durable halves; this is a convenience that removes a
-    // round trip when a seat happens to be live. So every failure here — no seat,
+    // function rather than a branch inside `fail()`. So every failure here — no seat,
     // a dead seat, a delivery that bounces — is logged and swallowed: a hand that
     // cannot be reached must NOT turn a correctly-held ticket into an escalation
     // failure, because the lead has already been told and the board already
@@ -6092,7 +6090,7 @@ function createTicketMethods(deps, shared) {
     // Preferring it unconditionally is the trap: `_taskCancel` is lead-only and
     // the lead can also close a `task done` for a seat that no longer can, so
     // closedBy is frequently the LEAD, whose record is the largest ledger in the
-    // system. That trades a foreign hand's spend for the lead's whole life.
+    // system.
     //
     // The lead is excluded even when it legitimately holds the ticket's role —
     // `matchSeatRole(team, team.lead)` returns 'lead' unconditionally, so a
@@ -6100,8 +6098,7 @@ function createTicketMethods(deps, shared) {
     // lifetime-sum shape this rollup uses is an approximation that only holds
     // for a SHORT-LIVED actor: an ephemeral hand's lifetime is roughly one
     // ticket, while the lead's spans every ticket in the project — and would be
-    // counted again into the next lead ticket, and the next. Approximately right
-    // for a hand is categorically wrong for the lead.
+    // counted again into the next lead ticket, and the next.
     //
     // Everything else is UNKNOWN, on purpose. A declared unknown costs one
     // ticket's row in a rollup; a confident wrong number poisons every rollup
