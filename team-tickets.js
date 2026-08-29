@@ -6026,46 +6026,28 @@ function createTicketMethods(deps, shared) {
       return { ok: true, dir: taskDir, error: null };
     },
 
-    // The ticket's task dir as it is SHOWN to an agent — the one renderer behind
-    // both the hand's dispatch and the reviewer's scope.
+    // ONE function, not two call sites passing the same arguments: the invariant is
+    // that the hand's dispatch and the reviewer's scope AGREE — same directory,
+    // same rule, under the same condition. Two sites that agree today diverge the
+    // moment one is edited.
     //
-    // ONE function, not two call sites passing the same arguments, because the
-    // invariant is that the two renderings AGREE: same directory, same rule,
-    // under the same condition. Two sites that agree today diverge the moment
-    // one is edited — which is exactly how this bug existed, with dispatch
-    // resolving the pointer while the scope passed `t.taskDir` verbatim into a
-    // reviewer whose cwd is the repo the decoy lives in.
+    // `rule` is empty for a `~`- or `/`-prefixed pointer: that one already means
+    // the same thing to an agent as it does here. The gate lives in
+    // taskDirRuleClause, beside the prose it gates.
     //
-    // Resolution and the RULE CLAUSE are two decisions, deliberately — and the
-    // three fields exist because the two renderers need different combinations
-    // of them, while the CONTENT of each must be identical:
-    //  - `dir` resolves whenever it can. An already-absolute pointer resolves to
-    //    itself, so there is never a reason to show a reviewer the raw one. The
-    //    scope always names a task dir, so this is what it uses.
-    //  - `rule` is the FACT, and it is empty for a `~`- or `/`-prefixed pointer:
-    //    that one already means the same thing to an agent as it does here, so
-    //    the clause would be telling ~100 live seats what they already know.
-    //    The gate lives in taskDirRuleClause, beside the prose it gates.
-    //  - `line` is the dispatch's whole rendering and is empty on the same
-    //    condition, because there it is the entire line rather than a suffix:
-    //    every dispatch already spills past the 500-byte threshold, so a
-    //    redundant line costs each of those seats a Read turn. The scope pays no
-    //    such cost — it names the dir regardless — which is why it takes `dir`
-    //    and `rule` rather than `line`.
-    //    The `rule ?` guard below looks like it duplicates the clause computed
-    //    inside ticketTaskDirLine, and must stay: the helper self-gates only the
-    //    clause, so without the outer guard a `~`/absolute pointer still emits a
-    //    bare `TASK DIR: <dir>` line to EVERY dispatch. The guard is what
-    //    suppresses the whole line, not a redundant recomputation.
-    // What must NOT differ is the wording of the fact, and that is why both come
-    // from here. `line` additionally carries "so create it", which `rule` must
-    // not: the scope's reader is a read-only seat.
+    // The `rule ?` guard below looks like it duplicates the clause computed inside
+    // ticketTaskDirLine, and must stay: the helper self-gates only the clause, so
+    // without the outer guard a `~`/absolute pointer still emits a bare
+    // `TASK DIR: <dir>` line to EVERY dispatch.
     //
-    // Through _ticketDiffDest, so the confinement guarding the diff and
-    // COST.json guards this too: a second resolver could name a directory
-    // Clodex itself would refuse to write, which is worse than naming none. A
-    // refusal drops the rendering and NEVER fails the caller — neither a
-    // dispatch nor a spawn may die over a display line.
+    // `line` additionally carries "so create it", which `rule` must not: the
+    // scope's reader is a read-only seat.
+    //
+    // Through _ticketDiffDest, so the confinement guarding the diff and COST.json
+    // guards this too: a second resolver could name a directory Clodex itself would
+    // refuse to write, which is worse than naming none. A refusal drops the
+    // rendering and NEVER fails the caller — neither a dispatch nor a spawn may die
+    // over a display line.
     _ticketTaskDirRender(team, ticket) {
       const raw = String((ticket && ticket.taskDir) || '').trim();
       if (!raw) return { dir: null, rule: '', line: '' };
