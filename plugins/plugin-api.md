@@ -904,6 +904,51 @@ Every function the module exports is either lent or explicitly withheld, and the
 partition is test-pinned — a new export fails the suite until it is classified,
 so it can never arrive here by default.
 
+### When the host lends you nothing: copying a core utility in
+
+The membership rule above has a consequence worth stating outright, because
+every plugin that outgrows a toy hits it: a utility that core uses and `host.lib`
+does not lend cannot be reached at all. §12's no-backdoor lint refuses a
+`require` that leaves your plugin's directory, so there is no import to write.
+The sanctioned answer is to **copy the utility into your own directory**.
+
+This is a real pattern with a real cost, not a workaround. Copying is what the
+boundary buys: your plugin keeps working when core refactors the original, and
+core can refactor it without auditing every plugin. What you give up is
+agreement. The copy and the original start identical and drift apart silently —
+and *silently* is the operative word, because a drifted copy of a pure utility
+almost never throws. It returns a different answer, and something downstream
+believes it.
+
+Three consequences, in the order they bite:
+
+**Copy the whole function, not the part you need.** The narrowed "good enough"
+version is the classic way a security property gets dropped. A path helper that
+handles the shapes you have seen so far is how a traversal gets in: the input
+that defeats it is the one you did not think to write down.
+
+**Know which direction a drift fails in.** A copy whose divergence makes
+something *refuse* is self-announcing — someone sees the error and fixes it. A
+copy whose divergence makes something *succeed differently* is not. Clodex's own
+`tickets-viewer` copies a path-hashing helper whose drifted form would compute a
+different directory name, read a directory that does not exist, and render an
+empty board. Nothing throws. An empty board and a board with nothing on it look
+identical, and the reader's conclusion — "no tickets" — is wrong. Ask of each
+copy: if this drifts, does anyone find out?
+
+**Pin the ones that fail silently.** A copy is only as good as the test that
+catches it diverging. A test in `test/` may require both halves and compare them
+directly — it is not under the boundary lint, so it can reach across where your
+plugin cannot. Assert the copy and the original agree over a table of inputs, and
+include the input the copy exists to handle; a table of easy cases is satisfied
+by two functions that are equally wrong. Then assert the *answer* as a literal
+too, so a pair that drifted together still fails.
+
+Not every copy earns a parity test. Judge by the failure mode rather than by the
+fact of copying: a helper whose divergence is loud can wait for the day it goes
+loud. One whose divergence is a false green cannot, and that is the one to pin
+the day you copy it.
+
 ### `host.library`
 
 Mutation of a Clodex library file. Two members in `"1"`:
