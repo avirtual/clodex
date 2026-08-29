@@ -1490,7 +1490,7 @@ test('seed: the hand prompt carries the decomment sweep and the post-cut boundar
     'by POINTER, not by pasting the code into a prompt every hand reads on every ticket');
   assert.match(hand, /the check is a\s+lint that needs a human ruling per flag, not a gate/,
     "the author's precision caveat, unsoftened: a lint, not a gate");
-  assert.match(hand, /It does not distinguish a\s+severed head from a lowercase-but-complete sentence; it only narrows where to\s+look/,
+  assert.match(hand, /It cannot distinguish a\s+severed head from a lowercase-but-complete sentence; it only narrows where to\s+look/,
     'including the half that says what it cannot do — each flag still needs a human ruling');
   // The pointer is the one claim in this section that rots on its own: the tool
   // can move or go away and the prose stays confident. Resolving the path OUT of
