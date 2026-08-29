@@ -495,7 +495,7 @@ function createSessionManager(deps) {
     || (() => ({ ok: false, error: 'terminal tabs are not available on this host' }));
 
   const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
-  // Settle margin before the boot-ready rising edge fires its pending drain (T54).
+  // Settle margin before the boot-ready rising edge fires its pending drain.
   // The first mode-2004 (which latches _bootReadySeen) is Claude ANNOUNCING
   // bracketed-paste during terminal setup — it can PRECEDE the readline loop
   // actually accepting a submitted Enter. Draining in that SAME synchronous tick
@@ -1154,7 +1154,7 @@ function createSessionManager(deps) {
       }
 
       let proxyBase = resolveProxyBase(proxy, getUiSettings());
-      // Wire-off (T189): the seat's whole point is that ANTHROPIC_BASE_URL is
+      // Wire-off: the seat's whole point is that ANTHROPIC_BASE_URL is
       // never set for it — Anthropic's remote access refuses to attach when it
       // is. Nulling proxyBase here is not a second switch: setupClaudeHook falls
       // back to proxyBase whenever wireBase is absent, so skipping only the wire
@@ -2419,7 +2419,7 @@ function createSessionManager(deps) {
       try { const t = resolveTeam(cwd); return t ? t.name : null; } catch { return null; }
     }
 
-    // The ONE board key / live-seat scope derivation (t303). Team-first: when a
+    // The ONE board key / live-seat scope derivation. Team-first: when a
     // team owns the cwd its root is returned unchanged, byte for byte, so the
     // team path never moves boards. Only a teamless cwd falls through to the
     // repo root.
@@ -3820,8 +3820,8 @@ function createSessionManager(deps) {
       const sinceMs = now - last;
       if (last && sinceMs < REBOOT_MIN_INTERVAL) {
         const waitS = Math.ceil((REBOOT_MIN_INTERVAL - sinceMs) / 1000);
-        // "requested", not "happened": the stamp is written at QUEUE time, and since
-        // t282 the restart may still be waiting for an all-idle window, or have been
+        // "requested", not "happened": the stamp is written at QUEUE time, and the
+        // restart may still be waiting for an all-idle window, or have been
         // cancelled/dropped without ever running — _rebootAbandoned deliberately
         // leaves the stamp behind so there is no rapid-retry window.
         reply(`rate-limited — a reboot was requested ${Math.round(sinceMs / 1000)}s ago; try again in ${waitS}s`);
@@ -5676,7 +5676,7 @@ function createSessionManager(deps) {
 
     _injectQueueFor(session) {
       if (!session._injectPtyQueue) {
-        // Boot-readiness gate (T35): the first inject into a freshly spawned
+        // Boot-readiness gate: the first inject into a freshly spawned
         // claude seat races CLI boot — text+Enter written before the raw-mode
         // input loop is up read as one paste-like chunk and the Enter lands as
         // content, so the message never submits. Gate claude agent seats on the
@@ -5860,7 +5860,7 @@ function createSessionManager(deps) {
     }
   }
 
-  // Graft the teams/tickets half (t380) onto the prototype. defineProperty and
+  // Graft the teams/tickets half onto the prototype. defineProperty and
   // not Object.assign: class methods are non-enumerable, and "no behaviour
   // change" includes property descriptors — an enumerable graft would change
   // what any for-in or spread over the prototype chain sees.
