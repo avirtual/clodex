@@ -2201,7 +2201,7 @@ function createTicketMethods(deps, shared) {
       const reply = (msg) => this._injectText(session, `[agent:task] ${msg}${stale}`, { parkable: true });
       let team;
       try { team = resolveTeam(session.cwd); } catch { team = null; }
-      // No team is the SOLO case, not an error (t303): tickets are the primitive
+      // No team is the SOLO case, not an error: tickets are the primitive
       // and teams consume them, so a lone operator must be able to file one
       // without instantiating a team to be their own lead. `_soloContext` returns
       // a stand-in with the same shape the verbs already read.
@@ -3671,7 +3671,7 @@ function createTicketMethods(deps, shared) {
       // A recorded branch WINS over the derived one: a branch is an identity
       // minted once, not a view of the ticket's current first line. Re-deriving
       // here is safe only while the slug's inputs never move, and they move two
-      // ways — the slug rule itself changed (t463), and `_taskRespec` / the
+      // ways — the slug rule itself changed, and `_taskRespec` / the
       // viewer's `editSpec` rewrite the spec TEXT. When _existingTicketTree
       // rejects the recorded tree (prunable, locked, no .git, held), the fresh
       // createWorktree below takes THIS name, so a re-derived one forks a second
@@ -4401,7 +4401,7 @@ function createTicketMethods(deps, shared) {
             // from the template here. A ticket seat is one Clodex spawns on the
             // lead's behalf with no operator checkbox behind it, and a template is
             // agent-writable — so honoring it would let a template silently blind
-            // the wire that measures what this seat costs. Pinned by t189.
+            // the wire that measures what this seat costs.
             shape.env, true,
           );
           this._applyTemplatePersistence(seat.name, shape.tpl);
@@ -4855,7 +4855,7 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task done', report)}`); return; }
-      // RE-ENTRY, the recovery from a verify escalation (t345). The ticket is
+      // RE-ENTRY, the recovery from a verify escalation. The ticket is
       // already `done` and still held at `verify` with a `verifyHold` on the
       // record: the loop told the lead a check failed and stopped there. Closing
       // again is how the hand says the condition is fixed, and it re-runs the
@@ -7083,7 +7083,7 @@ function createTicketMethods(deps, shared) {
         // is added there and none stops clearing. Nor can a merge pass put the
         // field back afterwards, by either entry: one that has not started meets
         // the top gate, and one already past it re-reads at the defer arm and
-        // declines to stamp (t551). Either way the pass runs its own finally
+        // declines to stamp. Either way the pass runs its own finally
         // over an already-absent field, which `_stampMergeWaiting` treats as a
         // no-op rather than a save.
         //
@@ -8389,7 +8389,7 @@ function createTicketMethods(deps, shared) {
         // respec) already reopens the ticket to alarming, so a reassignment starts a
         // clean episode exactly as before.
         if (orphan && t.nudgedAt && t.orphanNudgedAt) continue;
-        // NOT one nudge per episode any more (t322). `nudgedAt` is cleared only by
+        // NOT one nudge per episode any more. `nudgedAt` is cleared only by
         // seat ACTIVITY, which by definition never comes during a stall, so a
         // single alarm the lead dismissed bought permanent silence: measured on
         // t312, where the 30m alarm was waved off and the remaining 28 minutes of
