@@ -8474,11 +8474,10 @@ function createTicketMethods(deps, shared) {
             // sample, so there is no baseline to read growth against. Alarming
             // there is the blind alarm, fired at the first sweep past the window
             // at a seat nobody asked about. Deferring costs ONE sweep (60s)
-            // against a 30m window, and it
-            // is bounded: the sample is stored below, so the next sweep has a
-            // baseline and either classifies or alarms. A seat that is not live
-            // returns null and never reaches this, so nothing can defer forever
-            // on a seat that no longer exists.
+            // against a 30m window, and it is bounded: the sample is stored
+            // below, so the next sweep has a baseline and either classifies or
+            // alarms. A seat that is not live returns null and never reaches
+            // this, so nothing can defer forever on a seat that no longer exists.
             if (seatInfo && (seatInfo.verdict === 'moving' || seatInfo.verdict === 'unknown')) continue;
           }
           const head = repeat > 0 ? `[ticket ${tid}] STILL stalled (repeat ${repeat}): ` : `[ticket ${tid}] stalled: `;
