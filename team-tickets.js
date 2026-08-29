@@ -2136,13 +2136,10 @@ function createTicketMethods(deps, shared) {
       // (the documented stall remediation, run precisely when a hand died mid-ticket
       // — which is when a respec has most likely already happened), start, and the
       // fresh-seat spawn. Each of those hands the corrected spec to a seat that
-      // never saw a previous revision, which is this line's whole premise. Naming
-      // the arm is what hid that; `!respec` names the property.
+      // never saw a previous revision, which is this line's whole premise.
       //
       // The `respec` arm alone is excluded, and only because its seat is live, still
       // holds the previous text, and is being handed the transition AS IT HAPPENS.
-      // Its own head says so directly — a count there would restate beside the arm
-      // what the arm already says.
       //
       // Body only, never the pointer line: the pointer already renders the arm's
       // marking, and a seat cannot act on a dispatch without reading the body, so a
@@ -4698,9 +4695,7 @@ function createTicketMethods(deps, shared) {
         // rests on `ticketInFlight`, which reads `loopStep` ALONE — the stranding
         // this ticket fixes was `loopStep` being DELETED. Here it is present, so a
         // process that dies mid-re-verify leaves a done ticket the sweep still
-        // sees and alarms as a stuck step, which is exactly what it is. What is
-        // dropped is the PREVIOUS round's evidence, which is stale the moment the
-        // hand re-closes; and if the re-run fails, `fail()` stamps it again, fresh.
+        // sees and alarms as a stuck step, which is exactly what it is.
         delete ticket.verifyHold;
         // Opening an in-flight phase is a NEW stall episode, so it spends a fresh
         // nudge — the same argument `_setLoopStep` makes, and it must be made here
@@ -7976,9 +7971,7 @@ function createTicketMethods(deps, shared) {
         // documents for `watchdogMs`. Team A wins the dedup and resolves team B's
         // ticket against A's `roles`, where B's role key is not a role at all: the
         // pin fails `isRoleKey`, the seat name is not in A's live set, and a ticket
-        // with a perfectly live B seat reads as orphaned.
-        //
-        // That was survivable while this only changed WORDING. It is not now that it
+        // with a perfectly live B seat reads as orphaned. It is not now that it
         // changes CLASSIFICATION: the orphan arm is one-shot, so B's genuinely
         // stalled ticket would get one wrongly-worded alarm and then permanent
         // silence — the same failure mode as the must-fix, arrived at sideways.
