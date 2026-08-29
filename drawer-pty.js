@@ -1,23 +1,23 @@
 'use strict';
-// drawer-pty.js — the drawer's terminal tab, main side. A workbench terminal is
-// not a session: no `sessions` entry, no registry file, no agent socket, no
-// persistence record, invisible to `[agent:who]`. Reusing session-manager here is
-// what would quietly make one discoverable; this file requires nothing by design.
+// drawer-pty.js — the drawer's terminal tab, main side. A workbench terminal is not
+// a session: no `sessions` entry, no registry file, no agent socket, no persistence
+// record, invisible to `[agent:who]`. Reusing session-manager would make one
+// discoverable, so this file requires nothing.
 
-// One terminal per (WINDOW, SEAT). Collapsing the two identities gives a seat a
-// shell in another seat's directory. A seatless key is the workspace-wide shell.
+// Keyed by (WINDOW, SEAT): collapsing the two gives a seat a shell in another
+// seat's directory. A seatless key is the workspace-wide shell.
 function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser, onExecResult, vetCommand, execTimeoutMs, onOutput, onShellEnd }) {
   const ptys = new Map(); // key(windowId, seat) -> { proc, scrollback, cols, rows, windowId, seat }
 
-// NUL is the one byte neither half can contain: any separator either could hold
-// would let one pair alias another's shell.
+  // NUL is the one byte neither half can contain; any other separator would let one
+  // pair alias another's shell.
   const keyFor = (windowId, seat) => `${windowId}\u0000${seat || ''}`;
   const MAX = scrollbackMax || 256 * 1024;
   const logger = log || { info() {}, warn() {}, error() {} };
   const later = setTimeoutFn || setTimeout;
-// The `> 0` lives in the default because that is the arm production takes —
-// engine.js injects no killPid. A non-positive pid is not an id to process.kill:
-// -1 signals every process the user may signal, 0 our own process group.
+  // The `> 0` lives in the default because that is the arm production takes —
+  // engine.js injects no killPid. A non-positive pid is not an id to process.kill:
+  // -1 signals every process the user may signal, 0 our own process group.
   const killProcess = killPid || ((pid, sig) => {
     if (!(pid > 0)) {
       logger.warn('drawer', `refusing SIGKILL: pid is ${pid}, which would broadcast rather than target`);
@@ -26,34 +26,28 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     process.kill(pid, sig);
   });
   let disposed = false;
-// A deadline on the SILENCE, not on the command: it cancels nothing.
+  // A deadline on the SILENCE, not on the command: it cancels nothing.
   const EXEC_TIMEOUT = execTimeoutMs || 120000;
-// From a code point, not a literal byte: a raw control character does not reliably
-// survive reformatting or an editor that sanitizes on save, and its loss is silent.
-// ^C, never ^U/^K — those are emacs-keymap bindings, and under `bindkey -v` zsh
-// binds ^K to self-insert, so the shell ran `^Kls`; ^U under viins kills backward
-// and keeps the tail of a mid-line draft. Measured against real zsh and bash.
+  // From a code point, not a literal byte: an editor that sanitizes on save would
+  // silently drop it. ^C, never ^U/^K — under `bindkey -v` zsh binds ^K to
+  // self-insert, so the shell ran `^Kls`. Measured on real zsh and bash.
   const ABANDON_LINE = String.fromCharCode(0x03);
   const ENTER = String.fromCharCode(0x0d);
-// Armed only while the shell has stayed silent: the first byte makes it inert for
-// good and the cap below governs from there.
+  // Armed only while the shell is silent; the first byte makes it inert for good.
   const ABANDON_ACK_MS = 250;
-// Chosen to be later than any plausible flush rather than to track one, and it is
-// not evidence that the interrupt landed.
+  // Later than any plausible flush, and not evidence that the interrupt landed.
   const ABANDON_MAX_MS = 1000;
-// The fast path is an OSC 133 A reporting exit 130. It proves only that the last
-// command to finish exited 128+SIGINT: `$?` is latched and re-reports on every
-// prompt cycle until a command runs (measured on zsh and bash — ^C then three bare
-// Enters all report 130), so a stale or in-flight pair can arrive inside our race
-// window. The clocks above are the only thing standing behind that.
+  // An A mark reporting 130 proves only that the last command to finish exited
+  // 128+SIGINT: `$?` is latched and re-reports on every prompt cycle until a command
+  // runs, so a stale or in-flight pair can arrive inside our race window. The two
+  // clocks above are the only thing standing behind that.
 
   function shellFor() {
     return shell || (env && env.SHELL) || process.env.SHELL || '/bin/zsh';
   }
 
-// A login shell by default: the operator's aliases and PATH are the point. Not
-// fixed here because bash cannot be shimmed and stay a login shell (a login bash
-// ignores `--rcfile`); its shim hands back a non-login argv. zsh's shim keeps `-l`.
+  // bash cannot be shimmed and stay a login shell (a login bash ignores `--rcfile`),
+  // so its shim hands back a non-login argv; zsh's shim keeps `-l`.
   const DEFAULT_ARGS = ['-l'];
 
   function spawnFor(windowId, seat, opts) {
@@ -66,12 +60,11 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     const rows = clampDim(opts && opts.rows, 24);
     const cwd = (cwdFor && cwdFor(windowId, seat)) || process.env.HOME || '/';
 
-// A null shim must stay ordinary: the shell spawns unshimmed and reporting is what
-// degrades, never the terminal. `{ env, args }` rather than an env map because
-// bash's mechanism is entirely in the argv.
+    // A null shim must stay ordinary: reporting degrades, never the terminal.
+    // `{ env, args }`, not an env map — bash's mechanism is all in the argv.
     const shim = (shimEnv && shimEnv(seat)) || null;
-// Read off the shim, never off its env half: bash's shim legitimately adds no
-// environment, and a `!!shim.env` test would refuse every exec on a shimmed bash.
+    // Read off the shim, never its env half: bash's shim legitimately adds no env,
+    // and a `!!shim.env` test would refuse every exec on a correctly shimmed bash.
     const shimmed = !!shim;
 
     let proc;
@@ -88,20 +81,19 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       return { error: e.message };
     }
 
-// Scrollback and live bytes arrive over different IPC paths, so their order is not
-// guaranteed and a seq-less renderer double-prints the overlap or drops the tail.
+    // Scrollback and live bytes take different IPC paths, so a seq-less renderer
+    // double-prints the overlap or drops the tail.
     const rec = { proc, scrollback: '', cols, rows, windowId, seat: seat || null, seq: 0, shimmed, pending: null };
-// Per shell, not per window: one parser shared across seats would attribute one
-// seat's output to another's command. Marks are forwarded to the renderer anyway —
-// xterm ignores an unknown OSC, and stripping them forks the same bytes in two.
+    // Per shell, not per window: one parser shared across seats would attribute one
+    // seat's output to another's command. Marks are still forwarded to the renderer —
+    // stripping them would fork the same bytes into two divergent copies.
     rec.marks = (onCommand && makeMarkParser && seat)
       ? makeMarkParser({
         onCommand: (c) => {
-// Decided BEFORE settle clears the record.
+          // Decided before settle(), which clears the record it reads.
           const mine = !!rec.pending && !foreignRecord(rec.pending, c);
           settle(rec, { status: 'ok', record: c });
-// Ours must not also reach the firehose: both feed the same selection queue, so
-// reporting it twice hands the agent its own command as an unasked-for report.
+          // Ours must not also reach the firehose: both feed one selection queue.
           if (!mine) { try { onCommand(seat, c); } catch {} }
         },
         onAbandon: (c) => { settle(rec, { status: 'abandoned', record: c }); },
@@ -111,31 +103,31 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     ptys.set(key, rec);
 
     proc.onData((data) => {
-// Bytes retire the silence deadline and nothing else — they cannot say whether the
-// interrupt has been processed. Runs before the parser is fed so that a shell
-// emitting no marks still leaves the deadline behind.
+      // Before the parser is fed, so a shell emitting no marks still retires the
+      // silence deadline. Bytes retire it and nothing else — they cannot say whether
+      // the interrupt has been processed.
       if (rec.execArm) rec.execArm();
       if (rec.marks) { try { rec.marks.feed(data); } catch {} }
       rec.scrollback += data;
       rec.seq += 1;
       if (rec.scrollback.length > MAX) rec.scrollback = rec.scrollback.slice(-MAX);
-// The seat rides along or a background seat's output is written into whichever
-// terminal is mounted, interleaving two scrollbacks unrecoverably.
+      // The seat rides along, or a background seat's output lands in whichever
+      // terminal is mounted and two scrollbacks interleave unrecoverably.
       send(windowId, 'wterm:data', data, rec.seat, rec.seq);
-// Fed from here, not from a copy of the scrollback, so the two views cannot
-// diverge: one shell is the safety property of the peer terminal. Isolated because
-// a wire that throws must not break the local tab.
+      // Fed from here, not from a copy of the scrollback, so the two views cannot
+      // diverge: one shell is the safety property of the peer terminal. Isolated
+      // because a wire that throws must not break the local tab.
       if (onOutput && rec.seat) { try { onOutput(rec.seat, data); } catch {} }
     });
 
     proc.onExit(({ exitCode }) => {
-// Before the identity guard: a dead shell took its pending command with it.
+      // Before the identity guard: a dead shell took its pending command with it.
       settle(rec, { status: 'shell-exit', exitCode });
-// Identity, not key. A foreground child trapping SIGHUP outlives the kill() that
-// closed its window; if that workspace is reopened a successor takes this key, and
-// a delete-by-key would unmap the LIVE one — invisible to dispose().
+      // Identity, not key. A child trapping SIGHUP outlives the kill() that closed
+      // its window; reopening that workspace spawns a successor at this key, and a
+      // delete-by-key would unmap the LIVE one.
       if (ptys.get(key) !== rec) return;
-// Drop the record before announcing, or the respawn is handed the corpse.
+      // Drop the record before announcing, or the respawn is handed the corpse.
       ptys.delete(key);
       send(windowId, 'wterm:data', `\r\n\x1b[2m[shell exited: ${exitCode}]\x1b[0m\r\n`, rec.seat);
       if (onShellEnd && rec.seat) { try { onShellEnd(rec.seat, exitCode); } catch {} }
@@ -144,63 +136,58 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     return rec;
   }
 
-// Every path that can end a command routes here — D mark, abandon, shell exit,
-// seat and window kills — because the failure this prevents is an agent waiting
-// forever on a command whose ending nobody announced. Idempotent by clearing
-// `pending` first: two paths can legitimately fire for one command. The deadline
-// timer is never cleared but identity-checked; drawer-pty.test.js pins that this
-// module requires nothing, so a global clearTimeout would break that pin.
+  // Every path that can end a command routes here — D mark, abandon, shell exit, seat
+  // and window kills — or an agent waits forever on a command whose ending nobody
+  // announced. Idempotent by clearing `pending` first: two paths can legitimately
+  // fire for one command. The deadline timer is identity-checked rather than cleared;
+  // drawer-pty.test.js pins that this module requires nothing, so reaching for a
+  // global clearTimeout would break that pin.
   function settle(rec, outcome) {
     const p = rec.pending;
     if (!p) return false;
     rec.pending = null;
-// The arm is deliberately not cleared either: identity at the point of use covers
-// what a clear cannot — an already-dispatched fallback closure, which would
-// otherwise type a settled command onto a later one's line.
+    // The arm is not cleared either: identity at the point of use also covers an
+    // already-dispatched fallback closure, which would otherwise type a settled
+    // command onto a later one's line.
     if (!onExecResult) return true;
-// A D mark for a command that is not ours is ordinary: the operator presses Enter
-// on `vim` and its C mark reaches us a PTY round trip later, so an exec inside that
-// window sees isBusy() false and writes into vim's stdin. No pre-check can close
-// it. We still settle — the always-answer invariant — but do not claim the result.
+    // A D mark for a command that is not ours: the operator's Enter on `vim` marks C
+    // a PTY round trip later, so an exec inside that window sees isBusy() false and
+    // writes into vim's stdin. No pre-check can close it — we settle anyway, and only
+    // refuse to claim the result.
     const mismatch = foreignRecord(p, outcome && outcome.record);
-// `late` tells the agent this supersedes the timeout it already reported.
     const res = { ...outcome, command: p.command, late: !!p.timedOut };
     if (mismatch) res.mismatch = true;
     try { onExecResult(rec.seat, res); } catch {}
     return true;
   }
 
-// An empty reported command is unknown, not foreign — a C payload whose base64 did
-// not decode.
   function foreignRecord(p, record) {
     const reported = String((record && record.command) || '').trim();
     return !!reported && reported !== p.command;
   }
 
   function endShell(rec) {
-// The only place that can tell a watching peer: both callers delete the record
-// first, so the PTY's own onExit hits the identity guard and returns before its
-// onShellEnd. That guard is also why this cannot double-announce.
+    // The only place that can tell a watching peer: both callers delete the record
+    // first, so the PTY's own onExit hits the identity guard and returns before its
+    // onShellEnd. That guard is also why this cannot double-announce.
     if (onShellEnd && rec.seat) { try { onShellEnd(rec.seat, 'closed'); } catch {} }
-// Read the pid first — the escalation runs 5s later, when nothing resolves proc.
+    // Read the pid first — the escalation runs 5s later, when nothing resolves proc.
     const pid = rec.proc.pid;
     try { rec.proc.kill(); } catch {}
-// pty.kill() is SIGHUP, which a child trapping or ignoring HUP survives
-// indefinitely. `unref` so a quit is not held open for five seconds.
+    // pty.kill() is SIGHUP, which a child trapping or ignoring HUP survives. `unref`
+    // so a quit is never held open for five seconds.
     const t = later(() => { try { killProcess(pid, 'SIGKILL'); } catch {} }, 5000);
     if (t && typeof t.unref === 'function') t.unref();
   }
 
-// A PTY dimension of 0 makes the child's ioctl meaningless; the renderer
-// legitimately reports 0 when it measures a pane mid-transition.
+  // A PTY dimension of 0 makes the child's ioctl meaningless; the renderer
+  // legitimately reports 0 while measuring a pane mid-transition.
   function clampDim(n, fallback) {
     const v = Math.floor(Number(n));
     return Number.isFinite(v) && v > 0 ? v : fallback;
   }
 
   return {
-// Idempotent: the tenant calls this on every onShow, and the second call must
-// return the SAME shell with its scrollback.
     spawn(windowId, seat, opts) {
       const had = ptys.has(keyFor(windowId, seat));
       const rec = spawnFor(windowId, seat, opts);
@@ -209,47 +196,48 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       return { ok: true, fresh: !had, scrollback: rec.scrollback, cols: rec.cols, rows: rec.rows, seat: rec.seat, seq: rec.seq };
     },
 
-// Raw keystrokes, arbitrated by nothing: exec()'s machinery serialises commands,
-// which have a settled beginning and end, and a keystroke has neither. Two typists
-// share one shell and their bytes can interleave mid-line; that is the accepted
-// price of the shared-PTY ruling. Do not "fix" it by giving the peer its own
-// shell — that trades a visible annoyance for an invisible exposure.
+    // Raw keystrokes, arbitrated by nothing: exec()'s machinery serialises commands,
+    // and a keystroke has no settled beginning or end. Two typists share one shell and
+    // their bytes can interleave mid-line — the accepted price of the shared-PTY
+    // ruling. Do not give the peer its own shell; that trades a visible annoyance for
+    // an invisible exposure.
     write(windowId, seat, data) {
       const rec = ptys.get(keyFor(windowId, seat));
       if (!rec || typeof data !== 'string') return false;
       try { rec.proc.write(data); return true; } catch { return false; }
     },
 
-// Never spawns, unlike write(): a shell the operator did not ask for would appear
-// with a command already running in it. Every refusal is checked HERE rather than
-// by a caller reading a status first — a foreground program can start in the gap
-// between a check and the write, and the command lands in its stdin.
+    // Never spawns, unlike write(): a shell the operator did not ask for would appear
+    // with a command already running in it. Every refusal is checked HERE, not by a
+    // caller reading a status first — a foreground program can start in the gap
+    // between a check and the write, and the command lands in its stdin.
     exec(windowId, seat, command) {
       if (!seat) return { ok: false, code: 'no-seat' };
       const vet = vetCommand ? vetCommand(command) : { ok: true, command };
       if (!vet.ok) return { ok: false, code: 'bad-command', error: vet.error };
       const rec = ptys.get(keyFor(windowId, seat));
       if (!rec) return { ok: false, code: 'no-shell' };
-// No marks ⇒ no D ⇒ nothing would ever tell the agent this finished.
+      // No marks ⇒ no D ⇒ nothing tells the agent this finished, but it still runs.
       if (!rec.shimmed || !rec.marks) return { ok: false, code: 'no-marks' };
-// A timed-out command that left the terminal idle never got an ending and never
-// will; without this every later exec answers `pending` and the seat is wedged.
+      // A timed-out command over an idle terminal never got an ending and never will;
+      // without this every later exec answers `pending` and the seat is wedged.
       if (rec.pending && rec.pending.timedOut && !rec.marks.isBusy()) {
         settle(rec, { status: 'lost' });
       }
-// Distinct from `busy`: between the write and the C mark the parser is not
-// capturing yet, so a second exec passes a busy check and types over the first.
+      // Distinct from `busy`: between the write and the C mark the parser is not
+      // capturing yet, so a second exec passes a busy check and types over the first.
       if (rec.pending) return { ok: false, code: 'pending', running: rec.pending.command };
       if (rec.marks.isBusy()) return { ok: false, code: 'busy' };
 
       const p = { command: vet.command, timedOut: false };
       rec.pending = p;
       try {
-// Abandon the line first: `isBusy()` false says nothing about the line editor,
-// which may hold a half-typed line the C mark would then report as ours.
-// TWO WRITES, and they must not be merged. ^C is a signal, not an in-band byte:
-// bash discards pending input when SIGINT lands, so anything sharing this write can
-// be swallowed — measured at 3 failures in 72 under load, truncated but still run.
+        // Abandon the line first: `isBusy()` false says nothing about the line editor,
+        // which may hold a half-typed line the C mark would then report as ours.
+        // TWO WRITES, and they must not be merged. ^C is a signal, not an in-band byte:
+        // bash discards pending input when SIGINT lands, so anything sharing this write
+        // can be swallowed — measured at 3 failures in 72 under load, and what came out
+        // was a truncated command that still ran.
         rec.proc.write(ABANDON_LINE);
       } catch (e) {
         rec.pending = null;
@@ -261,42 +249,41 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         armed = true;
         if (rec.execArm === arm) rec.execArm = null;
         if (rec.execPromptAck === promptAck) rec.execPromptAck = null;
-// The command belongs to the exec that started it; `pending` may hold a later one,
-// and typing then puts our bytes on a line its waiter will claim as its result.
+        // The command belongs to the exec that started it; `pending` may hold a later
+        // one, and typing then puts our bytes on a line its waiter will claim.
         if (rec.pending !== p) return;
         try {
           rec.proc.write(vet.command + ENTER);
         } catch (e) {
-// exec() has already returned ok, so an error return here reaches nobody.
+          // exec() already returned ok, so an error return here would reach nobody.
           settle(rec, { status: 'write-failed', reason: String((e && e.message) || e) });
         }
       };
-// A flag rather than a cancelled handle: the timer seam is injected, so a caller's
-// fake may return something clearTimeout ignores.
+      // A flag, not a cancelled handle: the timer seam is injected, so a caller's
+      // fake may return something clearTimeout ignores.
       let spoke = false;
-// Bytes do not release the command. ^C is consumed by the tty line discipline as a
-// signal delivered asynchronously with respect to the byte stream, so a shell can
-// emit a complete, quiet, line-editor-ready prompt while the interrupt is still
-// pending — a quiet-window heuristic cannot work at any value.
+      // Bytes do not release the command. ^C is consumed by the line discipline as a
+      // signal, delivered asynchronously with respect to the byte stream, so a shell
+      // can emit a quiet, line-editor-ready prompt while the interrupt is still
+      // pending — a quiet-window heuristic cannot work at any value.
       const arm = () => { spoke = true; };
-// A plain redraw carries no interrupt status and must not release the command, or
-// we type onto a line the interrupt is about to kill. Counting redraws instead is
-// wrong at any N: the number is theme-dependent and unbounded.
+      // A plain redraw carries no interrupt status and must not release the command,
+      // or we type onto a line the interrupt is about to kill. Counting redraws is
+      // wrong at any N: the number is theme-dependent and unbounded.
       const promptAck = (info) => { if (info && info.interrupted) typeCommand(); };
       rec.execPromptAck = promptAck;
       later(() => { if (!spoke) typeCommand(); }, ABANDON_ACK_MS);
-// Types eventually whatever the shell does, including for a background job writing
-// to the tty (isBusy() false, so the exec is accepted); without the cap those hang
-// to EXEC_TIMEOUT, reporting a timeout for a command that never ran.
+      // Types eventually whatever the shell does, including for a background job
+      // writing to the tty (isBusy() false, so the exec is accepted); without the cap
+      // those hang to EXEC_TIMEOUT, reporting a timeout for a command that never ran.
       later(typeCommand, ABANDON_MAX_MS);
       rec.execArm = arm;
 
       const timer = later(() => {
-// Identity, not a cleared handle: this record may hold a later command.
         if (rec.pending !== p || p.timedOut) return;
         p.timedOut = true;
-// The pending record deliberately survives: the command was not cancelled, so the
-// eventual D mark still delivers, flagged `late`.
+        // The pending record deliberately survives: the command was not cancelled, so
+        // the eventual D mark still delivers, flagged `late`.
         if (onExecResult) {
           try { onExecResult(seat, { status: 'timeout', command: p.command, afterMs: EXEC_TIMEOUT }); } catch {}
         }
@@ -316,14 +303,14 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       try { rec.proc.resize(c, r); return true; } catch { return false; }
     },
 
-// A loop, not a lookup: the keying went per-seat, and one lookup strands every
-// seat's shell but the first.
+    // A loop, not a lookup: the keying went per-seat, and one lookup would strand
+    // every seat's shell but the first.
     kill(windowId) {
       let killed = false;
       for (const [k, rec] of [...ptys]) {
         if (rec.windowId !== windowId) continue;
         ptys.delete(k);
-// Before the kill, while the seat is knowable: no D mark is coming.
+        // Before the kill, while the seat is knowable: no D mark is coming.
         settle(rec, { status: 'shell-gone', reason: 'the workspace window was closed' });
         endShell(rec);
         killed = true;
@@ -331,8 +318,8 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       return killed;
     },
 
-// Nothing else reaps this — window close is the wrong event, and without it a
-// workspace accumulates a shell per unreachable seat.
+    // Nothing else reaps this — window close is the wrong event, and without it a
+    // workspace accumulates a shell per unreachable seat.
     killSeat(windowId, seat) {
       const key = keyFor(windowId, seat);
       const rec = ptys.get(key);
@@ -348,8 +335,8 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       for (const id of [...ptys.keys()]) {
         const rec = ptys.get(id);
         ptys.delete(id);
-// Deliberately not settled: dispose() is app quit, so a delivery writes into a
-// queue nobody will drain, and on desktop it runs during before-quit.
+        // Deliberately not settled: dispose() is app quit, so a delivery would write
+        // into a queue nobody will drain.
         rec.pending = null;
         try { rec.proc.kill(); } catch {}
       }
@@ -357,8 +344,8 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
 
     _count: () => ptys.size,
 
-// Never for a caller to pre-check and then act on: that race is the reason exec
-// takes the refusal decisions itself.
+    // Never for a caller to pre-check and then act on: that race is the reason exec
+    // takes the refusal decisions itself.
     _execState: (windowId, seat) => {
       const rec = ptys.get(keyFor(windowId, seat));
       if (!rec) return null;
