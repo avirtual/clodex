@@ -13,6 +13,23 @@ blocks a release.
 
 ## Unreleased
 
+- **Dictation can now submit for you when you say a phrase.** The Claude CLI
+  only auto-submits when the last chunk of transcribed speech runs to three
+  words or more, so trailing off at the end of a thought leaves the whole
+  sentence sitting in the composer waiting for a keypress — which rather defeats
+  talking to it. Preferences ▸ Voice input has a new **Hands-free submit**
+  switch: end what you are saying with a phrase (`over and out` by default,
+  editable) and Clodex erases the phrase and presses Enter. It matches at the end
+  of what you have dictated, ignoring case and whatever punctuation dictation
+  decided to add, so "Over and out." works as well as the bare words. Off by
+  default, tap mode only — in hold mode the CLI already submits when you release
+  the key. Long drafts work too: the phrase is found even once what you have said
+  has wrapped onto further lines, which is the case the feature is really for.
+  Only the session you are looking at listens, since that is the only one your
+  dictation reaches. It will not fire while a session is asking permission for something,
+  because Enter would answer that dialog; a phrase spoken while one is open is
+  dropped rather than sent after it clears. Claude sessions on this machine.
+
 ## 5.19.0 — 2026-08-30
 
 - **A preserved ticket-suite dump now tells you when the branch moved out from

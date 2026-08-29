@@ -6794,6 +6794,17 @@ body {
           </select>
         </div>
         <span id="prefs-voice-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
+        <h5>Hands-free submit</h5>
+        <p class="hint-text">In <strong>Tap</strong> mode only. End a dictated sentence with the phrase below and Clodex erases the phrase and presses Enter for you. The CLI submits on its own only when the last transcribed chunk runs to three words or more, so trailing off leaves your sentence sitting in the box — this is the way out of that. Never fires while a session is asking permission for something (Enter would answer the dialog), and a phrase spoken then is dropped rather than sent once the dialog clears. Hold mode is untouched: releasing the key already submits there. Applies to Claude sessions on this machine.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-voice-submit">
+          <span>Submit when I say the phrase</span>
+        </label>
+        <div class="prefs-row" style="margin-top: 6px;">
+          <span>Phrase</span>
+          <input type="text" id="prefs-voice-submit-phrase" placeholder="over and out" spellcheck="false" autocomplete="off" style="flex: 1;">
+        </div>
+        <span class="hint-text" style="display: block; margin-top: 6px;">Matched at the end of what you have dictated, ignoring case and any punctuation dictation adds. Pick something you would never say mid-sentence — a short one like &ldquo;send it&rdquo; will fire while you are still talking. Clear the box to go back to the default.</span>
       </details>
       <details class="prefs-group" data-group="statusline">
         <summary><h4>Statusline</h4><span class="prefs-group-sub">What each agent shows above its prompt</span></summary>
@@ -23523,6 +23534,195 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // renderer/lib/voice-submit.js
+  var require_voice_submit = __commonJS({
+    "renderer/lib/voice-submit.js"(exports, module) {
+      var DEFAULT_SUBMIT_PHRASE = "over and out";
+      var EDGE_PUNCT = /^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu;
+      var BOX_GLYPH = /[│┃┊┆|]/;
+      var BOX_LEFT = /^[\s│┃┊┆|]*/;
+      var BOX_RIGHT = /[\s│┃┊┆|]*$/;
+      var PROMPT_HEAD = /^>[ ]/;
+      function escapeRe(s) {
+        return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      }
+      function triggerWords(phrase) {
+        if (typeof phrase !== "string") return [];
+        return phrase.toLowerCase().split(/\s+/).map((w) => w.replace(EDGE_PUNCT, "")).filter(Boolean);
+      }
+      function normalizePhrase(phrase) {
+        return triggerWords(phrase).join(" ");
+      }
+      function stripRow(text, { atCursor }) {
+        const left = BOX_LEFT.exec(text)[0];
+        let rest = text.slice(left.length);
+        if (!atCursor) rest = rest.replace(BOX_RIGHT, "");
+        const prompt2 = PROMPT_HEAD.test(rest);
+        return {
+          text: prompt2 ? rest.slice(2) : rest,
+          prompt: prompt2,
+          // A real border GLYPH, not merely leading blanks: `BOX_LEFT` matches the
+          // empty string, so without this every unindented transcript line would read
+          // as a continuation and the walk would climb out of the box.
+          bordered: BOX_GLYPH.test(left)
+        };
+      }
+      function findSubmit(rows, phrase) {
+        if (!Array.isArray(rows) || !rows.length) return null;
+        const parts = [];
+        let cursorRowLen = 0;
+        for (let i = rows.length - 1; i >= 0; i -= 1) {
+          const r = rows[i];
+          if (!r || typeof r.text !== "string") return null;
+          const atCursor = i === rows.length - 1;
+          const s = stripRow(r.text, { atCursor });
+          if (atCursor) cursorRowLen = s.text.length;
+          parts.unshift(s.text);
+          if (s.prompt) {
+            const content = parts.join("\n");
+            const hit = matchTrigger(content, phrase);
+            if (!hit) return { content, erase: 0 };
+            const erase = Math.min(hit.erase, cursorRowLen);
+            return { content, erase };
+          }
+          if (!s.bordered && !r.isWrapped) return null;
+        }
+        return null;
+      }
+      function matchTrigger(content, phrase) {
+        if (typeof content !== "string") return null;
+        const words = triggerWords(phrase);
+        if (!words.length) return null;
+        const body = words.map(escapeRe).join("\\s+");
+        const re = new RegExp(`(?:\\s+|^)${body}[\\p{P}\\p{S}]*\\s*$`, "iu");
+        const m = re.exec(content);
+        if (!m) return null;
+        return { erase: content.length - m.index };
+      }
+      function shouldFire({ enabled, voiceMode, attention } = {}) {
+        if (enabled !== true) return false;
+        if (voiceMode !== "tap") return false;
+        if (attention === "permission") return false;
+        return true;
+      }
+      function readVoiceSubmitSettings(settings) {
+        const raw = settings && typeof settings === "object" ? settings : {};
+        return {
+          enabled: raw.voiceSubmit === true,
+          phrase: normalizePhrase(raw.voiceSubmitPhrase) || DEFAULT_SUBMIT_PHRASE
+        };
+      }
+      module.exports = {
+        DEFAULT_SUBMIT_PHRASE,
+        triggerWords,
+        normalizePhrase,
+        stripRow,
+        findSubmit,
+        matchTrigger,
+        shouldFire,
+        readVoiceSubmitSettings
+      };
+    }
+  });
+
+  // renderer/voice-submit-watcher.js
+  var require_voice_submit_watcher = __commonJS({
+    "renderer/voice-submit-watcher.js"(exports, module) {
+      var { findSubmit, shouldFire } = require_voice_submit();
+      var QUIET_MS = 1200;
+      var ENTER_SETTLE_MS = 30;
+      var MAX_COMPOSER_ROWS = 12;
+      function createVoiceSubmitWatcher(terminal, {
+        getConfig,
+        getVoiceMode,
+        getAttention,
+        write,
+        quietMs = QUIET_MS
+      }) {
+        let timer = null;
+        let enterTimer = null;
+        let disposed = false;
+        let answered = null;
+        let fires = 0;
+        function composerRows() {
+          const buf = terminal.buffer.active;
+          if (buf.type !== "normal") return null;
+          const cursor = buf.baseY + buf.cursorY;
+          const top = Math.max(0, cursor - (MAX_COMPOSER_ROWS - 1));
+          const rows = [];
+          for (let y = top; y <= cursor; y += 1) {
+            const line = buf.getLine(y);
+            if (!line) return null;
+            rows.push({
+              text: y === cursor ? line.translateToString(false, 0, buf.cursorX) : line.translateToString(false),
+              isWrapped: !!line.isWrapped
+            });
+          }
+          return rows;
+        }
+        function tick() {
+          timer = null;
+          if (disposed) return;
+          let cfg = null;
+          try {
+            cfg = getConfig();
+          } catch {
+            cfg = null;
+          }
+          if (!cfg) return;
+          const rows = composerRows();
+          if (!rows) return;
+          const found = findSubmit(rows, cfg.phrase);
+          if (!found) return;
+          if (!found.erase) {
+            answered = null;
+            return;
+          }
+          if (answered === found.content) return;
+          answered = found.content;
+          let voiceMode = null;
+          let attention = null;
+          try {
+            voiceMode = getVoiceMode();
+          } catch {
+            voiceMode = null;
+          }
+          try {
+            attention = getAttention();
+          } catch {
+            attention = "permission";
+          }
+          if (!shouldFire({ enabled: cfg.enabled, voiceMode, attention })) return;
+          fires += 1;
+          write("\x7F".repeat(found.erase));
+          enterTimer = setTimeout(() => {
+            enterTimer = null;
+            if (!disposed) write("\r");
+          }, ENTER_SETTLE_MS);
+        }
+        const schedule = () => {
+          if (disposed) return;
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(tick, quietMs);
+        };
+        const subs = [terminal.onWriteParsed(schedule)];
+        return {
+          refresh: schedule,
+          fireCount: () => fires,
+          dispose() {
+            disposed = true;
+            if (timer) clearTimeout(timer);
+            if (enterTimer) clearTimeout(enterTimer);
+            timer = null;
+            enterTimer = null;
+            for (const s of subs) s.dispose();
+          }
+        };
+      }
+      module.exports = { createVoiceSubmitWatcher, QUIET_MS, ENTER_SETTLE_MS, MAX_COMPOSER_ROWS };
+    }
+  });
+
   // renderer/banners.js
   var require_banners = __commonJS({
     "renderer/banners.js"(exports, module) {
@@ -31274,6 +31474,8 @@ ${detail}` });
       var { createVoiceCore, createVoiceControl } = require_voice_control();
       var { createTermSearch } = require_term_search();
       var { createIntentHighlight } = require_intent_highlight();
+      var { createVoiceSubmitWatcher } = require_voice_submit_watcher();
+      var { DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings } = require_voice_submit();
       var { initBanners } = require_banners();
       var { initThemes } = require_themes();
       var { initLibraryDrawers } = require_library_drawers();
@@ -32295,6 +32497,24 @@ ${detail}` });
           }
         });
         const intentHighlight = createIntentHighlight(terminal);
+        const voiceSubmit = peer ? null : createVoiceSubmitWatcher(terminal, {
+          // Gated on the ACTIVE session, not merely a live one. Dictation only ever
+          // reaches the focused composer, so a background seat's watcher can never
+          // help and can only misfire — and an agent seat parked at its own composer
+          // with injected text is exactly the shape the prompt check accepts.
+          getConfig: () => voiceSubmitConfig.enabled && name === activeSession && sessionTypeOf(name) === "claude" ? voiceSubmitConfig : null,
+          // The FILE's mode, never the core's pending pick: a pick is a command that
+          // has been queued into a session, not a mode any CLI is in yet.
+          getVoiceMode: () => {
+            const st = voiceCore.snapshot().state;
+            return st ? st.effective : null;
+          },
+          getAttention: () => {
+            const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+            return el ? el.dataset.attention || null : "permission";
+          },
+          write: (data) => window.api.writeToSession(name, data)
+        });
         const searchAddon = new SearchAddon();
         terminal.loadAddon(searchAddon);
         searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
@@ -32323,7 +32543,7 @@ ${detail}` });
           }
           window.api.writeToSession(name, data);
         });
-        sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, wrapperEl, peer });
+        sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, wrapperEl, peer });
         updateWindowTitle();
         return { terminal, fitAddon, searchAddon, wrapperEl };
       }
@@ -32450,6 +32670,7 @@ ${detail}` });
             forgetControlMirror(s.peer.id, s.peer.name);
           }
           if (s.intentHighlight) s.intentHighlight.dispose();
+          if (s.voiceSubmit) s.voiceSubmit.dispose();
           s.terminal.dispose();
           s.wrapperEl.remove();
           sessions.delete(name);
@@ -34397,6 +34618,17 @@ Click for live activity`;
         sessionList,
         showToast
       });
+      var voiceSubmitConfig = { enabled: false, phrase: DEFAULT_SUBMIT_PHRASE };
+      async function refreshVoiceSubmitConfig() {
+        try {
+          voiceSubmitConfig = readVoiceSubmitSettings(await window.api.getSettings());
+        } catch {
+        }
+      }
+      refreshVoiceSubmitConfig();
+      window.addEventListener("focus", () => {
+        refreshVoiceSubmitConfig();
+      });
       var voiceControl = createVoiceControl({ core: voiceCore });
       var { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
         core: voiceCore,
@@ -34729,6 +34961,8 @@ Click for live activity`;
       var prefsContextHints = document.getElementById("prefs-context-hints");
       var prefsSemanticHints = document.getElementById("prefs-semantic-hints");
       var prefsSelectionHints = document.getElementById("prefs-selection-hints");
+      var prefsVoiceSubmit = document.getElementById("prefs-voice-submit");
+      var prefsVoiceSubmitPhrase = document.getElementById("prefs-voice-submit-phrase");
       var prefsTerminalReports = document.getElementById("prefs-terminal-reports");
       var prefsDiscoverOnStartup = document.getElementById("prefs-discover-on-startup");
       var prefsToolsRow = document.getElementById("prefs-tools-row");
@@ -36341,6 +36575,8 @@ ${res.stderr}` : "");
         prefsContextHints.checked = !!s.contextHints;
         if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
         if (prefsSelectionHints) prefsSelectionHints.checked = !!s.selectionHints;
+        if (prefsVoiceSubmit) prefsVoiceSubmit.checked = s.voiceSubmit === true;
+        if (prefsVoiceSubmitPhrase) prefsVoiceSubmitPhrase.value = s.voiceSubmitPhrase || "";
         setTerminalReports(s.terminalReports);
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
         restorePrefsGroups();
@@ -36389,11 +36625,14 @@ ${res.stderr}` : "");
           contextHints: prefsContextHints.checked,
           semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
           selectionHints: prefsSelectionHints ? prefsSelectionHints.checked : false,
+          voiceSubmit: prefsVoiceSubmit ? prefsVoiceSubmit.checked : false,
+          voiceSubmitPhrase: prefsVoiceSubmitPhrase ? prefsVoiceSubmitPhrase.value.trim() : "",
           terminalReports: readTerminalReports(),
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
           remoteEnabled: prefsRemoteEnabled.checked
         });
         await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
+        await refreshVoiceSubmitConfig();
         closePrefs();
       });
       if (prefsPeerShell) {

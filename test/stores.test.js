@@ -155,6 +155,34 @@ function writeRawSettings(userData, obj) {
   fs.writeFileSync(path.join(userData, 'ui-settings.json'), JSON.stringify(obj));
 }
 
+test('uiSettings: clearing the submit phrase restores the default, absence keeps it', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const DEFAULT = 'over and out';
+    assert.strictEqual(stores.uiSettings.get().voiceSubmitPhrase, DEFAULT);
+
+    stores.uiSettings.set({ voiceSubmitPhrase: 'wrap it up' });
+    assert.strictEqual(stores.uiSettings.get().voiceSubmitPhrase, 'wrap it up');
+
+    // KEY ABSENT is "no opinion" — an unrelated save must not reset the phrase.
+    stores.uiSettings.set({ voiceSubmit: true });
+    assert.strictEqual(stores.uiSettings.get().voiceSubmitPhrase, 'wrap it up');
+    assert.strictEqual(stores.uiSettings.get().voiceSubmit, true);
+
+    // KEY PRESENT AND BLANK is the operator clearing the field, which the
+    // Preferences hint offers as the way back to the default. Collapsing the two
+    // cases makes that promise false: the custom phrase survives the clear and
+    // reappears in the field on the next open.
+    stores.uiSettings.set({ voiceSubmitPhrase: '' });
+    assert.strictEqual(stores.uiSettings.get().voiceSubmitPhrase, DEFAULT);
+
+    stores.uiSettings.set({ voiceSubmitPhrase: '  Roger That.  ' });
+    assert.strictEqual(stores.uiSettings.get().voiceSubmitPhrase, 'Roger That.');
+    stores.uiSettings.set({ voiceSubmitPhrase: '   ' });
+    assert.strictEqual(stores.uiSettings.get().voiceSubmitPhrase, DEFAULT, 'whitespace is blank');
+  } finally { cleanup(); }
+});
+
 test('uiSettings: an upgrading box that granted the peer terminal KEEPS serving', () => {
   const { userData, stores, cleanup } = freshStores();
   try {

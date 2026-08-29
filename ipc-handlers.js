@@ -932,6 +932,8 @@ function registerIpcHandlers(deps) {
       contextHints: s.contextHints,
       semanticHints: s.semanticHints,
       selectionHints: s.selectionHints,
+      voiceSubmit: s.voiceSubmit,
+      voiceSubmitPhrase: s.voiceSubmitPhrase,
       terminalReports: s.terminalReports,
       discoverOnStartup: s.discoverOnStartup,
       theme: s.theme,

@@ -24,6 +24,7 @@ function prefsMarkup() {
 const CONTROLS = [
   'prefs-overlay', 'prefs-dialog', 'prefs-theme',
   'prefs-voice-mode', 'prefs-voice-state',
+  'prefs-voice-submit', 'prefs-voice-submit-phrase',
   'prefs-claude-components', 'prefs-claude-sl-cmd', 'prefs-codex-components',
   'prefs-proxy-enabled', 'ws-dot', 'ws-status-text', 'ws-restart-btn',
   'prefs-compact-on-resume', 'prefs-compact-on-resume-why',
