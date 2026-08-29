@@ -2839,8 +2839,7 @@ function createTicketMethods(deps, shared) {
     // Has the dispatch for `ticketId` reached this seat's INPUT since byte `from`?
     // The transcript records what the CLI actually consumed, so a spec that was
     // written and wiped is absent from it while one the seat read — injected, or
-    // drained from a park by the out-of-process hook — is present. That is what
-    // makes a turn attributable to a particular write.
+    // drained from a park by the out-of-process hook — is present.
     //
     // `from` is NOT an optimisation, it is the correctness of the whole probe on a
     // respawn. A `--resume` seat's transcript ALREADY contains this ticket's marker
@@ -2854,8 +2853,7 @@ function createTicketMethods(deps, shared) {
     // Matched on the dispatch MARKER, never the bare id: ids are monotonic, so
     // every low id is a prefix of ~10 live higher ones and `includes('t40')` is
     // true of a transcript that merely mentions t408 — a cross-reference in another
-    // spec, a lead dm, a review scope. Discriminating between those is the one job
-    // this function has. Two forms because a dispatch pointer line carries either:
+    // spec, a lead dm, a review scope. Two forms because a dispatch pointer line carries either:
     // `[ticket tN]` plain, or `[ticket tN ` followed by REPLAY / RESPEC / a
     // redirect label.
     //
@@ -2866,9 +2864,7 @@ function createTicketMethods(deps, shared) {
     // the transcript is readable and this write is not in it — which is what keeps
     // the latch armed. `null` is reserved for a probe that cannot answer at all (no
     // transcript, unreadable link), where the caller must fall back to trusting the
-    // turn rather than manufacture a redelivery out of a blind spot. Collapsing the
-    // two surrenders both shapes this exists for: a fresh seat (anchored at 0, empty
-    // transcript) and a wire-routed edge that beat the CLI's append.
+    // turn rather than manufacture a redelivery out of a blind spot.
     _seatTranscriptHas(name, ticketId, from = 0, tailBytes = 1 << 20) {
       let fd;
       try {
