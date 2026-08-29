@@ -2971,26 +2971,22 @@ function createSessionManager(deps) {
       }
     }
 
-    // One subagent turn into the session's ring. Observer-grade like
-    // _noteFileTouches: this runs from the wire tee's turn.completed, which the
-    // proxy emits only AFTER the client's final byte (wire/proxy.js — "client
-    // bytes first, always"), so a throw here cannot reach the request. The catch
-    // is the second line of that defence, not the first.
+    // One subagent turn into the session's ring. Observer-grade: this runs from
+    // the wire tee's turn.completed, which the proxy emits only AFTER the client's
+    // final byte, so a throw here cannot reach the request.
     //
-    // ACCEPTED MISATTRIBUTION WINDOW (operator ruling, t209): RoleClassifier's
-    // per-session fingerprint map is empty on a fresh Clodex process, so until
-    // the first main-line turn establishes it, the documented cc_is_subagent
-    // leak (wire/role.js — a parent turn carrying a recycled
-    // x-claude-code-agent-id, wire-confirmed 2026-06-14) can file ONE parent
-    // turn as a subagent row here. It is self-clearing and deliberately not
-    // gated: do not "fix" a misattributed row by weakening genuineSubagent's
-    // fingerprint backstop — that trades a cosmetic, one-turn artefact for the
-    // leak the backstop exists to catch.
+    // ACCEPTED MISATTRIBUTION WINDOW: RoleClassifier's per-session fingerprint map
+    // is empty on a fresh Clodex process, so until the first main-line turn
+    // establishes it, the documented cc_is_subagent leak (a parent turn carrying a
+    // recycled x-claude-code-agent-id) can file ONE parent turn as a subagent row
+    // here. It is self-clearing and deliberately not gated: do not "fix" a
+    // misattributed row by weakening genuineSubagent's fingerprint backstop — that
+    // trades a cosmetic, one-turn artefact for the leak the backstop exists to
+    // catch.
     //
     // The key must stay byte-identical to wirescope's instance key (agent-id
-    // verbatim, role as fallback): the chip strip is wirescope's and the feed is
-    // looked up by the chip's key, so a mismatch shows an empty feed for a live
-    // subagent rather than failing.
+    // verbatim, role as fallback): the feed is looked up by the chip's key, so a
+    // mismatch shows an empty feed for a live subagent rather than failing.
     _noteSubagentTurn(session, t) {
       try {
         if (!session.subagentStore) return;
@@ -3045,11 +3041,10 @@ function createSessionManager(deps) {
       }
       if (s && state !== 'idle') s.lastMainStop = null;
       // A turn started — but a turn confirms THIS write only if this write caused
-      // it, and on a fresh seat it frequently did not. Measured on t408: the spec
-      // was injected at spawn+1s and wiped by the boot re-render, an unrelated
-      // roster park drained 12s later, and the turn the seat took to READ THE
-      // ROSTER cleared the spec latch. The record said delivered, the seat held
-      // nothing, and the one mechanism built to notice had already stood down.
+      // it, and on a fresh seat it frequently did not: a spec injected at spawn+1s
+      // and wiped by the boot re-render, an unrelated roster park draining 12s
+      // later, and the turn the seat took to READ THE ROSTER cleared the spec
+      // latch. The record said delivered and the seat held nothing.
       //
       // So the turn is ATTRIBUTED before it clears anything: the transcript records
       // what the CLI actually consumed, and the dispatch names its ticket id on the
@@ -3059,17 +3054,13 @@ function createSessionManager(deps) {
       // This edge can RACE the transcript rather than following it. For a
       // jsonl-routed seat the edge is derived from the transcript, so a consumed
       // spec is already on disk; but a WIRE-routed seat gets its activity from wire
-      // `turn.started` alone (its sentinel's JsonlWatcher has a no-op activity
-      // callback), which can arrive before the CLI has appended the user message.
-      // The race is one-sided and lands on the safe side: it leaves the latch armed
-      // over a delivered spec, and _checkSpecConfirm re-probes at the deadline —
-      // by which point the write is long since on disk — so the worst case is a
-      // check, not a spurious redelivery.
+      // `turn.started` alone, which can arrive before the CLI has appended the user
+      // message. The race is one-sided and lands on the safe side: it leaves the
+      // latch armed over a delivered spec, and _checkSpecConfirm re-probes at the
+      // deadline, so the worst case is a check, not a spurious redelivery.
       //
       // Bounded fs work despite sitting in the hot path: gated on a latch that is
-      // set only inside the 90s window after a dispatch. An ATTRIBUTED edge clears
-      // the latch and ends the reads; an unattributed one re-reads on each later
-      // edge in that window, which is the case worth paying for.
+      // set only inside the 90s window after a dispatch.
       if (s && state !== 'idle' && s._specUnconfirmed) {
         const u = s._specUnconfirmed;
         // Anchored at the byte the transcript had reached when this write went out:
@@ -3093,10 +3084,8 @@ function createSessionManager(deps) {
         }
       }
       // Same edge, same meaning, for the plain-dm latch — and it is a SEPARATE
-      // field, so unlike t387's redirect kind it inherits nothing from the spec
-      // latch above by construction. That is the whole reason this line and the
-      // _cleanup entry each carry their own test: a new caller of existing state
-      // gets that state's defences for free, and a new field never does.
+      // field, so it inherits nothing from the spec latch above by construction.
+      // That is why this line and the _cleanup entry each carry their own test.
       if (s && state !== 'idle' && ((s._dmUnconfirmed && s._dmUnconfirmed.length) || s._dmUnconfirmedLast)) {
         this._clearDmConfirm(s);
       }
@@ -3179,9 +3168,7 @@ function createSessionManager(deps) {
       // mid-conversation bust, affordable only because the compaction already
       // discarded everything after it. Later is not equivalent — the continuation
       // is the new conversation's first turn, and rewriting after it re-bills the
-      // context it just built. This fires for the CLI's own auto-compact too (the
-      // watcher reads the transcript, not only Clodex-triggered compactions),
-      // which is exactly when a seat would otherwise never refresh at all.
+      // context it just built.
       try { this.refreshPrompt(session.name, 'compact'); } catch { /* never block the continuation on a refresh */ }
       this._clearCompactValve(session);
       const sched = getRemindScheduler && getRemindScheduler();
@@ -3359,14 +3346,14 @@ function createSessionManager(deps) {
       });
     }
 
-    // Boot-ready-edge drain (T54). Claims LATE, like every other drain: peek
+    // Boot-ready-edge drain. Claims LATE, like every other drain: peek
     // (non-destructive) to decide whether to bother, then enqueue a fire-time
     // PRODUCER that does the destructive drainPending claim only once the InjectQueue
     // is past its ready + quiet gates and about to write. If the seat died or a draft
     // opened in the meantime the producer claims nothing and returns null — the
-    // delivery stays parked, recoverable, its ✉ intact. Exactly-once holds: the claim
-    // is the same atomic dir-rename the hook + idle drains use, so whoever fires
-    // first owns the messages.
+    // delivery stays parked, recoverable. Exactly-once holds: the claim is the same
+    // atomic dir-rename the hook + idle drains use, so whoever fires first owns the
+    // messages.
     _drainPendingAtBootReady(session) {
       if (!session || session.agentType !== 'claude' || session._dead) return;
       try { if (isDraftOpen(session)) return; } catch { return; } // don't splice an open draft
@@ -3401,10 +3388,9 @@ function createSessionManager(deps) {
       let i = 0;
       // Fence map for the whole turn (intent-scanner.fencedLines): a line
       // inside a ```/~~~ code block is a QUOTE — literal text at every level
-      // of this scan (no intent parse, no body boundary, no near-miss
-      // bounce). Before this, an intent-shaped example inside a fence FIRED
-      // (a fence only renders as a block; raw turn text keeps each line at
-      // column 1 — observed live, a documentation block sent two real dms).
+      // of this scan (no intent parse, no body boundary, no near-miss bounce).
+      // Before this, an intent-shaped example inside a fence FIRED: a fence only
+      // renders as a block; raw turn text keeps each line at column 1.
       const fenced = fencedLines(lines);
       let unknown = null;
       while (i < lines.length) {
