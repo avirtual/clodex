@@ -331,22 +331,14 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         console.warn(`team "${name}": ignoring role keys this schema no longer models — ${dropped.join(', ')} (${file})`);
       }
     }
-    // NOT under the version gate, unlike the unknown-key warn above. A cut field
-    // reads as authority and enforces nothing, and the version stamp is exactly
-    // what hides the dangerous case: a file claiming the CURRENT schema while
-    // still carrying `reviewer.tools` dropped in total silence, which is the
-    // shape that burned a reader. The gate's rationale — "the warn exists for
-    // the migration, not as a linter" — holds for a key this schema never
-    // modelled; it does not hold for one it deliberately retired.
+    // NOT under the version gate, unlike the unknown-key warn above: a file
+    // claiming the current schema while still carrying a retired field would drop
+    // it in total silence. The gate's rationale holds for a key this schema never
+    // modelled, not for one it deliberately retired.
     //
-    // Says IGNORED, not "dropped": a reader who sees "dropped" asks what it was
-    // dropped FROM and may still believe the file means something. The point of
-    // the line is that the field changes no behaviour anywhere.
-    //
-    // Reaches a key whose removal CHANGED the normalized def never — that text
-    // would be a lie about a live opt-in, and a reader who acts on it loses the
-    // opt-in silently. The effect test above, not the key name, is what keeps
-    // this sentence true: an inert `worktree` belongs here and gets it rightly.
+    // Says IGNORED, not "dropped": the point of the line is that the field
+    // changes no behaviour anywhere. It must never reach a key whose removal
+    // changed the normalized def — that text would be a lie about a live opt-in.
     if (droppedCut.length) {
       const seen = `cut|${file}|${droppedCut.join(',')}`;
       if (!warnedDrops.has(seen)) {
@@ -354,11 +346,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         console.warn(`team "${name}": these role keys are IGNORED — they are retired fields this schema no longer honors, and setting them enforces or configures nothing: ${droppedCut.join(', ')} (${file})`);
       }
     }
-    // Ungated on version for the same reason as the line above, but the OPPOSITE
-    // message: this key still takes effect. It names the replacement because the
-    // only safe edit is a rewrite, not a delete — and it warns rather than going
-    // quiet because the meaning lives in a compatibility branch that will
-    // eventually be removed, at which point a silent file would change behaviour.
+    // Ungated for the same reason as the line above, but the opposite message:
+    // this key still takes effect, so the only safe edit is a rewrite, not a
+    // delete.
     if (droppedHonored.length) {
       const seen = `honored|${file}|${droppedHonored.join(',')}`;
       if (!warnedDrops.has(seen)) {
@@ -366,9 +356,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         console.warn(`team "${name}": these role keys are RETIRED but STILL READ — they are not modeled by this schema, yet a compatibility branch honors them HERE, so deleting one CHANGES BEHAVIOUR: ${droppedHonored.join(', ')}; a future schema will stop reading them (${file})`);
       }
     }
-    // team.json is agent-writable, so a hand-written watchdogMs is neutralized at
-    // READ, the choke point every consumer passes. Never throw on a bad value — one
-    // bad number must not break the whole team's resolution; it reads as absent.
+    // team.json is agent-writable, so a hand-written watchdogMs is clamped at
+    // READ, the choke point every consumer passes. Never throw on a bad value —
+    // one bad number must not break the whole team's resolution.
     const rawWatchdog = m.watchdogMs;
     const watchdogMs = (typeof rawWatchdog === 'number' && Number.isFinite(rawWatchdog) && rawWatchdog > 0)
       ? Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, rawWatchdog))
@@ -382,20 +372,17 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   }
 
   // The write-time gate on a role's `cwd`. Every mutator that can land one on
-  // disk runs it, because the field flows to create() as a PTY working directory
-  // and team.json is agent-writable — this is a security boundary, not tidiness.
+  // disk runs it: the field flows to create() as a PTY working directory and
+  // team.json is agent-writable, so this is a security boundary.
   //
-  // Confinement is decided by RESOLVING and comparing (containsPath), never by a
-  // prefix match on the raw string: "../sibling-repo" is not a prefix of the
-  // root, and "/etc" shares no prefix with anything, but a string check that
-  // looks only for a leading ".." misses `api/../../elsewhere`.
+  // Confinement is decided by resolving and comparing (containsPath), never by a
+  // prefix match on the raw string: a check for a leading ".." misses
+  // `api/../../elsewhere`.
   //
-  // The refusals are here rather than in normalizeRoleDef because they need the
-  // team's ROOT and the filesystem, neither of which that pure function has —
-  // and because a LOAD must not throw on them: loadManifest runs inside every
-  // caller's best-effort catch, so a hand-edited bad cwd would read as "no team
-  // at all" everywhere. On the load path a bad cwd is instead neutralized at
-  // spawn time, which reports the fallback (the same shape as a nested team.json).
+  // Not in normalizeRoleDef, because a LOAD must not throw on these: loadManifest
+  // runs inside every caller's best-effort catch, so a hand-edited bad cwd would
+  // read as "no team at all" everywhere. On the load path it is neutralized at
+  // spawn time instead.
   function assertRoleCwd(roleName, def, root, file) {
     if (!def || typeof def !== 'object' || Array.isArray(def)) return;
     const raw = def.cwd;
@@ -404,11 +391,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`role "${roleName}" cwd must be a string (${file})`);
     }
     const rel = raw.trim();
-    // The lead's seat is operator-created and standing — resolveSeatShape is
-    // never called with roleKey 'lead' — so a cwd here would be inert but
-    // believed, on exactly one role. That is the shape that got `type` and
-    // `tools` cut from this schema; refuse it at the door, and say why, because
-    // the operator CAN set the directory they wanted — just not from here.
+    // resolveSeatShape is never called with roleKey 'lead', so a cwd here would
+    // be inert but believed. Refused at the door, with the reason: the operator
+    // can still set that directory when creating the seat.
     if (roleName === 'lead') {
       throw new Error(`role "lead" cannot take a cwd: the lead's seat is not spawned by the team, so its directory is set when the operator creates the seat (${file})`);
     }
@@ -420,22 +405,19 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (!containsPath(resolvedRoot, resolved)) {
       throw new Error(`role "${roleName}" cwd "${rel}" resolves outside the team root ${resolvedRoot} (${file})`);
     }
-    // Refused, never created: a mkdir here would invent structure the project did
-    // not ask for, and a seat working in an invented empty directory looks exactly
-    // like a seat working correctly. Refusing at WRITE puts the error where the
-    // operator can still fix it.
+    // Refused, never created: a seat working in an invented empty directory looks
+    // exactly like a seat working correctly.
     let isDir = false;
     try { isDir = fs.statSync(resolved).isDirectory(); } catch { isDir = false; }
     if (!isDir) {
       throw new Error(`role "${roleName}" cwd "${rel}" is not an existing directory under the team root (${resolvedRoot}) — create it first; Clodex never makes it for you (${file})`);
     }
-    // Confinement re-decided on the REAL paths. containsPath compares strings, so
-    // `cwd: "link"` where link → another project satisfies it while pointing a PTY
+    // Confinement re-decided on the REAL paths: containsPath compares strings, so
+    // `cwd: "link"` pointing at another project satisfies it while aiming a PTY
     // out of the tree (statSync follows the link, so the check above passes too).
-    // BOTH sides are realpath'd: a project root under /tmp is itself a symlink on
-    // macOS (/tmp → /private/tmp), and realpathing only the candidate would refuse
-    // every legitimate role cwd there. A throw from realpath is the missing-path
-    // refusal above, not a crash.
+    // BOTH sides are realpath'd — a project root under /tmp is itself a symlink on
+    // macOS, and realpathing only the candidate would refuse every legitimate role
+    // cwd there.
     let realRoot = null;
     let realCwd = null;
     try { realRoot = fs.realpathSync(resolvedRoot); } catch { realRoot = null; }
@@ -451,25 +433,18 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   // The checkout a linked git worktree belongs to, or null. A linked worktree's
   // `.git` is a FILE reading `gitdir: <main>/.git/worktrees/<id>`, so the main
   // checkout is derivable with one read — no `git` subprocess, which is what makes
-  // this safe to call from resolveTeam. That matters: resolveTeam runs on every
-  // roster render and every ticket resolution, and spawning a process there would
-  // turn team membership into a latency problem.
-  //
-  // Deliberately NOT clodex- or even git-specific in its effect: the rule this
-  // encodes is "a team is a repository, not a path", so any tool that lays out
-  // sibling checkouts the way git does resolves onto the same team.
+  // this safe to call from resolveTeam, which runs on every roster render and
+  // every ticket resolution.
   const WORKTREE_MARKER = `${path.sep}.git${path.sep}worktrees${path.sep}`;
   function mainCheckoutOf(cwd) {
     let dir = path.resolve(cwd);
-    // Bounded walk: a worktree's root is an ancestor of the agent's cwd, but an
-    // unbounded loop on a symlink cycle would hang the caller.
+    // Bounded: an unbounded walk on a symlink cycle would hang the caller.
     for (let i = 0; i < 64; i++) {
       let raw;
       try {
         const st = fs.lstatSync(path.join(dir, '.git'));
-        // A directory `.git` is the MAIN checkout, which containsPath already
-        // handled — returning it here would be a no-op at best and would mask a
-        // genuine miss at worst.
+        // A directory `.git` is the main checkout, which containsPath already
+        // handled; returning it here would mask a genuine miss.
         if (!st.isFile()) return null;
         raw = fs.readFileSync(path.join(dir, '.git'), 'utf-8');
       } catch {
@@ -483,20 +458,17 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       const gitdir = path.resolve(dir, m[1]);
       const at = gitdir.indexOf(WORKTREE_MARKER);
       if (at < 0) return null;   // a `.git` file that is not a linked worktree
-      // Slice ENDS at the marker: the marker leads with the separator, so the
-      // prefix is exactly the main checkout with no trailing slash to strip.
+      // The marker leads with the separator, so the prefix is exactly the main
+      // checkout with no trailing slash to strip.
       return gitdir.slice(0, at);
     }
     return null;
   }
 
-  // A cwd belongs to a project when it sits under the project root, OR when it is
-  // a git worktree of the checkout at that root. Path containment alone was the
-  // rule, and it silently excluded worktrees: git's own default puts one at
+  // Path containment alone silently excludes worktrees: git's default puts one at
   // `<repo>/../<repo>-<branch>`, a SIBLING of the root, so a seat working in one
-  // fell off its team — no roster entry, and `_ticketAssigneeSeat` returned null,
-  // which surfaces to the lead as "no live seat yet" (a timing message for a
-  // membership fault). Worktree isolation is unusable without this.
+  // falls off its team entirely — no roster entry, and `_ticketAssigneeSeat`
+  // returns null, which surfaces as "no live seat yet".
   function cwdInProject(cwd, root) {
     if (!cwd || !root) return false;
     if (containsPath(root, cwd)) return true;
