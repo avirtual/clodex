@@ -6660,9 +6660,7 @@ function createTicketMethods(deps, shared) {
       // A reminder bound to the ticket is most wanted on the NOT-terminal pair,
       // which is why finish() gates its cancellation on this flag.
       // What this accept actually ACTED ON, for the compare-and-clear in finish().
-      // Seeded from the snapshot (the no-branch arm closes out without ever
-      // computing a stamp) and re-pointed at the fresh read once the merged path
-      // has one. A plain `let` rather than a reference to `mergeStamp`, which is
+      // A plain `let` rather than a reference to `mergeStamp`, which is
       // declared below this point and would be in its temporal dead zone on the
       // no-branch, `!m.ok` and `!m.merged` arms, each of which calls finish()
       // before reaching it.
@@ -7608,8 +7606,7 @@ function createTicketMethods(deps, shared) {
     // NOT from the `keepHold` escalation arms: those keep the step precisely
     // because the ticket is still in flight and the seat's verdict may still
     // land, so retiring there would destroy the review the hold exists to
-    // preserve. Hold while a verdict may land; retire once the lead has ended
-    // the round.
+    // preserve.
     //
     // Same shape as review-done's own teardown — `session:context-action`
     // retired/discard, then kill() — so the record, the sidebar and
@@ -7621,9 +7618,7 @@ function createTicketMethods(deps, shared) {
     // NEVER throws, and never awaited. A reject or accept that failed because a
     // seat teardown did is strictly worse than the leak it fixes — the ticket
     // transition is already saved by the time this runs, so an escaping error
-    // would abandon the reply and leave the board ahead of the lead. Same
-    // reasoning as `_stampTicketRevival`'s call site, and the same reason
-    // review-done fires its own kill() unawaited.
+    // would abandon the reply and leave the board ahead of the lead.
     _retireReviewSeatsFor(team, ticketId, why) {
       const retired = [];
       try {
