@@ -3131,9 +3131,7 @@ function createTicketMethods(deps, shared) {
     // An UNSTARTED closed ticket advances nobody. The seat here is resolved from the
     // ticket being closed, and for a backlog ticket sitting on a ROLE that resolver
     // returns whichever seat holds the role — a seat that never had this ticket and
-    // is not freed by closing it. There is no completion edge, so the "seat went
-    // idle" argument above does not apply, and the head it would push is whatever
-    // that seat is already mid-work on. Closing an unstarted backlog ticket then
+    // is not freed by closing it. Closing an unstarted backlog ticket then
     // redelivers an unrelated in-flight spec to a working seat.
     // The test is on the CLOSED ticket, never on the candidate: `_openTicketsFor`
     // already carries its own `ticketStarted` term for the other direction.
@@ -3143,10 +3141,7 @@ function createTicketMethods(deps, shared) {
     // still mid-work on. Left deliberately, made safe by the REPLAY marking below
     // rather than by suppression. The narrower "exclude what the seat is already
     // working" fix is not implementable here: nothing on the record says which
-    // ticket a seat currently holds. `deliveredTo` is the only such stamp and it is
-    // written ONLY by `_replayOpenTickets`, never by start/assign/advance, so it is
-    // absent on exactly the tickets this would need to test. Adding a write for it
-    // is a lifecycle change, not a fix to this function.
+    // ticket a seat currently holds.
     _advanceSeat(team, seatName, closed) {
       if (team && team.solo) return null;
       if (!ticketStarted(closed)) return null;
@@ -4797,9 +4792,7 @@ function createTicketMethods(deps, shared) {
       //
       // The fix is HERE and not at the re-entry gate. Widening that gate to
       // `verifyHold` alone would let a throw AFTER `_spawnTicketReview` already
-      // succeeded re-run verify and put a SECOND reviewer on one branch. A
-      // review-step throw keeps `keepHold` and the pre-existing "stuck at review"
-      // alarm, which is accurate there: the loop really did die mid-review.
+      // succeeded re-run verify and put a SECOND reviewer on one branch.
       const fail = (step, evidence, tried, recovery) => {
         held = true;
         // ONE predicate for the stamp AND the message, deliberately a single
