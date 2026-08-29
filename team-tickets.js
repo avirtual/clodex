@@ -1450,6 +1450,9 @@ function createTicketMethods(deps, shared) {
         // A reject landing during `mergeNoFf` or the post-merge suite is NOT
         // closeable here; undoing that is `revert -m 1`, the lead's call.
         //
+        // A GATE, not the record everything below reads: the merge message and
+        // the post-merge suite keep using the `ticket` snapshot on purpose.
+        //
         // `closedOut` alongside `state` is not redundant with the top gate: an
         // ACCEPT leaves `state` at `done`, so state alone is blind to it, and
         // every closing arm costs something past this line — the MERGED arm
@@ -3133,7 +3136,9 @@ function createTicketMethods(deps, shared) {
     // still mid-work on. Left deliberately, made safe by the REPLAY marking below
     // rather than by suppression. The narrower "exclude what the seat is already
     // working" fix is not implementable here: nothing on the record says which
-    // ticket a seat currently holds.
+    // ticket a seat currently holds. `deliveredTo` is the only such stamp and it is
+    // written ONLY by `_replayOpenTickets`, never by start/assign/advance, so it is
+    // absent on exactly the tickets this would need to test.
     _advanceSeat(team, seatName, closed) {
       if (team && team.solo) return null;
       if (!ticketStarted(closed)) return null;
