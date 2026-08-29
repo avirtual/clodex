@@ -1457,6 +1457,43 @@ test('seed: shipped team prompts carry the comment rule, in both directions', ()
     'reviewer prompt marks qualifying as the exception, not the reflex');
 });
 
+// Both halves reach defects a code-identity check and a cold review cannot: the
+// reviewer reads the diff, so a comment nobody opened is invisible to it, and a
+// cut that severs a sentence head leaves a tail that compiles, passes identity
+// and reads inverted. The greppable patterns are pinned as LITERALS because a
+// hand pastes them — a "grep the always-cut categories" instruction with the
+// patterns dropped is the version that gets found incidentally again. The
+// caveat is pinned in its author's words: softening it into a gate recreates,
+// one level up, the coverage claim this whole section exists to remove.
+test('seed: the hand prompt carries the decomment sweep and the post-cut boundary check', () => {
+  const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
+  assert.match(hand, /a comment you never opened appears nowhere\s+and cannot be reviewed/,
+    'hand prompt gives the structural reason a sweep is needed: the diff cannot show an omission');
+  assert.match(hand, /Grep\s+each always-cut category across the WHOLE file and drive it to zero/,
+    'and the instruction to sweep the whole file rather than the blocks the pass happens to open');
+  for (const pattern of ['test/.*\\.test\\.js|pinned by|covered by',
+    '\\bt[0-9]{2,3}\\b|Task [0-9]+|GH#',
+    '[A-Z]{2,}\\.md|§',
+    ':[0-9]{3,}']) {
+    assert.ok(hand.includes(pattern), `hand prompt ships the greppable pattern: ${pattern}`);
+  }
+  assert.match(hand, /That list is a floor/,
+    'the category list is a floor, so a category found mid-pass is swept too');
+  assert.match(hand, /TRUE and CHECKABLE earns its\s+place/,
+    'and a true coverage claim survives the sweep — it finds them, it does not delete them unread');
+  assert.match(hand, /check what SURVIVES each cut, not only what it removed/,
+    'hand prompt states the post-cut half: the residue is the defect, not the deletion');
+  assert.match(hand, /semantically\s+INVERTED/,
+    'and names the failure: a severed head leaves a valid sentence meaning the opposite');
+  assert.match(hand, /boundary-check\.js/, 'and points at the implementation');
+  assert.doesNotMatch(hand, /const CONNECTOR|require\('fs'\)/,
+    'by POINTER, not by pasting the code into a prompt every hand reads on every ticket');
+  assert.match(hand, /the check is a lint that needs a human ruling\s+per flag, not a gate/,
+    "the author's precision caveat, unsoftened: a lint, not a gate");
+  assert.match(hand, /It does not distinguish a severed head from a\s+lowercase-but-complete sentence; it only narrows where to look/,
+    'including the half that says what it cannot do — each flag still needs a human ruling');
+});
+
 // A prompt is a claim on a path no execution passes through: nothing throws when
 // it goes stale, and every seat that boots obeys it anyway. These pin the two
 // halves of the branch-per-ticket division of labour, which is exactly the kind

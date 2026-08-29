@@ -90,6 +90,32 @@ write no comment.
   the right one. Adding qualifiers until the sentence is true grows the file
   every round and fixes nothing.
 
+### Decommenting: sweep by category, then check what survives
+
+A cold reviewer reads the DIFF, so a comment you never opened appears nowhere
+and cannot be reviewed — deletions get a second reader, omissions never do. Grep
+each always-cut category across the WHOLE file and drive it to zero:
+
+- coverage claims — `test/.*\.test\.js|pinned by|covered by`
+- ticket archaeology — `\bt[0-9]{2,3}\b|Task [0-9]+|GH#`
+- documents not in this repo — `[A-Z]{2,}\.md|§` (verify with `git ls-files`)
+- line-number pointers into other files — `:[0-9]{3,}`
+
+That list is a floor: a category you discover mid-pass must be swept globally
+before the pass is done. A coverage claim that is TRUE and CHECKABLE earns its
+place — the sweep is for finding them, not for deleting them unread.
+
+Then check what SURVIVES each cut, not only what it removed: cutting the head
+off a sentence leaves a tail that is grammatically valid and semantically
+INVERTED, which code identity and a green suite both pass over. A surviving
+block must still open at a sentence boundary — flag an opening line that starts
+lowercase, starts on a clause connector, or is a bare `//` with no prose;
+identifier-initial openers are exempt. Implementation:
+`~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/decomment-team-tickets-a/boundary-check.js`.
+Its author's caveat, unsoftened: the check is a lint that needs a human ruling
+per flag, not a gate. It does not distinguish a severed head from a
+lowercase-but-complete sentence; it only narrows where to look.
+
 ## Checkpointing (why an unjournaled marathon is expensive)
 
 - Turn LENGTH is not itself a cost to manage — work in whatever turns the task
