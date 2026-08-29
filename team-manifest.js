@@ -1,5 +1,4 @@
-// Pure leaf — no electron, injected fs. A team lives entirely under
-// ~/.clodex/teams/<name>/, never inside project files.
+// Pure leaf — no electron, injected fs.
 
 'use strict';
 
@@ -208,7 +207,6 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (typeof root !== 'string' || !path.isAbsolute(root)) {
       throw new Error(`team.json "root" must be an absolute path (${file})`);
     }
-    // A SEAT name, not a role key; the roles map is keyed by role name.
     const lead = m.lead;
     if (typeof lead !== 'string' || !NAME_RE.test(lead)) {
       throw new Error(`team.json "lead" must be a seat name matching ${NAME_RE} (${file})`);
@@ -273,8 +271,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const dropped = named('unknown');
     const droppedCut = named('ignored');
     const droppedHonored = named('honored');
-    // Absent reads as 1, not as current: defaulting to current would let a stale
-    // manifest claim a schema it was never checked against.
+    // Absent reads as 1: defaulting to current would let a stale manifest claim a
+    // schema it was never checked against.
     const version = (typeof m.version === 'number' && Number.isInteger(m.version) && m.version > 0)
       ? m.version : 1;
     // Warn, never throw: a manifest that refuses to load reads as "this cwd is on
@@ -332,8 +330,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`role "${roleName}" cwd must be a string (${file})`);
     }
     const rel = raw.trim();
-    // resolveSeatShape is never called with roleKey 'lead', so a cwd here would be
-    // inert but believed.
+    // resolveSeatShape is never called with roleKey 'lead', so a cwd here is inert
+    // but believed.
     if (roleName === 'lead') {
       throw new Error(`role "lead" cannot take a cwd: the lead's seat is not spawned by the team, so its directory is set when the operator creates the seat (${file})`);
     }
