@@ -7011,43 +7011,33 @@ function createTicketMethods(deps, shared) {
         // silent ERASURE is. A mark that arrived mid-accept survives on the board
         // instead of vanishing with the branch.
         if (closedOut && ticket.mergeError && String(ticket.mergeError) === actedStamp) delete ticket.mergeError;
-        // `mergeWaiting` goes on the same gate, and it is a SECOND clearing site
-        // for a field whose own clear lives in `_autoMergeTicket`'s finally.
-        // That finally runs on every exit, the deferring pass included — but on
-        // that pass `deferred` is true and it declines to clear, which is the
-        // whole point of the flag. So what a deferred merge is left waiting for
-        // is not the finally running but a LATER pass reaching it with the flag
-        // false, and that needs the retry to wake: up to 30s per attempt, ten
-        // minutes across them. A crash or an [agent:reboot] inside that window
-        // freezes `(merge waiting: suite-in-flight)` onto an accepted row, and
-        // nothing re-examines the field at boot.
+        // `mergeWaiting` goes on the same gate, and it is a SECOND clearing site for
+        // a field whose own clear lives in `_autoMergeTicket`'s finally. That finally
+        // declines to clear on the deferring pass, so what a deferred merge waits for
+        // is a LATER pass reaching it with the flag false — and that needs the retry
+        // to wake. A crash or an [agent:reboot] inside that window freezes
+        // `(merge waiting: suite-in-flight)` onto an accepted row, and nothing
+        // re-examines the field at boot.
         //
-        // It does not weaken the invariant that finally states. That invariant
-        // is over the EXITS OF `_autoMergeTicket` — set on the defer arm, clear
-        // on every other way out — and this clear is not an exit of it; no arm
-        // is added there and none stops clearing. Nor can a merge pass put the
-        // field back afterwards, by either entry: one that has not started meets
-        // the top gate, and one already past it re-reads at the defer arm and
-        // declines to stamp. Either way the pass runs its own finally
-        // over an already-absent field, which `_stampMergeWaiting` treats as a
-        // no-op rather than a save.
+        // It does not weaken the invariant that finally states: that invariant is over
+        // the EXITS OF `_autoMergeTicket`, and this clear is not one of them. Nor can a
+        // merge pass put the field back — one that has not started meets the top gate,
+        // one already past it declines to stamp at the defer arm.
         //
-        // UNCONDITIONAL, unlike the compare-and-clear above it, and the
-        // asymmetry is not an oversight in either direction:
-        //   `mergeError` carries a distinguishing value, so comparing against
-        //   what this accept read is what keeps it from erasing a DIFFERENT
-        //   stamp that landed mid-accept and is still true of the repository.
-        //   `mergeWaiting` has one writer that writes one value, so a compare
-        //   cannot tell a stamp this accept never saw from the one it did —
-        //   the conditionality is not expressible for this field.
-        //   A stale value here is also not a claim a human must answer: the
-        //   retry's own `closedOut` gate returns before any git work and logs
-        //   the merge ABANDONED, so past a closing accept no `mergeWaiting`
-        //   describes a merge still able to produce a commit.
-        // The gate is `closedOut` for the reason the line above it is: on
-        // `!m.ok` the merge fact could not be measured, on `!m.merged` it was
-        // measured and the branch has not landed. A retry may still land either,
-        // so clearing there would erase a claim that is live and true.
+        // UNCONDITIONAL, unlike the compare-and-clear above it, and the asymmetry is
+        // deliberate: `mergeError` carries a distinguishing value, so comparing against
+        // what this accept read keeps it from erasing a DIFFERENT stamp that landed
+        // mid-accept and is still true. `mergeWaiting` has one writer writing one
+        // value, so a compare cannot tell a stamp this accept never saw from the one it
+        // did — the conditionality is not expressible for this field. A stale value is
+        // also not a claim a human must answer: the retry's own `closedOut` gate returns
+        // before any git work, so past a closing accept no `mergeWaiting` describes a
+        // merge still able to produce a commit.
+        //
+        // The gate is `closedOut` for the reason the line above it is: on `!m.ok` the
+        // merge fact could not be measured, on `!m.merged` it was measured and the
+        // branch has not landed. A retry may still land either, so clearing there
+        // would erase a claim that is live and true.
         if (closedOut) delete ticket.mergeWaiting;
         // Re-read: the teardown below stamped revival onto its own copy.
         const fresh = ticketsStore.load(team.root);
