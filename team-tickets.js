@@ -2258,31 +2258,25 @@ function createTicketMethods(deps, shared) {
     // otherwise take its whole queue with it — the tickets name something nothing
     // answers for, and no sibling of the same role can be handed them.
     //
-    // So the pin degrades to `ticket.role` once the pinned seat is not live. It
-    // lives HERE, in the one resolver, and not in the callers: a lister that
-    // degrades while this does not makes a ticket visible but undeliverable, and
-    // `_advanceSeat` then reports a hand-off it never performed — the sibling is
-    // starved of its real next ticket and told each time that it got one.
+    // So the pin degrades to `ticket.role` once the pinned seat is not live, and it
+    // lives HERE, in the one resolver, not in the callers: a lister that degrades
+    // while this does not makes a ticket visible but undeliverable, and
+    // `_advanceSeat` then reports a hand-off it never performed.
     //
     // Gated on `!ticket.worktree`, which keeps the worktree flow's one-shot
     // property: a tree is bound to the seat holding it, so handing a worktree
     // ticket to a sibling would drop it in another branch's checkout. A dead
-    // worktree seat has its own explicit recovery, which names the two real exits
-    // rather than guessing a new holder.
+    // worktree seat has its own explicit recovery.
     //
-    // A `spawn` ticket therefore degrades like a standing one, and that is
-    // deliberate: there is no tree to misroute into, so the reason for the
-    // worktree refusal does not apply. The cost is that a one-shot TICKET can be
-    // picked up by a second one-shot seat after the first dies — accepted, since
-    // the alternative is a ticket nothing can answer for. Second consequence of
-    // the same choice, equally intended: _advanceSeat hands a CLOSING spawn seat
-    // the next ticket degrading to its role, so accepting the first ticket can
-    // archive a seat that is mid-work on a second — recoverable, since unarchiving
-    // resumes it.
+    // A `spawn` ticket therefore degrades like a standing one: there is no tree to
+    // misroute into. The accepted cost is that a one-shot ticket can be picked up by
+    // a second one-shot seat after the first dies, and that `_advanceSeat` can hand a
+    // CLOSING spawn seat the next ticket degrading to its role — so accepting the
+    // first can archive a seat mid-work on a second, recoverable by unarchiving.
     //
     // `liveNames` lets a caller in a LOOP walk the live seats once instead of once
-    // per ticket. Both reads here are filesystem work, and `_touchTicketActivity`
-    // runs on every non-idle activity edge — much hotter than the listers.
+    // per ticket: both reads here are filesystem work, and `_touchTicketActivity`
+    // runs on every non-idle activity edge.
     _ticketAssigneeSeat(team, ticket, liveNames = null) {
       const a = ticket && ticket.assignee;
       if (!a) return null;
