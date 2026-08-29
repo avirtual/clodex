@@ -484,9 +484,10 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const cwd = path.resolve(expandedCwd.value.replace(/^~(?=$|\/)/, os.homedir()));
-      // createWorktree (it reaches git argv), so this only rejects the empty form
-      // — a bare `worktree:` that parsed to nothing must not spawn a NORMAL seat
-      // silently, which is the isolation the caller asked for going missing.
+      // The branch name is validated inside createWorktree (it reaches git argv),
+      // so this only rejects the empty form — a bare `worktree:` that parsed to
+      // nothing must not spawn a NORMAL seat silently, which is the isolation the
+      // caller asked for going missing.
       const branch = (intent.worktree || '').trim() || null;
       if (intent.worktree != null && !branch) {
         reply('error: worktree: needs a branch name — [agent:spawn name:X cwd:Y worktree:<branch>]');
@@ -509,10 +510,6 @@ function createTicketMethods(deps, shared) {
       const injectSkills = (tpl && tpl.injectSkills) || [];
       const systemPromptFile = (tpl && tpl.systemPromptFile) || null;
       const appendPromptFiles = (tpl && tpl.appendPromptFiles) || [];
-      // ticket paths use, not a copy of it: env is an authority surface (base-url,
-      // credential and model redirects) and a template is agent-writable, so this
-      // stays a fixed code-level ceiling. Keys outside it are dropped and named in
-      // the reply, because a silently ignored env key is the bug being fixed.
       const { sessionEnv, dropped: envDropped, badType: envBadType } = filterTemplateEnv(tpl && tpl.env);
 
       setImmediate(async () => {
@@ -1206,7 +1203,6 @@ function createTicketMethods(deps, shared) {
       // exactly the kind this field was added to prevent. Clearing at each exit
       // is a rule someone must re-apply to every arm added later; a finally is
       // the same rule enforced by control flow.
-      //
       let deferred = false;
       const fail = (step, evidence, tried) => {
         // Stamped BEFORE the DM, because the DM is the arm that can fail. An
