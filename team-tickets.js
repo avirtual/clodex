@@ -8302,19 +8302,15 @@ function createTicketMethods(deps, shared) {
         // UNSTARTED is the exemption, not unassigned: `add` writes the ROLE NAME
         // into `assignee`, so a ticket the lead filed as backlog and never
         // dispatched is indistinguishable from a live one under an `assignee`
-        // test. Seven such tickets alarmed in one burst before ticketStarted
-        // drew the line here — and against the t322 ladder each would have gone
-        // on repeating at 30m/60m/120m/240m forever, since no seat exists to go
-        // quiet. `parked` stays as its own term: a parked ticket can already
-        // have started, so ticketStarted does not cover it. The `assignee` term
-        // stays too, narrowed to what it was always meant to catch: a legacy
-        // record with no `startedAt` key reads as STARTED, so an unassigned one
-        // would newly alarm about a seat that cannot be resolved.
-        // `done` stopped being terminal when the loop started running past it: a
-        // done ticket with a live `loopStep` has checks running or a review in
-        // flight, and if that step dies nothing else ever nudges anyone. The
-        // predicate is shared with the stamp below and with the verdict landing —
-        // see ticketInFlight; divergence between them is silent, not loud.
+        // test. `parked` stays as its own term: a parked ticket can already have
+        // started, so ticketStarted does not cover it. The `assignee` term stays
+        // too: a legacy record with no `startedAt` key reads as STARTED, so an
+        // unassigned one would newly alarm about a seat that cannot be resolved.
+        // `done` is not terminal while the loop runs past it: a done ticket with a
+        // live `loopStep` has checks running or a review in flight, and if that step
+        // dies nothing else nudges anyone. The predicate is shared with the stamp
+        // below and with the verdict landing — see ticketInFlight; divergence
+        // between them is silent, not loud.
         if (!ticketInFlight(t) || t.assignee == null || !ticketStarted(t) || t.parked) continue; // unstarted/unassigned/parked/closed exempt
         const last = t.lastActivityAt || t.openedAt || now;
         if (now - last < stallMs) continue;
@@ -8323,10 +8319,7 @@ function createTicketMethods(deps, shared) {
         // there, and asking whether a seat is live would classify every loop-held
         // ticket as unassigned and replace the alarm that names the stuck step.
         const loopHeld = t.state === 'done' && !!t.loopStep;
-        // ORPHAN: the assignee resolves to no live seat. Measured on t376 — a
-        // retired hand's ticket alarmed "hand quiet 31m", then "STILL stalled
-        // (repeat 1): hand quiet 1h" about a seat that had not existed for an hour.
-        // Nothing was quiet; nothing was there.
+        // ORPHAN: the assignee resolves to no live seat.
         //
         // Resolution goes through the SAME `_ticketAssigneeSeat` the dispatch uses,
         // so "no seat" here means exactly what "undeliverable" means there. A
@@ -8334,10 +8327,10 @@ function createTicketMethods(deps, shared) {
         // would be silent in the worse direction: a ticket the sweep calls orphaned
         // while dispatch still routes it stops alarming about a seat that IS there.
         //
-        // Note this is reachable for a worktree ticket in a way a role ticket is
-        // not: `_ticketAssigneeSeat` deliberately refuses to degrade a worktree pin
-        // to its role, so a retired worktree seat resolves to null permanently
-        // rather than being re-answered by a sibling.
+        // Reachable for a worktree ticket in a way a role ticket is not:
+        // `_ticketAssigneeSeat` refuses to degrade a worktree pin to its role, so a
+        // retired worktree seat resolves to null permanently rather than being
+        // re-answered by a sibling.
         // ANOTHER TEAM'S ticket, seen because the stall sweep is deduped per BOARD
         // while the board is per PROJECT — the hazard `_sweepTickets` already
         // documents for `watchdogMs`. Team A wins the dedup and resolves team B's
