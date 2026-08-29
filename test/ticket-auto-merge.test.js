@@ -1706,6 +1706,104 @@ test('t544: a closing accept clears the WAITING stamp before the retry ever wake
     'and it does not advertise a merge that the accept has already ended');
 });
 
+// ── t551: the accept can also land INSIDE a pass that then defers ──────────
+// The residual t544 left. The subject above starts its accept after
+// `_autoMergeTicket` has already returned, so the accept's clear is the last
+// write and nothing can put the field back. This one starts it while a pass is
+// still running, past the top `closedOut` gate: that gate is followed by three
+// awaited git calls — `isMerged`, `isDirty`, `currentBranch` — and a pass
+// suspended at any of them reaches the defer arm afterwards and stamps
+// `mergeWaiting` back onto a row the accept has just closed out. (Closed out is
+// what the accept does to THIS row: it is the first pass, so no stamp exists yet
+// and the accept's own `delete ticket.mergeWaiting` is a no-op here. The variant
+// where the accept lands inside a RETRY pass, over a stamp an earlier pass really
+// wrote, is the same window and is not separately constructed.)
+//
+// The pre-merge re-read cannot cover it, and not for a positional reason: the
+// defer arm RETURNS, so control never reaches that read at all.
+//
+// Same self-healing as t544's window and the same residue: the next retry wake
+// meets the top gate and the finally clears the field, so what survives is a
+// crash or an [agent:reboot] inside it.
+//
+// Interleaved at `currentBranch` through the REAL `_taskAccept`, for the reason
+// the two verdict→merge-gap subjects give: `closedOut` is written by the
+// accept's merged arm, and hand-writing the field would pin this against a
+// belief about which arm writes it rather than against the arm.
+test('t551: an accept landing inside a pass that goes on to DEFER is not overwritten by the defer stamp', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  let f = null;
+  let accepted = null;
+  // Set BEFORE the inner work for the reason t542's subject gives: nothing on
+  // today's accept path calls currentBranch, but a future one that did would
+  // re-enter a guard keyed on the RESULT and recurse instead of failing.
+  let entered = false;
+  const realCurrentBranch = require('../git-worktree').currentBranch;
+  const gitOver = {
+    currentBranch: async (root) => {
+      const out = await realCurrentBranch(root);
+      if (entered) return out;
+      entered = true;
+      // What makes the accept take a CLOSING arm: the lead lands the branch by
+      // hand, which is exactly what the waiting mark and the defer invite.
+      git(repo.dir, ['merge', '--no-ff', '-q', '-m', 'Merge tl-1 by hand', 'tl-1']);
+      const replies = [];
+      await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
+        { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => replies.push(msg));
+      accepted = replies.join('\n');
+      return out;
+    },
+  };
+  f = mkMerge({ repo, gitOver });
+  const r = captureRetries(f);
+  // Planted BEFORE the run and never cleared: the lock is what routes this pass
+  // to the defer arm rather than to the merge, and it must still be held when
+  // the pass reaches the arm — which is after the accept above has run.
+  plantLock(repo);
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  // Read AFTER the run rather than thrown from inside the stub: the call site
+  // wraps `currentBranch` in `.catch(e => ({ ok: false, error }))`, so an
+  // AssertionError raised in there is swallowed into an `on-master` gate failure
+  // and reports the wrong line. Same hazard as the two subjects above.
+  assert.match(String(accepted), /branch tl-1 deleted/,
+    'ENTER: the accept really landed mid-pass and took the merged arm, which closes out');
+  assert.strictEqual(f.one().closedOut, true, 'ENTER: so the ticket really is closed out');
+  assert.strictEqual(f.one().state, 'done',
+    'ENTER: while leaving state at done — which is why a state-only re-read could not see this accept');
+  // THE ARM UNDER TEST. Without this the subject would pass over a pass that
+  // escalated at `on-master` or died anywhere else after the accept, and the
+  // absence assertion below is true of all of those.
+  assert.strictEqual(r.scheduled.length, 1,
+    'ENTER: and the pass went on to reach the DEFER arm — it armed a retry');
+  assert.deepStrictEqual(f.esc(), [],
+    'ENTER: by deferring, not by escalating — a fail() arm would clear the stamp via the finally for its own reason');
+
+  assert.ok(!('mergeWaiting' in f.one()),
+    'the defer arm re-read the ticket and did not stamp a merge as waiting on a row the accept had just closed out');
+
+  // The retry is left armed on purpose, and that is the choice this subject
+  // records: the guard skips the stamp, not the scheduling. The woken retry
+  // meets the top gate and logs the merge ABANDONED, which is where that
+  // decision is made.
+  assert.strictEqual(await r.drain(), 1, 'the retry still runs, rather than being cancelled by the guard');
+  assert.ok(f.logs.some((l) => /ABANDONED: the ticket was ACCEPTED and closed out/.test(l.msg)),
+    'and it is the TOP gate that ends it, named by its own message — the merge-step '
+    + 'abandon reads "ABANDONED at the merge step: the ticket is ...", so it cannot match this');
+  assert.ok(!('mergeWaiting' in f.one()), 'with nothing re-stamped by that pass either');
+  assert.ok(!('mergeError' in f.one()), 'and no MERGE FAILED on a ticket the lead had finished');
+
+  // The board is where a frozen mark actually costs the lead something.
+  f.injected.length = 0;
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'list', who: null, id: null, body: '' });
+  const board = f.injected[f.injected.length - 1];
+  assert.match(board, /t1 \[done\].*closed/, 'ENTER: the accepted row reached the board');
+  assert.doesNotMatch(board, /merge waiting/,
+    'and does not advertise a merge the accept has already ended');
+});
+
 // The gate's OTHER direction, and the one that decides between the two candidate
 // fields. `finish()` stamps `acceptedAt` on EVERY accept arm — including this
 // one (`!m.merged`), whose own reply ends "Merge it, then [agent:task accept

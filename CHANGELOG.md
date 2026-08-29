@@ -31,9 +31,11 @@ blocks a release.
   the retry next woke — up to ten minutes later — and quitting or crashing
   Clodex in between froze it on the row permanently, since nothing rechecks the
   mark at startup. The accept now clears it as it closes the ticket out, on
-  every board that shows it. Accepts that leave the merge genuinely owed — the
-  branch has not landed, or the check could not run — still keep the mark,
-  because there a retry may yet land it.
+  every board that shows it, and a merge attempt that was already underway when
+  you accepted no longer writes the mark back afterwards — it re-checks the
+  ticket before marking, so your accept is the last word. Accepts that leave the
+  merge genuinely owed — the branch has not landed, or the check could not run —
+  still keep the mark, because there a retry may yet land it.
 
 - **A ticket released from the backlog now tells its seat that the "do not
   start" line in its own spec is spent.** A backlog ticket's spec is written
