@@ -6625,7 +6625,7 @@ function createTicketMethods(deps, shared) {
       }
       ticket.state = 'open';
       ticket.closedAt = null;
-      ticket.closedBy = null;          // cleared alongside closedAt — it is open again
+      ticket.closedBy = null;
       // A reopened ticket is not terminal. Left set, `ticketTerminalReason` keeps
       // reading it as closed out and refuses a `for <id>` reminder binding on the
       // rework round, which is a round the reminder is wanted for.
@@ -6714,10 +6714,6 @@ function createTicketMethods(deps, shared) {
         reply(`error: respec replaces the spec of an OPEN ticket; ${intent.id} is ${ticket.state}${route}${this._spillRejectedPayload(session, 'task respec', spec)}`);
         return;
       }
-      // The supersession record, so the board can show the spec CHANGED and by whom
-      // — an open ticket silently rewritten into different work is the loss this
-      // verb exists to prevent.
-      //
       // The full superseded BODY is kept, not the title alone. A respec is usually
       // written as a delta against the spec the seat is holding, and the line below
       // is the only copy of what it was a delta against: once it is gone, a REPLAY
