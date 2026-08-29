@@ -643,55 +643,44 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     for (const k of EDITABLE) {
       if (k in patch) clean[k] = patch[k];
     }
-    // C4: `template` is DESCRIPTIVE-ONLY in this slice — validated as a NAME here
-    // and resolved NOWHERE. Any FUTURE consumption MUST resolve NAMED library
-    // templates through the normal spawn gate (H3), validated at consume; do NOT
-    // wire this field into auto-instantiate without that gate.
+    // `template` is descriptive-only: validated as a name here and resolved
+    // nowhere. Any future consumption must resolve named library templates
+    // through the normal spawn gate, validated at consume.
     if ('template' in clean && (typeof clean.template !== 'string' || !NAME_RE.test(clean.template))) {
       throw new Error(`role "${roleName}" template must be a library-template name matching ${NAME_RE} (${team.file})`);
     }
-    // Validated here as well as in normalizeRoleDef below, in `template`'s shape:
-    // the patch is the front door, and a caller that sends a junk value should be
-    // refused by the door it knocked on, naming the field it got wrong.
+    // Validated here as well as in normalizeRoleDef below: the patch is the front
+    // door, and a caller that sends a junk value should be refused by the door it
+    // knocked on, naming the field it got wrong.
     if ('dispatch' in clean && !ROLE_DISPATCH_VALUES.has(clean.dispatch)) {
       throw new Error(`role "${roleName}" dispatch must be one of ${[...ROLE_DISPATCH_VALUES].join(', ')} (${team.file})`);
     }
-    // Validated on `clean` (the patch), not on the merged def below: the merge
-    // preserves an EXISTING cwd that a stale/foreign check could re-refuse, and
-    // the caller must be told about the value THEY sent. setRole cannot reach
-    // `lead` at all (RESERVED_ROLE_KEYS refuses above), so D3's refusal is
-    // structural here rather than restated.
+    // Validated on `clean` (the patch), not the merged def below: the merge
+    // preserves an EXISTING cwd a stale check could re-refuse, and the caller must
+    // be told about the value they sent.
     //
-    // Gated on CHANGE, not on presence: the popover's save patch always carries
-    // `cwd`, so re-validating an unchanged value makes an unrelated edit (the
-    // brief) fail once that directory is deleted — and the operator then cannot
-    // fix the brief without also clearing a cwd they never touched. A value
-    // already on disk is not a new grant (dropping the key from the patch would
-    // preserve it regardless), and it is still refused the moment it CHANGES; a
-    // bad one already stored is neutralized at spawn time with a reported
-    // fallback, which is the same treatment a hand-edited manifest gets.
+    // Gated on CHANGE, not presence: the popover's save patch always carries
+    // `cwd`, so re-validating an unchanged value makes an unrelated edit fail once
+    // that directory is deleted, and the operator cannot then fix the brief
+    // without clearing a cwd they never touched. A value already on disk is not a
+    // new grant, and it is still refused the moment it changes.
     const storedCwd = typeof team.roles[roleName].cwd === 'string' ? team.roles[roleName].cwd : '';
     const patchCwd = typeof clean.cwd === 'string' ? clean.cwd.trim() : null;
     if ('cwd' in clean && !(patchCwd !== null && patchCwd === storedCwd)) {
       assertRoleCwd(roleName, clean, team.root, team.file);
     }
-    // Trimmed AFTER the gate, for the same reason pickRoleKeys trims: this write
-    // does not go through pickRoleKeys, so without this the merge below lands the
-    // untrimmed bytes that assertRoleCwd never saw.
+    // Trimmed AFTER the gate: this write does not go through pickRoleKeys, so
+    // without it the merge below lands untrimmed bytes assertRoleCwd never saw.
     if (typeof clean.cwd === 'string') clean.cwd = clean.cwd.trim();
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
     // NOT picked down to the schema, unlike addRole's new role: this write
-    // preserves an EXISTING role's hand-authored keys (pinned below), and `clean`
-    // is already EDITABLE-only, so no cut field can enter here. The cut fields
-    // that are already on disk leave via migrateRoles, which names them.
+    // preserves an existing role's hand-authored keys, and `clean` is already
+    // EDITABLE-only, so no cut field can enter here.
     raw.roles[roleName] = { ...raw.roles[roleName], ...clean };
-    // A blank cwd is a CLEAR, and it deletes the key rather than storing '': the
-    // popover's text input sends '' for "no cwd", and path.resolve(root, '') is
-    // the root — so an empty string on disk would be a value meaning exactly what
-    // its absence means, which is the state migrateRoles exists to keep out.
-    // Unlike `template`, blank is reachable and legitimate here (there is a
-    // clear-cwd semantic); unlike `brief`, '' is not a displayable value.
+    // A blank cwd is a CLEAR and deletes the key rather than storing '':
+    // path.resolve(root, '') is the root, so '' on disk would mean exactly what
+    // its absence means.
     if ('cwd' in clean && !String(clean.cwd == null ? '' : clean.cwd).trim()) {
       delete raw.roles[roleName].cwd;
     }
@@ -700,18 +689,16 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return loadManifest(teamName);
   }
 
-  // `opts.operator` is the RENDERER's opt-in (team:removeRole — Bogdan clicking),
-  // and nothing else passes it: the `[agent:team role-rm]` intent calls this with
-  // two args, so an agent still gets the refusal below verbatim, which is what
-  // makes its "remove it via the app" literally true rather than aspirational.
+  // `opts.operator` is the renderer's opt-in and nothing else passes it: the
+  // `[agent:team role-rm]` intent calls this with two args, so an agent still gets
+  // the refusal below, which is what makes "remove it via the app" true.
   function removeRole(teamName, roleName, opts) {
     const team = loadManifest(teamName);
     const operator = !!(opts && opts.operator === true);
-    // `lead` is non-removable for EVERYONE, operator included, and needs its own
-    // reason: loadManifest hard-requires the key and throws without it, while
-    // every caller resolves teams in a best-effort catch — so a team that lost
-    // its lead would not report a missing role, it would read as "no team at
-    // all" everywhere at once, with no surface left that could add it back.
+    // `lead` is non-removable for everyone, operator included: loadManifest
+    // hard-requires the key, and every caller resolves teams in a best-effort
+    // catch, so a team that lost its lead would read as "no team at all"
+    // everywhere at once, with no surface left to add it back.
     if (roleName === 'lead') {
       throw new Error(`the "lead" role cannot be removed: a team.json without it fails to load, and the team would read as missing everywhere (${team.file})`);
     }
@@ -749,20 +736,12 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return loadManifest(teamName);
   }
 
-  // The team's lead SEAT — a top-level pointer, NOT the `lead` role. The role is
-  // reserved (RESERVED_ROLE_KEYS) and stays locked; this only re-points which
-  // seat fills it, so the two must not be conflated: setRole('lead') still
-  // throws, and this never touches raw.roles.
+  // Re-points the lead SEAT pointer, NOT the `lead` role, which stays reserved:
+  // setRole('lead') still throws and this never touches raw.roles.
   //
-  // Reassignment is a POINTER change and nothing more — tickets and roster lines
-  // follow it immediately, and the new seat inherits none of the old one's
-  // context. Any "hand over the lead's state" semantics would have to live
-  // somewhere else; this cannot lose anything precisely because it moves nothing.
-  //
-  // A seat that is not running is ACCEPTED on purpose: every team is in that
-  // state whenever its lead is stopped, and the record restarts by name. Only
-  // the charset is gated (NAME_RE, the same regex createTeam validates `lead`
-  // with) — an existence check here would refuse the legitimate stopped case.
+  // A seat that is not running is accepted on purpose — every team is in that
+  // state whenever its lead is stopped, and the record restarts by name — so only
+  // the charset is gated. An existence check would refuse the stopped case.
   function setLead(teamName, seatName) {
     const team = loadManifest(teamName); // throws if the team is missing
     if (typeof seatName !== 'string' || !NAME_RE.test(seatName)) {
