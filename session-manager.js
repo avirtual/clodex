@@ -1409,52 +1409,37 @@ function createSessionManager(deps) {
           const promptPath = pathFor(REGISTRY_DIR, name, 'appendPrompt');
           // FREEZE on resume (see ipc-prompt-cache.js). create() runs on
           // restore-with---resume too, so writing `realIpc` unconditionally here
-          // is what changed the system prompt under continuing conversations and
-          // cost 111k-139k tokens a time. A resume re-bakes the bytes this
-          // conversation was BORN with and stages any change as a diff for the
-          // ipcdelta drain; a genuine boundary regenerates, which is free because
-          // the conversation is new anyway.
+          // changed the system prompt under continuing conversations and cost
+          // 111k-139k tokens a time. A resume re-bakes the bytes this conversation
+          // was BORN with and stages any change as a diff for the ipcdelta drain.
           //
-          // Three conditions, and every one of them is a bug that shipped:
+          // Three conditions:
           //   resumeId    — there is a conversation to protect at all.
           //   !mint       — a MINT regenerates even when it carries a resumeId (an
           //                 "adopt"), because reusing a same-named dead session's
-          //                 frozen bytes would bake a stranger's prompt. This is
-          //                 the mint-vs-restore axis (nameConflict's header), and
-          //                 it replaces the _cleanup rm that used to enforce the
-          //                 same thing destructively — and wrongly, since restart
-          //                 routes through kill() too.
-          //   hookInstalled — NO FREEZE WITHOUT A CHANNEL. A user --settings means
+          //                 frozen bytes would bake a stranger's prompt.
+          //   hookInstalled — no freeze without a channel. A user --settings means
           //                 ipcdelta.sh was never installed, so a staged delta can
           //                 never be delivered; freezing there is permanent silent
           //                 staleness, strictly worse than the rewrite this module
-          //                 exists to avoid. Regenerating is the honest fallback:
-          //                 the session pays the bust once and is CORRECT.
+          //                 exists to avoid.
           if (resumeId && !mint && !hookInstalled) {
             warnings.push(`This session's own --settings replaces Clodex's hooks, so the IPC protocol-change channel isn't installed. Its system prompt will be regenerated on every resume instead of frozen — correct, but it re-reads the whole prompt each time.`);
           }
           const reuse = !!resumeId && !mint && hookInstalled;
           const baked = bakePrompt(REGISTRY_DIR, name, realIpc, reuse);
           // First producer on the notice queue (notice-queue.js). Gated on the
-          // SAME `reuse` as the freeze above, and every clause earns its place
-          // for the same reason it does there: no conversation to inform
-          // (!resumeId) or a fresh one built against this very host, a MINT
-          // adopting a dead namesake's record (whose version says nothing about
-          // THIS conversation), or no drain installed to deliver it.
+          // SAME `reuse` as the freeze above, for the same reasons.
           //
           // Per-session HERE rather than a fan-out at app startup: a fan-out
           // only reaches sessions that exist when it runs, so a seat archived
-          // now and unarchived in three weeks would learn nothing. This
-          // comparison runs at the seat's own spawn, which covers archived and
-          // restored sessions with no extra path.
+          // now and unarchived in three weeks would learn nothing.
           //
-          // A record with no version at all (written by a build before this
-          // existed) yields no notice: versionNoticeFor needs both sides, and
-          // inventing a floor would announce an upgrade we cannot describe. The
-          // upsert below records the running version, so the NEXT one is real.
+          // A record with no version at all yields no notice: versionNoticeFor
+          // needs both sides, and inventing a floor would announce an upgrade we
+          // cannot describe.
           //
-          // The else is the boundary side, exactly as bakePrompt clears its own
-          // staging when reuse is false. The producer guard above is not enough
+          // The else is the boundary side. The producer guard above is not enough
           // on its own: it sits on the producer while an undrained notice sits
           // on the consumer, so a mint would still be DELIVERED whatever the
           // dead namesake enqueued before it died.
@@ -1466,13 +1451,11 @@ function createSessionManager(deps) {
               clearNotices(REGISTRY_DIR, name);
             }
           } catch { /* an advisory must never block a spawn */ }
-          // ensureDir here so the write never depends on hook-setup ordering
-          // having created the dir first — the same invariant, and the same
-          // idiom, as the socket bind's ensureDir below. It is load-bearing on
-          // exactly the path this block is about: run/<name>/ is created as a
-          // side effect of setupClaudeHook, which is SKIPPED when the caller
-          // supplies its own --settings, so without this a --settings session
-          // ENOENTs here and cannot spawn at all.
+          // ensureDir so the write never depends on hook-setup ordering having
+          // created the dir first: run/<name>/ is created as a side effect of
+          // setupClaudeHook, which is SKIPPED when the caller supplies its own
+          // --settings, so without this a --settings session ENOENTs here and
+          // cannot spawn at all.
           ensureDir(runDirFor(REGISTRY_DIR, name));
           fs.writeFileSync(promptPath, baked, { mode: 0o600 });
           args.push('--append-system-prompt-file', promptPath);
@@ -1572,7 +1555,6 @@ function createSessionManager(deps) {
         // actor can replace the record while we are dialing; a verdict about the
         // record we READ must not be applied to a different record we find later
         // (that is how `blockerLive === false` would force-clean a live agent).
-        // Compared byte-wise at the re-read below.
         let blockerRaw = null;
         try {
           blockerRaw = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8');
@@ -1589,10 +1571,6 @@ function createSessionManager(deps) {
         // net.Server, which then keeps listening with no error and no event and is
         // permanently unreachable. With this order every unlink happens while nothing
         // of ours is listening, and a refusal returns having touched nothing.
-        // This does leave a window where a registry entry exists before its socket
-        // file does; cleanup() prunes exactly that shape, and reaching it needs a
-        // second engine sharing this ~/.clodex booting inside a sub-millisecond
-        // window. Deliberately uncovered.
         try {
           registry.register(name, socketPath, cwd);
         } catch (e) {
@@ -1649,18 +1627,15 @@ function createSessionManager(deps) {
         spawnerHintSet,
         // Ticket-replay incarnation key. Minted here and NEVER persisted, so that
         // its absence from a resumed record is itself the signal that this process
-        // has not been handed its open tickets' specs (_replayOpenTickets). Every
-        // candidate read back off the record fails for one reason: the record is
-        // what survived the respawn. `sessionId` in particular cannot serve — it is
-        // assigned from `resumeId` just below, so a --resume carries the SAME id,
-        // which is exactly the case that loses a delivery.
+        // has not been handed its open tickets' specs (_replayOpenTickets).
+        // `sessionId` cannot serve — it is assigned from `resumeId` just below, so
+        // a --resume carries the SAME id, which is exactly the case that loses a
+        // delivery.
         //
-        // pid + ms + counter rather than randBase36 (the house idiom for park
-        // handles) because this is the only value in create() that must be unique
-        // ACROSS processes: a fresh process colliding with its predecessor's key
-        // would read its own tickets as already delivered and replay nothing. Two
-        // app processes cannot share a pid at the same millisecond, and the counter
-        // separates managers built inside one process.
+        // pid + ms + counter because this is the only value in create() that must
+        // be unique ACROSS processes: a fresh process colliding with its
+        // predecessor's key would read its own tickets as already delivered and
+        // replay nothing.
         incarnation: nextIncarnation(),
         // The tri-state as REQUESTED (false=off, string=explicit, null=follow the
         // pref), kept alongside the base it resolved to: _armCtx has to re-resolve
@@ -1674,7 +1649,6 @@ function createSessionManager(deps) {
         proxyRequested: typeof proxy === 'string' ? normalizeProxyBase(proxy) : (proxy === false ? false : null),
         intentSource, wireRouted, backend, noWire: wireOff, sentinel: null,
         fileTouches: [],
-        // Wire-fed subagent turn feeds, bounded by subagent-ring.js itself.
         // Called defensively because this runs AFTER the agent socket is bound:
         // an observer dep that is merely absent must degrade to "no feed" (which
         // `_noteSubagentTurn` already handles), never throw out of create() and
@@ -1705,9 +1679,6 @@ function createSessionManager(deps) {
         // payload.linked guard, so seeding unconditionally is safe.
         lastMainStop: { isTurn: true, ts: Date.now(), seeded: true },
         bootResumeId: resumeId || null,
-        // The append-prompt recipe as SPAWNED (null for non-claude). refreshPrompt
-        // replays it; nothing else reads it. It dies with the session, which is
-        // correct — the next spawn captures its own.
         promptRecipe,
         // Recompute rather than re-write: setupClaudeHook already wrote the
         // digest file pre-spawn, and rewriting here would race the CLI's
