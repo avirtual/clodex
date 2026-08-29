@@ -855,6 +855,17 @@
           </select>
         </div>
         <span id="prefs-voice-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
+        <h5>Hands-free submit</h5>
+        <p class="hint-text">In <strong>Tap</strong> mode only. End a dictated sentence with the phrase below and Clodex erases the phrase and presses Enter for you. The CLI submits on its own only when the last transcribed chunk runs to three words or more, so trailing off leaves your sentence sitting in the box — this is the way out of that. Never fires while a session is asking permission for something (Enter would answer the dialog), and a phrase spoken then is dropped rather than sent once the dialog clears. Hold mode is untouched: releasing the key already submits there. Applies to Claude sessions on this machine.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-voice-submit">
+          <span>Submit when I say the phrase</span>
+        </label>
+        <div class="prefs-row" style="margin-top: 6px;">
+          <span>Phrase</span>
+          <input type="text" id="prefs-voice-submit-phrase" placeholder="over and out" spellcheck="false" autocomplete="off" style="flex: 1;">
+        </div>
+        <span class="hint-text" style="display: block; margin-top: 6px;">Matched at the end of what you have dictated, ignoring case and any punctuation dictation adds. Pick something you would never say mid-sentence — a short one like &ldquo;send it&rdquo; will fire while you are still talking. Leave it empty for the default.</span>
       </details>
       <details class="prefs-group" data-group="statusline">
         <summary><h4>Statusline</h4><span class="prefs-group-sub">What each agent shows above its prompt</span></summary>

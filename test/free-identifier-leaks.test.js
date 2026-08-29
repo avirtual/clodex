@@ -251,6 +251,13 @@ const RENDERER_SCANNED_MODULES = [
   // `activeSession` are in easy reach, and a decoration lifecycle that grabbed
   // one would ship green without this.
   'renderer/intent-highlight.js',
+  // The hands-free submit matcher and its watcher (t566). The watcher runs
+  // per-terminal inside createTerminal's scope exactly like intent-highlight,
+  // where `sessions` and `activeSession` are in easy reach — and this one WRITES
+  // to the pty, so a reach for a renderer.js name is the difference between a
+  // gate the caller can supply and one that cannot be tested at all.
+  'renderer/lib/voice-submit.js',
+  'renderer/voice-submit-watcher.js',
   'renderer/lib/constants.js',
   'renderer/lib/format.js',
   'renderer/lib/render-html.js',

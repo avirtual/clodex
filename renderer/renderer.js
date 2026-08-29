@@ -49,6 +49,8 @@ const { createInboxDrawer } = require('./inbox-drawer');
 const { createVoiceCore, createVoiceControl } = require('./voice-control');
 const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
+const { createVoiceSubmitWatcher } = require('./voice-submit-watcher');
+const { DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings } = require('./lib/voice-submit');
 const { initBanners } = require('./banners');
 const { initThemes } = require('./themes');
 const { initLibraryDrawers } = require('./library-drawers');
@@ -1147,6 +1149,29 @@ function createTerminal(name, peer = null) {
 
   const intentHighlight = createIntentHighlight(terminal);
 
+  // Local Claude seats only. A peer's composer is on the other machine, and
+  // Codex has no `/voice` for the mode gate to read. The type is resolved at
+  // FIRE time rather than here: the sidebar row this reads may not exist yet
+  // while the terminal is being built.
+  const voiceSubmit = peer ? null : createVoiceSubmitWatcher(terminal, {
+    getConfig: () => (voiceSubmitConfig.enabled && sessionTypeOf(name) === 'claude'
+      ? voiceSubmitConfig : null),
+    // The FILE's mode, never the core's pending pick: a pick is a command that
+    // has been queued into a session, not a mode any CLI is in yet.
+    getVoiceMode: () => {
+      const st = voiceCore.snapshot().state;
+      return st ? st.effective : null;
+    },
+    getAttention: () => {
+      const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+      // A row that is GONE is not a row without a dialog. Reporting 'permission'
+      // makes the missing-row case decline, matching the throw path in the
+      // watcher — the interlock's failures all have to land on the safe side.
+      return el ? (el.dataset.attention || null) : 'permission';
+    },
+    write: (data) => window.api.writeToSession(name, data),
+  });
+
   const searchAddon = new SearchAddon();
   terminal.loadAddon(searchAddon);
   searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
@@ -1184,7 +1209,7 @@ function createTerminal(name, peer = null) {
     window.api.writeToSession(name, data);
   });
 
-  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, wrapperEl, peer });
+  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, wrapperEl, peer });
   updateWindowTitle();
   return { terminal, fitAddon, searchAddon, wrapperEl };
 }
@@ -1347,6 +1372,7 @@ function removeSession(name, { keepPersisted = false } = {}) {
     // Before the terminal: its decorations hold markers that the terminal owns,
     // and disposing them afterwards throws on the marker lookup.
     if (s.intentHighlight) s.intentHighlight.dispose();
+    if (s.voiceSubmit) s.voiceSubmit.dispose();
     s.terminal.dispose();
     s.wrapperEl.remove();
     sessions.delete(name);
@@ -3517,6 +3543,15 @@ createInboxDrawer({ openFilePeek, showToast });
 const voiceCore = createVoiceCore({
   getActiveSession: () => activeSession, sessionTypeOf, sessionList, showToast,
 });
+
+// Cached because the watcher consults it on every quiet-window expiry, per
+// terminal — an invoke per tick would put IPC on a timer. Refreshed by the two
+// events that can change it: Preferences saving, and this window loading.
+let voiceSubmitConfig = { enabled: false, phrase: DEFAULT_SUBMIT_PHRASE };
+async function refreshVoiceSubmitConfig() {
+  try { voiceSubmitConfig = readVoiceSubmitSettings(await window.api.getSettings()); } catch {}
+}
+refreshVoiceSubmitConfig();
 const voiceControl = createVoiceControl({ core: voiceCore });
 
 const { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
@@ -3873,6 +3908,8 @@ const prefsCompactOnResume = document.getElementById('prefs-compact-on-resume');
 const prefsContextHints = document.getElementById('prefs-context-hints');
 const prefsSemanticHints = document.getElementById('prefs-semantic-hints');
 const prefsSelectionHints = document.getElementById('prefs-selection-hints');
+const prefsVoiceSubmit = document.getElementById('prefs-voice-submit');
+const prefsVoiceSubmitPhrase = document.getElementById('prefs-voice-submit-phrase');
 const prefsTerminalReports = document.getElementById('prefs-terminal-reports');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
@@ -5526,6 +5563,10 @@ async function openPrefs() {
   prefsContextHints.checked = !!s.contextHints;
   if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
   if (prefsSelectionHints) prefsSelectionHints.checked = !!s.selectionHints;
+  if (prefsVoiceSubmit) prefsVoiceSubmit.checked = s.voiceSubmit === true;
+  // The stored phrase, never the default, so an empty box is the operator
+  // asking for the default back rather than a value they typed being hidden.
+  if (prefsVoiceSubmitPhrase) prefsVoiceSubmitPhrase.value = s.voiceSubmitPhrase || '';
   setTerminalReports(s.terminalReports);
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
@@ -5579,11 +5620,16 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     contextHints: prefsContextHints.checked,
     semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
     selectionHints: prefsSelectionHints ? prefsSelectionHints.checked : false,
+    voiceSubmit: prefsVoiceSubmit ? prefsVoiceSubmit.checked : false,
+    voiceSubmitPhrase: prefsVoiceSubmitPhrase ? prefsVoiceSubmitPhrase.value.trim() : '',
     terminalReports: readTerminalReports(),
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     remoteEnabled: prefsRemoteEnabled.checked,
   });
   await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
+  // The watchers read a cache, so without this the setting applies only at the
+  // next window load — including the OFF direction.
+  await refreshVoiceSubmitConfig();
   closePrefs();
 });
 

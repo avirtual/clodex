@@ -69,6 +69,8 @@ const DEFAULT_UI_SETTINGS = {
   contextHints: false,
   semanticHints: false,
   selectionHints: false,
+  voiceSubmit: false,
+  voiceSubmitPhrase: 'over and out',
   // New installs get the capability WITHOUT the firehose. Existing ones never
   // reach this value for this key — sanitizeTerminalReports resolves an absent
   // key to 'off' rather than falling through to the default.
@@ -1246,6 +1248,13 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           contextHints: typeof raw?.contextHints === 'boolean' ? raw.contextHints : DEFAULT_UI_SETTINGS.contextHints,
           semanticHints: typeof raw?.semanticHints === 'boolean' ? raw.semanticHints : DEFAULT_UI_SETTINGS.semanticHints,
           selectionHints: typeof raw?.selectionHints === 'boolean' ? raw.selectionHints : DEFAULT_UI_SETTINGS.selectionHints,
+          voiceSubmit: typeof raw?.voiceSubmit === 'boolean' ? raw.voiceSubmit : DEFAULT_UI_SETTINGS.voiceSubmit,
+          // A blank or non-string phrase resolves to the DEFAULT, never to '':
+          // an empty trigger matches the end of every composer, so the value
+          // that disarms the feature is `voiceSubmit`, never the phrase.
+          voiceSubmitPhrase: (typeof raw?.voiceSubmitPhrase === 'string' && raw.voiceSubmitPhrase.trim())
+            ? raw.voiceSubmitPhrase.trim()
+            : DEFAULT_UI_SETTINGS.voiceSubmitPhrase,
           terminalReports: sanitizeTerminalReports(raw),
           discoverOnStartup: typeof raw?.discoverOnStartup === 'boolean' ? raw.discoverOnStartup : DEFAULT_UI_SETTINGS.discoverOnStartup,
           recentCwds: Array.isArray(raw?.recentCwds) ? raw.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : defaultUiSettings().recentCwds,
@@ -1294,6 +1303,10 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         contextHints: partial?.contextHints ?? cur.contextHints,
         semanticHints: partial?.semanticHints ?? cur.semanticHints,
         selectionHints: partial?.selectionHints ?? cur.selectionHints,
+        voiceSubmit: typeof partial?.voiceSubmit === 'boolean' ? partial.voiceSubmit : cur.voiceSubmit,
+        voiceSubmitPhrase: (typeof partial?.voiceSubmitPhrase === 'string' && partial.voiceSubmitPhrase.trim())
+          ? partial.voiceSubmitPhrase.trim()
+          : cur.voiceSubmitPhrase,
         // Validated on the way IN, not just on the way out: an unrecognised
         // string written here would read back as itself, and every gate
         // downstream compares against a literal — so `'On'` would silently mean
