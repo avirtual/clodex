@@ -3,14 +3,6 @@
 //
 // ─── WINDOW BRIDGE / opaque-handle contract ─────────────────────────────────
 //
-// This file never imports electron. It reaches renderers through exactly one
-// map — `this.windows`, workspaceId → handle — filled by `registerWindow()`,
-// emptied by `unregisterWindow()`, and read only by `windowForWorkspace()`,
-// `windowForSession()`, `workspaceForWindow()` and `allLiveWindows()`.
-// `_sendToSession()` and `_broadcast()` are the routine exits; the one direct
-// use of a handle is the `[agent:file view]` path, which needs show + focus +
-// send on a single handle.
-//
 // A handle is an OPAQUE OBJECT. Everything here touches exactly five methods:
 //
 //   .webContents.send(channel, ...args)   _sendToSession, _broadcast, file-view
@@ -33,8 +25,6 @@
 // one of those works under Electron and is undefined under the web host, so it
 // fails only at runtime and only for browser clients. Widening the contract
 // means widening `handleFor` to match, in the same change.
-//
-// The bridge is covered by test/session-manager.test.js with fake handles.
 
 const NOTIFY_USER_MAX_BYTES = 16 * 1024;
 
@@ -46,9 +36,8 @@ const REBOOT_NOTICE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 // reason this exists. Nothing in the stack acknowledges an injected message:
 // InjectQueue ends at a fire-and-forget pty.write, so "the notice was parked"
 // and "the notice arrived" are not the same claim and no layer here can tell
-// them apart. Reading the first as the second is what let the notice go
-// undelivered seven times while the log said it was handled. So the notice is
-// re-offered a bounded number of times and then given up on, deliberately.
+// them apart. So the notice is re-offered a bounded number of times and then
+// given up on, deliberately.
 //
 // The delays are measured, not round: a resumed seat produced nothing for 105s
 // while a 41MB transcript re-rendered, and both existing margins
@@ -62,11 +51,6 @@ const REBOOT_NOTICE_MAX_ATTEMPTS = 3;
 // cap (INJECT_QUIET_MAXWAIT, 5 min) it would otherwise inherit. A wake-up notice
 // that arrives five minutes after the wake is not a wake-up notice.
 //
-// Both fast drains bail on an open draft, so with one open the generic cap was
-// the only thing left and the notice sat for the full five minutes. This does
-// NOT relax that gate — it schedules _flushParkedNow, the same forced path the
-// operator's flush button uses, which is what rescued the notice every time.
-//
 // Derived, and both bounds are load-bearing:
 //   > INJECT_BOOT_MAXWAIT (20s) — past the queue's readiness cap a polite drain
 //     either already happened or is not going to, so this cannot pre-empt one.
@@ -74,12 +58,12 @@ const REBOOT_NOTICE_MAX_ATTEMPTS = 3;
 //     flush TWO copies of the notice joined into one body. This bound holds for
 //     the FIRST, undeferred round only: a draft deferral re-arms past 30s, so a
 //     later round can join the ladder's re-park. Accepted, not overlooked — it
-//     costs one duplicated line, and t229 already rules a duplicate the safe
-//     direction. Do not "fix" it by bounding the re-arm; see _armRebootNoticeFlush.
+//     costs one duplicated line, and a duplicate is the safe direction. Do not
+//     "fix" it by bounding the re-arm; see _armRebootNoticeFlush.
 //
 // This deadline does NOT make the retry ladder redundant, and the ladder must not
 // be simplified away now that it exists. The queue's readiness gate writes anyway
-// once INJECT_BOOT_MAXWAIT elapses, so on a slow seat — t229 measured a 105s
+// once INJECT_BOOT_MAXWAIT elapses, so on a slow seat — a measured 105s
 // transcript re-render — a flush at 25s can still evaporate into a booting CLI.
 // That is recoverable only because the ladder is there: the notice survives in
 // settings, the re-park follows, and the T+150s rung lands after the render.
@@ -121,14 +105,9 @@ const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } =
 // trailer, and reachability is the wrong test for that: session names are a
 // global namespace, so an unrelated seat that happens to be called `team` makes
 // `team` look answerable and every seat on the box gets told to reply to it.
-// Observed live — team roster/delta notices taught seats to dm a real session
-// named `team` in another workspace, which received the replies as nonsense.
 // Keep in sync with the senderName literals at the _deliver* call sites.
 const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 'reboot', 'clodex']);
 
-// Only the store constructor stays here: createSessionManager builds the ONE
-// instance and lends it to team-tickets.js. Every record helper that used to be
-// destructured alongside it moved with the verbs that call them (t380).
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
@@ -159,8 +138,7 @@ function nextIncarnation() {
 // onboarding is left byte-untouched, unparseable JSON is never clobbered, and
 // any failure degrades to the wizard (never blocks a spawn). Credentials are
 // NOT touched here — the token rides the service env
-// (deploy --claude-token-file). Module-level with a deps bag so tests inject
-// fs/path + a home dir; create() calls it with the factory's natives.
+// (deploy --claude-token-file).
 function preseedClaudeOnboarding({ fs, path, homeDir }) {
   try {
     const p = path.join(homeDir, '.claude.json');
@@ -178,13 +156,6 @@ function preseedClaudeOnboarding({ fs, path, homeDir }) {
     return true;
   } catch { return false; }
 }
-// Sharpens the near-miss bounce for the one core verb whose argument sits
-// OUTSIDE the brackets. `term`'s neighbours in the grammar block — remind, task,
-// team — all take theirs inside, so `[agent:term exec pwd]` is a grammar
-// confusion rather than a typo, and the generic bounce actively confirms the
-// wrong reading: its valid-intents list NAMES `term`, so the seat concludes the
-// verb was fine and hunts for a fault elsewhere.
-//
 // Names the correct form and stops there. It must never reconstruct and run
 // what the line probably meant: that would execute something nobody wrote,
 // which is worse than the bounce it replaces — the same rule the control-char
@@ -205,7 +176,6 @@ function nearMissFormHint(text) {
 // here would make two writers for one field.
 // A field a restart can legitimately reset (rosterSentAt on a fresh
 // restart) must stay caller-controlled.
-// test/preserve-across-restart.test.js pins that every caller gets these.
 // `wireLabel` is here for the same reason: it is seeded ONLY at the team-spawn
 // mint, nothing regrows it, and create() re-mints the proxy agent id from
 // `entry.wireLabel || name`. Dropped by an in-place restart, the seat's whole
@@ -232,30 +202,6 @@ function nearMissFormHint(text) {
 // KEEPS the record and rides the path out for the operator.
 // _ticketTreeHolder reads occupancy off the record too, so a reloaded seat
 // without it is invisible and its LIVE tree can be handed to a second seat.
-// Preservation does not normally manufacture a stale pointer — a restart
-// re-enters the same cwd and deliberately does not touch the tree, so the value
-// copied back is the one that was there microseconds earlier. One interleaving
-// can: the seed is captured from priorEntry BEFORE kill, and a seat mid-restart
-// is invisible to _ticketTreeHolder, so a re-dispatch can reuse its tree and
-// claimTree finds no record to clear — the preserve then re-seeds a pointer to a
-// tree another seat now holds. That window is inherent to EVERY field here, not
-// to `worktree`, and pre-exists this list: engine.js's restart catch arms
-// re-upsert a whole pre-kill snapshot the same way. `worktree` is the field it is
-// guarded for, because a checkout is the one EXCLUSIVE resource on this list.
-//
-// _stripClaimedTree is that guard and carries the reasoning; it runs on the
-// success path here AND on all three catch arms (engine.js restartSession /
-// applySessionArgs, the [agent:context reload] intent), so the snapshot-restoring
-// failure paths named above are covered rather than merely documented — that
-// matters because the catch is the LIKELIER arm in this scenario, the window
-// being held open by a CLI slow to die and such a CLI being the one that throws.
-// test/preserve-tree-handoff.test.js exhibits the interleaving on both paths.
-//
-// What it does NOT cover, and do not read the sentence above as more than it is:
-// the guard is BOOKKEEPING. It keeps one record per tree; it does not stop the
-// re-dispatch, so two live seats can still be told to work in one checkout. That
-// is _ticketTreeHolder's blindness one layer up — it reads occupancy off the
-// record, and a seat mid-restart has none — and it is not fixable from here.
 // `autoCompact` is stored ONLY as the opt-OUT (`false`; enabling deletes the
 // key), so losing it fails toward the more destructive default — autoCompactOf
 // reads absence as ON and compacts a seat the operator exempted.
@@ -294,19 +240,15 @@ function sigkillPid(pid, name, log) {
 // surviving an unclean shutdown always points at the new engine itself and a bare
 // isAlive() check would read it as "running elsewhere" forever, wedging restore
 // and fresh create under that name. Desktop is unaffected — a genuinely-other
-// Clodex sharing ~/.clodex never has our pid. Pure so it can be tested without the
-// create() spawn machinery.
+// Clodex sharing ~/.clodex never has our pid.
 function isStaleRegistration(existingPid, ownPid, isAlive) {
   return !isAlive(existingPid) || existingPid === ownPid;
 }
 
-// Missing-CLI exit heuristic (Task 12). node-pty's execvp failure in the forked
-// child is silent (no stderr) — it surfaces as a bare code-1 exit within a couple
-// seconds of spawn. Returns the unresolvable command to NAME in the exit toast, or
-// null when this isn't that case. Pure (whichBin injected) so it's unit-tested
-// directly rather than through a real spawn. Excludes deliberate exits, signals,
-// and anything past the fast-fail window (a later code-1 is a real crash, not a
-// missing binary — the CLI clearly launched).
+// node-pty's execvp failure in the forked child is silent (no stderr) — it
+// surfaces as a bare code-1 exit within a couple seconds of spawn. Excludes
+// deliberate exits, signals, and anything past the fast-fail window (a later
+// code-1 is a real crash, not a missing binary — the CLI clearly launched).
 function missingToolOnExit({ expected, exitCode, signal, elapsedMs, cmd, whichBin }) {
   if (expected || exitCode !== 1 || signal) return null;
   if (!(elapsedMs <= 5000)) return null;
@@ -314,20 +256,18 @@ function missingToolOnExit({ expected, exitCode, signal, elapsedMs, cmd, whichBi
   return resolved ? null : (cmd || null);
 }
 
-// Name-collision decision for MINTING a new session (Task 15, GH#9). The name is
-// the primary key everywhere (run/<name>/ dir, agent.sock, [agent:dm] bus,
-// renderer Map, DOM data-name), so minting over any existing record — live OR
-// merely persisted/archived (archive KEEPS the record, stamped archivedAt) —
-// would overwrite it and split a name across two sidebar rows. This guards the
-// mint FRONT DOOR only (the session:create / team:create / team:join IPC, all via
+// Name-collision decision for MINTING a new session. The name is the primary
+// key everywhere (run/<name>/ dir, agent.sock, [agent:dm] bus, renderer Map,
+// DOM data-name), so minting over any existing record — live OR merely
+// persisted/archived (archive KEEPS the record, stamped archivedAt) — would
+// overwrite it and split a name across two sidebar rows. This guards the mint
+// FRONT DOOR only (the session:create / team:create / team:join IPC, all via
 // spawnFromParams); the resume paths (restore-on-launch, unarchive→retry,
-// restart/reload) re-create a persisted name legitimately and DELIBERATELY bypass
-// this — that's the whole --resume design, and the mint-vs-resume axis is the
-// front-door-vs-restore-path distinction, NOT resumeId (an "adopt" mint carries a
-// resumeId but is still a mint; a persisted entry with no sessionId resumes with
-// resumeId=null). Pure → unit-tested directly. Returns null (allow) | 'live' |
-// 'persisted' so the caller can word the error (live: "already exists"; persisted:
-// "archived/saved record — unarchive or rename").
+// restart/reload) re-create a persisted name legitimately and DELIBERATELY
+// bypass this — that's the whole --resume design, and the mint-vs-resume axis is
+// the front-door-vs-restore-path distinction, NOT resumeId (an "adopt" mint
+// carries a resumeId but is still a mint; a persisted entry with no sessionId
+// resumes with resumeId=null).
 function nameConflict({ liveHas, persistedHas }) {
   if (liveHas) return 'live';
   if (persistedHas) return 'persisted';
@@ -340,9 +280,8 @@ function nameConflict({ liveHas, persistedHas }) {
 // note on _deniedIntentPayload.
 const DENIED_SPILL_CAP = 3;
 
-// What to do with the body of an intent the gate just refused. Pure → unit-tested
-// directly, and keyed on the INTENT rather than the type because `memory` and
-// `context` split on `sub`.
+// What to do with the body of an intent the gate just refused. Keyed on the
+// INTENT rather than the type because `memory` and `context` split on `sub`.
 //   'spill' — hand the payload back on disk. Reserved for bodies whose value IS
 //             the composition: prose the sender wrote once and cannot regenerate.
 //   'note'  — tell the sender the body is gone, write nothing.
@@ -431,10 +370,6 @@ function createSessionManager(deps) {
     enqueueNotice,
     versionNoticeFor,
     clearNotices,
-    // The running app's version, injected like every other host fact. A
-    // getter-free constant is enough: the app cannot upgrade itself
-    // mid-process, so the value a seat is compared against is fixed for the
-    // life of this manager by construction.
     appVersion,
     diagSummary,
     diagWarning,
@@ -475,8 +410,6 @@ function createSessionManager(deps) {
     fencedLines,
     looksLikeIntent,
     memoryStore,
-    // Recall fallback for ids the agent's own store does not hold; absent, the
-    // common half of the hint corpus is simply not recallable.
     commonMemoryRecall,
     memoryLoad,
     hintArm,
@@ -558,9 +491,6 @@ function createSessionManager(deps) {
   };
   const selectionArm = selectionArmDep || NO_SELECTION_ARM;
 
-  // Same shape and same reason as NO_SELECTION_ARM above: a host that built no
-  // drawer service must still answer the agent, because the alternative is an
-  // exec that does nothing and reports nothing.
   const termExec = termExecDep
     || (() => ({ ok: false, error: 'terminal tabs are not available on this host' }));
 
@@ -647,10 +577,6 @@ function createSessionManager(deps) {
     }
 
 
-    // Split out of _ensureWire so the durability of the totals write is reachable
-    // without a listening proxy: _ensureWire awaits wire.listen(), which binds a
-    // real port, and that is the only reason this pair is not inline.
-    //
     // The write goes through atomicWriteFileSync, not fs.writeFileSync. This is
     // all-time per-session cost history rewritten IN FULL on wire-telemetry's 1s
     // debounce, and the read side above swallows a parse error by design — so a
@@ -715,8 +641,7 @@ function createSessionManager(deps) {
       // cannot: a 429 carries no ratelimit headers from ANY provider, so the
       // store's 429 branch is reached on status alone and would file a codex
       // refusal against the Claude org — turning the chip loud for a plan that
-      // was never refused. This wire is multi-provider; the Python reference
-      // called note() only from the anthropic receipt path.
+      // was never refused. This wire is multi-provider.
       wire.on('response', (ev) => {
         if (!ev || !ev.headers) return;
         if (ev.provider !== 'anthropic') return;
@@ -865,15 +790,6 @@ function createSessionManager(deps) {
               const fired = new Set();
               for (const intent of this._extractIntents(text)) {
                 const bkey = shadowIntentKey(ev.agent, intent);
-                // No exec exemption here, unlike the wire loop above, and adding
-                // one would be INERT rather than wrong: it would only hand the
-                // second exec to IntentDeduper.claim, which rejects
-                // recovery-after-recovery unconditionally (a replay tail repeats
-                // every poll). The exemption did arrive by drift (one of two
-                // adjacent guards was edited), but the EFFECT is not drift —
-                // claim ALLOWS wire-after-wire, so on the wire side this Set is
-                // the only intra-turn dedup and the exemption there is
-                // load-bearing.
                 if (fired.has(bkey)) {
                   log.warn('intent', `intra-turn dup ${intent.type} ${ev.agent} — swallowed`);
                   continue;
@@ -902,10 +818,7 @@ function createSessionManager(deps) {
       return wire;
     }
 
-    // Observer-grade sink for every wire record. Retention (the type split, the
-    // 14-day bulk window, the size backstop) lives in wire/shadow-log.js; this
-    // stays a one-line hand-off so the hot-path guarantee is visible at the
-    // call site. Lazily built because REGISTRY_DIR resolves post-whenReady.
+    // Lazily built because REGISTRY_DIR resolves post-whenReady.
     _shadowLog(rec) {
       try {
         if (!this._shadowSink) {
