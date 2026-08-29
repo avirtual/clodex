@@ -3338,10 +3338,9 @@ function createTicketMethods(deps, shared) {
     },
 
     // Every open ticket resolving to `seatName`, oldest first — advance takes the
-    // head, replay takes the whole list. ONE resolver on purpose: a second copy of
-    // the role-or-name match would let advance and replay disagree about which
-    // tickets are a seat's, and the disagreement would be invisible (each would
-    // look right in isolation).
+    // head, replay takes the whole list. ONE resolver on purpose: a second copy
+    // of the role-or-name match would let advance and replay disagree about which
+    // tickets are a seat's, invisibly.
     // Order is FIFO by openedAt, ties broken by numeric id — array order is not
     // deterministic for two tickets minted in the same ms.
     // Backlog (`assignee == null`) is excluded here, so it can never be replayed
@@ -3353,10 +3352,9 @@ function createTicketMethods(deps, shared) {
     // would make dispatch order depend on it.
     // The degraded pin (a dead seat's ticket falling back to its role) is NOT a
     // second clause here: it is `_ticketAssigneeSeat`'s, and this asks that
-    // resolver rather than re-deriving liveness. A copy of the rule here could
-    // disagree with the one delivery uses, and the disagreement is invisible —
-    // this would list a ticket the delivery then refuses, and `_advanceSeat`
-    // would report a hand-off that never happened.
+    // resolver rather than re-deriving liveness — a copy could list a ticket the
+    // delivery then refuses, and `_advanceSeat` would report a hand-off that
+    // never happened.
     // `ticketStarted` is the third exclusion, alongside backlog and parked, and it
     // is here rather than in the badge filters on purpose. Both callers DISPATCH
     // what this returns — advance pushes the head at a seat that just closed one,
