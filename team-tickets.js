@@ -1,49 +1,24 @@
-// team-tickets.js — the teams/tickets half of SessionManager: ticket board
-// verbs, seat shaping/spawn, spec delivery, review/verdict/auto-merge, the
-// ticket loop + suite, watchdog/stall sweep, team role editing, retire.
+// createSessionManager grafts these methods onto SessionManager.prototype, so
+// every one runs with `this` = the manager instance. Two consequences decide
+// how to change code here:
 //
-// ─── GRAFT CONTRACT ─────────────────────────────────────────────────────────
-//
-// This module returns METHODS, not an API. createSessionManager grafts them
-// onto SessionManager.prototype, so every one of them runs with `this` = the
-// manager instance and NOT with `this` = anything this file constructs.
-//
-// Three consequences that decide how to change code here:
-//
-//   1. STATE LIVES ON THE INSTANCE, never in this module. `this._ticketWatch`,
-//      `this._stallProbing`, `this.sessions` and the per-session latches are
-//      the manager's; this file must not hold ticket state in a closure, which
-//      would be per-FACTORY rather than per-manager and would leak across two
+//   1. Ticket state lives on the instance, never in a closure in this module: a
+//      closure is per-FACTORY rather than per-manager and leaks across two
 //      managers in one process (every test file builds several).
 //
-//   2. CROSS-BOUNDARY CALLS STAY `this.<name>()`. Reaching core is
-//      `this._gatedDeliver(…)`, not an injected handle — that is what let the
-//      move be byte-identical. It also means the coupling is INVISIBLE to
-//      test/free-identifier-leaks.test.js, which scans module-scope names and
-//      can never see a prototype-chain lookup. The seam is gated instead by
-//      test/ticket-mixin-surface.test.js. Deleting a core method these bodies
-//      call is a runtime TypeError that only that gate will catch.
-//
-//   3. This is a FILE SPLIT, NOT A DECOUPLING (t380). The coupling graph after
-//      the move is the coupling graph before it. Do not read this boundary as a
-//      claim that tickets are independent of the session core; the mixin
-//      surface test's inventory is the starting spec for that work, not its
-//      result.
-//
-// Everything the methods need from the coordinator arrives through `deps` (all
-// names already destructured by createSessionManager, so engine.js is
-// unchanged) or through `shared`, which carries the two core-OWNED values the
-// cluster reads rather than constructs.
+//   2. Cross-boundary calls stay `this.<name>()`, which makes the coupling
+//      invisible to test/free-identifier-leaks.test.js — it scans module-scope
+//      names and can never see a prototype-chain lookup.
+//      test/ticket-mixin-surface.test.js gates the seam instead: deleting a core
+//      method these bodies call is a runtime TypeError only that gate catches.
 
 const { nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, ticketStarted, ticketInFlight, branchSlug } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { buildReviewScope } = require('./ticket-review-scope');
 const { projectDirFor } = require('./clodex-paths');
-// The task-dir helpers below are module-scope (exported, so suites pin the real
-// bytes rather than a copy) and so cannot reach the `path` createTicketMethods
-// takes through deps. Deliberately NOT named `path`: inside the factory that
-// name is the injected one, and shadowing it would silently swap a fixture's
-// probe for the real module.
+// Deliberately NOT named `path`: inside createTicketMethods that name is the
+// injected one, and shadowing it would swap a fixture's probe for the real
+// module.
 const nodePath = require('path');
 const {
   readTail, lastToolFrom, lastApiErrorFrom, formatStallBody, formatOrphanBody,
@@ -57,80 +32,62 @@ const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
 
 // How long a queued ticket waits for another run to release the shared lock.
-// Generous because the thing being waited for is a whole suite run, and giving
-// up early would escalate a ticket whose only fault was closing while the
-// lead's suite was running.
+// Sized to a whole suite run: giving up earlier escalates a ticket whose only
+// fault was closing while the lead's suite was running.
 const TICKET_SUITE_LOCK_WAIT_MS = 20 * 60 * 1000;
 
-// The ticket loop's suite run. The kill timer starts at SPAWN, so it covers the
-// lock wait as well as the run — which is why it is DERIVED from the wait and
-// must stay strictly greater than it. Shipped once the other way round (15m
-// kill over a 20m wait), which makes the wait unreachable dead code and reports
-// a queued run as `did not finish within 900000ms (killed)`: a wedge report for
+// The kill timer starts at SPAWN, so it covers the lock wait as well as the run
+// — which is why it is DERIVED from the wait and must stay strictly greater than
+// it. Shipped once the other way round (15m kill over a 20m wait), which makes
+// the wait unreachable and reports a queued run as `killed`: a wedge report for
 // a run that was only waiting its turn. test/test-digest-lock.test.js pins the
-// same relation for the other entry point, where the inversion cost three
-// misdiagnosed timeouts. The margin is the run itself: the suite takes ~74s
-// (measured 2026-08-19 at fe8e152), and exceeding 15m of RUNNING means a wedge,
-// not a slow suite.
+// same relation for the other entry point. The margin is the run itself: the
+// suite takes ~74s (measured 2026-08-19 at fe8e152), so exceeding 15m of RUNNING
+// means a wedge, not a slow suite.
 const TICKET_SUITE_TIMEOUT_MS = TICKET_SUITE_LOCK_WAIT_MS + 15 * 60 * 1000;
 
-// The suite-in-flight retry (t440). BOUNDED IN BOTH DIRECTIONS, and the two
-// bounds answer different questions: the attempt count bounds how often the loop
-// asks, the deadline bounds how long a ticket can sit unmerged. Either alone is
-// unsound here — attempts alone let a retry that re-enters a busy merge chain
-// stretch to hours, and a deadline alone lets a fast lock flap spin the timer
-// hundreds of times.
+// Bounded in BOTH directions, and the two bounds answer different questions: the
+// attempt count bounds how often the loop asks, the deadline bounds how long a
+// ticket can sit unmerged. Either alone is unsound — attempts alone let a retry
+// re-entering a busy merge chain stretch to hours, a deadline alone lets a fast
+// lock flap spin the timer hundreds of times.
 //
-// The numbers are sized against ONE suite run: 73s wall at master fe8e152, 74s
-// from a worktree at c1e1b8e, measured 2026-08-19 (scripts/test-digest.sh and
-// test/test-digest-lock.test.js carry the same measurement). A delay well under
-// that would burn attempts inside a single run without ever outliving it, and a
-// delay near it would usually sample the lock just as the next run takes it —
-// 30s samples a ~74s run about three times.
-// 10 attempts x 30s covers ~5 minutes of continuous contention — three
-// back-to-back suite runs — which is the realistic shape here (a hand verifying
-// its worktree takes the ROOT's lock, so a team of hands serializes through it).
-// Past that, waiting longer is unlikely to help and the escalation is the honest
-// answer — which is NOT the same as concluding the lock is wedged, and the
-// escalation deliberately does not say so. The 10-minute deadline is the one
-// that bites when the retries are themselves delayed behind other merges in the
-// chain.
+// Sized against ONE suite run: 73s wall at master fe8e152, 74s from a worktree
+// at c1e1b8e, measured 2026-08-19. A delay well under that burns attempts inside
+// a single run without outliving it; a delay near it samples the lock just as
+// the next run takes it. 10 x 30s covers ~5 minutes of continuous contention —
+// three back-to-back runs, which is the realistic shape here, since a hand
+// verifying its worktree takes the ROOT's lock and a team of hands serializes
+// through it. Past that the escalation is the honest answer, and it deliberately
+// does not conclude the lock is wedged.
 const MERGE_RETRY_DELAY_MS = 30 * 1000;
 const MERGE_RETRY_MAX_ATTEMPTS = 10;
 const MERGE_RETRY_MAX_WAIT_MS = 10 * 60 * 1000;
 
-// Cold-reviewer tool cap (Task 29a). The [agent:team-review] reviewer is SOLD as
-// independent verification against a confused lead — but team.json is
-// agent-writable, so a lead could widen its own reviewer to every tool. This
-// code-level constant is the ceiling: the reviewer's effective allowlist is the
-// INTERSECTION of this cap and any manifest `tools`. A manifest may NARROW below
-// the cap; it can never widen past it. Not an authority source — a narrowing
-// hint. (Until an operator-owned surface exists — T29 GUI may later widen
-// per-team from operator clicks.)
+// The [agent:team-review] reviewer is sold as independent verification against a
+// confused lead — but team.json is agent-writable, so a lead could widen its own
+// reviewer to every tool. This code-level constant is the ceiling: the effective
+// allowlist is the INTERSECTION of it and any manifest `tools`. A manifest may
+// NARROW below the cap; it can never widen past it.
 const REVIEWER_TOOL_CAP = ['Read', 'Grep', 'Glob'];
 
-// Cold-reviewer sessionEnv key allowlist (T52). The reviewer seat's env now comes
-// from a template (resources/library/templates/clodex-team-reviewer.json), which —
-// like team.json — is agent-writable. Env is an AUTHORITY surface (ANTHROPIC_BASE_URL,
-// proxy/credential redirects, model overrides), so a doctored template must not be
-// able to set an arbitrary key on a review seat. This code-level allowlist is the
-// ceiling: exactly the keys the SHIPPED default reviewer template uses. A template
-// env key outside this set is DROPPED LOUDLY (a note in the lead's confirm line),
-// never honored. Not an authority source — same posture as REVIEWER_TOOL_CAP.
-// CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS is admitted on a different footing
-// from its four neighbours, and the distinction is the one that keeps this list
-// a ceiling: the others turn a Clodex mechanism off, this one is a RESOURCE
-// knob. Its worst case over a doctored template is a seat that reads too much
-// or — set to garbage — cannot Read at all. Neither redirects the seat to
-// another backend, another credential or another model, which is what the list
-// exists to refuse. A key whose abuse costs context is not a key whose abuse
-// costs authority; admitting the first does not soften the refusal of the
-// second.
+// The reviewer seat's env comes from a template, which — like team.json — is
+// agent-writable, and env is an AUTHORITY surface (ANTHROPIC_BASE_URL, proxy and
+// credential redirects, model overrides). This code-level allowlist is the
+// ceiling: exactly the keys the shipped default reviewer template uses. A key
+// outside it is DROPPED LOUDLY (a note in the lead's confirm line), never
+// honored. Same posture as REVIEWER_TOOL_CAP: not an authority source.
 //
-// It must be PLAIN DIGITS. The CLI does parseInt(v, 10) and takes any result
-// > 0, so '6e4' becomes 6 and '1e6' becomes 1 — a one-token Read cap that
-// fails every read, one API roundtrip at a time, while passing the > 0 gate
-// that would otherwise reject it. test/reviewer-read-token-cap.test.js pins the
+// CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS is admitted on a different footing
+// from its four neighbours, and the distinction is what keeps this list a
+// ceiling: the others turn a Clodex mechanism off, this one is a RESOURCE knob.
+// Its worst case over a doctored template is a seat that reads too much or — set
+// to garbage — cannot Read at all. Neither redirects the seat to another
+// backend, credential or model, which is what the list exists to refuse.
+//
+// Its value must be PLAIN DIGITS. The CLI does parseInt(v, 10) and takes any
+// result > 0, so '6e4' becomes 6 — a one-token Read cap that fails every read
+// while passing the > 0 gate. test/reviewer-read-token-cap.test.js pins the
 // digits-only form against exactly that edit.
 const REVIEWER_ENV_ALLOWLIST = new Set([
   'CLAUDE_CODE_DISABLE_CLAUDE_MDS',
@@ -141,13 +98,12 @@ const REVIEWER_ENV_ALLOWLIST = new Set([
 ]);
 
 // The ONE filter for every agent-initiated env. It lived in three hand-rolled
-// copies against the same constant, so any one could be edited without the
-// others — and one of them did diverge, reporting a bad VALUE TYPE as an
-// out-of-allowlist key. Two distinct reasons, returned in separate buckets and
-// never merged by a caller: an unknown key is an authority question that needs
-// operator approval, a non-string value is a template typo that needs an edit.
-// Telling the operator to seek approval for a key they already have sends them
-// to the wrong fix.
+// copies against the same constant, and one diverged — reporting a bad VALUE
+// TYPE as an out-of-allowlist key. The two reasons are returned in separate
+// buckets and must never be merged by a caller: an unknown key is an authority
+// question that needs operator approval, a non-string value is a template typo
+// that needs an edit. Telling the operator to seek approval for a key they
+// already have sends them to the wrong fix.
 function filterTemplateEnv(rawEnv) {
   const env = {};
   const dropped = [];
@@ -168,18 +124,13 @@ function filterTemplateEnv(rawEnv) {
 // hands in a row finished good work, committed it, reported by dm, and never
 // emitted `[agent:task done <id>]` — so the ticket stayed `open` and the verify
 // loop, the reviewer spawn and the verdict never fired, with nothing to say so.
-// It cannot live only in the prompt: that prompt is a SEEDED file
-// (stores.js seedLibraryDefaults), which stops re-syncing the moment the live
-// copy diverges, so a shipped fix can sit in the repo and never reach a seat.
-// Both observed false beliefs are denied by name — one hand said it could not
-// close because `clodex-team` was not granted to it (it confused the intent
-// grammar with the exec registry; `task` is not in intent-catalog's gateable set
-// and needs no grant at all), and the dm-is-a-close case is invisible from the
-// lead's side because the report itself arrives either way.
-// The tickets-viewer plugin holds a copy it cannot require (plugin-api §4);
+// It cannot live only in the prompt: that prompt is a SEEDED file (stores.js
+// seedLibraryDefaults), which stops re-syncing the moment the live copy
+// diverges, so a shipped fix can sit in the repo and never reach a seat. The
+// tickets-viewer plugin holds a copy it cannot require (plugin-api §4);
 // test/tickets-viewer-path-parity.test.js pins the two together.
 //
-// COLUMN 1 IS THE SAFETY. This text contains a complete, ready-to-fire
+// The prefix is the safety. This text contains a complete, ready-to-fire
 // `[agent:task done <id>]`, and it is inert only because it never starts a line:
 // `CLOSE WITH: ` precedes it here and `[agent:from <sender>] ` precedes it on the
 // pointer line. IntentScanner's parse is ^-anchored, so reflowing either one to
@@ -196,10 +147,9 @@ const ticketCloseVerb = (id) => `[agent:task done ${id}]`;
 // task-dir arm while that same arm's own evidence said "reject, then re-file" —
 // two contradictory instructions two lines apart, one of which cannot terminate.
 //
-// `spec` is the class that makes this more than a message tidy-up: re-closing
-// re-reads the SAME `ticket.taskDir` and fails identically, forever. The
-// distinction is not "who is senior" but "does the recovery change the input the
-// check reads" — a hand's commit does, a re-close on an unchanged spec does not.
+// The distinction between the classes is not "who is senior" but "does the
+// recovery change the input the check reads" — a hand's commit does, a re-close
+// on an unchanged spec does not.
 const HOLD_RECOVERY = {
   // Class (a): the branch is wrong and the seat that owns it can fix it.
   hand: (id) => `Fix what the check named, then close the ticket again — ${ticketCloseVerb(id)} <your report>. `
@@ -208,17 +158,16 @@ const HOLD_RECOVERY = {
   // the check reads has to change first.
   //
   // The board's editSpec is named FIRST because it is the only route that needs
-  // no lifecycle change at all: it is state-agnostic by construction ("correcting
-  // the record of a closed ticket is not a lifecycle change") and it re-derives
-  // `taskDir` from the new text, which is exactly the field the check re-reads.
-  // So the ticket stays `done`, stays held, and the re-close then terminates.
+  // no lifecycle change at all: it is state-agnostic by construction and
+  // re-derives `taskDir` from the new text, which is exactly the field the check
+  // re-reads. So the ticket stays `done`, stays held, and the re-close then
+  // terminates.
   //
-  // DELIBERATELY does not prescribe reject+respec, though that also works. Two
-  // reasons, and the second is pinned: it counts a rework round for a defect in
-  // the SPEC, which the hand did not write — the same misattribution this ticket
-  // removes, one step out — and `ticket-loop-verify.test.js`'s refused-task-dir
-  // subject asserts this arm must NOT tell the reader to re-file, because the
-  // path was named and merely wrong. Correcting it is an edit, not a re-filing.
+  // DELIBERATELY does not prescribe reject+respec, though that also works: it
+  // counts a rework round for a defect in the SPEC, which the hand did not write,
+  // and `ticket-loop-verify.test.js`'s refused-task-dir subject asserts this arm
+  // must NOT tell the reader to re-file. Correcting a path that was named and
+  // merely wrong is an edit, not a re-filing.
   spec: (id) => `Re-closing alone will NOT help: the check re-reads the same spec and fails identically. `
     + `Correct the spec's \`tasks/…\` line first — the spec is editable on the board in any state, and the ticket stays held while you do it — `
     + `then ${ticketCloseVerb(id)} <your report> to re-run the checks from here.`,
@@ -236,23 +185,19 @@ const holdRecoveryText = (cls, id) => (HOLD_RECOVERY[cls] || HOLD_RECOVERY.hand)
 // Deliberately NOT shared with two neighbours that read like copies of it:
 //   - `_notifyHandOfHold`'s is second person ("YOUR worktree … THIS seat"), and
 //     the person is the message — a held seat is asking about its own tree.
-//   - `_notifyMergeLanded`'s states the opposite tense: not "nothing was torn
-//     down and nothing will be", but "not yet, and here is the verb that will".
-//     It also ends with a ready-to-fire `[agent:task accept <id>]`, inert ONLY
-//     because prose precedes it on its line — IntentScanner is ^-anchored, so a
-//     reflow moving it to column 1 makes the LEAD auto-accept on receipt and
-//     destroy a worktree. Rendering it through a shared helper puts that line's
-//     column at a caller's mercy. Pinned by ticket-auto-merge.test.js.
+//   - `_notifyMergeLanded`'s states the opposite tense, and ends with a
+//     ready-to-fire `[agent:task accept <id>]` that is inert ONLY because prose
+//     precedes it on its line. Rendering it through a shared helper puts that
+//     line's column at a caller's mercy. Pinned by ticket-auto-merge.test.js.
 const NOTHING_TORN_DOWN = 'Nothing was torn down — the worktree, the branch and the seat are exactly as they were.';
 const ticketCloseLine = (id) => `CLOSE WITH: ${ticketCloseVerb(id)} <your report> — one intent, at the end: it delivers the report to the lead AND marks the ticket done. `
   + `It is a line you emit yourself, like any [agent:…] intent — NOT an exec command, and nothing needs to be granted for it. `
   + `A dm carrying your report does NOT close the ticket: the ticket stays open, and everything downstream of the close (tree verify, review) never runs.\n`;
 // The pointer shapes the clause below is ABOUT. A `~`- or `/`-prefixed pointer
-// already means to an agent what it means here, so it earns no prose. The gate
-// lives HERE, beside the wording, rather than at each call site: both helpers
-// below are exported, and a caller that gated on the raw string being merely
-// present would emit prose asserting an absolute path "is relative to the
-// PROJECT'S ARTIFACT DIR".
+// already means to an agent what it means here. The gate lives HERE, beside the
+// wording, rather than at each call site: both helpers below are exported, and a
+// caller that gated on the raw string being merely present would emit prose
+// asserting an absolute path "is relative to the PROJECT'S ARTIFACT DIR".
 const taskDirRelative = (raw) => !!raw && !raw.startsWith('~') && !nodePath.isAbsolute(raw);
 
 // The rule a RELATIVE pointer needs and an already-placed one does not. Split
@@ -260,19 +205,18 @@ const taskDirRelative = (raw) => !!raw && !raw.startsWith('~') && !nodePath.isAb
 // dispatch and the reviewer's scope — frame the path differently but must state
 // the rule identically; a second wording is the divergence in new clothes.
 //
-// Three things in one clause, because each alone leaves a live failure:
-// where the path resolves (an agent resolves it against cwd, and the repo has a
+// Three things in one clause, because each alone leaves a live failure: where
+// the path resolves (an agent resolves it against cwd, and the repo has a
 // same-named decoy), that it names the DIRECTORY of a pointer that usually ends
 // in a file, and that it may not exist yet — a hand that found it absent
-// reported it missing and worked without it, which is the whole ticket.
+// reported it missing and worked without one.
 //
 // FACT ONLY, no imperative: this clause is what the reviewer's scope carries,
-// and that seat is read-only by construction (REVIEWER_TOOL_CAP has no write
-// tool, its scope forbids editing the tree). "So create it" belongs to the
+// and that seat is read-only by construction. "So create it" belongs to the
 // dispatch alone — see taskDirCreateClause — and folding it back in here hands a
 // read-only seat an instruction it cannot follow. What must NOT be answered by
-// splitting the WORDING is the half that both seats need: the absence proving
-// nothing is exactly the part a reviewer has to know.
+// splitting the WORDING is the half both seats need: the absence proving nothing
+// is exactly the part a reviewer has to know.
 const taskDirRuleClause = (raw) => (taskDirRelative(raw)
   ? ` — the spec's \`${raw}\` is relative to the PROJECT'S ARTIFACT DIR, `
     + `not to your cwd, and a same-named directory inside the repo is NOT it. `
@@ -308,22 +252,21 @@ const REVIEWER_FALLBACK = {
   },
 };
 
-// The review path refuses a template's extraArgs wholesale (an agent-writable
+// The review path refuses a template's extraArgs wholesale — an agent-writable
 // array of raw CLI argv reaching a seat whose premise is a hard tool cap:
 // --allowedTools, --mcp-config and --dangerously-skip-permissions all ride
-// there, and REVIEWER_TOOL_CAP screens none of them). `--model` is the single
+// there, and REVIEWER_TOOL_CAP screens none of them. `--model` is the single
 // carve-out: it grants no authority — tools, posture and env each have their own
 // ceiling above — so honoring it cannot widen the seat, and refusing it made
-// every reviewer spawn as the default model however it was configured.
-// Returns { args, refused }. `args` is [] when the template names no usable
-// model, so the caller appends nothing. An ALLOWLIST by construction: the value
-// is rebuilt from the parsed model, never passed through from the template's
-// array, so no neighbouring token can ride along with it.
+// every reviewer spawn as the default model however it was configured. An
+// ALLOWLIST by construction: the value is rebuilt from the parsed model, never
+// passed through from the template's array, so no neighbouring token can ride
+// along with it.
 //
 // `refused` carries the offending spec when a --model was PRESENT but not
-// honored, and it is not decoration: a silent refusal reproduces this function's
-// own bug one layer in — the operator configured a model, did not get it, and
-// nothing said so. The caller must surface it.
+// honored, and the caller must surface it: a silent refusal reproduces this
+// function's own bug one layer in — the operator configured a model, did not get
+// it, and nothing said so.
 function reviewerModelArgs(extraArgs) {
   const a = Array.isArray(extraArgs) ? extraArgs : [];
   // A model NAME never begins with '-'. Refusing one that does keeps this
@@ -335,10 +278,10 @@ function reviewerModelArgs(extraArgs) {
   for (let i = 0; i < a.length; i++) {
     const tok = a[i];
     if (typeof tok !== 'string') continue;
-    // The FIRST model token decides, valid or not — it is not "the first
-    // VALID one". A later well-formed --model does NOT rescue an earlier
-    // refused one, because a last-wins CLI would then have honored the
-    // earlier token this function rejected.
+    // The FIRST model token decides, valid or not — it is not "the first VALID
+    // one". A later well-formed --model does NOT rescue an earlier refused one,
+    // because a last-wins CLI would then have honored the earlier token this
+    // function rejected.
     if (tok === '--model' || tok === '-m') {
       // A trailing flag with no value is dropped entirely rather than emitted
       // bare — a bare --model would consume whatever argv token followed it.
@@ -360,7 +303,7 @@ const TICKET_STALL_MS = 30 * 60 * 1000;
 // alarm. Baseline sweep + confirm sweep + jitter is 2-3 minutes; this bounds it,
 // so a probe stuck at `unknown` alarms rather than deferring forever. The
 // deferral becoming silent alarm DELETION is the failure class this file has
-// been burned by three times (MIN_GAP_MS, the wedged-confirm clear, t376).
+// been burned by three times.
 const WAKE_GRACE_MS = 5 * 60 * 1000;
 
 // The branch an accepted ticket lands on. A literal, matching what
@@ -381,11 +324,11 @@ function humanizeAge(ms) {
   return `${Math.round(h / 24)}d`;
 }
 
-// The filter vocabulary for [agent:task list [filter]]. The three real states a
-// ticket is ever written with, plus `all`. Deliberately NOT `rejected`: reject
-// reopens a ticket (_taskReject sets state 'open'), so a rejected filter would
-// always answer none and be misread as "nothing was rejected".
-// Mirrored in scripts/clodex-team.js (the exec listing) — see _taskList.
+// The filter vocabulary for [agent:task list [filter]]. Deliberately NOT
+// `rejected`: reject reopens a ticket (_taskReject sets state 'open'), so a
+// rejected filter would always answer none and be misread as "nothing was
+// rejected". Mirrored in scripts/clodex-team.js (the exec listing) — see
+// _taskList.
 const TICKET_FILTERS = ['open', 'done', 'cancelled', 'all'];
 
 const RECENT_DONE_MS = 24 * 60 * 60 * 1000;
@@ -411,9 +354,6 @@ function createTicketMethods(deps, shared) {
     path,
     pathFor,
     getPersistence,
-    // whenReady-assigned in engine.js, so it crosses as a lazy getter like the
-    // others here. Used by _cancelTicketReminders to drop the reminders bound to
-    // a ticket that just closed.
     getRemindScheduler,
     getTemplates,
     getUserDataPath,
@@ -423,46 +363,40 @@ function createTicketMethods(deps, shared) {
     withoutPrivilegedIntentsFor,
   } = deps;
   const {
-    // ticketsStore is constructed ONCE, by createSessionManager, and borrowed
-    // here. Constructing a second instance would work (it is fs-backed) and
-    // would still be wrong: core's list() badge and these verbs must agree
-    // about cache and ordering, and two stores are free to disagree silently.
+    // Constructed ONCE, by createSessionManager, and borrowed here. A second
+    // instance would work and would still be wrong: core's list() badge and
+    // these verbs must agree about cache and ordering, and two stores are free
+    // to disagree silently.
     ticketsStore,
-    // Module-scope in session-manager.js, used by core's create() AND by
-    // _taskAssign, AND exported (ipc-handlers imports it). Passed in rather
-    // than moved so the export keeps its home and no require cycle is created.
+    // Passed in rather than moved so its export keeps its home and no require
+    // cycle is created.
     nameConflict,
-    // Derived core-side (session-manager.js, beside BOOT_DRAIN_SETTLE_MS) and
-    // borrowed here. It measures how long an injected unit has to produce a turn
-    // edge — inject/activity plumbing, not ticket lifecycle — and the dm latch
-    // core-side is its third borrower. Re-deriving it from `deps.specConfirmMs`
-    // here as well would put the same default in two files.
+    // Derived core-side and borrowed here. It measures how long an injected unit
+    // has to produce a turn edge — inject/activity plumbing, not ticket lifecycle
+    // — and re-deriving it here would put the same default in two files.
     SPEC_CONFIRM_MS,
   } = shared;
 
-  // How long a wake has to produce a turn before rung 3 fires. Aliased to the
-  // spec latch's window rather than re-derived: both measure "a write was made
-  // and no turn followed", and two numbers for one question drift.
-  //
-  // The first rung-3 alarm fires no later than `stallMs + WAKE_GRACE_MS +
-  // WAKE_CONFIRM_MS`. The confirm term cannot be gated away — a wake fired just
-  // inside the grace window still opens a full take-window behind it.
+  // Aliased to the spec latch's window rather than re-derived: both measure "a
+  // write was made and no turn followed", and two numbers for one question
+  // drift. The confirm term cannot be gated away — a wake fired just inside the
+  // grace window still opens a full take-window behind it.
   const WAKE_CONFIRM_MS = SPEC_CONFIRM_MS;
 
   // Injectable ONLY so the kill arm is reachable from a test. Without a seam no
-  // subject can pin "a runner that never exits is SIGKILLed and ESCALATES,
-  // never rejects" — an arm that decides a ticket's fate and would otherwise
-  // ship green while measuring nothing.
+  // subject can pin "a runner that never exits is SIGKILLed and ESCALATES, never
+  // rejects" — an arm that decides a ticket's fate would otherwise ship green
+  // while measuring nothing.
   const TICKET_SUITE_TIMEOUT = Number.isFinite(deps.ticketSuiteTimeoutMs)
     ? deps.ticketSuiteTimeoutMs : TICKET_SUITE_TIMEOUT_MS;
 
   return {
     // The three-marker filter is the safety argument, and it is an IDENTITY read
-    // off the record — no stat, no filesystem. Do not copy this shape into a sweep
-    // keyed on a recorded path being missing: an unmounted volume and a moved repo
-    // read identically to a deleted tree, and dropping records on that signal is
-    // the pre-v0.5.3 "upgrade kills my agents" bug. Stale `worktree` pointers are
-    // expected and deliberately unswept — docs/sessions.md §5 has the trace.
+    // off the record — no stat, no filesystem. Do not copy this shape into a
+    // sweep keyed on a recorded path being missing: an unmounted volume and a
+    // moved repo read identically to a deleted tree, and dropping records on that
+    // signal is the pre-v0.5.3 "upgrade kills my agents" bug. Stale `worktree`
+    // pointers are expected and deliberately unswept — docs/sessions.md §5.
     sweepReviewerGraveyard() {
       const swept = [];
       const corpses = getPersistence().list()
@@ -550,11 +484,10 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const cwd = path.resolve(expandedCwd.value.replace(/^~(?=$|\/)/, os.homedir()));
-      // `worktree:<branch>` spawns the seat in its own `git worktree` on that
-      // branch, off the repo containing cwd. The branch name is validated inside
-      // createWorktree (it reaches git argv), so this only rejects the empty form
-      // — a bare `worktree:` that parsed to nothing must not spawn a NORMAL seat
-      // silently, which is the isolation the caller asked for going missing.
+      // The branch name is validated inside createWorktree (it reaches git argv),
+      // so this only rejects the empty form — a bare `worktree:` that parsed to
+      // nothing must not spawn a NORMAL seat silently, which is the isolation the
+      // caller asked for going missing.
       const branch = (intent.worktree || '').trim() || null;
       if (intent.worktree != null && !branch) {
         reply('error: worktree: needs a branch name — [agent:spawn name:X cwd:Y worktree:<branch>]');
@@ -577,14 +510,6 @@ function createTicketMethods(deps, shared) {
       const injectSkills = (tpl && tpl.injectSkills) || [];
       const systemPromptFile = (tpl && tpl.systemPromptFile) || null;
       const appendPromptFiles = (tpl && tpl.appendPromptFiles) || [];
-      // A template's `env` was read ONLY on the cold-reviewer path, so an
-      // agent-initiated spawn silently dropped it — a seat whose whole point was
-      // CLODEX_DISABLE_IPC_PROMPT booted with the full protocol prompt anyway,
-      // and nothing said so. Honored here through the SAME filter the reviewer and
-      // ticket paths use, not a copy of it: env is an authority surface (base-url,
-      // credential and model redirects) and a template is agent-writable, so this
-      // stays a fixed code-level ceiling. Keys outside it are dropped and named in
-      // the reply, because a silently ignored env key is the bug being fixed.
       const { sessionEnv, dropped: envDropped, badType: envBadType } = filterTemplateEnv(tpl && tpl.env);
 
       setImmediate(async () => {
@@ -723,14 +648,10 @@ function createTicketMethods(deps, shared) {
       //
       // What it closes: `task done` stamps `loopStep: 'verify'` and the ticket stays
       // there until the loop's own reviewer is minted at _setLoopStep(…, 'review').
-      // That is NOT the 74-81s spawn latency measured after the suite — the suite
-      // await ahead of it is MINUTES (see its own comment), so the blind window is
-      // a whole suite run. In it the ticket LOOKS unreviewed and is not, so a bare
+      // The suite await ahead of that is MINUTES, so the blind window is a whole
+      // suite run. In it the ticket LOOKS unreviewed and is not, so a bare
       // `[agent:team-review]` spawns a second, unattached reviewer whose verdict
       // lands nowhere.
-      //
-      // Only `verify`. A `review` ticket already HAS its seat on the roster, so a
-      // bare call there is visibly redundant; `verify` is the blind window.
       //
       // Fails OPEN on an unreadable board: team-review is the documented escape
       // hatch for when the loop CANNOT spawn a reviewer, so refusing it on a board
@@ -791,9 +712,6 @@ function createTicketMethods(deps, shared) {
       const promptEscapeWarn = shape.promptEscaped
         ? ` — NOTE: reviewer systemPromptFile "${shape.promptEscaped}" contains a path separator or "..", which could escape library/prompts/system; ignored, using the built-in default "${REVIEWER_FALLBACK.systemPromptFile}"`
         : '';
-      // Two reasons, never merged: an unknown key is an authority question, a
-      // non-string value is a template typo. Telling the operator to seek
-      // approval for a key that is already allowed sends them to the wrong fix.
       const envWarn = (shape.envDropped.length
         ? ` — reviewer template env keys [${shape.envDropped.join(', ')}] are outside the allowed set [${[...REVIEWER_ENV_ALLOWLIST].join(', ')}] — dropped (env is an authority surface; requires operator approval)`
         : '')
@@ -823,8 +741,6 @@ function createTicketMethods(deps, shared) {
       // name-mint loop below: that loop's synchronous upsert IS the reservation, so
       // bailing after it burns a reviewer name permanently. Both report via reply(),
       // not throw, for the same reason as the resolveSeatShape catch above.
-      // They are disjoint by construction — malformed carries requestedTools: null —
-      // so the order between them cannot change which message fires.
 
       // A wrong TYPE is a syntax error to fix, and telling an author to add cap
       // members to a string sends them to the wrong edit — hence its own message.
@@ -850,8 +766,7 @@ function createTicketMethods(deps, shared) {
       // _writeTicketDiff adds one to and _landVerdictOnTicket stamps — and NOT
       // off the mint index below. kill() removes the seat's record when a
       // reviewer retires, so the index restarts at 1 for round 2; anything
-      // derived from it renumbers round 2 as round 1. Measured on t332: REWORK
-      // then ACCEPT, both billed to review-r1.
+      // derived from it renumbers round 2 as round 1.
       //
       // A taken scoped name falls back to the counter rather than refusing: the
       // loop has no way to act on a refusal here, and a second reviewer for a
@@ -861,14 +776,13 @@ function createTicketMethods(deps, shared) {
       // The name is unique per (ticket, ROUND), not per review. A verdict that
       // fails to parse leaves _landVerdictOnTicket's counter unbumped while
       // kill() still reaps the record, so a re-review of that ticket mints the
-      // same name and the same cost label a second time. Narrower than the
-      // collapse above — two reviews of ONE round, not two rounds merged — and
-      // bumping at spawn would trade it for a round number that counts spawns
-      // rather than verdicts, which is the number the loop's rework ladder reads.
+      // same name and the same cost label a second time. Bumping at spawn would
+      // trade that for a round number counting spawns rather than verdicts, which
+      // is the number the loop's rework ladder reads.
       const roundTicket = reviewTicket ? this._loadTicket(team, reviewTicket) : null;
       // _loadTicket returns null for a missing ticket AND for an unreadable
       // board. Silent, that degrades a ticket review to the counter name and to
-      // `reviewRound = n - 1` — the exact t332 round collapse this mint exists to
+      // `reviewRound = n - 1` — the round collapse this mint exists to
       // prevent, reintroduced with no signal. Logged so it is auditable.
       if (reviewTicket && !roundTicket) {
         log.warn('intent', `team-review for ticket ${reviewTicket}: ticket not readable from the board — falling back to the counter name and a seat-index round (rounds may collapse in the cost rollup)`);
@@ -1102,11 +1016,9 @@ function createTicketMethods(deps, shared) {
     // lead that does not know a review finished is a lead not merging it.
     //
     // Summary rather than fall-through, against the measured alternative: one
-    // real verdict was 15839 bytes, and posting that to the inbox on every
-    // review is the flooding the record/dm split was built to prevent. The
-    // fields here are the ones the lead acts on — which ticket, which way it
-    // went, which round, and whether there is work to hand back — and they are
-    // exactly what a truncated dump of the record hides, since `verdict` sits
+    // real verdict was 15839 bytes, and posting that to the inbox on every review
+    // is the flooding the record/dm split was built to prevent. The fields here
+    // are exactly what a truncated dump of the record hides, since `verdict` sits
     // after a multi-KB `report`.
     //
     // Called AFTER _landVerdictOnTicket has returned, i.e. after the save: a
@@ -1146,10 +1058,6 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    // An ACCEPT lands the branch on master. The edge the loop used to stop dead
-    // at: dispatch, verify, review and reject all ran themselves, and every
-    // accept then cost the lead six manual steps.
-    //
     // EVERY failure arm escalates through _escalateTicket — the loop's existing
     // single channel to the lead, deliberately not a second one — and every one
     // of them leaves the tree, the branch and the seat exactly as they were.
@@ -1157,9 +1065,9 @@ function createTicketMethods(deps, shared) {
     // What this does NOT do, and must not: `task accept`. That retires the seat
     // and destroys the worktree, which is the lead's call after reading the
     // verdict; a merge is recoverable by a revert, a destroyed worktree is not.
-    // It also does not touch CHANGELOG.md — that file conflicts across every
-    // live branch, so it stays the lead's, and the notification says an entry is
-    // owed instead.
+    // It also does not touch CHANGELOG.md — that file conflicts across every live
+    // branch, so it stays the lead's, and the notification says an entry is owed.
+    //
     // ONE merge at a time, process-wide, chained rather than fired.
     //
     // Every step of a merge writes the shared root checkout, and the suite in
@@ -1197,11 +1105,9 @@ function createTicketMethods(deps, shared) {
       return this._mergeChain;
     },
 
-    // The suite-in-flight retry's two seams, as methods so a test can replace
-    // them without a real timer and without real seconds. Kept separate because
-    // they answer different questions and a test usually wants only one of them:
-    // _mergeRetryNow is the clock the DEADLINE is measured against,
-    // _scheduleMergeRetry is the delay between attempts.
+    // Seams so a test can replace them without a real timer and without real
+    // seconds. Separate because a test usually wants only one: _mergeRetryNow is
+    // the clock the DEADLINE is measured against, _scheduleMergeRetry the delay.
     _mergeRetryNow() { return Date.now(); },
 
     // unref'd for the same reason the spec-confirm and review-start timers are:
@@ -1215,9 +1121,8 @@ function createTicketMethods(deps, shared) {
 
     // The pid holding the root checkout's suite lock, or null. Reads the same
     // `<lock>/pid` file scripts/run-tests.js writes, and treats a lock naming a
-    // DEAD pid as absent for the same reason the runner reclaims it: a killed
-    // run never cleans up, and refusing every merge forever afterwards would be
-    // a wedge with no way out.
+    // DEAD pid as absent for the same reason the runner reclaims it: a killed run
+    // never cleans up, and refusing every merge afterwards is a wedge with no way out.
     //
     // The catch covers ONLY the read — an absent lock dir is the normal case and
     // means nobody holds it. The liveness probe stays OUTSIDE it: a throw there
@@ -1259,10 +1164,8 @@ function createTicketMethods(deps, shared) {
     // Why it needs one at all: by the time a merge runs, _landVerdictOnTicket has
     // already deleted `loopStep`, so ticketInFlight is false and the stall sweep
     // never looks at this ticket again. A deferred merge holds its entire retry
-    // state in ONE unref'd setTimeout closure for up to ten minutes — a crash or
-    // an [agent:reboot] in that window drops the merge with nothing on the record
-    // and no DM, which is strictly worse than the terminal refusal this replaced,
-    // since that one at least stamped and escalated.
+    // state in ONE unref'd setTimeout closure for up to ten minutes — a crash in
+    // that window drops the merge with nothing on the record and no DM.
     //
     // Why a SEPARATE field: mergeError reads as "this ticket needs a human". A
     // ticket waiting its turn does not, and stamping it there would send the lead
@@ -1300,13 +1203,6 @@ function createTicketMethods(deps, shared) {
       // exactly the kind this field was added to prevent. Clearing at each exit
       // is a rule someone must re-apply to every arm added later; a finally is
       // the same rule enforced by control flow.
-      //
-      // Costs one ticketsStore load per merge, and no save unless the field is
-      // actually there — _stampMergeWaiting returns early when it is absent.
-      //
-      // Attached to the EXISTING try/catch below rather than an outer one: the
-      // whole body already runs inside it, so this needs no new block and no
-      // reindent of 300 lines whose template literals are byte-sensitive.
       let deferred = false;
       const fail = (step, evidence, tried) => {
         // Stamped BEFORE the DM, because the DM is the arm that can fail. An
@@ -1333,63 +1229,20 @@ function createTicketMethods(deps, shared) {
         // ticket out ends the merge the loop was told to perform. `state` cannot
         // see this: accept leaves it at `done`, so the gate above passes and a
         // deferred retry walks into a teardown that already happened — the
-        // worktree removed, the branch deleted, `ticket.worktree` never cleared
-        // (only `_spawnTicketSeat`'s rollback deletes it). STEP 2 then asks git
-        // about a ref that is gone, takes `fail()`, and stamps MERGE FAILED back
-        // onto the row the accept just cleared.
+        // worktree removed, the branch deleted, `ticket.worktree` never cleared.
+        // STEP 2 then asks git about a ref that is gone, takes `fail()`, and
+        // stamps MERGE FAILED back onto the row the accept just cleared.
         //
         // `closedOut`, NOT `acceptedAt`: `finish()` stamps `acceptedAt` on EVERY
-        // accept arm, including the two that do NOT close out — `!m.merged`, whose
-        // reply ends "Merge it, then [agent:task accept <id>] again to clean up",
-        // and `!m.ok`, whose reply says the merge check could not run and nothing
-        // was removed. On both the merge is still genuinely owed and a retry that
-        // lands it is the wanted outcome. Inviting a second accept is NOT the
-        // distinction — the veto and the dirty downgrade invite one and close out
-        // anyway. `closedOut` is passed by the CALLING arm precisely to keep that
+        // accept arm, including the two that do NOT close out, where the merge is
+        // still genuinely owed and a retry that lands it is the wanted outcome.
+        // `closedOut` is passed by the CALLING arm precisely to keep that
         // distinction.
         //
-        // The terminal arms that KEEP the branch are, by name — so a retry can
-        // still be in flight under either, for a reason of its own:
-        //
-        //   t536's MERGE FAILED veto   keeps tree and branch, closes out. It is
-        //                              reached only WITH `mergeError` set, and a
-        //                              stamp from an EARLIER merge run survives
-        //                              (cleared only by the green path or by a
-        //                              closing accept) — so a stamped ticket and
-        //                              a pending retry do coexist.
-        //   the merged arm's DIRTY     downgrade keeps the seat's worktree and
-        //                              skips `deleteBranch` entirely, and still
-        //                              closes out. No stamp is involved at all:
-        //                              defer, lead merges by hand, accept, seat
-        //                              tree dirty. It coexists trivially.
-        //
-        // Suppressing on the veto and on the dirty downgrade is right for one
-        // shared reason: each is reached only past `if (!m.merged) return`, so
-        // the branch is ALREADY an ancestor of the base that check compared
-        // against, and no merge the retry could still run would produce a
-        // commit. Such a retry would clear STEP 2 — the dirty tree is the
-        // SEAT's worktree, never `team.root` — and then die either at STEP 3's
-        // `on-master`, if the root is parked off master, or at STEP 4's
-        // `!merged.moved`. Either way with a fresh, false MERGE FAILED for a
-        // merge that had nothing to do.
-        //
         // Silent like the reopen case above it, but not for its reason: there
-        // nothing had been decided about the merge, here the lead's accept IS
-        // the decision that ends it, and where the merge had already deferred,
-        // the board carries it as waiting on the row they accepted. Logged,
-        // because a merge abandoned by an accept is worth finding when a lead
-        // asks why a branch never landed.
-        //
-        // What the silence does NOT assert is that the merge was unwanted. The
-        // merge gate at the merged arm calls `isMerged(root, branch)` with no
-        // base, so it answers about the ROOT CHECKOUT'S CURRENT BRANCH: a root
-        // parked on another branch containing this one takes that arm, deletes
-        // the ref and closes out while master never received the work. The
-        // suppression is silent because the accept has already made the merge
-        // unable to produce anything — on the teardown path the ref is gone, on
-        // the veto and dirty-downgrade arms it survives but is already an
-        // ancestor — not because the loop can show the merge is not owed. The
-        // `log.info` is the only trace, and that is what it is for.
+        // nothing had been decided about the merge, here the lead's accept IS the
+        // decision that ends it. Logged, because a merge abandoned by an accept is
+        // worth finding when a lead asks why a branch never landed.
         if (ticket.closedOut) {
           log.info('ticket', `auto-merge for ${ticketId} ABANDONED: the ticket was ACCEPTED and closed out while the merge was pending — nothing was merged`);
           return;
@@ -1603,62 +1456,32 @@ function createTicketMethods(deps, shared) {
         // RE-READ THE STATE ONE LAST TIME, and keep this the last statement
         // before the merge that can be reached across an `await`.
         //
-        // The read at the top of this function covers only the queue→start gap:
-        // a merge waiting its turn in _mergeChain, or waiting out the retry
-        // delay, re-enters and re-reads. It does NOT cover start→merge, and that
-        // window is three awaited git subprocesses wide — which is where a
-        // `task reject` was observed landing while the merge went ahead anyway,
-        // putting on master work the lead had just sent back for another round.
-        // Intent handlers are synchronous, so they can only interleave at an
-        // `await`; anything that adds one BELOW this line reopens the gap.
+        // The read at the top of this function covers only the queue→start gap.
+        // It does NOT cover start→merge, and that window is three awaited git
+        // subprocesses wide — which is where a `task reject` was observed landing
+        // while the merge went ahead anyway, putting on master work the lead had
+        // just sent back for another round. Intent handlers are synchronous, so
+        // they can only interleave at an `await`; anything that adds one BELOW
+        // this line reopens the gap. test/ticket-auto-merge.test.js pins that.
         //
-        // Fails CLOSED and silent, the same predicate and the same argument as
-        // the top read: `state !== 'done'` covers reject and cancel alike, the
-        // lead who reopened it does not need telling the loop noticed, and the
-        // merge is not lost — the next ACCEPT queues it again. Logged, because
-        // a merge abandoned this late is worth finding in the log.
+        // Fails CLOSED and silent: `state !== 'done'` covers reject and cancel
+        // alike, and the merge is not lost — the next ACCEPT queues it again.
+        // A reject landing during `mergeNoFf` or the post-merge suite is NOT
+        // closeable here; undoing that is `revert -m 1`, the lead's call.
         //
-        // What is NOT closed, and not closeable here: a reject landing during
-        // `mergeNoFf` or the post-merge suite lands on a merge already made.
-        // Undoing that is `revert -m 1`, the lead's call, not the loop's.
         // A GATE, not the record everything below reads: the merge message and
-        // the post-merge suite keep using the `ticket` snapshot on purpose. The
-        // verbs that rewrite `spec` while a merge is in flight are `_taskRespec`
-        // (gated to `state === 'open'`, so it trips this guard first) and the
-        // board's `editSpec`, which is state-agnostic by design; the latter can
-        // leave the merge subject stale relative to the board, but cannot make
-        // an abandoned merge land, since nothing below this line awaits.
+        // the post-merge suite keep using the `ticket` snapshot on purpose.
         //
-        // `closedOut` alongside `state`, and the reason it is not redundant with
-        // the top gate: an ACCEPT leaves `state` at `done`, so state alone is
-        // blind to it. An accept can interleave at any of the three git awaits
-        // this window is made of — `isMerged`, `isDirty`, `currentBranch` — and
-        // every closing arm costs something past this line, by two routes:
+        // `closedOut` alongside `state` is not redundant with the top gate: an
+        // ACCEPT leaves `state` at `done`, so state alone is blind to it, and
+        // every closing arm costs something past this line — the MERGED arm
+        // deletes the ref so the merge below names a branch that is gone, while
+        // the VETO and DIRTY arms keep it and reach `mergeNoFf` on a ref already
+        // contained in master. Both stamp a false MERGE FAILED on a closed-out row.
         //
-        //   the MERGED arm            deletes the ref, so the merge below names
-        //                             a branch that is gone and STEP 4's
-        //                             `fail('merge')` stamps MERGE FAILED on
-        //                             the closed-out row. This is the arm the
-        //                             pin drives.
-        //   the VETO arm and the      keep the branch, so the merge below reaches
-        //   DIRTY downgrade           `mergeNoFf` on a live ref already contained
-        //                             in master: git says "Already up to date",
-        //                             `ok` is true and `moved` false, and
-        //                             `!merged.moved` stamps the same false
-        //                             MERGE FAILED on the same closed-out row.
-        //
-        // The retry's lock wait is NOT in this window and needs nothing here:
-        // the defer arm returns, so control never reaches this line on that
-        // path, and a retry re-enters through `_queueAutoMerge` and meets the
-        // TOP gate. What that arm DOES need it carries itself — the same three
-        // awaits run before it too, so it re-reads at its own site before
-        // stamping. This one exists for the gates-to-merge window on either
-        // entry — sub-second, rather than the retry's ten minutes, and the same
-        // defect.
-        //
-        // A SYNCHRONOUS field read, and that is what makes it safe here: the pin
-        // below forbids any `await` in this stretch, and re-checking a condition
-        // an await could have changed is exactly what an await here would break.
+        // A SYNCHRONOUS field read, which is what makes it safe here: re-checking
+        // a condition an await could have changed is exactly what an await here
+        // would break.
         const stillDone = this._loadTicket(team, ticketId);
         if (!stillDone || stillDone.state !== 'done' || stillDone.closedOut) {
           const why = !stillDone ? 'gone'
@@ -1737,20 +1560,12 @@ function createTicketMethods(deps, shared) {
           // uses, not a second mechanism. This dump matters more than that one:
           // a red post-merge suite REVERTS master, and the revert is what makes
           // the evidence unreproducible — re-running the suite afterwards
-          // measures a tree the failure is no longer in.
+          // measures a tree the failure is no longer in. Attempted on the UNRAN
+          // arm as well, which reverts master exactly as a red one does.
           //
-          // Attempted on the UNRAN arm as well. A crashed or timed-out run
-          // reverts master exactly as a red one does, so its output is just as
-          // unreproducible — and `suite.error`, inlined in `why` above, is a
-          // 300-char last line standing in for a 64KB capture. Whether there is
-          // anything worth keeping is the writer's judgement, not this arm's: it
-          // refuses an empty capture, which is what a spawn failure carrying no
-          // streams produces.
-          //
-          // WRAPPED for the reason the verify arm is wrapped, and with more at
-          // stake: `.catch()` cannot catch a synchronous throw, and one escaping
-          // here would reach the method's catch-all — which escalates WITHOUT
-          // reverting, leaving a red master standing because the evidence
+          // WRAPPED because `.catch()` cannot catch a synchronous throw, and one
+          // escaping here would reach the method's catch-all — which escalates
+          // WITHOUT reverting, leaving a red master standing because the evidence
           // mechanism threw. Preservation must never outrank the undo.
           let kept;
           try {
@@ -1759,14 +1574,11 @@ function createTicketMethods(deps, shared) {
             kept = { ok: false, path: null, error: `the preservation threw: ${e && e.message ? e.message : String(e)}` };
             log.error('ticket', `ticket ${ticketId}: post-merge suite output could not be preserved — ${kept.error}`);
           }
-          // BOTH directions, the rule t370 r3 settled: naming the file when it
-          // exists and going silent when it does not leaves the lead — the only
-          // reader on either arm here — unable to tell "preservation failed"
-          // from "nobody thought to look".
-          // The "do not re-run" advice holds only where the revert SUCCEEDED.
-          // On the two arms that leave the merge standing, re-running really
-          // does reproduce, and those arms are exactly where the lead is acting
-          // by hand — so the clause is built per-arm rather than once.
+          // BOTH directions: naming the file when it exists and going silent when
+          // it does not leaves the lead unable to tell "preservation failed" from
+          // "nobody thought to look". The "do not re-run" advice holds only where
+          // the revert SUCCEEDED — on the arms that leave the merge standing,
+          // re-running really does reproduce, so the clause is built per-arm.
           const keptWhere = (reverted) => (kept.ok
             ? (reverted
               ? ` Full output (assertion text, diff and stack) preserved at ${kept.path} — read it instead of re-running, which would measure the reverted tree.`
@@ -1778,23 +1590,15 @@ function createTicketMethods(deps, shared) {
           // the path that reaches it is the one a live suite creates: our own run
           // waits TICKET_SUITE_LOCK_WAIT_MS for a lock the lead's exec grant is
           // holding, the runner dies, `ran` is false, and reverting here would
-          // rewrite the tree under that still-running child.
+          // rewrite the tree under that still-running child. An unverified merge
+          // on master is undone by one command the lead can run whenever they
+          // like; a torn write into a running suite costs a debugging session and
+          // reports a failure that was never in the code.
           //
-          // The asymmetry is the point. Today a red suite and a suite we were
-          // never allowed to run arrive here as the same value, and reverting
-          // treats them the same — the most destructive action available, taken
-          // on no evidence. An unverified merge on master is undone by one
-          // command the lead can run whenever they like; a torn write into a
-          // running suite costs a debugging session and reports a failure that
-          // was never in the code.
-          // The ran-TRUE case reaches here too, and it was priced rather than
-          // overlooked: our own runner releases the root lock at exit, so a
-          // ticket-B verify run spinning in run-tests.js's wait loop can take it
-          // in the sliver before this probe. That leaves a genuinely RED master
-          // standing, against the rule that red is always undone. The
-          // alternative trades it for a torn write into B's live run plus a
-          // spurious red on B, so the ruling stands — but the message below must
-          // then say RED, not merely unverified.
+          // The ran-TRUE case reaches here too and can leave a genuinely RED
+          // master standing, against the rule that red is always undone — which
+          // is why the message below must then say RED, not merely unverified.
+          //
           // Our OWN runner is not a blocker. On the timeout path it is SIGKILLed
           // and this probe runs before it is reaped, so isAlive answers true for
           // a corpse whose pid the killed runner never cleared from the lock dir
@@ -1824,12 +1628,10 @@ function createTicketMethods(deps, shared) {
         // forbids.
         this._stampMergeError(team, ticketId, null);
         // The CHANGELOG claim is MEASURED here rather than asserted in the
-        // notice. It was unconditional and wrong nine merges running (t470,
-        // t471): both branches wrote their entry in round 1, so every merge
-        // carried it and every notice still asked for one. The cost is not the
-        // noise — a lead who acts writes a duplicate entry, and a lead who
-        // learns to skip the line has been trained to skip it on the day it is
-        // true.
+        // notice. Unconditional, it was wrong nine merges running: every merge
+        // carried the entry and every notice still asked for one. A lead who acts
+        // writes a duplicate; a lead who learns to skip the line has been trained
+        // to skip it on the day it is true.
         //
         // The range is headBefore..sha — what THIS merge actually added to
         // master, not what the branch carries. The two disagree exactly when
@@ -1864,14 +1666,9 @@ function createTicketMethods(deps, shared) {
     // ships with no notes; reported as "one is owed" it retrains the lead to
     // ignore the line. Neither collapse is available from here.
     //
-    // The `^`-anchored `diff --git` header IS the detection. Every hunk body
-    // line carries a `+`, `-` or space prefix, so a file whose CONTENT quotes a
-    // diff header cannot spoof a match.
-    //
     // Whole-range diff TEXT for a one-filename question, deliberately: it is the
     // only range-diff git-worktree.js exports, and its `ok:false`-on-overflow
-    // lands in `known:false`, which is honest. A cheaper `--name-only` probe
-    // would be a new lent-or-withheld export, and that is the lead's call.
+    // lands in `known:false`, which is honest.
     async _mergeTouchedChangelog(team, base, head) {
       try {
         if (!base || !head) return { known: false, error: 'the merge did not report both ends of its range' };
@@ -1884,13 +1681,8 @@ function createTicketMethods(deps, shared) {
         // anything: a GLOBAL external driver (`GIT_EXTERNAL_DIFF`) replaces git's
         // whole output with the driver's and emits no headers. Reading that as
         // "no CHANGELOG.md here" answers touched:false on EVERY merge under such
-        // a config and reports it as a measurement — this method's own defect,
-        // arriving through the parser instead of the claim.
-        //
-        // GLOBAL is the word that matters: a PER-PATH driver (`.gitattributes`
-        // saying `CHANGELOG.md diff=x`) suppresses the header for that file while
-        // other files keep theirs, so this guard does not fire. That case is a
-        // residual, enumerated below with the others.
+        // a config and reports it as a measurement. A PER-PATH driver suppresses
+        // one file's header while others keep theirs, so this guard does not fire.
         //
         // It cannot mis-fire on a genuinely empty range: empty text means nothing
         // changed, where OWED is the correct answer, so the guard requires text
@@ -1914,26 +1706,12 @@ function createTicketMethods(deps, shared) {
         // silence. A wrong CHANGED costs a glance; a wrong "nothing to do" is a
         // release with no notes. That is the property to preserve when editing.
         //
-        // The shapes below are the ones MEASURED, not a closed set — and that
-        // wording is deliberate. This comment said "exactly one shape", then
-        // "THREE shapes", and a fourth turned up in the next round; the recurring
-        // defect is the exhaustiveness claim itself, not the count. Do not
-        // re-close the set. Observed so far:
-        //
-        //   - `diff.noprefix` + a NESTED `docs/CHANGELOG.md`: not distinguishable
-        //     FROM A PREFIXED ROOT FILE BY THIS PATTERN (the strings differ —
-        //     `docs/CHANGELOG.md docs/CHANGELOG.md` vs `a/CHANGELOG.md
-        //     b/CHANGELOG.md` — but both satisfy it). Reads as CHANGED.
-        //   - A RENAME into or out of the root file: `git mv NOTES.md
-        //     CHANGELOG.md` emits `diff --git a/NOTES.md b/CHANGELOG.md`, and the
-        //     root filename is required on BOTH sides. Reads as OWED.
-        //   - A MULTI-SEGMENT prefix (`diff.srcPrefix 'i/w/'`) emits
-        //     `diff --git i/w/CHANGELOG.md o/w/CHANGELOG.md`, which one optional
-        //     segment cannot cross. Reads as OWED.
-        //   - A PER-PATH external driver on `CHANGELOG.md` itself suppressed that
-        //     file's header while others kept theirs. Now unreachable through
-        //     `diffText`, which passes `--no-ext-diff`; listed because the guard
-        //     above still defends text arriving headerless by another route.
+        // The shapes it misreads are the ones MEASURED, not a closed set: this
+        // comment said "exactly one shape", then "THREE shapes", and a fourth
+        // turned up in the next round. Do not re-close the set. Known: a nested
+        // `docs/CHANGELOG.md` under `diff.noprefix` reads as CHANGED; a rename
+        // into or out of the root file, and a multi-segment prefix
+        // (`diff.srcPrefix 'i/w/'`), both read as OWED.
         //
         // The pattern is NOT widened to chase these: testing each side
         // independently, or allowing `[^\s]+\/`, swallows nested paths and trades
@@ -1971,11 +1749,9 @@ function createTicketMethods(deps, shared) {
       try {
         // Collapsed and capped BEFORE it reaches the array. git stderr is routinely
         // multi-line, and this body's safety property is that no line starts with
-        // `[agent:` — an invariant the hazard comment below reasons about as five
-        // lines each carrying a prose prefix. A multi-line interpolation breaks
-        // that silently. git prefixes its own diagnostics (`fatal:`, `error:`), so
-        // no real stderr is known to open a line with the bad token; this closes
-        // the class instead of re-deriving that argument each time the text moves.
+        // `[agent:` — an invariant the hazard comment above reasons about as lines
+        // each carrying a prose prefix. A multi-line interpolation breaks that
+        // silently.
         const oneLine = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, 300);
         // `touched` must be a BOOLEAN, not merely present: see the note above the
         // method — a truthy `known` over an absent measurement is the one way an
@@ -1991,16 +1767,9 @@ function createTicketMethods(deps, shared) {
             : `A CHANGELOG.md entry is OWED — the merge carried none (the merge never writes one itself: it conflicts across every live branch).`)
           // `diff --stat <sha>^1 <sha>` rather than `show --stat <sha>`: it NAMES
           // the comparison — first parent against the merge, i.e. what the merge
-          // brought to master — instead of relying on how `git
-          // show` chooses to render a merge commit, which is a presentation
-          // default rather than a stated question. Same ground as the prefix
-          // tolerance above: do not hand the lead a command whose output depends
-          // on the lead's own git config.
-          //
-          // NOT because the combined diff omits paths matching a parent. That was
-          // the suggested reason and it did NOT reproduce here (git 2.52.0):
-          // `show --stat` on a real two-parent auto-merge printed the full
-          // diffstat, byte-identical to the `diff --stat` rows.
+          // brought to master — instead of relying on how `git show` chooses to
+          // render a merge commit. Do not hand the lead a command whose output
+          // depends on the lead's own git config.
           //
           // "the check could not RUN" is HOLD_RECOVERY's infra arm verbatim, and
           // hold-recovery-single-source.test.js's phrase scan reads a shared
@@ -2066,12 +1835,9 @@ function createTicketMethods(deps, shared) {
         // always did.
         if (landedOn.verdict === 'ACCEPT') {
           // Re-resolved off the reviewer's cwd rather than threaded out of
-          // _landVerdictOnTicket: that function returns the verdict fields by
-          // contract, and widening its return to carry the team so one caller
-          // can avoid a resolve is how a narrow contract turns into a bag. A
-          // null is unreachable here (the verdict landed, so the team resolved
-          // moments ago) and is skipped rather than escalated — there would be
-          // no team to escalate to.
+          // _landVerdictOnTicket: widening that function's return to carry the
+          // team so one caller can avoid a resolve is how a narrow contract turns
+          // into a bag.
           let team = null;
           try { team = resolveTeam(session.cwd); } catch { team = null; }
           // QUEUED, not fired: see _queueAutoMerge for why two of these must
