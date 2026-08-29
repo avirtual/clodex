@@ -1063,10 +1063,6 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    // An ACCEPT lands the branch on master. The edge the loop used to stop dead
-    // at: dispatch, verify, review and reject all ran themselves, and every
-    // accept then cost the lead six manual steps.
-    //
     // EVERY failure arm escalates through _escalateTicket — the loop's existing
     // single channel to the lead, deliberately not a second one — and every one
     // of them leaves the tree, the branch and the seat exactly as they were.
@@ -1074,9 +1070,9 @@ function createTicketMethods(deps, shared) {
     // What this does NOT do, and must not: `task accept`. That retires the seat
     // and destroys the worktree, which is the lead's call after reading the
     // verdict; a merge is recoverable by a revert, a destroyed worktree is not.
-    // It also does not touch CHANGELOG.md — that file conflicts across every
-    // live branch, so it stays the lead's, and the notification says an entry is
-    // owed instead.
+    // It also does not touch CHANGELOG.md — that file conflicts across every live
+    // branch, so it stays the lead's, and the notification says an entry is owed.
+    //
     // ONE merge at a time, process-wide, chained rather than fired.
     //
     // Every step of a merge writes the shared root checkout, and the suite in
@@ -1114,11 +1110,9 @@ function createTicketMethods(deps, shared) {
       return this._mergeChain;
     },
 
-    // The suite-in-flight retry's two seams, as methods so a test can replace
-    // them without a real timer and without real seconds. Kept separate because
-    // they answer different questions and a test usually wants only one of them:
-    // _mergeRetryNow is the clock the DEADLINE is measured against,
-    // _scheduleMergeRetry is the delay between attempts.
+    // Seams so a test can replace them without a real timer and without real
+    // seconds. Separate because a test usually wants only one: _mergeRetryNow is
+    // the clock the DEADLINE is measured against, _scheduleMergeRetry the delay.
     _mergeRetryNow() { return Date.now(); },
 
     // unref'd for the same reason the spec-confirm and review-start timers are:
@@ -1132,9 +1126,8 @@ function createTicketMethods(deps, shared) {
 
     // The pid holding the root checkout's suite lock, or null. Reads the same
     // `<lock>/pid` file scripts/run-tests.js writes, and treats a lock naming a
-    // DEAD pid as absent for the same reason the runner reclaims it: a killed
-    // run never cleans up, and refusing every merge forever afterwards would be
-    // a wedge with no way out.
+    // DEAD pid as absent for the same reason the runner reclaims it: a killed run
+    // never cleans up, and refusing every merge afterwards is a wedge with no way out.
     //
     // The catch covers ONLY the read — an absent lock dir is the normal case and
     // means nobody holds it. The liveness probe stays OUTSIDE it: a throw there
@@ -1176,10 +1169,8 @@ function createTicketMethods(deps, shared) {
     // Why it needs one at all: by the time a merge runs, _landVerdictOnTicket has
     // already deleted `loopStep`, so ticketInFlight is false and the stall sweep
     // never looks at this ticket again. A deferred merge holds its entire retry
-    // state in ONE unref'd setTimeout closure for up to ten minutes — a crash or
-    // an [agent:reboot] in that window drops the merge with nothing on the record
-    // and no DM, which is strictly worse than the terminal refusal this replaced,
-    // since that one at least stamped and escalated.
+    // state in ONE unref'd setTimeout closure for up to ten minutes — a crash in
+    // that window drops the merge with nothing on the record and no DM.
     //
     // Why a SEPARATE field: mergeError reads as "this ticket needs a human". A
     // ticket waiting its turn does not, and stamping it there would send the lead
@@ -1218,12 +1209,6 @@ function createTicketMethods(deps, shared) {
       // is a rule someone must re-apply to every arm added later; a finally is
       // the same rule enforced by control flow.
       //
-      // Costs one ticketsStore load per merge, and no save unless the field is
-      // actually there — _stampMergeWaiting returns early when it is absent.
-      //
-      // Attached to the EXISTING try/catch below rather than an outer one: the
-      // whole body already runs inside it, so this needs no new block and no
-      // reindent of 300 lines whose template literals are byte-sensitive.
       let deferred = false;
       const fail = (step, evidence, tried) => {
         // Stamped BEFORE the DM, because the DM is the arm that can fail. An
@@ -1250,63 +1235,20 @@ function createTicketMethods(deps, shared) {
         // ticket out ends the merge the loop was told to perform. `state` cannot
         // see this: accept leaves it at `done`, so the gate above passes and a
         // deferred retry walks into a teardown that already happened — the
-        // worktree removed, the branch deleted, `ticket.worktree` never cleared
-        // (only `_spawnTicketSeat`'s rollback deletes it). STEP 2 then asks git
-        // about a ref that is gone, takes `fail()`, and stamps MERGE FAILED back
-        // onto the row the accept just cleared.
+        // worktree removed, the branch deleted, `ticket.worktree` never cleared.
+        // STEP 2 then asks git about a ref that is gone, takes `fail()`, and
+        // stamps MERGE FAILED back onto the row the accept just cleared.
         //
         // `closedOut`, NOT `acceptedAt`: `finish()` stamps `acceptedAt` on EVERY
-        // accept arm, including the two that do NOT close out — `!m.merged`, whose
-        // reply ends "Merge it, then [agent:task accept <id>] again to clean up",
-        // and `!m.ok`, whose reply says the merge check could not run and nothing
-        // was removed. On both the merge is still genuinely owed and a retry that
-        // lands it is the wanted outcome. Inviting a second accept is NOT the
-        // distinction — the veto and the dirty downgrade invite one and close out
-        // anyway. `closedOut` is passed by the CALLING arm precisely to keep that
+        // accept arm, including the two that do NOT close out, where the merge is
+        // still genuinely owed and a retry that lands it is the wanted outcome.
+        // `closedOut` is passed by the CALLING arm precisely to keep that
         // distinction.
         //
-        // The terminal arms that KEEP the branch are, by name — so a retry can
-        // still be in flight under either, for a reason of its own:
-        //
-        //   t536's MERGE FAILED veto   keeps tree and branch, closes out. It is
-        //                              reached only WITH `mergeError` set, and a
-        //                              stamp from an EARLIER merge run survives
-        //                              (cleared only by the green path or by a
-        //                              closing accept) — so a stamped ticket and
-        //                              a pending retry do coexist.
-        //   the merged arm's DIRTY     downgrade keeps the seat's worktree and
-        //                              skips `deleteBranch` entirely, and still
-        //                              closes out. No stamp is involved at all:
-        //                              defer, lead merges by hand, accept, seat
-        //                              tree dirty. It coexists trivially.
-        //
-        // Suppressing on the veto and on the dirty downgrade is right for one
-        // shared reason: each is reached only past `if (!m.merged) return`, so
-        // the branch is ALREADY an ancestor of the base that check compared
-        // against, and no merge the retry could still run would produce a
-        // commit. Such a retry would clear STEP 2 — the dirty tree is the
-        // SEAT's worktree, never `team.root` — and then die either at STEP 3's
-        // `on-master`, if the root is parked off master, or at STEP 4's
-        // `!merged.moved`. Either way with a fresh, false MERGE FAILED for a
-        // merge that had nothing to do.
-        //
         // Silent like the reopen case above it, but not for its reason: there
-        // nothing had been decided about the merge, here the lead's accept IS
-        // the decision that ends it, and where the merge had already deferred,
-        // the board carries it as waiting on the row they accepted. Logged,
-        // because a merge abandoned by an accept is worth finding when a lead
-        // asks why a branch never landed.
-        //
-        // What the silence does NOT assert is that the merge was unwanted. The
-        // merge gate at the merged arm calls `isMerged(root, branch)` with no
-        // base, so it answers about the ROOT CHECKOUT'S CURRENT BRANCH: a root
-        // parked on another branch containing this one takes that arm, deletes
-        // the ref and closes out while master never received the work. The
-        // suppression is silent because the accept has already made the merge
-        // unable to produce anything — on the teardown path the ref is gone, on
-        // the veto and dirty-downgrade arms it survives but is already an
-        // ancestor — not because the loop can show the merge is not owed. The
-        // `log.info` is the only trace, and that is what it is for.
+        // nothing had been decided about the merge, here the lead's accept IS the
+        // decision that ends it. Logged, because a merge abandoned by an accept is
+        // worth finding when a lead asks why a branch never landed.
         if (ticket.closedOut) {
           log.info('ticket', `auto-merge for ${ticketId} ABANDONED: the ticket was ACCEPTED and closed out while the merge was pending — nothing was merged`);
           return;
