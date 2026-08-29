@@ -1713,7 +1713,11 @@ test('t544: a closing accept clears the WAITING stamp before the retry ever wake
 // still running, past the top `closedOut` gate: that gate is followed by three
 // awaited git calls — `isMerged`, `isDirty`, `currentBranch` — and a pass
 // suspended at any of them reaches the defer arm afterwards and stamps
-// `mergeWaiting` back onto a row the accept has just cleared.
+// `mergeWaiting` back onto a row the accept has just closed out. (Closed out is
+// what the accept does to THIS row: it is the first pass, so no stamp exists yet
+// and the accept's own `delete ticket.mergeWaiting` is a no-op here. The variant
+// where the accept lands inside a RETRY pass, over a stamp an earlier pass really
+// wrote, is the same window and is not separately constructed.)
 //
 // The pre-merge re-read cannot cover it, and not for a positional reason: the
 // defer arm RETURNS, so control never reaches that read at all.
@@ -1778,15 +1782,16 @@ test('t551: an accept landing inside a pass that goes on to DEFER is not overwri
     'ENTER: by deferring, not by escalating — a fail() arm would clear the stamp via the finally for its own reason');
 
   assert.ok(!('mergeWaiting' in f.one()),
-    'the defer arm re-read the ticket and did not stamp a merge as waiting on a row the accept had just cleared');
+    'the defer arm re-read the ticket and did not stamp a merge as waiting on a row the accept had just closed out');
 
   // The retry is left armed on purpose, and that is the choice this subject
   // records: the guard skips the stamp, not the scheduling. The woken retry
   // meets the top gate and logs the merge ABANDONED, which is where that
   // decision is made.
   assert.strictEqual(await r.drain(), 1, 'the retry still runs, rather than being cancelled by the guard');
-  assert.ok(f.logs.some((l) => /ABANDONED/.test(l.msg) && /ACCEPTED and closed out/.test(l.msg)),
-    'and it is the TOP gate that ends it, named by its own message');
+  assert.ok(f.logs.some((l) => /ABANDONED: the ticket was ACCEPTED and closed out/.test(l.msg)),
+    'and it is the TOP gate that ends it, named by its own message — the merge-step '
+    + 'abandon reads "ABANDONED at the merge step: the ticket is ...", so it cannot match this');
   assert.ok(!('mergeWaiting' in f.one()), 'with nothing re-stamped by that pass either');
   assert.ok(!('mergeError' in f.one()), 'and no MERGE FAILED on a ticket the lead had finished');
 

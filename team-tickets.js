@@ -1560,15 +1560,18 @@ function createTicketMethods(deps, shared) {
             // stamping would change what the flag means — from "this pass wrote
             // the field" to "this pass reached the defer point" — and the finally
             // would then decline to clear on behalf of a write that never
-            // happened. Skipping both leaves the finally clearing a field that is
-            // already absent, which `_stampMergeWaiting` returns on before it
-            // saves.
+            // happened. What skipping both leaves the finally to clear differs by
+            // which half of the predicate declined: on a CLOSEOUT the accept has
+            // already deleted the field, so the clear returns before it saves; on
+            // a REOPEN nothing deleted it, so a stamp written by an EARLIER
+            // deferred pass may still be on the row and the clear removes it and
+            // does save — which is the invariant doing its job, not a cost.
             //
             // The retry stays SCHEDULED above either way: it re-enters through
-            // `_queueAutoMerge` and meets the top gate, which is where an
-            // abandoned merge is logged. Suppressing the scheduling here would
-            // change when the retry chain terminates, which this arm does not
-            // decide.
+            // `_queueAutoMerge` and meets the top gates — logged ABANDONED on a
+            // closeout, silent on a reopen — which is where that decision already
+            // lives. Suppressing the scheduling here would change when the retry
+            // chain terminates, which this arm does not decide.
             const stillPending = this._loadTicket(team, ticketId);
             if (stillPending && stillPending.state === 'done' && !stillPending.closedOut) {
               deferred = true;
