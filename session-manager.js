@@ -2166,8 +2166,6 @@ function createSessionManager(deps) {
     // the persistence record, and that record is the only pointer to the
     // checkout — so a caller that kills without removing the tree first orphans
     // it irrecoverably, along with whatever unmerged commits its branch carries.
-    // Team-retire did exactly that while telling the operator "state lives in
-    // its task artifact".
     //
     // NOT folded into kill() itself: the restart paths (engine.js) kill and
     // recreate the same seat, and destroying its checkout there would delete the
@@ -2179,23 +2177,16 @@ function createSessionManager(deps) {
     // A seat that has ALREADY exited still gets its record dropped here, and
     // that is this method's own drop, not kill()'s: kill() returns at `if (!s)`
     // before its `remove()`, so on a dead seat the tree went and the record
-    // naming it stayed — a record pointing at nothing, which is the "agents
-    // vanish" class in reverse. Not reachable only by mishap: the accept arm's
-    // dirty downgrade archives the seat (leaving `this.sessions`) and then
-    // invites a second accept, so the app itself routes that second accept
-    // here with the seat dead every time. Widened HERE rather than in kill()
-    // because the restart paths call kill() on purpose to recreate the same
-    // seat — but all three destroy() callers (the merged accept arm,
-    // team-retire --discard, the sidebar's Delete Session…) mean gone for good.
+    // naming it stayed — a record pointing at nothing. Widened HERE rather than
+    // in kill() because the restart paths call kill() on purpose to recreate the
+    // same seat, while all three destroy() callers mean gone for good.
     //
-    // That drop is placed PER RETURN, never once up front, and the invariant is
-    // the whole point: destroy() must not return having dropped the record while
-    // the tree it named still stands. Dropping first is the same irrecoverable
-    // orphan the header forbids, arrived at from the other side — a failed
-    // `removeWorktree` would leave a checkout on disk with nothing naming it,
-    // its path unrecoverable and its unmerged commits with it. So the two safe
-    // returns call it and the failure return deliberately does not, which keeps
-    // the property readable at each exit instead of inferred from an ordering.
+    // That drop is placed PER RETURN, never once up front: destroy() must not
+    // return having dropped the record while the tree it named still stands.
+    // Dropping first is the same irrecoverable orphan the header forbids — a
+    // failed `removeWorktree` would leave a checkout on disk with nothing naming
+    // it. So the two safe returns call it and the failure return deliberately
+    // does not.
     async destroy(name) {
       const entry = getPersistence().get(name);
       const worktree = entry && entry.worktree && entry.worktree.path ? entry.worktree : null;
@@ -2265,8 +2256,7 @@ function createSessionManager(deps) {
     // drift would show up as a permanent phantom delta (refresh bakes A, the next
     // create() bakes B, every spawn diffs them forever).
     //
-    // Deliberately NOT cached across calls, even though refreshPrompt re-resolves
-    // the whole team on every clear/compact. That re-resolution BUYS something: an
+    // Deliberately NOT cached across calls. The re-resolution BUYS something: an
     // edit to team.json or to a role prompt lands at the seat's next context reset
     // instead of waiting for a respawn. A later "optimization" that memoizes this
     // per session is trading that property for a few ms of disk reads.
@@ -2291,15 +2281,13 @@ function createSessionManager(deps) {
             const def = role ? team.roles[role] : null;
             const promptRidesAsSystem = def && def.prompt && systemPromptFile === def.prompt;
             if (def && def.prompt) {
-              // Resolved on BOTH arms, and that is the subtle part. When the prompt
-              // rides as --system-prompt-file this method appends nothing and the
-              // stem is resolved instead by resolveSystemPromptFile at prompt-build
-              // time — where a miss returns null and the seat boots with NO system
-              // prompt at all, strictly worse than unbriefed and reported by nobody.
-              // Checking only the arm that reads the file here is how that case
-              // stayed invisible. Same path both resolvers use, so one read answers
-              // for both; a present-but-empty file is NOT a miss (accessSync
-              // succeeds on it, so resolveSystemPromptFile hands it over).
+              // Resolved on BOTH arms. When the prompt rides as
+              // --system-prompt-file this method appends nothing and the stem is
+              // resolved instead by resolveSystemPromptFile at prompt-build time
+              // — where a miss returns null and the seat boots with NO system
+              // prompt at all, strictly worse than unbriefed and reported by
+              // nobody. Same path both resolvers use, so one read answers for
+              // both; a present-but-empty file is NOT a miss.
               const promptFile = path.join(REGISTRY_DIR, 'library', 'prompts', 'system', `${def.prompt}.md`);
               let rolePrompt = null;
               try { rolePrompt = fs.readFileSync(promptFile, 'utf-8'); }
@@ -2391,19 +2379,13 @@ function createSessionManager(deps) {
         // This path takes the finding too. Refresh RE-RESOLVES on every
         // clear/compact, so a prompt file deleted after the seat booted first
         // bites here: the rebake drops the role prompt and the seat comes out of
-        // its reset unbriefed, having been briefed a moment earlier. There is no
-        // reply channel at a clear, so it rides the ipc-message the refresh
-        // already broadcasts rather than gaining one — only ever emitted when
-        // resolution actually failed, so this is not per-reset noise.
+        // its reset unbriefed. There is no reply channel at a clear, so it rides
+        // the ipc-message the refresh already broadcasts.
         //
-        // In practice this covers the APPEND arm only. On the rides-as-system
-        // arm the missing prompt never entered teamBlock in the first place, so
-        // the bytes are unchanged, the `already current` guard below returns
-        // early, and the broadcast never fires. Nothing is lost — that arm is
-        // reported at spawn — but do not restructure the refresh to force a
-        // broadcast: the guard is what keeps a clear/compact from re-baking
-        // identical bytes under a live CLI, which is a real property traded for
-        // a rare case.
+        // In practice this covers the APPEND arm only. Do not restructure the
+        // refresh to force a broadcast on the other arm: the `already current`
+        // guard is what keeps a clear/compact from re-baking identical bytes
+        // under a live CLI.
         const { teamBlock, missingPrompt } = this._teamBlockFor(name, entry.cwd, session.agentType, entry.systemPromptFile || null);
         const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock);
         if (realIpc === readCache(REGISTRY_DIR, name, 'session')) return false; // already current
@@ -2461,10 +2443,8 @@ function createSessionManager(deps) {
     // `lead` is the sender: solo has exactly one actor, so every lead-only gate
     // becomes a no-op rather than a refusal. `roles` is null, which makes the
     // role machinery inert by construction — `matchSeatRole` and
-    // `_ticketDispatchMode` both bail on a falsy `roles`, so `_resolveAssignee`
-    // is left with its live-seat branch, and a solo assign names a live session.
-    // `solo` marks the context for the three dispatch helpers that must NOT run
-    // here (see `_reconcileTickets`).
+    // `_ticketDispatchMode` both bail on a falsy `roles`. `solo` marks the
+    // context for the three dispatch helpers that must NOT run here.
     // Returns null outside a git repo — the caller turns that into the refusal.
     _soloContext(session) {
       const root = this._projectRootFor(session && session.cwd);
