@@ -7967,7 +7967,9 @@ function createTicketMethods(deps, shared) {
         // documents for `watchdogMs`. Team A wins the dedup and resolves team B's
         // ticket against A's `roles`, where B's role key is not a role at all: the
         // pin fails `isRoleKey`, the seat name is not in A's live set, and a ticket
-        // with a perfectly live B seat reads as orphaned. It is not now that it
+        // with a perfectly live B seat reads as orphaned.
+        //
+        // That was survivable while this only changed WORDING. It is not now that it
         // changes CLASSIFICATION: the orphan arm is one-shot, so B's genuinely
         // stalled ticket would get one wrongly-worded alarm and then permanent
         // silence — the same failure mode as the must-fix, arrived at sideways.
