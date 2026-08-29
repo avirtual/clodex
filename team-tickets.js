@@ -484,8 +484,6 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const cwd = path.resolve(expandedCwd.value.replace(/^~(?=$|\/)/, os.homedir()));
-      // `worktree:<branch>` spawns the seat in its own `git worktree` on that
-      // branch, off the repo containing cwd. The branch name is validated inside
       // createWorktree (it reaches git argv), so this only rejects the empty form
       // — a bare `worktree:` that parsed to nothing must not spawn a NORMAL seat
       // silently, which is the isolation the caller asked for going missing.
@@ -511,10 +509,6 @@ function createTicketMethods(deps, shared) {
       const injectSkills = (tpl && tpl.injectSkills) || [];
       const systemPromptFile = (tpl && tpl.systemPromptFile) || null;
       const appendPromptFiles = (tpl && tpl.appendPromptFiles) || [];
-      // A template's `env` was read ONLY on the cold-reviewer path, so an
-      // agent-initiated spawn silently dropped it — a seat whose whole point was
-      // CLODEX_DISABLE_IPC_PROMPT booted with the full protocol prompt anyway,
-      // and nothing said so. Honored here through the SAME filter the reviewer and
       // ticket paths use, not a copy of it: env is an authority surface (base-url,
       // credential and model redirects) and a template is agent-writable, so this
       // stays a fixed code-level ceiling. Keys outside it are dropped and named in
@@ -657,14 +651,10 @@ function createTicketMethods(deps, shared) {
       //
       // What it closes: `task done` stamps `loopStep: 'verify'` and the ticket stays
       // there until the loop's own reviewer is minted at _setLoopStep(…, 'review').
-      // That is NOT the 74-81s spawn latency measured after the suite — the suite
-      // await ahead of it is MINUTES (see its own comment), so the blind window is
-      // a whole suite run. In it the ticket LOOKS unreviewed and is not, so a bare
+      // The suite await ahead of that is MINUTES, so the blind window is a whole
+      // suite run. In it the ticket LOOKS unreviewed and is not, so a bare
       // `[agent:team-review]` spawns a second, unattached reviewer whose verdict
       // lands nowhere.
-      //
-      // Only `verify`. A `review` ticket already HAS its seat on the roster, so a
-      // bare call there is visibly redundant; `verify` is the blind window.
       //
       // Fails OPEN on an unreadable board: team-review is the documented escape
       // hatch for when the loop CANNOT spawn a reviewer, so refusing it on a board
@@ -725,9 +715,6 @@ function createTicketMethods(deps, shared) {
       const promptEscapeWarn = shape.promptEscaped
         ? ` — NOTE: reviewer systemPromptFile "${shape.promptEscaped}" contains a path separator or "..", which could escape library/prompts/system; ignored, using the built-in default "${REVIEWER_FALLBACK.systemPromptFile}"`
         : '';
-      // Two reasons, never merged: an unknown key is an authority question, a
-      // non-string value is a template typo. Telling the operator to seek
-      // approval for a key that is already allowed sends them to the wrong fix.
       const envWarn = (shape.envDropped.length
         ? ` — reviewer template env keys [${shape.envDropped.join(', ')}] are outside the allowed set [${[...REVIEWER_ENV_ALLOWLIST].join(', ')}] — dropped (env is an authority surface; requires operator approval)`
         : '')
@@ -757,8 +744,6 @@ function createTicketMethods(deps, shared) {
       // name-mint loop below: that loop's synchronous upsert IS the reservation, so
       // bailing after it burns a reviewer name permanently. Both report via reply(),
       // not throw, for the same reason as the resolveSeatShape catch above.
-      // They are disjoint by construction — malformed carries requestedTools: null —
-      // so the order between them cannot change which message fires.
 
       // A wrong TYPE is a syntax error to fix, and telling an author to add cap
       // members to a string sends them to the wrong edit — hence its own message.
@@ -784,8 +769,7 @@ function createTicketMethods(deps, shared) {
       // _writeTicketDiff adds one to and _landVerdictOnTicket stamps — and NOT
       // off the mint index below. kill() removes the seat's record when a
       // reviewer retires, so the index restarts at 1 for round 2; anything
-      // derived from it renumbers round 2 as round 1. Measured on t332: REWORK
-      // then ACCEPT, both billed to review-r1.
+      // derived from it renumbers round 2 as round 1.
       //
       // A taken scoped name falls back to the counter rather than refusing: the
       // loop has no way to act on a refusal here, and a second reviewer for a
@@ -795,14 +779,13 @@ function createTicketMethods(deps, shared) {
       // The name is unique per (ticket, ROUND), not per review. A verdict that
       // fails to parse leaves _landVerdictOnTicket's counter unbumped while
       // kill() still reaps the record, so a re-review of that ticket mints the
-      // same name and the same cost label a second time. Narrower than the
-      // collapse above — two reviews of ONE round, not two rounds merged — and
-      // bumping at spawn would trade it for a round number that counts spawns
-      // rather than verdicts, which is the number the loop's rework ladder reads.
+      // same name and the same cost label a second time. Bumping at spawn would
+      // trade that for a round number counting spawns rather than verdicts, which
+      // is the number the loop's rework ladder reads.
       const roundTicket = reviewTicket ? this._loadTicket(team, reviewTicket) : null;
       // _loadTicket returns null for a missing ticket AND for an unreadable
       // board. Silent, that degrades a ticket review to the counter name and to
-      // `reviewRound = n - 1` — the exact t332 round collapse this mint exists to
+      // `reviewRound = n - 1` — the round collapse this mint exists to
       // prevent, reintroduced with no signal. Logged so it is auditable.
       if (reviewTicket && !roundTicket) {
         log.warn('intent', `team-review for ticket ${reviewTicket}: ticket not readable from the board — falling back to the counter name and a seat-index round (rounds may collapse in the cost rollup)`);
