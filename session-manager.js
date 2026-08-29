@@ -3838,8 +3838,7 @@ function createSessionManager(deps) {
         // The host decides WHEN. Under Electron the restart waits for a sustained
         // all-idle window, so this seat's own turn finishes and flushes first —
         // which means the wait can also be given up, and onAbandon is the only way
-        // the seat hears about that. Nobody is watching the desktop notification
-        // on its behalf.
+        // the seat hears about that.
         // `requester` is for the OPERATOR's give-up notification, not for this
         // seat: without it the desktop notice reads as the operator's own restart
         // failing, when in fact an agent they never asked armed it.
@@ -3930,12 +3929,11 @@ function createSessionManager(deps) {
         catch (e) { log.error('intent', `reboot notice clear failed: ${e.message}`); }
       };
 
-      // Both bounds are checked BEFORE attempting, not only after a throw. The old
-      // code reached its stale-drop solely through retainOrExpire, so a notice that
-      // never threw could not expire — and once the retry below makes retention the
-      // normal outcome rather than the error path, an unchecked notice would be
-      // re-offered at every launch for as long as it existed. Age is the outer
-      // bound; attempts is the one that actually ends a doomed notice.
+      // Both bounds are checked BEFORE attempting, not only after a throw: once
+      // the retry below makes retention the normal outcome rather than the error
+      // path, an unchecked notice would be re-offered at every launch for as long
+      // as it existed. Age is the outer bound; attempts is the one that actually
+      // ends a doomed notice.
       const priorAttempts = Number.isFinite(notice.attempts) && notice.attempts > 0 ? notice.attempts : 0;
       const noticeAge = Number.isFinite(notice.at) && notice.at ? Date.now() - notice.at : Infinity;
       if (noticeAge > REBOOT_NOTICE_MAX_AGE) {
@@ -3969,10 +3967,9 @@ function createSessionManager(deps) {
       // An armed retry means an offer for THIS notice is already in flight, so a
       // second restore is not a second delivery opportunity — it only re-stamps an
       // attempt. restoreSessionsForWorkspace runs once per workspace, so a
-      // two-workspace launch made two offers ~0.4s apart: the ladder burned to its
-      // ceiling before its first rung elapsed, the 30s rung was never used, and
-      // delivery fell through to the generic 5-minute cap. The budget is per notice,
-      // not per restore — suppress the duplicate rather than widen the budget.
+      // two-workspace launch made two offers ~0.4s apart and the ladder burned to
+      // its ceiling before its first rung elapsed. The budget is per notice, not
+      // per restore — suppress the duplicate rather than widen the budget.
       //
       // Keyed on the in-flight timer, not a launch-scoped flag: at the ceiling no
       // timer is armed, and a later call must still reach the give-up-and-clear
@@ -4032,17 +4029,13 @@ function createSessionManager(deps) {
     // anything else parked for this seat leaves early with the notice. Bounded by
     // one deferral round, NOT by REBOOT_NOTICE_FLUSH_MS: the re-arm below is
     // unbounded, so a chain that started at T+0 can still be alive minutes later
-    // and sweep a DM parked just before it fires. The 300s park cap would have
-    // flushed that DM anyway, and the turn check below means a seat that has
-    // already woken forces nothing at all.
+    // and sweep a DM parked just before it fires.
     _armRebootNoticeFlush(target, parkedAt = Date.now()) {
       if (target._rebootNoticeFlushTimer) return;   // one deadline per launch, earliest governs
       // Carried across a re-arm, NOT restamped: the turn check below asks "did the
       // seat wake since the PARK", and refreshing this on every round would keep
       // moving the line the turn has to beat, so a seat that woke during round 1
       // would look unwoken forever.
-      // Named like the retry's fire, and for the same reason: a test drives it
-      // directly instead of waiting out 25s of wall clock.
       const fire = () => {
         target._rebootNoticeFlushTimer = null;
         if (target._dead) return;
@@ -4056,15 +4049,13 @@ function createSessionManager(deps) {
         }
         // A FRESH draft is the one thing this deadline must never interrupt. The
         // forced flush enqueues non-parkable, so at write time the queue emits a
-        // bare Ctrl-U clear-line into whatever is typed (inject-queue.js) — the
-        // splice INJECT_QUIET_MAXWAIT was raised to 5 min to avoid after it cut
-        // live composition mid-word twice. Shortening the deadline to 25s without
-        // this check would make that 12x more likely, trading the annoyance this
-        // ticket fixes for a worse one.
+        // bare Ctrl-U clear-line into whatever is typed — the splice
+        // INJECT_QUIET_MAXWAIT was raised to 5 min to avoid after it cut live
+        // composition mid-word twice.
         //
         // Re-arm rather than flush, and deliberately WITHOUT a round bound: the
         // 300s _armParkCap is armed independently at T+0 and remains the ultimate
-        // backstop, so unbounded re-arming degrades at worst to exactly master's
+        // backstop, so unbounded re-arming degrades at worst to the previous
         // behaviour while giving 25s whenever the operator is away. A bound would
         // only re-introduce the splice this check exists to prevent — do not add one.
         //
@@ -4078,7 +4069,7 @@ function createSessionManager(deps) {
         log.info('inject', `reboot notice flush cap (${REBOOT_NOTICE_FLUSH_MS / 1000}s) for ${target.name} — forcing the parked notice out`);
         // Timer callback: _flushParkedNow calls countPending outside a try by
         // design, so a throw here escapes as an uncaughtException and takes the
-        // app down rather than costing one undelivered notice. The ladder re-parks.
+        // app down rather than costing one undelivered notice.
         try {
           this._flushParkedNow(target, `reboot.${process.pid}`, 'park-flush');
         } catch (e) {
@@ -4098,19 +4089,17 @@ function createSessionManager(deps) {
     // Re-offer the notice WITHIN this launch. The cross-launch retry (the notice
     // surviving in settings) is only the backstop for a crash between park and
     // delivery: a copy arriving at the next launch answers a question nobody is
-    // still asking, because by then something else has woken the agent — which is
-    // exactly how this defect stayed invisible.
+    // still asking.
     //
     // The liveness test is deliberately NOT _armParkedDrainFallback's
     // fs.existsSync on the park file. That timer is the right shape against "the
     // drain never fired" and blind to the failure here: the drain DID fire, the
     // file is gone, and the write vanished — which existsSync reads as success.
     //
-    // What is observable is that the seat took a turn after the park. A turn means
-    // the CLI processed input, which is the closest this layer gets to delivery.
-    // It is inference, not confirmation: a turn the operator caused would satisfy
-    // it too. That costs at most one duplicate notice — self-dating, one line, and
-    // by ruling the safe direction — whereas trusting the claim costs the message.
+    // What is observable is that the seat took a turn after the park. It is
+    // inference, not confirmation: a turn the operator caused would satisfy it
+    // too. That costs at most one duplicate notice, whereas trusting the claim
+    // costs the message.
     _armRebootNoticeRetry(target, notice) {
       const attempt = (Number.isFinite(notice.attempts) && notice.attempts > 0 ? notice.attempts : 0) + 1;
       const store = getUiSettings && getUiSettings();
@@ -4122,9 +4111,6 @@ function createSessionManager(deps) {
       const delay = REBOOT_NOTICE_RETRY_DELAYS[attempt - 1];
       if (delay == null || attempt >= REBOOT_NOTICE_MAX_ATTEMPTS) return;
       clearTimeout(target._rebootNoticeRetryTimer);
-      // Held as a named function so a test can run the retry on demand rather than
-      // waiting out a 30s/120s wall-clock delay or reaching into Node's Timeout
-      // internals. The delay itself is asserted separately from the behaviour.
       const fire = () => {
         target._rebootNoticeRetryTimer = null;
         if (target._dead) return;
@@ -4205,11 +4191,10 @@ function createSessionManager(deps) {
           this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${e}` });
           return;
         }
-        // Existence is not enough, and this is the same bug the whole ticket is
-        // about: a binding to an ALREADY-TERMINAL ticket can never be collected,
-        // because no verb will name it again — _taskCancel refuses a non-open
-        // ticket, and an accept that closed out is not repeated. So it would arm
-        // and then fire stale, which is precisely what this feature prevents.
+        // Existence is not enough: a binding to an ALREADY-TERMINAL ticket can
+        // never be collected, because no verb will name it again — _taskCancel
+        // refuses a non-open ticket, and an accept that closed out is not
+        // repeated. So it would arm and then fire stale.
         //
         // The SAME predicate decides here and at close time (ticketTerminal /
         // ticketTerminalReason in tickets-store), so the set refused here and
