@@ -14,80 +14,42 @@ const ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
 // prefix, so it must be name-legal; top-level `lead` is a seat name.
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
-// Bumped when the ROLE schema loses or gains a key. 2 dropped the five fields no
-// resolver consumed (instantiate, standing, tools, type, ephemeral); 3 replaced
-// the `worktree` boolean with the `dispatch` enum. A file without one is a
-// version-1 file, which is why absent reads as 1 rather than
-// current — a current-by-default would let a stale file claim to be new.
+// Bumped when the role schema loses or gains a key.
 const MANIFEST_VERSION = 3;
 
-// Everything a role def may carry. Anything else is dropped at load with a
-// warning rather than throwing: team.json is agent-writable and old files carry
-// the version-1 keys, so a hard failure here would read as "no team" everywhere
-// (every caller resolves teams inside a best-effort catch).
+// Anything else is dropped at load with a warning rather than a throw: a hard
+// failure here would read as "no team" everywhere, since every caller resolves
+// teams inside a best-effort catch.
 const ROLE_KEYS = new Set(['template', 'prompt', 'brief', 'dispatch', 'cwd']);
 
-// What dispatching a ticket to this role DOES. The predecessor was named
-// `worktree`, after one artifact of the behaviour rather than the behaviour, and
-// that is what let it read as an implementation detail nobody needed a front
-// door for. Absent reads as `standing`.
-//
-// Three values, not two axes. Lifecycle (persistent vs one-shot) and isolation
-// (shared checkout vs own worktree) are independent, but `worktree` fused them:
-// the only route to a one-shot seat also minted a branch, so a team whose root
-// is not a git repo could not have an ephemeral hand at all. `spawn` is the
-// missing cell — one-shot seat, no branch, no tree, works in the shared
-// checkout. It is a VALUE and not a second field for the reason the header
-// below `normalizeRoleDef` gives: `ephemeral` was already cut as a field, and
-// two fields that must agree forever is how all five cut fields died.
 const ROLE_DISPATCH_VALUES = new Set(['standing', 'spawn', 'worktree']);
 const DEFAULT_ROLE_DISPATCH = 'standing';
 
-// Schema fields NO front door sets, each with the reason it is exempt. The
-// legibility test asserts EDITABLE_ROLE_FIELDS ∪ this ≡ ROLE_KEYS, so a new
+// The legibility test asserts EDITABLE_ROLE_FIELDS ∪ this ≡ ROLE_KEYS, so a new
 // field is either reachable or listed here with a reason — never merely absent.
-// EMPTY is the intended steady state, not a leftover: the one entry it ever held
-// was closed by giving that field a front door. Do not delete the constant —
-// the next field that wants an exemption has to add itself back explicitly.
+// Empty is the steady state; do not delete the constant.
 const UNREACHABLE_ROLE_FIELDS = new Set([]);
 
-// The fields a version bump deleted (five in v2, plus v3's `worktree`). Named
-// rather than derived as "anything not
-// in ROLE_KEYS", because the mutators DELETE these from disk: a derived set would
-// silently grow to include hand-authored keys nobody asked us to remove, and the
-// migration would become data loss. Every one of these is already dropped at
-// load by every reader that routes through loadManifest, so removing it from the
-// file changes no behavior there — only the bytes. scripts/clodex-team.js parses
-// team.json itself and does NOT route through here; keep it off these fields.
-//
-// `worktree` is cut-AND-REPLACED, not cut: migrateRoles carries its value onto
-// `dispatch` BEFORE this delete runs. Reorder those two and every live role that
-// opted into a worktree silently stops getting one, with nothing failing.
+// The fields a version bump deleted. Named rather than derived as "anything not
+// in ROLE_KEYS", because the mutators delete these from disk: a derived set would
+// grow to include hand-authored keys nobody asked us to remove, and the migration
+// would become data loss.
 const CUT_ROLE_FIELDS = ['instantiate', 'standing', 'tools', 'type', 'ephemeral', 'worktree'];
 
-// Cut from the schema but SOMETIMES still read, mapped to the remedy a reader
-// should write instead. A key belongs here for exactly as long as a
-// compatibility branch reads it, and leaves when that branch does.
-//
-// Membership is only a GATE: it says "this key can be honored, so measure
-// whether it was", never "this occurrence is honored". `worktree` is read only
-// when it is exactly `true`, on a non-reserved role, with no explicit
-// `dispatch` — so `worktree: false`, `worktree: true` on lead/reviewer, and
-// `worktree: true` beside a `dispatch` are all INERT, and telling their owner
-// to "write dispatch instead" would talk them into minting worktrees nobody
-// asked for or into hand-authoring a value every write path refuses. The
-// remedy travels with the key so the map cannot grow a member whose advice
-// nobody wrote.
+// Cut from the schema but sometimes still read, mapped to the remedy a reader
+// should write instead. A key belongs here for exactly as long as a compatibility
+// branch reads it. Membership is only a gate — it says "this key can be honored,
+// so measure whether it was", never "this occurrence is honored". The remedy
+// travels with the key so the map cannot grow a member whose advice nobody wrote.
 const HONORED_CUT_FIELDS = new Map([['worktree', 'dispatch: "worktree"']]);
 
 // Every role field a front door (setRole, the Add Role form, the popover row
-// model) may set. Exported so the legibility test compares the real list against
-// the schema instead of a copy that can drift from it.
+// model) may set.
 const EDITABLE_ROLE_FIELDS = ['brief', 'cwd', 'dispatch', 'prompt', 'template'];
 
 // team.json is agent-writable and these role keys are trusted downstream, so the
 // mutators below must never create, destroy or rename them; only the operator
-// GUI/approval may mint or replace them.
+// GUI/approval may.
 const RESERVED_ROLE_KEYS = new Set(['lead', 'reviewer']);
 
 const WATCHDOG_MIN_MS = 5 * 60 * 1000;
@@ -95,24 +57,16 @@ const WATCHDOG_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 const STOCK_ROLE_DEFS = {
   lead: { prompt: 'clodex-team-lead', brief: 'team lead; holds durable context, dispatches specs, verifies and integrates the work.' },
-  // The hand is the only stock role that names a TEMPLATE, because it is the only
+  // The hand is the only stock role that names a template, because it is the only
   // one whose seat needs a working directory: the shipped clodex-team-hand.json
-  // writes "${TEAM_ROOT}" there, so a new team's hand boots in ITS root rather
-  // than in whatever project the template was authored against. Seed-only — an
-  // existing team.json names its own template and is unaffected.
+  // writes "${TEAM_ROOT}" there, so a new team's hand boots in its own root.
   hand: { prompt: 'clodex-team-hand', brief: 'implementer; executes a spec to done, one distilled report per task.', template: 'clodex-team-hand' },
   reviewer: { prompt: 'clodex-team-reviewer', brief: 'reviewer; an independent verification pass, invoked on demand.' },
 };
 
 // A field may live here only if exactly one resolver consumes it and every spawn
-// path reaches that resolver. Five fields failed that test and were cut:
-// `instantiate` (a declaration two display sites compensated for), `standing`
-// (zero consumers anywhere), `tools` (a restriction enforced on one role and
-// inert-but-believed on the rest), `type` (honored on one spawn path, overridden
-// with a warning on the other), and `ephemeral` (one word, two stores — the
-// persistence record is now the single source). Variation belongs in a TEMPLATE,
-// which is data and cheap to vary; a new role field is code semantics and is how
-// every one of those divergences was born.
+// path reaches that resolver — five fields failed that test and were cut.
+// Variation belongs in a template, which is data and cheap to vary.
 //
 // Fixed key order: addRole's no-op check compares JSON.stringify of two
 // normalized defs, so reordering these keys breaks equality.
