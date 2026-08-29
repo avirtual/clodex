@@ -5756,16 +5756,14 @@ function createSessionManager(deps) {
       });
     }
 
-    // Active-class PARK (T54): parked like passive (NO spawn-time PTY write, so
-    // the T40/T42 boot-race stays fixed — an early mode-2004 proxy can't strand
-    // the text as a Ctrl-U-wiped draft), but TURN-EARNING — a NON-.passive.json
-    // entry, so hasActivePending() sees it and the boot-ready rising edge (or any
-    // idle edge) drains it. Passive parks never earn a turn by design; a fresh
-    // reviewer seat has no other traffic, so passive stalled the scope until a
-    // human ✉-click. Used ONLY for the team-review scope — roster/team deltas
-    // stay _deliverPassive (genuinely ride-along). Claude-only (pending is a
-    // Claude-hook store); park failure falls back to a normal delivery (degraded
-    // to noisy beats dropped), same as passive.
+    // Active-class PARK: parked like passive (NO spawn-time PTY write, so the
+    // boot-race stays fixed — an early mode-2004 proxy can't strand the text as a
+    // Ctrl-U-wiped draft), but TURN-EARNING — a NON-.passive.json entry, so
+    // hasActivePending() sees it and the boot-ready rising edge (or any idle edge)
+    // drains it. Passive parks never earn a turn by design; a fresh reviewer seat
+    // has no other traffic, so passive stalled the scope until a human ✉-click.
+    // Used ONLY for the team-review scope. Claude-only (pending is a Claude-hook
+    // store); park failure falls back to a normal delivery.
     _deliverParkedActive(targetName, senderName, body, mtype) {
       const target = this.sessions.get(targetName);
       if (!target) return;
@@ -5795,41 +5793,36 @@ function createSessionManager(deps) {
     // both the idle drain and the out-of-process hook need a turn the seat will
     // never take, because the thing it is missing IS its first turn. So a park whose
     // boot-ready edge does not fire — measured twice, seat alive and the files still
-    // unclaimed 8s later — is silent and permanent, and the drain is what is
-    // missing, not the write: the delivery that eventually rescued it was an
-    // operator flush through this same queue, with no boot-readiness cap in sight.
+    // unclaimed 8s later — is silent and permanent.
     //
     // Recovery for a seat ALREADY in that state is a plain dm re-sending the scope,
-    // never a respawn. Respawning is the intuitive move and it is wrong: the seat is
-    // healthy and its name is reserved, so a respawn mints a SECOND seat while the
-    // first keeps its parked mail and its `born` stamp — and the stamp is what makes
-    // the old mail undeliverable to the new seat (drainPending discards a `born`
-    // mismatch). A dm lands on the live seat and drains the park with it.
+    // never a respawn: the seat is healthy and its name is reserved, so a respawn
+    // mints a SECOND seat while the first keeps its parked mail and its `born`
+    // stamp — and the stamp is what makes the old mail undeliverable to the new
+    // seat. A dm lands on the live seat and drains the park with it.
     //
-    // Modeled on _armReplayFallback, and re-checks for the same reason rather than
-    // delivering on schedule: a drain forced while the latch is still missing puts
-    // the write back inside the boot re-render window with the messages already
-    // claimed off disk. Deferring to an armed _bootDrainTimer is what preserves
-    // BOOT_DRAIN_SETTLE_MS as the margin — this timer never shortens it. A plain
-    // _armParkCap here would be that same forced delivery, which is why it isn't one.
+    // Re-checks rather than delivering on schedule: a drain forced while the latch
+    // is still missing puts the write back inside the boot re-render window with
+    // the messages already claimed off disk. Deferring to an armed _bootDrainTimer
+    // is what preserves BOOT_DRAIN_SETTLE_MS as the margin — this timer never
+    // shortens it. A plain _armParkCap here would be that same forced delivery.
     //
     // EVERY path out of a pass either delivers or leaves a timer armed. A bare
     // return anywhere here makes this second edge one-shot in exactly the way the
-    // first one is, which is the defect this method exists to cover, one layer out:
-    // yielding to a drain that then bails (an open draft at :2514, a producer that
-    // claims nothing) would end with the park unclaimed and nothing alive to notice.
+    // first one is: yielding to a drain that then bails (an open draft, a producer
+    // that claims nothing) would end with the park unclaimed and nothing alive to
+    // notice.
     // `file` scopes a pass to the park it was armed FOR: hasActivePending is
     // name-scoped, so a later pass would otherwise find UNRELATED mail parked
     // meanwhile by _maybeParkDelivery and force it through, bypassing _injectText's
     // hold check and splicing into the very thinking seat that park protects.
     // `drained` marks a pass that FOLLOWS a terminal drain, and it gates the warn,
-    // not the re-arm. Bounding the re-arm instead was the obvious move and it is
-    // wrong: a seat whose draft stays open across two periods would have its park
-    // abandoned with nothing scheduled to look again — this ticket's own defect,
-    // reintroduced by the thing meant to stop the log from repeating. So the timer
-    // lives as long as the park does, and only the first drain announces itself. It
-    // is bounded in the ways that actually end: the pass returns once the file is
-    // claimed, and _cleanup clears the handle when the seat dies.
+    // not the re-arm. Bounding the re-arm instead is wrong: a seat whose draft
+    // stays open across two periods would have its park abandoned with nothing
+    // scheduled to look again. So the timer lives as long as the park does, and
+    // only the first drain announces itself. It is bounded in the ways that
+    // actually end: the pass returns once the file is claimed, and _cleanup clears
+    // the handle when the seat dies.
     _armParkedDrainFallback(session, file, periodMs, deadline, drained = false) {
       if (!session || session.agentType !== 'claude') return;
       if (session._parkedDrainFallbackTimer) return;   // earliest arm governs, like the park cap
@@ -5853,8 +5846,7 @@ function createSessionManager(deps) {
         }
         // seen=… is the discriminator: a park landing AFTER the edge was already
         // spent is the likeliest real case, and there the edge fired — early — so an
-        // unqualified "never fired" would misdiagnose it. This defect was found in
-        // these lines and nothing else.
+        // unqualified "never fired" would misdiagnose it.
         if (!drained) {
           log.warn('inject', `parked-drain fallback for ${session.name} — boot-ready drain never fired (boot-ready seen=${!!session._bootReadySeen}); draining active park`);
         }
