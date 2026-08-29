@@ -2324,10 +2324,7 @@ function createTicketMethods(deps, shared) {
     // Armed from the WRITE (_deliverMessage's onWrite), never from the enqueue, and
     // only for the 'injected' disposition. Two reasons, both load-bearing:
     //
-    // A PARKED delivery is not confirmable. The file is drained by the
-    // out-of-process PostToolUse hook mid-loop, and ActivityTracker._set dedupes on
-    // unchanged state — so a seat that was already `thinking` when the spec parked
-    // consumes it without ever producing a fresh edge. Arming there would redeliver
+    // A PARKED delivery is not confirmable. Arming there would redeliver
     // a full spec into a seat actively working on it.
     //
     // And arming at ENQUEUE would start the clock before the bytes exist: the quiet
@@ -7063,8 +7060,7 @@ function createTicketMethods(deps, shared) {
         // than useless: it answers YES BY CONSTRUCTION, the lead reads a confirmed
         // landing, the second accept deletes the branch, and then they perform the
         // revert the loop asked them for — leaving the work in neither master's
-        // tree nor any ref. The owed action there is a DECISION about the revert,
-        // not a check.
+        // tree nor any ref.
         //
         // The VETO stays broad on purpose — an allowlist is a list someone must
         // maintain, and a step added later would default to not vetoing, which is
