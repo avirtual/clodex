@@ -5178,8 +5178,7 @@ function createSessionManager(deps) {
         // draft, so a sender holding the only one of its own messages is still
         // in the ambiguous case whenever the seat's window held more than one.
         // "may not have been seen" and not "was lost" — a confidently wrong
-        // report is worse than a hedged one, and §3 is why the discrimination
-        // cannot be had.
+        // report is worse than a hedged one.
         const one = mineCount === 1;
         const noun = one ? 'your message' : `your ${mineCount} messages`;
         const verb = one ? 'was' : 'were';
@@ -5431,8 +5430,8 @@ function createSessionManager(deps) {
     // in whether CONSUMPTION is observable from this process. An injected unit ends
     // with an Enter, so consuming it starts a turn; a parked file is drained by the
     // out-of-process hook mid-loop, and a seat already `thinking` produces no fresh
-    // activity edge for it (ActivityTracker._set dedupes on unchanged state). A
-    // caller that waits for such an edge must therefore arm on 'injected' only.
+    // activity edge for it. A caller that waits for such an edge must therefore arm
+    // on 'injected' only.
     _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null) {
       const target = this.sessions.get(targetName);
       if (!target) return;
@@ -5527,11 +5526,10 @@ function createSessionManager(deps) {
       if (!target || target.agentType !== 'claude' || target._dead) return false;
       const typing = Date.now() - (target.lastUserInputTs || 0) < INJECT_QUIET_MS;
       // "Busy" = mid-turn ('thinking' from either the wire tracker or the JSONL
-      // watcher). A busy DM used to flow to _injectText's busy-branch _injectQueue
-      // and flush via stdin at the idle edge; parking it instead lets the
-      // out-of-process PostToolUse hook deliver it mid-loop (an external script
-      // can't see the in-memory queue). The idle-edge Node drain is the fallback
-      // for a turn that ends with no tool call (pure-text reply).
+      // watcher). Parking a busy DM lets the out-of-process PostToolUse hook
+      // deliver it mid-loop (an external script can't see the in-memory queue).
+      // The idle-edge Node drain is the fallback for a turn that ends with no tool
+      // call (pure-text reply).
       const busy = target.activityState === 'thinking';
       if (!typing && !busy) return false;
       try {
@@ -5568,12 +5566,11 @@ function createSessionManager(deps) {
       // Claim LATE, like the boot-ready drain: drainPending DELETES the parked
       // files, and enqueue returns before the queue has written anything, so
       // claiming here meant a wiped or never-reached write destroyed the only
-      // copy — with flushPending broadcasting pending-count: 0 on top of it.
-      // The producer runs inside the queue's critical section, past the ready and
-      // quiet gates, so the files are claimed only when the write is imminent.
+      // copy. The producer runs inside the queue's critical section, past the ready
+      // and quiet gates, so the files are claimed only when the write is imminent.
       // The count is a non-destructive PRE-count for the return value and the log
-      // line; the drain may legitimately yield fewer (another drainer won, a born
-      // mismatch restored one), which costs an over-count in a log, never a message.
+      // line; the drain may legitimately yield fewer, which costs an over-count in
+      // a log, never a message.
       const count = countPending(PENDING_DIR, target.name);
       // Logged BEFORE the early return, which is where it has to be: with the
       // return first, a cap firing on an already-empty mailbox was silent and
@@ -5592,10 +5589,9 @@ function createSessionManager(deps) {
       // ONE injection for the whole drain, not N. N sequential _injectText calls
       // raced: #1's Enter starts a CLI turn and #2 landed in the turn-start churn
       // where its Enter got swallowed → stranded draft. A forced flush is non-
-      // parkable (resend-recursion fix), so a stranded text just sits. Join into a
-      // single body with the SAME blank-line separator the out-of-process hook
-      // drain uses (cli-hooks.js: texts.join('\\n\\n')), so a seat sees the same
-      // combined shape whichever drainer won. drainPending returns park order.
+      // parkable, so a stranded text just sits. Join into a single body with the
+      // SAME blank-line separator the out-of-process hook drain uses, so a seat
+      // sees the same combined shape whichever drainer won.
       this._injectText(target, '', {
         produce: () => {
           if (target._dead) return null;
