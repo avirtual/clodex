@@ -855,28 +855,20 @@ function leadActionLine(team) {
   return parts.length ? parts.join(' ') : null;
 }
 
-// The retired keys a role carries, as the lines to print UNDER its roster row.
 // Reads loadManifest's classification; decides nothing about membership itself.
 //
-// A CONTINUATION line rather than a column, because the roster row is already
-// dense and this must never push `tmpl`/brief/live off the end — and because a
-// role with a clean def then renders byte-identically to before by construction,
-// not by a formatting coincidence someone can break.
+// A continuation line rather than a column, so a role with a clean def renders
+// byte-identically to before by construction.
 //
 // The two statuses never share a line: 'ignored' says the field configures
-// nothing, 'honored' says deleting it changes behaviour. One sentence covering
-// both would repeat, in the surface the lead actually reads, the exact falsehood
-// that made `reviewer.tools` read as a tool cap. 'unknown' is rendered by
-// NEITHER: that warn is version-gated because it exists for the migration and
-// not as a linter, and a hand-added key on today's schema has no business
-// appearing in every context reset forever. That exclusion also happens to be
-// what keeps this text SAFE: an 'unknown' field name is an arbitrary
-// agent-authored string from team.json, this roster is baked into the digest
-// re-read on every context reset, and the intent parser is `^`-anchored — so a
-// key carrying a newline and a column-1 verb would fire in the lead's context.
-// Every byte rendered here comes from ROLE_RE-constrained role names and the two
-// fixed field lists. A surface that decides to render 'unknown' must refuse
-// newlines first.
+// nothing, 'honored' says deleting it changes behaviour. 'unknown' is rendered by
+// neither, and that exclusion is also what keeps this text SAFE: an 'unknown'
+// field name is an arbitrary agent-authored string from team.json, this roster is
+// baked into the digest re-read on every context reset, and the intent parser is
+// `^`-anchored — so a key carrying a newline and a column-1 verb would fire in
+// the lead's context. Every byte rendered here comes from ROLE_RE-constrained
+// role names and the two fixed field lists. A surface that renders 'unknown' must
+// refuse newlines first.
 function retiredFieldLines(team, role) {
   const all = Array.isArray(team && team.droppedFields) ? team.droppedFields : [];
   const mine = all.filter((d) => d && d.role === role);
@@ -886,20 +878,16 @@ function retiredFieldLines(team, role) {
     lines.push(`  retired, configures nothing: ${inert.map((f) => `${role}.${f}`).join(', ')} — this schema does not read ${inert.length > 1 ? 'them' : 'it'}`);
   }
   for (const d of mine.filter((x) => x.status === 'honored')) {
-    // Per occurrence, not folded: the remedy is per-key (HONORED_CUT_FIELDS maps
-    // each to its own replacement), so a joined line would carry one key's advice
-    // over another key's occurrence.
+    // Per occurrence, not folded: the remedy is per-key, so a joined line would
+    // carry one key's advice over another key's occurrence.
     lines.push(`  retired but STILL READ here: ${role}.${d.field} — deleting it CHANGES BEHAVIOUR; write \`${d.remedy}\` instead`);
   }
   return lines;
 }
 
-/**
- * `liveSeats` entries are `{ name, label }`; bare strings are accepted as a
- * label-less form. The label is never computed here — team-manifest is a pure
- * leaf and warmth is a wire-layer property, so it arrives as data from
- * session-manager's peerStatusLabel.
- */
+// The label is never computed here — team-manifest is a pure leaf and warmth is a
+// wire-layer property, so it arrives as data. `liveSeats` entries are
+// `{ name, label }`; bare strings are accepted as a label-less form.
 function formatRoster(team, liveSeats = [], { seat = null } = {}) {
   const byRole = new Map();
   const roleless = [];
@@ -907,8 +895,6 @@ function formatRoster(team, liveSeats = [], { seat = null } = {}) {
     const name = typeof entry === 'string' ? entry : (entry && entry.name);
     if (!name) continue;
     const label = typeof entry === 'string' ? null : (entry && entry.label) || null;
-    // The reading seat knows its own warmth; `(you)` is the useful thing to
-    // say in that slot instead.
     const suffix = name === seat ? ' (you)' : (label ? ` (${label})` : '');
     const role = matchSeatRole(team, name);
     if (!role) { roleless.push(`${name}${suffix}`); continue; }
@@ -917,35 +903,28 @@ function formatRoster(team, liveSeats = [], { seat = null } = {}) {
   }
   const lines = [`[team ${team.name}] roster (lead: ${team.lead})`];
   for (const [role, def] of Object.entries(team.roles)) {
-    // `reviewer` is a reserved key reached by [agent:team-review]. Name the
-    // intent ONLY to the seat allowed to use it: _handleTeamReview bounces a
-    // non-lead, so advertising it to a hand invites a wasted turn. Every other
-    // role is reached the same way — a ticket assigned to it — so the row says
-    // so instead of printing a class that used to lie.
+    // Name [agent:team-review] ONLY to the seat allowed to use it:
+    // _handleTeamReview bounces a non-lead, so advertising it to a hand invites a
+    // wasted turn.
     const cls = role !== 'reviewer' ? 'session'
       : (seat && seat === team.lead ? 'via [agent:team-review]' : 'lead-only');
     // Suppressed on the reviewer: [agent:team-review] resolves the template
     // itself, so printing one invites the hand-spawn the row exists to prevent.
     const tmpl = (role !== 'reviewer' && def && typeof def.template === 'string' && def.template) ? `, tmpl ${def.template}` : '';
     const brief = def && def.brief ? ` — ${def.brief}` : '';
-    // Liveness is STATED in this slot, never left to be inferred from a missing
-    // tail: a definition row and a live row were otherwise identical in shape,
-    // and a reader scanning for teammates read the role key as an addressable
-    // name and dm'd a seat that did not exist. The two branches are mutually
-    // exclusive text in one position, so absence of evidence can't read as a
-    // teammate. Wording tracks formatCompositionDelta's `(no seat)`.
+    // Liveness is STATED in this slot, never inferred from a missing tail: a
+    // definition row and a live row are otherwise identical in shape, and a reader
+    // scanning for teammates dm's a seat that does not exist. The two branches are
+    // mutually exclusive text in one position.
     const live = byRole.get(role);
     const liveStr = live && live.length
       ? ` · live: ${live.join(', ')}`
       : ' · no live seat — role definition only, not addressable';
     lines.push(`- ${role} (${cls}${tmpl})${brief}${liveStr}`);
-    // Under the row it belongs to, so the field is read while the reader is
-    // reasoning about THAT role — a footnote at the bottom is read after the
+    // Under the row it belongs to: a footnote at the bottom is read after the
     // decision it exists to change.
     for (const l of retiredFieldLines(team, role)) lines.push(l);
   }
-  // A live seat off the naming convention is still warm and still DM-able;
-  // dropping it defeats the point of a listing of who is live.
   if (roleless.length) lines.push(`also live, no role: ${roleless.join(', ')}`);
   if (seat && seat === team.lead) {
     const action = leadActionLine(team);
