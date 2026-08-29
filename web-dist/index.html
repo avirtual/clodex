@@ -6804,7 +6804,7 @@ body {
           <span>Phrase</span>
           <input type="text" id="prefs-voice-submit-phrase" placeholder="over and out" spellcheck="false" autocomplete="off" style="flex: 1;">
         </div>
-        <span class="hint-text" style="display: block; margin-top: 6px;">Matched at the end of what you have dictated, ignoring case and any punctuation dictation adds. Pick something you would never say mid-sentence — a short one like &ldquo;send it&rdquo; will fire while you are still talking. Leave it empty for the default.</span>
+        <span class="hint-text" style="display: block; margin-top: 6px;">Matched at the end of what you have dictated, ignoring case and any punctuation dictation adds. Pick something you would never say mid-sentence — a short one like &ldquo;send it&rdquo; will fire while you are still talking. Clear the box to go back to the default.</span>
       </details>
       <details class="prefs-group" data-group="statusline">
         <summary><h4>Statusline</h4><span class="prefs-group-sub">What each agent shows above its prompt</span></summary>
@@ -23539,7 +23539,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
     "renderer/lib/voice-submit.js"(exports, module) {
       var DEFAULT_SUBMIT_PHRASE = "over and out";
       var EDGE_PUNCT = /^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu;
-      var COMPOSER_PROMPT = /^[\s│┃┊┆|]*>[ ]/;
+      var BOX_GLYPH = /[│┃┊┆|]/;
+      var BOX_LEFT = /^[\s│┃┊┆|]*/;
+      var BOX_RIGHT = /[\s│┃┊┆|]*$/;
+      var PROMPT_HEAD = /^>[ ]/;
       function escapeRe(s) {
         return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       }
@@ -23550,10 +23553,41 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function normalizePhrase(phrase) {
         return triggerWords(phrase).join(" ");
       }
-      function composerTail(rowUpToCursor) {
-        if (typeof rowUpToCursor !== "string") return null;
-        const m = COMPOSER_PROMPT.exec(rowUpToCursor);
-        return m ? rowUpToCursor.slice(m[0].length) : null;
+      function stripRow(text, { atCursor }) {
+        const left = BOX_LEFT.exec(text)[0];
+        let rest = text.slice(left.length);
+        if (!atCursor) rest = rest.replace(BOX_RIGHT, "");
+        const prompt2 = PROMPT_HEAD.test(rest);
+        return {
+          text: prompt2 ? rest.slice(2) : rest,
+          prompt: prompt2,
+          // A real border GLYPH, not merely leading blanks: `BOX_LEFT` matches the
+          // empty string, so without this every unindented transcript line would read
+          // as a continuation and the walk would climb out of the box.
+          bordered: BOX_GLYPH.test(left)
+        };
+      }
+      function findSubmit(rows, phrase) {
+        if (!Array.isArray(rows) || !rows.length) return null;
+        const parts = [];
+        let cursorRowLen = 0;
+        for (let i = rows.length - 1; i >= 0; i -= 1) {
+          const r = rows[i];
+          if (!r || typeof r.text !== "string") return null;
+          const atCursor = i === rows.length - 1;
+          const s = stripRow(r.text, { atCursor });
+          if (atCursor) cursorRowLen = s.text.length;
+          parts.unshift(s.text);
+          if (s.prompt) {
+            const content = parts.join("\n");
+            const hit = matchTrigger(content, phrase);
+            if (!hit) return { content, erase: 0 };
+            const erase = Math.min(hit.erase, cursorRowLen);
+            return { content, erase };
+          }
+          if (!s.bordered && !r.isWrapped) return null;
+        }
+        return null;
       }
       function matchTrigger(content, phrase) {
         if (typeof content !== "string") return null;
@@ -23582,7 +23616,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         DEFAULT_SUBMIT_PHRASE,
         triggerWords,
         normalizePhrase,
-        composerTail,
+        stripRow,
+        findSubmit,
         matchTrigger,
         shouldFire,
         readVoiceSubmitSettings
@@ -23593,9 +23628,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
   // renderer/voice-submit-watcher.js
   var require_voice_submit_watcher = __commonJS({
     "renderer/voice-submit-watcher.js"(exports, module) {
-      var { composerTail, matchTrigger, shouldFire } = require_voice_submit();
+      var { findSubmit, shouldFire } = require_voice_submit();
       var QUIET_MS = 1200;
       var ENTER_SETTLE_MS = 30;
+      var MAX_COMPOSER_ROWS = 12;
       function createVoiceSubmitWatcher(terminal, {
         getConfig,
         getVoiceMode,
@@ -23606,14 +23642,23 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let timer = null;
         let enterTimer = null;
         let disposed = false;
-        let latched = false;
+        let answered = null;
         let fires = 0;
-        function cursorRow() {
+        function composerRows() {
           const buf = terminal.buffer.active;
           if (buf.type !== "normal") return null;
-          const line = buf.getLine(buf.baseY + buf.cursorY);
-          if (!line) return null;
-          return line.translateToString(false, 0, buf.cursorX);
+          const cursor = buf.baseY + buf.cursorY;
+          const top = Math.max(0, cursor - (MAX_COMPOSER_ROWS - 1));
+          const rows = [];
+          for (let y = top; y <= cursor; y += 1) {
+            const line = buf.getLine(y);
+            if (!line) return null;
+            rows.push({
+              text: y === cursor ? line.translateToString(false, 0, buf.cursorX) : line.translateToString(false),
+              isWrapped: !!line.isWrapped
+            });
+          }
+          return rows;
         }
         function tick() {
           timer = null;
@@ -23625,16 +23670,16 @@ ${m[2].replace(/^\r?\n/, "")}`;
             cfg = null;
           }
           if (!cfg) return;
-          const row = cursorRow();
-          const content = composerTail(row);
-          if (content === null) return;
-          const hit = matchTrigger(content, cfg.phrase);
-          if (!hit) {
-            latched = false;
+          const rows = composerRows();
+          if (!rows) return;
+          const found = findSubmit(rows, cfg.phrase);
+          if (!found) return;
+          if (!found.erase) {
+            answered = null;
             return;
           }
-          if (latched) return;
-          latched = true;
+          if (answered === found.content) return;
+          answered = found.content;
           let voiceMode = null;
           let attention = null;
           try {
@@ -23649,7 +23694,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (!shouldFire({ enabled: cfg.enabled, voiceMode, attention })) return;
           fires += 1;
-          write("\x7F".repeat(hit.erase));
+          write("\x7F".repeat(found.erase));
           enterTimer = setTimeout(() => {
             enterTimer = null;
             if (!disposed) write("\r");
@@ -23674,7 +23719,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
         };
       }
-      module.exports = { createVoiceSubmitWatcher, QUIET_MS, ENTER_SETTLE_MS };
+      module.exports = { createVoiceSubmitWatcher, QUIET_MS, ENTER_SETTLE_MS, MAX_COMPOSER_ROWS };
     }
   });
 
@@ -32453,7 +32498,11 @@ ${detail}` });
         });
         const intentHighlight = createIntentHighlight(terminal);
         const voiceSubmit = peer ? null : createVoiceSubmitWatcher(terminal, {
-          getConfig: () => voiceSubmitConfig.enabled && sessionTypeOf(name) === "claude" ? voiceSubmitConfig : null,
+          // Gated on the ACTIVE session, not merely a live one. Dictation only ever
+          // reaches the focused composer, so a background seat's watcher can never
+          // help and can only misfire — and an agent seat parked at its own composer
+          // with injected text is exactly the shape the prompt check accepts.
+          getConfig: () => voiceSubmitConfig.enabled && name === activeSession && sessionTypeOf(name) === "claude" ? voiceSubmitConfig : null,
           // The FILE's mode, never the core's pending pick: a pick is a command that
           // has been queued into a session, not a mode any CLI is in yet.
           getVoiceMode: () => {
@@ -34577,6 +34626,9 @@ Click for live activity`;
         }
       }
       refreshVoiceSubmitConfig();
+      window.addEventListener("focus", () => {
+        refreshVoiceSubmitConfig();
+      });
       var voiceControl = createVoiceControl({ core: voiceCore });
       var { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
         core: voiceCore,

@@ -9,8 +9,8 @@
 // A fixed three-word radio sign-off. The default is the part that must not
 // misfire, and every shorter candidate collides with ordinary speech in this
 // repo: we dictate "send it", "send the message" and "message bob" constantly,
-// and any one-word trigger appears mid-sentence. Three words in a fixed order,
-// matched only at the very end of the composer, cannot be reached by accident.
+// and any one-word trigger appears mid-sentence. The words are common; the
+// ordered sequence, at the very end of a draft, is not.
 const DEFAULT_SUBMIT_PHRASE = 'over and out';
 
 // Dictation auto-punctuates, so the spoken form arrives as `Over and out.` far
@@ -18,9 +18,15 @@ const DEFAULT_SUBMIT_PHRASE = 'over and out';
 // of the CONFIGURED phrase and consumed after the match in the composer.
 const EDGE_PUNCT = /^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu;
 
-// The composer's prompt. Box-drawing and padding may precede it; the trailing
-// space is required, so a bare `>` in prose is not a prompt.
-const COMPOSER_PROMPT = /^[\s│┃┊┆|]*>[ ]/;
+// The CLI draws its input box with a border on EVERY row and the `> ` prompt on
+// the FIRST only, so a draft that outgrows one row leaves the cursor on a
+// border-prefixed continuation. Reading one row would make the feature decline
+// forever in exactly the long-draft case it exists for.
+const BOX_GLYPH = /[│┃┊┆|]/;
+const BOX_LEFT = /^[\s│┃┊┆|]*/;
+const BOX_RIGHT = /[\s│┃┊┆|]*$/;
+// The trailing space is required, so a bare `>` in prose is not a prompt.
+const PROMPT_HEAD = /^>[ ]/;
 
 function escapeRe(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -41,13 +47,59 @@ function normalizePhrase(phrase) {
   return triggerWords(phrase).join(' ');
 }
 
-// The composer contents, given the cursor row truncated at the cursor. null
-// when the row carries no prompt: the watcher fires Enter, so "I could not
-// identify a composer" must be indistinguishable from "do not fire".
-function composerTail(rowUpToCursor) {
-  if (typeof rowUpToCursor !== 'string') return null;
-  const m = COMPOSER_PROMPT.exec(rowUpToCursor);
-  return m ? rowUpToCursor.slice(m[0].length) : null;
+// One screen row, stripped of the box it is drawn in. The right border is
+// stripped only ABOVE the cursor row: the cursor row arrives already truncated
+// at the cursor, so anything trailing there is the operator's own text.
+function stripRow(text, { atCursor }) {
+  const left = BOX_LEFT.exec(text)[0];
+  let rest = text.slice(left.length);
+  if (!atCursor) rest = rest.replace(BOX_RIGHT, '');
+  const prompt = PROMPT_HEAD.test(rest);
+  return {
+    text: prompt ? rest.slice(2) : rest,
+    prompt,
+    // A real border GLYPH, not merely leading blanks: `BOX_LEFT` matches the
+    // empty string, so without this every unindented transcript line would read
+    // as a continuation and the walk would climb out of the box.
+    bordered: BOX_GLYPH.test(left),
+  };
+}
+
+// `rows`: the screen rows ending at the cursor, top-first, the LAST one already
+// truncated at the cursor column. Returns `{ content, erase }` or null — the
+// watcher fires Enter, so "I could not identify a composer" and "do not fire"
+// must be the same answer.
+function findSubmit(rows, phrase) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const parts = [];
+  let cursorRowLen = 0;
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    const r = rows[i];
+    if (!r || typeof r.text !== 'string') return null;
+    const atCursor = i === rows.length - 1;
+    const s = stripRow(r.text, { atCursor });
+    if (atCursor) cursorRowLen = s.text.length;
+    parts.unshift(s.text);
+    if (s.prompt) {
+      const content = parts.join('\n');
+      const hit = matchTrigger(content, phrase);
+      if (!hit) return { content, erase: 0 };
+      // CLAMPED to the cursor row, so the erase can never cross a row boundary
+      // — where the count is unknowable. The screen cannot say whether the CLI
+      // soft-wrapped one logical line or the operator hard-broke two, and the
+      // two differ by the newline a backspace would have to eat. Deleting less
+      // than was matched strands whitespace the CLI trims anyway; deleting more
+      // eats the draft. So the safe direction is the floor.
+      const erase = Math.min(hit.erase, cursorRowLen);
+      return { content, erase };
+    }
+    // Only a bordered or SOFT-WRAPPED row continues the box upward. Anything
+    // else means the walk left the composer without finding a prompt.
+    if (!s.bordered && !r.isWrapped) return null;
+  }
+  // Ran out of rows still inside the box: the prompt is above the window the
+  // caller supplied. Declining is the safe answer.
+  return null;
 }
 
 // `{ erase }` — how many CHARACTERS to backspace over, counted from the cursor,
@@ -98,7 +150,8 @@ module.exports = {
   DEFAULT_SUBMIT_PHRASE,
   triggerWords,
   normalizePhrase,
-  composerTail,
+  stripRow,
+  findSubmit,
   matchTrigger,
   shouldFire,
   readVoiceSubmitSettings,

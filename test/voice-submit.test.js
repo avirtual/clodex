@@ -18,7 +18,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 const {
-  DEFAULT_SUBMIT_PHRASE, normalizePhrase, composerTail, matchTrigger,
+  DEFAULT_SUBMIT_PHRASE, normalizePhrase, findSubmit, matchTrigger,
   shouldFire, readVoiceSubmitSettings,
 } = require('../renderer/lib/voice-submit');
 const { createVoiceSubmitWatcher } = require('../renderer/voice-submit-watcher');
@@ -99,15 +99,85 @@ test('settings resolve strictly, and a blank phrase falls back to the default', 
     { enabled: false, phrase: DEFAULT_SUBMIT_PHRASE });
 });
 
+// `rows` as the watcher supplies them: top-first, the last already truncated at
+// the cursor. A bare string is the one-row case.
+const R = (...texts) => texts.map((t) => (typeof t === 'string' ? { text: t } : t));
+
 test('the composer is identified by its prompt, and other rows are not composers', () => {
-  assert.strictEqual(composerTail('> finish the report over and out'), 'finish the report over and out');
-  assert.strictEqual(composerTail('│ > over and out'), 'over and out');
+  const one = findSubmit(R('> finish the report over and out'), DEFAULT_SUBMIT_PHRASE);
+  assert.strictEqual(one.content, 'finish the report over and out');
+  assert.strictEqual(one.erase, 13);
+  assert.strictEqual(findSubmit(R('│ > over and out'), DEFAULT_SUBMIT_PHRASE).erase, 12);
+
   // Transcript text is not a composer no matter what it ends with — this is what
   // keeps the agent's own output from submitting on the operator's behalf.
-  assert.strictEqual(composerTail('  I will say over and out'), null);
-  assert.strictEqual(composerTail('>no space after the prompt'), null);
-  assert.strictEqual(composerTail(''), null);
-  assert.strictEqual(composerTail(null), null);
+  for (const rows of [
+    R('  I will say over and out'),
+    R('>no space after the prompt over and out'),
+    R(''),
+  ]) {
+    assert.strictEqual(findSubmit(rows, DEFAULT_SUBMIT_PHRASE), null);
+  }
+  assert.strictEqual(findSubmit(null, DEFAULT_SUBMIT_PHRASE), null);
+  assert.strictEqual(findSubmit([], DEFAULT_SUBMIT_PHRASE), null);
+});
+
+test('a composer that has WRAPPED past one row still matches', () => {
+  // The motivating case: the CLI borders every row and prompts only the first,
+  // so the cursor sits on a continuation with no `> `. Reading the cursor row
+  // alone declines here, which is the r1 defect.
+  const rows = R(
+    '│ > the first line of a long dictated thought that filled the box │',
+    '│ and it kept going over and out',
+  );
+  const hit = findSubmit(rows, DEFAULT_SUBMIT_PHRASE);
+  assert.ok(hit, 'a wrapped composer must still be found');
+  assert.strictEqual(hit.content,
+    'the first line of a long dictated thought that filled the box\nand it kept going over and out');
+  // The whole match sits on the cursor row, so the clamp takes nothing off it.
+  // It only bites when the phrase itself straddles rows — see the next test.
+  assert.strictEqual(hit.erase, 13);
+  // What the backspaces would actually consume, from the cursor leftward.
+  assert.strictEqual(rows[1].text.slice(rows[1].text.length - hit.erase), ' over and out');
+});
+
+test('an erase that would cross a row boundary is clamped to the cursor row', () => {
+  // The phrase itself straddles the wrap. The screen cannot say whether the CLI
+  // soft-wrapped one logical line or the operator hard-broke two — those differ
+  // by the newline a backspace would have to eat — so the count is unknowable
+  // and the safe direction is the floor. Under-deleting strands whitespace the
+  // CLI trims; over-deleting eats the draft.
+  const rows = R('│ > wrap me over and', '│ out');
+  const hit = findSubmit(rows, DEFAULT_SUBMIT_PHRASE);
+  assert.ok(hit);
+  assert.strictEqual(hit.erase, 3, 'must not delete past the start of the cursor row');
+});
+
+test('the walk stops rather than climbing out of the composer box', () => {
+  // A PROMPT ROW EXISTS ABOVE, so running out of rows cannot be what declines
+  // this — only the border/wrap check can. Without it the walk climbs past the
+  // transcript, finds that older prompt, and submits an agent's own output.
+  // (An earlier version of this test used rows with no prompt at all: it passed
+  // with the guard deleted, asserting nothing — the CLAUDE.md ▸ Tests hazard of
+  // an assertion that never reaches the state it names.)
+  assert.strictEqual(
+    findSubmit(R('> an older prompt further up', 'some agent output', 'over and out'),
+      DEFAULT_SUBMIT_PHRASE),
+    null,
+  );
+  // Ran out of supplied rows still inside the box: the prompt is above the
+  // window, so declining is the only safe answer.
+  assert.strictEqual(
+    findSubmit(R('│ still in the box', '│ over and out'), DEFAULT_SUBMIT_PHRASE),
+    null,
+  );
+});
+
+test('a composer with no match reports zero erase rather than declining', () => {
+  // Distinct from null: the watcher RE-ARMS on this, and folding it into the
+  // "not a composer" answer would leave the latch stuck after every fire.
+  const hit = findSubmit(R('> still typing'), DEFAULT_SUBMIT_PHRASE);
+  assert.deepStrictEqual(hit, { content: 'still typing', erase: 0 });
 });
 
 // ------------------------------------------------------------- activation gate
@@ -143,14 +213,16 @@ test('the gate needs the setting AND tap mode, and hold is excluded', () => {
 
 // ------------------------------------------------------------------ the watcher
 
-// A fake xterm buffer holding ONE cursor row. `type` is the normal/alternate
-// distinction; `translateToString(_, 0, cursorX)` is the truncate-at-cursor read
-// the watcher makes, and this stub honours the cursorX argument rather than
-// ignoring it — a stub that returned the whole row would hide a watcher that
-// forgot to truncate.
-function fakeTerminal({ row = '', type = 'normal' } = {}) {
+// A fake xterm buffer holding N screen rows, cursor on the LAST one. Multi-row
+// by construction: the r1 stub held a single row and therefore could not express
+// a wrapped composer at all, which is what let the one-row read ship green.
+// `translateToString(_, 0, cursorX)` is the truncate-at-cursor read the watcher
+// makes, and this stub honours the cursorX argument rather than ignoring it — a
+// stub returning the whole row would hide a watcher that forgot to truncate.
+function fakeTerminal({ rows = [''], type = 'normal' } = {}) {
   const listeners = [];
-  const state = { row, type };
+  const state = { rows: [...rows], type };
+  const last = () => state.rows[state.rows.length - 1];
   return {
     _state: state,
     buffer: {
@@ -158,17 +230,27 @@ function fakeTerminal({ row = '', type = 'normal' } = {}) {
         return {
           type: state.type,
           baseY: 0,
-          cursorY: 0,
-          get cursorX() { return state.row.length; },
-          getLine: (y) => (y === 0 ? {
-            translateToString: (_trim, start, end) => state.row.slice(start ?? 0, end ?? state.row.length),
-          } : null),
+          get cursorY() { return state.rows.length - 1; },
+          get cursorX() { return last().text.length; },
+          getLine: (y) => {
+            const r = state.rows[y];
+            if (!r) return null;
+            return {
+              isWrapped: !!r.isWrapped,
+              translateToString: (_trim, start, end) =>
+                r.text.slice(start ?? 0, end ?? r.text.length),
+            };
+          },
         };
       },
     },
     onWriteParsed(fn) { listeners.push(fn); return { dispose() {} }; },
-    // Set the composer and fire the write event, as a real terminal would.
-    write(text) { state.row = text; for (const fn of listeners) fn(); },
+    // Repaint the composer and fire the write event, as a real terminal would.
+    // Strings are the common one-row case; objects carry `isWrapped`.
+    write(...next) {
+      state.rows = next.flat().map((r) => (typeof r === 'string' ? { text: r } : r));
+      for (const fn of listeners) fn();
+    },
   };
 }
 
@@ -181,12 +263,12 @@ const settle = (ms) => new Promise((r) => setTimeout(r, ms));
 // need. `done()` waits out both stages of a fire.
 const TEST_QUIET_MS = 5;
 function fastHarness({
-  row = '', type = 'normal',
+  rows = [''], type = 'normal',
   config = { enabled: true, phrase: DEFAULT_SUBMIT_PHRASE },
   voiceMode = 'tap', attention = null,
 } = {}) {
   const writes = [];
-  const term = fakeTerminal({ row, type });
+  const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)), type });
   const env = { config, voiceMode, attention };
   const watcher = createVoiceSubmitWatcher(term, {
     getConfig: () => env.config,
@@ -299,6 +381,55 @@ test('one fire per match, re-armed only by a non-matching composer', async () =>
   h.term.write('> and another thing over and out');
   await h.done();
   assert.strictEqual(h.watcher.fireCount(), 2);
+  h.watcher.dispose();
+});
+
+test('a wrapped composer fires through the real buffer read', async () => {
+  // The end-to-end of MUST-FIX 1: not the leaf in isolation, but the watcher
+  // walking a multi-row buffer, so a future one-row read fails HERE too.
+  const h = fastHarness();
+  h.term.write(
+    { text: '│ > a long dictated thought that filled the whole box │' },
+    { text: '│ and it kept going over and out', isWrapped: true },
+  );
+  await h.done();
+  assert.strictEqual(h.writes.length, 2, `writes: ${JSON.stringify(h.writes)}`);
+  assert.strictEqual(h.writes[0], '\x7f'.repeat(13));
+  assert.strictEqual(h.writes[1], '\r');
+  h.watcher.dispose();
+});
+
+test('a SECOND deliberate utterance of the phrase fires again', async () => {
+  // The r1 latch was a bare boolean, so this was silently dead: the composer
+  // still ended with the phrase, so the latch still held for the rest of the
+  // draft. Keyed on the content, a CHANGED draft re-arms.
+  const h = fastHarness();
+  h.term.write('> first thought over and out');
+  await h.done();
+  assert.strictEqual(h.watcher.fireCount(), 1);
+
+  // The submit did not land (busy agent, say), the operator says it again, and
+  // the phrase is appended to a draft that already ends with it.
+  h.term.write('> first thought over and out over and out');
+  await h.done();
+  assert.strictEqual(h.watcher.fireCount(), 2, 'a repeated phrase must fire again');
+  h.watcher.dispose();
+});
+
+test('a repaint of an already-answered composer still does not re-fire', async () => {
+  // The other half of the content latch: re-arming on CHANGE must not re-arm on
+  // an identical repaint, or the stale-speech case the latch exists for revives.
+  const h = fastHarness({ attention: 'permission' });
+  h.term.write('> approve it over and out');
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+
+  h.env.attention = null;
+  for (let i = 0; i < 3; i += 1) {
+    h.term.write('> approve it over and out');   // byte-identical repaints
+    await h.done();
+  }
+  assert.deepStrictEqual(h.writes, [], 'an unchanged draft must stay answered');
   h.watcher.dispose();
 });
 

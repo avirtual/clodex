@@ -9,7 +9,7 @@
 // Every decision except "where is the cursor" lives in lib/voice-submit.js;
 // this half owns the buffer read, the quiet window and the two writes.
 
-const { composerTail, matchTrigger, shouldFire } = require('./lib/voice-submit');
+const { findSubmit, shouldFire } = require('./lib/voice-submit');
 
 // The quiet window. Streamed transcription lands in segments, so a fire on the
 // first write that completes the phrase submits half an utterance. Shorter than
@@ -23,26 +23,49 @@ const QUIET_MS = 1200;
 // a literal instead of submitting. Merging these two writes reintroduces that.
 const ENTER_SETTLE_MS = 30;
 
+// How far up to look for the `> ` prompt. The composer grows upward as the draft
+// wraps, so a one-row read declines forever on a long draft — the case this
+// feature exists for. Bounded because the walk is per quiet-window and a draft
+// taller than this is well past anything dictation produces in one utterance.
+const MAX_COMPOSER_ROWS = 12;
+
 function createVoiceSubmitWatcher(terminal, {
   getConfig, getVoiceMode, getAttention, write, quietMs = QUIET_MS,
 }) {
   let timer = null;
   let enterTimer = null;
   let disposed = false;
-  // One fire per match: set by ANY match, cleared only by a composer that no
-  // longer matches. See the gate-failure case in tick().
-  let latched = false;
+  // The composer CONTENT a match was already answered for, not a bare boolean.
+  // A boolean makes a second deliberate "over and out" dead for the rest of the
+  // draft: the composer still ends with the phrase, so the latch still holds.
+  // Keying on the content re-arms when the draft CHANGES — which a repaint of
+  // the same text does not do, so the stale-speech case the latch exists for
+  // stays killed.
+  let answered = null;
   let fires = 0;
 
-  function cursorRow() {
+  // The screen rows ending at the cursor, top-first, the last truncated at the
+  // cursor column. Never wider than MAX_COMPOSER_ROWS.
+  function composerRows() {
     const buf = terminal.buffer.active;
     // While the alternate buffer is active it IS buffer.active — a full-screen
     // program's cursor row is not a composer, and its contents are not the
     // operator's draft. intent-highlight.js declines the same way.
     if (buf.type !== 'normal') return null;
-    const line = buf.getLine(buf.baseY + buf.cursorY);
-    if (!line) return null;
-    return line.translateToString(false, 0, buf.cursorX);
+    const cursor = buf.baseY + buf.cursorY;
+    const top = Math.max(0, cursor - (MAX_COMPOSER_ROWS - 1));
+    const rows = [];
+    for (let y = top; y <= cursor; y += 1) {
+      const line = buf.getLine(y);
+      if (!line) return null;
+      rows.push({
+        text: y === cursor
+          ? line.translateToString(false, 0, buf.cursorX)
+          : line.translateToString(false),
+        isWrapped: !!line.isWrapped,
+      });
+    }
+    return rows;
   }
 
   function tick() {
@@ -53,19 +76,17 @@ function createVoiceSubmitWatcher(terminal, {
     try { cfg = getConfig(); } catch { cfg = null; }
     if (!cfg) return;
 
-    const row = cursorRow();
-    const content = composerTail(row);
-    if (content === null) return;   // no prompt on this row — not a composer
-
-    const hit = matchTrigger(content, cfg.phrase);
-    if (!hit) { latched = false; return; }
-    if (latched) return;
-    // Latched even when the gate REFUSES, so a blocked match cannot fire later
-    // off an unrelated repaint. That is the whole of "no retry after the dialog
-    // clears": by then the operator's speech is stale, and the Enter it would
-    // send lands on whatever the dialog left behind. Re-arming needs the
-    // composer to stop matching.
-    latched = true;
+    const rows = composerRows();
+    if (!rows) return;
+    const found = findSubmit(rows, cfg.phrase);
+    if (!found) return;             // no composer under the cursor
+    if (!found.erase) { answered = null; return; }
+    if (answered === found.content) return;
+    // Recorded even when the gate REFUSES below, so a blocked match cannot fire
+    // later off an unrelated repaint. That is the whole of "no retry after the
+    // dialog clears": by then the operator's speech is stale, and the Enter it
+    // would send lands on whatever the dialog left behind.
+    answered = found.content;
 
     let voiceMode = null;
     let attention = null;
@@ -74,7 +95,7 @@ function createVoiceSubmitWatcher(terminal, {
     if (!shouldFire({ enabled: cfg.enabled, voiceMode, attention })) return;
 
     fires += 1;
-    write('\x7f'.repeat(hit.erase));
+    write('\x7f'.repeat(found.erase));
     enterTimer = setTimeout(() => {
       enterTimer = null;
       if (!disposed) write('\r');
@@ -105,4 +126,4 @@ function createVoiceSubmitWatcher(terminal, {
   };
 }
 
-module.exports = { createVoiceSubmitWatcher, QUIET_MS, ENTER_SETTLE_MS };
+module.exports = { createVoiceSubmitWatcher, QUIET_MS, ENTER_SETTLE_MS, MAX_COMPOSER_ROWS };

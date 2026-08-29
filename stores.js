@@ -1304,8 +1304,12 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         semanticHints: partial?.semanticHints ?? cur.semanticHints,
         selectionHints: partial?.selectionHints ?? cur.selectionHints,
         voiceSubmit: typeof partial?.voiceSubmit === 'boolean' ? partial.voiceSubmit : cur.voiceSubmit,
-        voiceSubmitPhrase: (typeof partial?.voiceSubmitPhrase === 'string' && partial.voiceSubmitPhrase.trim())
-          ? partial.voiceSubmitPhrase.trim()
+        // Key ABSENT means "no opinion" and keeps the current value; key present
+        // and BLANK is the operator clearing the field, which Preferences offers
+        // as the way back to the default. Collapsing those two makes that
+        // promise false — the custom phrase survives the clear and reappears.
+        voiceSubmitPhrase: typeof partial?.voiceSubmitPhrase === 'string'
+          ? (partial.voiceSubmitPhrase.trim() || DEFAULT_UI_SETTINGS.voiceSubmitPhrase)
           : cur.voiceSubmitPhrase,
         // Validated on the way IN, not just on the way out: an unrecognised
         // string written here would read back as itself, and every gate

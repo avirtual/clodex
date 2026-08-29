@@ -724,18 +724,29 @@ Own state + DOM, `init*(deps)`:
   watcher per local Claude terminal sends Enter when the composer ENDS with the
   configured trigger phrase. The composer is read from `terminal.buffer.active`
   (the CLI redraws its input box with ANSI, so the text is screen state and not
-  recoverable from the PTY stream) and is identified by the prompt on the cursor
-  row — a row without one never matches, which is what keeps the agent's own
-  transcript from submitting on the operator's behalf. Declines on the ALTERNATE
+  recoverable from the PTY stream). The CLI borders every row of that box and
+  prompts only the FIRST, so the read WALKS UP from the cursor row to find the
+  `> ` — a one-row read declines forever on a wrapped draft, which is the long
+  draft this feature exists for. The walk stops at a row that is neither
+  bordered nor soft-wrapped, so it cannot climb out of the box into transcript
+  and submit the agent's own output. The erase is CLAMPED to the cursor row: the
+  screen cannot say whether the CLI soft-wrapped one logical line or the
+  operator hard-broke two, so a cross-row count is unknowable and under-deleting
+  (stranded whitespace the CLI trims) is the safe direction. Declines on the
+  ALTERNATE
   buffer for intent-highlight.js's reason. Fires only after a QUIET WINDOW, since
   transcription streams in segments and an immediate fire submits half an
   utterance. The gate — feature on, voice mode `tap`, and no permission dialog —
   is re-checked at FIRE time, because the dialog can open during that window and
   the Enter would ANSWER it; the 'permission' signal is attention.js's existing
   classification carried on `el.dataset.attention`, never a second detector, and
-  both failure paths of that read resolve to 'permission'. A refused match still
-  LATCHES, so a phrase spoken into a dialog is dropped rather than replayed once
-  it clears. Hold mode is excluded: the CLI's own autoSubmit covers it. All the
+  both failure paths of that read resolve to 'permission'. The watcher also fires
+  only for the ACTIVE session: dictation reaches the focused composer only, so a
+  background seat can never be helped and can only misfire. A refused match still
+  latches — keyed on the composer CONTENT, so an identical repaint stays answered
+  (the stale-speech case) while a CHANGED draft re-arms, which is what lets a
+  second deliberate utterance of the phrase work. Hold mode is excluded: the
+  CLI's own autoSubmit covers it. All the
   deciding lives in the DOM-free leaf, which is what lets
   `test/voice-submit.test.js` pin the interlock with no jsdom. Disposed BEFORE
   its terminal.

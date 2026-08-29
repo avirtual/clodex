@@ -23,7 +23,10 @@ blocks a release.
   of what you have dictated, ignoring case and whatever punctuation dictation
   decided to add, so "Over and out." works as well as the bare words. Off by
   default, tap mode only — in hold mode the CLI already submits when you release
-  the key. It will not fire while a session is asking permission for something,
+  the key. Long drafts work too: the phrase is found even once what you have said
+  has wrapped onto further lines, which is the case the feature is really for.
+  Only the session you are looking at listens, since that is the only one your
+  dictation reaches. It will not fire while a session is asking permission for something,
   because Enter would answer that dialog; a phrase spoken while one is open is
   dropped rather than sent after it clears. Claude sessions on this machine.
 

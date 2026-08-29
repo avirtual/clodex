@@ -1154,7 +1154,13 @@ function createTerminal(name, peer = null) {
   // FIRE time rather than here: the sidebar row this reads may not exist yet
   // while the terminal is being built.
   const voiceSubmit = peer ? null : createVoiceSubmitWatcher(terminal, {
-    getConfig: () => (voiceSubmitConfig.enabled && sessionTypeOf(name) === 'claude'
+    // Gated on the ACTIVE session, not merely a live one. Dictation only ever
+    // reaches the focused composer, so a background seat's watcher can never
+    // help and can only misfire — and an agent seat parked at its own composer
+    // with injected text is exactly the shape the prompt check accepts.
+    getConfig: () => (voiceSubmitConfig.enabled
+      && name === activeSession
+      && sessionTypeOf(name) === 'claude'
       ? voiceSubmitConfig : null),
     // The FILE's mode, never the core's pending pick: a pick is a command that
     // has been queued into a session, not a mode any CLI is in yet.
@@ -3552,6 +3558,10 @@ async function refreshVoiceSubmitConfig() {
   try { voiceSubmitConfig = readVoiceSubmitSettings(await window.api.getSettings()); } catch {}
 }
 refreshVoiceSubmitConfig();
+// A second workspace window would otherwise hold the config it loaded with —
+// including the OFF direction — until it reloaded. Focus is the same moment
+// voice-control.js re-reads the mode for the same reason.
+window.addEventListener('focus', () => { refreshVoiceSubmitConfig(); });
 const voiceControl = createVoiceControl({ core: voiceCore });
 
 const { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
