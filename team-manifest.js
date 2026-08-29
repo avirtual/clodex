@@ -170,35 +170,24 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     atomicWriteFileSync(file, data);
   }
 
-  // Migrate every role off the cut fields, then stamp the schema version. Run on
-  // EVERY mutator write, which is what makes the version mean something: a
-  // conditional stamp alone could never fire on a real legacy file, because the
-  // v1 stock scaffold put `instantiate`/`tools` on `reviewer` and every mutator
-  // refuses the reserved roles — so the one file that motivated the warning was
-  // the one file that could never stop emitting it.
+  // Run on EVERY mutator write, not conditionally: a conditional stamp could
+  // never fire on a real legacy file, since every mutator refuses the reserved
+  // roles the v1 scaffold put the stale keys on.
   //
-  // Scoped to CUT_ROLE_FIELDS, not to ROLE_KEYS: this strips a NAMED set of keys
-  // this schema already drops at load, so it changes no read semantics anywhere —
-  // it only makes the disk agree with what every reader already does. Keys we
-  // simply do not model (setRole's `customField` case) are hand-authored data and
-  // stay untouched; that distinction is the whole justification for stripping
-  // here at all.
+  // Scoped to CUT_ROLE_FIELDS, not ROLE_KEYS: this strips a named set this schema
+  // already drops at load, so it changes no read semantics. Keys we simply do not
+  // model are hand-authored data and must stay untouched.
   function migrateRoles(raw) {
     const roles = (raw && raw.roles && typeof raw.roles === 'object' && !Array.isArray(raw.roles))
       ? raw.roles : null;
     if (!roles) return raw;
     for (const [roleName, def] of Object.entries(roles)) {
       if (!def || typeof def !== 'object' || Array.isArray(def)) continue;
-      // CARRY-OVER BEFORE DELETE. `worktree` is in CUT_ROLE_FIELDS, so the loop
-      // below removes it; reading it after that runs yields undefined and every
-      // role that opted into a worktree quietly becomes standing, with no error
-      // anywhere. v2 `false`/absent migrates to ABSENT rather than an explicit
-      // "standing" — absent already reads as standing, so writing the default
-      // would be noise on disk.
-      //
-      // Reserved roles are excepted: `worktree: true` on lead/reviewer was
-      // already refused at dispatch, so carrying it would migrate a claim that
-      // was never true into a schema where the front door refuses to write it.
+      // Carry-over must run BEFORE the delete loop below: `worktree` is in
+      // CUT_ROLE_FIELDS, so reading it afterwards yields undefined and every role
+      // that opted into a worktree quietly becomes standing, with no error.
+      // Reserved roles are excepted — `worktree: true` on lead/reviewer was
+      // already refused at dispatch.
       if (def.worktree === true && def.dispatch == null && !RESERVED_ROLE_KEYS.has(roleName)) {
         def.dispatch = 'worktree';
       }
@@ -207,9 +196,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       }
       roles[roleName] = def;
     }
-    // Only now can this be true of a file whose stale keys lived on a reserved
-    // role. Still conditional: a hand-authored key outside the cut set is not
-    // ours to delete, and a file carrying one has not finished migrating.
+    // Still conditional: a hand-authored key outside the cut set is not ours to
+    // delete, and a file carrying one has not finished migrating.
     const clean = Object.values(roles).every((d) => unknownRoleKeys(d).length === 0);
     if (clean) raw.version = MANIFEST_VERSION;
     return raw;
@@ -249,9 +237,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (typeof root !== 'string' || !path.isAbsolute(root)) {
       throw new Error(`team.json "root" must be an absolute path (${file})`);
     }
-    // `lead` is now a SEAT name (the session adopted as lead), not a role key —
-    // the roles map is keyed by ROLE name and always carries a literal `lead`
-    // role. matchSeatRole binds the lead SEAT to that role.
+    // `lead` here is a SEAT name, not a role key; the roles map is keyed by role
+    // name and always carries a literal `lead` role.
     const lead = m.lead;
     if (typeof lead !== 'string' || !NAME_RE.test(lead)) {
       throw new Error(`team.json "lead" must be a seat name matching ${NAME_RE} (${file})`);
@@ -264,30 +251,22 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`team.json roles must include a "lead" role (${file})`);
     }
     const roles = {};
-    // The classification as DATA, built once and rendered twice: the three warn
-    // lines below are DERIVED from it, and formatRoster reads it off the
-    // returned manifest. A surface that re-decided `honored` for itself is the
-    // drift this shape exists to prevent — `reviewer.tools` read as an enforced
-    // capability cap for hours while the warn beside it said otherwise, because
-    // the only consumer of the classification was a console nobody watches.
+    // The classification as data, built once and rendered twice: the warn lines
+    // below derive from it and formatRoster reads it off the returned manifest.
+    // A surface that re-decides `honored` for itself is the drift this prevents.
     //
-    // Three statuses, matching the three warns and for their reasons:
     //   'unknown' — a key this schema never modelled (version-gated warn)
     //   'ignored' — a retired key that configures nothing
-    //   'honored' — retired but STILL READ here, so deleting it changes behaviour
+    //   'honored' — retired but still read here, so deleting it changes behaviour
     // 'ignored' and 'honored' may never be merged or rendered in one line: the
-    // second's text is the negation of the first's, and one sentence covering
-    // both is false about half its subjects.
+    // second's text is the negation of the first's.
     //
     // This rides on the object `team:get` returns, so it crosses into the
-    // nodeIntegration renderer whether or not a surface reads it. `field` is
-    // safe by construction only for the two RETIRED statuses, whose names come
-    // from CUT_ROLE_FIELDS/HONORED_CUT_FIELDS; an 'unknown' field name is an
-    // arbitrary agent-authored string out of team.json. A UI consumer therefore
-    // inherits the SECURITY rule in renderer/popovers/team-roles-popover.js
-    // (never interpolate into a value="…" attribute), and a text surface that
-    // renders 'unknown' must refuse newlines — formatRoster avoids both by
-    // rendering neither.
+    // nodeIntegration renderer. `field` is safe by construction only for the two
+    // retired statuses; an 'unknown' field name is an arbitrary agent-authored
+    // string out of team.json, so a UI consumer inherits the security rule in
+    // renderer/popovers/team-roles-popover.js and a text surface rendering
+    // 'unknown' must refuse newlines.
     const droppedFields = [];
     for (const [roleName, def] of Object.entries(rolesIn)) {
       if (!ROLE_RE.test(roleName)) {
@@ -295,17 +274,12 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       }
       // Partitioned by MEASURED EFFECT, not by key name: honoring is conditional
       // on the value, the role and the absence of an explicit `dispatch`, so a
-      // name-only test claims "this still takes effect" over occurrences where it
-      // does not — and the remedy that line carries is actively harmful there.
-      // Removing the key and re-normalizing is the only test that tracks the
-      // branch instead of restating it, and it stays honest for a future member
-      // whose condition nobody here anticipated.
+      // name-only test claims "this still takes effect" where it does not, and
+      // the remedy it carries is actively harmful there.
       //
-      // Safe by two properties, both checked at source: `without` is a SUBSET of
-      // `def` and `k` is never in ROLE_KEYS, so no validator that passed on `def`
-      // can throw on `without` (every throw reads a modeled key); and
-      // normalizeRoleDef returns a fixed-key-order literal, which is what makes
-      // the stringify comparison sound — addRole's no-op check already leans on it.
+      // Sound because `without` is a subset of `def` and `k` is never in
+      // ROLE_KEYS, so no validator that passed on `def` can throw on `without`;
+      // and normalizeRoleDef returns a fixed-key-order literal.
       const normalized = normalizeRoleDef(roleName, def, file);
       for (const k of unknownRoleKeys(def)) {
         let honored = false;
@@ -314,9 +288,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
           delete without[k];
           honored = JSON.stringify(normalizeRoleDef(roleName, without, file)) !== JSON.stringify(normalized);
         }
-        // The remedy rides with the OCCURRENCE, not with the message: one line
-        // may name several keys, and a single hardcoded "write X instead" is
-        // wrong the moment the map holds two entries.
+        // The remedy rides with the occurrence, not the message: one line may
+        // name several keys, and a hardcoded "write X instead" is wrong the
+        // moment the map holds two entries.
         if (honored) {
           droppedFields.push({
             role: roleName, field: k, status: 'honored', remedy: HONORED_CUT_FIELDS.get(k),
@@ -330,36 +304,26 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       }
       roles[roleName] = normalized;
     }
-    // The warn lines are a RENDERING of the classification above, never a second
-    // pass over the defs: a warn that decided membership for itself is how the
-    // console and the roster end up disagreeing about the same key.
+    // A rendering of the classification above, never a second pass over the defs:
+    // a warn that decides membership for itself is how the console and the roster
+    // end up disagreeing about one key.
     const named = (st) => droppedFields
       .filter((d) => d.status === st)
-      // Keyed on STATUS, never on `remedy`'s truthiness: an honored member whose
+      // Keyed on status, never on `remedy`'s truthiness: an honored member whose
       // remedy came out empty would drop the suffix here while the roster still
-      // rendered a bare "write `` instead" — the two renderings disagreeing about
-      // one key is the exact drift this single-source shape exists to prevent.
-      // test/team-role-schema-legibility.test.js holds the remedies to non-empty.
+      // rendered a bare "write `` instead".
       .map((d) => (d.status === 'honored' ? `${d.role}.${d.field} (write \`${d.remedy}\` instead)` : `${d.role}.${d.field}`));
     const dropped = named('unknown');
     const droppedCut = named('ignored');
     const droppedHonored = named('honored');
-    // Absent reads as 1, not as current: a file written before the version
-    // existed IS a version-1 file, and defaulting to current would let a stale
+    // Absent reads as 1, not as current: defaulting to current would let a stale
     // manifest claim a schema it was never checked against.
     const version = (typeof m.version === 'number' && Number.isInteger(m.version) && m.version > 0)
       ? m.version : 1;
-    // Warn, never throw: a version-1 file still on disk carries `instantiate`
-    // and friends, and a manifest that refuses to load reads as "this cwd is on
-    // no team" at every call site — the whole team layer would vanish over a key
-    // nothing consumes any more.
-    //
-    // This is `version`'s consumer, and the pair is what makes the drop
-    // self-healing rather than merely quiet: an out-of-date file warns (once per
-    // key set) until a mutator rewrites it clean and restamps, after which the
-    // version gate alone silences it. A CURRENT-version file with unknown keys is
-    // silent by design — that is a hand-added key on today's schema, which the
-    // legibility gate covers; the warn exists for the migration, not as a linter.
+    // Warn, never throw: a manifest that refuses to load reads as "this cwd is on
+    // no team" at every call site, so the whole team layer would vanish over a key
+    // nothing consumes any more. A current-version file with unknown keys is
+    // silent by design — the warn exists for the migration, not as a linter.
     if (dropped.length && version < MANIFEST_VERSION) {
       const seen = `unknown|${file}|${dropped.join(',')}`;
       if (!warnedDrops.has(seen)) {
