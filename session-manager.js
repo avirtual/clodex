@@ -1702,12 +1702,11 @@ function createSessionManager(deps) {
         name, type, cwd,
         extraArgs,
         createdAt,
-        // The version this seat is running under AS OF THIS SPAWN — the
-        // baseline the next spawn compares against to decide whether it owes a
-        // "Clodex was upgraded" notice (notice-queue.js). Written for every
-        // type, not just claude: the record outlives the agent type it was
-        // written under, and a value that is only sometimes present is a
-        // baseline whose absence means two different things.
+        // The version this seat is running under AS OF THIS SPAWN — the baseline
+        // the next spawn compares against to decide whether it owes a "Clodex was
+        // upgraded" notice (notice-queue.js). Written for every type, not just
+        // claude: a value that is only sometimes present is a baseline whose
+        // absence means two different things.
         //
         // Unconditional, and it must stay so. This is the ADVANCE half of an
         // edge-triggered comparison: the read above happens before this line,
@@ -1750,18 +1749,15 @@ function createSessionManager(deps) {
         // (everything gated) is a real value that persists.
         ...(Array.isArray(intents) ? { intents: intents.map(String) } : {}),
         ...(Array.isArray(execCommands) && execCommands.length ? { execCommands: execCommands.map(String) } : {}),
-        // Session-scope env (T46). Persisted on the entry so --resume respawns
-        // with the SAME env (the wrong AWS identity on restart would be silent
-        // and dangerous). Like execCommands, an empty/absent env is NOT a distinct
-        // value — absent ≡ {} ≡ "no session env" — so omit it to keep the record
-        // lean and let the merge fall through to global/workspace scopes. Stored
-        // as the flat { KEY: value } shape create() received (session env has no
-        // secret flag — a session credential is opaque either way, and it never
-        // reaches an IPC read surface: it lives only on sessions.json at 0600).
-        // sanitizeFlat re-applies the key/deny/newline gate at the PERSISTENCE door
-        // too: a deny-listed key or newline value must not land on sessions.json
-        // even inert (deny-list at every door), and it's what a later --resume reads
-        // back — the spawn merge already drops junk, so the record must match.
+        // Session-scope env. Persisted on the entry so --resume respawns with the
+        // SAME env (the wrong AWS identity on restart would be silent and
+        // dangerous). An empty/absent env is NOT a distinct value — absent ≡ {} ≡
+        // "no session env" — so omit it and let the merge fall through to
+        // global/workspace scopes. sanitizeFlat re-applies the key/deny/newline
+        // gate at the PERSISTENCE door too: a deny-listed key or newline value
+        // must not land on sessions.json even inert, and it is what a later
+        // --resume reads back — the spawn merge already drops junk, so the record
+        // must match.
         ...(() => {
           const clean = sanitizeFlat(sessionEnv);
           return Object.keys(clean).length ? { env: clean } : {};
@@ -1777,16 +1773,14 @@ function createSessionManager(deps) {
         // which owns the same transition but reports nothing back. The first id
         // (attach, resume) is not a clear and must not reset.
         if (priorSid && sessionId && priorSid !== sessionId) {
-          // The keep-warm handover rides THIS edge. The symlink repoint is what
-          // reports a clear, and it lands seconds before the new conversation's
-          // first upstream response — so by the time the wire's turn.completed
-          // runs, the assignment above has already made its
-          // `s.sessionId !== t.sessionId` test false and _onWireSessionRotated
-          // does NOT run on an ordinary clear. That method keeps the same two
-          // lines for the backstop case (a wiped symlink, where the wire id is
-          // the first news of the clear); it is a second site on purpose, so do
-          // not consolidate the handover into it. Why the old hold must be ended
-          // rather than left to lapse: see _onWireSessionRotated.
+          // The keep-warm handover rides THIS edge. The symlink repoint reports
+          // the clear seconds before the new conversation's first upstream
+          // response, so by the time the wire's turn.completed runs the
+          // assignment above has already made its `s.sessionId !== t.sessionId`
+          // test false and _onWireSessionRotated does NOT run on an ordinary
+          // clear. That method keeps the same two lines for the backstop case (a
+          // wiped symlink); it is a second site on purpose, so do not consolidate
+          // the handover into it.
           try { if (this._holdKeeper) this._holdKeeper.endSession(priorSid); } catch { /* observer-grade */ }
           session._holdRearmed = false;
           this._noteSessionLeft(session, priorSid);
@@ -1846,10 +1840,8 @@ function createSessionManager(deps) {
               // An ephemeral seat is never nudged: it is retired at `done`, the
               // moment a compact would cost it exactly the context its rework
               // needs. Suppressed HERE, not inside ctxReminderFor, which stays
-              // pure — "is this context heavy" is still true of such a seat, and
-              // only whether we act on it changes. Read off the persistence
-              // record (team-tickets seeds `ephemeral` before create), never
-              // re-derived from the name shape.
+              // pure. Read off the persistence record, never re-derived from the
+              // name shape.
               let warn = ctxReminderFor(c.tok);
               // Read lazily at the first over-threshold tick, not eagerly at
               // create: get() re-parses the whole of sessions.json and _load()
@@ -2000,10 +1992,6 @@ function createSessionManager(deps) {
         }
       }
       try { getPluginHooks && getPluginHooks() && getPluginHooks().fireCreate(name); } catch {}
-      // `missingPrompt` rides the return SEPARATELY from `warnings`, which it is
-      // also in: the intent spawn paths relay this one finding on their own reply
-      // channel and must be able to pick it out, not string-match the warnings
-      // array for it.
       return { name, type, pid: ptyProc.pid, backend, noWire: wireOff, ...(teamName ? { team: teamName } : {}), ...(missingPrompt ? { missingPrompt } : {}), ...(warnings.length ? { warnings } : {}) };
     }
 
@@ -2067,28 +2055,23 @@ function createSessionManager(deps) {
     }
 
     // The EXACT route when we have it, a glob only as a fallback. A glob is
-    // fnmatchcase on the proxy side (proxylab/hints.py _matching_agent_scopes),
-    // so `clodex-clodex-*` also matches `clodex-clodex-hand-4f2a` — arming for
-    // one agent would arm every agent whose name extends it. Clodex mints
-    // proxyAgent itself, so the hash is known here even though it is not
-    // knowable from outside.
+    // fnmatchcase on the proxy side, so `clodex-clodex-*` also matches
+    // `clodex-clodex-hand-4f2a` — arming for one agent would arm every agent
+    // whose name extends it.
     _armCtx(s) {
       return {
         agent: s.name,
         // Re-resolved every draft, not read straight off the session: `proxyBase`
         // was captured at SPAWN, so unticking traffic optimization left a routed
-        // session ranking and POSTing hints at a wirescope that had just been
-        // stopped — and a rejected POST does not release the pre-arm's hold, so
-        // the inject queue then sat for its full cap before delivering.
+        // session POSTing hints at a wirescope that had just been stopped — and a
+        // rejected POST does not release the pre-arm's hold, so the inject queue
+        // then sat for its full cap before delivering.
         // Re-resolution and NOT the live pref alone: an explicitly-routed session
         // keeps its hints when the global pref is off. Used only as a BOOLEAN —
         // the value is the CAPTURED base, because that is the one the child's env
-        // was baked with (the upstreams and openai_base_url args above), so
-        // editing proxyUrl mid-session correctly does not move it. That also makes
-        // a null capture win on its own, which is what preserves the spawn-time
-        // decisions re-resolution cannot reconstruct: the tee-blind nulling above,
-        // and a session spawned while the pref was off, whose CLI does not route
-        // through wirescope at all and cannot gain hints by ticking it back on.
+        // was baked with, so editing proxyUrl mid-session correctly does not move
+        // it. That also makes a null capture win on its own, which preserves the
+        // spawn-time decisions re-resolution cannot reconstruct.
         base: resolveProxyBase(s.proxyRequested, getUiSettings()) ? s.proxyBase : null,
         route: s.proxyAgent || `${PROXY_AGENT_PREFIX}${s.name}-*`,
       };
