@@ -26,24 +26,12 @@ const QUIET_MS = 1200;
 // a literal instead of submitting. Merging these two writes reintroduces that.
 const ENTER_SETTLE_MS = 30;
 
-// The watcher cannot rely on terminal writes alone to wake it. A write is what
-// STARTS a quiet window, so after the last one there is never another event —
-// and the operator dictating into an unfocused window produces no further
-// writes at all, which left the check asleep until a click forced a repaint.
-const POLL_MS = 600;
-
 function createVoiceSubmitWatcher(terminal, {
-  getConfig, getAttention, write, quietMs = QUIET_MS, pollMs = POLL_MS,
+  getConfig, getAttention, write, quietMs = QUIET_MS,
 }) {
   let timer = null;
   let enterTimer = null;
-  let pollTimer = null;
   let disposed = false;
-  // The cursor row as of the last wake, write- or poll-driven. `undefined` is
-  // NOT a row: it means unsynced, and the next poll adopts what it finds
-  // without scheduling, so re-enabling the feature over a composer that already
-  // ends with the phrase does not submit speech from before it was armed.
-  let lastRow;
   // The composer CONTENT a match was already answered for, not a bare boolean.
   // A boolean makes a second deliberate "over and out" dead for the rest of the
   // draft: the composer still ends with the phrase, so the latch still holds.
@@ -106,39 +94,7 @@ function createVoiceSubmitWatcher(terminal, {
     timer = setTimeout(tick, quietMs);
   };
 
-  // A write is a wake AND an observation: recording the row it produced is what
-  // keeps the poll below from reporting that same text as a change one interval
-  // later, which would push every ordinary fire a poll interval past the quiet
-  // window it should have fired at.
-  const onWrite = () => {
-    lastRow = cursorRow();
-    schedule();
-  };
-
-  // The second wake source, and the only one that survives the composer going
-  // quiet. It schedules on a CHANGED row rather than on every tick, which is
-  // what preserves the debounce in both directions: calling tick() here would
-  // skip the quiet window and submit a half-finished utterance, while
-  // scheduling unconditionally would restart the window on every interval and,
-  // with pollMs under quietMs, mean it never expired at all.
-  const poll = () => {
-    if (disposed) return;
-    let cfg = null;
-    try { cfg = getConfig(); } catch { cfg = null; }
-    // Resync rather than sample while disarmed, so the row a re-arm inherits is
-    // never mistaken for something the operator just said.
-    if (!cfg) { lastRow = undefined; return; }
-    const row = cursorRow();
-    if (lastRow === undefined) { lastRow = row; return; }
-    if (row === lastRow) return;
-    lastRow = row;
-    schedule();
-  };
-
-  lastRow = cursorRow();
-  pollTimer = setInterval(poll, pollMs);
-
-  const subs = [terminal.onWriteParsed(onWrite)];
+  const subs = [terminal.onWriteParsed(schedule)];
 
   return {
     refresh: schedule,
@@ -147,13 +103,11 @@ function createVoiceSubmitWatcher(terminal, {
       disposed = true;
       if (timer) clearTimeout(timer);
       if (enterTimer) clearTimeout(enterTimer);
-      if (pollTimer) clearInterval(pollTimer);
       timer = null;
       enterTimer = null;
-      pollTimer = null;
       for (const s of subs) s.dispose();
     },
   };
 }
 
-module.exports = { createVoiceSubmitWatcher, QUIET_MS, ENTER_SETTLE_MS, POLL_MS };
+module.exports = { createVoiceSubmitWatcher, QUIET_MS, ENTER_SETTLE_MS };
