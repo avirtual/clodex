@@ -312,6 +312,17 @@ const settle = (ms) => new Promise((r) => setTimeout(r, ms));
 // because the watcher takes `quietMs` as a seam. `env` is mutable so a test can
 // change the world DURING a window, which is what the fire-time re-check tests
 // need. `done()` waits out both stages of a fire.
+// Every watcher built below, disposed after each test WHETHER OR NOT it passed.
+// EVERY watcher holds the composition poll's setInterval, buffer-half ones
+// included, so this has to sit above BOTH harnesses: an assertion that fails
+// jumps over the dispose() at the end of its test, and the surviving interval
+// hangs the whole suite on a timeout instead of naming the failure. Covering
+// only the composition harness leaves every buffer-half failure unreportable.
+// Belt to the per-test dispose calls, not a replacement for them.
+const live = [];
+function track(watcher) { live.push(watcher); return watcher; }
+afterEach(() => { while (live.length) live.pop().dispose(); });
+
 const TEST_QUIET_MS = 5;
 function fastHarness({
   rows = [''], type = 'normal',
@@ -321,12 +332,12 @@ function fastHarness({
   const writes = [];
   const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)), type });
   const env = { config, attention };
-  const watcher = createVoiceSubmitWatcher(term, {
+  const watcher = track(createVoiceSubmitWatcher(term, {
     getConfig: () => env.config,
     getAttention: () => env.attention,
     write: (d) => writes.push(d),
     quietMs: TEST_QUIET_MS,
-  });
+  }));
   return { term, watcher, writes, env, done: () => settle(TEST_QUIET_MS + ENTER_SETTLE_MS + 25) };
 }
 
@@ -557,15 +568,6 @@ test('dispose stops a fire already in flight', async () => {
 // records what the commit boundary was asked to do; `echo` is what the real
 // commit causes — the composed text reaching the pty as an ordinary write —
 // and it is deliberately NOT automatic, so a test says when it happens.
-// Every watcher built below, disposed after each test WHETHER OR NOT it passed.
-// The composition half holds a setInterval, and an assertion that fails jumps
-// over the dispose() at the end of its test — which would leave that interval
-// running and hang the whole suite on a timeout instead of reporting the
-// failure. Belt to the per-test dispose calls, not a replacement for them.
-const live = [];
-function track(watcher) { live.push(watcher); return watcher; }
-afterEach(() => { while (live.length) live.pop().dispose(); });
-
 function compositionHarness({
   config = { enabled: true, composition: true, phrase: DEFAULT_SUBMIT_PHRASE },
   attention = null, composed = null, commitTakes = true, now, type = 'normal',

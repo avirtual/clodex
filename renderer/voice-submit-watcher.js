@@ -69,7 +69,7 @@ function readComposition(terminal) {
 // Contract: commit it, and report whether it took.
 //
 // A synthetic keydown, because that is what the operator's live evidence
-// identified: pressing Command — not clicking, not blurring — commits. That is
+// identified: pressing Command commits. That is
 // CompositionHelper.keydown, which exempts only 229/Shift/Ctrl/Alt and sends
 // everything else into _finalizeComposition(false), reading the text out of the
 // textarea and dispatching it immediately. Preferred over calling
@@ -111,9 +111,24 @@ function readComposition(terminal) {
 // xterm's _keyUp calls this.focus() for anything wasModifierKeyOnlyEvent()
 // rejects, and that helper lists only 16/17/18 — Meta is not among them, so the
 // "cleanup" would yank focus to this terminal. See _keyDownSeen below.
-function commitComposition(terminal) {
+function commitComposition(terminal, composed = '', consumed = '') {
   const ta = terminal && terminal.textarea;
   if (!ta || typeof ta.dispatchEvent !== 'function') return false;
+  // Send only what has not been sent yet. `start` is private and fixed at
+  // compositionstart, so the un-consumed remainder is reached by shortening
+  // `value` rather than by moving the offset: substring CLAMPS its end, and the
+  // stale `end` a compositionupdate left pointing past the new length therefore
+  // yields exactly the remainder. Rewriting after the dispatch instead would
+  // send the accumulation this exists to prevent.
+  //
+  // Both shape checks REFUSE rather than guess. Writing a `value` whose head is
+  // not the pre-composition text moves the words under a `start` that cannot
+  // move with them, which sends a fragment cut at the wrong byte.
+  if (consumed) {
+    const value = typeof ta.value === 'string' ? ta.value : '';
+    if (!composed || !composed.startsWith(consumed) || !value.endsWith(composed)) return false;
+    ta.value = value.slice(0, value.length - composed.length) + composed.slice(consumed.length);
+  }
   ta.dispatchEvent(new KeyboardEvent('keydown', {
     key: 'Meta', code: 'MetaLeft', keyCode: 91, which: 91,
     metaKey: true, bubbles: false, cancelable: true,
@@ -152,6 +167,19 @@ function createVoiceSubmitWatcher(terminal, {
   let pending = null;
   let pendingAt = 0;
   let committed = null;
+  // macOS re-fills the composition with EVERYTHING said since it began, so
+  // sample N+1 carries sample N's words again. `committed` cannot catch that —
+  // an equality latch never bites on text that keeps growing — so what has
+  // already been sent is tracked as a consumed PREFIX and only the remainder is
+  // ever dispatched.
+  //
+  // `desynced` is the answer to a revision: dictation rewrites what it already
+  // transcribed, so the accumulation is not always an extension of what we
+  // consumed. When the prefix stops matching, the offset is meaningless and this
+  // composition sends nothing further. Dropping words is recoverable — the
+  // operator says them again; re-sending sentences already submitted is not.
+  let consumed = '';
+  let desynced = false;
   let commits = 0;
   let commitFailures = 0;
 
@@ -214,6 +242,8 @@ function createVoiceSubmitWatcher(terminal, {
     pending = null;
     pendingAt = 0;
     committed = null;
+    consumed = '';
+    desynced = false;
   }
 
   function pollComposition() {
@@ -239,14 +269,25 @@ function createVoiceSubmitWatcher(terminal, {
     // cannot undo. A composition that is still growing never reaches this line.
     if (now() - pendingAt < quietMs) return;
 
+    if (desynced) return;
+    if (!text.startsWith(consumed)) { desynced = true; return; }
+    const fresh = text.slice(consumed.length);
+
     // Dictation prepends a space to the overlay text. It cannot affect a match
     // anchored at the tail, but trimming keeps what is matched identical to
-    // what the buffer half will see once this commits.
-    if (!matchTrigger(text.trim(), cfg.phrase)) return;
+    // what the buffer half will see once this commits. Matched on the REMAINDER:
+    // the phrase that ended an already-sent utterance is still sitting in the
+    // accumulation, and matching the whole text would re-fire on it forever.
+    if (!matchTrigger(fresh.trim(), cfg.phrase)) return;
     if (committed === text) return;
-    // Recorded ahead of the gate for the same reason as `answered`: a match
+    // Both recorded ahead of the gate for the same reason as `answered`: a match
     // blocked by a dialog must die, not sit waiting for the dialog to clear.
+    // `consumed` advances here rather than after a successful commit so that a
+    // refusal buries those words too — the next accumulation carries them again,
+    // and re-sending them is the harm this whole prefix exists to prevent.
     committed = text;
+    const alreadySent = consumed;
+    consumed = text;
 
     let attention = null;
     try { attention = getAttention(); } catch { attention = 'permission'; }
@@ -266,7 +307,7 @@ function createVoiceSubmitWatcher(terminal, {
     // instead of being discarded.
     commits += 1;
     let took = false;
-    try { took = commitPending(terminal) !== false; } catch { took = false; }
+    try { took = commitPending(terminal, text, alreadySent) !== false; } catch { took = false; }
     if (!took) commitFailures += 1;
   }
 
