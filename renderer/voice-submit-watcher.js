@@ -64,14 +64,24 @@ const COMPOSITION_POLL_MS = 300;
 // STAYS quiet — a CLI still working repaints. This window is how long it must
 // stay quiet for.
 //
-// It is deliberately far longer than a plausible repaint gap rather than tuned
-// to a measured one: the author could not establish the CLI's actual repaint
-// cadence from the binary, so the value is chosen to be safe under uncertainty,
-// not to be tight. Erring long costs a late re-arm; erring short types a
-// character into the middle of a turn, where the CLI's voice path is dead and
-// the byte lands in the draft — which then blocks the real re-arm at turn end,
-// because the tap handler declines a non-empty composer.
+// The window is a QUIET GAP, not a delay: `attemptRearm` reschedules itself
+// while the terminal is still painting, so the size of this number does not
+// decide whether the re-arm happens, only how long a lull has to be before it
+// counts as one. That is why it is not tuned to a measured repaint cadence —
+// which the author could not establish from the binary anyway. Too short reads
+// a gap between two paints of one turn as a turn end and writes into a live
+// turn, where the CLI's voice path is dead: the byte lands in the draft, and a
+// non-empty composer then blocks the real re-arm at turn end. Too long only
+// delays the write.
 const REARM_SETTLE_MS = 3000;
+
+// How long a single idle edge may keep rescheduling before it is abandoned. The
+// trailing window below re-arms its own timer on every paint, so a terminal
+// that never goes quiet — a spinner, a tailing log, an agent that went straight
+// back to work without an activity event — would otherwise reschedule forever
+// off one edge. Abandoning is the safe end: the next real turn end starts a
+// fresh attempt.
+const REARM_ABANDON_MS = 60000;
 
 // Provisional boundary #1: where the pending composed text comes from.
 // Contract: the text of THIS terminal's pending composition, or null when there
@@ -164,6 +174,7 @@ function createVoiceSubmitWatcher(terminal, {
   getVoiceMode = () => null,
   getTriggerKey = () => null,
   rearmMs = REARM_SETTLE_MS,
+  abandonMs = REARM_ABANDON_MS,
   now = Date.now,
 }) {
   let timer = null;
@@ -199,6 +210,8 @@ function createVoiceSubmitWatcher(terminal, {
   // When the terminal last painted anything. The turn-end evidence on the
   // jsonl path, where every 1s text flush claims to be a turn end.
   let lastWriteAt = 0;
+  // When the edge currently being waited on arrived, for the abandon deadline.
+  let rearmDeadline = 0;
 
   // The cursor row alone, truncated at the cursor column. The phrase ends the
   // utterance, so it is on the row the cursor is on even when the draft wrapped.
@@ -333,6 +346,50 @@ function createVoiceSubmitWatcher(terminal, {
   // is dead at the top (`isActive` is `!busy`), so a byte written mid-turn does
   // nothing at all. The first moment a write can arm the recorder is the edge
   // out of that window, which is exactly the transition reported here.
+  // A TRAILING window, not a one-shot delay, and that distinction is the whole
+  // of it. The condition being waited on is "the terminal has stopped
+  // painting", and on the wire path the composer repaint ALWAYS lands after
+  // the edge — `turnCompleted` fires when the tee finishes the upstream
+  // stream, so the CLI cannot have drawn its answer yet. A version of this
+  // that RETURNED on a recent paint therefore declined permanently on the one
+  // path that carries a truthful `turnEnd`, and no value of the constant fixed
+  // it. Rescheduling is what turns "not yet" back into "later".
+  //
+  // Same shape as `schedule()` on the submit half, for the same reason.
+  function attemptRearm() {
+    rearmTimer = null;
+    if (disposed) return;
+    // The edge being waited on is stale: re-check it rather than trusting the
+    // timer, since a turn that restarted means the CLI's key path is dead
+    // again and a dialog that opened means the byte would answer it.
+    if (activity !== 'idle' || !rearmAllowed('thinking', 'idle')) return;
+
+    const quietFor = now() - lastWriteAt;
+    if (quietFor < rearmMs) {
+      // Still painting. Give up only at the deadline, so one edge cannot
+      // reschedule forever behind a spinner or a tailing log.
+      if (now() >= rearmDeadline) return;
+      rearmTimer = setTimeout(attemptRearm, rearmMs - quietFor);
+      return;
+    }
+
+    // Last, because it is the only gate that reads the screen, and the reason
+    // it is not optional: the CLI's tap handler bails on a NON-EMPTY composer
+    // BEFORE it swallows the key, so the character would be INSERTED into the
+    // operator's draft and would arm nothing. cursorRow() returns null off the
+    // normal buffer, which composerIsEmpty declines too.
+    if (!composerIsEmpty(cursorRow())) return;
+
+    let key = null;
+    try { key = getTriggerKey(); } catch { key = null; }
+    // No plain character is bound to push-to-talk, so no byte can arm the
+    // recorder — a space written in hope would just type into the draft.
+    if (typeof key !== 'string' || key.length !== 1) return;
+
+    rearms += 1;
+    write(key);
+  }
+
   function noteActivity(state, turnEnd) {
     if (disposed) return;
     const from = activity;
@@ -352,35 +409,8 @@ function createVoiceSubmitWatcher(terminal, {
     // fires, `activity` may already have moved on.
     if (!rearmAllowed(from, state)) return;
     if (rearmTimer) clearTimeout(rearmTimer);
-    rearmTimer = setTimeout(() => {
-      rearmTimer = null;
-      if (disposed) return;
-      // Still idle, and still allowed. A turn that started again inside the
-      // window means the CLI's key path is dead once more, and a dialog that
-      // opened inside it means the byte would answer it.
-      if (activity !== 'idle' || !rearmAllowed('thinking', 'idle')) return;
-
-      // The jsonl emitter passes turnEnd unconditionally, so the flag above
-      // cleared nothing on that path. A terminal that has painted since the
-      // edge is a CLI still working.
-      if (now() - lastWriteAt < rearmMs) return;
-
-      // Last, because it is the only gate that reads the screen, and the reason
-      // it is not optional: the CLI's tap handler bails on a NON-EMPTY composer
-      // BEFORE it swallows the key, so the character would be INSERTED into the
-      // operator's draft and would arm nothing. cursorRow() returns null off the
-      // normal buffer, which composerIsEmpty declines too.
-      if (!composerIsEmpty(cursorRow())) return;
-
-      let key = null;
-      try { key = getTriggerKey(); } catch { key = null; }
-      // No plain character is bound to push-to-talk, so no byte can arm the
-      // recorder — a space written in hope would just type into the draft.
-      if (typeof key !== 'string' || key.length !== 1) return;
-
-      rearms += 1;
-      write(key);
-    }, rearmMs);
+    rearmDeadline = now() + abandonMs;
+    rearmTimer = setTimeout(attemptRearm, rearmMs);
   }
 
   // Trailing debounce: every write RESTARTS the window, which is what makes the

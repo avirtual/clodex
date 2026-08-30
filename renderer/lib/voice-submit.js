@@ -166,7 +166,21 @@ function shouldRearm({ enabled, rearm, voiceMode, attention, from, to } = {}) {
 // and a dialog interior and a mid-repaint screen both look exactly like that.
 // A silent feature is recoverable, a character typed into a permission dialog
 // is not.
-const COMPOSER_EMPTY = /^[\u276f>] ?$/u;
+//
+// THE SEPARATOR IS U+00A0, NOT U+0020. Measured 2026-08-31 off a live seat
+// (CLI 2.1.251) from the same read this rule is given: cursor row
+// `U+276F U+00A0`, cursorX 2. An earlier revision of this rule spelled it with
+// an ASCII space and therefore returned false on every genuinely empty
+// composer — the feature was dead with the suite green, because the fixtures
+// encoded the same assumption the rule did.
+//
+// Both separators are listed EXPLICITLY rather than as `\s?`, which would also
+// match U+00A0 and pass the same tests. `\s` additionally admits tab, newline
+// and the rest of the Unicode space run — none of which has been observed in
+// this position, and each of which is a screen state we have no reading of.
+// Listing what was measured keeps an unrecognised row falling to the silent
+// side, which is the direction chosen throughout this rule.
+const COMPOSER_EMPTY = /^[\u276f>][\u0020\u00a0]?$/u;
 
 function composerIsEmpty(row) {
   if (typeof row !== 'string') return false;

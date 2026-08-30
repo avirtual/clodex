@@ -1100,14 +1100,27 @@ test('shouldRearm: every gate declines on its own', () => {
 });
 
 test('composerIsEmpty: ornament is empty, a draft is not, unreadable is not', () => {
-  // The marker, with at most the one separator space the CLI paints after it.
-  for (const row of ['❯', '❯ ', '>', '> ']) {
+  // THE MEASURED ROW, first and by itself, because this is the case the whole
+  // guard exists to accept and the one an ASCII-space fixture cannot express.
+  // Captured 2026-08-31 off a live seat (CLI 2.1.251): U+276F U+00A0, cursorX 2.
+  assert.strictEqual(composerIsEmpty('\u276f\u00a0'), true,
+    'the real composer is empty — U+00A0 separator, not U+0020');
+
+  // The marker, with at most the one separator the CLI paints after it. Both
+  // separators are accepted; only U+00A0 has been observed.
+  for (const row of ['❯', '\u276f\u0020', '\u276f\u00a0', '>', '> ']) {
     assert.strictEqual(composerIsEmpty(row), true, JSON.stringify(row));
   }
   // A SECOND space is already a draft by the CLI's own `value.length > 0`
   // guard, and dictation prepends exactly one. A row with no marker is not
   // evidence of a composer at all — a dialog interior looks like that.
-  for (const row of ['❯  ', '│ ', '│', '', '   ', ' ']) {
+  for (const row of [
+    '❯  ', '\u276f\u00a0\u00a0', '\u276f\u00a0x',
+    '│ ', '│', '', '   ', ' ',
+    // \s would admit these; the rule lists the two separators it has evidence
+    // for, so an unrecognised row falls to the silent side.
+    '\u276f\t', '\u276f\n',
+  ]) {
     assert.strictEqual(composerIsEmpty(row), false, JSON.stringify(row));
   }
   // The CLI's tap handler RETURNS before swallowing the key when the composer
@@ -1146,13 +1159,22 @@ test('resolveTriggerKey takes a plain character and refuses a chord', () => {
 // mode, and `env` is mutable so a test can change the world DURING the settle
 // window — which is what the re-check tests need. `rearmMs` is a seam for the
 // same reason `quietMs` is.
+// The empty composer AS MEASURED off a live seat on 2026-08-31 (CLI 2.1.251):
+// U+276F then U+00A0, with the cursor at column 2, read from the same
+// `cursorRow()` truncation the watcher performs. The separator is a
+// NON-BREAKING space, and writing it as an ASCII one here is what hid a rule
+// that returned false on every real composer while this file stayed green.
+// Spelled as escapes so it cannot be silently "fixed" by an editor.
+const EMPTY_COMPOSER = '\u276f\u00a0';
+
 const TEST_REARM_MS = 5;
 function rearmHarness({
-  rows = ['❯ '],
+  rows = [EMPTY_COMPOSER],
   config = { enabled: true, rearm: true, phrase: DEFAULT_SUBMIT_PHRASE },
   attention = null,
   voiceMode = 'tap',
   trigger = ' ',
+  abandonMs,
 } = {}) {
   const writes = [];
   const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)) });
@@ -1161,9 +1183,16 @@ function rearmHarness({
   // "the CLI is still painting" has to control the clock rather than race it:
   // real elapsed time between a write and the assertion is longer than any
   // workable test settle. `offset` moves the clock forward by hand.
-  const clock = { offset: 0, now: () => Date.now() + clock.offset };
+  // `frozen` pins the clock at a fixed instant so a test can say "the terminal
+  // is painting continuously" without racing real timers; `offset` shifts it.
+  // Indirect through the object so a test can set either AFTER construction.
+  const clock = {
+    offset: 0,
+    frozen: null,
+    now: () => (clock.frozen === null ? Date.now() + clock.offset : clock.frozen),
+  };
   const watcher = createVoiceSubmitWatcher(term, {
-    now: clock.now,
+    now: () => clock.now(),
     getConfig: () => env.config,
     getAttention: () => env.attention,
     getVoiceMode: () => env.voiceMode,
@@ -1171,6 +1200,7 @@ function rearmHarness({
     write: (d) => writes.push(d),
     quietMs: TEST_QUIET_MS,
     rearmMs: TEST_REARM_MS,
+    ...(abandonMs === undefined ? {} : { abandonMs }),
   });
   // A turn, then its end. Every re-arm needs the edge, so this is the shape
   // every test below starts from.
@@ -1405,30 +1435,68 @@ test('MF1: turnEnd must be exactly true, not merely truthy-by-absence', async ()
   }
 });
 
-test('MF1: a turn-end claim is refused while the terminal is still painting', async () => {
-  // The jsonl emitter passes turnEnd unconditionally, so the flag alone clears
-  // nothing on that path. A CLI still working repaints; that is the only
-  // evidence this side has, and the settle window is how long it must stay
-  // quiet.
+test('MF1: a paint AFTER the edge delays the re-arm, then it fires once quiet', async () => {
+  // THE PRODUCTION ORDERING. On the wire path `turnCompleted` fires when the
+  // tee finishes the upstream stream, so the CLI has not drawn its answer yet
+  // and the composer repaint ALWAYS lands after the edge. A version of this
+  // that returned on a recent paint declined permanently, on the only path
+  // carrying a truthful turnEnd — the feature never fired at all.
   const h = rearmHarness();
   h.turn();
-  // Stamp the paint far in the FUTURE, so it still reads as "just now" when the
-  // settle fires. Real elapsed time would clear a 5ms quiet window before the
-  // assertion runs, and the test would pass without exercising the check.
-  h.clock.offset = 1e6;
-  h.term.write('❯ ');
-  h.clock.offset = 0;
+  await settle(1);
+  h.term.write(EMPTY_COMPOSER);
   await h.done();
+  // Delayed by the paint, not abandoned because of it.
+  assert.deepStrictEqual(h.writes, [' ']);
+  assert.strictEqual(h.watcher.rearmCount(), 1, 'exactly once, not once per reschedule');
+  h.watcher.dispose();
+});
+
+test('MF1: a terminal that never goes quiet is never written into', async () => {
+  // The reschedule must not decay into an unconditional write once the paints
+  // stop being checked.
+  //
+  // The clock is driven rather than raced: each paint stamps `lastWriteAt`
+  // 1000ms further ahead, so every attempt sees a paint that just happened, no
+  // matter how the real timers jitter. Racing wall-clock here made this test
+  // fail 3 runs in 5 — and a flaky pin on an interlock is worse than none,
+  // because it gets muted.
+  // Painting on a REAL timer cannot express this: `settle(5)` sleeps ~11ms, so
+  // a gap wider than rearmMs opens between paints and the re-arm fires in it.
+  // Freeze the clock instead — every attempt then reads a paint that happened
+  // "now" — and let the loop run long enough in real time for several settles
+  // to have fired.
+  const h = rearmHarness();
+  h.turn();
+  h.term.write(EMPTY_COMPOSER);
+  h.clock.frozen = h.clock.now();
+  for (let i = 0; i < 6; i += 1) {
+    h.term.write(EMPTY_COMPOSER);
+    await settle(TEST_REARM_MS);
+  }
   assert.deepStrictEqual(h.writes, []);
   h.watcher.dispose();
 });
 
-test('MF1: once the terminal goes quiet, a turn end does re-arm', async () => {
-  // The other direction of the same gate — without this the quiet condition
-  // could be satisfied by never firing at all.
-  const h = rearmHarness();
-  h.term.write('❯ ');
-  await settle(TEST_REARM_MS + 25);
+test('MF1: one edge cannot reschedule forever — the abandon deadline holds', async () => {
+  // A terminal that keeps painting past the deadline stops being waited on, so
+  // one edge cannot hold a timer alive behind a spinner or a tailing log.
+  // abandonMs 0: the deadline is already past on the first attempt, so the
+  // branch under test is reached the moment the terminal is seen painting.
+  const h = rearmHarness({ abandonMs: 0 });
+  h.turn();
+  // Freeze with a paint stamped NOW, so every attempt sees "still painting"
+  // and the deadline has passed — abandon, rather than reschedule.
+  h.term.write(EMPTY_COMPOSER);
+  h.clock.frozen = h.clock.now();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [], 'abandoned, not merely delayed');
+
+  // Abandonment is per-EDGE, not permanent: unfreeze, let it go quiet, and a
+  // fresh turn end re-arms normally.
+  h.clock.frozen = null;
+  await settle(TEST_REARM_MS + 5);
+  assert.deepStrictEqual(h.writes, [], 'the abandoned edge must not resurrect');
   h.turn();
   await h.done();
   assert.deepStrictEqual(h.writes, [' ']);
