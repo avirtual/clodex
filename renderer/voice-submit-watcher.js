@@ -69,10 +69,10 @@ function readComposition(terminal) {
 // Contract: commit it, and report whether it took.
 //
 // A synthetic keydown, because that is what the operator's live evidence
-// identified: pressing Command commits. That is
-// CompositionHelper.keydown, which exempts only 229/Shift/Ctrl/Alt and sends
-// everything else into _finalizeComposition(false), reading the text out of the
-// textarea and dispatching it immediately. Preferred over calling
+// identified: pressing Command commits. That is CompositionHelper.keydown,
+// which exempts only 229/Shift/Ctrl/Alt and sends everything else into
+// _finalizeComposition(false), reading the text out of the textarea and
+// dispatching it immediately. Preferred over calling
 // _finalizeComposition directly: it is the same path a real key takes.
 //
 // Meta specifically, and this is the part not to "simplify": it must be a key
