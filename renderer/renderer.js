@@ -50,7 +50,9 @@ const { createVoiceCore, createVoiceControl } = require('./voice-control');
 const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
 const { createVoiceSubmitWatcher } = require('./voice-submit-watcher');
-const { DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings } = require('./lib/voice-submit');
+const {
+  DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings, resolveTriggerKey,
+} = require('./lib/voice-submit');
 const { initBanners } = require('./banners');
 const { initThemes } = require('./themes');
 const { initLibraryDrawers } = require('./library-drawers');
@@ -1172,6 +1174,11 @@ function createTerminal(name, peer = null) {
       return el ? (el.dataset.attention || null) : 'permission';
     },
     write: (data) => window.api.writeToSession(name, data),
+    // Both read through voiceCore, which already polls the CLI's config for the
+    // bar button — a second reader here would be a second copy of a box-wide
+    // value, which voice-control.js's header rules out.
+    getVoiceMode: () => voiceCore.snapshot().mode || null,
+    getTriggerKey: () => resolveTriggerKey(voiceCore.triggerBinding()),
   });
 
   const searchAddon = new SearchAddon();
@@ -2468,6 +2475,10 @@ window.api.onSessionActivity((name, state) => {
     applyThinkBadge(el);
   }
   el.dataset.activity = state;
+  // AFTER the dataset write, because the watcher's own permission interlock
+  // reads this row back.
+  const sess = sessions.get(name);
+  if (sess && sess.voiceSubmit) sess.voiceSubmit.noteActivity(state);
   sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), lastActivityTs: Date.now() });
   scheduleSidebarRelayout();
 });
@@ -3549,7 +3560,9 @@ const voiceCore = createVoiceCore({
 // Cached because the watcher consults it on every quiet-window expiry, per
 // terminal — an invoke per tick would put IPC on a timer. Refreshed by the two
 // events that can change it: Preferences saving, and this window loading.
-let voiceSubmitConfig = { enabled: false, composition: false, phrase: DEFAULT_SUBMIT_PHRASE };
+let voiceSubmitConfig = {
+  enabled: false, composition: false, rearm: false, phrase: DEFAULT_SUBMIT_PHRASE,
+};
 async function refreshVoiceSubmitConfig() {
   try { voiceSubmitConfig = readVoiceSubmitSettings(await window.api.getSettings()); } catch {}
 }
@@ -3916,6 +3929,7 @@ const prefsSemanticHints = document.getElementById('prefs-semantic-hints');
 const prefsSelectionHints = document.getElementById('prefs-selection-hints');
 const prefsVoiceSubmit = document.getElementById('prefs-voice-submit');
 const prefsVoiceSubmitComposition = document.getElementById('prefs-voice-submit-composition');
+const prefsVoiceSubmitRearm = document.getElementById('prefs-voice-submit-rearm');
 const prefsVoiceSubmitPhrase = document.getElementById('prefs-voice-submit-phrase');
 const prefsTerminalReports = document.getElementById('prefs-terminal-reports');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
@@ -5572,6 +5586,7 @@ async function openPrefs() {
   if (prefsSelectionHints) prefsSelectionHints.checked = !!s.selectionHints;
   if (prefsVoiceSubmit) prefsVoiceSubmit.checked = s.voiceSubmit === true;
   if (prefsVoiceSubmitComposition) prefsVoiceSubmitComposition.checked = s.voiceSubmitComposition === true;
+  if (prefsVoiceSubmitRearm) prefsVoiceSubmitRearm.checked = s.voiceSubmitRearm === true;
   // The stored phrase, never the default, so an empty box is the operator
   // asking for the default back rather than a value they typed being hidden.
   if (prefsVoiceSubmitPhrase) prefsVoiceSubmitPhrase.value = s.voiceSubmitPhrase || '';
@@ -5630,6 +5645,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     selectionHints: prefsSelectionHints ? prefsSelectionHints.checked : false,
     voiceSubmit: prefsVoiceSubmit ? prefsVoiceSubmit.checked : false,
     voiceSubmitComposition: prefsVoiceSubmitComposition ? prefsVoiceSubmitComposition.checked : false,
+    voiceSubmitRearm: prefsVoiceSubmitRearm ? prefsVoiceSubmitRearm.checked : false,
     voiceSubmitPhrase: prefsVoiceSubmitPhrase ? prefsVoiceSubmitPhrase.value.trim() : '',
     terminalReports: readTerminalReports(),
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,

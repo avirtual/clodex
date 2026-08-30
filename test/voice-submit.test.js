@@ -20,6 +20,7 @@ const assert = require('node:assert');
 const {
   DEFAULT_SUBMIT_PHRASE, normalizePhrase, findSubmit, matchTrigger,
   foldConfusables, shouldFire, readVoiceSubmitSettings,
+  shouldRearm, composerIsEmpty, resolveTriggerKey,
 } = require('../renderer/lib/voice-submit');
 const {
   createVoiceSubmitWatcher, readComposition, commitComposition,
@@ -136,15 +137,15 @@ test('an empty or punctuation-only phrase yields no matcher at all', () => {
 
 test('settings resolve strictly, and a blank phrase falls back to the default', () => {
   assert.deepStrictEqual(readVoiceSubmitSettings({ voiceSubmit: true, voiceSubmitPhrase: 'Wrap It Up.' }),
-    { enabled: true, composition: false, phrase: 'wrap it up' });
+    { enabled: true, composition: false, rearm: false, phrase: 'wrap it up' });
   // undefined is what an omission from the settings:get whitelist arrives as,
   // and it must read as OFF rather than as truthy-by-absence.
   assert.deepStrictEqual(readVoiceSubmitSettings({}),
-    { enabled: false, composition: false, phrase: DEFAULT_SUBMIT_PHRASE });
+    { enabled: false, composition: false, rearm: false, phrase: DEFAULT_SUBMIT_PHRASE });
   assert.deepStrictEqual(readVoiceSubmitSettings({ voiceSubmit: 'yes', voiceSubmitPhrase: '  ' }),
-    { enabled: false, composition: false, phrase: DEFAULT_SUBMIT_PHRASE });
+    { enabled: false, composition: false, rearm: false, phrase: DEFAULT_SUBMIT_PHRASE });
   assert.deepStrictEqual(readVoiceSubmitSettings(null),
-    { enabled: false, composition: false, phrase: DEFAULT_SUBMIT_PHRASE });
+    { enabled: false, composition: false, rearm: false, phrase: DEFAULT_SUBMIT_PHRASE });
 });
 
 test('the composition read is ANDed with the master switch, never standing alone', () => {
@@ -152,17 +153,25 @@ test('the composition read is ANDed with the master switch, never standing alone
   // stale `voiceSubmitComposition: true` in a settings file predates the
   // operator unticking the box above it, and a bare `=== true` read would arm
   // the poll over a feature he believes is disarmed.
+  // `rearm` is ANDed with the master switch for the same reason, so it rides
+  // this table rather than a parallel one — the two secondary switches must
+  // not drift apart in how they read a stale file.
   const cases = [
-    [{ voiceSubmit: true, voiceSubmitComposition: true }, true, true],
-    [{ voiceSubmit: true, voiceSubmitComposition: false }, true, false],
-    [{ voiceSubmit: true }, true, false],
-    [{ voiceSubmit: false, voiceSubmitComposition: true }, false, false],
-    [{ voiceSubmitComposition: true }, false, false],
-    [{ voiceSubmit: true, voiceSubmitComposition: 'yes' }, true, false],
+    [{ voiceSubmit: true, voiceSubmitComposition: true }, true, true, false],
+    [{ voiceSubmit: true, voiceSubmitComposition: false }, true, false, false],
+    [{ voiceSubmit: true }, true, false, false],
+    [{ voiceSubmit: false, voiceSubmitComposition: true }, false, false, false],
+    [{ voiceSubmitComposition: true }, false, false, false],
+    [{ voiceSubmit: true, voiceSubmitComposition: 'yes' }, true, false, false],
+    [{ voiceSubmit: true, voiceSubmitRearm: true }, true, false, true],
+    [{ voiceSubmit: false, voiceSubmitRearm: true }, false, false, false],
+    [{ voiceSubmitRearm: true }, false, false, false],
+    [{ voiceSubmit: true, voiceSubmitRearm: 'yes' }, true, false, false],
+    [{ voiceSubmit: true, voiceSubmitComposition: true, voiceSubmitRearm: true }, true, true, true],
   ];
-  for (const [raw, enabled, composition] of cases) {
+  for (const [raw, enabled, composition, rearm] of cases) {
     assert.deepStrictEqual(readVoiceSubmitSettings(raw),
-      { enabled, composition, phrase: DEFAULT_SUBMIT_PHRASE }, JSON.stringify(raw));
+      { enabled, composition, rearm, phrase: DEFAULT_SUBMIT_PHRASE }, JSON.stringify(raw));
   }
 });
 
@@ -1039,4 +1048,321 @@ test('commitComposition reports whether the composition actually went away', () 
   } finally {
     globalThis.KeyboardEvent = OriginalKeyboardEvent;
   }
+});
+
+// ------------------------------------------------------------------- re-arm
+// The second half of the feature: writing ONE character into an empty composer
+// on the thinking -> idle edge, because the CLI's tap recorder arms only from a
+// keypress. Same hazard as the submit half and then some — under the old
+// post-send trigger a permission dialog was an incidental collision, but the
+// idle edge is exactly when a dialog appears, so the interlock is on the main
+// path here. These assert on what reached the pty for that reason.
+
+test('shouldRearm fires on the edge and only on the edge', () => {
+  const base = {
+    enabled: true, rearm: true, voiceMode: 'tap', attention: null,
+  };
+  assert.strictEqual(shouldRearm({ ...base, from: 'thinking', to: 'idle' }), true);
+  // A LEVEL check would pass all of these, and each one is a character written
+  // into a composer the operator may be typing in by hand.
+  for (const [from, to] of [
+    ['idle', 'idle'], ['thinking', 'thinking'], ['idle', 'thinking'],
+    [null, 'idle'], ['compacting', 'idle'], ['thinking', 'compacting'],
+  ]) {
+    assert.strictEqual(shouldRearm({ ...base, from, to }), false,
+      `${String(from)} -> ${String(to)} must not re-arm`);
+  }
+});
+
+test('shouldRearm: every gate declines on its own', () => {
+  const ok = {
+    enabled: true, rearm: true, voiceMode: 'tap', attention: null,
+    from: 'thinking', to: 'idle',
+  };
+  assert.strictEqual(shouldRearm(ok), true);
+  const cases = [
+    ['the feature is off', { enabled: false }],
+    ['the re-arm switch is off', { rearm: false }],
+    ['a dialog is open', { attention: 'permission' }],
+    // Not a preference: in hold mode one character cannot reach the CLI's
+    // auto-repeat threshold, so it lands in the draft as a literal instead.
+    ['voice mode is hold', { voiceMode: 'hold' }],
+    ['voice mode is off', { voiceMode: 'off' }],
+    ['voice mode is unknown', { voiceMode: null }],
+  ];
+  for (const [why, patch] of cases) {
+    assert.strictEqual(shouldRearm({ ...ok, ...patch }), false, why);
+  }
+  // Undefined must read as off everywhere, the same way the settings reader
+  // treats an omitted key.
+  assert.strictEqual(shouldRearm({}), false);
+  assert.strictEqual(shouldRearm(), false);
+});
+
+test('composerIsEmpty: ornament is empty, a draft is not, unreadable is not', () => {
+  for (const row of ['', '   ', '❯ ', '> ', '│ > ', '❯']) {
+    assert.strictEqual(composerIsEmpty(row), true, JSON.stringify(row));
+  }
+  // The CLI's tap handler RETURNS before swallowing the key when the composer
+  // is non-empty, so a character written for any of these is inserted into the
+  // draft AND arms nothing.
+  for (const row of ['❯ a', '❯ finish the report', '> x', 'text']) {
+    assert.strictEqual(composerIsEmpty(row), false, JSON.stringify(row));
+  }
+  // cursorRow() answers null off the normal buffer; "I cannot read this" and
+  // "do not write" have to be the same answer.
+  for (const bad of [null, undefined, 0, {}, []]) {
+    assert.strictEqual(composerIsEmpty(bad), false, JSON.stringify(bad));
+  }
+});
+
+test('resolveTriggerKey takes a plain character and refuses a chord', () => {
+  const plain = { key: ' ', ctrl: false, alt: false, shift: false, meta: false, super: false };
+  assert.strictEqual(resolveTriggerKey(plain), ' ');
+  assert.strictEqual(resolveTriggerKey({ ...plain, key: 'k' }), 'k');
+  // A modifier chord cannot be armed by writing a byte — the CLI compares the
+  // typed character against a single-character binding only.
+  for (const mod of ['ctrl', 'alt', 'shift', 'meta', 'super']) {
+    assert.strictEqual(resolveTriggerKey({ ...plain, key: 'k', [mod]: true }), null, mod);
+  }
+  // Named keys ('escape', 'up') are not characters either.
+  assert.strictEqual(resolveTriggerKey({ ...plain, key: 'escape' }), null);
+  assert.strictEqual(resolveTriggerKey({ ...plain, key: '' }), null);
+  // Null is the CLEARED binding, not a missing default: the CLI's own default
+  // is seeded by the read in voice-settings.js, so defaulting to a space here
+  // would write one into a session that has no push-to-talk key at all.
+  assert.strictEqual(resolveTriggerKey(null), null);
+  assert.strictEqual(resolveTriggerKey(undefined), null);
+});
+
+// A harness for the re-arm half. The composer starts EMPTY, the CLI is in tap
+// mode, and `env` is mutable so a test can change the world DURING the settle
+// window — which is what the re-check tests need. `rearmMs` is a seam for the
+// same reason `quietMs` is.
+const TEST_REARM_MS = 5;
+function rearmHarness({
+  rows = ['❯ '],
+  config = { enabled: true, rearm: true, phrase: DEFAULT_SUBMIT_PHRASE },
+  attention = null,
+  voiceMode = 'tap',
+  trigger = ' ',
+} = {}) {
+  const writes = [];
+  const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)) });
+  const env = { config, attention, voiceMode, trigger };
+  const watcher = createVoiceSubmitWatcher(term, {
+    getConfig: () => env.config,
+    getAttention: () => env.attention,
+    getVoiceMode: () => env.voiceMode,
+    getTriggerKey: () => env.trigger,
+    write: (d) => writes.push(d),
+    quietMs: TEST_QUIET_MS,
+    rearmMs: TEST_REARM_MS,
+  });
+  // A turn, then its end. Every re-arm needs the edge, so this is the shape
+  // every test below starts from.
+  const turn = () => { watcher.noteActivity('thinking'); watcher.noteActivity('idle'); };
+  const done = () => settle(TEST_REARM_MS + TEST_QUIET_MS + ENTER_SETTLE_MS + 25);
+  return { term, watcher, writes, env, turn, done };
+}
+
+test('the idle edge writes the trigger character into an empty composer', async () => {
+  const h = rearmHarness();
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [' ']);
+  assert.strictEqual(h.watcher.rearmCount(), 1);
+  h.watcher.dispose();
+});
+
+test('the trigger character written is the CONFIGURED one, not a hardcoded space', async () => {
+  const h = rearmHarness({ trigger: 'k' });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, ['k']);
+  h.watcher.dispose();
+});
+
+test('no character can arm a chord binding, so nothing is written', async () => {
+  const h = rearmHarness({ trigger: null });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+  assert.strictEqual(h.watcher.rearmCount(), 0);
+  h.watcher.dispose();
+});
+
+test('THE INTERLOCK: a permission dialog gets no character', async () => {
+  const h = rearmHarness({ attention: 'permission' });
+  h.turn();
+  await h.done();
+  // Not a predicate assertion: the byte is what would answer the dialog.
+  assert.deepStrictEqual(h.writes, []);
+  h.watcher.dispose();
+});
+
+test('THE INTERLOCK: a dialog opening DURING the settle window still blocks', async () => {
+  const h = rearmHarness();
+  h.turn();
+  // The race this window exists for: `session-attention` and `session-activity`
+  // reach the renderer from different watchers, so the idle edge can arrive
+  // just before the notice that a dialog is up.
+  h.env.attention = 'permission';
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+  h.watcher.dispose();
+});
+
+test('THE INTERLOCK: a missing sidebar row reads as permission', async () => {
+  // renderer.js maps a row that is GONE to 'permission' deliberately; this is
+  // the watcher end of that contract.
+  const h = rearmHarness();
+  h.env.attention = 'permission';
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+  h.watcher.dispose();
+});
+
+test('a composer the operator is typing in is never written into', async () => {
+  const h = rearmHarness({ rows: ['❯ half a thought'] });
+  h.turn();
+  await h.done();
+  // The CLI would INSERT the character here rather than swallow it, so this
+  // guard protects the draft as well as the recorder.
+  assert.deepStrictEqual(h.writes, []);
+  h.watcher.dispose();
+});
+
+test('a draft typed DURING the settle window is not written into either', async () => {
+  const h = rearmHarness();
+  h.turn();
+  h.term.write('❯ started typing');
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+  h.watcher.dispose();
+});
+
+test('a new turn starting inside the settle window cancels the re-arm', async () => {
+  const h = rearmHarness();
+  h.turn();
+  // The CLI's voice key path is dead again while busy, so the byte would go
+  // nowhere useful and would sit in the composer.
+  h.watcher.noteActivity('thinking');
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+  h.watcher.dispose();
+});
+
+test('sitting idle re-arms once, not once per event', async () => {
+  const h = rearmHarness();
+  h.turn();
+  await h.done();
+  assert.strictEqual(h.watcher.rearmCount(), 1);
+  // Repeat idle events with no turn between them are the LEVEL the spec
+  // refused: each one would be another character into the composer.
+  for (let i = 0; i < 5; i += 1) h.watcher.noteActivity('idle');
+  await h.done();
+  assert.deepStrictEqual(h.writes, [' ']);
+  assert.strictEqual(h.watcher.rearmCount(), 1);
+  // A real turn re-arms again — the feature would be useless otherwise.
+  h.turn();
+  await h.done();
+  assert.strictEqual(h.watcher.rearmCount(), 2);
+  h.watcher.dispose();
+});
+
+test('a seat that is merely idle at startup is not re-armed', async () => {
+  // `activity` seeds null, so the first event cannot look like an arrival from
+  // 'thinking'. A terminal built next to an idle agent has not just finished a
+  // turn, and its composer may hold a draft from before.
+  const h = rearmHarness();
+  h.watcher.noteActivity('idle');
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+  h.watcher.dispose();
+});
+
+test('the re-arm respects its own switch and the feature switch', async () => {
+  for (const config of [
+    { enabled: true, rearm: false, phrase: DEFAULT_SUBMIT_PHRASE },
+    { enabled: false, rearm: true, phrase: DEFAULT_SUBMIT_PHRASE },
+    null,
+  ]) {
+    const h = rearmHarness({ config });
+    h.turn();
+    await h.done();
+    assert.deepStrictEqual(h.writes, [], JSON.stringify(config));
+    h.watcher.dispose();
+  }
+});
+
+test('only tap mode is re-armed', async () => {
+  for (const voiceMode of ['hold', 'off', null]) {
+    const h = rearmHarness({ voiceMode });
+    h.turn();
+    await h.done();
+    assert.deepStrictEqual(h.writes, [], `voiceMode ${String(voiceMode)}`);
+    h.watcher.dispose();
+  }
+});
+
+test('an alternate-buffer screen is not a composer and gets nothing', async () => {
+  const h = rearmHarness();
+  h.term._state.type = 'alt';
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+  h.watcher.dispose();
+});
+
+test('dispose cancels a re-arm already in flight', async () => {
+  const h = rearmHarness();
+  h.turn();
+  h.watcher.dispose();
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+});
+
+test('a throwing environment declines rather than writing', async () => {
+  for (const patch of [
+    { getConfig: () => { throw new Error('x'); } },
+    { getAttention: () => { throw new Error('x'); } },
+    { getVoiceMode: () => { throw new Error('x'); } },
+    { getTriggerKey: () => { throw new Error('x'); } },
+  ]) {
+    const writes = [];
+    const term = fakeTerminal({ rows: [{ text: '❯ ' }] });
+    const watcher = createVoiceSubmitWatcher(term, {
+      getConfig: () => ({ enabled: true, rearm: true, phrase: DEFAULT_SUBMIT_PHRASE }),
+      getAttention: () => null,
+      getVoiceMode: () => 'tap',
+      getTriggerKey: () => ' ',
+      write: (d) => writes.push(d),
+      quietMs: TEST_QUIET_MS,
+      rearmMs: TEST_REARM_MS,
+      ...patch,
+    });
+    watcher.noteActivity('thinking');
+    watcher.noteActivity('idle');
+    await settle(TEST_REARM_MS + 25);
+    assert.deepStrictEqual(writes, [], Object.keys(patch)[0]);
+    watcher.dispose();
+  }
+});
+
+test("re-arm and submit stay independent: neither writes the other's bytes", async () => {
+  // The submit half sends backspaces then \r; the re-arm sends one character.
+  // A regression routing either through the other shows up here as the wrong
+  // byte sequence for the situation.
+  const h = rearmHarness({ rows: ['❯ finish the report over and out'] });
+  h.term.write('❯ finish the report over and out');
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + 25);
+  assert.deepStrictEqual(h.writes, ['\x7f'.repeat(13), '\r'], 'submit path unchanged');
+  // And the re-arm declines that same composer, because it is not empty.
+  const before = h.writes.length;
+  h.turn();
+  await h.done();
+  assert.strictEqual(h.writes.length, before, 're-arm stayed out of a full composer');
+  h.watcher.dispose();
 });

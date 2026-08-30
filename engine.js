@@ -18,7 +18,7 @@ const { confine } = require('./path-confine');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { resolveDisplayedPath } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
-const { readVoiceMode } = require('./voice-settings');
+const { readVoiceMode, readVoiceTrigger } = require('./voice-settings');
 const { runTicketsMigration } = require('./tickets-migrate');
 const { materializeExecScripts } = require('./bin-materialize');
 // Module-level, unlike the rest of pending-store's surface (required inside
@@ -1978,7 +1978,7 @@ const toolCache = createToolCache({ whichBin });
     fetchSessionFiles, fetchFilePeek, fetchFileDiff, writeFilePeek, resolveFilePath,
     restartSession, waitForSessionExit,
     readSessionArgs, applySessionArgs, readSkillCatalog, applySessionSkills,
-    sessionScopeCtx, readEffectiveSkillState, readEffectiveToolState, readVoiceMode,
+    sessionScopeCtx, readEffectiveSkillState, readEffectiveToolState, readVoiceMode, readVoiceTrigger,
     readSessionMeta, sessionMeta, sessionInfo, claudeProjectDir, rebuildAllStatusScripts,
     stripLevelOf, updateApplies, jsonlToMarkdown, sshRun,
     probePeer, fixSessionName, buildDeployFixBriefing, classifyDeployFolder, resolveDeployFolder,

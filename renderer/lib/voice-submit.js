@@ -119,6 +119,69 @@ function shouldFire({ enabled, attention } = {}) {
   return true;
 }
 
+// The re-arm half. Separate from `shouldFire` because it answers a different
+// question: not "may I submit this draft" but "may I write one character into
+// an empty composer to arm the CLI's recorder".
+//
+// The CLI's tap handler arms only from a keypress — its own
+// "Re-arming focus recording after silence timeout" branch is the first branch
+// INSIDE handleKeyEvent, and the flag it tests is set only by the FOCUS-mode
+// silence timer, never by tap's. So nothing re-arms tap without a byte.
+//
+// EDGE, not level: `from`/`to` are the previous and current activity states,
+// and only thinking -> idle passes. A level test would re-arm on every repeat
+// event for as long as the seat sits idle, writing into a composer the operator
+// may be typing in by hand.
+//
+// `voiceMode === 'tap'` is required here although `shouldFire` deliberately
+// ignores the mode. The asymmetry is real: submit acts on words the operator
+// already committed, whatever typed them, while this arms the CLI's own tap
+// recorder and is meaningless anywhere else. In hold mode a single character
+// cannot reach the auto-repeat threshold, so it would land in the draft as a
+// literal instead.
+function shouldRearm({ enabled, rearm, voiceMode, attention, from, to } = {}) {
+  if (enabled !== true) return false;
+  if (rearm !== true) return false;
+  if (voiceMode !== 'tap') return false;
+  // The same interlock as shouldFire, and it matters MORE here: an agent that
+  // stopped to ask permission is idle, so the dialog opens exactly on this
+  // edge, and any byte written then answers it.
+  if (attention === 'permission') return false;
+  return from === 'thinking' && to === 'idle';
+}
+
+// Ornament and whitespace only — the composer with nothing typed into it.
+// `row` is the cursor row already truncated at the cursor, so a draft the
+// operator is part-way through is text to the LEFT of the cursor and fails this.
+//
+// Anything unreadable answers false, which DECLINES the write. The tap handler
+// returns before swallowing the key when the composer is non-empty, so a
+// character written then is inserted into the draft and does not arm anything —
+// "I cannot tell" and "do not write" have to be the same answer.
+const COMPOSER_ORNAMENT_ONLY = /^[\s>❯│|]*$/u;
+
+function composerIsEmpty(row) {
+  if (typeof row !== 'string') return false;
+  return COMPOSER_ORNAMENT_ONLY.test(row);
+}
+
+// The character that arms the recorder, or null when no character can.
+//
+// The CLI resolves its own trigger the same way: it takes the Chat-context
+// binding for `voice:pushToTalk` and uses its key ONLY when that key is a
+// single character with no modifier. A modifier chord (meta+k) matches through
+// a different comparison that no written byte can satisfy, so null here is the
+// honest answer rather than a space written in hope.
+// Null in, null out, and that is not a missing default: the CLI's own default
+// (space) is seeded by the READ, in voice-settings.js, so a null arriving here
+// is either a binding the operator cleared or a config not yet loaded. Both
+// must decline, and defaulting to a space here would write one in both cases.
+function resolveTriggerKey(binding) {
+  if (!binding || typeof binding !== 'object') return null;
+  if (binding.ctrl || binding.alt || binding.shift || binding.meta || binding.super) return null;
+  return typeof binding.key === 'string' && binding.key.length === 1 ? binding.key : null;
+}
+
 // Strict `=== true`: the key travels through the `settings:get` whitelist,
 // where an omission arrives as undefined, and undefined must read as off.
 //
@@ -133,6 +196,7 @@ function readVoiceSubmitSettings(settings) {
   return {
     enabled,
     composition: enabled && raw.voiceSubmitComposition === true,
+    rearm: enabled && raw.voiceSubmitRearm === true,
     phrase: normalizePhrase(raw.voiceSubmitPhrase) || DEFAULT_SUBMIT_PHRASE,
   };
 }
@@ -145,5 +209,8 @@ module.exports = {
   findSubmit,
   matchTrigger,
   shouldFire,
+  shouldRearm,
+  composerIsEmpty,
+  resolveTriggerKey,
   readVoiceSubmitSettings,
 };

@@ -22,7 +22,9 @@
 // The buffer read is ONE row. The latch keys on that row's content, so an
 // identical repaint stays answered and a changed draft re-arms.
 
-const { findSubmit, matchTrigger, shouldFire } = require('./lib/voice-submit');
+const {
+  findSubmit, matchTrigger, shouldFire, shouldRearm, composerIsEmpty,
+} = require('./lib/voice-submit');
 
 // The quiet window. Streamed transcription lands in segments, so a fire on the
 // first write that completes the phrase submits half an utterance. Shorter than
@@ -42,6 +44,17 @@ const ENTER_SETTLE_MS = 30;
 // test that decides, so sampling faster than the window is what gives that test
 // its resolution rather than what shortens it.
 const COMPOSITION_POLL_MS = 300;
+
+// The re-arm waits this long after the idle edge before writing, and re-checks
+// every gate when it lands. Not a debounce — the edge is already discrete. It
+// covers a RACE: the permission interlock reads a sidebar row written by the
+// `session-attention` event, which travels from a different watcher (an
+// fs.watch on the attention log) than the activity event does (the transcript
+// poll). The two orderings are not synchronised, so an idle edge can arrive
+// just BEFORE the notice that a dialog is open, and the fence is only as good
+// as the row it reads. Waiting one beat and re-reading is what makes the
+// interlock hold in both orderings.
+const REARM_SETTLE_MS = 400;
 
 // Provisional boundary #1: where the pending composed text comes from.
 // Contract: the text of THIS terminal's pending composition, or null when there
@@ -131,6 +144,9 @@ function createVoiceSubmitWatcher(terminal, {
   pollMs = COMPOSITION_POLL_MS,
   readComposition: readPending = readComposition,
   commitComposition: commitPending = commitComposition,
+  getVoiceMode = () => null,
+  getTriggerKey = () => null,
+  rearmMs = REARM_SETTLE_MS,
   now = Date.now,
 }) {
   let timer = null;
@@ -154,6 +170,15 @@ function createVoiceSubmitWatcher(terminal, {
   let committed = null;
   let commits = 0;
   let commitFailures = 0;
+
+  // The previous activity state, which is the whole of the edge test. Seeded
+  // null so the FIRST event a watcher ever sees cannot look like an arrival
+  // from 'thinking' — a seat that is merely idle when its terminal is built
+  // has not just finished a turn, and re-arming it would write into whatever
+  // draft is already sitting there.
+  let activity = null;
+  let rearms = 0;
+  let rearmTimer = null;
 
   // The cursor row alone, truncated at the cursor column. The phrase ends the
   // utterance, so it is on the row the cursor is on even when the draft wrapped.
@@ -270,6 +295,61 @@ function createVoiceSubmitWatcher(terminal, {
     if (!took) commitFailures += 1;
   }
 
+  function rearmAllowed(from, to) {
+    let cfg = null;
+    try { cfg = getConfig(); } catch { cfg = null; }
+    if (!cfg) return false;
+    let mode = null;
+    try { mode = getVoiceMode(); } catch { mode = null; }
+    let attention = null;
+    try { attention = getAttention(); } catch { attention = 'permission'; }
+    return shouldRearm({
+      enabled: cfg.enabled, rearm: cfg.rearm, voiceMode: mode, attention, from, to,
+    });
+  }
+
+  // The re-arm, driven by the sidebar's activity state rather than by anything
+  // this file can observe: while the agent is THINKING the CLI's voice key path
+  // is dead at the top (`isActive` is `!busy`), so a byte written mid-turn does
+  // nothing at all. The first moment a write can arm the recorder is the edge
+  // out of that window, which is exactly the transition reported here.
+  function noteActivity(state) {
+    if (disposed) return;
+    const from = activity;
+    activity = state;
+    if (from !== 'thinking' || state !== 'idle') return;
+
+    // Every gate is evaluated HERE and again when the timer lands. Cheap, and
+    // it keeps the edge test where the edge actually is: by the time the timer
+    // fires, `activity` may already have moved on.
+    if (!rearmAllowed(from, state)) return;
+    if (rearmTimer) clearTimeout(rearmTimer);
+    rearmTimer = setTimeout(() => {
+      rearmTimer = null;
+      if (disposed) return;
+      // Still idle, and still allowed. A turn that started again inside the
+      // window means the CLI's key path is dead once more, and a dialog that
+      // opened inside it means the byte would answer it.
+      if (activity !== 'idle' || !rearmAllowed('thinking', 'idle')) return;
+
+      // Last, because it is the only gate that reads the screen, and the reason
+      // it is not optional: the CLI's tap handler bails on a NON-EMPTY composer
+      // BEFORE it swallows the key, so the character would be INSERTED into the
+      // operator's draft and would arm nothing. cursorRow() returns null off the
+      // normal buffer, which composerIsEmpty declines too.
+      if (!composerIsEmpty(cursorRow())) return;
+
+      let key = null;
+      try { key = getTriggerKey(); } catch { key = null; }
+      // No plain character is bound to push-to-talk, so no byte can arm the
+      // recorder — a space written in hope would just type into the draft.
+      if (typeof key !== 'string' || key.length !== 1) return;
+
+      rearms += 1;
+      write(key);
+    }, rearmMs);
+  }
+
   // Trailing debounce: every write RESTARTS the window, which is what makes the
   // wait a quiet gate rather than a fixed delay.
   const schedule = () => {
@@ -287,7 +367,9 @@ function createVoiceSubmitWatcher(terminal, {
 
   return {
     refresh: schedule,
+    noteActivity,
     fireCount: () => fires,
+    rearmCount: () => rearms,
     commitCount: () => commits,
     commitFailureCount: () => commitFailures,
     dispose() {
@@ -295,9 +377,11 @@ function createVoiceSubmitWatcher(terminal, {
       if (timer) clearTimeout(timer);
       if (enterTimer) clearTimeout(enterTimer);
       if (pollTimer) clearInterval(pollTimer);
+      if (rearmTimer) clearTimeout(rearmTimer);
       timer = null;
       enterTimer = null;
       pollTimer = null;
+      rearmTimer = null;
       for (const s of subs) s.dispose();
     },
   };
@@ -305,5 +389,5 @@ function createVoiceSubmitWatcher(terminal, {
 
 module.exports = {
   createVoiceSubmitWatcher, readComposition, commitComposition,
-  QUIET_MS, ENTER_SETTLE_MS, COMPOSITION_POLL_MS,
+  QUIET_MS, ENTER_SETTLE_MS, COMPOSITION_POLL_MS, REARM_SETTLE_MS,
 };

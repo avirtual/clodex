@@ -38,7 +38,7 @@ function registerIpcHandlers(deps) {
     jsonlToMarkdown, log, manager,
     openWirescopeWindow, os,
     path, persistence, probePeer, proxyPoller,
-    pty, readEffectiveSkillState, readEffectiveToolState, readVoiceMode, readSessionMeta,
+    pty, readEffectiveSkillState, readEffectiveToolState, readVoiceMode, readVoiceTrigger, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead,
@@ -899,7 +899,10 @@ function registerIpcHandlers(deps) {
   // every Claude session on this box shares it. Reading it MAIN-side is what lets
   // the browser frontend have this control at all — a renderer-side fs read would
   // ship a button that is dead over web-host.
-  handle('settings:voiceMode', () => ({ ok: true, ...readVoiceMode() }));
+  // The trigger key rides this same channel rather than a second one: both are
+  // read-only facts about the CLI's own config, and the re-arm needs the mode
+  // and the key together to decide anything.
+  handle('settings:voiceMode', () => ({ ok: true, ...readVoiceMode(), trigger: readVoiceTrigger() }));
 
   handle('settings:toolCatalogFor', (_e, cwd) => {
     return { ok: true, effective: readEffectiveToolState(cwd || null).overrides };
@@ -934,6 +937,7 @@ function registerIpcHandlers(deps) {
       selectionHints: s.selectionHints,
       voiceSubmit: s.voiceSubmit,
       voiceSubmitComposition: s.voiceSubmitComposition,
+      voiceSubmitRearm: s.voiceSubmitRearm,
       voiceSubmitPhrase: s.voiceSubmitPhrase,
       terminalReports: s.terminalReports,
       discoverOnStartup: s.discoverOnStartup,
