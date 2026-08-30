@@ -5184,6 +5184,9 @@ function createTicketMethods(deps, shared) {
       // resolve its dependencies reports a red that says nothing about the branch.
       const linkErr = this._linkWorktreeNodeModules(team.root, cwd);
       if (linkErr) { out.error = linkErr; return out; }
+      // Named by the dependency-mismatch escalation below, which tells the lead
+      // WHERE the tree it would verify against is.
+      const link = path.join(cwd, 'node_modules');
 
       // A branch that CHANGES package.json's dependencies cannot be verified
       // against the root's installed tree, and the failure is silent in both
