@@ -279,9 +279,10 @@ function createVoiceSubmitWatcher(terminal, {
   }
 
   // The session-scoped half, reset only where the DICTATION SESSION itself is
-  // over or out of scope: dispose, the setting going off, a full-screen program,
-  // and the idle expiry. Never on a null overlay read, which is the ordinary
-  // gap between two utterances of one session.
+  // over: the COMPOSITION setting going off (the master switch produces a null
+  // config instead, and is handled above as an out-of-scope seat), and the idle
+  // expiry. Not on a null overlay read, an out-of-scope seat, or a full-screen
+  // program — each is a gap WITHIN one session, the OS accumulation intact.
   function forgetConsumed() {
     consumed = '';
     consumedAt = 0;
@@ -293,7 +294,16 @@ function createVoiceSubmitWatcher(terminal, {
 
     let cfg = null;
     try { cfg = getConfig(); } catch { cfg = null; }
-    if (!cfg || cfg.composition !== true) { forgetPending(); forgetConsumed(); return; }
+    // A null config is an out-of-scope SEAT, not a stop: getConfig returns it
+    // for any seat that is not the active claude session, and also whenever
+    // hands-free submit is off at all — so clicking another sidebar row
+    // produces one. Clearing the prefix here would resend the whole
+    // accumulation the moment the operator clicks back and keeps dictating —
+    // the same shape as the alt-screen arm, and the same answer.
+    if (!cfg) { forgetPending(); return; }
+    // The COMPOSITION checkbox going off is the operator saying stop, and that
+    // does end the session. The master switch never reaches here.
+    if (cfg.composition !== true) { forgetPending(); forgetConsumed(); return; }
     // Before the overlay is touched: a composition over a full-screen program is
     // not a draft for this feature to submit, whatever it says. Forgetting
     // rather than merely returning means the words cannot be adopted as
@@ -401,7 +411,6 @@ function createVoiceSubmitWatcher(terminal, {
     commitFailureCount: () => commitFailures,
     dispose() {
       disposed = true;
-      forgetConsumed();
       if (timer) clearTimeout(timer);
       if (enterTimer) clearTimeout(enterTimer);
       if (pollTimer) clearInterval(pollTimer);

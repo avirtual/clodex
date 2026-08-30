@@ -23737,7 +23737,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
           } catch {
             cfg = null;
           }
-          if (!cfg || cfg.composition !== true) {
+          if (!cfg) {
+            forgetPending();
+            return;
+          }
+          if (cfg.composition !== true) {
             forgetPending();
             forgetConsumed();
             return;
@@ -23805,7 +23809,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
           commitFailureCount: () => commitFailures,
           dispose() {
             disposed = true;
-            forgetConsumed();
             if (timer) clearTimeout(timer);
             if (enterTimer) clearTimeout(enterTimer);
             if (pollTimer) clearInterval(pollTimer);
