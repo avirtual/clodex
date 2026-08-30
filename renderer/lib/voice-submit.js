@@ -121,10 +121,18 @@ function shouldFire({ enabled, attention } = {}) {
 
 // Strict `=== true`: the key travels through the `settings:get` whitelist,
 // where an omission arrives as undefined, and undefined must read as off.
+//
+// `composition` is ANDed with `enabled` rather than standing alone, so the
+// checkbox that disarms the feature disarms all of it. It is a second key and
+// not a widening of the first because the risk differs in kind: the buffer half
+// reads text the operator has already committed, while the composition half
+// reads words still being transcribed, and acts on them with no undo.
 function readVoiceSubmitSettings(settings) {
   const raw = settings && typeof settings === 'object' ? settings : {};
+  const enabled = raw.voiceSubmit === true;
   return {
-    enabled: raw.voiceSubmit === true,
+    enabled,
+    composition: enabled && raw.voiceSubmitComposition === true,
     phrase: normalizePhrase(raw.voiceSubmitPhrase) || DEFAULT_SUBMIT_PHRASE,
   };
 }
