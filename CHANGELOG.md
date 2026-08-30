@@ -25,6 +25,9 @@ blocks a release.
   default, tap mode only — in hold mode the CLI already submits when you release
   the key. Long drafts work too: the phrase is found even once what you have said
   has wrapped onto further lines, which is the case the feature is really for.
+  Curly quotes and long dashes are folded to their plain forms on both sides, so
+  a phrase like `that's it` still fires when dictation spells it with a
+  typographic apostrophe.
   Only the session you are looking at listens, since that is the only one your
   dictation reaches. It will not fire while a session is asking permission for something,
   because Enter would answer that dialog; a phrase spoken while one is open is
