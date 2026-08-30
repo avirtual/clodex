@@ -29,6 +29,7 @@ const { intentEnabled } = require('../intent-catalog');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 // The REAL scheduler, built as engine.js builds it. See the deps block below.
+const { createTeamManifest } = require('../team-manifest');
 const { createRemindScheduler } = require('../remind-scheduler');
 const { initStores } = require('../stores');
 
@@ -132,6 +133,8 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
   fsReal.writeFileSync(pathReal.join(repo.dir, 'scripts', 'run-tests.js'), SUITE_STUBS[suite]);
 
   const home = mkTmpRoot('clodex-merge-');
+  const userData = mkTmpRoot('clodex-merge-userdata-');
+  const manifest = createTeamManifest({ fs: fsReal, clodexHome: home });
   const scheduler = createRemindScheduler({
     now: () => Date.now(),
     setTimer: () => null,
@@ -202,6 +205,19 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
     // cancelled a ticket-bound reminder or rendered the clause reporting it —
     // the reminders outliving their merged ticket would have read as green.
     getRemindScheduler: () => scheduler,
+    // The rest of what team-tickets.js reads, wired real. None of it is reached
+    // by a merge subject today — no subject here mints a seat — so this is the
+    // nit half of the t574 audit, fixed so the guard above can be a plain
+    // coverage check rather than a list of grandfathered exceptions.
+    getUserDataPath: () => userData,
+    pathFor: require('../clodex-paths').pathFor,
+    AGENT_NAME_RE: require('../catalogs').AGENT_NAME_RE,
+    DEFAULT_WORKSPACE_ID: require('../catalogs').DEFAULT_WORKSPACE_ID,
+    addRole: manifest.addRole,
+    setRole: manifest.setRole,
+    removeRole: manifest.removeRole,
+    renameRole: manifest.renameRole,
+    setTeamWatchdog: manifest.setTeamWatchdog,
     isAlive: isAliveOver || ((pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }),
     ensureDir: require('../fs-util').ensureDir,
     // REAL, deliberately — see the header. The merge WRITES to this repo.
