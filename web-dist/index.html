@@ -23613,6 +23613,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { findSubmit, matchTrigger, shouldFire } = require_voice_submit();
       var QUIET_MS = 1200;
       var ENTER_SETTLE_MS = 30;
+      var CONSUMED_IDLE_MS = 9e4;
       var COMPOSITION_POLL_MS = 300;
       function readComposition(terminal) {
         const root = terminal && terminal.element;
@@ -23623,9 +23624,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (typeof text !== "string" || !text.trim()) return null;
         return text;
       }
-      function commitComposition(terminal) {
+      function commitComposition(terminal, composed = "", consumed = "") {
         const ta = terminal && terminal.textarea;
         if (!ta || typeof ta.dispatchEvent !== "function") return false;
+        if (consumed) {
+          const value = typeof ta.value === "string" ? ta.value : "";
+          if (!composed || !composed.startsWith(consumed)) return false;
+          const held = value.endsWith(composed) ? composed : value.endsWith(composed.trimStart()) ? composed.trimStart() : null;
+          if (held === null) return false;
+          const already = held.length - (composed.length - consumed.length);
+          ta.value = value.slice(0, value.length - held.length) + held.slice(already);
+        }
         ta.dispatchEvent(new KeyboardEvent("keydown", {
           key: "Meta",
           code: "MetaLeft",
@@ -23657,6 +23666,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let pending = null;
         let pendingAt = 0;
         let committed = null;
+        let consumed = "";
+        let consumedAt = 0;
+        let desynced = false;
         let commits = 0;
         let commitFailures = 0;
         function onNormalBuffer() {
@@ -23712,6 +23724,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
           pendingAt = 0;
           committed = null;
         }
+        function forgetConsumed() {
+          consumed = "";
+          consumedAt = 0;
+          desynced = false;
+        }
         function pollComposition() {
           if (disposed) return;
           let cfg = null;
@@ -23722,6 +23739,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (!cfg || cfg.composition !== true) {
             forgetPending();
+            forgetConsumed();
             return;
           }
           if (!onNormalBuffer()) {
@@ -23736,17 +23754,27 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (text === null) {
             forgetPending();
+            if (consumed && now() - consumedAt >= CONSUMED_IDLE_MS) forgetConsumed();
             return;
           }
+          if (desynced) return;
+          if (!text.startsWith(consumed)) {
+            desynced = true;
+            return;
+          }
+          consumedAt = now();
           if (text !== pending) {
             pending = text;
             pendingAt = now();
             return;
           }
           if (now() - pendingAt < quietMs) return;
-          if (!matchTrigger(text.trim(), cfg.phrase)) return;
+          const fresh = text.slice(consumed.length);
+          if (!matchTrigger(fresh.trim(), cfg.phrase)) return;
           if (committed === text) return;
           committed = text;
+          const alreadySent = consumed;
+          consumed = text;
           let attention = null;
           try {
             attention = getAttention();
@@ -23757,7 +23785,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           commits += 1;
           let took = false;
           try {
-            took = commitPending(terminal) !== false;
+            took = commitPending(terminal, text, alreadySent) !== false;
           } catch {
             took = false;
           }
@@ -23777,6 +23805,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           commitFailureCount: () => commitFailures,
           dispose() {
             disposed = true;
+            forgetConsumed();
             if (timer) clearTimeout(timer);
             if (enterTimer) clearTimeout(enterTimer);
             if (pollTimer) clearInterval(pollTimer);
@@ -23793,7 +23822,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         commitComposition,
         QUIET_MS,
         ENTER_SETTLE_MS,
-        COMPOSITION_POLL_MS
+        COMPOSITION_POLL_MS,
+        CONSUMED_IDLE_MS
       };
     }
   });

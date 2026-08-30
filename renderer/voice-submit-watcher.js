@@ -36,6 +36,20 @@ const QUIET_MS = 1200;
 // a literal instead of submitting. Merging these two writes reintroduces that.
 const ENTER_SETTLE_MS = 30;
 
+// How long a consumed prefix outlives the composition it came from.
+//
+// PROVISIONAL AND NOT MEASURED: nobody on this team can dictate, so this number
+// is a judgement, not an observation. It is long relative to a pause between
+// sentences and short relative to walking away, because both errors are real:
+// too short resends an utterance, too long buries the first words of a genuinely
+// new session. The operator's probe showed `.composition-view.active` flapping
+// mid-session — composing, unselected, composing — without the machine being
+// touched, so gaps of seconds are ORDINARY and this cannot be tightened toward
+// the poll interval. It measures SILENCE: the stamp refreshes on every live
+// overlay read, so a long utterance cannot age the prefix out while it is still
+// being spoken.
+const CONSUMED_IDLE_MS = 90_000;
+
 // A composition emits no event this side can subscribe to — compositionupdate
 // goes to xterm's own listener — so the overlay is sampled instead. Well under
 // QUIET_MS: the poll only OBSERVES, and it is the unchanged-for-a-quiet-window
@@ -69,10 +83,10 @@ function readComposition(terminal) {
 // Contract: commit it, and report whether it took.
 //
 // A synthetic keydown, because that is what the operator's live evidence
-// identified: pressing Command — not clicking, not blurring — commits. That is
-// CompositionHelper.keydown, which exempts only 229/Shift/Ctrl/Alt and sends
-// everything else into _finalizeComposition(false), reading the text out of the
-// textarea and dispatching it immediately. Preferred over calling
+// identified: pressing Command commits. CompositionHelper.keydown
+// exempts only 229/Shift/Ctrl/Alt and sends everything else into
+// _finalizeComposition(false), reading the text out of the textarea and
+// dispatching it immediately. Preferred over calling
 // _finalizeComposition directly: it is the same path a real key takes.
 //
 // Meta specifically, and this is the part not to "simplify": it must be a key
@@ -111,9 +125,34 @@ function readComposition(terminal) {
 // xterm's _keyUp calls this.focus() for anything wasModifierKeyOnlyEvent()
 // rejects, and that helper lists only 16/17/18 — Meta is not among them, so the
 // "cleanup" would yank focus to this terminal. See _keyDownSeen below.
-function commitComposition(terminal) {
+function commitComposition(terminal, composed = '', consumed = '') {
   const ta = terminal && terminal.textarea;
   if (!ta || typeof ta.dispatchEvent !== 'function') return false;
+  // Send only what has not been sent yet. `start` is private and fixed at
+  // compositionstart, so the un-consumed remainder is reached by shortening
+  // `value` rather than by moving the offset: substring CLAMPS its end, and the
+  // stale `end` a compositionupdate left pointing past the new length therefore
+  // yields exactly the remainder. Rewriting after the dispatch instead would
+  // send the accumulation this exists to prevent.
+  //
+  // Both shape checks REFUSE rather than guess. Writing a `value` whose head is
+  // not the pre-composition text moves the words under a `start` that cannot
+  // move with them, which sends a fragment cut at the wrong byte.
+  if (consumed) {
+    const value = typeof ta.value === 'string' ? ta.value : '';
+    if (!composed || !composed.startsWith(consumed)) return false;
+    // The overlay text and `value` need not be byte-identical: dictation
+    // PREPENDS A SPACE to the overlay that the textarea may not carry. Demanding
+    // an exact suffix would refuse every commit after the first — and since the
+    // prefix advances at the latch, each refusal BURIES an utterance instead of
+    // merely dropping it. So fall back to the trimmed form and take the offset
+    // from whichever actually matches.
+    const held = value.endsWith(composed) ? composed
+      : (value.endsWith(composed.trimStart()) ? composed.trimStart() : null);
+    if (held === null) return false;
+    const already = held.length - (composed.length - consumed.length);
+    ta.value = value.slice(0, value.length - held.length) + held.slice(already);
+  }
   ta.dispatchEvent(new KeyboardEvent('keydown', {
     key: 'Meta', code: 'MetaLeft', keyCode: 91, which: 91,
     metaKey: true, bubbles: false, cancelable: true,
@@ -152,6 +191,29 @@ function createVoiceSubmitWatcher(terminal, {
   let pending = null;
   let pendingAt = 0;
   let committed = null;
+  // macOS re-fills the composition with EVERYTHING said since it began, so
+  // sample N+1 carries sample N's words again. `committed` cannot catch that —
+  // an equality latch never bites on text that keeps growing — so what has
+  // already been sent is tracked as a consumed PREFIX and only the remainder is
+  // ever dispatched.
+  //
+  // `desynced` is the answer to a revision: dictation rewrites what it already
+  // transcribed, so the accumulation is not always an extension of what we
+  // consumed. When the prefix stops matching, the offset is meaningless and this
+  // composition sends nothing further. Dropping words is recoverable — the
+  // operator says them again; re-sending sentences already submitted is not.
+  //
+  // THE TWO LIFETIMES, and conflating them is the bug this had first time round.
+  // `pending`/`pendingAt`/`committed` belong to ONE COMPOSITION and must reset
+  // whenever the overlay goes quiet. `consumed`/`desynced` belong to the whole
+  // DICTATION SESSION and must SURVIVE that: a successful commit removes
+  // `.active` — commitComposition reports success by observing exactly that — so
+  // a null read after every commit is guaranteed, and a prefix cleared there is
+  // erased seconds before macOS refills the composition with the words it
+  // described. `consumedAt` bounds the survival, since nothing else can.
+  let consumed = '';
+  let consumedAt = 0;
+  let desynced = false;
   let commits = 0;
   let commitFailures = 0;
 
@@ -216,21 +278,59 @@ function createVoiceSubmitWatcher(terminal, {
     committed = null;
   }
 
+  // The session-scoped half, reset only where the DICTATION SESSION itself is
+  // over or out of scope: dispose, the setting going off, a full-screen program,
+  // and the idle expiry. Never on a null overlay read, which is the ordinary
+  // gap between two utterances of one session.
+  function forgetConsumed() {
+    consumed = '';
+    consumedAt = 0;
+    desynced = false;
+  }
+
   function pollComposition() {
     if (disposed) return;
 
     let cfg = null;
     try { cfg = getConfig(); } catch { cfg = null; }
-    if (!cfg || cfg.composition !== true) { forgetPending(); return; }
+    if (!cfg || cfg.composition !== true) { forgetPending(); forgetConsumed(); return; }
     // Before the overlay is touched: a composition over a full-screen program is
     // not a draft for this feature to submit, whatever it says. Forgetting
     // rather than merely returning means the words cannot be adopted as
     // already-stable the moment the program exits.
+    //
+    // Only the per-composition half is forgotten. A pager opening and closing
+    // does not end the OS's dictation session — the accumulation is fully intact
+    // when it exits — so clearing the prefix here would resend every utterance
+    // already submitted. The decline to COMMIT while the program is up is
+    // untouched; it is only the session state that survives.
     if (!onNormalBuffer()) { forgetPending(); return; }
 
     let text = null;
     try { text = readPending(terminal); } catch { text = null; }
-    if (text === null) { forgetPending(); return; }
+    if (text === null) {
+      forgetPending();
+      // NOT forgetConsumed(): this null is the ordinary gap between two
+      // utterances of one dictation session — every successful commit produces
+      // one — and dropping the prefix here is what made the first fix a no-op.
+      // Only a gap long enough to be a different sitting clears it.
+      if (consumed && now() - consumedAt >= CONSUMED_IDLE_MS) forgetConsumed();
+      return;
+    }
+
+    if (desynced) return;
+    if (!text.startsWith(consumed)) { desynced = true; return; }
+    // AN ACTIVE OVERLAY IS THE EVIDENCE THE SESSION IS ALIVE, and the expiry
+    // measures silence, not time since the last submit. Stamped here rather than
+    // at commit time so that dictating one long utterance — overlay active
+    // throughout, which is positive proof the session never ended — cannot age
+    // the prefix out and resend everything on the next flap. Above the growth
+    // return, so words still arriving refresh it too.
+    //
+    // A DESYNCED session returns before this and therefore still expires. That
+    // is deliberate: it is the one state where letting the prefix die is how the
+    // feature comes back.
+    consumedAt = now();
 
     if (text !== pending) { pending = text; pendingAt = now(); return; }
     // The words are still un-finalised, so the quiet window is doing more work
@@ -239,14 +339,23 @@ function createVoiceSubmitWatcher(terminal, {
     // cannot undo. A composition that is still growing never reaches this line.
     if (now() - pendingAt < quietMs) return;
 
+    const fresh = text.slice(consumed.length);
+
     // Dictation prepends a space to the overlay text. It cannot affect a match
     // anchored at the tail, but trimming keeps what is matched identical to
-    // what the buffer half will see once this commits.
-    if (!matchTrigger(text.trim(), cfg.phrase)) return;
+    // what the buffer half will see once this commits. Matched on the REMAINDER:
+    // the phrase that ended an already-sent utterance is still sitting in the
+    // accumulation, and matching the whole text would re-fire on it forever.
+    if (!matchTrigger(fresh.trim(), cfg.phrase)) return;
     if (committed === text) return;
-    // Recorded ahead of the gate for the same reason as `answered`: a match
+    // Both recorded ahead of the gate for the same reason as `answered`: a match
     // blocked by a dialog must die, not sit waiting for the dialog to clear.
+    // `consumed` advances here rather than after a successful commit so that a
+    // refusal buries those words too — the next accumulation carries them again,
+    // and re-sending them is the harm this whole prefix exists to prevent.
     committed = text;
+    const alreadySent = consumed;
+    consumed = text;
 
     let attention = null;
     try { attention = getAttention(); } catch { attention = 'permission'; }
@@ -266,7 +375,7 @@ function createVoiceSubmitWatcher(terminal, {
     // instead of being discarded.
     commits += 1;
     let took = false;
-    try { took = commitPending(terminal) !== false; } catch { took = false; }
+    try { took = commitPending(terminal, text, alreadySent) !== false; } catch { took = false; }
     if (!took) commitFailures += 1;
   }
 
@@ -292,6 +401,7 @@ function createVoiceSubmitWatcher(terminal, {
     commitFailureCount: () => commitFailures,
     dispose() {
       disposed = true;
+      forgetConsumed();
       if (timer) clearTimeout(timer);
       if (enterTimer) clearTimeout(enterTimer);
       if (pollTimer) clearInterval(pollTimer);
@@ -305,5 +415,5 @@ function createVoiceSubmitWatcher(terminal, {
 
 module.exports = {
   createVoiceSubmitWatcher, readComposition, commitComposition,
-  QUIET_MS, ENTER_SETTLE_MS, COMPOSITION_POLL_MS,
+  QUIET_MS, ENTER_SETTLE_MS, COMPOSITION_POLL_MS, CONSUMED_IDLE_MS,
 };
