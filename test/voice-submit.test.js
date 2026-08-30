@@ -22,7 +22,7 @@ const {
   foldConfusables, shouldFire, readVoiceSubmitSettings,
 } = require('../renderer/lib/voice-submit');
 const {
-  createVoiceSubmitWatcher, readComposition, commitComposition,
+  createVoiceSubmitWatcher, readComposition, commitComposition, CONSUMED_IDLE_MS,
 } = require('../renderer/voice-submit-watcher');
 
 const ENTER_SETTLE_MS = 30; // must match voice-submit-watcher.js
@@ -398,12 +398,12 @@ test('the interlock holds when the attention read THROWS', async () => {
   // undefined a swallowed throw would leave behind.
   const writes = [];
   const term = fakeTerminal();
-  const watcher = createVoiceSubmitWatcher(term, {
+  const watcher = track(createVoiceSubmitWatcher(term, {
     getConfig: () => ({ enabled: true, phrase: DEFAULT_SUBMIT_PHRASE }),
     getAttention: () => { throw new Error('row gone'); },
     write: (d) => writes.push(d),
     quietMs: TEST_QUIET_MS,
-  });
+  }));
   term.write('❯ approve it over and out');
   await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + 25);
   assert.deepStrictEqual(writes, []);
@@ -586,7 +586,19 @@ function compositionHarness({
     // Both arguments, because WHAT WAS ALREADY SENT is the whole of this fix:
     // a harness recording only the text cannot tell the accumulation bug from
     // its repair — the shipped code committed twice too.
-    commitComposition: (_t, composed, consumed) => { commits.push([composed, consumed]); return commitTakes; },
+    //
+    // A successful commit CLEARS THE READER, because the real boundary does:
+    // _finalizeComposition removes `.active`, and commitComposition reports
+    // success by observing `readComposition() === null`. So a null read after a
+    // commit is guaranteed, not incidental — a fixture that leaves the overlay
+    // active models a DOM state that cannot occur, and it hides every bug in
+    // what the watcher does across that null. Each test re-arms `env.composed`
+    // with the next sample, exactly as macOS refills the composition.
+    commitComposition: (_t, composed, consumed) => {
+      commits.push([composed, consumed]);
+      if (commitTakes) env.composed = null;
+      return commitTakes;
+    },
     ...(now ? { now } : {}),
   }));
   return {
@@ -766,6 +778,15 @@ test('the SECOND commit in one dictation session sends only the new words', asyn
   await h.settled();
   assert.deepStrictEqual(h.commits, [[u1, '']], 'the first utterance commits whole, nothing consumed before it');
 
+  // THE NULL POLL, and the test is worthless without it. The commit removed
+  // `.active`, so the overlay reads null until macOS refills it — seconds later,
+  // across many polls. `consumed` has to SURVIVE that gap: it belongs to the
+  // dictation session, not to the composition, and a prefix reset on the null
+  // read is erased before the words it describes ever come back.
+  assert.strictEqual(h.env.composed, null, 'ENTER: the commit cleared the overlay, as the real one does');
+  await h.settled();
+  await h.settled();
+
   h.env.composed = u1 + u2;
   await h.settled();
   assert.strictEqual(h.commits.length, 2, `the accumulation must commit again: ${JSON.stringify(h.commits)}`);
@@ -790,6 +811,7 @@ test('a REVISED accumulation sends nothing further, rather than re-sending', asy
   });
   await h.settled();
   assert.strictEqual(h.commits.length, 1);
+  await h.settled();   // the null poll between utterances
 
   // Dictation revised "first" to "second" — the prefix no longer holds.
   h.env.composed = ' send the second draft roger and then some more roger';
@@ -805,25 +827,55 @@ test('a REVISED accumulation sends nothing further, rather than re-sending', asy
   assert.strictEqual(h.commits.length, 1, 'the desync must not heal itself mid-composition');
 });
 
-test('a new composition after a desync commits again', async () => {
-  // The desync must not outlive the composition that caused it, or the feature
-  // is dead until the terminal is rebuilt.
+test('a desync survives the gap between utterances, and only IDLE clears it', async () => {
+  // A desync must NOT be cleared by the overlay going quiet: that null is the
+  // ordinary gap between two utterances of one dictation session, and the
+  // accumulation it precedes still carries everything already spoken. Clearing
+  // there would resume mid-session against a revised transcript, which is the
+  // re-send this whole prefix exists to prevent.
+  //
+  // What DOES clear it is the idle expiry — long enough to be a different
+  // sitting. The clock is driven, so this asserts the expiry rather than
+  // sleeping out a real 90 seconds.
+  const clock = { t: 1000 };
   const h = compositionHarness({
     config: { enabled: true, composition: true, phrase: 'roger' },
     composed: ' first thing roger',
+    now: () => clock.t,
   });
+  await h.settled();                  // first sighting stamps pendingAt
+  clock.t += TEST_QUIET_MS + 1;       // then the window elapses
   await h.settled();
   assert.strictEqual(h.commits.length, 1);
-  h.env.composed = ' something else entirely roger';   // desync
-  await h.settled();
-  assert.strictEqual(h.commits.length, 1);
+  await h.settled();                  // the null poll after the commit
 
-  h.env.composed = null;                                // the composition ends
+  h.env.composed = ' something else entirely roger';   // a revision: desync
   await h.settled();
-  h.env.composed = ' a brand new utterance roger';      // and a new one starts
+  clock.t += TEST_QUIET_MS + 1;
+  await h.settled();
+  assert.strictEqual(h.commits.length, 1, 'the revision must not commit');
+
+  // The overlay goes quiet and comes back WITHIN the session. Still dead.
+  h.env.composed = null;
+  await h.settled();
+  h.env.composed = ' another try roger';
+  await h.settled();
+  clock.t += TEST_QUIET_MS + 1;
+  await h.settled();
+  assert.strictEqual(h.commits.length, 1,
+    'a null read is an ordinary gap — it must not resurrect a desynced session');
+
+  // Now the operator walks away. Past the expiry, the next composition is a
+  // genuinely new sitting and the feature comes back.
+  h.env.composed = null;
+  clock.t += CONSUMED_IDLE_MS + 1;
+  await h.settled();
+  h.env.composed = ' a brand new utterance roger';
+  await h.settled();
+  clock.t += TEST_QUIET_MS + 1;
   await h.settled();
   assert.deepStrictEqual(h.commits[h.commits.length - 1], [' a brand new utterance roger', ''],
-    'a fresh composition starts with nothing consumed');
+    'ENTER: past the expiry the session restarts with nothing consumed');
   assert.strictEqual(h.commits.length, 2);
 });
 
@@ -838,6 +890,7 @@ test('the trigger is matched on the REMAINDER, not on the accumulation', async (
   });
   await h.settled();
   assert.strictEqual(h.commits.length, 1);
+  await h.settled();   // the null poll between utterances
 
   // Grows, and the accumulation still ENDS with the old phrase — but the new
   // words do not, so there is nothing to commit yet.
@@ -861,6 +914,7 @@ test('a commit blocked by a dialog buries its words instead of re-sending them',
   assert.deepStrictEqual(h.commits, []);
 
   h.env.attention = null;
+  await h.settled();   // the null poll between utterances
   h.env.composed = blocked + ' now say something new roger';
   await h.settled();
   assert.strictEqual(h.commits.length, 1, 'the new words may commit');
@@ -906,6 +960,40 @@ test('un-ticking the setting FORGETS a composition already sitting there', async
   await h.settled();
   assert.deepStrictEqual(h.commits, [[' words spoken while it was on roger', '']],
     'ENTER: the feature is alive — the decline above was the reset, not a dead poll');
+});
+
+test('turning the setting off ends the DICTATION SESSION, not just the composition', async () => {
+  // The consumed prefix survives an ordinary null read, so something has to end
+  // it besides the idle expiry, and the un-tick is the operator saying stop.
+  // Without this the prefix outlives its own feature: re-arming would subtract
+  // words from an accumulation the operator has since restarted, silently
+  // swallowing the first utterance of the new session.
+  const clock = { t: 1000 };
+  const h = compositionHarness({
+    config: { enabled: true, composition: true, phrase: 'roger' },
+    composed: ' the first utterance roger',
+    now: () => clock.t,
+  });
+  await h.settled();
+  clock.t += TEST_QUIET_MS + 1;
+  await h.settled();
+  assert.deepStrictEqual(h.commits, [[' the first utterance roger', '']]);
+
+  // Off, then on again — well inside the idle window, so only the un-tick can
+  // account for the reset.
+  h.env.config = { enabled: true, composition: false, phrase: 'roger' };
+  await h.settled();
+  h.env.config = { enabled: true, composition: true, phrase: 'roger' };
+
+  // The SAME words come back. Treated as a fresh session, they must commit
+  // whole rather than being subtracted away to nothing.
+  h.env.composed = ' the first utterance roger';
+  await h.settled();
+  clock.t += TEST_QUIET_MS + 1;
+  await h.settled();
+  assert.strictEqual(h.commits.length, 2, 'the re-armed session must commit again');
+  assert.deepStrictEqual(h.commits[1], [' the first utterance roger', ''],
+    'ENTER: nothing consumed — the un-tick ended the session the prefix belonged to');
 });
 
 test('a composition over a full-screen program is never committed', async () => {
@@ -1259,6 +1347,39 @@ test('commitComposition with nothing consumed does not touch the value before di
   }
 });
 
+test('commitComposition still sends the remainder when the overlay carries a leading space the textarea does not', () => {
+  const OriginalKeyboardEvent = globalThis.KeyboardEvent;
+  globalThis.KeyboardEvent = class { constructor(type, init) { Object.assign(this, { type }, init); } };
+  try {
+    // Dictation prepends a space to the OVERLAY, which is where `composed` is
+    // read from; the textarea need not carry it. A byte-exact suffix demand
+    // refuses here — and because the prefix advances at the latch, that refusal
+    // BURIES the utterance rather than retrying it. The remainder must come out
+    // whole, with the offset taken from the form that actually matched.
+    const consumed = ' Dictation test roger';
+    const composed = consumed + ' it sent it roger';
+    const value = composed.trimStart();          // no leading space in the textarea
+
+    let sent = null;
+    const start = 0;
+    const ta = {
+      value,
+      dispatchEvent() { sent = this.value.substring(start, end); composing = false; return true; },
+    };
+    const end = value.length;                    // stale, pre-shortening
+    let composing = true;
+    const term = { textarea: ta, element: { querySelector: () => (composing ? { textContent: composed } : null) } };
+
+    assert.strictEqual(commitComposition(term, composed, consumed), true,
+      'a prepended overlay space must not cause a refusal');
+    assert.strictEqual(sent, ' it sent it roger', 'the remainder must arrive whole');
+    assert.ok(!sent.includes('Dictation test'),
+      'ENTER: the already-sent utterance must still not be resent on the trimmed path');
+  } finally {
+    globalThis.KeyboardEvent = OriginalKeyboardEvent;
+  }
+});
+
 test('commitComposition REFUSES when the textarea does not hold the composition it was told about', () => {
   const OriginalKeyboardEvent = globalThis.KeyboardEvent;
   globalThis.KeyboardEvent = class { constructor(type, init) { Object.assign(this, { type }, init); } };
@@ -1269,7 +1390,7 @@ test('commitComposition REFUSES when the textarea does not hold the composition 
     // send a fragment cut at the wrong byte. Refusing costs one utterance; the
     // caller records it as a failed commit and does not retry.
     for (const [label, value, composed, consumed] of [
-      ['value does not end with the composition', '❯ something else', ' a roger b', ' a roger'],
+      ['value does not end with the composition', '❯ something else entirely', ' a roger b', ' a roger'],
       ['composition does not start with the consumed prefix', '❯ x a roger b', ' a roger b', ' NOT the prefix'],
       ['value is not a string', undefined, ' a roger b', ' a roger'],
     ]) {

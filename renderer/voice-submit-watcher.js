@@ -36,6 +36,18 @@ const QUIET_MS = 1200;
 // a literal instead of submitting. Merging these two writes reintroduces that.
 const ENTER_SETTLE_MS = 30;
 
+// How long a consumed prefix outlives the composition it came from.
+//
+// PROVISIONAL AND NOT MEASURED: nobody on this team can dictate, so this number
+// is a judgement, not an observation. It is long relative to a pause between
+// sentences and short relative to walking away, because both errors are real:
+// too short resends an utterance, too long buries the first words of a genuinely
+// new session. The operator's probe showed `.composition-view.active` flapping
+// mid-session — composing, unselected, composing — without the machine being
+// touched, so gaps of seconds are ORDINARY and this cannot be tightened toward
+// the poll interval.
+const CONSUMED_IDLE_MS = 90_000;
+
 // A composition emits no event this side can subscribe to — compositionupdate
 // goes to xterm's own listener — so the overlay is sampled instead. Well under
 // QUIET_MS: the poll only OBSERVES, and it is the unchanged-for-a-quiet-window
@@ -126,8 +138,18 @@ function commitComposition(terminal, composed = '', consumed = '') {
   // move with them, which sends a fragment cut at the wrong byte.
   if (consumed) {
     const value = typeof ta.value === 'string' ? ta.value : '';
-    if (!composed || !composed.startsWith(consumed) || !value.endsWith(composed)) return false;
-    ta.value = value.slice(0, value.length - composed.length) + composed.slice(consumed.length);
+    if (!composed || !composed.startsWith(consumed)) return false;
+    // The overlay text and `value` need not be byte-identical: dictation
+    // PREPENDS A SPACE to the overlay that the textarea may not carry. Demanding
+    // an exact suffix would refuse every commit after the first — and since the
+    // prefix advances at the latch, each refusal BURIES an utterance instead of
+    // merely dropping it. So fall back to the trimmed form and take the offset
+    // from whichever actually matches.
+    const held = value.endsWith(composed) ? composed
+      : (value.endsWith(composed.trimStart()) ? composed.trimStart() : null);
+    if (held === null) return false;
+    const already = held.length - (composed.length - consumed.length);
+    ta.value = value.slice(0, value.length - held.length) + held.slice(already);
   }
   ta.dispatchEvent(new KeyboardEvent('keydown', {
     key: 'Meta', code: 'MetaLeft', keyCode: 91, which: 91,
@@ -178,7 +200,17 @@ function createVoiceSubmitWatcher(terminal, {
   // consumed. When the prefix stops matching, the offset is meaningless and this
   // composition sends nothing further. Dropping words is recoverable — the
   // operator says them again; re-sending sentences already submitted is not.
+  //
+  // THE TWO LIFETIMES, and conflating them is the bug this had first time round.
+  // `pending`/`pendingAt`/`committed` belong to ONE COMPOSITION and must reset
+  // whenever the overlay goes quiet. `consumed`/`desynced` belong to the whole
+  // DICTATION SESSION and must SURVIVE that: a successful commit removes
+  // `.active` — commitComposition reports success by observing exactly that — so
+  // a null read after every commit is guaranteed, and a prefix cleared there is
+  // erased seconds before macOS refills the composition with the words it
+  // described. `consumedAt` bounds the survival, since nothing else can.
   let consumed = '';
+  let consumedAt = 0;
   let desynced = false;
   let commits = 0;
   let commitFailures = 0;
@@ -242,7 +274,15 @@ function createVoiceSubmitWatcher(terminal, {
     pending = null;
     pendingAt = 0;
     committed = null;
+  }
+
+  // The session-scoped half, reset only where the DICTATION SESSION itself is
+  // over or out of scope: dispose, the setting going off, a full-screen program,
+  // and the idle expiry. Never on a null overlay read, which is the ordinary
+  // gap between two utterances of one session.
+  function forgetConsumed() {
     consumed = '';
+    consumedAt = 0;
     desynced = false;
   }
 
@@ -251,16 +291,24 @@ function createVoiceSubmitWatcher(terminal, {
 
     let cfg = null;
     try { cfg = getConfig(); } catch { cfg = null; }
-    if (!cfg || cfg.composition !== true) { forgetPending(); return; }
+    if (!cfg || cfg.composition !== true) { forgetPending(); forgetConsumed(); return; }
     // Before the overlay is touched: a composition over a full-screen program is
     // not a draft for this feature to submit, whatever it says. Forgetting
     // rather than merely returning means the words cannot be adopted as
     // already-stable the moment the program exits.
-    if (!onNormalBuffer()) { forgetPending(); return; }
+    if (!onNormalBuffer()) { forgetPending(); forgetConsumed(); return; }
 
     let text = null;
     try { text = readPending(terminal); } catch { text = null; }
-    if (text === null) { forgetPending(); return; }
+    if (text === null) {
+      forgetPending();
+      // NOT forgetConsumed(): this null is the ordinary gap between two
+      // utterances of one dictation session — every successful commit produces
+      // one — and dropping the prefix here is what made the first fix a no-op.
+      // Only a gap long enough to be a different sitting clears it.
+      if (consumed && now() - consumedAt >= CONSUMED_IDLE_MS) forgetConsumed();
+      return;
+    }
 
     if (text !== pending) { pending = text; pendingAt = now(); return; }
     // The words are still un-finalised, so the quiet window is doing more work
@@ -288,6 +336,7 @@ function createVoiceSubmitWatcher(terminal, {
     committed = text;
     const alreadySent = consumed;
     consumed = text;
+    consumedAt = now();
 
     let attention = null;
     try { attention = getAttention(); } catch { attention = 'permission'; }
@@ -333,6 +382,7 @@ function createVoiceSubmitWatcher(terminal, {
     commitFailureCount: () => commitFailures,
     dispose() {
       disposed = true;
+      forgetConsumed();
       if (timer) clearTimeout(timer);
       if (enterTimer) clearTimeout(enterTimer);
       if (pollTimer) clearInterval(pollTimer);
@@ -346,5 +396,5 @@ function createVoiceSubmitWatcher(terminal, {
 
 module.exports = {
   createVoiceSubmitWatcher, readComposition, commitComposition,
-  QUIET_MS, ENTER_SETTLE_MS, COMPOSITION_POLL_MS,
+  QUIET_MS, ENTER_SETTLE_MS, COMPOSITION_POLL_MS, CONSUMED_IDLE_MS,
 };

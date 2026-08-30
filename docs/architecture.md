@@ -785,7 +785,16 @@ Own state + DOM, `init*(deps)`:
   first arrives carrying the utterances already submitted. A whole-text equality
   latch cannot catch that — accumulating text never equals the previous sample —
   so the watcher tracks a consumed PREFIX, matches the phrase on the REMAINDER,
-  and hands `commitComposition` what was already sent. That is dispatched by
+  and hands `commitComposition` what was already sent. THE PREFIX'S LIFETIME IS
+  THE DICTATION SESSION, NOT THE COMPOSITION, and that distinction is the whole
+  of it: a successful commit removes `.active` — `commitComposition` reports
+  success by observing exactly that — so a null overlay read after every commit
+  is guaranteed, and a prefix reset there is erased seconds before macOS refills
+  the composition with the words it described. `pending`/`pendingAt`/`committed`
+  reset on that null; `consumed`/`desynced` survive it and are cleared only by
+  dispose, the setting going off, the alt-screen decline, and an idle expiry
+  (`CONSUMED_IDLE_MS`, provisional — nobody here can dictate, and the overlay is
+  known to flap mid-session, so it is deliberately long relative to a pause). That is dispatched by
   shortening `value` BEFORE the keydown: `_compositionPosition.start` is private
   and fixed at `compositionstart`, but `substring` clamps its end, so a `value`
   holding only the remainder sends only the remainder even though `end` still

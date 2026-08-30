@@ -21,8 +21,8 @@ blocks a release.
   Clodex was reading that record rather than just the new words. It now keeps
   track of what it has already sent and submits only what you have said since.
   If dictation goes back and rewrites something it transcribed earlier, Clodex
-  stops submitting for the rest of that dictation session rather than risk
-  sending a sentence twice — pause and start speaking again to re-arm it.
+  stops submitting rather than risk sending a sentence twice; leave it idle for
+  a minute or two, or toggle the setting off and on, to start fresh.
 
 - **Dictation can now submit for you when you say a phrase.** The Claude CLI
   only auto-submits when the last chunk of transcribed speech runs to three
