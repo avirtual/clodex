@@ -1431,6 +1431,10 @@ test('the SPAWN links node_modules too, so the hand does not start in a dep-less
   // where a concurrent suite run reads a dangling link.
   const repo = mkRepo();
   const f = mkLoop({ repo });
+  // Written HERE and not in mkRepo(): the spawn links only for a node project,
+  // and mkRepo() feeds ~50 other subjects — including one whose premise is that
+  // neither tree has a package.json.
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'package.json'), '{"name":"t"}\n');
   // The fixture's `hand` is a standing role, which mints no seat and takes no
   // worktree path at all. `dispatch: 'worktree'` is what routes the dispatch
   // through _spawnTicketSeat's acquisition — the subject under test.
@@ -1447,8 +1451,11 @@ test('the SPAWN links node_modules too, so the hand does not start in a dep-less
 
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', id: 't1', who: null, body: '' });
   // _spawnTicketSeat does its whole acquisition inside a setImmediate and then
-  // awaits a git subprocess, so one turn of the queue is not enough.
-  for (let i = 0; i < 40 && !(f.one().worktree && f.one().worktree.path); i += 1) {
+  // awaits a git subprocess, so one turn of the queue is not enough. Waits on
+  // the SPAWN, not on the recorded worktree path: that path is written before
+  // the link step, so waking on it would leave the assertions free to run in
+  // the gap before the step under test.
+  for (let i = 0; i < 40 && f.created.length === 0; i += 1) {
     await new Promise((r) => setTimeout(r, 25));
   }
   const wtPath = (f.one().worktree || {}).path;
@@ -1477,6 +1484,9 @@ test('a node_modules the spawn cannot link WARNS on the reply and spawns anyway'
   // lead is told, and is the only party who can run the root `npm install`.
   const repo = mkRepo();
   const f = mkLoop({ repo });
+  // See the sibling above: without it the gate skips the link entirely and all
+  // four assertions below go vacuous while staying green.
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'package.json'), '{"name":"t"}\n');
   f.team.roles.hand.dispatch = 'worktree';
   // The root's tree removed: the source the link would point at is gone, which
   // is the state a box that never ran `npm install` is in.
@@ -1494,6 +1504,31 @@ test('a node_modules the spawn cannot link WARNS on the reply and spawns anyway'
   assert.match(warned[0], /^\[agent:task\] ticket t1 → /, 'the warning rides the dispatch reply, like the env drops');
   assert.match(warned[0], /starts without dependencies/, 'and names the consequence for the seat');
   assert.deepStrictEqual(f.esc(), [], 'a missing link is a warning, never an escalation');
+});
+
+test('a NON-node team root is not told to run npm install, and still spawns', async () => {
+  // The warning above advises `npm install`, which is false advice on a team
+  // rooted at a Python or Go checkout — and the suite caller never reached it
+  // for such a repo, since it aborts on the missing `scripts/run-tests.js`
+  // first. So the spawn call is gated on the root being a node project.
+  const repo = mkRepo();          // mints no package.json — the population at issue
+  const f = mkLoop({ repo });
+  f.team.roles.hand.dispatch = 'worktree';
+  assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'package.json')),
+    'ENTER: the root is not a node project, which is the case under test');
+  fsReal.rmSync(pathReal.join(repo.dir, 'node_modules'), { recursive: true, force: true });
+  f.tstore.save(f.team.root, [{ ...f.one(), worktree: undefined, role: undefined, assignee: 'hand', startedAt: null }]);
+
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', id: 't1', who: null, body: '' });
+  for (let i = 0; i < 40 && f.created.length === 0; i += 1) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+
+  // BOTH halves. The absence alone is true of a dispatch that never spawned at
+  // all, so it would pass over the failure it is meant to exclude.
+  assert.strictEqual(f.created.length, 1, 'ENTER: the seat was dispatched');
+  assert.deepStrictEqual(f.injected.filter((t) => /node_modules|without dependencies/.test(t)), [],
+    'and nothing on the reply mentions node_modules on a repo that has no package.json');
 });
 
 test('a test file that cannot even LOAD is rejected, named by its path', async () => {
