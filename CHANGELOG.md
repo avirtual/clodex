@@ -36,6 +36,22 @@ blocks a release.
   dictation reaches. It will not fire while a session is asking permission for something,
   because Enter would answer that dialog; a phrase spoken while one is open is
   dropped rather than sent after it clears. Claude sessions on this machine.
+- **…and it now works with macOS dictation, which used to need a keypress.**
+  With the switch above on, hands-free submit still did nothing under macOS
+  on-device dictation until you clicked or pressed a key — and the reason turned
+  out to be worth the extra switch. Dictation does not hand your words to the
+  session as you speak: it holds them, underlined and uncommitted, and only
+  releases them when you touch the machine. So there was nothing in the session
+  for the feature above to read, however long you waited. The words are on
+  screen the whole time, though, so a second switch —
+  **Also submit while macOS dictation is still holding the words** — reads them
+  where they actually are and commits them for you once they end with your
+  phrase, at which point the switch above takes over as usual. It needs the
+  first box ticked and is off on its own, because it is the more forward of the
+  two: it acts on a transcript you have not accepted yet, so if dictation drops
+  your phrase into the middle of a sentence it will submit early, and there is
+  no undo. Nothing else changes — it still stays silent while a session is
+  asking permission, still only listens to the session you are looking at.
 
 ## 5.19.0 — 2026-08-30
 

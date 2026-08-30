@@ -6804,6 +6804,11 @@ body {
           <span>Phrase</span>
           <input type="text" id="prefs-voice-submit-phrase" placeholder="over and out" spellcheck="false" autocomplete="off" style="flex: 1;">
         </div>
+        <label class="prefs-check" style="margin-top: 6px;">
+          <input type="checkbox" id="prefs-voice-submit-composition">
+          <span>Also submit while macOS dictation is still holding the words</span>
+        </label>
+        <span class="hint-text" style="display: block; margin-top: 6px;">macOS dictation keeps what you said <em>underlined and uncommitted</em> until you press a key or click — the words never reach the session, so the setting above cannot see them and nothing happens until you touch the machine. With this on, Clodex reads the words while they are still pending and commits them for you when they end with the phrase. The trade: it is acting on a transcript you have not accepted yet, so if dictation puts the phrase in mid-sentence it will submit early, and there is no undo. Needs the box above ticked.</span>
         <span class="hint-text" style="display: block; margin-top: 6px;">Matched at the end of what you have dictated, ignoring case and any punctuation dictation adds. Pick something you would never say mid-sentence — a short one like &ldquo;send it&rdquo; will fire while you are still talking. Clear the box to go back to the default.</span>
       </details>
       <details class="prefs-group" data-group="statusline">
@@ -23582,8 +23587,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       function readVoiceSubmitSettings(settings) {
         const raw = settings && typeof settings === "object" ? settings : {};
+        const enabled = raw.voiceSubmit === true;
         return {
-          enabled: raw.voiceSubmit === true,
+          enabled,
+          composition: enabled && raw.voiceSubmitComposition === true,
           phrase: normalizePhrase(raw.voiceSubmitPhrase) || DEFAULT_SUBMIT_PHRASE
         };
       }
@@ -23603,20 +23610,53 @@ ${m[2].replace(/^\r?\n/, "")}`;
   // renderer/voice-submit-watcher.js
   var require_voice_submit_watcher = __commonJS({
     "renderer/voice-submit-watcher.js"(exports, module) {
-      var { findSubmit, shouldFire } = require_voice_submit();
+      var { findSubmit, matchTrigger, shouldFire } = require_voice_submit();
       var QUIET_MS = 1200;
       var ENTER_SETTLE_MS = 30;
+      var COMPOSITION_POLL_MS = 300;
+      function readComposition(terminal) {
+        const root = terminal && terminal.element;
+        if (!root || typeof root.querySelector !== "function") return null;
+        const view = root.querySelector(".composition-view.active");
+        if (!view) return null;
+        const text = view.textContent;
+        if (typeof text !== "string" || !text.trim()) return null;
+        return text;
+      }
+      function commitComposition(terminal) {
+        const ta = terminal && terminal.textarea;
+        if (!ta || typeof ta.dispatchEvent !== "function") return false;
+        ta.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Meta",
+          code: "MetaLeft",
+          keyCode: 91,
+          which: 91,
+          metaKey: true,
+          bubbles: false,
+          cancelable: true
+        }));
+        return readComposition(terminal) === null;
+      }
       function createVoiceSubmitWatcher(terminal, {
         getConfig,
         getAttention,
         write,
-        quietMs = QUIET_MS
+        quietMs = QUIET_MS,
+        pollMs = COMPOSITION_POLL_MS,
+        readComposition: readPending = readComposition,
+        commitComposition: commitPending = commitComposition,
+        now = Date.now
       }) {
         let timer = null;
         let enterTimer = null;
+        let pollTimer = null;
         let disposed = false;
         let answered = null;
         let fires = 0;
+        let pending = null;
+        let pendingAt = 0;
+        let committed = null;
+        let commits = 0;
         function cursorRow() {
           const buf = terminal.buffer.active;
           if (buf.type !== "normal") return null;
@@ -23658,26 +23698,86 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (!disposed) write("\r");
           }, ENTER_SETTLE_MS);
         }
+        function forgetPending() {
+          pending = null;
+          pendingAt = 0;
+          committed = null;
+        }
+        function pollComposition() {
+          if (disposed) return;
+          let cfg = null;
+          try {
+            cfg = getConfig();
+          } catch {
+            cfg = null;
+          }
+          if (!cfg || cfg.composition !== true) {
+            forgetPending();
+            return;
+          }
+          let text = null;
+          try {
+            text = readPending(terminal);
+          } catch {
+            text = null;
+          }
+          if (text === null) {
+            forgetPending();
+            return;
+          }
+          if (text !== pending) {
+            pending = text;
+            pendingAt = now();
+            return;
+          }
+          if (now() - pendingAt < quietMs) return;
+          if (!matchTrigger(text.trim(), cfg.phrase)) return;
+          if (committed === text) return;
+          committed = text;
+          let attention = null;
+          try {
+            attention = getAttention();
+          } catch {
+            attention = "permission";
+          }
+          if (!shouldFire({ enabled: cfg.enabled, attention })) return;
+          commits += 1;
+          try {
+            commitPending(terminal);
+          } catch {
+          }
+        }
         const schedule = () => {
           if (disposed) return;
           if (timer) clearTimeout(timer);
           timer = setTimeout(tick, quietMs);
         };
         const subs = [terminal.onWriteParsed(schedule)];
+        pollTimer = setInterval(pollComposition, pollMs);
         return {
           refresh: schedule,
           fireCount: () => fires,
+          commitCount: () => commits,
           dispose() {
             disposed = true;
             if (timer) clearTimeout(timer);
             if (enterTimer) clearTimeout(enterTimer);
+            if (pollTimer) clearInterval(pollTimer);
             timer = null;
             enterTimer = null;
+            pollTimer = null;
             for (const s of subs) s.dispose();
           }
         };
       }
-      module.exports = { createVoiceSubmitWatcher, QUIET_MS, ENTER_SETTLE_MS };
+      module.exports = {
+        createVoiceSubmitWatcher,
+        readComposition,
+        commitComposition,
+        QUIET_MS,
+        ENTER_SETTLE_MS,
+        COMPOSITION_POLL_MS
+      };
     }
   });
 
@@ -34570,7 +34670,7 @@ Click for live activity`;
         sessionList,
         showToast
       });
-      var voiceSubmitConfig = { enabled: false, phrase: DEFAULT_SUBMIT_PHRASE };
+      var voiceSubmitConfig = { enabled: false, composition: false, phrase: DEFAULT_SUBMIT_PHRASE };
       async function refreshVoiceSubmitConfig() {
         try {
           voiceSubmitConfig = readVoiceSubmitSettings(await window.api.getSettings());
@@ -34914,6 +35014,7 @@ Click for live activity`;
       var prefsSemanticHints = document.getElementById("prefs-semantic-hints");
       var prefsSelectionHints = document.getElementById("prefs-selection-hints");
       var prefsVoiceSubmit = document.getElementById("prefs-voice-submit");
+      var prefsVoiceSubmitComposition = document.getElementById("prefs-voice-submit-composition");
       var prefsVoiceSubmitPhrase = document.getElementById("prefs-voice-submit-phrase");
       var prefsTerminalReports = document.getElementById("prefs-terminal-reports");
       var prefsDiscoverOnStartup = document.getElementById("prefs-discover-on-startup");
@@ -36528,6 +36629,7 @@ ${res.stderr}` : "");
         if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
         if (prefsSelectionHints) prefsSelectionHints.checked = !!s.selectionHints;
         if (prefsVoiceSubmit) prefsVoiceSubmit.checked = s.voiceSubmit === true;
+        if (prefsVoiceSubmitComposition) prefsVoiceSubmitComposition.checked = s.voiceSubmitComposition === true;
         if (prefsVoiceSubmitPhrase) prefsVoiceSubmitPhrase.value = s.voiceSubmitPhrase || "";
         setTerminalReports(s.terminalReports);
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
@@ -36578,6 +36680,7 @@ ${res.stderr}` : "");
           semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
           selectionHints: prefsSelectionHints ? prefsSelectionHints.checked : false,
           voiceSubmit: prefsVoiceSubmit ? prefsVoiceSubmit.checked : false,
+          voiceSubmitComposition: prefsVoiceSubmitComposition ? prefsVoiceSubmitComposition.checked : false,
           voiceSubmitPhrase: prefsVoiceSubmitPhrase ? prefsVoiceSubmitPhrase.value.trim() : "",
           terminalReports: readTerminalReports(),
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,

@@ -751,6 +751,25 @@ Own state + DOM, `init*(deps)`:
   deciding lives in the DOM-free leaf, which is what lets
   `test/voice-submit.test.js` pin the interlock with no jsdom. Disposed BEFORE
   its terminal.
+  A SECOND HALF covers composed input, where the buffer read above is blind: a
+  pending composition (macOS dictation, an IME) has not reached the pty, so the
+  buffer is empty and no write event fires — the words live in xterm's
+  `.composition-view` overlay and helper textarea instead. That half POLLS the
+  overlay and, when the text ends with the phrase and has been unchanged for the
+  quiet window, COMMITS the composition; the text then echoes as an ordinary
+  write and the buffer half above submits it unchanged. It never sends Enter
+  itself, so there is one submit path, not two. The commit is a synthetic Meta
+  keydown at `terminal.textarea`: `CompositionHelper.keydown` exempts only
+  229/Shift/Ctrl/Alt and finalizes on anything else, and Meta is the one key that
+  finalizes while contributing no byte of its own — a printable key would commit
+  AND type itself into the draft. The two xterm-facing steps are the injectable
+  `readComposition` / `commitComposition`, kept separate because both rest on
+  structure xterm can move; `readComposition` queries under `terminal.element`,
+  never the document, since there is one overlay PER TERMINAL and a document-wide
+  query would return another session's. Behind its own setting
+  (`voiceSubmitComposition`, ANDed with `voiceSubmit`), because it acts on words
+  the operator has not accepted: the quiet window is the only thing between a
+  transcriber that emits the phrase mid-utterance and a submit with no undo.
 - **plugin-host.js** — the renderer-side plugin host. Plugins hand it data or
   callbacks, NEVER HTML: everything user-supplied is escaped here, and every
   registered id becomes `"<pluginId>:<id>"` before it reaches the DOM, so a
