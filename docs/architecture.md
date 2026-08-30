@@ -736,17 +736,18 @@ Own state + DOM, `init*(deps)`:
   Declines on the ALTERNATE
   buffer for intent-highlight.js's reason. Fires only after a QUIET WINDOW, since
   transcription streams in segments and an immediate fire submits half an
-  utterance. The gate — feature on, voice mode `tap`, and no permission dialog —
-  is re-checked at FIRE time, because the dialog can open during that window and
-  the Enter would ANSWER it; the 'permission' signal is attention.js's existing
+  utterance. The gate — feature on and no permission dialog — is re-checked at
+  FIRE time, because the dialog can open during that window and the Enter would
+  ANSWER it; the 'permission' signal is attention.js's existing
   classification carried on `el.dataset.attention`, never a second detector, and
   both failure paths of that read resolve to 'permission'. The watcher also fires
   only for the ACTIVE session: dictation reaches the focused composer only, so a
   background seat can never be helped and can only misfire. A refused match still
   latches — keyed on the composer CONTENT, so an identical repaint stays answered
   (the stale-speech case) while a CHANGED draft re-arms, which is what lets a
-  second deliberate utterance of the phrase work. Hold mode is excluded: the
-  CLI's own autoSubmit covers it. All the
+  second deliberate utterance of the phrase work. The CLI's voice mode is NOT
+  consulted: gating on `tap` was a proxy for "the operator is dictating" that
+  refused macOS on-device dictation, where the CLI's mode reads `off`. All the
   deciding lives in the DOM-free leaf, which is what lets
   `test/voice-submit.test.js` pin the interlock with no jsdom. Disposed BEFORE
   its terminal.

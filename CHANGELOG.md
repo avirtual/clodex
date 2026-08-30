@@ -22,8 +22,12 @@ blocks a release.
   editable) and Clodex erases the phrase and presses Enter. It matches at the end
   of what you have dictated, ignoring case and whatever punctuation dictation
   decided to add, so "Over and out." works as well as the bare words. Off by
-  default, tap mode only — in hold mode the CLI already submits when you release
-  the key. Long drafts work too: the phrase is found even once what you have said
+  default. It does not care how the words reached the composer — the CLI's own
+  voice mode, macOS dictation, or your own typing all count, so it works in the
+  local-only dictation setup where the CLI reports no voice mode at all; the
+  flip side is that a line you type by hand ending in the phrase submits too,
+  which is why the default is three words you would never end a sentence with.
+  Long drafts work too: the phrase is found even once what you have said
   has wrapped onto further lines, which is the case the feature is really for.
   Curly quotes and long dashes are folded to their plain forms on both sides, so
   a phrase like `that's it` still fires when dictation spells it with a

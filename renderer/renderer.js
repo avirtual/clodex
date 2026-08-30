@@ -1149,10 +1149,9 @@ function createTerminal(name, peer = null) {
 
   const intentHighlight = createIntentHighlight(terminal);
 
-  // Local Claude seats only. A peer's composer is on the other machine, and
-  // Codex has no `/voice` for the mode gate to read. The type is resolved at
-  // FIRE time rather than here: the sidebar row this reads may not exist yet
-  // while the terminal is being built.
+  // Local Claude seats only: a peer's composer is on the other machine. The
+  // type is resolved at FIRE time rather than here: the sidebar row this reads
+  // may not exist yet while the terminal is being built.
   const voiceSubmit = peer ? null : createVoiceSubmitWatcher(terminal, {
     // Gated on the ACTIVE session, not merely a live one. Dictation only ever
     // reaches the focused composer, so a background seat's watcher can never
@@ -1162,12 +1161,6 @@ function createTerminal(name, peer = null) {
       && name === activeSession
       && sessionTypeOf(name) === 'claude'
       ? voiceSubmitConfig : null),
-    // The FILE's mode, never the core's pending pick: a pick is a command that
-    // has been queued into a session, not a mode any CLI is in yet.
-    getVoiceMode: () => {
-      const st = voiceCore.snapshot().state;
-      return st ? st.effective : null;
-    },
     getAttention: () => {
       const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
       // A row that is GONE is not a row without a dialog. Reporting 'permission'
