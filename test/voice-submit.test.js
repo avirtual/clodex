@@ -542,16 +542,16 @@ test('dispose stops a fire already in flight', async () => {
 
 // ------------------------------------------------------- the composition half
 //
-// The state these cover is the one t569 could not reach: the operator has
-// dictated, macOS is holding the words UNCOMMITTED, and the terminal buffer is
-// empty. Bogdan captured that live — `.composition-view` and the helper textarea
-// both carried " this is a dictation test Roger" while the buffer rows stayed
-// empty for seconds.
+// The state these cover: the operator has dictated, macOS is holding the words
+// UNCOMMITTED, and the terminal buffer is EMPTY. Captured live — the overlay and
+// the helper textarea both carried the phrase for seconds while the buffer rows
+// stayed empty.
 //
 // So the fixture drives the watcher through the same two seams the DOM does:
 // text appears in the composition reader while NOTHING is written to the
-// terminal. A fixture that wrote the phrase into the buffer would be modelling
-// the state the real DOM does not produce — t569's mistake exactly.
+// terminal. Do not "simplify" one of these by writing the phrase into the buffer
+// instead — that models a state the real DOM never produces, and every
+// assertion downstream of it would pass over a feature that cannot work.
 
 // A harness whose composition reader is a plain mutable string. `commits`
 // records what the commit boundary was asked to do; `echo` is what the real
