@@ -736,7 +736,13 @@ Own state + DOM, `init*(deps)`:
   Declines on the ALTERNATE
   buffer for intent-highlight.js's reason. Fires only after a QUIET WINDOW, since
   transcription streams in segments and an immediate fire submits half an
-  utterance. The gate — feature on and no permission dialog — is re-checked at
+  utterance. TWO wake sources feed that window: terminal writes, and a slow POLL
+  that schedules only when the cursor row CHANGED. The poll is what covers text
+  landing with no write to follow it — a write starts the window, so after the
+  last one nothing else would ever schedule a check. Change detection is what
+  keeps it from breaking the debounce, in both directions: firing the check
+  directly would skip the window, and scheduling every interval would restart it
+  forever, the interval being shorter than the window. The gate — feature on and no permission dialog — is re-checked at
   FIRE time, because the dialog can open during that window and the Enter would
   ANSWER it; the 'permission' signal is attention.js's existing
   classification carried on `el.dataset.attention`, never a second detector, and

@@ -247,6 +247,10 @@ function fakeTerminal({ rows = [''], type = 'normal' } = {}) {
   const listeners = [];
   const state = { rows: [...rows], type };
   const last = () => state.rows[state.rows.length - 1];
+  const setRows = (next) => {
+    state.rows = next.flat().map((r) => (typeof r === 'string' ? { text: r } : r));
+  };
+
   return {
     _state: state,
     buffer: {
@@ -278,8 +282,15 @@ function fakeTerminal({ rows = [''], type = 'normal' } = {}) {
     // Repaint the composer and fire the write event, as a real terminal would.
     // Strings are the common one-row case; objects carry `isWrapped`.
     write(...next) {
-      state.rows = next.flat().map((r) => (typeof r === 'string' ? { text: r } : r));
+      setRows(next);
       for (const fn of listeners) fn();
+    },
+    // The same repaint with NO write event — the shape the poll exists for. It
+    // is not a terminal behaviour being modelled but the watcher's blind spot
+    // held still: whatever the reason a check does not follow the text landing,
+    // the composer ends up holding a finished utterance with nothing scheduled.
+    writeSilently(...next) {
+      setRows(next);
     },
   };
 }
@@ -292,6 +303,10 @@ const settle = (ms) => new Promise((r) => setTimeout(r, ms));
 // change the world DURING a window, which is what the fire-time re-check tests
 // need. `done()` waits out both stages of a fire.
 const TEST_QUIET_MS = 5;
+// Under the real ratio (600 poll / 1200 quiet) the poll is the SHORTER of the
+// two, which is what makes "a poll must not shorten the quiet window" a live
+// hazard rather than an arrangement the test defines away.
+const TEST_POLL_MS = 2;
 function fastHarness({
   rows = [''], type = 'normal',
   config = { enabled: true, phrase: DEFAULT_SUBMIT_PHRASE },
@@ -305,8 +320,12 @@ function fastHarness({
     getAttention: () => env.attention,
     write: (d) => writes.push(d),
     quietMs: TEST_QUIET_MS,
+    pollMs: TEST_POLL_MS,
   });
-  return { term, watcher, writes, env, done: () => settle(TEST_QUIET_MS + ENTER_SETTLE_MS + 25) };
+  return {
+    term, watcher, writes, env,
+    done: () => settle(TEST_QUIET_MS + TEST_POLL_MS + ENTER_SETTLE_MS + 25),
+  };
 }
 
 test('a matching composer submits after the quiet window: backspaces then Enter', async () => {
@@ -506,6 +525,121 @@ test('the quiet window restarts on every write, so a mid-utterance match waits',
   await h.done();
   assert.deepStrictEqual(h.writes, [], 'the utterance kept going — nothing should have been sent');
   h.watcher.dispose();
+});
+
+test('a match that arrives with NO write event still fires, once the poll sees it', async () => {
+  // THE REGRESSION. The operator dictates into an unfocused window: the text is
+  // in the buffer and no further write ever comes, so the write subscription —
+  // the watcher's only wake source before this — never schedules a check and
+  // the composer sits there until a click repaints it.
+  const h = fastHarness();
+  h.term.writeSilently('\u276f finish the report over and out');
+  await h.done();
+  assert.strictEqual(h.writes.length, 2, `writes: ${JSON.stringify(h.writes)}`);
+  assert.strictEqual(h.writes[0], '\x7f'.repeat(13));
+  assert.strictEqual(h.writes[1], '\r');
+  assert.strictEqual(h.watcher.fireCount(), 1);
+  h.watcher.dispose();
+});
+
+test('the poll does not shorten the quiet window mid-utterance', async () => {
+  // The poll interval is well under the quiet window, so a poll that fired the
+  // check itself — or that failed to RESTART the window on a changed row —
+  // would submit the first half of an utterance still being transcribed. Every
+  // segment here lands silently, so the poll is the only thing observing them.
+  const h = fastHarness();
+  h.term.writeSilently('\u276f over and out');
+  await settle(TEST_POLL_MS * 2);
+  h.term.writeSilently('\u276f over and out of the office');
+  await settle(TEST_POLL_MS * 2);
+  h.term.writeSilently('\u276f over and out of the office tomorrow');
+  await h.done();
+  assert.deepStrictEqual(h.writes, [], 'the utterance kept going — nothing should have been sent');
+  h.watcher.dispose();
+});
+
+test('a poll-driven match is still refused while a permission dialog is up', async () => {
+  // The new wake source must reach the SAME gate. A poll path that called tick()
+  // by another route, or read the gate itself, could fire Enter into an open
+  // dialog — the one state where this feature is destructive.
+  const h = fastHarness({ attention: 'permission' });
+  h.term.writeSilently('\u276f approve it over and out');
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+  assert.strictEqual(h.watcher.fireCount(), 0);
+  h.watcher.dispose();
+});
+
+test('the poll reads nothing while the feature is disarmed, and re-arms without firing', async () => {
+  // Arming over a composer that ALREADY ends with the phrase must not submit
+  // what the operator said before they turned it on. The row is adopted on the
+  // first armed poll rather than treated as a change.
+  const h = fastHarness({ config: null });
+  h.term.writeSilently('\u276f said before it was armed over and out');
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+
+  h.env.config = { enabled: true, phrase: DEFAULT_SUBMIT_PHRASE };
+  await h.done();
+  assert.deepStrictEqual(h.writes, [], 'arming must not submit a pre-existing draft');
+
+  // A NEW utterance after the arm is a change, and still fires.
+  h.term.writeSilently('\u276f a fresh thought over and out');
+  await h.done();
+  assert.strictEqual(h.watcher.fireCount(), 1);
+  h.watcher.dispose();
+});
+
+test('an ordinary write still fires at the quiet window, not a poll interval later', async () => {
+  // The write path records the row it produced, so the next poll does not
+  // re-report that same text as a change and restart the window behind it —
+  // which would delay every ordinary fire by up to one poll interval.
+  //
+  // This one is measured in WALL TIME, and needs its own slower timings to be
+  // measurable at all: the difference under the shared harness is TEST_POLL_MS,
+  // 2ms, which is indistinguishable from timer noise. The gap here is 25ms
+  // against a 100ms window, and the assertion sits between the two outcomes.
+  const writes = [];
+  const term = fakeTerminal();
+  const started = Date.now();
+  let firstWriteAt = null;
+  const watcher = createVoiceSubmitWatcher(term, {
+    getConfig: () => ({ enabled: true, phrase: DEFAULT_SUBMIT_PHRASE }),
+    getAttention: () => null,
+    write: (d) => { if (firstWriteAt === null) firstWriteAt = Date.now() - started; writes.push(d); },
+    quietMs: 100,
+    pollMs: 25,
+  });
+  term.write('\u276f finish the report over and out');
+  await settle(180);
+  watcher.dispose();
+  assert.strictEqual(writes.length, 2, `writes: ${JSON.stringify(writes)}`);
+  assert.ok(firstWriteAt !== null && firstWriteAt < 120,
+    `fired at ${firstWriteAt}ms — a poll restarted the window behind the write`);
+});
+
+test('dispose stops the poll, not just the pending timers', async () => {
+  // A leaked interval writes NOTHING — the disposed guards downstream see to
+  // that — so asserting on writes here would pass with the interval still
+  // running for the life of the window, once per interval, per terminal ever
+  // created. What distinguishes the two is the WORK: the poll reads config and
+  // buffer every tick. Counting that read is the only way this test can fail.
+  let configReads = 0;
+  const term = fakeTerminal();
+  const watcher = createVoiceSubmitWatcher(term, {
+    getConfig: () => { configReads += 1; return { enabled: true, phrase: DEFAULT_SUBMIT_PHRASE }; },
+    getAttention: () => null,
+    write: () => {},
+    quietMs: TEST_QUIET_MS,
+    pollMs: TEST_POLL_MS,
+  });
+  await settle(TEST_POLL_MS * 5);
+  assert.ok(configReads > 0, 'the poll should have been running before dispose');
+
+  watcher.dispose();
+  const afterDispose = configReads;
+  await settle(TEST_POLL_MS * 10);
+  assert.strictEqual(configReads, afterDispose, 'a disposed watcher must not still be polling');
 });
 
 test('dispose stops a fire already in flight', async () => {

@@ -33,7 +33,9 @@ blocks a release.
   a phrase like `that's it` still fires when dictation spells it with a
   typographic apostrophe.
   Only the session you are looking at listens, since that is the only one your
-  dictation reaches. It will not fire while a session is asking permission for something,
+  dictation reaches. It checks on a timer as well as when the session prints, so
+  a phrase that lands while the window is in the background still sends without
+  you clicking in first. It will not fire while a session is asking permission for something,
   because Enter would answer that dialog; a phrase spoken while one is open is
   dropped rather than sent after it clears. Claude sessions on this machine.
 
