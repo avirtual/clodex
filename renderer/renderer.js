@@ -1149,9 +1149,12 @@ function createTerminal(name, peer = null) {
 
   const intentHighlight = createIntentHighlight(terminal);
 
-  // Local Claude seats only: a peer's composer is on the other machine. The
-  // type is resolved at FIRE time rather than here: the sidebar row this reads
-  // may not exist yet while the terminal is being built.
+  // Local Claude seats only: a peer's composer is on the other machine, and the
+  // erase-then-Enter shape is verified against the Claude CLI's input box alone
+  // — in a bash seat Enter RUNS the line rather than sending a message, so the
+  // consequence of a false fire is not the same and the widening needs its own
+  // decision. The type is resolved at FIRE time rather than here: the sidebar
+  // row this reads may not exist yet while the terminal is being built.
   const voiceSubmit = peer ? null : createVoiceSubmitWatcher(terminal, {
     // Gated on the ACTIVE session, not merely a live one. Dictation only ever
     // reaches the focused composer, so a background seat's watcher can never
