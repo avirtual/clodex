@@ -6814,7 +6814,7 @@ body {
           <input type="checkbox" id="prefs-voice-submit-rearm">
           <span>Re-arm tap mode when a session finishes its turn</span>
         </label>
-        <span class="hint-text" style="display: block; margin-top: 6px;">In the CLI&rsquo;s <strong>tap</strong> mode the recorder stops inserting what you say while the agent is working, and only a keypress starts it again &mdash; so after every answer you have to walk over and tap. With this on, Clodex presses the push-to-talk key for you the moment the agent goes idle, and you can keep dictating from where you are. It presses nothing if you have started typing in the box, if the session is asking permission, or if push-to-talk is bound to a key combination rather than a single character. Needs the CLI&rsquo;s voice mode set to tap, and the box above ticked.</span>
+        <span class="hint-text" style="display: block; margin-top: 6px;">In the CLI&rsquo;s <strong>tap</strong> mode the recorder stops inserting what you say while the agent is working, and only a keypress starts it again &mdash; so after every answer you have to walk over and tap. With this on, Clodex presses the push-to-talk key for you once the agent has finished and the screen has stopped repainting, and you can keep dictating from where you are. It presses nothing if you have started typing in the box, if the session is asking permission, or if push-to-talk is bound to a key combination rather than a single character. Needs the CLI&rsquo;s voice mode set to tap, and the box above ticked.</span>
       </details>
       <details class="prefs-group" data-group="statusline">
         <summary><h4>Statusline</h4><span class="prefs-group-sub">What each agent shows above its prompt</span></summary>
@@ -23658,9 +23658,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
       } = require_voice_submit();
       var QUIET_MS = 1200;
       var ENTER_SETTLE_MS = 30;
+      var CONSUMED_IDLE_MS = 9e4;
       var COMPOSITION_POLL_MS = 300;
       var REARM_SETTLE_MS = 3e3;
-      var REARM_ABANDON_MS = 6e4;
+      var REARM_ABANDON_MS = 1e4;
       function readComposition(terminal) {
         const root = terminal && terminal.element;
         if (!root || typeof root.querySelector !== "function") return null;
@@ -23670,9 +23671,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (typeof text !== "string" || !text.trim()) return null;
         return text;
       }
-      function commitComposition(terminal) {
+      function commitComposition(terminal, composed = "", consumed = "") {
         const ta = terminal && terminal.textarea;
         if (!ta || typeof ta.dispatchEvent !== "function") return false;
+        if (consumed) {
+          const value = typeof ta.value === "string" ? ta.value : "";
+          if (!composed || !composed.startsWith(consumed)) return false;
+          const held = value.endsWith(composed) ? composed : value.endsWith(composed.trimStart()) ? composed.trimStart() : null;
+          if (held === null) return false;
+          const already = held.length - (composed.length - consumed.length);
+          ta.value = value.slice(0, value.length - held.length) + held.slice(already);
+        }
         ta.dispatchEvent(new KeyboardEvent("keydown", {
           key: "Meta",
           code: "MetaLeft",
@@ -23708,6 +23717,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let pending = null;
         let pendingAt = 0;
         let committed = null;
+        let consumed = "";
+        let consumedAt = 0;
+        let desynced = false;
         let commits = 0;
         let commitFailures = 0;
         let activity = null;
@@ -23768,6 +23780,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
           pendingAt = 0;
           committed = null;
         }
+        function forgetConsumed() {
+          consumed = "";
+          consumedAt = 0;
+          desynced = false;
+        }
         function pollComposition() {
           if (disposed) return;
           let cfg = null;
@@ -23776,8 +23793,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
           } catch {
             cfg = null;
           }
-          if (!cfg || cfg.composition !== true) {
+          if (!cfg) {
             forgetPending();
+            return;
+          }
+          if (cfg.composition !== true) {
+            forgetPending();
+            forgetConsumed();
             return;
           }
           if (!onNormalBuffer()) {
@@ -23792,17 +23814,27 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (text === null) {
             forgetPending();
+            if (consumed && now() - consumedAt >= CONSUMED_IDLE_MS) forgetConsumed();
             return;
           }
+          if (desynced) return;
+          if (!text.startsWith(consumed)) {
+            desynced = true;
+            return;
+          }
+          consumedAt = now();
           if (text !== pending) {
             pending = text;
             pendingAt = now();
             return;
           }
           if (now() - pendingAt < quietMs) return;
-          if (!matchTrigger(text.trim(), cfg.phrase)) return;
+          const fresh = text.slice(consumed.length);
+          if (!matchTrigger(fresh.trim(), cfg.phrase)) return;
           if (committed === text) return;
           committed = text;
+          const alreadySent = consumed;
+          consumed = text;
           let attention = null;
           try {
             attention = getAttention();
@@ -23813,7 +23845,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           commits += 1;
           let took = false;
           try {
-            took = commitPending(terminal) !== false;
+            took = commitPending(terminal, text, alreadySent) !== false;
           } catch {
             took = false;
           }
@@ -23918,7 +23950,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         QUIET_MS,
         ENTER_SETTLE_MS,
         COMPOSITION_POLL_MS,
-        REARM_SETTLE_MS
+        CONSUMED_IDLE_MS,
+        REARM_SETTLE_MS,
+        REARM_ABANDON_MS
       };
     }
   });

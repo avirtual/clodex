@@ -4092,7 +4092,14 @@ function createTicketMethods(deps, shared) {
           //
           // Skipped for a spawn seat: it works in the shared checkout, which has
           // the root's tree already.
-          if (!isSpawn && wt && wt.path) {
+          //
+          // Gated on the root being a node project, and only HERE: the sentence
+          // advises `npm install`, which is false advice on a team rooted at a
+          // Python or Go checkout. The suite caller is filtered upstream instead
+          // — it aborts on a missing `scripts/run-tests.js` before reaching the
+          // link — so a non-node root never saw this until the spawn call
+          // existed.
+          if (!isSpawn && wt && wt.path && fs.existsSync(path.join(team.root, 'package.json'))) {
             const e = this._linkWorktreeNodeModules(team.root, wt.path);
             if (e) linkWarn = ` — NOTE: ${e}; the seat starts without dependencies (require() and npm run build:web will fail there until the root has a node_modules)`;
           }

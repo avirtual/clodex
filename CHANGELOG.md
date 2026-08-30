@@ -13,6 +13,20 @@ blocks a release.
 
 ## Unreleased
 
+- **Hands-free submit no longer re-sends what you already said.** With macOS
+  dictation, the second and every later submit in one dictation session sent the
+  whole session over again — your first sentence, its trigger word still in it,
+  with the new sentence tacked on the end. macOS keeps its own record of
+  everything dictated since you started and hands it back in full each time, and
+  Clodex was reading that record rather than just the new words. It now keeps
+  track of what it has already sent and submits only what you have said since.
+  If dictation goes back and rewrites something it transcribed earlier, Clodex
+  stops submitting rather than risk sending a sentence twice; leave it idle
+  for a minute or two to start fresh. If you ever do see it resend something
+  you already sent, and it did NOT follow a long pause, that is worth
+  reporting — it means the tracking was dropped by something other than the
+  idle timer.
+
 - **Dictation can now submit for you when you say a phrase.** The Claude CLI
   only auto-submits when the last chunk of transcribed speech runs to three
   words or more, so trailing off at the end of a thought leaves the whole
@@ -60,8 +74,8 @@ blocks a release.
   across a back-and-forth meant walking over and tapping after every answer,
   which is the whole thing hands-free submit was supposed to fix. A third
   switch — **Re-arm tap mode when a session finishes its turn** — presses the
-  push-to-talk key for you the moment the agent goes idle, so you can keep
-  talking from wherever you are. It presses the key you actually have bound to
+  push-to-talk key for you once the agent has finished and the screen has
+  stopped repainting, so you can keep talking from wherever you are. It presses the key you actually have bound to
   push-to-talk, not always a space, and if you have bound it to a key
   combination rather than a single character it does nothing rather than type
   something into your composer. It also stays out of the way whenever a
@@ -82,7 +96,8 @@ blocks a release.
   too, so the seat has it from its first command. If the link cannot be made —
   a checkout that has never had `npm install` run in it — the seat is spawned
   anyway and the dispatch reply says so, since a hand without dependencies can
-  still read, write and commit.
+  still read, write and commit. A team whose root is not a node project at all
+  is left alone: no link is attempted and no `npm install` advice is given.
 
 ## 5.19.0 — 2026-08-30
 
