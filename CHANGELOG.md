@@ -23,10 +23,11 @@ blocks a release.
   of what you have dictated, ignoring case and whatever punctuation dictation
   decided to add, so "Over and out." works as well as the bare words. Off by
   default. It does not care how the words reached the composer — the CLI's own
-  voice mode, macOS dictation, or your own typing all count, so it works in the
-  local-only dictation setup where the CLI reports no voice mode at all; the
-  flip side is that a line you type by hand ending in the phrase submits too,
-  which is why the default is three words you would never end a sentence with.
+  voice mode and your own typing both count, so it works in the local-only setup
+  where the CLI reports no voice mode at all. macOS dictation needs the second
+  switch below as well, for the reason described there. The flip side is that a
+  line you type by hand ending in the phrase submits too, which is why the
+  default is three words you would never end a sentence with.
   Long drafts work too: the phrase is found even once what you have said
   has wrapped onto further lines, which is the case the feature is really for.
   Curly quotes and long dashes are folded to their plain forms on both sides, so
