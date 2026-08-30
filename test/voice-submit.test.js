@@ -892,12 +892,33 @@ test('the trigger is matched on the REMAINDER, not on the accumulation', async (
   assert.strictEqual(h.commits.length, 1);
   await h.settled();   // the null poll between utterances
 
+  // THE DISTINGUISHING CASE, and it is the ordinary state rather than a corner:
+  // macOS refills the overlay with exactly what was just consumed, and the next
+  // word has not arrived yet. The remainder is EMPTY and declines; whole-text
+  // matching sees an accumulation that ends in the phrase, re-fires, and
+  // dispatches a commit that sends nothing while finalizing the live
+  // composition out from under the operator. The `committed` latch cannot stand
+  // in for this — the null poll above cleared it.
+  h.env.composed = first;
+  await h.settled();
+  await h.settled();
+  assert.strictEqual(h.commits.length, 1,
+    `an empty remainder must decline: ${JSON.stringify(h.commits)}`);
+
   // Grows, and the accumulation still ENDS with the old phrase — but the new
   // words do not, so there is nothing to commit yet.
   h.env.composed = first + ' and here is more to say';
   await h.settled();
   assert.strictEqual(h.commits.length, 1,
     `the remainder does not end in the phrase: ${JSON.stringify(h.commits)}`);
+
+  // ENTER: the two declines above are the remainder rule, not a dead watcher —
+  // the same fixture commits the moment the NEW words end in the phrase.
+  h.env.composed = first + ' and here is more to say roger';
+  await h.settled();
+  assert.deepStrictEqual(h.commits[1],
+    [first + ' and here is more to say roger', first],
+    'only the words after the consumed prefix are sent');
 });
 
 test('a commit blocked by a dialog buries its words instead of re-sending them', async () => {
@@ -994,6 +1015,37 @@ test('turning the setting off ends the DICTATION SESSION, not just the compositi
   assert.strictEqual(h.commits.length, 2, 'the re-armed session must commit again');
   assert.deepStrictEqual(h.commits[1], [' the first utterance roger', ''],
     'ENTER: nothing consumed — the un-tick ended the session the prefix belonged to');
+});
+
+test('a TAB SWITCH is an out-of-scope seat, not the end of the dictation session', async () => {
+  // getConfig returns null for any seat that is not the active claude session,
+  // so one click on another sidebar row produces it — and treating that as a
+  // stop is t577's bug back again by a route the operator can reach with the
+  // mouse: dictate into A, commit, click B, click back, keep talking. The OS
+  // accumulation never went anywhere, so a cleared prefix means the next commit
+  // resends the utterance already submitted.
+  const h = compositionHarness({
+    config: { enabled: true, composition: true, phrase: 'roger' },
+    composed: ' the first utterance roger',
+  });
+  await h.settled();
+  assert.deepStrictEqual(h.commits, [[' the first utterance roger', '']]);
+
+  // Click away. The config goes null with the prefix held, and stays null over
+  // several polls — the seat is not merely skipped for one tick.
+  h.env.config = null;
+  await h.settled();
+  await h.settled();
+
+  // Click back, well inside the idle window, and keep dictating into the same
+  // macOS session: the overlay comes back carrying the first utterance IN FULL.
+  h.env.config = { enabled: true, composition: true, phrase: 'roger' };
+  h.env.composed = ' the first utterance roger and now the second one roger';
+  await h.settled();
+  assert.strictEqual(h.commits.length, 2, 'the second utterance must still commit');
+  assert.deepStrictEqual(h.commits[1],
+    [' the first utterance roger and now the second one roger', ' the first utterance roger'],
+    'ENTER: the prefix survived the switch — only the new words are sent');
 });
 
 test('a LONG utterance keeps the session alive — the expiry measures silence, not time since the last submit', async () => {

@@ -792,18 +792,22 @@ Own state + DOM, `init*(deps)`:
   is guaranteed, and a prefix reset there is erased seconds before macOS refills
   the composition with the words it described. `pending`/`pendingAt`/`committed`
   reset on that null; `consumed`/`desynced` survive it and are cleared only by
-  dispose, the setting going off, and an idle expiry (`CONSUMED_IDLE_MS`,
+  the setting going off and an idle expiry (`CONSUMED_IDLE_MS`,
   provisional — nobody here can dictate, and the overlay is known to flap
   mid-session, so it is deliberately long relative to a pause). The expiry
   measures SILENCE, not time since the last submit: the stamp refreshes on every
   live overlay read, above the quiet-window return so a still-growing utterance
   refreshes too, since one long dictated sentence would otherwise age the prefix
   out and resend on the next flap. A DESYNCED session stops refreshing and so
-  still expires, which is how the feature recovers. The alt-screen decline does
-  NOT clear it — a pager opening and closing leaves the OS accumulation intact —
-  though it still declines to COMMIT while the program is up. The asymmetry
-  behind both: a surviving prefix at worst desyncs and costs one repeatable
-  utterance, while a cleared one resends what was already submitted. That is dispatched by
+  still expires, which is how the feature recovers. Neither the alt-screen
+  decline nor a NULL CONFIG clears it: a pager opening and closing leaves the
+  OS accumulation intact, and a null config is an out-of-scope seat rather
+  than a stop — `getConfig` returns one for every seat that is not the active
+  claude session, so clicking another sidebar row and back would otherwise
+  resend the whole session. The alt-screen arm still declines to COMMIT while
+  the program is up. The asymmetry behind all of it: a surviving prefix at
+  worst desyncs and costs one repeatable utterance, while a cleared one
+  resends what was already submitted. The remainder is dispatched by
   shortening `value` BEFORE the keydown: `_compositionPosition.start` is private
   and fixed at `compositionstart`, but `substring` clamps its end, so a `value`
   holding only the remainder sends only the remainder even though `end` still
