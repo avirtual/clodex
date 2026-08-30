@@ -6804,12 +6804,12 @@ body {
           <span>Phrase</span>
           <input type="text" id="prefs-voice-submit-phrase" placeholder="over and out" spellcheck="false" autocomplete="off" style="flex: 1;">
         </div>
+        <span class="hint-text" style="display: block; margin-top: 6px;">Matched at the end of what you have dictated, ignoring case and any punctuation dictation adds. Pick something you would never say mid-sentence — a short one like &ldquo;send it&rdquo; will fire while you are still talking. Clear the box to go back to the default.</span>
         <label class="prefs-check" style="margin-top: 6px;">
           <input type="checkbox" id="prefs-voice-submit-composition">
           <span>Also submit while macOS dictation is still holding the words</span>
         </label>
         <span class="hint-text" style="display: block; margin-top: 6px;">macOS dictation keeps what you said <em>underlined and uncommitted</em> until you press a key or click — the words never reach the session, so the setting above cannot see them and nothing happens until you touch the machine. With this on, Clodex reads the words while they are still pending and commits them for you when they end with the phrase. The trade: it is acting on a transcript you have not accepted yet, so if dictation puts the phrase in mid-sentence it will submit early, and there is no undo. Needs the box above ticked.</span>
-        <span class="hint-text" style="display: block; margin-top: 6px;">Matched at the end of what you have dictated, ignoring case and any punctuation dictation adds. Pick something you would never say mid-sentence — a short one like &ldquo;send it&rdquo; will fire while you are still talking. Clear the box to go back to the default.</span>
       </details>
       <details class="prefs-group" data-group="statusline">
         <summary><h4>Statusline</h4><span class="prefs-group-sub">What each agent shows above its prompt</span></summary>
@@ -23635,6 +23635,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           bubbles: false,
           cancelable: true
         }));
+        ta.value = "";
         return readComposition(terminal) === null;
       }
       function createVoiceSubmitWatcher(terminal, {
@@ -23657,9 +23658,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let pendingAt = 0;
         let committed = null;
         let commits = 0;
+        let commitFailures = 0;
+        function onNormalBuffer() {
+          try {
+            return terminal.buffer.active.type === "normal";
+          } catch {
+            return false;
+          }
+        }
         function cursorRow() {
+          if (!onNormalBuffer()) return null;
           const buf = terminal.buffer.active;
-          if (buf.type !== "normal") return null;
           const line = buf.getLine(buf.baseY + buf.cursorY);
           if (!line) return null;
           return line.translateToString(false, 0, buf.cursorX);
@@ -23715,6 +23724,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
             forgetPending();
             return;
           }
+          if (!onNormalBuffer()) {
+            forgetPending();
+            return;
+          }
           let text = null;
           try {
             text = readPending(terminal);
@@ -23742,10 +23755,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (!shouldFire({ enabled: cfg.enabled, attention })) return;
           commits += 1;
+          let took = false;
           try {
-            commitPending(terminal);
+            took = commitPending(terminal) !== false;
           } catch {
+            took = false;
           }
+          if (!took) commitFailures += 1;
         }
         const schedule = () => {
           if (disposed) return;
@@ -23758,6 +23774,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           refresh: schedule,
           fireCount: () => fires,
           commitCount: () => commits,
+          commitFailureCount: () => commitFailures,
           dispose() {
             disposed = true;
             if (timer) clearTimeout(timer);

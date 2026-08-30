@@ -90,6 +90,27 @@ function readComposition(terminal) {
 // it fires in the AT_TARGET phase regardless; letting a Meta keydown loose in
 // the document would offer it to every shortcut handler in the renderer for no
 // gain.
+//
+// CLEARING THE TEXTAREA AFTER THE DISPATCH IS LOAD-BEARING, AND THE ORDER IS THE
+// WHOLE OF IT. Our keydown reaches _finalizeComposition(false), which sends
+// `value.substring(start, end)` and leaves `value` ALONE. macOS then fires its
+// own compositionend, which takes the waitForPropagation branch; `_isComposing`
+// is false by then, so that branch reads the OPEN-ENDED `value.substring(start)`
+// and dispatches the same words A SECOND TIME. The field that exists to dedup
+// exactly this (`_dataAlreadySent`, xterm issue #3191) is written only from
+// _handleAnyTextareaChanges, which a keydown-driven finalize never reaches, so
+// it stays '' and deducts nothing. Emptying `value` is what makes that second
+// read return '' — the branch skips a zero-length input.
+//
+// Safe in both directions: the finalize is SYNCHRONOUS (triggerDataEvent is
+// called inline, before dispatchEvent returns), so clearing afterwards cannot
+// truncate the first send; and a later compositionstart recomputes `start` from
+// the new value length, so nothing is left pointing into a string we emptied.
+//
+// A synthetic keyUP would be the obvious tidy-up here and MUST NOT be added:
+// xterm's _keyUp calls this.focus() for anything wasModifierKeyOnlyEvent()
+// rejects, and that helper lists only 16/17/18 — Meta is not among them, so the
+// "cleanup" would yank focus to this terminal. See _keyDownSeen below.
 function commitComposition(terminal) {
   const ta = terminal && terminal.textarea;
   if (!ta || typeof ta.dispatchEvent !== 'function') return false;
@@ -97,6 +118,11 @@ function commitComposition(terminal) {
     key: 'Meta', code: 'MetaLeft', keyCode: 91, which: 91,
     metaKey: true, bubbles: false, cancelable: true,
   }));
+  // Leaves xterm's `_keyDownSeen` stuck true until the operator's next real
+  // keyup, because we send no keyup. The only reader is _inputEvent's emoji-IME
+  // path, which degrades to `!ev.composed` for that window — accepted as the
+  // cheaper of the two, for the focus reason above.
+  ta.value = '';
   return readComposition(terminal) === null;
 }
 
@@ -127,15 +153,23 @@ function createVoiceSubmitWatcher(terminal, {
   let pendingAt = 0;
   let committed = null;
   let commits = 0;
+  let commitFailures = 0;
 
   // The cursor row alone, truncated at the cursor column. The phrase ends the
   // utterance, so it is on the row the cursor is on even when the draft wrapped.
+  // While the alternate buffer is active it IS buffer.active — a full-screen
+  // program's cursor row is not a composer, and its contents are not the
+  // operator's draft. intent-highlight.js declines the same way. BOTH halves
+  // ask, which is why it is not folded back into cursorRow(): the composition
+  // half never reads the buffer, so it would inherit no decline from a check
+  // that lives in the buffer read.
+  function onNormalBuffer() {
+    try { return terminal.buffer.active.type === 'normal'; } catch { return false; }
+  }
+
   function cursorRow() {
+    if (!onNormalBuffer()) return null;
     const buf = terminal.buffer.active;
-    // While the alternate buffer is active it IS buffer.active — a full-screen
-    // program's cursor row is not a composer, and its contents are not the
-    // operator's draft. intent-highlight.js declines the same way.
-    if (buf.type !== 'normal') return null;
     const line = buf.getLine(buf.baseY + buf.cursorY);
     if (!line) return null;
     return line.translateToString(false, 0, buf.cursorX);
@@ -188,6 +222,11 @@ function createVoiceSubmitWatcher(terminal, {
     let cfg = null;
     try { cfg = getConfig(); } catch { cfg = null; }
     if (!cfg || cfg.composition !== true) { forgetPending(); return; }
+    // Before the overlay is touched: a composition over a full-screen program is
+    // not a draft for this feature to submit, whatever it says. Forgetting
+    // rather than merely returning means the words cannot be adopted as
+    // already-stable the moment the program exits.
+    if (!onNormalBuffer()) { forgetPending(); return; }
 
     let text = null;
     try { text = readPending(terminal); } catch { text = null; }
@@ -217,8 +256,18 @@ function createVoiceSubmitWatcher(terminal, {
     // which wakes the buffer half above, and THAT is what erases the phrase and
     // sends Enter — through every gate it already applies. Sending Enter here
     // as well would submit the draft twice.
+    //
+    // A commit that reports failure is RECORDED AND NOT RETRIED, deliberately.
+    // The latch above is already set, and that is the safe end state: retrying
+    // means dispatching Meta keydowns at the terminal once per poll for as long
+    // as the composition sits there, and the failure mode that would produce it
+    // — xterm no longer finalizing on this key — is exactly the one where
+    // retrying cannot work. It stays visible through commitFailureCount()
+    // instead of being discarded.
     commits += 1;
-    try { commitPending(terminal); } catch { /* the next poll re-observes */ }
+    let took = false;
+    try { took = commitPending(terminal) !== false; } catch { took = false; }
+    if (!took) commitFailures += 1;
   }
 
   // Trailing debounce: every write RESTARTS the window, which is what makes the
@@ -240,6 +289,7 @@ function createVoiceSubmitWatcher(terminal, {
     refresh: schedule,
     fireCount: () => fires,
     commitCount: () => commits,
+    commitFailureCount: () => commitFailures,
     dispose() {
       disposed = true;
       if (timer) clearTimeout(timer);

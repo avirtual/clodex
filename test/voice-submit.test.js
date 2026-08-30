@@ -568,11 +568,11 @@ afterEach(() => { while (live.length) live.pop().dispose(); });
 
 function compositionHarness({
   config = { enabled: true, composition: true, phrase: DEFAULT_SUBMIT_PHRASE },
-  attention = null, composed = null, commitTakes = true,
+  attention = null, composed = null, commitTakes = true, now, type = 'normal',
 } = {}) {
   const writes = [];
   const commits = [];
-  const term = fakeTerminal();
+  const term = fakeTerminal({ type });
   const env = { config, attention, composed };
   const watcher = track(createVoiceSubmitWatcher(term, {
     getConfig: () => env.config,
@@ -582,6 +582,7 @@ function compositionHarness({
     pollMs: 1,
     readComposition: () => env.composed,
     commitComposition: () => { commits.push(env.composed); return commitTakes; },
+    ...(now ? { now } : {}),
   }));
   return {
     term, watcher, writes, commits, env,
@@ -718,17 +719,78 @@ test('re-arming over an unchanged composition does not commit words spoken befor
   // Turning the setting on while a composition is already sitting there must
   // not submit it: those words predate the arm, exactly as the buffer half's
   // latch handles the same case on its side.
+  //
+  // The clock is DRIVEN, not slept on: the window is measured with the injected
+  // `now`, so holding it still proves the poll declines because too little time
+  // has passed rather than because the assertion ran before the next tick — a
+  // race a real 2ms sleep against a 1ms poll would decide by luck.
+  const clock = { t: 1000 };
   const h = compositionHarness({
     config: { enabled: true, composition: false, phrase: DEFAULT_SUBMIT_PHRASE },
     composed: ' finish the report over and out',
+    now: () => clock.t,
   });
   await h.settled();
   assert.deepStrictEqual(h.commits, []);
+
   h.env.config = { enabled: true, composition: true, phrase: DEFAULT_SUBMIT_PHRASE };
-  // It commits only after the words have been observed stable for a full window
-  // SINCE the arm — not on the first poll off text that was already there.
-  await settle(2);
-  assert.deepStrictEqual(h.commits, [], 'must not commit on the first poll after arming');
+  // Many polls run, but the clock has not advanced past the window, so the text
+  // is never old enough to act on however often it is observed.
+  await h.settled();
+  assert.deepStrictEqual(h.commits, [], 'must not commit until the window has passed SINCE the arm');
+
+  clock.t += TEST_QUIET_MS + 1;
+  await h.settled();
+  assert.deepStrictEqual(h.commits, [' finish the report over and out']);
+  h.watcher.dispose();
+});
+
+test('a composition over a full-screen program is never committed', async () => {
+  // The alt-screen decline has to be asked on the COMPOSITION path in its own
+  // right: that path never reads the buffer, so a check living inside the buffer
+  // read declines nothing here. A composition over vim or a pager is not a draft
+  // for this feature to submit, whatever words it holds.
+  const h = compositionHarness({ type: 'alternate', composed: ' finish the report over and out' });
+  await h.settled();
+  assert.deepStrictEqual(h.commits, []);
+  assert.deepStrictEqual(h.writes, []);
+  h.watcher.dispose();
+});
+
+test('leaving the alternate buffer restarts the window, it does not resume it', async () => {
+  // The decline FORGETS rather than merely returning, and this is what that
+  // buys. Words observed BEFORE a full-screen program starts must not become
+  // committable just because the program was up long enough for the window to
+  // elapse — the time passed with the composer hidden, not settling.
+  //
+  // The clock is driven so the elapsed time is the only variable: a bare
+  // `return` here leaves pendingAt at its pre-alt-screen value, and the first
+  // poll after the program exits sees a stale timestamp already older than the
+  // window and commits on the spot.
+  const clock = { t: 1000 };
+  const h = compositionHarness({
+    composed: ' finish the report over and out', now: () => clock.t,
+  });
+  // Observed on the normal buffer, but not yet old enough to act on.
+  await h.settled();
+  assert.deepStrictEqual(h.commits, [], 'not settled yet');
+
+  // A full-screen program takes over and stays up past a full window.
+  h.term._state.type = 'alternate';
+  await h.settled();
+  clock.t += TEST_QUIET_MS + 1;
+  await h.settled();
+  assert.deepStrictEqual(h.commits, [], 'nothing may commit while the program is up');
+
+  // It exits with the same words still pending. They are NOT stale-committable:
+  // the window starts again from here.
+  h.term._state.type = 'normal';
+  await h.settled();
+  assert.deepStrictEqual(h.commits, [],
+    'the window must restart on return, not resume from before the program');
+
+  // And it does still fire once they have genuinely settled since the return.
+  clock.t += TEST_QUIET_MS + 1;
   await h.settled();
   assert.deepStrictEqual(h.commits, [' finish the report over and out']);
   h.watcher.dispose();
@@ -750,6 +812,25 @@ test('dispose stops the composition poll AND releases its timer', async () => {
   assert.deepStrictEqual(h.commits, []);
 });
 
+test('a commit that does not take is RECORDED, and not retried', async () => {
+  // The report on this ticket claimed a guard here, so the code must have one.
+  // A boundary returning false means the composition is still pending: that is
+  // counted, and deliberately NOT retried — the latch stands, because retrying
+  // would spray a Meta keydown at the terminal on every poll for as long as the
+  // words sit there, and the only failure that produces it is xterm no longer
+  // finalizing on that key, which a retry cannot fix.
+  const h = compositionHarness({
+    composed: ' finish the report over and out', commitTakes: false,
+  });
+  await h.settled();
+  assert.strictEqual(h.watcher.commitCount(), 1);
+  assert.strictEqual(h.watcher.commitFailureCount(), 1, 'a failed commit must be visible');
+  await h.settled();
+  assert.strictEqual(h.commits.length, 1, 'must not retry the dispatch');
+  assert.deepStrictEqual(h.writes, [], 'and must never fall back to writing Enter itself');
+  h.watcher.dispose();
+});
+
 test('a commit boundary that THROWS does not take the watcher down', async () => {
   const term = fakeTerminal();
   const watcher = track(createVoiceSubmitWatcher(term, {
@@ -766,6 +847,7 @@ test('a commit boundary that THROWS does not take the watcher down', async () =>
   // a setInterval callback kills nothing visible, which is why this asserts the
   // watcher is still counting rather than that no error escaped.
   assert.strictEqual(watcher.commitCount(), 1);
+  assert.strictEqual(watcher.commitFailureCount(), 1, 'a throw is a failed commit, not a silent one');
   watcher.dispose();
 });
 
@@ -853,6 +935,86 @@ test('commitComposition dispatches a finalizing keydown AT the textarea', () => 
     // Bubbling would additionally offer a Meta keydown to every shortcut
     // handler in the renderer, for nothing.
     assert.strictEqual(ev.bubbles, false);
+  } finally {
+    globalThis.KeyboardEvent = OriginalKeyboardEvent;
+  }
+});
+
+test('commitComposition empties the textarea, and ONLY after the dispatch', () => {
+  const OriginalKeyboardEvent = globalThis.KeyboardEvent;
+  globalThis.KeyboardEvent = class { constructor(type, init) { Object.assign(this, { type }, init); } };
+  try {
+    // The ORDER is the fix, not the end state. _finalizeComposition(false) reads
+    // the words out of `value` synchronously during dispatchEvent; clearing
+    // BEFORE would hand it an empty string and send nothing at all. Clearing
+    // after is what stops macOS's own compositionend — which reads the
+    // open-ended substring(start) and is not deduped, since _dataAlreadySent is
+    // only ever written on a path our keydown never takes — from dispatching the
+    // same words a second time.
+    const log = [];
+    let composing = true;
+    const ta = {
+      _v: ' finish the report over and out',
+      get value() { return this._v; },
+      set value(v) { this._v = v; log.push(`set:${JSON.stringify(v)}`); },
+      dispatchEvent() {
+        // What xterm does inside the dispatch: read the pending words NOW.
+        log.push(`dispatch:${JSON.stringify(ta._v)}`);
+        composing = false;
+        return true;
+      },
+    };
+    const term = {
+      textarea: ta,
+      element: { querySelector: () => (composing ? { textContent: ta._v } : null) },
+    };
+    assert.strictEqual(commitComposition(term), true);
+    assert.deepStrictEqual(log, [
+      'dispatch:" finish the report over and out"',
+      'set:""',
+    ], 'the finalize must see the words, and the clear must follow it');
+    assert.strictEqual(ta.value, '', 'the late compositionend must find nothing left to re-send');
+  } finally {
+    globalThis.KeyboardEvent = OriginalKeyboardEvent;
+  }
+});
+
+test('the late compositionend finds nothing to re-send — the belt is unreachable', () => {
+  // WHY THERE IS NO SECOND GUARD AGAINST A DOUBLE SUBMIT.
+  //
+  // macOS fires its own compositionend after our keydown has already finalized.
+  // That takes CompositionHelper's waitForPropagation branch, and since
+  // _isComposing is false by then it reads the OPEN-ENDED substring(start) form
+  // and would dispatch the same words a second time. The field that exists to
+  // dedup it (_dataAlreadySent, xterm issue #3191) is written only from
+  // _handleAnyTextareaChanges, which a keydown-driven finalize never reaches, so
+  // it stays '' and subtracts nothing.
+  //
+  // This replays that branch's ACTUAL arithmetic against the state our boundary
+  // leaves behind. It is a model of xterm's logic, not of the DOM — the values
+  // it runs on are the ones commitComposition really produces.
+  const OriginalKeyboardEvent = globalThis.KeyboardEvent;
+  globalThis.KeyboardEvent = class { constructor(type, init) { Object.assign(this, { type }, init); } };
+  try {
+    const words = ' finish the report over and out';
+    let composing = true;
+    const ta = {
+      value: words,
+      dispatchEvent() { composing = false; return true; },
+    };
+    commitComposition({
+      textarea: ta,
+      element: { querySelector: () => (composing ? { textContent: ta.value } : null) },
+    });
+
+    // compositionstart set start to the length BEFORE the utterance; nothing
+    // was already sent, so the dedup offset is zero.
+    const start = 0 + ''.length;
+    const lateInput = ta.value.substring(start);
+    assert.strictEqual(lateInput, '', 'the late finalize must read an empty string');
+    // `if (input.length > 0)` is what then skips the dispatch entirely.
+    assert.strictEqual(lateInput.length > 0, false,
+      'a second dispatch would need a non-empty input; there is none');
   } finally {
     globalThis.KeyboardEvent = OriginalKeyboardEvent;
   }

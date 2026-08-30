@@ -770,6 +770,22 @@ Own state + DOM, `init*(deps)`:
   (`voiceSubmitComposition`, ANDed with `voiceSubmit`), because it acts on words
   the operator has not accepted: the quiet window is the only thing between a
   transcriber that emits the phrase mid-utterance and a submit with no undo.
+  `commitComposition` EMPTIES the textarea immediately after the dispatch, and
+  the order is load-bearing in both directions: the finalize reads the words out
+  of `value` synchronously during `dispatchEvent`, so clearing first would send
+  nothing, while not clearing at all lets the platform's own later
+  `compositionend` — which takes the `waitForPropagation` branch and reads the
+  open-ended `substring(start)` — dispatch the same words a SECOND time.
+  `_dataAlreadySent` would dedup that, but it is written only from
+  `_handleAnyTextareaChanges`, which this path never reaches. That clear is why
+  there is no second anti-double-submit guard: the late read finds `''` and the
+  branch skips a zero-length input. The alt-screen decline is asked on BOTH
+  paths (`onNormalBuffer`, hoisted out of the buffer read) since the composition
+  path never touches the buffer, and it FORGETS rather than returning, so words
+  composed before a full-screen program cannot come back already-stale. A commit
+  the boundary reports as failed is counted and NOT retried — retrying would
+  spray Meta keydowns at the terminal, and the failure it would answer (xterm no
+  longer finalizing on that key) is one a retry cannot fix.
 - **plugin-host.js** — the renderer-side plugin host. Plugins hand it data or
   callbacks, NEVER HTML: everything user-supplied is escaped here, and every
   registered id becomes `"<pluginId>:<id>"` before it reaches the DOM, so a
