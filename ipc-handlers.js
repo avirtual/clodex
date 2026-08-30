@@ -933,6 +933,7 @@ function registerIpcHandlers(deps) {
       semanticHints: s.semanticHints,
       selectionHints: s.selectionHints,
       voiceSubmit: s.voiceSubmit,
+      voiceSubmitComposition: s.voiceSubmitComposition,
       voiceSubmitPhrase: s.voiceSubmitPhrase,
       terminalReports: s.terminalReports,
       discoverOnStartup: s.discoverOnStartup,

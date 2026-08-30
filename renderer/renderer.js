@@ -3549,7 +3549,7 @@ const voiceCore = createVoiceCore({
 // Cached because the watcher consults it on every quiet-window expiry, per
 // terminal — an invoke per tick would put IPC on a timer. Refreshed by the two
 // events that can change it: Preferences saving, and this window loading.
-let voiceSubmitConfig = { enabled: false, phrase: DEFAULT_SUBMIT_PHRASE };
+let voiceSubmitConfig = { enabled: false, composition: false, phrase: DEFAULT_SUBMIT_PHRASE };
 async function refreshVoiceSubmitConfig() {
   try { voiceSubmitConfig = readVoiceSubmitSettings(await window.api.getSettings()); } catch {}
 }
@@ -3915,6 +3915,7 @@ const prefsContextHints = document.getElementById('prefs-context-hints');
 const prefsSemanticHints = document.getElementById('prefs-semantic-hints');
 const prefsSelectionHints = document.getElementById('prefs-selection-hints');
 const prefsVoiceSubmit = document.getElementById('prefs-voice-submit');
+const prefsVoiceSubmitComposition = document.getElementById('prefs-voice-submit-composition');
 const prefsVoiceSubmitPhrase = document.getElementById('prefs-voice-submit-phrase');
 const prefsTerminalReports = document.getElementById('prefs-terminal-reports');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
@@ -5570,6 +5571,7 @@ async function openPrefs() {
   if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
   if (prefsSelectionHints) prefsSelectionHints.checked = !!s.selectionHints;
   if (prefsVoiceSubmit) prefsVoiceSubmit.checked = s.voiceSubmit === true;
+  if (prefsVoiceSubmitComposition) prefsVoiceSubmitComposition.checked = s.voiceSubmitComposition === true;
   // The stored phrase, never the default, so an empty box is the operator
   // asking for the default back rather than a value they typed being hidden.
   if (prefsVoiceSubmitPhrase) prefsVoiceSubmitPhrase.value = s.voiceSubmitPhrase || '';
@@ -5627,6 +5629,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
     selectionHints: prefsSelectionHints ? prefsSelectionHints.checked : false,
     voiceSubmit: prefsVoiceSubmit ? prefsVoiceSubmit.checked : false,
+    voiceSubmitComposition: prefsVoiceSubmitComposition ? prefsVoiceSubmitComposition.checked : false,
     voiceSubmitPhrase: prefsVoiceSubmitPhrase ? prefsVoiceSubmitPhrase.value.trim() : '',
     terminalReports: readTerminalReports(),
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
