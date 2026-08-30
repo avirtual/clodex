@@ -21,13 +21,13 @@ blocks a release.
   switch: end what you are saying with a phrase (`over and out` by default,
   editable) and Clodex erases the phrase and presses Enter. It matches at the end
   of what you have dictated, ignoring case and whatever punctuation dictation
-  decided to add, so "Over and out." works as well as the bare words. Curly
-  quotes and long dashes are folded to their plain forms on both sides, so a
-  phrase like `that's it` still fires when dictation spells it with a
-  typographic apostrophe. Off by
+  decided to add, so "Over and out." works as well as the bare words. Off by
   default, tap mode only — in hold mode the CLI already submits when you release
   the key. Long drafts work too: the phrase is found even once what you have said
   has wrapped onto further lines, which is the case the feature is really for.
+  Curly quotes and long dashes are folded to their plain forms on both sides, so
+  a phrase like `that's it` still fires when dictation spells it with a
+  typographic apostrophe.
   Only the session you are looking at listens, since that is the only one your
   dictation reaches. It will not fire while a session is asking permission for something,
   because Enter would answer that dialog; a phrase spoken while one is open is

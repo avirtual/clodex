@@ -8,6 +8,9 @@
 //
 // Every decision except "where is the cursor" lives in lib/voice-submit.js;
 // this half owns the buffer read, the quiet window and the two writes.
+//
+// The read is ONE row. The latch keys on that row's content, so an identical
+// repaint stays answered and a changed draft re-arms.
 
 const { findSubmit, shouldFire } = require('./lib/voice-submit');
 
@@ -22,12 +25,6 @@ const QUIET_MS = 1200;
 // \r is read as a single paste-like event, which leaves the \r in the buffer as
 // a literal instead of submitting. Merging these two writes reintroduces that.
 const ENTER_SETTLE_MS = 30;
-
-// How far up to look for the `> ` prompt. The composer grows upward as the draft
-// wraps, so a one-row read declines forever on a long draft — the case this
-// feature exists for. Bounded because the walk is per quiet-window and a draft
-// taller than this is well past anything dictation produces in one utterance.
-const MAX_COMPOSER_ROWS = 12;
 
 function createVoiceSubmitWatcher(terminal, {
   getConfig, getVoiceMode, getAttention, write, quietMs = QUIET_MS,
@@ -44,28 +41,17 @@ function createVoiceSubmitWatcher(terminal, {
   let answered = null;
   let fires = 0;
 
-  // The screen rows ending at the cursor, top-first, the last truncated at the
-  // cursor column. Never wider than MAX_COMPOSER_ROWS.
-  function composerRows() {
+  // The cursor row alone, truncated at the cursor column. The phrase ends the
+  // utterance, so it is on the row the cursor is on even when the draft wrapped.
+  function cursorRow() {
     const buf = terminal.buffer.active;
     // While the alternate buffer is active it IS buffer.active — a full-screen
     // program's cursor row is not a composer, and its contents are not the
     // operator's draft. intent-highlight.js declines the same way.
     if (buf.type !== 'normal') return null;
-    const cursor = buf.baseY + buf.cursorY;
-    const top = Math.max(0, cursor - (MAX_COMPOSER_ROWS - 1));
-    const rows = [];
-    for (let y = top; y <= cursor; y += 1) {
-      const line = buf.getLine(y);
-      if (!line) return null;
-      rows.push({
-        text: y === cursor
-          ? line.translateToString(false, 0, buf.cursorX)
-          : line.translateToString(false),
-        isWrapped: !!line.isWrapped,
-      });
-    }
-    return rows;
+    const line = buf.getLine(buf.baseY + buf.cursorY);
+    if (!line) return null;
+    return line.translateToString(false, 0, buf.cursorX);
   }
 
   function tick() {
@@ -76,10 +62,10 @@ function createVoiceSubmitWatcher(terminal, {
     try { cfg = getConfig(); } catch { cfg = null; }
     if (!cfg) return;
 
-    const rows = composerRows();
-    if (!rows) return;
-    const found = findSubmit(rows, cfg.phrase);
-    if (!found) return;             // no composer under the cursor
+    const row = cursorRow();
+    if (row === null) return;
+    const found = findSubmit(row, cfg.phrase);
+    if (!found) return;
     if (!found.erase) { answered = null; return; }
     if (answered === found.content) return;
     // Recorded even when the gate REFUSES below, so a blocked match cannot fire
@@ -126,4 +112,4 @@ function createVoiceSubmitWatcher(terminal, {
   };
 }
 
-module.exports = { createVoiceSubmitWatcher, QUIET_MS, ENTER_SETTLE_MS, MAX_COMPOSER_ROWS };
+module.exports = { createVoiceSubmitWatcher, QUIET_MS, ENTER_SETTLE_MS };

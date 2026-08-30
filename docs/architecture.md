@@ -724,16 +724,16 @@ Own state + DOM, `init*(deps)`:
   watcher per local Claude terminal sends Enter when the composer ENDS with the
   configured trigger phrase. The composer is read from `terminal.buffer.active`
   (the CLI redraws its input box with ANSI, so the text is screen state and not
-  recoverable from the PTY stream). The CLI borders every row of that box and
-  prompts only the FIRST, so the read WALKS UP from the cursor row to find the
-  `> ` — a one-row read declines forever on a wrapped draft, which is the long
-  draft this feature exists for. The walk stops at a row that is neither
-  bordered nor soft-wrapped, so it cannot climb out of the box into transcript
-  and submit the agent's own output. The erase is CLAMPED to the cursor row: the
-  screen cannot say whether the CLI soft-wrapped one logical line or the
-  operator hard-broke two, so a cross-row count is unknowable and under-deleting
-  (stranded whitespace the CLI trims) is the safe direction. Declines on the
-  ALTERNATE
+  recoverable from the PTY stream). The read is ONE row — the cursor row,
+  truncated at the cursor column — and the phrase is matched against its TAIL:
+  the match is anchored at the end with a left word boundary, so nothing has to
+  locate the draft first. A wrapped draft needs no walk, since the utterance ends
+  with the phrase and the phrase is therefore on the last visual row. The erase
+  is bounded by the match, so the backspaces cannot reach past the phrase into
+  the prompt ornament. What distinguishes the operator's draft from AGENT OUTPUT
+  ending in the phrase is the CURSOR, which rests in the composer and not in
+  scrollback; the prompt character is not load-bearing and is not inspected.
+  Declines on the ALTERNATE
   buffer for intent-highlight.js's reason. Fires only after a QUIET WINDOW, since
   transcription streams in segments and an immediate fire submits half an
   utterance. The gate — feature on, voice mode `tap`, and no permission dialog —

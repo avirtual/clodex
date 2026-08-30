@@ -5,6 +5,17 @@
 // three words, so a trailing-off utterance leaves the composer full. This
 // matches a chosen sign-off at the END of the composer so the renderer can send
 // Enter itself.
+//
+// It reads ONE row: the cursor row, truncated at the cursor. The match is
+// anchored at `$` with a left word boundary, so it matches that row's TAIL and
+// needs no prompt, no border stripping and no upward walk to locate the draft.
+// A wrapped draft is covered for free — the phrase is at the very end, so it is
+// on the row the cursor is on.
+//
+// What the prompt used to buy was telling the operator's draft from AGENT
+// OUTPUT ending in the phrase (a live hazard: an agent discussing this feature
+// prints it). The CURSOR is the better evidence — it rests in the composer, not
+// in scrollback — and the alt-screen decline in the watcher covers the rest.
 
 // A fixed three-word radio sign-off. The default is the part that must not
 // misfire, and every shorter candidate collides with ordinary speech in this
@@ -40,16 +51,6 @@ function foldConfusables(s) {
   return s.replace(CONFUSABLE_RE, (c) => CONFUSABLES.get(c));
 }
 
-// The CLI draws its input box with a border on EVERY row and the `> ` prompt on
-// the FIRST only, so a draft that outgrows one row leaves the cursor on a
-// border-prefixed continuation. Reading one row would make the feature decline
-// forever in exactly the long-draft case it exists for.
-const BOX_GLYPH = /[│┃┊┆|]/;
-const BOX_LEFT = /^[\s│┃┊┆|]*/;
-const BOX_RIGHT = /[\s│┃┊┆|]*$/;
-// The trailing space is required, so a bare `>` in prose is not a prompt.
-const PROMPT_HEAD = /^>[ ]/;
-
 function escapeRe(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -69,59 +70,18 @@ function normalizePhrase(phrase) {
   return triggerWords(phrase).join(' ');
 }
 
-// One screen row, stripped of the box it is drawn in. The right border is
-// stripped only ABOVE the cursor row: the cursor row arrives already truncated
-// at the cursor, so anything trailing there is the operator's own text.
-function stripRow(text, { atCursor }) {
-  const left = BOX_LEFT.exec(text)[0];
-  let rest = text.slice(left.length);
-  if (!atCursor) rest = rest.replace(BOX_RIGHT, '');
-  const prompt = PROMPT_HEAD.test(rest);
-  return {
-    text: prompt ? rest.slice(2) : rest,
-    prompt,
-    // A real border GLYPH, not merely leading blanks: `BOX_LEFT` matches the
-    // empty string, so without this every unindented transcript line would read
-    // as a continuation and the walk would climb out of the box.
-    bordered: BOX_GLYPH.test(left),
-  };
-}
-
-// `rows`: the screen rows ending at the cursor, top-first, the LAST one already
-// truncated at the cursor column. Returns `{ content, erase }` or null — the
-// watcher fires Enter, so "I could not identify a composer" and "do not fire"
-// must be the same answer.
-function findSubmit(rows, phrase) {
-  if (!Array.isArray(rows) || !rows.length) return null;
-  const parts = [];
-  let cursorRowLen = 0;
-  for (let i = rows.length - 1; i >= 0; i -= 1) {
-    const r = rows[i];
-    if (!r || typeof r.text !== 'string') return null;
-    const atCursor = i === rows.length - 1;
-    const s = stripRow(r.text, { atCursor });
-    if (atCursor) cursorRowLen = s.text.length;
-    parts.unshift(s.text);
-    if (s.prompt) {
-      const content = parts.join('\n');
-      const hit = matchTrigger(content, phrase);
-      if (!hit) return { content, erase: 0 };
-      // CLAMPED to the cursor row, so the erase can never cross a row boundary
-      // — where the count is unknowable. The screen cannot say whether the CLI
-      // soft-wrapped one logical line or the operator hard-broke two, and the
-      // two differ by the newline a backspace would have to eat. Deleting more
-      // than was matched eats the draft, so the floor is the safe direction: a
-      // phrase straddling the wrap leaves its head in the submitted message.
-      const erase = Math.min(hit.erase, cursorRowLen);
-      return { content, erase };
-    }
-    // Only a bordered or SOFT-WRAPPED row continues the box upward. Anything
-    // else means the walk left the composer without finding a prompt.
-    if (!s.bordered && !r.isWrapped) return null;
-  }
-  // Ran out of rows still inside the box: the prompt is above the window the
-  // caller supplied. Declining is the safe answer.
-  return null;
+// The cursor row's tail, matched for the phrase. `text` is that row already
+// truncated at the cursor column. Returns `{ content, erase }`, or null only
+// for an unusable row — the watcher fires Enter, so "I cannot read this" and
+// "do not fire" must be the same answer.
+//
+// `erase` is bounded by the match, which is what makes reading a raw row safe:
+// the backspaces can never reach past the phrase into the prompt ornament or
+// anything else the CLI drew to the left of the draft.
+function findSubmit(text, phrase) {
+  if (typeof text !== 'string') return null;
+  const hit = matchTrigger(text, phrase);
+  return { content: text, erase: hit ? hit.erase : 0 };
 }
 
 // `{ erase }` — how many CHARACTERS to backspace over, counted from the cursor,
@@ -173,7 +133,6 @@ module.exports = {
   foldConfusables,
   triggerWords,
   normalizePhrase,
-  stripRow,
   findSubmit,
   matchTrigger,
   shouldFire,
