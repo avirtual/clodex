@@ -23606,15 +23606,19 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { findSubmit, shouldFire } = require_voice_submit();
       var QUIET_MS = 1200;
       var ENTER_SETTLE_MS = 30;
+      var POLL_MS = 600;
       function createVoiceSubmitWatcher(terminal, {
         getConfig,
         getAttention,
         write,
-        quietMs = QUIET_MS
+        quietMs = QUIET_MS,
+        pollMs = POLL_MS
       }) {
         let timer = null;
         let enterTimer = null;
+        let pollTimer = null;
         let disposed = false;
+        let lastRow;
         let answered = null;
         let fires = 0;
         function cursorRow() {
@@ -23663,7 +23667,34 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (timer) clearTimeout(timer);
           timer = setTimeout(tick, quietMs);
         };
-        const subs = [terminal.onWriteParsed(schedule)];
+        const onWrite = () => {
+          lastRow = cursorRow();
+          schedule();
+        };
+        const poll = () => {
+          if (disposed) return;
+          let cfg = null;
+          try {
+            cfg = getConfig();
+          } catch {
+            cfg = null;
+          }
+          if (!cfg) {
+            lastRow = void 0;
+            return;
+          }
+          const row = cursorRow();
+          if (lastRow === void 0) {
+            lastRow = row;
+            return;
+          }
+          if (row === lastRow) return;
+          lastRow = row;
+          schedule();
+        };
+        lastRow = cursorRow();
+        pollTimer = setInterval(poll, pollMs);
+        const subs = [terminal.onWriteParsed(onWrite)];
         return {
           refresh: schedule,
           fireCount: () => fires,
@@ -23671,13 +23702,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
             disposed = true;
             if (timer) clearTimeout(timer);
             if (enterTimer) clearTimeout(enterTimer);
+            if (pollTimer) clearInterval(pollTimer);
             timer = null;
             enterTimer = null;
+            pollTimer = null;
             for (const s of subs) s.dispose();
           }
         };
       }
-      module.exports = { createVoiceSubmitWatcher, QUIET_MS, ENTER_SETTLE_MS };
+      module.exports = { createVoiceSubmitWatcher, QUIET_MS, ENTER_SETTLE_MS, POLL_MS };
     }
   });
 
