@@ -19,7 +19,7 @@ const assert = require('node:assert');
 
 const {
   DEFAULT_SUBMIT_PHRASE, normalizePhrase, findSubmit, matchTrigger,
-  shouldFire, readVoiceSubmitSettings,
+  foldConfusables, shouldFire, readVoiceSubmitSettings,
 } = require('../renderer/lib/voice-submit');
 const { createVoiceSubmitWatcher } = require('../renderer/voice-submit-watcher');
 
@@ -58,6 +58,52 @@ test('a configured phrase carrying case and punctuation still matches plain spee
   const hit = matchTrigger('all done, Roger That.', 'Roger, that!');
   assert.ok(hit);
   assert.strictEqual(hit.erase, 12);
+});
+
+test('typographic quotes and dashes fold, so a dictated phrase meets a typed one', () => {
+  // The shipped defect: the operator typed `that's it` with U+0027, dictation
+  // emitted U+2019, EDGE_PUNCT strips only at word EDGES, and the apostrophe
+  // INSIDE the word went into the regex as a literal. Hands-free submit could
+  // never fire on that phrase.
+  //
+  // Both directions, because the field takes whatever is pasted into it. Each
+  // row's erase is a LITERAL: the fold must not move the count, or the erase
+  // strands the phrase's head or eats the words before it. The survivor is what
+  // proves that — it is checked against the RAW content, which is what the
+  // backspaces actually run over.
+  const cases = [
+    ['Testing. Testing. That\u2019s it.', "that's it", 11, 'Testing. Testing.'],
+    ["Testing. Testing. That's it.", 'that\u2019s it', 11, 'Testing. Testing.'],
+    ["Testing. Testing. That's it.", "that's it", 11, 'Testing. Testing.'],
+    ['Testing. Testing. That\u2019s it.', 'that\u2019s it', 11, 'Testing. Testing.'],
+    ['all set that\u2018s it', "that's it", 10, 'all set'],
+    ['all set that\u02bcs it', "that's it", 10, 'all set'],
+    ['draft done sign\u2013off now', 'sign-off now', 13, 'draft done'],
+    ['draft done sign\u2014off now', 'sign-off now', 13, 'draft done'],
+    ['draft done sign-off now', 'sign\u2014off now', 13, 'draft done'],
+  ];
+  for (const [content, phrase, erase, survives] of cases) {
+    const hit = matchTrigger(content, phrase);
+    assert.ok(hit, `no match: ${JSON.stringify(content)} / ${JSON.stringify(phrase)}`);
+    assert.strictEqual(hit.erase, erase, `erase for ${JSON.stringify(content)}`);
+    assert.strictEqual(content.slice(0, content.length - hit.erase), survives,
+      `survivor for ${JSON.stringify(content)}`);
+  }
+});
+
+test('every fold is one character for one, which is what keeps the erase honest', () => {
+  // matchTrigger counts its erase against the RAW content but finds its index in
+  // the FOLDED one. A substitution of any other length would shift every index
+  // after it, so this is the invariant the erase counts above rest on — and it
+  // is invisible from those rows, which would all still pass with a fold that
+  // happened to be length-preserving only for the cases they happen to use.
+  for (const ch of ['\u2019', '\u2018', '\u02bc', '\u2014', '\u2013']) {
+    assert.strictEqual(foldConfusables(ch).length, 1, `fold width of ${JSON.stringify(ch)}`);
+  }
+  assert.strictEqual(foldConfusables('a\u2019b\u2014c').length, 'a\u2019b\u2014c'.length);
+  // Left alone: folding these would change which phrases match, which is the
+  // thing a broad normalization pass does that nobody asked for.
+  assert.strictEqual(foldConfusables('caf\u00e9 \u201cquoted\u201d \u2026'), 'caf\u00e9 \u201cquoted\u201d \u2026');
 });
 
 test('the phrase matches on word boundaries, never as a substring', () => {

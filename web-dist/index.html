@@ -23539,6 +23539,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
     "renderer/lib/voice-submit.js"(exports, module) {
       var DEFAULT_SUBMIT_PHRASE = "over and out";
       var EDGE_PUNCT = /^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu;
+      var CONFUSABLES = /* @__PURE__ */ new Map([
+        ["\u2019", "'"],
+        ["\u2018", "'"],
+        ["\u02BC", "'"],
+        ["\u2014", "-"],
+        ["\u2013", "-"]
+      ]);
+      var CONFUSABLE_RE = /[\u2019\u2018\u02bc\u2014\u2013]/g;
+      function foldConfusables(s) {
+        return s.replace(CONFUSABLE_RE, (c) => CONFUSABLES.get(c));
+      }
       var BOX_GLYPH = /[│┃┊┆|]/;
       var BOX_LEFT = /^[\s│┃┊┆|]*/;
       var BOX_RIGHT = /[\s│┃┊┆|]*$/;
@@ -23548,7 +23559,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       function triggerWords(phrase) {
         if (typeof phrase !== "string") return [];
-        return phrase.toLowerCase().split(/\s+/).map((w) => w.replace(EDGE_PUNCT, "")).filter(Boolean);
+        return foldConfusables(phrase.toLowerCase()).split(/\s+/).map((w) => w.replace(EDGE_PUNCT, "")).filter(Boolean);
       }
       function normalizePhrase(phrase) {
         return triggerWords(phrase).join(" ");
@@ -23595,7 +23606,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (!words.length) return null;
         const body = words.map(escapeRe).join("\\s+");
         const re = new RegExp(`(?:\\s+|^)${body}[\\p{P}\\p{S}]*\\s*$`, "iu");
-        const m = re.exec(content);
+        const m = re.exec(foldConfusables(content));
         if (!m) return null;
         return { erase: content.length - m.index };
       }
@@ -23614,6 +23625,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       module.exports = {
         DEFAULT_SUBMIT_PHRASE,
+        foldConfusables,
         triggerWords,
         normalizePhrase,
         stripRow,

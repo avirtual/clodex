@@ -18,6 +18,28 @@ const DEFAULT_SUBMIT_PHRASE = 'over and out';
 // of the CONFIGURED phrase and consumed after the match in the composer.
 const EDGE_PUNCT = /^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu;
 
+// Dictation emits typographic punctuation; an operator types the ASCII form
+// into the phrase field. EDGE_PUNCT strips only at word EDGES, so a U+2019 in
+// the MIDDLE of `that’s` survives into the regex and is matched literally
+// against a configured `that's` that never arrives that way. Folding both sides
+// is what makes the two forms meet.
+//
+// Every entry MUST be a single character mapping to a single character:
+// `matchTrigger` counts its erase against the RAW content but matches against
+// the folded one, so a substitution that changes length shifts the count and
+// the erase strands or eats text. That is also why this is a small table and
+// not a Unicode normalization pass — NFKD does not fold U+2019 to an
+// apostrophe at all, and a wide fold silently changes which phrases match.
+const CONFUSABLES = new Map([
+  ['\u2019', "'"], ['\u2018', "'"], ['\u02bc', "'"],
+  ['\u2014', '-'], ['\u2013', '-'],
+]);
+const CONFUSABLE_RE = /[\u2019\u2018\u02bc\u2014\u2013]/g;
+
+function foldConfusables(s) {
+  return s.replace(CONFUSABLE_RE, (c) => CONFUSABLES.get(c));
+}
+
 // The CLI draws its input box with a border on EVERY row and the `> ` prompt on
 // the FIRST only, so a draft that outgrows one row leaves the cursor on a
 // border-prefixed continuation. Reading one row would make the feature decline
@@ -36,7 +58,7 @@ function escapeRe(s) {
 // drops out rather than becoming an empty alternative that matches everywhere.
 function triggerWords(phrase) {
   if (typeof phrase !== 'string') return [];
-  return phrase.toLowerCase().split(/\s+/)
+  return foldConfusables(phrase.toLowerCase()).split(/\s+/)
     .map((w) => w.replace(EDGE_PUNCT, ''))
     .filter(Boolean);
 }
@@ -116,7 +138,7 @@ function matchTrigger(content, phrase) {
   if (!words.length) return null;
   const body = words.map(escapeRe).join('\\s+');
   const re = new RegExp(`(?:\\s+|^)${body}[\\p{P}\\p{S}]*\\s*$`, 'iu');
-  const m = re.exec(content);
+  const m = re.exec(foldConfusables(content));
   if (!m) return null;
   return { erase: content.length - m.index };
 }
@@ -148,6 +170,7 @@ function readVoiceSubmitSettings(settings) {
 
 module.exports = {
   DEFAULT_SUBMIT_PHRASE,
+  foldConfusables,
   triggerWords,
   normalizePhrase,
   stripRow,
