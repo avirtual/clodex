@@ -305,6 +305,13 @@ function mkLoop({
     MSG_MAX_AGE: 1800,
     termAvailableFor: require('../drawer-avail').termAvailableFor,
     REGISTRY_DIR: home,
+    // The REAL name rule and workspace id, for the same reason as pathFor above:
+    // un-injected they arrive as `undefined`, and `_mintTicketSeat`'s
+    // `AGENT_NAME_RE.test(name)` throws out of the dispatch — a fixture in which
+    // no seat can ever be minted, which every subject that does not dispatch
+    // passes over.
+    AGENT_NAME_RE: require('../catalogs').AGENT_NAME_RE,
+    DEFAULT_WORKSPACE_ID: require('../catalogs').DEFAULT_WORKSPACE_ID,
     log: {
       info: (tag, msg) => logs.push({ level: 'info', tag, msg }),
       warn: (tag, msg) => logs.push({ level: 'warn', tag, msg }),
@@ -1414,6 +1421,79 @@ test('the worktree gets a node_modules link, or the whole suite is a false red',
   assert.strictEqual(fsReal.realpathSync(link), fsReal.realpathSync(pathReal.join(repo.dir, 'node_modules')),
     'and it points at the root checkout tree');
   assert.strictEqual(f.created.length, 1, 'and the green run still reached its reviewer');
+});
+
+test('the SPAWN links node_modules too, so the hand does not start in a dep-less tree', async () => {
+  // The suite-time link above runs after the hand has finished, so before this
+  // every ticket hand met a checkout where `require()` of any dependency and
+  // `npm run build:web` fail. Measured three times (t566, t568, t569); each hand
+  // improvised the same symlink and removed it again, which leaves a window
+  // where a concurrent suite run reads a dangling link.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  // The fixture's `hand` is a standing role, which mints no seat and takes no
+  // worktree path at all. `dispatch: 'worktree'` is what routes the dispatch
+  // through _spawnTicketSeat's acquisition — the subject under test.
+  f.team.roles.hand.dispatch = 'worktree';
+  // A REAL tree minted by the real createWorktree through the real dispatch, not
+  // the fixture's `wt` stub: the claim is about the path _spawnTicketSeat takes,
+  // and a pre-made directory would let the assertion pass over a spawn that
+  // never resolved a tree at all. The ticket is cleared of its stub pointer so
+  // the fresh-create arm runs rather than the reuse one.
+  // `role` and `worktree` both cleared, not just the tree: `ticketStarted` reads
+  // EITHER as evidence of a prior dispatch, and `start` refuses a started ticket
+  // — which is the reply this got before, with nothing spawned to assert about.
+  f.tstore.save(f.team.root, [{ ...f.one(), worktree: undefined, role: undefined, assignee: 'hand', startedAt: null }]);
+
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', id: 't1', who: null, body: '' });
+  // _spawnTicketSeat does its whole acquisition inside a setImmediate and then
+  // awaits a git subprocess, so one turn of the queue is not enough.
+  for (let i = 0; i < 40 && !(f.one().worktree && f.one().worktree.path); i += 1) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  const wtPath = (f.one().worktree || {}).path;
+  assert.ok(wtPath, 'ENTER: the dispatch minted a real worktree and recorded it');
+  assert.ok(fsReal.existsSync(pathReal.join(wtPath, '.git')), 'ENTER: and it is a real checkout on disk');
+  // The ENTER the CLAUDE.md rule asks for, in the only form available here: a
+  // freshly-minted git worktree HAS no node_modules (git checks out tracked
+  // files, and node_modules is gitignored), so the link below can only have been
+  // planted by the spawn. Asserted through the SOURCE tree's marker so a bare
+  // directory could not satisfy it.
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'node_modules', 'MARKER'), 'root tree\n');
+  const link = pathReal.join(wtPath, 'node_modules');
+  // Guarded: an ABSENT link is the regression this pins, and a bare lstatSync
+  // would report it as an ENOENT throw rather than as this sentence.
+  const st = (() => { try { return fsReal.lstatSync(link); } catch { return null; } })();
+  assert.ok(st && st.isSymbolicLink(), 'the spawn linked node_modules into the fresh worktree');
+  assert.ok(fsReal.existsSync(pathReal.join(link, 'MARKER')),
+    'and it resolves to the ROOT checkout tree, not an empty directory of its own');
+  assert.strictEqual(f.created.length, 1, 'and the seat was still spawned');
+});
+
+test('a node_modules the spawn cannot link WARNS on the reply and spawns anyway', async () => {
+  // The spawn-time disposition differs from the suite's deliberately. A hand in
+  // a dep-less tree can still read code, write code and commit, so killing its
+  // spawn over a missing symlink is a worse outcome than the status quo — the
+  // lead is told, and is the only party who can run the root `npm install`.
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.team.roles.hand.dispatch = 'worktree';
+  // The root's tree removed: the source the link would point at is gone, which
+  // is the state a box that never ran `npm install` is in.
+  fsReal.rmSync(pathReal.join(repo.dir, 'node_modules'), { recursive: true, force: true });
+  f.tstore.save(f.team.root, [{ ...f.one(), worktree: undefined, role: undefined, assignee: 'hand', startedAt: null }]);
+
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', id: 't1', who: null, body: '' });
+  for (let i = 0; i < 40 && f.created.length === 0; i += 1) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+
+  assert.strictEqual(f.created.length, 1, 'the seat spawns regardless — a dep-less tree is still writable');
+  const warned = f.injected.filter((t) => /cannot resolve its dependencies/.test(t));
+  assert.strictEqual(warned.length, 1, 'and the lead is told exactly once, on the dispatch reply');
+  assert.match(warned[0], /^\[agent:task\] ticket t1 → /, 'the warning rides the dispatch reply, like the env drops');
+  assert.match(warned[0], /starts without dependencies/, 'and names the consequence for the seat');
+  assert.deepStrictEqual(f.esc(), [], 'a missing link is a warning, never an escalation');
 });
 
 test('a test file that cannot even LOAD is rejected, named by its path', async () => {

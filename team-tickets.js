@@ -3986,6 +3986,7 @@ function createTicketMethods(deps, shared) {
         // previous seat left on the branch, which are the only thing that survived
         // it. Only a tree this spawn created is rolled back below.
         let reused = false;
+        let linkWarn = '';
         try {
           // A spawn seat has no tree by construction, so the whole acquisition
           // below is skipped — including `_existingTicketTree`, which shells out
@@ -4079,6 +4080,22 @@ function createTicketMethods(deps, shared) {
               ticket.worktree = wt;
             } catch { /* best-effort — the spec below still carries it from `ticket` */ }
           }
+          // Before create(), so the hand's first `require()` already resolves.
+          // Doing it only at suite time meant every hand met a dep-less checkout
+          // and learned the tree was usable after it had finished working in it.
+          //
+          // WARNS, never aborts: a hand in a dep-less tree can still read code,
+          // write code and commit, so killing its spawn over a missing symlink is
+          // strictly worse than the status quo this replaces. Routed on the reply
+          // like the env drops below — the lead is the only party who can run the
+          // root `npm install` that fixes it.
+          //
+          // Skipped for a spawn seat: it works in the shared checkout, which has
+          // the root's tree already.
+          if (!isSpawn && wt && wt.path) {
+            const e = this._linkWorktreeNodeModules(team.root, wt.path);
+            if (e) linkWarn = ` — NOTE: ${e}; the seat starts without dependencies (require() and npm run build:web will fail there until the root has a node_modules)`;
+          }
           const shape = this.resolveSeatShape(team, roleKey, 'ticket', opener);
           const spawned = await this.create(
             seat.name, shape.type, shape.cwd,
@@ -4145,7 +4162,7 @@ function createTicketMethods(deps, shared) {
           const cwdWarn = shape.cwdFallback ? ` — NOTE: ${shape.cwdFallback}` : '';
           reply(isSpawn
             ? `ticket ${ticket.id} → ${seat.name} in the shared checkout ${shape.cwd} (no branch, no worktree)${this._ticketDeliverySuffix(d, seat.name)}${envWarn}${cwdWarn}${promptWarn}`
-            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name)}${envWarn}${cwdWarn}${promptWarn}`);
+            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name)}${envWarn}${cwdWarn}${promptWarn}${linkWarn}`);
         } catch (err) {
           const live = this.sessions.has(seat.name);
           if (!live) getPersistence().remove(seat.name);
@@ -5073,6 +5090,47 @@ function createTicketMethods(deps, shared) {
       }
     },
 
+    // A git worktree has no node_modules, and nothing installs one. Without this
+    // the 7 files requiring electron/node-pty/ws fail MODULE_NOT_FOUND: at suite
+    // time the loop would reject every ticket for a defect in its own harness, and
+    // at spawn time the hand finds `require()` and `npm run build:web` broken and
+    // improvises its own link — three hands did exactly that, each removing it
+    // again afterwards, which leaves a window where a concurrent suite run reads a
+    // dangling link.
+    //
+    // A symlink to the root's tree costs nothing, is gitignored (so it neither
+    // dirties the tree nor blocks worktree removal), and is left in place —
+    // recreating it per run would race a concurrent read of it.
+    //
+    // Returns null on success, an error SENTENCE on failure; the two callers
+    // dispose of that sentence differently (the suite aborts, the spawn warns).
+    _linkWorktreeNodeModules(rootDir, treeDir) {
+      const link = path.join(treeDir, 'node_modules');
+      // EXISTENCE is lstat, VALIDITY is existsSync, and conflating them names
+      // the wrong cause: existsSync FOLLOWS the link, so a link whose target is
+      // momentarily gone (a root `npm install` mid-flight) reads as absent, the
+      // symlinkSync below then fails EEXIST, and the escalation says "could not
+      // link node_modules" for a tree that HAS the link and is missing the
+      // TARGET. The two states need different sentences because they need
+      // different fixes.
+      const entry = (p) => { try { return fs.lstatSync(p); } catch { return null; } };
+      if (!entry(link)) {
+        const src = path.join(rootDir, 'node_modules');
+        if (!fs.existsSync(src)) {
+          return `neither ${link} nor ${src} exists — the suite cannot resolve its dependencies`;
+        }
+        try { fs.symlinkSync(src, link); } catch (e) {
+          if (!entry(link)) {   // a concurrent run winning the race is fine
+            return `could not link node_modules into the worktree: ${e.message}`;
+          }
+        }
+      } else if (!fs.existsSync(link)) {
+        return `${link} exists but does not resolve — a dangling link, most likely to a `
+          + `${path.join(rootDir, 'node_modules')} that was removed or is being reinstalled`;
+      }
+      return null;
+    },
+
     // Run the suite in the ticket's WORKTREE while holding the ROOT checkout's
     // lock. Returns { ran, green, code, summary, failing, output, cwd, error, head }.
     //
@@ -5122,38 +5180,10 @@ function createTicketMethods(deps, shared) {
         return out;
       }
 
-      // A git worktree has no node_modules, and nothing installs one. Without
-      // this the 7 files requiring electron/node-pty/ws fail MODULE_NOT_FOUND
-      // and the loop would reject every ticket for a defect in its own harness.
-      // A symlink to the root's tree costs nothing, is gitignored (so it neither
-      // dirties the tree nor blocks worktree removal), and is left in place —
-      // recreating it per run would race a concurrent read of it.
-      const link = path.join(cwd, 'node_modules');
-      // EXISTENCE is lstat, VALIDITY is existsSync, and conflating them names
-      // the wrong cause: existsSync FOLLOWS the link, so a link whose target is
-      // momentarily gone (a root `npm install` mid-flight) reads as absent, the
-      // symlinkSync below then fails EEXIST, and the escalation says "could not
-      // link node_modules" for a tree that HAS the link and is missing the
-      // TARGET. The two states need different sentences because they need
-      // different fixes.
-      const entry = (p) => { try { return fs.lstatSync(p); } catch { return null; } };
-      if (!entry(link)) {
-        const src = path.join(team.root, 'node_modules');
-        if (!fs.existsSync(src)) {
-          out.error = `neither ${link} nor ${src} exists — the suite cannot resolve its dependencies`;
-          return out;
-        }
-        try { fs.symlinkSync(src, link); } catch (e) {
-          if (!entry(link)) {   // a concurrent run winning the race is fine
-            out.error = `could not link node_modules into the worktree: ${e.message}`;
-            return out;
-          }
-        }
-      } else if (!fs.existsSync(link)) {
-        out.error = `${link} exists but does not resolve — a dangling link, most likely to a `
-          + `${path.join(team.root, 'node_modules')} that was removed or is being reinstalled`;
-        return out;
-      }
+      // A missing link ABORTS here, unlike at spawn time: a suite that cannot
+      // resolve its dependencies reports a red that says nothing about the branch.
+      const linkErr = this._linkWorktreeNodeModules(team.root, cwd);
+      if (linkErr) { out.error = linkErr; return out; }
 
       // A branch that CHANGES package.json's dependencies cannot be verified
       // against the root's installed tree, and the failure is silent in both
