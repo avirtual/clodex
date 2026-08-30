@@ -77,7 +77,8 @@ blocks a release.
   too, so the seat has it from its first command. If the link cannot be made —
   a checkout that has never had `npm install` run in it — the seat is spawned
   anyway and the dispatch reply says so, since a hand without dependencies can
-  still read, write and commit.
+  still read, write and commit. A team whose root is not a node project at all
+  is left alone: no link is attempted and no `npm install` advice is given.
 
 ## 5.19.0 — 2026-08-30
 
