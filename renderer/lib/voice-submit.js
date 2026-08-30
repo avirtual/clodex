@@ -103,17 +103,18 @@ function matchTrigger(content, phrase) {
   return { erase: content.length - m.index };
 }
 
-// Re-checked at FIRE time, not at arm time: voice mode is box-wide and read
-// from a file that a `/voice` in any terminal rewrites, and the dialog can open
-// during the quiet window.
+// Re-checked at FIRE time, not at arm time: the dialog can open during the
+// quiet window.
 //
 // `attention === 'permission'` is the interlock, and it is not a preference:
 // the CLI is showing a dialog and the Enter this feature sends would ANSWER it.
-// Hold mode is excluded because the CLI's own autoSubmit already covers
-// release-to-send there — a second Enter would submit the next draft.
-function shouldFire({ enabled, voiceMode, attention } = {}) {
+//
+// Deliberately independent of the CLI's voice mode. Gating on `tap` was a proxy
+// for "the operator is dictating" and refused the case it was most wanted in:
+// macOS on-device dictation types into the composer while the CLI's own mode
+// reads `off`. The phrase is the intent, whatever typed it.
+function shouldFire({ enabled, attention } = {}) {
   if (enabled !== true) return false;
-  if (voiceMode !== 'tap') return false;
   if (attention === 'permission') return false;
   return true;
 }

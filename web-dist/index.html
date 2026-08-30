@@ -6795,7 +6795,7 @@ body {
         </div>
         <span id="prefs-voice-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
         <h5>Hands-free submit</h5>
-        <p class="hint-text">In <strong>Tap</strong> mode only. End a dictated sentence with the phrase below and Clodex erases the phrase and presses Enter for you. The CLI submits on its own only when the last transcribed chunk runs to three words or more, so trailing off leaves your sentence sitting in the box — this is the way out of that. Never fires while a session is asking permission for something (Enter would answer the dialog), and a phrase spoken then is dropped rather than sent once the dialog clears. Hold mode is untouched: releasing the key already submits there. Applies to Claude sessions on this machine.</p>
+        <p class="hint-text">End what you are saying with the phrase below and Clodex erases the phrase and presses Enter for you. The CLI submits on its own only when the last transcribed chunk runs to three words or more, so trailing off leaves your sentence sitting in the box — this is the way out of that. It does not care <em>how</em> the words got there: it works with the CLI's own voice mode, with macOS dictation, and it will also fire on text you typed by hand ending in the phrase. Never fires while a session is asking permission for something (Enter would answer the dialog), and a phrase spoken then is dropped rather than sent once the dialog clears. Applies to Claude sessions on this machine.</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-voice-submit">
           <span>Submit when I say the phrase</span>
@@ -23575,9 +23575,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (!m) return null;
         return { erase: content.length - m.index };
       }
-      function shouldFire({ enabled, voiceMode, attention } = {}) {
+      function shouldFire({ enabled, attention } = {}) {
         if (enabled !== true) return false;
-        if (voiceMode !== "tap") return false;
         if (attention === "permission") return false;
         return true;
       }
@@ -23609,7 +23608,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var ENTER_SETTLE_MS = 30;
       function createVoiceSubmitWatcher(terminal, {
         getConfig,
-        getVoiceMode,
         getAttention,
         write,
         quietMs = QUIET_MS
@@ -23646,19 +23644,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (answered === found.content) return;
           answered = found.content;
-          let voiceMode = null;
           let attention = null;
-          try {
-            voiceMode = getVoiceMode();
-          } catch {
-            voiceMode = null;
-          }
           try {
             attention = getAttention();
           } catch {
             attention = "permission";
           }
-          if (!shouldFire({ enabled: cfg.enabled, voiceMode, attention })) return;
+          if (!shouldFire({ enabled: cfg.enabled, attention })) return;
           fires += 1;
           write("\x7F".repeat(found.erase));
           enterTimer = setTimeout(() => {
@@ -32469,12 +32461,6 @@ ${detail}` });
           // help and can only misfire — and an agent seat parked at its own composer
           // with injected text is exactly the shape the prompt check accepts.
           getConfig: () => voiceSubmitConfig.enabled && name === activeSession && sessionTypeOf(name) === "claude" ? voiceSubmitConfig : null,
-          // The FILE's mode, never the core's pending pick: a pick is a command that
-          // has been queued into a session, not a mode any CLI is in yet.
-          getVoiceMode: () => {
-            const st = voiceCore.snapshot().state;
-            return st ? st.effective : null;
-          },
           getAttention: () => {
             const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
             return el ? el.dataset.attention || null : "permission";

@@ -197,8 +197,8 @@ test('an unreadable row is null, which is the same answer as do-not-fire', () =>
 
 // ------------------------------------------------------------- activation gate
 
-test('the gate needs the setting AND tap mode, and hold is excluded', () => {
-  const ON = { enabled: true, voiceMode: 'tap', attention: null };
+test('the gate needs the setting, and the permission dialog is the only block', () => {
+  const ON = { enabled: true, attention: null };
   assert.strictEqual(shouldFire(ON), true);
 
   // Each row flips exactly ONE field of the firing case, so a row that fails
@@ -207,11 +207,6 @@ test('the gate needs the setting AND tap mode, and hold is excluded', () => {
     ['setting off', { ...ON, enabled: false }],
     ['setting absent', { ...ON, enabled: undefined }],
     ['setting truthy but not true', { ...ON, enabled: 'yes' }],
-    // The CLI's own autoSubmit sends on release here; a second Enter would
-    // submit whatever came after.
-    ['hold mode', { ...ON, voiceMode: 'hold' }],
-    ['voice off', { ...ON, voiceMode: 'off' }],
-    ['mode unreadable', { ...ON, voiceMode: null }],
     ['permission dialog', { ...ON, attention: 'permission' }],
   ];
   for (const [label, arg] of blocked) {
@@ -223,6 +218,20 @@ test('the gate needs the setting AND tap mode, and hold is excluded', () => {
   // "any attention" would make the feature dead for a badged session.
   for (const attention of ['idle', 'other']) {
     assert.strictEqual(shouldFire({ ...ON, attention }), true, attention);
+  }
+});
+
+test('the gate is INDEPENDENT of the CLI voice mode, in every value it takes', () => {
+  // The mode used to gate this, and the gate refused the case the feature is
+  // most wanted in: macOS on-device dictation types into the composer while the
+  // CLI's own mode reads `off`, and Codex has no `/voice` at all. Passing the
+  // key must change nothing — including 'hold', where the CLI's autoSubmit
+  // covers release-to-send but the phrase is still the operator's own intent.
+  for (const voiceMode of ['off', 'hold', 'tap', null, undefined]) {
+    assert.strictEqual(shouldFire({ enabled: true, attention: null, voiceMode }), true,
+      `fires with voiceMode ${String(voiceMode)}`);
+    assert.strictEqual(shouldFire({ enabled: true, attention: 'permission', voiceMode }), false,
+      `interlock holds with voiceMode ${String(voiceMode)}`);
   }
 });
 
@@ -286,14 +295,13 @@ const TEST_QUIET_MS = 5;
 function fastHarness({
   rows = [''], type = 'normal',
   config = { enabled: true, phrase: DEFAULT_SUBMIT_PHRASE },
-  voiceMode = 'tap', attention = null,
+  attention = null,
 } = {}) {
   const writes = [];
   const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)), type });
-  const env = { config, voiceMode, attention };
+  const env = { config, attention };
   const watcher = createVoiceSubmitWatcher(term, {
     getConfig: () => env.config,
-    getVoiceMode: () => env.voiceMode,
     getAttention: () => env.attention,
     write: (d) => writes.push(d),
     quietMs: TEST_QUIET_MS,
@@ -360,7 +368,6 @@ test('the interlock holds when the attention read THROWS', async () => {
   const term = fakeTerminal();
   const watcher = createVoiceSubmitWatcher(term, {
     getConfig: () => ({ enabled: true, phrase: DEFAULT_SUBMIT_PHRASE }),
-    getVoiceMode: () => 'tap',
     getAttention: () => { throw new Error('row gone'); },
     write: (d) => writes.push(d),
     quietMs: TEST_QUIET_MS,
@@ -371,11 +378,11 @@ test('the interlock holds when the attention read THROWS', async () => {
   watcher.dispose();
 });
 
-test('hold mode and a disabled setting write nothing', async () => {
+test('a disabled setting writes nothing, whether it is off or absent', async () => {
   for (const [label, patch] of [
-    ['hold', { voiceMode: 'hold' }],
-    ['voice off', { voiceMode: 'off' }],
     ['feature off', { config: null }],
+    ['enabled false', { config: { enabled: false, phrase: DEFAULT_SUBMIT_PHRASE } }],
+    ['enabled absent', { config: { phrase: DEFAULT_SUBMIT_PHRASE } }],
   ]) {
     const h = fastHarness(patch);
     h.term.write('❯ finish the report over and out');
@@ -383,6 +390,19 @@ test('hold mode and a disabled setting write nothing', async () => {
     assert.deepStrictEqual(h.writes, [], label);
     h.watcher.dispose();
   }
+});
+
+test('the watcher submits for a draft the operator TYPED, with no voice mode anywhere', async () => {
+  // The watcher is handed no mode reader at all — the plumbing is gone, not
+  // merely defaulted — so this is the macOS-dictation and the typed case both:
+  // the phrase reached the composer without the CLI's voice mode involved.
+  const h = fastHarness();
+  h.term.write('❯ finish the report over and out');
+  await h.done();
+  assert.strictEqual(h.writes.length, 2, `writes: ${JSON.stringify(h.writes)}`);
+  assert.strictEqual(h.writes[0], '\x7f'.repeat(13));
+  assert.strictEqual(h.writes[1], '\r');
+  h.watcher.dispose();
 });
 
 test('one fire per match, re-armed only by a non-matching composer', async () => {

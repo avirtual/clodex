@@ -1,6 +1,6 @@
 // voice-submit-watcher.js — watch one terminal's composer and submit it when a
-// dictated utterance ends with the configured trigger phrase. One instance per
-// local Claude terminal.
+// draft ends with the configured trigger phrase. One instance per local Claude
+// terminal.
 //
 // The composer is SCREEN STATE: the CLI redraws its input box with ANSI, so the
 // text is read out of the buffer rather than reassembled from the PTY stream,
@@ -27,7 +27,7 @@ const QUIET_MS = 1200;
 const ENTER_SETTLE_MS = 30;
 
 function createVoiceSubmitWatcher(terminal, {
-  getConfig, getVoiceMode, getAttention, write, quietMs = QUIET_MS,
+  getConfig, getAttention, write, quietMs = QUIET_MS,
 }) {
   let timer = null;
   let enterTimer = null;
@@ -74,11 +74,9 @@ function createVoiceSubmitWatcher(terminal, {
     // would send lands on whatever the dialog left behind.
     answered = found.content;
 
-    let voiceMode = null;
     let attention = null;
-    try { voiceMode = getVoiceMode(); } catch { voiceMode = null; }
     try { attention = getAttention(); } catch { attention = 'permission'; }
-    if (!shouldFire({ enabled: cfg.enabled, voiceMode, attention })) return;
+    if (!shouldFire({ enabled: cfg.enabled, attention })) return;
 
     fires += 1;
     write('\x7f'.repeat(found.erase));

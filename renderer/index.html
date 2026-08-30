@@ -856,7 +856,7 @@
         </div>
         <span id="prefs-voice-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
         <h5>Hands-free submit</h5>
-        <p class="hint-text">In <strong>Tap</strong> mode only. End a dictated sentence with the phrase below and Clodex erases the phrase and presses Enter for you. The CLI submits on its own only when the last transcribed chunk runs to three words or more, so trailing off leaves your sentence sitting in the box — this is the way out of that. Never fires while a session is asking permission for something (Enter would answer the dialog), and a phrase spoken then is dropped rather than sent once the dialog clears. Hold mode is untouched: releasing the key already submits there. Applies to Claude sessions on this machine.</p>
+        <p class="hint-text">End what you are saying with the phrase below and Clodex erases the phrase and presses Enter for you. The CLI submits on its own only when the last transcribed chunk runs to three words or more, so trailing off leaves your sentence sitting in the box — this is the way out of that. It does not care <em>how</em> the words got there: it works with the CLI's own voice mode, with macOS dictation, and it will also fire on text you typed by hand ending in the phrase. Never fires while a session is asking permission for something (Enter would answer the dialog), and a phrase spoken then is dropped rather than sent once the dialog clears. Applies to Claude sessions on this machine.</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-voice-submit">
           <span>Submit when I say the phrase</span>
