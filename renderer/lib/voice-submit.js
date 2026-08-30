@@ -87,9 +87,9 @@ function findSubmit(rows, phrase) {
       // CLAMPED to the cursor row, so the erase can never cross a row boundary
       // — where the count is unknowable. The screen cannot say whether the CLI
       // soft-wrapped one logical line or the operator hard-broke two, and the
-      // two differ by the newline a backspace would have to eat. Deleting less
-      // than was matched strands whitespace the CLI trims anyway; deleting more
-      // eats the draft. So the safe direction is the floor.
+      // two differ by the newline a backspace would have to eat. Deleting more
+      // than was matched eats the draft, so the floor is the safe direction: a
+      // phrase straddling the wrap leaves its head in the submitted message.
       const erase = Math.min(hit.erase, cursorRowLen);
       return { content, erase };
     }
