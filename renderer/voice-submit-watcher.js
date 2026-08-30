@@ -94,12 +94,11 @@ function createVoiceSubmitWatcher(terminal, {
     timer = setTimeout(tick, quietMs);
   };
 
-  // A write is the ONLY wake, and adding a timer wake does not help: while
-  // macOS dictation holds an utterance as marked text it is in xterm's
-  // .composition-view overlay, onData has not fired and the buffer row is
-  // EMPTY, so there is nothing for a poll to read. Focusing the window is what
-  // ends the composition and echoes the text, which is the write below. A timer
-  // wake was tried against this and reverted; it observed nothing.
+  // This subscription is the only wake, and adding a timer wake does not help:
+  // while a COMPOSITION is in progress the text is in xterm's .composition-view
+  // overlay, onData has not fired and the buffer does not hold it, so there is
+  // nothing for a poll to read. Ending the composition is what echoes the text,
+  // which is a write.
   const subs = [terminal.onWriteParsed(schedule)];
 
   return {
