@@ -37,6 +37,17 @@ blocks a release.
   because Enter would answer that dialog; a phrase spoken while one is open is
   dropped rather than sent after it clears. Claude sessions on this machine.
 
+- **A ticket seat now starts in a worktree whose dependencies resolve.** A git
+  worktree has no `node_modules` and nothing installs one, so a hand dispatched
+  to a ticket branch found every `require()` of a dependency and
+  `npm run build:web` failing — and only learned the tree was usable when the
+  suite ran, which is after it had finished working. The loop already planted a
+  symlink to the main checkout's tree at suite time; that step now runs at spawn
+  too, so the seat has it from its first command. If the link cannot be made —
+  a checkout that has never had `npm install` run in it — the seat is spawned
+  anyway and the dispatch reply says so, since a hand without dependencies can
+  still read, write and commit.
+
 ## 5.19.0 — 2026-08-30
 
 - **A preserved ticket-suite dump now tells you when the branch moved out from
