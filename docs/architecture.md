@@ -792,7 +792,7 @@ Own state + DOM, `init*(deps)`:
   is guaranteed, and a prefix reset there is erased seconds before macOS refills
   the composition with the words it described. `pending`/`pendingAt`/`committed`
   reset on that null; `consumed`/`desynced` survive it and are cleared only by
-  the setting going off and an idle expiry (`CONSUMED_IDLE_MS`,
+  the COMPOSITION checkbox going off and an idle expiry (`CONSUMED_IDLE_MS`,
   provisional — nobody here can dictate, and the overlay is known to flap
   mid-session, so it is deliberately long relative to a pause). The expiry
   measures SILENCE, not time since the last submit: the stamp refreshes on every
@@ -803,11 +803,13 @@ Own state + DOM, `init*(deps)`:
   decline nor a NULL CONFIG clears it: a pager opening and closing leaves the
   OS accumulation intact, and a null config is an out-of-scope seat rather
   than a stop — `getConfig` returns one for every seat that is not the active
-  claude session, so clicking another sidebar row and back would otherwise
-  resend the whole session. The alt-screen arm still declines to COMMIT while
-  the program is up. The asymmetry behind all of it: a surviving prefix at
-  worst desyncs and costs one repeatable utterance, while a cleared one
-  resends what was already submitted. The remainder is dispatched by
+  claude session AND whenever hands-free submit is off at all, so clicking
+  another sidebar row and back would otherwise resend the whole session. The
+  master switch therefore does NOT clear the prefix; only the composition
+  checkbox does. The alt-screen arm still declines to COMMIT while the program
+  is up. The asymmetry behind all of it: a surviving prefix at worst desyncs
+  and costs one repeatable utterance, while a cleared one resends what was
+  already submitted. The remainder is dispatched by
   shortening `value` BEFORE the keydown: `_compositionPosition.start` is private
   and fixed at `compositionstart`, but `substring` clamps its end, so a `value`
   holding only the remainder sends only the remainder even though `end` still

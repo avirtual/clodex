@@ -1048,6 +1048,47 @@ test('a TAB SWITCH is an out-of-scope seat, not the end of the dictation session
     'ENTER: the prefix survived the switch — only the new words are sent');
 });
 
+test('a seat switched away RESTARTS the window, it does not resume it', async () => {
+  // The other half of the new `!cfg` arm: it forgets the PENDING text as well
+  // as keeping the prefix, and a bare `return;` there passes every other pin —
+  // the TAB SWITCH one cannot see it, because a commit nulls the overlay and
+  // there is no pending text to inherit across the switch. The hazard is the
+  // pager arm's, reached by a click instead: words observed but not yet stable,
+  // the seat left for longer than a window, and the same words still sitting
+  // there on return. An inherited `pendingAt` makes them instantly committable,
+  // and the time passed with the seat not even on screen.
+  const clock = { t: 1000 };
+  const h = compositionHarness({
+    config: { enabled: true, composition: true, phrase: 'roger' },
+    composed: ' half a thought roger',
+    now: () => clock.t,
+  });
+  // Observed under a live config, but not yet old enough to act on.
+  await h.settled();
+  assert.deepStrictEqual(h.commits, [], 'not settled yet');
+
+  // The operator clicks another seat and stays there past a full window.
+  h.env.config = null;
+  await h.settled();
+  clock.t += TEST_QUIET_MS + 1;
+  await h.settled();
+  assert.deepStrictEqual(h.commits, [], 'nothing may commit while the seat is out of scope');
+
+  // Back, with the same words still in the overlay. NOT stale-committable: the
+  // window starts again from the return.
+  h.env.config = { enabled: true, composition: true, phrase: 'roger' };
+  await h.settled();
+  assert.deepStrictEqual(h.commits, [],
+    'the window must restart on return, not resume from before the switch');
+
+  // ENTER: and they do commit once genuinely settled SINCE the return, so the
+  // decline above is the reset rather than a watcher that never woke up.
+  clock.t += TEST_QUIET_MS + 1;
+  await h.settled();
+  assert.deepStrictEqual(h.commits, [[' half a thought roger', '']],
+    'the same words commit once the window has passed since the return');
+});
+
 test('a LONG utterance keeps the session alive — the expiry measures silence, not time since the last submit', async () => {
   // THE FAILING PATH, and it is ordinary rather than a corner: commit the first
   // utterance, then dictate a second one for longer than the expiry with the
