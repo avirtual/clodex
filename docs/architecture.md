@@ -779,7 +779,20 @@ Own state + DOM, `init*(deps)`:
   `_dataAlreadySent` would dedup that, but it is written only from
   `_handleAnyTextareaChanges`, which this path never reaches. That clear is why
   there is no second anti-double-submit guard: the late read finds `''` and the
-  branch skips a zero-length input. The alt-screen decline is asked on BOTH
+  branch skips a zero-length input. That clear does NOT stop the OTHER re-send:
+  macOS keeps its own record of the dictation session and re-fills the
+  composition with everything said since it began, so each commit after the
+  first arrives carrying the utterances already submitted. A whole-text equality
+  latch cannot catch that — accumulating text never equals the previous sample —
+  so the watcher tracks a consumed PREFIX, matches the phrase on the REMAINDER,
+  and hands `commitComposition` what was already sent. That is dispatched by
+  shortening `value` BEFORE the keydown: `_compositionPosition.start` is private
+  and fixed at `compositionstart`, but `substring` clamps its end, so a `value`
+  holding only the remainder sends only the remainder even though `end` still
+  points past it. When the accumulation stops extending what was consumed —
+  dictation revising its own transcript — the offset is meaningless and the
+  composition sends nothing further, since dropped words can be repeated and
+  re-submitted ones cannot be recalled. The alt-screen decline is asked on BOTH
   paths (`onNormalBuffer`, hoisted out of the buffer read) since the composition
   path never touches the buffer, and it FORGETS rather than returning, so words
   composed before a full-screen program cannot come back already-stale. A commit

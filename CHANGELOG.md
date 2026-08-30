@@ -13,6 +13,17 @@ blocks a release.
 
 ## Unreleased
 
+- **Hands-free submit no longer re-sends what you already said.** With macOS
+  dictation, the second and every later submit in one dictation session sent the
+  whole session over again — your first sentence, its trigger word still in it,
+  with the new sentence tacked on the end. macOS keeps its own record of
+  everything dictated since you started and hands it back in full each time, and
+  Clodex was reading that record rather than just the new words. It now keeps
+  track of what it has already sent and submits only what you have said since.
+  If dictation goes back and rewrites something it transcribed earlier, Clodex
+  stops submitting for the rest of that dictation session rather than risk
+  sending a sentence twice — pause and start speaking again to re-arm it.
+
 - **Dictation can now submit for you when you say a phrase.** The Claude CLI
   only auto-submits when the last chunk of transcribed speech runs to three
   words or more, so trailing off at the end of a thought leaves the whole
