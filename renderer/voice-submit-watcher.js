@@ -92,11 +92,14 @@ const REARM_SETTLE_MS = 3000;
 // How long a single idle edge may keep rescheduling before it is abandoned.
 //
 // THIS CONSTANT BOUNDS A HAZARD; it is not merely a guard against a stuck edge.
-// `voiceMode` is the one gate that cannot be re-read at write time — nothing
-// here can see whether the CLI's recorder is already armed — so a byte written
+// Nothing here can see whether the recorder is already armed, so a byte written
 // late can land after the operator has tapped push-to-talk by hand, where it
 // STOPS recording instead of arming it. This deadline is the width of that
-// exposure window, so it is the reason not to widen it.
+// exposure window PLUS one settle: it is consulted only on the still-painting
+// branch, so a paint at `deadline - 1` still schedules an attempt that may write
+// up to `rearmMs` past it. Do NOT hoist the check to the top of `attemptRearm`
+// to tighten that — the `abandonMs: 0` re-arm in `MF1: one edge cannot
+// reschedule forever` depends on the current placement.
 //
 // Ten seconds because a genuine turn end that has not produced a settle-length
 // lull within it is almost certainly not a turn end. The trailing window below

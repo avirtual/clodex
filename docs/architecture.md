@@ -745,9 +745,13 @@ Own state + DOM, `init*(deps)`:
   background seat can never be helped and can only misfire. A refused match still
   latches — keyed on the composer CONTENT, so an identical repaint stays answered
   (the stale-speech case) while a CHANGED draft re-arms, which is what lets a
-  second deliberate utterance of the phrase work. The CLI's voice mode is NOT
+  second deliberate utterance of the phrase work. For the SUBMIT half the CLI's voice mode is NOT
   consulted: gating on `tap` was a proxy for "the operator is dictating" that
-  refused macOS on-device dictation, where the CLI's mode reads `off`. All the
+  refused macOS on-device dictation, where the CLI's mode reads `off`. The
+  RE-ARM half is the opposite and deliberately so: it fires on the turn-end edge
+  ONLY in `tap` mode, writes the configured trigger character, and is fenced by
+  the permission interlock and an empty composer — it is arming a recorder, not
+  submitting text, so it needs the mode the submit half must ignore. All the
   deciding lives in the DOM-free leaf, which is what lets
   `test/voice-submit.test.js` pin the interlock with no jsdom. Disposed BEFORE
   its terminal.
