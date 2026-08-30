@@ -1177,7 +1177,13 @@ function createTerminal(name, peer = null) {
     // Both read through voiceCore, which already polls the CLI's config for the
     // bar button — a second reader here would be a second copy of a box-wide
     // value, which voice-control.js's header rules out.
-    getVoiceMode: () => voiceCore.snapshot().mode || null,
+    // The FILE-backed mode, not snapshot().mode: that one prefers a PENDING
+    // pick, so a queued `/voice tap` the CLI has not run yet would make the
+    // re-arm act as though tap were already live.
+    getVoiceMode: () => {
+      const { state } = voiceCore.snapshot();
+      return (state && state.effective) || null;
+    },
     getTriggerKey: () => resolveTriggerKey(voiceCore.triggerBinding()),
   });
 
@@ -2461,7 +2467,7 @@ window.api.onSessionExit((name, code, meta) => {
 
 window.api.onSelectionSent((name) => drawerHost.onSelectionSent(name));
 
-window.api.onSessionActivity((name, state) => {
+window.api.onSessionActivity((name, state, turnEnd) => {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!el) return;
   // Thinking-duration stamp: the amber dot alone makes a 3s turn and a wedged
@@ -2478,7 +2484,7 @@ window.api.onSessionActivity((name, state) => {
   // AFTER the dataset write, because the watcher's own permission interlock
   // reads this row back.
   const sess = sessions.get(name);
-  if (sess && sess.voiceSubmit) sess.voiceSubmit.noteActivity(state);
+  if (sess && sess.voiceSubmit) sess.voiceSubmit.noteActivity(state, turnEnd === true);
   sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), lastActivityTs: Date.now() });
   scheduleSidebarRelayout();
 });

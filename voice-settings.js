@@ -81,16 +81,15 @@ function parseChord(spec) {
   };
 }
 
-// The CLI's own resolution, and the shape of it is the part to preserve: it
-// walks DEFAULTS THEN USER BINDINGS in order, setting the trigger on every
-// `voice:pushToTalk` and CLEARING it when a later binding gives that same
-// chord a different action. Both directions matter — a user file that rebinds
-// space to something else leaves the CLI with no push-to-talk key at all, and
-// a scan that only looked for the action would report a space that no longer
-// arms anything.
+// Both directions of the fold matter: a later entry can BIND the action to a
+// new chord, and it can also take the current chord AWAY by giving it another
+// action — a file that rebinds space to something else leaves no push-to-talk
+// key at all. A scan that only looked for the action would report a space that
+// no longer arms anything.
 //
-// Only the Chat context, because that is the only context the CLI's scan
-// accepts for this action.
+// The fold follows JS object key order, which is insertion order for these
+// string keys; that is the order the entries appear in the file, not a
+// re-derivation of the CLI's own precedence rules.
 function sameChord(a, b) {
   return !!a && !!b && a.key === b.key && a.ctrl === b.ctrl && a.alt === b.alt
     && a.shift === b.shift && a.meta === b.meta && a.super === b.super;

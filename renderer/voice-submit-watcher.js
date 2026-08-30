@@ -46,15 +46,32 @@ const ENTER_SETTLE_MS = 30;
 const COMPOSITION_POLL_MS = 300;
 
 // The re-arm waits this long after the idle edge before writing, and re-checks
-// every gate when it lands. Not a debounce — the edge is already discrete. It
-// covers a RACE: the permission interlock reads a sidebar row written by the
+// every gate when it lands. Two separate jobs, and the LONGER of the two needs
+// is what sets the number.
+//
+// One: the permission interlock reads a sidebar row written by the
 // `session-attention` event, which travels from a different watcher (an
 // fs.watch on the attention log) than the activity event does (the transcript
-// poll). The two orderings are not synchronised, so an idle edge can arrive
-// just BEFORE the notice that a dialog is open, and the fence is only as good
-// as the row it reads. Waiting one beat and re-reading is what makes the
-// interlock hold in both orderings.
-const REARM_SETTLE_MS = 400;
+// poll). The orderings are not synchronised, so an idle edge can arrive just
+// BEFORE the notice that a dialog is open, and the fence is only as good as
+// the row it reads.
+//
+// Two, and this is why it is seconds rather than milliseconds: `turnEnd` gates
+// the WIRE emitter's mid-turn idle, but the jsonl emitter passes
+// `notify = state === 'idle'` unconditionally, so on that path every 1s text
+// flush between tool calls arrives here looking like a turn end. The only
+// evidence this side has that the turn really ended is that the terminal then
+// STAYS quiet — a CLI still working repaints. This window is how long it must
+// stay quiet for.
+//
+// It is deliberately far longer than a plausible repaint gap rather than tuned
+// to a measured one: the author could not establish the CLI's actual repaint
+// cadence from the binary, so the value is chosen to be safe under uncertainty,
+// not to be tight. Erring long costs a late re-arm; erring short types a
+// character into the middle of a turn, where the CLI's voice path is dead and
+// the byte lands in the draft — which then blocks the real re-arm at turn end,
+// because the tap handler declines a non-empty composer.
+const REARM_SETTLE_MS = 3000;
 
 // Provisional boundary #1: where the pending composed text comes from.
 // Contract: the text of THIS terminal's pending composition, or null when there
@@ -179,6 +196,9 @@ function createVoiceSubmitWatcher(terminal, {
   let activity = null;
   let rearms = 0;
   let rearmTimer = null;
+  // When the terminal last painted anything. The turn-end evidence on the
+  // jsonl path, where every 1s text flush claims to be a turn end.
+  let lastWriteAt = 0;
 
   // The cursor row alone, truncated at the cursor column. The phrase ends the
   // utterance, so it is on the row the cursor is on even when the draft wrapped.
@@ -313,11 +333,19 @@ function createVoiceSubmitWatcher(terminal, {
   // is dead at the top (`isActive` is `!busy`), so a byte written mid-turn does
   // nothing at all. The first moment a write can arm the recorder is the edge
   // out of that window, which is exactly the transition reported here.
-  function noteActivity(state) {
+  function noteActivity(state, turnEnd) {
     if (disposed) return;
     const from = activity;
     activity = state;
     if (from !== 'thinking' || state !== 'idle') return;
+    // NOT merely idle. Two emitters produce `idle` mid-turn: the wire tracker's
+    // gap-idle timer, when a tool runs longer than its gap with nothing in
+    // flight, and the jsonl watcher's flush between tool calls. Mid-turn the
+    // CLI's voice path is dead, so the byte would be INSERTED into the draft —
+    // and a non-empty composer is exactly what makes the tap handler decline
+    // the real re-arm when the turn finally does end. Acting on the bare state
+    // edge inverts the feature on long turns, which are the ones it is for.
+    if (turnEnd !== true) return;
 
     // Every gate is evaluated HERE and again when the timer lands. Cheap, and
     // it keeps the edge test where the edge actually is: by the time the timer
@@ -331,6 +359,11 @@ function createVoiceSubmitWatcher(terminal, {
       // window means the CLI's key path is dead once more, and a dialog that
       // opened inside it means the byte would answer it.
       if (activity !== 'idle' || !rearmAllowed('thinking', 'idle')) return;
+
+      // The jsonl emitter passes turnEnd unconditionally, so the flag above
+      // cleared nothing on that path. A terminal that has painted since the
+      // edge is a CLI still working.
+      if (now() - lastWriteAt < rearmMs) return;
 
       // Last, because it is the only gate that reads the screen, and the reason
       // it is not optional: the CLI's tap handler bails on a NON-EMPTY composer
@@ -362,7 +395,7 @@ function createVoiceSubmitWatcher(terminal, {
   // is on screen. The composition half cannot use it — while a composition is
   // pending onData has not fired and the buffer does not hold the text — so it
   // polls the overlay instead, on its own timer.
-  const subs = [terminal.onWriteParsed(schedule)];
+  const subs = [terminal.onWriteParsed(() => { lastWriteAt = now(); schedule(); })];
   pollTimer = setInterval(pollComposition, pollMs);
 
   return {

@@ -1100,8 +1100,15 @@ test('shouldRearm: every gate declines on its own', () => {
 });
 
 test('composerIsEmpty: ornament is empty, a draft is not, unreadable is not', () => {
-  for (const row of ['', '   ', '❯ ', '> ', '│ > ', '❯']) {
+  // The marker, with at most the one separator space the CLI paints after it.
+  for (const row of ['❯', '❯ ', '>', '> ']) {
     assert.strictEqual(composerIsEmpty(row), true, JSON.stringify(row));
+  }
+  // A SECOND space is already a draft by the CLI's own `value.length > 0`
+  // guard, and dictation prepends exactly one. A row with no marker is not
+  // evidence of a composer at all — a dialog interior looks like that.
+  for (const row of ['❯  ', '│ ', '│', '', '   ', ' ']) {
+    assert.strictEqual(composerIsEmpty(row), false, JSON.stringify(row));
   }
   // The CLI's tap handler RETURNS before swallowing the key when the composer
   // is non-empty, so a character written for any of these is inserted into the
@@ -1150,7 +1157,13 @@ function rearmHarness({
   const writes = [];
   const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)) });
   const env = { config, attention, voiceMode, trigger };
+  // The terminal-quiet check compares timestamps, so a test that wants to say
+  // "the CLI is still painting" has to control the clock rather than race it:
+  // real elapsed time between a write and the assertion is longer than any
+  // workable test settle. `offset` moves the clock forward by hand.
+  const clock = { offset: 0, now: () => Date.now() + clock.offset };
   const watcher = createVoiceSubmitWatcher(term, {
+    now: clock.now,
     getConfig: () => env.config,
     getAttention: () => env.attention,
     getVoiceMode: () => env.voiceMode,
@@ -1161,9 +1174,13 @@ function rearmHarness({
   });
   // A turn, then its end. Every re-arm needs the edge, so this is the shape
   // every test below starts from.
-  const turn = () => { watcher.noteActivity('thinking'); watcher.noteActivity('idle'); };
+  // A real turn: thinking, then an idle carrying turnEnd. `midTurnIdle` is the
+  // same state edge WITHOUT it — what the wire tracker's gap timer and the
+  // jsonl watcher's inter-tool flush actually emit.
+  const turn = () => { watcher.noteActivity('thinking'); watcher.noteActivity('idle', true); };
+  const midTurnIdle = () => { watcher.noteActivity('thinking'); watcher.noteActivity('idle', false); };
   const done = () => settle(TEST_REARM_MS + TEST_QUIET_MS + ENTER_SETTLE_MS + 25);
-  return { term, watcher, writes, env, turn, done };
+  return { term, watcher, writes, env, turn, midTurnIdle, done, clock };
 }
 
 test('the idle edge writes the trigger character into an empty composer', async () => {
@@ -1213,17 +1230,6 @@ test('THE INTERLOCK: a dialog opening DURING the settle window still blocks', as
   h.watcher.dispose();
 });
 
-test('THE INTERLOCK: a missing sidebar row reads as permission', async () => {
-  // renderer.js maps a row that is GONE to 'permission' deliberately; this is
-  // the watcher end of that contract.
-  const h = rearmHarness();
-  h.env.attention = 'permission';
-  h.turn();
-  await h.done();
-  assert.deepStrictEqual(h.writes, []);
-  h.watcher.dispose();
-});
-
 test('a composer the operator is typing in is never written into', async () => {
   const h = rearmHarness({ rows: ['❯ half a thought'] });
   h.turn();
@@ -1261,7 +1267,7 @@ test('sitting idle re-arms once, not once per event', async () => {
   assert.strictEqual(h.watcher.rearmCount(), 1);
   // Repeat idle events with no turn between them are the LEVEL the spec
   // refused: each one would be another character into the composer.
-  for (let i = 0; i < 5; i += 1) h.watcher.noteActivity('idle');
+  for (let i = 0; i < 5; i += 1) h.watcher.noteActivity('idle', true);
   await h.done();
   assert.deepStrictEqual(h.writes, [' ']);
   assert.strictEqual(h.watcher.rearmCount(), 1);
@@ -1277,7 +1283,7 @@ test('a seat that is merely idle at startup is not re-armed', async () => {
   // 'thinking'. A terminal built next to an idle agent has not just finished a
   // turn, and its composer may hold a draft from before.
   const h = rearmHarness();
-  h.watcher.noteActivity('idle');
+  h.watcher.noteActivity('idle', true);
   await h.done();
   assert.deepStrictEqual(h.writes, []);
   h.watcher.dispose();
@@ -1344,7 +1350,7 @@ test('a throwing environment declines rather than writing', async () => {
       ...patch,
     });
     watcher.noteActivity('thinking');
-    watcher.noteActivity('idle');
+    watcher.noteActivity('idle', true);
     await settle(TEST_REARM_MS + 25);
     assert.deepStrictEqual(writes, [], Object.keys(patch)[0]);
     watcher.dispose();
@@ -1365,4 +1371,93 @@ test("re-arm and submit stay independent: neither writes the other's bytes", asy
   await h.done();
   assert.strictEqual(h.writes.length, before, 're-arm stayed out of a full composer');
   h.watcher.dispose();
+});
+
+// MF1: `thinking -> idle` is NOT turn-end. Two emitters produce that edge
+// mid-turn — the wire tracker's gap-idle timer when a tool runs longer than
+// its gap with nothing in flight, and the jsonl watcher's 1s text flush
+// between tool calls. Mid-turn the CLI's voice path is dead (`isActive` is
+// `!busy`), so the byte is INSERTED into the draft rather than swallowed, and
+// the non-empty composer it leaves behind makes the tap handler decline the
+// real re-arm at turn end. The feature would invert itself on exactly the long
+// turns that motivate it. Both gates below are load-bearing and cover
+// different emitters; neither alone is enough.
+
+test('MF1: a mid-turn idle with turnEnd false writes nothing', async () => {
+  const h = rearmHarness();
+  h.midTurnIdle();
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+  assert.strictEqual(h.watcher.rearmCount(), 0);
+  h.watcher.dispose();
+});
+
+test('MF1: turnEnd must be exactly true, not merely truthy-by-absence', async () => {
+  // The renderer passes `turnEnd === true`; an older main process that sends
+  // no third argument at all must decline rather than re-arm on every flush.
+  for (const flag of [undefined, null, 0, '', 'yes', 1]) {
+    const h = rearmHarness();
+    h.watcher.noteActivity('thinking');
+    h.watcher.noteActivity('idle', flag);
+    await h.done();
+    assert.deepStrictEqual(h.writes, [], `turnEnd ${JSON.stringify(flag)}`);
+    h.watcher.dispose();
+  }
+});
+
+test('MF1: a turn-end claim is refused while the terminal is still painting', async () => {
+  // The jsonl emitter passes turnEnd unconditionally, so the flag alone clears
+  // nothing on that path. A CLI still working repaints; that is the only
+  // evidence this side has, and the settle window is how long it must stay
+  // quiet.
+  const h = rearmHarness();
+  h.turn();
+  // Stamp the paint far in the FUTURE, so it still reads as "just now" when the
+  // settle fires. Real elapsed time would clear a 5ms quiet window before the
+  // assertion runs, and the test would pass without exercising the check.
+  h.clock.offset = 1e6;
+  h.term.write('❯ ');
+  h.clock.offset = 0;
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+  h.watcher.dispose();
+});
+
+test('MF1: once the terminal goes quiet, a turn end does re-arm', async () => {
+  // The other direction of the same gate — without this the quiet condition
+  // could be satisfied by never firing at all.
+  const h = rearmHarness();
+  h.term.write('❯ ');
+  await settle(TEST_REARM_MS + 25);
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [' ']);
+  h.watcher.dispose();
+});
+
+// MF2: our "empty" must not be laxer than the CLI's `value.length > 0`, or we
+// write a character it declines to swallow — which lands in the draft and
+// blocks every later re-arm.
+
+test('MF2: a whitespace-bearing draft is not an empty composer', async () => {
+  // Dictation prepends a space, so this is reachable with no mid-turn idle
+  // involved at all.
+  const h = rearmHarness({ rows: ['❯  '] });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+  h.watcher.dispose();
+});
+
+test('MF2: a row with no prompt marker is not a composer', async () => {
+  // A dialog interior and a mid-repaint screen both look like this, and the
+  // settle window must not be the only thing standing between the byte and a
+  // permission dialog.
+  for (const row of ['│ ', '', '   ', '│']) {
+    const h = rearmHarness({ rows: [row] });
+    h.turn();
+    await h.done();
+    assert.deepStrictEqual(h.writes, [], JSON.stringify(row));
+    h.watcher.dispose();
+  }
 });

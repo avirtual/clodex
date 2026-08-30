@@ -149,33 +149,41 @@ function shouldRearm({ enabled, rearm, voiceMode, attention, from, to } = {}) {
   if (attention === 'permission') return false;
   return from === 'thinking' && to === 'idle';
 }
-
-// Ornament and whitespace only — the composer with nothing typed into it.
-// `row` is the cursor row already truncated at the cursor, so a draft the
-// operator is part-way through is text to the LEFT of the cursor and fails this.
+// The composer with nothing typed in it, matched against the CURSOR ROW
+// truncated at the cursor.
 //
-// Anything unreadable answers false, which DECLINES the write. The tap handler
-// returns before swallowing the key when the composer is non-empty, so a
-// character written then is inserted into the draft and does not arm anything —
-// "I cannot tell" and "do not write" have to be the same answer.
-const COMPOSER_ORNAMENT_ONLY = /^[\s>❯│|]*$/u;
+// The bar this has to clear is the CLI's own, and it is `value.length > 0`:
+// the tap handler returns on ANY non-empty composer, so a single space of
+// draft is already enough to make it decline. Ours must decline there too, or
+// we write a character the CLI will not swallow — it lands in the draft, and
+// the now-non-empty composer blocks every later re-arm. Hence at most ONE
+// space: that one is the separator the CLI paints after the marker, and a
+// second is the operator's (or dictation's, which prepends one).
+//
+// The marker is REQUIRED, and that direction is chosen for how it fails. If
+// the glyph is wrong this returns false and the feature goes quiet; if the
+// marker were optional a bare whitespace row would read as an empty composer,
+// and a dialog interior and a mid-repaint screen both look exactly like that.
+// A silent feature is recoverable, a character typed into a permission dialog
+// is not.
+const COMPOSER_EMPTY = /^[\u276f>] ?$/u;
 
 function composerIsEmpty(row) {
   if (typeof row !== 'string') return false;
-  return COMPOSER_ORNAMENT_ONLY.test(row);
+  return COMPOSER_EMPTY.test(row);
 }
 
 // The character that arms the recorder, or null when no character can.
 //
 // The CLI resolves its own trigger the same way: it takes the Chat-context
 // binding for `voice:pushToTalk` and uses its key ONLY when that key is a
-// single character with no modifier. A modifier chord (meta+k) matches through
-// a different comparison that no written byte can satisfy, so null here is the
-// honest answer rather than a space written in hope.
+// single character with no modifier. A modifier chord matches through a
+// different comparison that no written byte can satisfy.
+//
 // Null in, null out, and that is not a missing default: the CLI's own default
 // (space) is seeded by the READ, in voice-settings.js, so a null arriving here
 // is either a binding the operator cleared or a config not yet loaded. Both
-// must decline, and defaulting to a space here would write one in both cases.
+// must decline.
 function resolveTriggerKey(binding) {
   if (!binding || typeof binding !== 'object') return null;
   if (binding.ctrl || binding.alt || binding.shift || binding.meta || binding.super) return null;
