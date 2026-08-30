@@ -218,7 +218,17 @@ function createVoiceCore({ getActiveSession, sessionTypeOf, sessionList, showToa
   // window that never loses focus.
   window.addEventListener('focus', () => { if (holds > 0) refresh(); });
 
-  return { snapshot, subscribe, choose, refresh, repaint: emit, start, stop, isMode };
+  // The push-to-talk binding as the CLI resolves it, or null when no plain
+  // character is bound to it. Read off the same payload `state` already holds,
+  // so it costs no extra IPC and cannot drift from the mode beside it.
+  function triggerBinding() {
+    return (state && state.trigger && state.trigger.binding) || null;
+  }
+
+  return {
+    snapshot, subscribe, choose, refresh, repaint: emit, start, stop, isMode,
+    triggerBinding,
+  };
 }
 
 // The Preferences surface: a <select> plus a state line, over the shared core.

@@ -3100,7 +3100,12 @@ function createSessionManager(deps) {
       if (state !== 'idle') this._touchTicketActivity(name);
       if (s && state !== 'idle' && s.needsAttention) this._setAttention(s, null);
       if (s && state === 'idle') { this._maybeFlushInjectQueue(s); this._drainPendingAtIdle(s); }
-      this._sendToSession(name, 'session-activity', name, state);
+      // `notify` is TURN-END, not merely idle, and the renderer needs that
+      // distinction: two emitters produce `idle` MID-TURN — the wire tracker's
+      // gap-idle timer when a tool runs long with nothing in flight, and the
+      // jsonl watcher's 1s text flush between tool calls. A consumer that acts
+      // on the state alone acts in the middle of turns.
+      this._sendToSession(name, 'session-activity', name, state, !!notify);
       if (getRemoteServer()) { try { getRemoteServer().notifyActivity(name, state, notify); } catch {} }
       if (!notify) return;
       const owningWin = this.windowForSession(name);

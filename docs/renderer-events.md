@@ -54,7 +54,7 @@ reattach — a web host needs the same replay-on-connect for a reloaded tab.
 |---|---|---|
 | `pty-data` | `name, data` (data = raw PTY chunk; base64 over WS) | session-manager (PTY onData) |
 | `session-exit` | `name, exitCode` | session-manager (ptyProc.onExit) |
-| `session-activity` | `name, state` (`working`/`idle`) | session-manager `_emitActivity` |
+| `session-activity` | `name, state, turnEnd` (`working`/`idle`; `turnEnd` true only on a real end-of-turn idle, false for the mid-turn idles the gap timer and the jsonl flush emit) | session-manager `_emitActivity` |
 | `session-ctx` | `name, pct, tok, size, cost, modelName` | session-manager (ctx poll) |
 | `session-proxy` | `name, payload` (status-bar telemetry snapshot; wire-overlay shape) | wirescope-proxy poller |
 | `session-files` | `name, files` (fileTouches array) | session-manager |

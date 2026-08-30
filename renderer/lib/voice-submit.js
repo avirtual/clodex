@@ -119,6 +119,91 @@ function shouldFire({ enabled, attention } = {}) {
   return true;
 }
 
+// The re-arm half. Separate from `shouldFire` because it answers a different
+// question: not "may I submit this draft" but "may I write one character into
+// an empty composer to arm the CLI's recorder".
+//
+// The CLI's tap handler arms only from a keypress — its own
+// "Re-arming focus recording after silence timeout" branch is the first branch
+// INSIDE handleKeyEvent, and the flag it tests is set only by the FOCUS-mode
+// silence timer, never by tap's. So nothing re-arms tap without a byte.
+//
+// EDGE, not level: `from`/`to` are the previous and current activity states,
+// and only thinking -> idle passes. A level test would re-arm on every repeat
+// event for as long as the seat sits idle, writing into a composer the operator
+// may be typing in by hand.
+//
+// `voiceMode === 'tap'` is required here although `shouldFire` deliberately
+// ignores the mode. The asymmetry is real: submit acts on words the operator
+// already committed, whatever typed them, while this arms the CLI's own tap
+// recorder and is meaningless anywhere else. In hold mode a single character
+// cannot reach the auto-repeat threshold, so it would land in the draft as a
+// literal instead.
+function shouldRearm({ enabled, rearm, voiceMode, attention, from, to } = {}) {
+  if (enabled !== true) return false;
+  if (rearm !== true) return false;
+  if (voiceMode !== 'tap') return false;
+  // The same interlock as shouldFire, and it matters MORE here: an agent that
+  // stopped to ask permission is idle, so the dialog opens exactly on this
+  // edge, and any byte written then answers it.
+  if (attention === 'permission') return false;
+  return from === 'thinking' && to === 'idle';
+}
+// The composer with nothing typed in it, matched against the CURSOR ROW
+// truncated at the cursor.
+//
+// The bar this has to clear is the CLI's own, and it is `value.length > 0`:
+// the tap handler returns on ANY non-empty composer, so a single space of
+// draft is already enough to make it decline. Ours must decline there too, or
+// we write a character the CLI will not swallow — it lands in the draft, and
+// the now-non-empty composer blocks every later re-arm. Hence at most ONE
+// space: that one is the separator the CLI paints after the marker, and a
+// second is the operator's (or dictation's, which prepends one).
+//
+// The marker is REQUIRED, and that direction is chosen for how it fails. If
+// the glyph is wrong this returns false and the feature goes quiet; if the
+// marker were optional a bare whitespace row would read as an empty composer,
+// and a dialog interior and a mid-repaint screen both look exactly like that.
+// A silent feature is recoverable, a character typed into a permission dialog
+// is not.
+//
+// THE SEPARATOR IS U+00A0, NOT U+0020. Measured 2026-08-31 off a live seat
+// (CLI 2.1.251) from the same read this rule is given: cursor row
+// `U+276F U+00A0`, cursorX 2. An earlier revision of this rule spelled it with
+// an ASCII space and therefore returned false on every genuinely empty
+// composer — the feature was dead with the suite green, because the fixtures
+// encoded the same assumption the rule did.
+//
+// Both separators are listed EXPLICITLY rather than as `\s?`, which would also
+// match U+00A0 and pass the same tests. `\s` additionally admits tab, newline
+// and the rest of the Unicode space run — none of which has been observed in
+// this position, and each of which is a screen state we have no reading of.
+// Listing what was measured keeps an unrecognised row falling to the silent
+// side, which is the direction chosen throughout this rule.
+const COMPOSER_EMPTY = /^[\u276f>][\u0020\u00a0]?$/u;
+
+function composerIsEmpty(row) {
+  if (typeof row !== 'string') return false;
+  return COMPOSER_EMPTY.test(row);
+}
+
+// The character that arms the recorder, or null when no character can.
+//
+// The CLI resolves its own trigger the same way: it takes the Chat-context
+// binding for `voice:pushToTalk` and uses its key ONLY when that key is a
+// single character with no modifier. A modifier chord matches through a
+// different comparison that no written byte can satisfy.
+//
+// Null in, null out, and that is not a missing default: the CLI's own default
+// (space) is seeded by the READ, in voice-settings.js, so a null arriving here
+// is either a binding the operator cleared or a config not yet loaded. Both
+// must decline.
+function resolveTriggerKey(binding) {
+  if (!binding || typeof binding !== 'object') return null;
+  if (binding.ctrl || binding.alt || binding.shift || binding.meta || binding.super) return null;
+  return typeof binding.key === 'string' && binding.key.length === 1 ? binding.key : null;
+}
+
 // Strict `=== true`: the key travels through the `settings:get` whitelist,
 // where an omission arrives as undefined, and undefined must read as off.
 //
@@ -133,6 +218,7 @@ function readVoiceSubmitSettings(settings) {
   return {
     enabled,
     composition: enabled && raw.voiceSubmitComposition === true,
+    rearm: enabled && raw.voiceSubmitRearm === true,
     phrase: normalizePhrase(raw.voiceSubmitPhrase) || DEFAULT_SUBMIT_PHRASE,
   };
 }
@@ -145,5 +231,8 @@ module.exports = {
   findSubmit,
   matchTrigger,
   shouldFire,
+  shouldRearm,
+  composerIsEmpty,
+  resolveTriggerKey,
   readVoiceSubmitSettings,
 };

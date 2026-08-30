@@ -71,6 +71,7 @@ const DEFAULT_UI_SETTINGS = {
   selectionHints: false,
   voiceSubmit: false,
   voiceSubmitComposition: false,
+  voiceSubmitRearm: false,
   voiceSubmitPhrase: 'over and out',
   // New installs get the capability WITHOUT the firehose. Existing ones never
   // reach this value for this key — sanitizeTerminalReports resolves an absent
@@ -1252,6 +1253,8 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           voiceSubmit: typeof raw?.voiceSubmit === 'boolean' ? raw.voiceSubmit : DEFAULT_UI_SETTINGS.voiceSubmit,
           voiceSubmitComposition: typeof raw?.voiceSubmitComposition === 'boolean'
             ? raw.voiceSubmitComposition : DEFAULT_UI_SETTINGS.voiceSubmitComposition,
+          voiceSubmitRearm: typeof raw?.voiceSubmitRearm === 'boolean'
+            ? raw.voiceSubmitRearm : DEFAULT_UI_SETTINGS.voiceSubmitRearm,
           // A blank or non-string phrase resolves to the DEFAULT, never to '':
           // an empty trigger matches the end of every composer, so the value
           // that disarms the feature is `voiceSubmit`, never the phrase.
@@ -1309,6 +1312,8 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         voiceSubmit: typeof partial?.voiceSubmit === 'boolean' ? partial.voiceSubmit : cur.voiceSubmit,
         voiceSubmitComposition: typeof partial?.voiceSubmitComposition === 'boolean'
           ? partial.voiceSubmitComposition : cur.voiceSubmitComposition,
+        voiceSubmitRearm: typeof partial?.voiceSubmitRearm === 'boolean'
+          ? partial.voiceSubmitRearm : cur.voiceSubmitRearm,
         // Key ABSENT means "no opinion" and keeps the current value; key present
         // and BLANK is the operator clearing the field, which Preferences offers
         // as the way back to the default. Collapsing those two makes that

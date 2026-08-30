@@ -587,3 +587,52 @@ test('unsubscribe detaches a surface without disturbing the rest', async () => {
     assert.strictEqual(h.emits.length, 2, 'the other subscriber kept receiving');
   } finally { h.restore(); }
 });
+
+// ------------------------------------------------------- the trigger binding
+// `triggerBinding()` is the one hop where the settings:voiceMode payload shape
+// can drift silently: the re-arm reads the push-to-talk key through it, and
+// every failure mode of that feature looks like nothing happening. A renamed
+// key on the main side would leave the re-arm permanently declining with no
+// error anywhere, which is the shape of bug this whole ticket kept producing.
+
+test('triggerBinding reports the push-to-talk chord the file read carried', async () => {
+  const binding = { key: 'k', ctrl: false, alt: false, shift: false, meta: false, super: false };
+  const h = harness({
+    rows: [row('a')],
+    active: 'a',
+    voice: fileSays('tap', { trigger: { file: '/x/keybindings.json', binding, custom: true } }),
+  });
+  try {
+    await h.core.refresh();
+    assert.deepStrictEqual(h.core.triggerBinding(), binding);
+  } finally { h.restore(); }
+});
+
+test('triggerBinding is null before any read, and when the file binds no chord', async () => {
+  // Before a refresh there is no payload at all — the re-arm must decline
+  // rather than fall back to a space, which would type into a box whose owner
+  // has no push-to-talk key bound.
+  const fresh = harness({ rows: [row('a')], active: 'a' });
+  try {
+    assert.strictEqual(fresh.core.triggerBinding(), null);
+  } finally { fresh.restore(); }
+
+  // And the cleared-binding case the main-side read reports as `binding: null`.
+  const cleared = harness({
+    rows: [row('a')],
+    active: 'a',
+    voice: fileSays('tap', { trigger: { file: '/x/keybindings.json', binding: null, custom: true } }),
+  });
+  try {
+    await cleared.core.refresh();
+    assert.strictEqual(cleared.core.triggerBinding(), null);
+  } finally { cleared.restore(); }
+
+  // A payload with no trigger key at all (an older main process) is the same
+  // answer, and must not throw.
+  const legacy = harness({ rows: [row('a')], active: 'a', voice: fileSays('tap') });
+  try {
+    await legacy.core.refresh();
+    assert.strictEqual(legacy.core.triggerBinding(), null);
+  } finally { legacy.restore(); }
+});

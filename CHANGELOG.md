@@ -67,6 +67,25 @@ blocks a release.
   your phrase into the middle of a sentence it will submit early, and there is
   no undo. Nothing else changes — it still stays silent while a session is
   asking permission, still only listens to the session you are looking at.
+- **Tap mode can now re-arm itself when an agent finishes its turn.** In the
+  CLI's **tap** voice mode the recorder goes deaf while the agent is working:
+  the microphone is still on and the cursor still flickers when you speak, but
+  nothing is inserted, and only a keypress starts it up again. So dictating
+  across a back-and-forth meant walking over and tapping after every answer,
+  which is the whole thing hands-free submit was supposed to fix. A third
+  switch — **Re-arm tap mode when a session finishes its turn** — presses the
+  push-to-talk key for you once the agent has finished and the screen has
+  stopped repainting, so you can keep talking from wherever you are. It presses the key you actually have bound to
+  push-to-talk, not always a space, and if you have bound it to a key
+  combination rather than a single character it does nothing rather than type
+  something into your composer. It also stays out of the way whenever a
+  character would land somewhere it should not: nothing is pressed if you have
+  started typing in the box yourself, if a full-screen program is on the screen,
+  or if the session is asking permission for something — that last one matters
+  more here than anywhere else, because a session waiting on a dialog is idle,
+  which is exactly when this would otherwise fire, and the keypress would answer
+  the dialog. Needs the CLI's voice mode set to tap and hands-free submit
+  ticked; off by default, and box-wide like the rest of the voice settings.
 
 - **A ticket seat now starts in a worktree whose dependencies resolve.** A git
   worktree has no `node_modules` and nothing installs one, so a hand dispatched

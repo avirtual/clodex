@@ -6810,6 +6810,11 @@ body {
           <span>Also submit while macOS dictation is still holding the words</span>
         </label>
         <span class="hint-text" style="display: block; margin-top: 6px;">macOS dictation keeps what you said <em>underlined and uncommitted</em> until you press a key or click — the words never reach the session, so the setting above cannot see them and nothing happens until you touch the machine. With this on, Clodex reads the words while they are still pending and commits them for you when they end with the phrase. The trade: it is acting on a transcript you have not accepted yet, so if dictation puts the phrase in mid-sentence it will submit early, and there is no undo. Needs the box above ticked.</span>
+        <label class="prefs-check" style="margin-top: 6px;">
+          <input type="checkbox" id="prefs-voice-submit-rearm">
+          <span>Re-arm tap mode when a session finishes its turn</span>
+        </label>
+        <span class="hint-text" style="display: block; margin-top: 6px;">In the CLI&rsquo;s <strong>tap</strong> mode the recorder stops inserting what you say while the agent is working, and only a keypress starts it again &mdash; so after every answer you have to walk over and tap. With this on, Clodex presses the push-to-talk key for you once the agent has finished and the screen has stopped repainting, and you can keep dictating from where you are. It presses nothing if you have started typing in the box, if the session is asking permission, or if push-to-talk is bound to a key combination rather than a single character. Needs the CLI&rsquo;s voice mode set to tap, and the box above ticked.</span>
       </details>
       <details class="prefs-group" data-group="statusline">
         <summary><h4>Statusline</h4><span class="prefs-group-sub">What each agent shows above its prompt</span></summary>
@@ -22795,7 +22800,20 @@ ${m[2].replace(/^\r?\n/, "")}`;
         window.addEventListener("focus", () => {
           if (holds > 0) refresh();
         });
-        return { snapshot, subscribe, choose, refresh, repaint: emit, start, stop, isMode };
+        function triggerBinding() {
+          return state && state.trigger && state.trigger.binding || null;
+        }
+        return {
+          snapshot,
+          subscribe,
+          choose,
+          refresh,
+          repaint: emit,
+          start,
+          stop,
+          isMode,
+          triggerBinding
+        };
       }
       function createVoiceControl({ core }) {
         const sel = document.getElementById("prefs-voice-mode");
@@ -23585,12 +23603,30 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (attention === "permission") return false;
         return true;
       }
+      function shouldRearm({ enabled, rearm, voiceMode, attention, from, to } = {}) {
+        if (enabled !== true) return false;
+        if (rearm !== true) return false;
+        if (voiceMode !== "tap") return false;
+        if (attention === "permission") return false;
+        return from === "thinking" && to === "idle";
+      }
+      var COMPOSER_EMPTY = /^[\u276f>][\u0020\u00a0]?$/u;
+      function composerIsEmpty(row) {
+        if (typeof row !== "string") return false;
+        return COMPOSER_EMPTY.test(row);
+      }
+      function resolveTriggerKey(binding) {
+        if (!binding || typeof binding !== "object") return null;
+        if (binding.ctrl || binding.alt || binding.shift || binding.meta || binding.super) return null;
+        return typeof binding.key === "string" && binding.key.length === 1 ? binding.key : null;
+      }
       function readVoiceSubmitSettings(settings) {
         const raw = settings && typeof settings === "object" ? settings : {};
         const enabled = raw.voiceSubmit === true;
         return {
           enabled,
           composition: enabled && raw.voiceSubmitComposition === true,
+          rearm: enabled && raw.voiceSubmitRearm === true,
           phrase: normalizePhrase(raw.voiceSubmitPhrase) || DEFAULT_SUBMIT_PHRASE
         };
       }
@@ -23602,6 +23638,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         findSubmit,
         matchTrigger,
         shouldFire,
+        shouldRearm,
+        composerIsEmpty,
+        resolveTriggerKey,
         readVoiceSubmitSettings
       };
     }
@@ -23610,11 +23649,19 @@ ${m[2].replace(/^\r?\n/, "")}`;
   // renderer/voice-submit-watcher.js
   var require_voice_submit_watcher = __commonJS({
     "renderer/voice-submit-watcher.js"(exports, module) {
-      var { findSubmit, matchTrigger, shouldFire } = require_voice_submit();
+      var {
+        findSubmit,
+        matchTrigger,
+        shouldFire,
+        shouldRearm,
+        composerIsEmpty
+      } = require_voice_submit();
       var QUIET_MS = 1200;
       var ENTER_SETTLE_MS = 30;
       var CONSUMED_IDLE_MS = 9e4;
       var COMPOSITION_POLL_MS = 300;
+      var REARM_SETTLE_MS = 3e3;
+      var REARM_ABANDON_MS = 1e4;
       function readComposition(terminal) {
         const root = terminal && terminal.element;
         if (!root || typeof root.querySelector !== "function") return null;
@@ -23655,6 +23702,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         pollMs = COMPOSITION_POLL_MS,
         readComposition: readPending = readComposition,
         commitComposition: commitPending = commitComposition,
+        getVoiceMode = () => null,
+        getTriggerKey = () => null,
+        rearmMs = REARM_SETTLE_MS,
+        abandonMs = REARM_ABANDON_MS,
         now = Date.now
       }) {
         let timer = null;
@@ -23671,6 +23722,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let desynced = false;
         let commits = 0;
         let commitFailures = 0;
+        let activity = null;
+        let rearms = 0;
+        let rearmTimer = null;
+        let lastWriteAt = 0;
+        let rearmDeadline = 0;
         function onNormalBuffer() {
           try {
             return terminal.buffer.active.type === "normal";
@@ -23795,16 +23851,82 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (!took) commitFailures += 1;
         }
+        function rearmAllowed(from, to) {
+          let cfg = null;
+          try {
+            cfg = getConfig();
+          } catch {
+            cfg = null;
+          }
+          if (!cfg) return false;
+          let mode = null;
+          try {
+            mode = getVoiceMode();
+          } catch {
+            mode = null;
+          }
+          let attention = null;
+          try {
+            attention = getAttention();
+          } catch {
+            attention = "permission";
+          }
+          return shouldRearm({
+            enabled: cfg.enabled,
+            rearm: cfg.rearm,
+            voiceMode: mode,
+            attention,
+            from,
+            to
+          });
+        }
+        function attemptRearm() {
+          rearmTimer = null;
+          if (disposed) return;
+          if (activity !== "idle" || !rearmAllowed("thinking", "idle")) return;
+          const quietFor = now() - lastWriteAt;
+          if (quietFor < rearmMs) {
+            if (now() >= rearmDeadline) return;
+            rearmTimer = setTimeout(attemptRearm, rearmMs - quietFor);
+            return;
+          }
+          if (!composerIsEmpty(cursorRow())) return;
+          let key = null;
+          try {
+            key = getTriggerKey();
+          } catch {
+            key = null;
+          }
+          if (typeof key !== "string" || key.length !== 1) return;
+          rearms += 1;
+          write(key);
+        }
+        function noteActivity(state, turnEnd) {
+          if (disposed) return;
+          const from = activity;
+          activity = state;
+          if (from !== "thinking" || state !== "idle") return;
+          if (turnEnd !== true) return;
+          if (!rearmAllowed(from, state)) return;
+          if (rearmTimer) clearTimeout(rearmTimer);
+          rearmDeadline = now() + abandonMs;
+          rearmTimer = setTimeout(attemptRearm, rearmMs);
+        }
         const schedule = () => {
           if (disposed) return;
           if (timer) clearTimeout(timer);
           timer = setTimeout(tick, quietMs);
         };
-        const subs = [terminal.onWriteParsed(schedule)];
+        const subs = [terminal.onWriteParsed(() => {
+          lastWriteAt = now();
+          schedule();
+        })];
         pollTimer = setInterval(pollComposition, pollMs);
         return {
           refresh: schedule,
+          noteActivity,
           fireCount: () => fires,
+          rearmCount: () => rearms,
           commitCount: () => commits,
           commitFailureCount: () => commitFailures,
           dispose() {
@@ -23812,9 +23934,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (timer) clearTimeout(timer);
             if (enterTimer) clearTimeout(enterTimer);
             if (pollTimer) clearInterval(pollTimer);
+            if (rearmTimer) clearTimeout(rearmTimer);
             timer = null;
             enterTimer = null;
             pollTimer = null;
+            rearmTimer = null;
             for (const s of subs) s.dispose();
           }
         };
@@ -23826,7 +23950,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         QUIET_MS,
         ENTER_SETTLE_MS,
         COMPOSITION_POLL_MS,
-        CONSUMED_IDLE_MS
+        CONSUMED_IDLE_MS,
+        REARM_SETTLE_MS,
+        REARM_ABANDON_MS
       };
     }
   });
@@ -31583,7 +31709,11 @@ ${detail}` });
       var { createTermSearch } = require_term_search();
       var { createIntentHighlight } = require_intent_highlight();
       var { createVoiceSubmitWatcher } = require_voice_submit_watcher();
-      var { DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings } = require_voice_submit();
+      var {
+        DEFAULT_SUBMIT_PHRASE,
+        readVoiceSubmitSettings,
+        resolveTriggerKey
+      } = require_voice_submit();
       var { initBanners } = require_banners();
       var { initThemes } = require_themes();
       var { initLibraryDrawers } = require_library_drawers();
@@ -32615,7 +32745,18 @@ ${detail}` });
             const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
             return el ? el.dataset.attention || null : "permission";
           },
-          write: (data) => window.api.writeToSession(name, data)
+          write: (data) => window.api.writeToSession(name, data),
+          // Both read through voiceCore, which already polls the CLI's config for the
+          // bar button — a second reader here would be a second copy of a box-wide
+          // value, which voice-control.js's header rules out.
+          // The FILE-backed mode, not snapshot().mode: that one prefers a PENDING
+          // pick, so a queued `/voice tap` the CLI has not run yet would make the
+          // re-arm act as though tap were already live.
+          getVoiceMode: () => {
+            const { state } = voiceCore.snapshot();
+            return state && state.effective || null;
+          },
+          getTriggerKey: () => resolveTriggerKey(voiceCore.triggerBinding())
         });
         const searchAddon = new SearchAddon();
         terminal.loadAddon(searchAddon);
@@ -33808,7 +33949,7 @@ ${detail}` });
         }
       });
       window.api.onSelectionSent((name) => drawerHost.onSelectionSent(name));
-      window.api.onSessionActivity((name, state) => {
+      window.api.onSessionActivity((name, state, turnEnd) => {
         const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         if (!el) return;
         if (state === "thinking") {
@@ -33818,6 +33959,8 @@ ${detail}` });
           applyThinkBadge(el);
         }
         el.dataset.activity = state;
+        const sess = sessions.get(name);
+        if (sess && sess.voiceSubmit) sess.voiceSubmit.noteActivity(state, turnEnd === true);
         sidebarMeta.set(name, { ...sidebarMeta.get(name) || {}, lastActivityTs: Date.now() });
         scheduleSidebarRelayout();
       });
@@ -34720,7 +34863,12 @@ Click for live activity`;
         sessionList,
         showToast
       });
-      var voiceSubmitConfig = { enabled: false, composition: false, phrase: DEFAULT_SUBMIT_PHRASE };
+      var voiceSubmitConfig = {
+        enabled: false,
+        composition: false,
+        rearm: false,
+        phrase: DEFAULT_SUBMIT_PHRASE
+      };
       async function refreshVoiceSubmitConfig() {
         try {
           voiceSubmitConfig = readVoiceSubmitSettings(await window.api.getSettings());
@@ -35065,6 +35213,7 @@ Click for live activity`;
       var prefsSelectionHints = document.getElementById("prefs-selection-hints");
       var prefsVoiceSubmit = document.getElementById("prefs-voice-submit");
       var prefsVoiceSubmitComposition = document.getElementById("prefs-voice-submit-composition");
+      var prefsVoiceSubmitRearm = document.getElementById("prefs-voice-submit-rearm");
       var prefsVoiceSubmitPhrase = document.getElementById("prefs-voice-submit-phrase");
       var prefsTerminalReports = document.getElementById("prefs-terminal-reports");
       var prefsDiscoverOnStartup = document.getElementById("prefs-discover-on-startup");
@@ -36680,6 +36829,7 @@ ${res.stderr}` : "");
         if (prefsSelectionHints) prefsSelectionHints.checked = !!s.selectionHints;
         if (prefsVoiceSubmit) prefsVoiceSubmit.checked = s.voiceSubmit === true;
         if (prefsVoiceSubmitComposition) prefsVoiceSubmitComposition.checked = s.voiceSubmitComposition === true;
+        if (prefsVoiceSubmitRearm) prefsVoiceSubmitRearm.checked = s.voiceSubmitRearm === true;
         if (prefsVoiceSubmitPhrase) prefsVoiceSubmitPhrase.value = s.voiceSubmitPhrase || "";
         setTerminalReports(s.terminalReports);
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
@@ -36731,6 +36881,7 @@ ${res.stderr}` : "");
           selectionHints: prefsSelectionHints ? prefsSelectionHints.checked : false,
           voiceSubmit: prefsVoiceSubmit ? prefsVoiceSubmit.checked : false,
           voiceSubmitComposition: prefsVoiceSubmitComposition ? prefsVoiceSubmitComposition.checked : false,
+          voiceSubmitRearm: prefsVoiceSubmitRearm ? prefsVoiceSubmitRearm.checked : false,
           voiceSubmitPhrase: prefsVoiceSubmitPhrase ? prefsVoiceSubmitPhrase.value.trim() : "",
           terminalReports: readTerminalReports(),
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,

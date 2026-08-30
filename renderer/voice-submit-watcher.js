@@ -22,7 +22,9 @@
 // The buffer read is ONE row. The latch keys on that row's content, so an
 // identical repaint stays answered and a changed draft re-arms.
 
-const { findSubmit, matchTrigger, shouldFire } = require('./lib/voice-submit');
+const {
+  findSubmit, matchTrigger, shouldFire, shouldRearm, composerIsEmpty,
+} = require('./lib/voice-submit');
 
 // The quiet window. Streamed transcription lands in segments, so a fire on the
 // first write that completes the phrase submits half an utterance. Shorter than
@@ -56,6 +58,53 @@ const CONSUMED_IDLE_MS = 90_000;
 // test that decides, so sampling faster than the window is what gives that test
 // its resolution rather than what shortens it.
 const COMPOSITION_POLL_MS = 300;
+
+// The re-arm waits this long after the idle edge before writing, and re-checks
+// every gate when it lands. Two separate jobs, and the LONGER of the two needs
+// is what sets the number.
+//
+// One: the permission interlock reads a sidebar row written by the
+// `session-attention` event, which travels from a different watcher (an
+// fs.watch on the attention log) than the activity event does (the transcript
+// poll). The orderings are not synchronised, so an idle edge can arrive just
+// BEFORE the notice that a dialog is open, and the fence is only as good as
+// the row it reads.
+//
+// Two, and this is why it is seconds rather than milliseconds: `turnEnd` gates
+// the WIRE emitter's mid-turn idle, but the jsonl emitter passes
+// `notify = state === 'idle'` unconditionally, so on that path every 1s text
+// flush between tool calls arrives here looking like a turn end. The only
+// evidence this side has that the turn really ended is that the terminal then
+// STAYS quiet — a CLI still working repaints. This window is how long it must
+// stay quiet for.
+//
+// The window is a QUIET GAP, not a delay: `attemptRearm` reschedules itself
+// while the terminal is still painting, so the size of this number does not
+// decide whether the re-arm happens, only how long a lull has to be before it
+// counts as one. That is why it is not tuned to a measured repaint cadence —
+// which the author could not establish from the binary anyway. Too short reads
+// a gap between two paints of one turn as a turn end and writes into a live
+// turn, where the CLI's voice path is dead: the byte lands in the draft, and a
+// non-empty composer then blocks the real re-arm at turn end. Too long only
+// delays the write.
+const REARM_SETTLE_MS = 3000;
+
+// How long a single idle edge may keep rescheduling before it is abandoned.
+//
+// THIS CONSTANT BOUNDS A HAZARD; it is not merely a guard against a stuck edge.
+// `voiceMode` is the one gate that cannot be re-read at write time — nothing
+// here can see whether the CLI's recorder is already armed — so a byte written
+// late can land after the operator has tapped push-to-talk by hand, where it
+// STOPS recording instead of arming it. This deadline is the width of that
+// exposure window, so it is the reason not to widen it.
+//
+// Ten seconds because a genuine turn end that has not produced a settle-length
+// lull within it is almost certainly not a turn end. The trailing window below
+// re-arms its own timer on every paint, so without a deadline a terminal that
+// never goes quiet — a spinner, a tailing log, an agent that went straight back
+// to work without an activity event — would reschedule off one edge forever.
+// Abandoning is the safe end: the next real turn end starts a fresh attempt.
+const REARM_ABANDON_MS = 10000;
 
 // Provisional boundary #1: where the pending composed text comes from.
 // Contract: the text of THIS terminal's pending composition, or null when there
@@ -170,6 +219,10 @@ function createVoiceSubmitWatcher(terminal, {
   pollMs = COMPOSITION_POLL_MS,
   readComposition: readPending = readComposition,
   commitComposition: commitPending = commitComposition,
+  getVoiceMode = () => null,
+  getTriggerKey = () => null,
+  rearmMs = REARM_SETTLE_MS,
+  abandonMs = REARM_ABANDON_MS,
   now = Date.now,
 }) {
   let timer = null;
@@ -216,6 +269,20 @@ function createVoiceSubmitWatcher(terminal, {
   let desynced = false;
   let commits = 0;
   let commitFailures = 0;
+
+  // The previous activity state, which is the whole of the edge test. Seeded
+  // null so the FIRST event a watcher ever sees cannot look like an arrival
+  // from 'thinking' — a seat that is merely idle when its terminal is built
+  // has not just finished a turn, and re-arming it would write into whatever
+  // draft is already sitting there.
+  let activity = null;
+  let rearms = 0;
+  let rearmTimer = null;
+  // When the terminal last painted anything. The turn-end evidence on the
+  // jsonl path, where every 1s text flush claims to be a turn end.
+  let lastWriteAt = 0;
+  // When the edge currently being waited on arrived, for the abandon deadline.
+  let rearmDeadline = 0;
 
   // The cursor row alone, truncated at the cursor column. The phrase ends the
   // utterance, so it is on the row the cursor is on even when the draft wrapped.
@@ -389,6 +456,91 @@ function createVoiceSubmitWatcher(terminal, {
     if (!took) commitFailures += 1;
   }
 
+  function rearmAllowed(from, to) {
+    let cfg = null;
+    try { cfg = getConfig(); } catch { cfg = null; }
+    if (!cfg) return false;
+    let mode = null;
+    try { mode = getVoiceMode(); } catch { mode = null; }
+    let attention = null;
+    try { attention = getAttention(); } catch { attention = 'permission'; }
+    return shouldRearm({
+      enabled: cfg.enabled, rearm: cfg.rearm, voiceMode: mode, attention, from, to,
+    });
+  }
+
+  // The re-arm, driven by the sidebar's activity state rather than by anything
+  // this file can observe: while the agent is THINKING the CLI's voice key path
+  // is dead at the top (`isActive` is `!busy`), so a byte written mid-turn does
+  // nothing at all. The first moment a write can arm the recorder is the edge
+  // out of that window, which is exactly the transition reported here.
+  // A TRAILING window, not a one-shot delay, and that distinction is the whole
+  // of it. The condition being waited on is "the terminal has stopped
+  // painting", and on the wire path the composer repaint ALWAYS lands after
+  // the edge — `turnCompleted` fires when the tee finishes the upstream
+  // stream, so the CLI cannot have drawn its answer yet. A version of this
+  // that RETURNED on a recent paint therefore declined permanently on the one
+  // path that carries a truthful `turnEnd`, and no value of the constant fixed
+  // it. Rescheduling is what turns "not yet" back into "later".
+  //
+  // Same shape as `schedule()` on the submit half, for the same reason.
+  function attemptRearm() {
+    rearmTimer = null;
+    if (disposed) return;
+    // The edge being waited on is stale: re-check it rather than trusting the
+    // timer, since a turn that restarted means the CLI's key path is dead
+    // again and a dialog that opened means the byte would answer it.
+    if (activity !== 'idle' || !rearmAllowed('thinking', 'idle')) return;
+
+    const quietFor = now() - lastWriteAt;
+    if (quietFor < rearmMs) {
+      // Still painting. Give up only at the deadline, so one edge cannot
+      // reschedule forever behind a spinner or a tailing log.
+      if (now() >= rearmDeadline) return;
+      rearmTimer = setTimeout(attemptRearm, rearmMs - quietFor);
+      return;
+    }
+
+    // Last, because it is the only gate that reads the screen, and the reason
+    // it is not optional: the CLI's tap handler bails on a NON-EMPTY composer
+    // BEFORE it swallows the key, so the character would be INSERTED into the
+    // operator's draft and would arm nothing. cursorRow() returns null off the
+    // normal buffer, which composerIsEmpty declines too.
+    if (!composerIsEmpty(cursorRow())) return;
+
+    let key = null;
+    try { key = getTriggerKey(); } catch { key = null; }
+    // No plain character is bound to push-to-talk, so no byte can arm the
+    // recorder — a space written in hope would just type into the draft.
+    if (typeof key !== 'string' || key.length !== 1) return;
+
+    rearms += 1;
+    write(key);
+  }
+
+  function noteActivity(state, turnEnd) {
+    if (disposed) return;
+    const from = activity;
+    activity = state;
+    if (from !== 'thinking' || state !== 'idle') return;
+    // NOT merely idle. Two emitters produce `idle` mid-turn: the wire tracker's
+    // gap-idle timer, when a tool runs longer than its gap with nothing in
+    // flight, and the jsonl watcher's flush between tool calls. Mid-turn the
+    // CLI's voice path is dead, so the byte would be INSERTED into the draft —
+    // and a non-empty composer is exactly what makes the tap handler decline
+    // the real re-arm when the turn finally does end. Acting on the bare state
+    // edge inverts the feature on long turns, which are the ones it is for.
+    if (turnEnd !== true) return;
+
+    // Every gate is evaluated HERE and again when the timer lands. Cheap, and
+    // it keeps the edge test where the edge actually is: by the time the timer
+    // fires, `activity` may already have moved on.
+    if (!rearmAllowed(from, state)) return;
+    if (rearmTimer) clearTimeout(rearmTimer);
+    rearmDeadline = now() + abandonMs;
+    rearmTimer = setTimeout(attemptRearm, rearmMs);
+  }
+
   // Trailing debounce: every write RESTARTS the window, which is what makes the
   // wait a quiet gate rather than a fixed delay.
   const schedule = () => {
@@ -401,12 +553,14 @@ function createVoiceSubmitWatcher(terminal, {
   // is on screen. The composition half cannot use it — while a composition is
   // pending onData has not fired and the buffer does not hold the text — so it
   // polls the overlay instead, on its own timer.
-  const subs = [terminal.onWriteParsed(schedule)];
+  const subs = [terminal.onWriteParsed(() => { lastWriteAt = now(); schedule(); })];
   pollTimer = setInterval(pollComposition, pollMs);
 
   return {
     refresh: schedule,
+    noteActivity,
     fireCount: () => fires,
+    rearmCount: () => rearms,
     commitCount: () => commits,
     commitFailureCount: () => commitFailures,
     dispose() {
@@ -414,9 +568,11 @@ function createVoiceSubmitWatcher(terminal, {
       if (timer) clearTimeout(timer);
       if (enterTimer) clearTimeout(enterTimer);
       if (pollTimer) clearInterval(pollTimer);
+      if (rearmTimer) clearTimeout(rearmTimer);
       timer = null;
       enterTimer = null;
       pollTimer = null;
+      rearmTimer = null;
       for (const s of subs) s.dispose();
     },
   };
@@ -425,4 +581,5 @@ function createVoiceSubmitWatcher(terminal, {
 module.exports = {
   createVoiceSubmitWatcher, readComposition, commitComposition,
   QUIET_MS, ENTER_SETTLE_MS, COMPOSITION_POLL_MS, CONSUMED_IDLE_MS,
+  REARM_SETTLE_MS, REARM_ABANDON_MS,
 };

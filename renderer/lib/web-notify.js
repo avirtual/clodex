@@ -9,11 +9,9 @@
 // the pure notice-builders plus a thin, injectable Notification wrapper so the
 // formatting and permission logic test without a real Notification.
 //
-// NOT wired: agent-finished (the turn-end `notifyOS` at session-manager.js
-// _emitActivity ~1403) has NO renderer broadcast — session-activity carries the
-// idle STATE but not the `notify` end-of-turn boolean — so the browser can't
-// tell a finished turn from any other idle. Bridging it (an ipc-message/event
-// broadcast at that site) is the trailhead for the M version; left out here.
+// NOT wired: agent-finished. `session-activity` now carries the end-of-turn
+// boolean, so the browser CAN tell a finished turn from a mid-turn idle; no
+// notice is built from it yet.
 
 // ── pure notice-builders ──────────────────────────────────────────────────
 
