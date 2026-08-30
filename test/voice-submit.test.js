@@ -996,6 +996,102 @@ test('turning the setting off ends the DICTATION SESSION, not just the compositi
     'ENTER: nothing consumed — the un-tick ended the session the prefix belonged to');
 });
 
+test('a LONG utterance keeps the session alive — the expiry measures silence, not time since the last submit', async () => {
+  // THE FAILING PATH, and it is ordinary rather than a corner: commit the first
+  // utterance, then dictate a second one for longer than the expiry with the
+  // overlay ACTIVE throughout. That activity is positive evidence the dictation
+  // session never ended, so the prefix must not age out — the operator has not
+  // stopped talking, and the OS accumulation still holds utterance 1.
+  //
+  // Stamping only at commit time measures "time since we last submitted", which
+  // this crosses while doing nothing wrong. The overlay is known to flap
+  // mid-session, so the null read that follows is expected, not exceptional.
+  const clock = { t: 1000 };
+  const u1 = ' the first utterance roger';
+  const h = compositionHarness({
+    config: { enabled: true, composition: true, phrase: 'roger' },
+    composed: u1,
+    now: () => clock.t,
+  });
+  await h.settled();
+  clock.t += TEST_QUIET_MS + 1;
+  await h.settled();
+  assert.deepStrictEqual(h.commits, [[u1, '']]);
+  await h.settled();                       // the null read the commit produces
+
+  // A second utterance arrives slowly, over well past the expiry. The overlay is
+  // ACTIVE at every step and the text keeps GROWING, so this never reaches the
+  // quiet-window return — which is exactly why the refresh cannot live below it.
+  //
+  // The clock advances AND the text grows together, so the composition is never
+  // observed unchanged across an elapsed window. Every poll therefore returns at
+  // the growth check or the quiet-window check, and the ONLY place a refresh can
+  // fire is above them — which is what pins the placement rather than merely the
+  // existence of the refresh. Letting a word go stale here would let a refresh
+  // sitting below the quiet-window return pass this test too.
+  let sofar = u1;
+  const words = [' it', ' keeps', ' going', ' and', ' going'];
+  for (const w of words) {
+    clock.t += Math.floor(CONSUMED_IDLE_MS / 2);
+    sofar += w;
+    h.env.composed = sofar;
+    await h.settled();
+  }
+  assert.ok(clock.t - 1000 > CONSUMED_IDLE_MS,
+    'ENTER: the utterance really did outlast the expiry window');
+
+  // Then the overlay flaps, as the operator's probe showed it does unprompted.
+  h.env.composed = null;
+  await h.settled();
+
+  // And the utterance finishes. Utterance 1 must STILL be consumed.
+  const u2 = sofar.slice(u1.length) + ' roger';
+  h.env.composed = u1 + u2;
+  await h.settled();
+  clock.t += TEST_QUIET_MS + 1;
+  await h.settled();
+  assert.strictEqual(h.commits.length, 2, `should have committed again: ${JSON.stringify(h.commits)}`);
+  assert.deepStrictEqual(h.commits[1], [u1 + u2, u1],
+    'the prefix must have survived: a live overlay is the session saying it is still here');
+  assert.notStrictEqual(h.commits[1][1], '',
+    'ENTER: an empty prefix here is the resend — the whole accumulation would go out again');
+});
+
+test('a full-screen program does not end the dictation session', async () => {
+  // A pager opening and closing leaves the OS accumulation fully intact, so
+  // clearing the prefix here would resend every utterance already submitted.
+  // The asymmetry that decides it: a surviving prefix at worst desyncs and goes
+  // quiet, costing one utterance the operator can repeat; a cleared prefix
+  // resends sentences already submitted, which cannot be undone.
+  const clock = { t: 1000 };
+  const u1 = ' the first utterance roger';
+  const h = compositionHarness({
+    config: { enabled: true, composition: true, phrase: 'roger' },
+    composed: u1,
+    now: () => clock.t,
+  });
+  await h.settled();
+  clock.t += TEST_QUIET_MS + 1;
+  await h.settled();
+  assert.deepStrictEqual(h.commits, [[u1, '']]);
+
+  // vim opens and closes, well inside the expiry.
+  h.term._state.type = 'alternate';
+  h.env.composed = u1 + ' invisible to this feature';
+  await h.settled();
+  assert.strictEqual(h.commits.length, 1, 'nothing may commit over a full-screen program');
+  h.term._state.type = 'normal';
+
+  const u2 = ' and now the second roger';
+  h.env.composed = u1 + u2;
+  await h.settled();
+  clock.t += TEST_QUIET_MS + 1;
+  await h.settled();
+  assert.strictEqual(h.commits.length, 2, 'the feature must work again once the program exits');
+  assert.deepStrictEqual(h.commits[1], [u1 + u2, u1],
+    'ENTER: the prefix survived the pager — otherwise utterance 1 goes out a second time');
+});
+
 test('a composition over a full-screen program is never committed', async () => {
   // The alt-screen decline has to be asked on the COMPOSITION path in its own
   // right: that path never reads the buffer, so a check living inside the buffer

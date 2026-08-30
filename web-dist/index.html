@@ -23744,7 +23744,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (!onNormalBuffer()) {
             forgetPending();
-            forgetConsumed();
             return;
           }
           let text = null;
@@ -23758,24 +23757,24 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (consumed && now() - consumedAt >= CONSUMED_IDLE_MS) forgetConsumed();
             return;
           }
+          if (desynced) return;
+          if (!text.startsWith(consumed)) {
+            desynced = true;
+            return;
+          }
+          consumedAt = now();
           if (text !== pending) {
             pending = text;
             pendingAt = now();
             return;
           }
           if (now() - pendingAt < quietMs) return;
-          if (desynced) return;
-          if (!text.startsWith(consumed)) {
-            desynced = true;
-            return;
-          }
           const fresh = text.slice(consumed.length);
           if (!matchTrigger(fresh.trim(), cfg.phrase)) return;
           if (committed === text) return;
           committed = text;
           const alreadySent = consumed;
           consumed = text;
-          consumedAt = now();
           let attention = null;
           try {
             attention = getAttention();

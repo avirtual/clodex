@@ -45,7 +45,9 @@ const ENTER_SETTLE_MS = 30;
 // new session. The operator's probe showed `.composition-view.active` flapping
 // mid-session — composing, unselected, composing — without the machine being
 // touched, so gaps of seconds are ORDINARY and this cannot be tightened toward
-// the poll interval.
+// the poll interval. It measures SILENCE: the stamp refreshes on every live
+// overlay read, so a long utterance cannot age the prefix out while it is still
+// being spoken.
 const CONSUMED_IDLE_MS = 90_000;
 
 // A composition emits no event this side can subscribe to — compositionupdate
@@ -81,8 +83,8 @@ function readComposition(terminal) {
 // Contract: commit it, and report whether it took.
 //
 // A synthetic keydown, because that is what the operator's live evidence
-// identified: pressing Command commits. That is CompositionHelper.keydown,
-// which exempts only 229/Shift/Ctrl/Alt and sends everything else into
+// identified: pressing Command commits. CompositionHelper.keydown
+// exempts only 229/Shift/Ctrl/Alt and sends everything else into
 // _finalizeComposition(false), reading the text out of the textarea and
 // dispatching it immediately. Preferred over calling
 // _finalizeComposition directly: it is the same path a real key takes.
@@ -296,7 +298,13 @@ function createVoiceSubmitWatcher(terminal, {
     // not a draft for this feature to submit, whatever it says. Forgetting
     // rather than merely returning means the words cannot be adopted as
     // already-stable the moment the program exits.
-    if (!onNormalBuffer()) { forgetPending(); forgetConsumed(); return; }
+    //
+    // Only the per-composition half is forgotten. A pager opening and closing
+    // does not end the OS's dictation session — the accumulation is fully intact
+    // when it exits — so clearing the prefix here would resend every utterance
+    // already submitted. The decline to COMMIT while the program is up is
+    // untouched; it is only the session state that survives.
+    if (!onNormalBuffer()) { forgetPending(); return; }
 
     let text = null;
     try { text = readPending(terminal); } catch { text = null; }
@@ -310,6 +318,20 @@ function createVoiceSubmitWatcher(terminal, {
       return;
     }
 
+    if (desynced) return;
+    if (!text.startsWith(consumed)) { desynced = true; return; }
+    // AN ACTIVE OVERLAY IS THE EVIDENCE THE SESSION IS ALIVE, and the expiry
+    // measures silence, not time since the last submit. Stamped here rather than
+    // at commit time so that dictating one long utterance — overlay active
+    // throughout, which is positive proof the session never ended — cannot age
+    // the prefix out and resend everything on the next flap. Above the growth
+    // return, so words still arriving refresh it too.
+    //
+    // A DESYNCED session returns before this and therefore still expires. That
+    // is deliberate: it is the one state where letting the prefix die is how the
+    // feature comes back.
+    consumedAt = now();
+
     if (text !== pending) { pending = text; pendingAt = now(); return; }
     // The words are still un-finalised, so the quiet window is doing more work
     // here than on the buffer side: it is the only thing standing between a
@@ -317,8 +339,6 @@ function createVoiceSubmitWatcher(terminal, {
     // cannot undo. A composition that is still growing never reaches this line.
     if (now() - pendingAt < quietMs) return;
 
-    if (desynced) return;
-    if (!text.startsWith(consumed)) { desynced = true; return; }
     const fresh = text.slice(consumed.length);
 
     // Dictation prepends a space to the overlay text. It cannot affect a match
@@ -336,7 +356,6 @@ function createVoiceSubmitWatcher(terminal, {
     committed = text;
     const alreadySent = consumed;
     consumed = text;
-    consumedAt = now();
 
     let attention = null;
     try { attention = getAttention(); } catch { attention = 'permission'; }
