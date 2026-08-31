@@ -79,6 +79,14 @@ function isUnspeakableToken(tok) {
   return false;
 }
 
+// Give a fragment a sentence end unless it already has one. Only used where a
+// line break carried the pause that punctuation now has to carry instead.
+function endStopped(body) {
+  const t = body.trim();
+  if (!t) return '';
+  return /[.!?:;,]$/.test(t) ? t : `${t}.`;
+}
+
 function stripInline(text) {
   return String(text)
     // Link text is the speakable half; the target never is.
@@ -87,10 +95,16 @@ function stripInline(text) {
     // reaches it as a bare token and is dropped. Removing them later would
     // leave every path quoted and spoken.
     .replace(/`{1,3}([^`\n]*)`{1,3}/g, '$1')
-    .replace(/^\s{0,3}#{1,6}\s+/gm, '')      // heading marks
+    // A heading is a fragment and the line break after it is the only pause it
+    // has; end-stopping it is what keeps "Summary" from running into the
+    // sentence below it.
+    .replace(/^\s{0,3}#{1,6}\s+(.*?)\s*$/gm, (_m, body) => endStopped(body))
     .replace(/^\s{0,3}>\s?/gm, '')           // block quotes
-    .replace(/^\s*[-*+]\s+/gm, '')           // bullets
-    .replace(/^\s*\d+[.)]\s+/gm, '')         // ordered items
+    // A list item is a sentence for the ear. The trailing period is added with
+    // the marker removed, or consecutive items run together into one
+    // unpunctuated string and `say` reads them without a pause.
+    .replace(/^\s*[-*+]\s+(.*?)\s*$/gm, (_m, body) => endStopped(body))
+    .replace(/^\s*\d+[.)]\s+(.*?)\s*$/gm, (_m, body) => endStopped(body))
     .replace(/^\s*[-*_]{3,}\s*$/gm, '')      // rules
     .replace(/(\*\*|__|~~)(.+?)\1/g, '$2')   // strong / strike
     .replace(/(?<![\w*])\*([^*\n]+)\*(?![\w*])/g, '$1'); // emphasis
@@ -122,7 +136,10 @@ function truncate(text, max) {
 function speakable(text, { max = SPEAK_MAX_CHARS } = {}) {
   if (!text || typeof text !== 'string') return '';
   let t = dropTokens(stripInline(stripBlocks(text)));
-  t = t.replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim();
+  // Horizontal space only, and per-line trimming that PRESERVES blank lines: a
+  // collapse of every whitespace run would eat the paragraph breaks before the
+  // rule below can read them, silently running two sentences together.
+  t = t.replace(/[ \t]+/g, ' ').replace(/[ \t]*\n[ \t]*/g, '\n').trim();
   // Paragraph breaks become sentence breaks so `say` pauses where the writing
   // did; a newline alone runs two sentences together.
   t = t.replace(/\n{2,}/g, '. ').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();

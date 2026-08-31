@@ -31,10 +31,11 @@ const SAY_BIN = '/usr/bin/say';
 // not warmth. A friendlier default is a regression for the use it was built for.
 const DEFAULT_VOICE = 'Daniel';
 
-// `say -v '?'` lines are `Name  locale  # sample`, and a name may contain a
-// space ("Eddy (English (UK))"), so the locale column anchors the split rather
-// than the first whitespace run.
-const VOICE_LINE = /^(.+?)\s{2,}([a-z]{2}_[A-Z]{2})\s/;
+// `say -v '?'` lines are `Name <spaces> locale <spaces> # sample`. A name may
+// contain spaces ("Eddy (English (UK))") AND a long name is followed by only a
+// single space, so neither the first whitespace run nor a fixed column finds the
+// boundary. The locale token is the anchor, pinned by the `#` that follows it.
+const VOICE_LINE = /^(.+?)\s+([a-z]{2}_[A-Z]{2})\s+#/;
 
 // ENUMERATED, NEVER LISTED FROM MEMORY. The installed set is far smaller than
 // macOS documentation suggests and differs per box — six usable English voices

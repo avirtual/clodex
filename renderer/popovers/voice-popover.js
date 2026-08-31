@@ -11,6 +11,11 @@
 // Claude only. Codex has no `/voice`, so a button on a Codex seat's bar would
 // name a setting that seat cannot have.
 //
+// It also carries the OUTPUT half (t597): whether Clodex reads the final reply
+// aloud. Input and output are one popover because they are one conversation
+// across the room, and because the two interlock — a narration is suppressed
+// while the recorder is lit and killed when it lights.
+//
 // There is no muted-microphone codepoint in Unicode — 🎤 and 🎙 are the only
 // two, neither has a struck-through variant, `🔇` is a SPEAKER (audio output,
 // the wrong direction), and a combining slash composes only if the font agrees.
@@ -22,6 +27,20 @@
 
 const { esc } = require('../lib/format');
 const { VOICE_ITEMS } = require('../voice-control');
+
+// Read on OPEN rather than cached at init: the file is the truth for the input
+// half and must be for this half too, or a Preferences change would leave the
+// checkbox asserting a value the store contradicts.
+async function readSpeakSettings() {
+  try {
+    const s = await window.api.getSettings();
+    return {
+      on: s?.speakReplies === true,
+      voice: typeof s?.speakVoice === 'string' ? s.speakVoice : '',
+      voices: Array.isArray(s?.speakVoices) ? s.speakVoices : [],
+    };
+  } catch { return null; }
+}
 
 function initVoicePopover({ core, renderProxyBar }) {
   const pop = document.getElementById('voice-popover');
@@ -72,7 +91,46 @@ function initVoicePopover({ core, renderProxyBar }) {
       note = 'One setting for every Claude session on this machine. Sessions already running keep the mode they started with until they restart.';
     }
     body.innerHTML = `<div class="voice-rows${snap.target ? '' : ' voice-rows-off'}">${rows}</div>`
-      + `<div class="cost-note">${note}</div>`;
+      + `<div class="cost-note">${note}</div>`
+      + `<div class="speak-host">${speakHtml()}</div>`;
+    // The settings read is async and the rows above are not: painting the shell
+    // first and filling it on arrival keeps the picker instant, and a failed
+    // read simply leaves the section absent rather than blocking the popover.
+    refreshSpeakSection();
+  }
+
+  // The OUTPUT half. Rendered from the last read; empty until one lands.
+  let speak = null;
+  function speakHtml() {
+    if (!speak) return '';
+    const voices = speak.voices.length
+      ? `<select class="speak-voice" ${speak.on ? '' : 'disabled'}>`
+        + speak.voices.map((v) => `<option value="${esc(v.name)}"${v.name === speak.voice ? ' selected' : ''}>`
+          + `${esc(v.name)} (${esc(v.locale)})</option>`).join('')
+        + '</select>'
+      // No enumerable voices means `say` did not answer. The name is still shown
+      // and still saved: it is what the store holds and what would be spoken.
+      : `<span class="speak-voice-fixed">${esc(speak.voice)}</span>`;
+    return '<label class="speak-row" title="Synthesized on this machine by /usr/bin/say — no audio and no text leave the box">'
+      + `<input type="checkbox" class="speak-toggle"${speak.on ? ' checked' : ''}> `
+      + 'Speak the final reply aloud</label>'
+      + `<div class="speak-sub">Local only — nothing leaves this machine. ${voices}</div>`;
+  }
+
+  async function refreshSpeakSection() {
+    const next = await readSpeakSettings();
+    if (!next) return;
+    speak = next;
+    const host = body.querySelector('.speak-host');
+    if (host) host.innerHTML = speakHtml();
+  }
+
+  // Write-through, then re-read. The store sanitizes (a blank voice resolves to
+  // the default), so echoing the local guess would show a value the file may
+  // not hold.
+  async function saveSpeak(partial) {
+    try { await window.api.setSettings(partial); } catch { /* leave the read to correct it */ }
+    await refreshSpeakSection();
   }
 
   function openVoicePopover(anchor) {
@@ -159,6 +217,20 @@ function initVoicePopover({ core, renderProxyBar }) {
     // own free retry rather than latching on the strength of an old failure.
     failedOnce = false;
   });
+
+  body.addEventListener('change', (e) => {
+    const toggle = e.target.closest('.speak-toggle');
+    if (toggle) { saveSpeak({ speakReplies: toggle.checked }); return; }
+    const sel = e.target.closest('.speak-voice');
+    if (sel) saveSpeak({ speakVoice: sel.value });
+  });
+
+  // The label wraps the checkbox, so a click inside this section must not fall
+  // through to the mode picker below it — that would change the input mode on a
+  // click aimed at the output half.
+  body.addEventListener('click', (e) => {
+    if (e.target.closest('.speak-host')) e.stopPropagation();
+  }, true);
 
   document.addEventListener('mousedown', (e) => {
     if (pop.classList.contains('hidden')) return;
