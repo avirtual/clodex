@@ -46,13 +46,22 @@ const QUIET_MS = 1200;
 const ENTER_SETTLE_MS = 30;
 
 // The gap between the submit's `\r` and the trigger key that stops the recorder.
-// Its own write and its own gap for the SAME reason ENTER_SETTLE_MS exists: a
-// chunk carrying `\r` with a character behind it is read as one paste-like
-// event: the `\r` stays in the buffer as a literal and the key rides in with
-// it. This does NOT widen ENTER_SETTLE_MS, which is 30 for the erase/Enter
-// pair; it is a second gap AFTER the Enter, so nothing above it is delayed or
-// reordered.
-const STOP_SETTLE_MS = 30;
+//
+// Its own write for the same reason ENTER_SETTLE_MS exists: a chunk carrying
+// `\r` with a character behind it is read as one paste-like event, which leaves
+// the `\r` in the buffer as a literal and the key riding in with it.
+//
+// Much longer than that 30ms floor, and the extra is for the READ, not the
+// write. The gate re-reads the indicator to decide whether to send this key at
+// all, and the cells it reads are the ones painted BEFORE our Enter until the
+// CLI repaints. A stale lit `\u23faREC` read there sends the key into a recorder
+// that has already stopped, which ARMS a new recording — the inverted failure
+// this design exists to avoid. The turn is running and the composer is empty,
+// so waiting costs nothing.
+//
+// This does NOT widen ENTER_SETTLE_MS, which is 30 for the erase/Enter pair;
+// it is a second gap AFTER the Enter, so nothing above it is delayed.
+const STOP_SETTLE_MS = 250;
 
 // How long a consumed prefix outlives the composition it came from.
 //
@@ -99,9 +108,9 @@ const COMPOSITION_POLL_MS = 300;
 // decide whether the re-arm happens, only how long a lull has to be before it
 // counts as one. That is why it is not tuned to a measured repaint cadence —
 // which the author could not establish from the binary anyway. Too short reads
-// a gap between two paints of one turn as a turn end and writes into a live
-// turn, where the CLI's voice path is dead: the byte lands in the draft, and a
-// non-empty composer then blocks the real re-arm at turn end. Too long only
+// a gap between two paints of one turn as a turn end and writes mid-turn, where
+// the key is LIVE and ARMS a recording nobody asked for — the CLI's handler
+// gates on panels/overlays, not on whether a turn is running. Too long only
 // delays the write.
 const REARM_SETTLE_MS = 3000;
 
@@ -467,12 +476,11 @@ function createVoiceSubmitWatcher(terminal, {
       write('\r');
       // AFTER the Enter, never merged into it, and never at turn end.
       //
-      // The CLI normally stops its own recorder when it submits, but when the
-      // model answers inside the recorder's silence timeout it does not, and the
-      // surviving recording is DEAD: `\u23faREC` stays painted and no words reach
-      // the composer. The re-arm then cannot run — writing the trigger key into
-      // what looks like a live recording would stop it — so the mic stays stuck
-      // until the operator taps by hand.
+      // A recorder still lit after our Enter would otherwise stay lit for the
+      // rest of its 15000ms silence timeout, and the re-arm cannot clear it:
+      // writing the trigger key into what looks like a live recording would
+      // stop the operator mid-sentence, so the gate declines and the mic sits
+      // stuck until it is tapped by hand.
       //
       // Stopping it HERE is what makes that safe, and the safety is positional,
       // not a heuristic: at this instant the operator has just completed an
@@ -496,6 +504,13 @@ function createVoiceSubmitWatcher(terminal, {
         // ARMS a recording the operator never asked for, and an armed mic that
         // nobody knows is running is worse than the stuck state this fixes.
         if (!recordingObserved(indicatorRows())) return;
+        // TAP only, for the reason `shouldRearm` gives: the swallow-and-toggle
+        // measured in the CLI is the tap branch specifically, and in hold mode
+        // a single written character cannot reach the auto-repeat threshold, so
+        // it lands in the draft as a literal instead of stopping anything.
+        let mode = null;
+        try { mode = getVoiceMode(); } catch { mode = null; }
+        if (mode !== 'tap') return;
         let key = null;
         try { key = getTriggerKey(); } catch { key = null; }
         if (typeof key !== 'string' || key.length !== 1) return;
@@ -672,10 +687,19 @@ function createVoiceSubmitWatcher(terminal, {
   }
 
   // The re-arm, driven by the sidebar's activity state rather than by anything
-  // this file can observe: while the agent is THINKING the CLI's voice key path
-  // is dead at the top (`isActive` is `!busy`), so a byte written mid-turn does
-  // nothing at all. The first moment a write can arm the recorder is the edge
-  // out of that window, which is exactly the transition reported here.
+  // this file can observe.
+  //
+  // NOT because the key is dead mid-turn — it is not. Measured in CLI 2.1.251:
+  // the handler's only top guards are the voice auth gate and `isActive`, and
+  // `isActive` at the main REPL is `!panelOpen` (a selector over the panel
+  // store's `open` list), never a busy/streaming flag. With no panel open the
+  // key is LIVE for the whole turn.
+  //
+  // The reason is what the live key would DO: mid-turn the composer is empty
+  // and the recorder idle, so the tap branch ARMS a recording — one nobody
+  // asked for, minutes before the operator is ready to speak. Arming is
+  // deliberately confined to the turn-end edge, which is the transition
+  // reported here.
   // A TRAILING window, not a one-shot delay, and that distinction is the whole
   // of it. The condition being waited on is "the terminal has stopped
   // painting", and on the wire path the composer repaint ALWAYS lands after
@@ -746,11 +770,12 @@ function createVoiceSubmitWatcher(terminal, {
     if (from !== 'thinking' || state !== 'idle') return;
     // NOT merely idle. Two emitters produce `idle` mid-turn: the wire tracker's
     // gap-idle timer, when a tool runs longer than its gap with nothing in
-    // flight, and the jsonl watcher's flush between tool calls. Mid-turn the
-    // CLI's voice path is dead, so the byte would be INSERTED into the draft —
-    // and a non-empty composer is exactly what makes the tap handler decline
-    // the real re-arm when the turn finally does end. Acting on the bare state
-    // edge inverts the feature on long turns, which are the ones it is for.
+    // flight, and the jsonl watcher's flush between tool calls. The key is LIVE
+    // mid-turn (the handler gates on panels, not on busy), so a byte written on
+    // one of these edges ARMS the recorder in the middle of a turn — a live
+    // microphone the operator did not ask for and has no reason to expect.
+    // Acting on the bare state edge does that on every long turn, which are the
+    // ones this feature is for.
     if (turnEnd !== true) return;
 
     // Every gate is evaluated HERE and again when the timer lands. Cheap, and

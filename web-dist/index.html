@@ -23685,7 +23685,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { isHumanPtyInput } = require_proxy_util();
       var QUIET_MS = 1200;
       var ENTER_SETTLE_MS = 30;
-      var STOP_SETTLE_MS = 30;
+      var STOP_SETTLE_MS = 250;
       var CONSUMED_IDLE_MS = 9e4;
       var COMPOSITION_POLL_MS = 300;
       var REARM_SETTLE_MS = 3e3;
@@ -23840,6 +23840,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
               stopTimer = null;
               if (disposed) return;
               if (!recordingObserved(indicatorRows())) return;
+              let mode = null;
+              try {
+                mode = getVoiceMode();
+              } catch {
+                mode = null;
+              }
+              if (mode !== "tap") return;
               let key = null;
               try {
                 key = getTriggerKey();

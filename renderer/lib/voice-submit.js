@@ -207,7 +207,7 @@ const RECORDING = /\u23faREC/u;
 
 // The CLI's PROCESSING indicator, which REPLACES the lit one rather than joining
 // it: the moment recording stops, `\u23faREC` is gone and this is painted in its
-// place, for ~500ms, while the utterance is still being transcribed.
+// place, while the utterance is still being transcribed.
 //
 // That replacement is why this pattern has to exist. A gate anchored only on the
 // lit indicator reads NOT RECORDING for that whole window, so a re-arm landing
@@ -275,11 +275,11 @@ function isVoiceOriginated({ evidenceAt, now, windowMs } = {}) {
 // then ARMS a recording nobody asked for, which is the inverted failure the
 // submit-time stop must never produce.
 //
-// Same pattern and same
-// rows as `recorderBlocksRearm`, opposite failure handling: this one feeds a
-// marker rather than an interlock, so an unreadable screen is "no evidence"
-// rather than "assume the worst". Reading the recorder's state must never be
-// confused with the re-arm's decision to stand down.
+// Same pattern and same rows as `recorderBlocksRearm`, opposite failure
+// handling: this one feeds a marker rather than an interlock, so an unreadable
+// screen is "no evidence" rather than "assume the worst". Reading the
+// recorder's state must never be confused with the re-arm's decision to stand
+// down.
 function recordingObserved(rows) {
   if (!Array.isArray(rows)) return false;
   return rows.some((row) => typeof row === 'string' && RECORDING.test(row));

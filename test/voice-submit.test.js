@@ -28,7 +28,7 @@ const {
 } = require('../renderer/voice-submit-watcher');
 
 const ENTER_SETTLE_MS = 30; // must match voice-submit-watcher.js
-const STOP_SETTLE_MS = 30; // must match voice-submit-watcher.js
+const STOP_SETTLE_MS = 250; // must match voice-submit-watcher.js
 
 // ---------------------------------------------------------------- normalization
 
@@ -2200,12 +2200,13 @@ test("re-arm and submit stay independent: neither writes the other's bytes", asy
 // MF1: `thinking -> idle` is NOT turn-end. Two emitters produce that edge
 // mid-turn — the wire tracker's gap-idle timer when a tool runs longer than
 // its gap with nothing in flight, and the jsonl watcher's 1s text flush
-// between tool calls. Mid-turn the CLI's voice path is dead (`isActive` is
-// `!busy`), so the byte is INSERTED into the draft rather than swallowed, and
-// the non-empty composer it leaves behind makes the tap handler decline the
-// real re-arm at turn end. The feature would invert itself on exactly the long
-// turns that motivate it. Both gates below are load-bearing and cover
-// different emitters; neither alone is enough.
+// between tool calls. The CLI's key handler is LIVE mid-turn: measured in
+// 2.1.251, it gates on the voice auth gate and `isActive`, and `isActive` at
+// the main REPL is `!panelOpen`, not a busy flag. So a byte written on one of
+// these edges is swallowed and ARMS the recorder mid-turn — a live microphone
+// nobody asked for, on exactly the long turns this feature is for. Both gates
+// below are load-bearing and cover different emitters; neither alone is
+// enough.
 
 test('MF1: a mid-turn idle with turnEnd false writes nothing', async () => {
   const h = rearmHarness();
@@ -2670,6 +2671,21 @@ test('the PROCESSING state blocks the re-arm, in every form the row can take', (
   }
 });
 
+test('THE INTERLOCK, PROCESSING: a recorder still finishing gets no character', async () => {
+  // The CALL SITE, not the predicate. The predicate test above pins
+  // `recorderBlocksRearm` in isolation, which stays green even if attemptRearm
+  // is mutated back to `recordingObserved` -- and that mutation reopens the
+  // word-losing bug: during the processing window the recorder is still
+  // transcribing, and a key written into it aborts the utterance the operator
+  // just spoke, with nothing on screen to say so.
+  const h = rearmHarness({ rows: [{ text: EMPTY_COMPOSER, cursor: true }, PROCESSING_ROW] });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [], 'the byte would abort a live transcription');
+  assert.strictEqual(h.watcher.rearmCount(), 0);
+  h.watcher.dispose();
+});
+
 test('recordingObserved stays REC-ONLY, so processing never draws the stop key', () => {
   // The two predicates must NOT be unified. `recorderBlocksRearm` widened to the
   // processing state because a key written there aborts a live transcription;
@@ -2700,8 +2716,11 @@ function stopHarness({
     getConfig: () => env.config,
     getAttention: () => env.attention,
     getTriggerKey: () => env.trigger,
-    getVoiceMode: () => 'tap',
-    write: (d) => writes.push(d),
+    getVoiceMode: () => env.voiceMode ?? 'tap',
+    // `onWrite` fires INSIDE the write, so a test can change the world at an
+    // exact point in the sequence. A real timer racing the watcher's own is the
+    // alternative, and the margins here are inside this file's observed jitter.
+    write: (d) => { writes.push(d); if (env.onWrite) env.onWrite(d); },
     quietMs: TEST_QUIET_MS,
     rearmMs: TEST_REARM_MS,
     pollMs: 1,
@@ -2750,12 +2769,12 @@ test('recorder NOT lit at submit: no stop key is written', async () => {
 
 test('indicator UNREADABLE at submit: no stop key is written', async () => {
   const h = stopHarness({ rows: [{ text: '\u276f ', cursor: true }, REC_ROW] });
-  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
   // The alt buffer is what indicatorRows() reports as unreadable (null). Flipped
-  // AFTER the match so the submit itself still fires and this test is about the
-  // stop key alone -- the indicator read happens LATE, when the key would land.
-  setTimeout(() => { h.term._state.type = 'alternate'; },
-    TEST_QUIET_MS + ENTER_SETTLE_MS + 8);
+  // FROM THE WRITE SPY the instant the `\r` goes out, not on a timer racing the
+  // watcher's: that lands it strictly between the Enter and the gated read, with
+  // no margin to tune and nothing to flake either way.
+  h.env.onWrite = (d) => { if (d === '\r') h.term._state.type = 'alternate'; };
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
   await h.done();
 
   assert.strictEqual(h.watcher.fireCount(), 1, 'ENTER: the submit must still have fired');
@@ -2778,6 +2797,22 @@ test('the PROCESSING row at submit does not draw a stop key either', async () =>
   h.watcher.dispose();
 });
 
+test('HOLD mode gets no stop key: the character would land in the draft', async () => {
+  // The swallow-and-toggle measured in the CLI is the TAP branch. In hold mode a
+  // single written character cannot reach the auto-repeat threshold, so it is
+  // inserted as a literal instead of stopping anything -- and the non-empty
+  // composer it leaves behind blocks every later re-arm.
+  const h = stopHarness({ rows: [{ text: '\u276f ', cursor: true }, REC_ROW] });
+  h.env.voiceMode = 'hold';
+  h.term.write({ text: DRAFT, cursor: true }, REC_ROW);
+  await h.done();
+
+  assert.strictEqual(h.watcher.fireCount(), 1, 'ENTER: the submit must still have fired');
+  assert.deepStrictEqual(h.writes, [ERASE, '\r']);
+  assert.strictEqual(h.watcher.stopCount(), 0);
+  h.watcher.dispose();
+});
+
 test('after the submit-time stop, the turn-end re-arm still taps the key back', async () => {
   // The two halves compose: the stop clears the stuck recorder, and the EXISTING
   // turn-end path arms it again. This fix adds no second way to arm.
@@ -2794,6 +2829,36 @@ test('after the submit-time stop, the turn-end re-arm still taps the key back', 
 
   assert.deepStrictEqual(h.writes, [ERASE, '\r', ' ', ' '],
     'the turn-end re-arm taps the key back through its own existing path');
+  assert.strictEqual(h.watcher.rearmCount(), 1);
+  h.watcher.dispose();
+});
+
+test('a recorder that clears LATE is still recovered, not abandoned first', async () => {
+  // THE RECOVERY, not the constant. The test below asserts the arithmetic; this
+  // asserts the behaviour it exists for, so an edit that keeps the number and
+  // breaks the rescheduling cannot pass.
+  //
+  // The meter is what keeps the re-arm alive: while the mic is live the CLI
+  // animates it on a 50ms tick, so the terminal never goes quiet, every attempt
+  // takes the still-painting branch, and each one reschedules -- but only until
+  // the deadline. That is the ONLY branch the deadline is consulted on, which is
+  // why the constant has to outlast the recorder's own timeout.
+  const h = rearmHarness({ rows: [{ text: EMPTY_COMPOSER, cursor: true }, REC_ROW] });
+  h.turn();
+  for (let i = 0; i < 6; i++) {
+    h.term.write(
+      { text: EMPTY_COMPOSER + METER[i % 4], cursorX: EMPTY_COMPOSER.length, cursor: true },
+      REC_ROW,
+    );
+    await settle(3);
+  }
+  assert.deepStrictEqual(h.writes, [], 'ENTER: it must decline for as long as the recorder is lit');
+
+  // The recorder finishes: the indicator comes down and the meter stops.
+  h.term.write({ text: EMPTY_COMPOSER, cursor: true }, ' agents \u00b7 tap to talk');
+  await settle(TEST_REARM_MS + TEST_QUIET_MS + 60);
+
+  assert.deepStrictEqual(h.writes, [' '], 'the still-live re-arm taps once the indicator clears');
   assert.strictEqual(h.watcher.rearmCount(), 1);
   h.watcher.dispose();
 });
