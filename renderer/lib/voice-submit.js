@@ -187,6 +187,43 @@ function composerIsEmpty(row) {
   return COMPOSER_EMPTY.test(row);
 }
 
+// The CLI's own recording indicator, as it lands in the BUFFER. Measured
+// 2026-08-31 through a real xterm replaying the painted spans (CLI 2.1.251):
+// the row reads ` agents ⏺REC · tap to send`, and the bullet and
+// `REC` are ADJACENT — U+23FA is width 1 in xterm's UnicodeV6 table (it is in
+// none of the wide ranges), so the two spans the DOM shows separately occupy
+// consecutive cells with nothing between them. Do not write a space into this
+// pattern: there is no cell there to match. Spelled as an escape because a
+// pasted glyph is one editor normalisation away from a rule that matches
+// nothing, and this one cannot be seen by eye.
+//
+// The adjacency IS the anchor, and it is chosen over the alternatives on
+// measured collisions rather than taste. U+23FA alone opens EVERY tool-call
+// bullet (`⏺ Bash(ls)`) and matches arbitrary transcript; `REC` alone
+// matches ordinary words (`RECORD`, `Read(RECOVERY.md)`); both were confirmed
+// to hit real rows. The bullet followed IMMEDIATELY by `REC` hit none of them,
+// because every ordinary bullet paints a space after itself.
+const RECORDING = /\u23faREC/u;
+
+// Whether the re-arm must stand down — the recorder is running, or the screen
+// could not be read at all.
+//
+// The polarity is deliberate and it is the OPPOSITE of `composerIsEmpty`'s,
+// which declines silently on anything it does not recognise. Here the two
+// mistakes are not symmetric: failing to see the recorder writes the trigger
+// character into a LIVE recording and STOPS it, losing what the operator is
+// saying, while seeing one that is not there only leaves the re-arm undone and
+// the operator taps the key themselves. So an unreadable screen blocks.
+//
+// `rows` is the cursor row and everything below it, UNTRUNCATED. Untruncated
+// because the indicator paints to the RIGHT of the cursor, and downward-only
+// because the rows ABOVE the composer are transcript, where the bullet is
+// ordinary output — a whole-buffer scan is a measured false positive.
+function recordingBlocksRearm(rows) {
+  if (!Array.isArray(rows)) return true;
+  return rows.some((row) => typeof row === 'string' && RECORDING.test(row));
+}
+
 // The character that arms the recorder, or null when no character can.
 //
 // The CLI resolves its own trigger the same way: it takes the Chat-context
@@ -233,6 +270,7 @@ module.exports = {
   shouldFire,
   shouldRearm,
   composerIsEmpty,
+  recordingBlocksRearm,
   resolveTriggerKey,
   readVoiceSubmitSettings,
 };

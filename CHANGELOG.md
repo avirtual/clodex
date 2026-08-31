@@ -86,6 +86,15 @@ blocks a release.
   which is exactly when this would otherwise fire, and the keypress would answer
   the dialog. Needs the CLI's voice mode set to tap and hands-free submit
   ticked; off by default, and box-wide like the rest of the voice settings.
+  It now also checks whether the microphone is still live before pressing
+  anything. The CLI's recorder stops listening on its own after about fifteen
+  seconds of quiet, and the keypress only restarts it once that has happened —
+  press it while the recorder is still going and it STOPS it instead. So an
+  answer arriving while you were still mid-sentence used to cut you off. Clodex
+  now reads the CLI's own red `REC` indicator off the screen and stays its hand
+  while it is showing; if it cannot make out the screen at all it also does
+  nothing, on the grounds that a re-arm you have to do yourself is a smaller
+  annoyance than one that cuts you off mid-word.
 
 - **A ticket seat now starts in a worktree whose dependencies resolve.** A git
   worktree has no `node_modules` and nothing installs one, so a hand dispatched
