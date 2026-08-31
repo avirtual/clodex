@@ -27,6 +27,11 @@ const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
+// The REAL scheduler, built as engine.js builds it. See the deps block below.
+const { createTeamManifest } = require('../team-manifest');
+const { createRemindScheduler } = require('../remind-scheduler');
+const { initStores } = require('../stores');
 
 const SHIPPED_REVIEWER_TEMPLATE = {
   name: 'clodex-team-reviewer',
@@ -128,6 +133,18 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
   fsReal.writeFileSync(pathReal.join(repo.dir, 'scripts', 'run-tests.js'), SUITE_STUBS[suite]);
 
   const home = mkTmpRoot('clodex-merge-');
+  const userData = mkTmpRoot('clodex-merge-userdata-');
+  const manifest = createTeamManifest({ fs: fsReal, clodexHome: home });
+  const scheduler = createRemindScheduler({
+    now: () => Date.now(),
+    setTimer: () => null,
+    clearTimer: () => {},
+    // registryDir is a THROWAWAY: initStores SEEDS the shipped prompt library
+    // into the dir it is handed, and pointing it at `home` would plant prompts
+    // the reviewer-spawn subjects read.
+    store: initStores(mkTmpRoot('clodex-merge-ud-'), { log: console, registryDir: mkTmpRoot('clodex-merge-seed-') }).reminders,
+    deliver: () => {},
+  });
   const pdir = pathReal.join(home, 'library', 'prompts', 'system');
   fsReal.mkdirSync(pdir, { recursive: true });
   fsReal.writeFileSync(pathReal.join(pdir, 'clodex-team-reviewer.md'), '# reviewer\n');
@@ -182,6 +199,25 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
     // wrote a lock file is still running, and a stub answering `false` would
     // turn every "a live suite holds the lock" subject into a merge that
     // proceeded — the assertions would then be measuring the stub.
+    // Un-injected until t574, and its absence was SWALLOWED: every close verb
+    // here runs `_cancelTicketReminders`, whose `getRemindScheduler()` TypeError
+    // is caught into `sched = null`. So no merge subject in this file ever
+    // cancelled a ticket-bound reminder or rendered the clause reporting it —
+    // the reminders outliving their merged ticket would have read as green.
+    getRemindScheduler: () => scheduler,
+    // The rest of what team-tickets.js reads, wired real. None of it is reached
+    // by a merge subject today — no subject here mints a seat — so this is the
+    // nit half of the t574 audit, fixed so the guard above can be a plain
+    // coverage check rather than a list of grandfathered exceptions.
+    getUserDataPath: () => userData,
+    pathFor: require('../clodex-paths').pathFor,
+    AGENT_NAME_RE: require('../catalogs').AGENT_NAME_RE,
+    DEFAULT_WORKSPACE_ID: require('../catalogs').DEFAULT_WORKSPACE_ID,
+    addRole: manifest.addRole,
+    setRole: manifest.setRole,
+    removeRole: manifest.removeRole,
+    renameRole: manifest.renameRole,
+    setTeamWatchdog: manifest.setTeamWatchdog,
     isAlive: isAliveOver || ((pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }),
     ensureDir: require('../fs-util').ensureDir,
     // REAL, deliberately — see the header. The merge WRITES to this repo.
@@ -245,7 +281,7 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
   tstore.save(team.root, [ticket]);
 
   return {
-    m, team, home, tstore, persistence, injected, gated, tags, broadcasts, created, seat, logs,
+    m, team, home, tstore, persistence, injected, gated, tags, broadcasts, created, seat, logs, deps,
     one: (id = 't1') => tstore.load(team.root).find((t) => t.id === id),
     esc: () => gated.filter((g) => /ESCALATED/.test(g.body)),
     landed: () => gated.filter((g) => /MERGED/.test(g.body)),
@@ -264,6 +300,16 @@ const ACCEPT = 'VERDICT: ACCEPT\n\nMUST-FIX\n(none)\n\nNITS\n- the comment could
 const LANDED = { verdict: 'ACCEPT', mustFix: null, reviewRound: 1 };
 
 // ── the green path: the branch actually lands ──────────────────────────────
+
+test('mkMerge injects every dep team-tickets.js reads', () => {
+  // t574: getRemindScheduler was missing here, and its absence was swallowed by
+  // the catch in `_cancelTicketReminders` — no subject could have caught it.
+  const f = mkMerge({ repo: mkRepo() });
+  assertTicketDepsCovered(assert, f.deps, {
+    // Deliberately unset: the merge subjects here run under the SHIPPED timeout.
+    optional: ['ticketSuiteTimeoutMs'],
+  });
+});
 
 test('an ACCEPT merges the branch into master with a merge commit', async () => {
   const repo = mkRepo();

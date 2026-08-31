@@ -27,6 +27,7 @@ const ticketsMod = require('../tickets-store');
 const { ticketInFlight } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 // The REAL parser, used to execute the recovery an escalation prescribes rather
 // than to pattern-match it: a copy of the grammar in this file would agree with
 // itself after a rename and let the advice go stale silently.
@@ -35,6 +36,11 @@ const { parseWithRegistry } = require('../intent-registry');
 // fixtures feed `ps` output verbatim off a live observation, and a hand-computed
 // millisecond value here would agree with a wrong parser forever.
 const { parseCpuTime } = require('../stall-evidence');
+// The REAL role verbs and remind scheduler, built exactly as engine.js builds
+// them. See the deps block in mkLoop for what their absence had disabled.
+const { createTeamManifest } = require('../team-manifest');
+const { createRemindScheduler } = require('../remind-scheduler');
+const { initStores } = require('../stores');
 
 const SHIPPED_REVIEWER_TEMPLATE = {
   name: 'clodex-team-reviewer',
@@ -229,6 +235,27 @@ function mkLoop({
     fsReal.mkdirSync(pdir, { recursive: true });
     fsReal.writeFileSync(pathReal.join(pdir, 'clodex-team-reviewer.md'), '# reviewer\n');
   }
+  const userData = mkTmpRoot('clodex-loop-ud-');
+  const manifest = createTeamManifest({ fs: fsReal, clodexHome: home });
+  const roleVerbs = {
+    addRole: manifest.addRole,
+    setRole: manifest.setRole,
+    removeRole: manifest.removeRole,
+    renameRole: manifest.renameRole,
+    setTeamWatchdog: manifest.setTeamWatchdog,
+  };
+  const scheduler = createRemindScheduler({
+    now: () => Date.now(),
+    setTimer: () => null,
+    clearTimer: () => {},
+    // registryDir is a THROWAWAY, deliberately not `home`: initStores SEEDS the
+    // shipped prompt library into whatever dir it is given, which would install
+    // clodex-team-reviewer.md into the fixture home and silently defeat every
+    // `noReviewerPrompt` subject — they assert the escalation taken when that
+    // exact file is missing.
+    store: initStores(userData, { log: console, registryDir: mkTmpRoot('clodex-loop-seed-') }).reminders,
+    deliver: () => {},
+  });
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: repo.dir, lead: 'lead', watchdogMs: null,
@@ -318,6 +345,27 @@ function mkLoop({
       error: (tag, msg) => logs.push({ level: 'error', tag, msg }),
       debug: () => {},
     },
+    // The eight deps below arrived as `undefined` until t574, which audited this
+    // block against what team-tickets.js destructures. Two of them were CALLED
+    // and their absence was swallowed by a catch, so the fixture asserted a
+    // system it did not model:
+    //
+    //   getUserDataPath  — `_writeTicketCost` reads wire-totals.json through it,
+    //     and the TypeError landed in the catch that means "no ledger yet". Every
+    //     loop subject rolled up cost against the degraded half, so no subject
+    //     here could tell a missing ledger from an unreadable one.
+    //   getRemindScheduler — `_cancelTicketReminders` caught the TypeError into
+    //     `sched = null` and returned '', so no close in this file ever cancelled
+    //     a ticket-bound reminder or rendered the clause that says it did.
+    //
+    // The other six are the `[agent:team role-*]` and watchdog verbs, which no
+    // subject in this file reaches. They are wired REAL anyway rather than
+    // stubbed, on the same reasoning as gitWorktree above: a stub would make a
+    // subject that did reach them assert only that the loop calls them.
+    ...roleVerbs,
+    isAlive: (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } },
+    getUserDataPath: () => userData,
+    getRemindScheduler: () => scheduler,
     resolveTeam: (cwd) => (cwd && cwd.startsWith(repo.dir) ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(repo.dir) ? repo.dir : null),
   };
@@ -369,7 +417,7 @@ function mkLoop({
   tstore.save(team.root, [ticket]);
 
   return {
-    m, team, home, tstore, persistence, injected, gated, tags, broadcasts, created, seat, logs,
+    m, team, home, tstore, persistence, injected, gated, tags, broadcasts, created, seat, logs, deps,
     one: (id = 't1') => tstore.load(team.root).find((t) => t.id === id),
     esc: () => gated.filter((g) => /ESCALATED/.test(g.body)),
     diffFile: () => {
@@ -388,6 +436,21 @@ function mkLoop({
     },
   };
 }
+
+// ── the fixture itself ─────────────────────────────────────────────────────
+
+test('mkLoop injects every dep team-tickets.js reads', () => {
+  // t574: eight were missing, and six of those were unreachable from any subject
+  // in this file — the gap and the coverage hole hid each other, which is exactly
+  // why this is checked structurally instead of by a subject that happens to
+  // reach the path.
+  const f = mkLoop({ repo: mkRepo() });
+  assertTicketDepsCovered(assert, f.deps, {
+    // Left unset on purpose so every subject exercises the SHIPPED timeout; only
+    // the hang subject passes one, through mkLoop's `suiteTimeoutMs`.
+    optional: ['ticketSuiteTimeoutMs'],
+  });
+});
 
 // ── the green path ─────────────────────────────────────────────────────────
 
