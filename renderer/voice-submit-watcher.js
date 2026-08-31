@@ -738,7 +738,11 @@ function createVoiceSubmitWatcher(terminal, {
   // it must keep waiting out.
   const subs = [terminal.onWriteParsed(() => {
     lastWriteAt = now();
-    const row = cursorRow();
+    // A throw here would escape into xterm's onWriteParsed fire loop. No
+    // reachable throw is known; a null read is already the "off the normal
+    // buffer" case the compare below handles.
+    let row = null;
+    try { row = cursorRow(); } catch {}
     if (row === lastRow) return;
     lastRow = row;
     schedule();

@@ -23990,7 +23990,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let lastRow = null;
         const subs = [terminal.onWriteParsed(() => {
           lastWriteAt = now();
-          const row = cursorRow();
+          let row = null;
+          try {
+            row = cursorRow();
+          } catch {
+          }
           if (row === lastRow) return;
           lastRow = row;
           schedule();
