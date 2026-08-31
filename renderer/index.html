@@ -844,7 +844,7 @@
       </details>
       <details class="prefs-group" data-group="voice">
         <summary><h4>Voice input</h4><span class="prefs-group-sub">Off, tap-to-talk, or hold-to-talk</span></summary>
-        <p class="hint-text">Applies as soon as you pick it — Cancel does not undo it. One setting for every Claude session on this machine — the CLI keeps it in <code>~/.claude/settings.json</code>. Clodex reads that file rather than remembering what it last sent, so a <code>/voice</code> you type in a terminal shows up here too. Changing it <em>sends</em> <code>/voice</code> to a live session instead of editing the file, because a session already running would never notice the edit; pick a mode mid-turn and the command is queued until that agent is between turns. Sessions started before a change keep the mode they launched with until they restart.</p>
+        <p class="hint-text">Applies as soon as you pick it — Cancel does not undo it. One setting for every Claude session on this machine — the CLI keeps it in <code>~/.claude/settings.json</code>, and Clodex writes that file directly, so this works with no session open. Clodex reads the same file rather than remembering what it last wrote, so a <code>/voice</code> you type in a terminal shows up here too. A session that started when the file did not yet exist keeps the mode it launched with until it restarts, since the CLI only watches for a file that was already there.</p>
         <div class="prefs-row">
           <span>Mode</span>
           <select id="prefs-voice-mode" style="flex: none;">

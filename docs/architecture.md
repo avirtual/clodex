@@ -728,9 +728,10 @@ Own state + DOM, `init*(deps)`:
   and `showToast` by injection so a link in a note lands in the same peek
   modal and toasts the same miss a path click in the terminal does.
 - **voice-control.js** — the voice-mode state machine (off · tap · hold),
-  reading `voice-settings.js` over `getVoiceMode` and writing by INJECTING
-  `/voice <mode>` into a live Claude session. `createVoiceCore` owns all of it —
-  state, the pending affordance, the inject target, the poll and the row
+  reading `voice-settings.js` over `getVoiceMode` and writing the settings file
+  directly over `setVoiceMode` — no session in the path, so both surfaces work
+  with none open. `createVoiceCore` owns all of it —
+  state, the pending affordance, the poll and the row
   observer — and publishes snapshots; `createVoiceControl` (the Preferences row)
   and `popovers/voice-popover.js` (the session bar's 🎤 button) are surfaces over
   it that own only their own painting. The setting is box-wide, so both surfaces

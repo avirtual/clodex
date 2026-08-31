@@ -2537,10 +2537,6 @@ body {
   color: var(--text-dim);
   font-size: 10px;
 }
-.voice-rows-off {
-  opacity: 0.5;
-  pointer-events: none;
-}
 #proxy-actions .px-action.px-voice-off {
   opacity: 0.45;
 }
@@ -6872,7 +6868,7 @@ body {
       </details>
       <details class="prefs-group" data-group="voice">
         <summary><h4>Voice input</h4><span class="prefs-group-sub">Off, tap-to-talk, or hold-to-talk</span></summary>
-        <p class="hint-text">Applies as soon as you pick it — Cancel does not undo it. One setting for every Claude session on this machine — the CLI keeps it in <code>~/.claude/settings.json</code>. Clodex reads that file rather than remembering what it last sent, so a <code>/voice</code> you type in a terminal shows up here too. Changing it <em>sends</em> <code>/voice</code> to a live session instead of editing the file, because a session already running would never notice the edit; pick a mode mid-turn and the command is queued until that agent is between turns. Sessions started before a change keep the mode they launched with until they restart.</p>
+        <p class="hint-text">Applies as soon as you pick it — Cancel does not undo it. One setting for every Claude session on this machine — the CLI keeps it in <code>~/.claude/settings.json</code>, and Clodex writes that file directly, so this works with no session open. Clodex reads the same file rather than remembering what it last wrote, so a <code>/voice</code> you type in a terminal shows up here too. A session that started when the file did not yet exist keeps the mode it launched with until it restarts, since the CLI only watches for a file that was already there.</p>
         <div class="prefs-row">
           <span>Mode</span>
           <select id="prefs-voice-mode" style="flex: none;">
@@ -7585,9 +7581,11 @@ body {
         { name: "getAgentCatalog", kind: "invoke", channel: "session:agentCatalog" },
         { name: "getSkillCatalogFor", kind: "invoke", channel: "settings:skillCatalogFor" },
         { name: "getToolCatalogFor", kind: "invoke", channel: "settings:toolCatalogFor" },
-        // t509: the box-wide voice-input mode the CLI persists. Read-only — the mode is
-        // CHANGED by injecting `/voice <mode>`, so there is no setter row to pair with it.
+        // The box-wide voice-input mode the CLI persists, read and written. The write
+        // is a direct settings-file write, NOT an injection: it needs no session, so
+        // both surfaces work with zero Claude seats open.
         { name: "getVoiceMode", kind: "invoke", channel: "settings:voiceMode" },
+        { name: "setVoiceMode", kind: "invoke", channel: "settings:setVoiceMode" },
         // t572: mark the hands-free submit about to happen as voice-originated. A
         // SEND, not an invoke, and that is the contract: the marker must never put a
         // round trip in front of the operator's Enter, so there is no result to wait
@@ -22854,24 +22852,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
       ];
       var POLL_MS = 15e3;
       var CHOICE_DEBOUNCE_MS = 250;
-      function createVoiceCore({ getActiveSession, sessionTypeOf, sessionList, showToast }) {
+      function createVoiceCore({ sessionList, showToast }) {
         let state = null;
         let pending = null;
-        let pendingTarget = null;
-        let injectTimer = null;
+        let writeTimer = null;
         let pollTimer = null;
         let holds = 0;
         const listeners = /* @__PURE__ */ new Set();
-        function injectTarget() {
-          const active = getActiveSession();
-          if (active && sessionTypeOf(active) === "claude") return active;
-          for (const el of sessionList.querySelectorAll('.session-item[data-type="claude"]')) {
-            if (el.dataset.peerUi || el.dataset.failed) continue;
-            if (el.classList.contains("archived") || el.classList.contains("peer-item")) continue;
-            if (el.dataset.name) return el.dataset.name;
-          }
-          return null;
-        }
         function anyClaudeRow() {
           return !!sessionList.querySelector('.session-item[data-type="claude"]');
         }
@@ -22879,32 +22866,20 @@ ${m[2].replace(/^\r?\n/, "")}`;
           return VOICE_ITEMS.some((i) => i.mode === m);
         }
         function snapshot() {
-          const target = injectTarget();
-          const live = target === pendingTarget ? pending : null;
           return {
-            target,
-            state,
-            pending: live,
-            mode: live || state && state.effective,
-            anyClaudeRow: anyClaudeRow(),
-            pickJustDied: false,
-            force: false
-          };
-        }
-        function emit(force = false) {
-          const target = injectTarget();
-          const hadPending = pending !== null;
-          if (target !== pendingTarget) {
-            pending = null;
-            pendingTarget = null;
-          }
-          const snap = {
-            target,
             state,
             pending,
             mode: pending || state && state.effective,
             anyClaudeRow: anyClaudeRow(),
-            pickJustDied: hadPending && pending === null,
+            force: false
+          };
+        }
+        function emit(force = false) {
+          const snap = {
+            state,
+            pending,
+            mode: pending || state && state.effective,
+            anyClaudeRow: anyClaudeRow(),
             force
           };
           for (const fn of [...listeners]) {
@@ -22924,53 +22899,36 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (r && r.ok) {
             state = r;
-            if (pending && r.effective === pending) {
-              pending = null;
-              pendingTarget = null;
-            }
+            if (pending && r.effective === pending) pending = null;
           }
           emit();
         }
         async function sendMode(mode) {
-          const target = injectTarget();
-          if (!target) {
-            pending = null;
-            pendingTarget = null;
-            emit();
-            return;
-          }
           let r = null;
           try {
-            r = await window.api.injectPrompt(target, `/voice ${mode}`);
+            r = await window.api.setVoiceMode(mode);
           } catch (err) {
             r = { ok: false, error: err.message };
           }
           if (!r || !r.ok) {
             if (pending !== mode) return;
             pending = null;
-            pendingTarget = null;
             emit(true);
             showToast(`Setting voice to ${mode} failed: ${r && r.error || "unknown error"}`);
             return;
           }
-          setTimeout(refresh, 1500);
+          refresh();
         }
         function choose(mode) {
           if (!isMode(mode)) {
             emit(true);
             return false;
           }
-          const target = injectTarget();
-          if (!target) {
-            emit(true);
-            return false;
-          }
           pending = mode;
-          pendingTarget = target;
           emit();
-          if (injectTimer) clearTimeout(injectTimer);
-          injectTimer = setTimeout(() => {
-            injectTimer = null;
+          if (writeTimer) clearTimeout(writeTimer);
+          writeTimer = setTimeout(() => {
+            writeTimer = null;
             sendMode(mode);
           }, CHOICE_DEBOUNCE_MS);
           return true;
@@ -23022,15 +22980,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }, stop() {
         } };
         function paint(snap) {
-          const { target, state, pending, mode, pickJustDied, force } = snap;
-          if (force || document.activeElement !== sel || pickJustDied) {
+          const { state, pending, mode, force } = snap;
+          if (force || document.activeElement !== sel) {
             sel.value = core.isMode(mode) ? mode : "";
           }
-          sel.disabled = !target;
-          if (!target) {
-            stateEl.textContent = snap.anyClaudeRow ? "No Claude session can be reached right now \u2014 the mode is shown from the file but cannot be changed from here." : "No Claude session on this machine \u2014 start one to change the mode. The value shown is read from the settings file.";
-          } else if (pending) {
-            stateEl.textContent = `Switching to ${pending} \u2014 queued until ${target} is between turns.`;
+          if (pending) {
+            stateEl.textContent = `Switching to ${pending}\u2026`;
           } else if (!core.isMode(mode)) {
             stateEl.textContent = state && state.source === "legacy" ? "Only the legacy voiceEnabled key is set in the settings file \u2014 pick a mode to set one." : "Not set in the settings file yet \u2014 pick a mode to set one.";
           } else {
@@ -27460,7 +27415,7 @@ helper=${d.helperPath}`;
           const known = core.isMode(mode);
           const label = known ? mode : "voice";
           const dim = known && mode === "off" ? " px-voice-off" : "";
-          const tip = snap.pending ? `Voice input: switching to ${snap.pending}, queued until ${snap.target} is between turns` : "Voice input mode for every Claude session on this machine \u2014 click to change";
+          const tip = snap.pending ? `Voice input: switching to ${snap.pending}` : "Voice input mode for every Claude session on this machine \u2014 click to change";
           return `<button class="px-action${dim}" data-act="voice" data-tip="${esc(tip)}">\u{1F3A4} ${esc(label)}</button>`;
         }
         function renderRows() {
@@ -27471,15 +27426,8 @@ helper=${d.helperPath}`;
             const mark = i.mode === mode ? "\u25CF" : "\u25CB";
             return `<div class="voice-row${on}" data-mode="${i.mode}"><span class="voice-row-mark">${mark}</span><span class="voice-row-main"><span class="voice-row-name">${esc(i.name)}</span><span class="voice-row-desc">${esc(i.desc)}</span></span></div>`;
           }).join("");
-          let note = "";
-          if (!snap.target) {
-            note = snap.anyClaudeRow ? "No Claude session can be reached right now \u2014 the mode is read from the settings file but cannot be changed from here." : "No Claude session on this machine \u2014 start one to change the mode.";
-          } else if (snap.pending) {
-            note = `Switching to ${esc(snap.pending)} \u2014 queued until ${esc(snap.target)} is between turns.`;
-          } else {
-            note = "One setting for every Claude session on this machine. Sessions already running keep the mode they started with until they restart.";
-          }
-          body.innerHTML = `<div class="voice-rows${snap.target ? "" : " voice-rows-off"}">${rows}</div><div class="rec-host">${recorderHtml()}</div><div class="cost-note">${note}</div><div class="speak-host">${speakHtml()}</div>`;
+          const note = snap.pending ? `Switching to ${esc(snap.pending)}\u2026` : "One setting for every Claude session on this machine. Sessions already running keep the mode they started with until they restart.";
+          body.innerHTML = `<div class="voice-rows">${rows}</div><div class="rec-host">${recorderHtml()}</div><div class="cost-note">${note}</div><div class="speak-host">${speakHtml()}</div>`;
           lastReading = reading();
           refreshSpeakSection();
         }
@@ -27548,7 +27496,7 @@ helper=${d.helperPath}`;
         let lastKey = null;
         let failedOnce = false;
         core.subscribe((snap) => {
-          const key = `${snap.pending || ""}|${snap.mode || ""}|${snap.target || ""}|${snap.anyClaudeRow}`;
+          const key = `${snap.pending || ""}|${snap.mode || ""}|${snap.anyClaudeRow}`;
           if (key === lastKey) return;
           try {
             if (!pop.classList.contains("hidden")) renderRows();
@@ -35499,12 +35447,7 @@ Click for live activity`;
         }
       });
       createInboxDrawer({ openFilePeek, showToast });
-      var voiceCore = createVoiceCore({
-        getActiveSession: () => activeSession,
-        sessionTypeOf,
-        sessionList,
-        showToast
-      });
+      var voiceCore = createVoiceCore({ sessionList, showToast });
       var voiceSubmitConfig = {
         enabled: false,
         composition: false,

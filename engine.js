@@ -2037,7 +2037,7 @@ const toolCache = createToolCache({ whichBin });
     fetchSessionFiles, fetchFilePeek, fetchFileDiff, writeFilePeek, resolveFilePath,
     restartSession, waitForSessionExit,
     readSessionArgs, applySessionArgs, readSkillCatalog, applySessionSkills,
-    sessionScopeCtx, readEffectiveSkillState, readEffectiveToolState, readVoiceMode, readVoiceTrigger,
+    sessionScopeCtx, readEffectiveSkillState, readEffectiveToolState, readVoiceMode, readVoiceTrigger, writeVoiceMode,
     readSessionMeta, sessionMeta, sessionInfo, claudeProjectDir, rebuildAllStatusScripts,
     stripLevelOf, updateApplies, jsonlToMarkdown, sshRun,
     probePeer, fixSessionName, buildDeployFixBriefing, classifyDeployFolder, resolveDeployFolder,

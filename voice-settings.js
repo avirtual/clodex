@@ -48,10 +48,19 @@ function readVoiceMode({ homeDir = os.homedir() } = {}) {
 }
 
 // Set the mode by writing the file the CLI reads, mirroring what its own
-// `/voice` handler writes:
+// `/voice` handler writes. The two arms write DIFFERENT SHAPES, both measured
+// from the 2.1.252 binary:
 //
-//   rn("userSettings", { voiceEnabled: true,
-//                        voice: { ...existing.voice, enabled: true, mode } })
+//   off:      rn("userSettings", { voiceEnabled: false,
+//                                  voice: { ...existing.voice, enabled: false } })
+//   tap/hold: rn("userSettings", { voiceEnabled: true,
+//                                  voice: { ...existing.voice, enabled: true, mode } })
+//
+// OFF LEAVES `mode` ALONE, and normalising it here would diverge from the CLI
+// over a file they share: `enabled` is the gate and the mode sits beside it
+// untouched, which is why readVoiceMode's `effective` reports 'off' on
+// `enabled === false` whatever mode it finds. Clearing the mode would also lose
+// which of tap/hold to return to.
 //
 // READ-MODIFY-WRITE, and every part of that matters. This is the user's GLOBAL
 // CLI settings file and holds far more than voice: unrelated top-level keys are
@@ -84,7 +93,7 @@ function readVoiceMode({ homeDir = os.homedir() } = {}) {
 // it with a two-key object. The CLI declines the same case ("Check your settings
 // file for syntax errors") rather than overwriting.
 function writeVoiceMode(mode, { homeDir = os.homedir() } = {}) {
-  if (mode !== 'tap' && mode !== 'hold') return { ok: false, error: `unknown voice mode "${mode}" (use tap|hold)` };
+  if (mode !== 'off' && mode !== 'tap' && mode !== 'hold') return { ok: false, error: `unknown voice mode "${mode}" (use off|tap|hold)` };
   const file = path.join(homeDir, '.claude', 'settings.json');
 
   let text = null;
@@ -144,7 +153,9 @@ function writeVoiceMode(mode, { homeDir = os.homedir() } = {}) {
   }
 
   const v = base.voice && typeof base.voice === 'object' && !Array.isArray(base.voice) ? base.voice : {};
-  const next = { ...base, voiceEnabled: true, voice: { ...v, enabled: true, mode } };
+  const next = mode === 'off'
+    ? { ...base, voiceEnabled: false, voice: { ...v, enabled: false } }
+    : { ...base, voiceEnabled: true, voice: { ...v, enabled: true, mode } };
   try {
     atomicWriteFileSync(target, `${JSON.stringify(next, null, 2)}\n`);
   } catch (e) {

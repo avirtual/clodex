@@ -321,18 +321,64 @@ test('writeVoiceMode round-trips through readVoiceMode', () => {
   });
 });
 
-test('writeVoiceMode refuses anything outside the two-valued CLI enum', () => {
+test('writeVoiceMode refuses anything outside the CLI enum', () => {
   withWrite({ model: 'opus', voice: { mode: 'hold' } }, (t) => {
     const before = t.bytes();
-    // "off" is the case worth naming: it is a VOICE_MODES member and the CLI's
-    // own argumentHint advertises it, but it is enabled:false, NOT a mode — a
-    // write of mode:"off" would produce a value the CLI never stores.
-    for (const bad of ['off', 'loud', '', null, undefined, { evil: 1 }]) {
+    for (const bad of ['loud', '', null, undefined, { evil: 1 }]) {
       const r = t.write(bad);
       assert.strictEqual(r.ok, false, String(bad));
       assert.match(r.error, /unknown voice mode/, String(bad));
     }
     assert.ok(before.equals(t.bytes()), 'a refused write leaves the file byte-for-byte alone');
+  });
+});
+
+// OFF IS A FLAG, NOT A MODE, and that is the whole shape: the CLI's own `off`
+// arm writes enabled:false and does NOT touch `voice.mode`. Normalising the mode
+// here would diverge from the CLI over a file they share, and would lose which
+// of tap/hold to return to.
+test('writeVoiceMode off clears the enabled flag and LEAVES the mode alone', () => {
+  withWrite({ model: 'opus', voice: { mode: 'hold', enabled: true, language: 'en' } }, (t) => {
+    assert.deepStrictEqual(t.write('off'), { ok: true, mode: 'off', file: t.file });
+    // The whole object: a spot check on `enabled` would read around a spread
+    // that dropped `mode` or a sibling.
+    assert.deepStrictEqual(t.read(), {
+      model: 'opus',
+      voiceEnabled: false,
+      voice: { mode: 'hold', enabled: false, language: 'en' },
+    });
+  });
+});
+
+test('writeVoiceMode off round-trips through readVoiceMode as effective off', () => {
+  withWrite({ voice: { mode: 'tap', enabled: true } }, (t) => {
+    t.write('off');
+    const r = readVoiceMode({ homeDir: t.home });
+    assert.strictEqual(r.effective, 'off', 'the selector shows off');
+    assert.strictEqual(r.mode, 'tap', 'and the mode to return to survived the write');
+  });
+});
+
+// The never-used-voice box turning voice OFF: there is no existing mode to
+// preserve, so the written object must carry none rather than inventing one.
+test('writeVoiceMode off creates the file with no mode invented', () => {
+  withWrite(null, (t) => {
+    assert.strictEqual(fs.existsSync(t.file), false, 'ENTER: no file to start with');
+    assert.strictEqual(t.write('off').ok, true);
+    assert.deepStrictEqual(t.read(), { voiceEnabled: false, voice: { enabled: false } });
+  });
+});
+
+// Off runs the same refusal gate as tap/hold. Pinned separately because the two
+// arms are separate expressions after the guard: a refusal that only covered the
+// mode-writing arm would leave this one clobbering an unparseable file.
+test('writeVoiceMode off REFUSES an unparseable file, byte-identically', () => {
+  withWrite('{"model":"opus",', (t) => {
+    const before = t.bytes();
+    const r = t.write('off');
+    assert.strictEqual(r.ok, false);
+    assert.match(r.error, /syntax error/);
+    assert.ok(before.equals(t.bytes()), 'the file the user was mid-edit on is untouched');
   });
 });
 

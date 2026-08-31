@@ -5,8 +5,8 @@
 //
 // Self-contained island: it owns its DOM handles and dismiss wiring, and gets
 // every piece of voice state from the shared core in voice-control.js. It holds
-// NO state of its own — a second copy of the pending/quiet-gate reconciliation
-// is exactly what the core exists to prevent.
+// NO state of its own — a second copy of the box-wide mode is exactly what the
+// core exists to prevent.
 //
 // Claude only. Codex has no `/voice`, so a button on a Codex seat's bar would
 // name a setting that seat cannot have.
@@ -147,7 +147,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
     const label = known ? mode : 'voice';
     const dim = known && mode === 'off' ? ' px-voice-off' : '';
     const tip = snap.pending
-      ? `Voice input: switching to ${snap.pending}, queued until ${snap.target} is between turns`
+      ? `Voice input: switching to ${snap.pending}`
       : 'Voice input mode for every Claude session on this machine — click to change';
     return `<button class="px-action${dim}" data-act="voice" data-tip="${esc(tip)}">🎤 ${esc(label)}</button>`;
   }
@@ -163,22 +163,12 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
         + `<span class="voice-row-main"><span class="voice-row-name">${esc(i.name)}</span>`
         + `<span class="voice-row-desc">${esc(i.desc)}</span></span></div>`;
     }).join('');
-    // The same two unreachable cases Preferences distinguishes, for the same
-    // reason: the remedy differs (start a Claude session vs wait for the one you
-    // have), and a picker that just did nothing would read as broken.
-    let note = '';
-    if (!snap.target) {
-      note = snap.anyClaudeRow
-        ? 'No Claude session can be reached right now — the mode is read from the settings file but cannot be changed from here.'
-        : 'No Claude session on this machine — start one to change the mode.';
-    } else if (snap.pending) {
-      note = `Switching to ${esc(snap.pending)} — queued until ${esc(snap.target)} is between turns.`;
-    } else {
-      note = 'One setting for every Claude session on this machine. Sessions already running keep the mode they started with until they restart.';
-    }
+    const note = snap.pending
+      ? `Switching to ${esc(snap.pending)}…`
+      : 'One setting for every Claude session on this machine. Sessions already running keep the mode they started with until they restart.';
     // The reading rides in its own host node so the tick can replace it without
     // touching the picker rows around it.
-    body.innerHTML = `<div class="voice-rows${snap.target ? '' : ' voice-rows-off'}">${rows}</div>`
+    body.innerHTML = `<div class="voice-rows">${rows}</div>`
       + `<div class="rec-host">${recorderHtml()}</div>`
       + `<div class="cost-note">${note}</div>`
       + `<div class="speak-host">${speakHtml()}</div>`;
@@ -322,7 +312,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
   // gate exists to prevent, arrived at from the other side.
   let failedOnce = false;
   core.subscribe((snap) => {
-    const key = `${snap.pending || ''}|${snap.mode || ''}|${snap.target || ''}|${snap.anyClaudeRow}`;
+    const key = `${snap.pending || ''}|${snap.mode || ''}|${snap.anyClaudeRow}`;
     if (key === lastKey) return;
     try {
       // Equally a no-op rebuild of a live picker: the rows are detached under the
