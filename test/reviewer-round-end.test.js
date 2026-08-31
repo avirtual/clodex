@@ -32,7 +32,11 @@ const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { ticketInFlight } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
+const { initStores } = require('../stores');
+const { createRemindScheduler } = require('../remind-scheduler');
+const { createTeamManifest } = require('../team-manifest');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 
 // Copied, not shared, for the reason reviewer-ticket-name.test.js states: these
 // assertions are about the seat's LIFETIME, and a shared fixture makes either
@@ -76,6 +80,19 @@ function mkRepo() {
 
 function mkFixture() {
   const home = mkTmpRoot('clodex-t470-');
+  const userData = mkTmpRoot('clodex-t470-ud-');
+  const manifest = createTeamManifest({ fs: fsReal, clodexHome: home });
+  const scheduler = createRemindScheduler({
+    now: () => Date.now(),
+    setTimer: () => null,
+    clearTimer: () => {},
+    // registryDir is a THROWAWAY, deliberately not `home`: initStores SEEDS the
+    // shipped prompt library into whatever dir it is given, and this fixture's
+    // REGISTRY_DIR is `home` — seeding it would plant clodex-team-reviewer.md
+    // under the dir the reviewer-prompt lookup reads.
+    store: initStores(userData, { log: console, registryDir: mkTmpRoot('clodex-t470-seed-') }).reminders,
+    deliver: () => {},
+  });
   const repoDir = mkRepo();
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
@@ -147,6 +164,31 @@ function mkFixture() {
     },
     resolveTeam: (cwd) => (cwd && cwd.startsWith(repoDir) ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(repoDir) ? repoDir : null),
+    // t581 widened t574's audit to this file. Two of these were REACHED and
+    // their absence swallowed:
+    //
+    //   getRemindScheduler — `_cancelTicketReminders` catches the TypeError into
+    //     `sched = null` and returns '', so no accept or cancel here ever
+    //     cancelled a ticket-bound reminder or rendered the clause reporting it.
+    //   DEFAULT_WORKSPACE_ID — `resolveSeatShape` resolves every reviewer spawn's
+    //     workspaceId through it, and this fixture's seats carry no workspaceId,
+    //     so every spawn resolved `undefined`. Invisible because `create` is a
+    //     stub that records nothing.
+    //
+    // The rest are reached by no subject here. The five manifest verbs go through
+    // `loadManifest`, which reads `<home>/teams/team/team.json`; this fixture
+    // never writes that file, so a subject reaching one gets `no team manifest
+    // at …` and must write it first rather than read the error as a broken verb.
+    AGENT_NAME_RE: require('../catalogs').AGENT_NAME_RE,
+    DEFAULT_WORKSPACE_ID: require('../catalogs').DEFAULT_WORKSPACE_ID,
+    getRemindScheduler: () => scheduler,
+    getUserDataPath: () => userData,
+    isAlive: (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } },
+    addRole: manifest.addRole,
+    setRole: manifest.setRole,
+    removeRole: manifest.removeRole,
+    renameRole: manifest.renameRole,
+    setTeamWatchdog: manifest.setTeamWatchdog,
   };
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
@@ -182,7 +224,7 @@ function mkFixture() {
     return m.sessions.get(name);
   };
   return {
-    m, team, home, repoDir, tstore, persistence, injected, gated, contextActions, logs, killed, archived, seat,
+    m, team, home, repoDir, tstore, persistence, injected, gated, contextActions, logs, killed, archived, seat, deps,
     one: (id) => tstore.load(team.root).find((t) => t.id === id),
   };
 }
@@ -235,6 +277,20 @@ const reject = (f, id, reason = 'the guard is inverted') =>
 const accept = (f, id, note = '') =>
   f.m._taskAccept(f.m.sessions.get('lead'), f.team, { type: 'task', sub: 'accept', id, who: null, body: note },
     (msg) => f.injected.push(msg));
+
+// ── the fixture itself ─────────────────────────────────────────────────────
+
+test('mkFixture injects every dep team-tickets.js reads', () => {
+  // t581: eleven were missing here. Two were REACHED — getRemindScheduler through
+  // `_cancelTicketReminders`, DEFAULT_WORKSPACE_ID through every reviewer spawn's
+  // `resolveSeatShape` — and both absences were invisible, one swallowed by a
+  // catch and one by a `create` stub that records nothing.
+  const f = mkFixture();
+  assertTicketDepsCovered(assert, f.deps, {
+    // Left unset on purpose: every subject here runs under the SHIPPED timeout.
+    optional: ['ticketSuiteTimeoutMs'],
+  });
+});
 
 // ── reject ends the round, so the seat goes ────────────────────────────────
 

@@ -142,7 +142,7 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
     // registryDir is a THROWAWAY: initStores SEEDS the shipped prompt library
     // into the dir it is handed, and pointing it at `home` would plant prompts
     // the reviewer-spawn subjects read.
-    store: initStores(mkTmpRoot('clodex-merge-ud-'), { log: console, registryDir: mkTmpRoot('clodex-merge-seed-') }).reminders,
+    store: initStores(userData, { log: console, registryDir: mkTmpRoot('clodex-merge-seed-') }).reminders,
     deliver: () => {},
   });
   const pdir = pathReal.join(home, 'library', 'prompts', 'system');
@@ -205,10 +205,12 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
     // cancelled a ticket-bound reminder or rendered the clause reporting it —
     // the reminders outliving their merged ticket would have read as green.
     getRemindScheduler: () => scheduler,
-    // The rest of what team-tickets.js reads, wired real. None of it is reached
-    // by a merge subject today — no subject here mints a seat — so this is the
-    // nit half of the t574 audit, fixed so the guard above can be a plain
-    // coverage check rather than a list of grandfathered exceptions.
+    // The rest of what team-tickets.js reads. None of it is reached by a merge
+    // subject today — no subject here mints a seat. The five manifest verbs go
+    // through `loadManifest`, which reads `<home>/teams/team/team.json`; this
+    // fixture never writes that file, so a subject reaching one gets `no team
+    // manifest at …` and must write it first rather than read the error as a
+    // broken verb.
     getUserDataPath: () => userData,
     pathFor: require('../clodex-paths').pathFor,
     AGENT_NAME_RE: require('../catalogs').AGENT_NAME_RE,

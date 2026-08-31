@@ -37,6 +37,8 @@ const { parseRemindSpec } = require('../remind-schedule');
 const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
+const { createTeamManifest } = require('../team-manifest');
+const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 
 const T0 = Date.UTC(2026, 7, 14, 9, 0, 0);
 const MIN = 60 * 1000;
@@ -109,6 +111,7 @@ function mkFixture() {
   const repoDir = repo.dir;
 
   const stores = initStores(userData, { log: console, registryDir: home });
+  const manifest = createTeamManifest({ fs: fsReal, clodexHome: home });
   const clock = fakeClock(T0);
   const fires = [];
   const scheduler = createRemindScheduler({
@@ -200,6 +203,23 @@ function mkFixture() {
     },
     resolveTeam: (cwd) => (cwd && cwd.startsWith(repoDir) ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(repoDir) ? repoDir : null),
+    // t581 widened t574's audit to this file. getRemindScheduler — the one that
+    // was reached-and-swallowed in the other four fixtures — was already wired
+    // above, which is why every reminder subject here measures a real scheduler.
+    // None of the ten below is reached by a subject here. The five manifest verbs
+    // go through `loadManifest`, which reads `<home>/teams/team/team.json`; this
+    // fixture never writes that file, so a subject reaching one gets `no team
+    // manifest at …` and must write it first rather than read the error as a
+    // broken verb.
+    AGENT_NAME_RE: require('../catalogs').AGENT_NAME_RE,
+    DEFAULT_WORKSPACE_ID: require('../catalogs').DEFAULT_WORKSPACE_ID,
+    getUserDataPath: () => userData,
+    isAlive: (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } },
+    addRole: manifest.addRole,
+    setRole: manifest.setRole,
+    removeRole: manifest.removeRole,
+    renameRole: manifest.renameRole,
+    setTeamWatchdog: manifest.setTeamWatchdog,
   };
 
   const costWrites = [];
@@ -242,7 +262,7 @@ function mkFixture() {
 
   return {
     m, team, lead, reply, replies, tstore, scheduler, clock, fires, logs, injected, costWrites,
-    repo, persistence,
+    repo, persistence, deps,
     store: stores.reminders,
     one: (id) => tstore.load(team.root).find((t) => t.id === id),
     setState: (id, patch) => {
@@ -271,6 +291,18 @@ function mkFixture() {
 // The bound record for a ticket, or undefined. Used for the ENTER assertions.
 const boundTo = (store, agent, ticketId) =>
   store.listForAgent(agent).find((r) => r.ticket === ticketId);
+
+// ── the fixture itself ─────────────────────────────────────────────────────
+
+test('mkFixture injects every dep team-tickets.js reads', () => {
+  // t581: ten were missing, none of them reached from here — getRemindScheduler,
+  // the one whose absence the other loop fixtures swallowed, was already wired.
+  const f = mkFixture();
+  assertTicketDepsCovered(assert, f.deps, {
+    // Left unset on purpose: every subject here runs under the SHIPPED timeout.
+    optional: ['ticketSuiteTimeoutMs'],
+  });
+});
 
 // ── the grammar ────────────────────────────────────────────────────────────
 

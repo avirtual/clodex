@@ -358,10 +358,11 @@ function mkLoop({
     //     `sched = null` and returned '', so no close in this file ever cancelled
     //     a ticket-bound reminder or rendered the clause that says it did.
     //
-    // The other six are the `[agent:team role-*]` and watchdog verbs, which no
-    // subject in this file reaches. They are wired REAL anyway rather than
-    // stubbed, on the same reasoning as gitWorktree above: a stub would make a
-    // subject that did reach them assert only that the loop calls them.
+    // The other six — `isAlive` and the five manifest verbs — are reached by no
+    // subject here. The manifest five go through `loadManifest`, which reads
+    // `<home>/teams/team/team.json`; this fixture never writes that file, so a
+    // subject reaching one gets `no team manifest at …` and must write it first
+    // rather than read the error as a broken verb.
     ...roleVerbs,
     isAlive: (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } },
     getUserDataPath: () => userData,

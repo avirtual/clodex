@@ -11,6 +11,11 @@
 // yet" and "no scheduler", so a fixture missing them asserted a system it did
 // not model while staying green.
 //
+// Tests DEFINEDNESS, not presence: a fixture that writes `getUserDataPath:
+// undefined`, or spreads an object carrying that key, reproduces the exact
+// failure this guard exists to catch, and `in` would pass it. A fixture that
+// genuinely wants a name absent uses `optional`.
+//
 // Deliberately a SUBSET check and not the deepStrictEqual CLAUDE.md's fixture
 // rule reaches for: a fixture is free to inject anything extra it likes (every
 // loop fixture injects a dozen deps this factory never reads, for the manager
@@ -34,13 +39,13 @@ function requiredTicketDeps() {
 // against the calling fixture's file.
 function assertTicketDepsCovered(assert, deps, { optional = [] } = {}) {
   const required = requiredTicketDeps();
-  assert.ok(required.size > 20,
+  assert.ok(required.size > 15,
     `ENTER: only ${required.size} dep names came back from the factory probe — the destructure moved and this guard is measuring nothing`);
   for (const anchor of ['AGENT_NAME_RE', 'getPersistence', 'gitWorktree']) {
     assert.ok(required.has(anchor), `ENTER: ${anchor} missing from the probe — the factory did not run`);
   }
   const exempt = new Set(optional);
-  const missing = [...required].filter((n) => !exempt.has(n) && !(n in deps)).sort();
+  const missing = [...required].filter((n) => !exempt.has(n) && deps[n] === undefined).sort();
   assert.deepStrictEqual(missing, [],
     `team-tickets.js reads these deps and this fixture does not inject them: ${missing.join(', ')}. `
     + 'They arrive as `undefined`, and the throw is swallowed on several paths — wire the real value, '

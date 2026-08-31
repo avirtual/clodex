@@ -35,6 +35,10 @@ const { execFileSync } = require('node:child_process');
 const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
+const { initStores } = require('../stores');
+const { createRemindScheduler } = require('../remind-scheduler');
+const { createTeamManifest } = require('../team-manifest');
+const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 
 // A REAL repo with REAL worktrees, for the reason reviewer-round-end.test.js
 // gives about the accept arms: every assertion below is about what survived on
@@ -67,8 +71,21 @@ function mkRepo() {
 function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
   const home = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t482-'));
   const repoDir = mkRepo();
-  const tmpDirs = [home, repoDir];
+  const userData = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t482-ud-'));
+  // registryDir is a THROWAWAY, deliberately not `home`: initStores SEEDS the
+  // shipped prompt library into whatever dir it is given, and this fixture's
+  // REGISTRY_DIR is `home`.
+  const seedDir = fsReal.mkdtempSync(pathReal.join(osReal.tmpdir(), 'clodex-t482-seed-'));
+  const tmpDirs = [home, repoDir, userData, seedDir];
   if (t) t.after(() => { for (const d of tmpDirs) { try { fsReal.rmSync(d, { recursive: true, force: true }); } catch {} } });
+  const manifest = createTeamManifest({ fs: fsReal, clodexHome: home });
+  const scheduler = createRemindScheduler({
+    now: () => Date.now(),
+    setTimer: () => null,
+    clearTimer: () => {},
+    store: initStores(userData, { log: console, registryDir: seedDir }).reminders,
+    deliver: () => {},
+  });
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: repoDir, lead: 'lead', watchdogMs: null,
@@ -136,6 +153,25 @@ function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
     },
     resolveTeam: (cwd) => (cwd && cwd.startsWith(repoDir) ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(repoDir) ? repoDir : null),
+    // t581 widened t574's audit to this file. One of these was REACHED and its
+    // absence swallowed: `_cancelTicketReminders` catches the getRemindScheduler
+    // TypeError into `sched = null` and returns '', so no accept here ever
+    // cancelled a ticket-bound reminder or rendered the clause reporting it.
+    //
+    // The rest are reached by no subject here. The five manifest verbs go through
+    // `loadManifest`, which reads `<home>/teams/team/team.json`; this fixture
+    // never writes that file, so a subject reaching one gets `no team manifest
+    // at …` and must write it first rather than read the error as a broken verb.
+    getRemindScheduler: () => scheduler,
+    AGENT_NAME_RE: require('../catalogs').AGENT_NAME_RE,
+    DEFAULT_WORKSPACE_ID: require('../catalogs').DEFAULT_WORKSPACE_ID,
+    getUserDataPath: () => userData,
+    isAlive: (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } },
+    addRole: manifest.addRole,
+    setRole: manifest.setRole,
+    removeRole: manifest.removeRole,
+    renameRole: manifest.renameRole,
+    setTeamWatchdog: manifest.setTeamWatchdog,
   };
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
@@ -188,7 +224,7 @@ function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
     return wtPath;
   };
   return {
-    m, team, home, repoDir, tstore, persistence, replies, logs, killed, archived, seat, worktreeSeat,
+    m, team, home, repoDir, tstore, persistence, replies, logs, killed, archived, seat, worktreeSeat, deps,
     one: (id) => tstore.load(team.root).find((t) => t.id === id),
   };
 }
@@ -216,6 +252,19 @@ const accept = (f, id, note = '') => {
 const exists = (p) => fsReal.existsSync(p);
 const branches = (f) => execFileSync('git', ['-C', f.repoDir, 'for-each-ref', '--format=%(refname:short)', 'refs/heads'],
   { encoding: 'utf8' }).split('\n').map((s) => s.trim()).filter(Boolean);
+
+// ── the fixture itself ─────────────────────────────────────────────────────
+
+test('mkFixture injects every dep team-tickets.js reads', (t) => {
+  // t581: eleven were missing here. One was REACHED — getRemindScheduler, whose
+  // absence `_cancelTicketReminders` swallows into `sched = null`, so no accept
+  // subject could have caught it.
+  const f = mkFixture(t);
+  assertTicketDepsCovered(assert, f.deps, {
+    // Left unset on purpose: every subject here runs under the SHIPPED timeout.
+    optional: ['ticketSuiteTimeoutMs'],
+  });
+});
 
 // ── direction 1: an EPHEMERAL ticket seat is still torn down, exactly as before ──
 //
