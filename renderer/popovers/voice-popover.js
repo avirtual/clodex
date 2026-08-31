@@ -31,8 +31,8 @@ const { VOICE_ITEMS } = require('../voice-control');
 // Only ever running while the popover is OPEN, and it writes a class and a
 // string on ONE node — never innerHTML on the bar. An indicator on the session
 // bar would repaint #proxy-actions on this timer, which is the measured
-// click-eating rebuild (t517 ate 10-15% of clicks); the popover placement is
-// what makes a tick this fast affordable at all.
+// click-eating rebuild that ate 10-15% of clicks; the popover placement is what
+// makes a tick this fast affordable at all.
 const RECORDER_TICK_MS = 300;
 
 // What CLODEX believes, in the words of the predicate that produced it. THREE
