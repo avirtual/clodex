@@ -488,8 +488,11 @@ test('writeVoiceMode writes THROUGH a symlinked settings.json, not over it', () 
   }
 });
 
-// A symlinked ~/.claude DIRECTORY is the same hazard one level up, and realpath
-// on the file resolves it without a second code path.
+// Realpath on the file resolves a symlinked `.claude` without a second code
+// path. Not the same hazard as a symlinked settings.json: a rename onto
+// ~/.claude/settings.json traverses the directory link and replaces the inner
+// regular file either way, so no link can be destroyed here. This guards that
+// the dangling-link refusal does not fire on a resolvable directory link.
 test('writeVoiceMode writes through a symlinked .claude directory', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voicesymd-'));
   try {
