@@ -1,10 +1,15 @@
 // voice-settings.js — read the Claude CLI's PERSISTED voice-input state out of
 // `~/.claude/settings.json`, for the voice-mode selector.
 //
-// READ-ONLY BY CONSTRUCTION, and that is the whole design. The mode is changed
-// by INJECTING `/voice <mode>` into a live session; a running CLI reads the file
-// at its own startup and holds the mode in memory, so a writer here would leave
-// the UI asserting a state no session is actually in.
+// READ-ONLY BY CONSTRUCTION. The mode is changed by running the CLI's own
+// `/voice <mode>`, which owns the merge and the schema of the file it writes;
+// nothing here needs a writer, so there is none to keep correct.
+//
+// A running CLI DOES pick up an external write — the mode is read through a
+// live selector, not cached at startup — but only where the CLI is watching:
+// it watches directories that had a settings file when that session started.
+// A box whose ~/.claude/settings.json did not exist at session start is not
+// covered, which is why the write is left to `/voice` rather than done here.
 //
 // The legacy sibling key `voiceEnabled` is REPORTED and never merged: `voice` is
 // authoritative, so a file whose two keys disagree still reports `voice`, and a

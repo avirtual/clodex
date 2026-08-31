@@ -18,16 +18,16 @@
 // STATE COMES FROM THE FILE, never from what we last injected. The user can type
 // `/voice hold` in any terminal, so a last-injected mirror goes stale with no
 // event to correct it; the read is re-run on window focus and on a slow poll.
-// The CLI reads the setting at ITS startup and holds a mode in memory, so a
-// long-running session and a freshly-changed file legitimately disagree — the
-// label reflects the FILE, rather than claiming per-session truth the renderer
-// cannot have.
+// The label reflects the FILE rather than claiming per-session truth the
+// renderer cannot have: a session the CLI is not watching (it watches only
+// directories that had a settings file when that session started) can sit on a
+// mode the file no longer names.
 //
-// The WRITE is an injection, not an fs write: a running CLI would not pick up an
-// edited file. Injection is quiet-gated (inject-queue parks it until the agent
-// is quiet), so every surface must carry a pending affordance — mid-turn the
-// command is queued, not lost, and a control that looked dead meanwhile would
-// invite a second choice that queues a second command.
+// The WRITE is an injection so the CLI's own `/voice` performs it, owning the
+// merge and the schema. Injection is quiet-gated (inject-queue parks it until
+// the agent is quiet), so every surface must carry a pending affordance —
+// mid-turn the command is queued, not lost, and a control that looked dead
+// meanwhile would invite a second choice that queues a second command.
 //
 // The Preferences row is never HIDDEN, only disabled: it lives in a modal
 // settings dialog that opens with no live Claude session at all, and a row that

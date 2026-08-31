@@ -2334,10 +2334,17 @@ function createSessionManager(deps) {
       return this.voiceTap(r.name, { raise: true });
     }
 
-    // Switch the CLI's own push-to-talk mode, INJECTED rather than written to a
-    // settings file: the CLI's `/voice` handler writes the GLOBAL
-    // ~/.claude/settings.json and reads the mode into memory at startup, so a
-    // file written under a running seat disagrees with the process holding it.
+    // Switch the CLI's own push-to-talk mode by INJECTING `/voice <mode>`, so
+    // the CLI's own handler performs the write and owns the merge and schema of
+    // the file it writes.
+    //
+    // A SPAWNED CLI CANNOT REPLACE THIS, measured 2026-09-01 against 2.1.252.
+    // `/voice` is a `type:"local"` command declaring supportsNonInteractive
+    // false, so the headless filter drops it: `claude -p "/voice tap"` exits 0
+    // and changes nothing — a silent no-op, the worst available failure. The
+    // positional form `claude "/voice tap"` is not headless at all; it starts
+    // the interactive TUI, which needs a real pty (with stdio ignored it also
+    // exits 0 having done nothing) and does NOT self-exit once it has written.
     //
     // Targets the MICROPHONE HOLDER, never `activeSession` — the holder is the
     // one invariant that is single-valued across windows, and the mode belongs
@@ -2370,9 +2377,9 @@ function createSessionManager(deps) {
     }
 
     // Spoken replies on or off, from across the room. CLODEX'S OWN setting, so
-    // this is an ordinary store write — no injection, no slash command, no pty.
-    // The CLI is not involved and must not be: `mode` needs injection only
-    // because the CLI owns voice mode and reads it at startup.
+    // this is an ordinary store write — no CLI, no slash command, no pty. The
+    // contrast with `mode` is which side owns the value: voice mode lives in
+    // the CLI's settings file, this lives in Clodex's store.
     //
     // BOX-WIDE. There is no per-seat speech flag, so this takes no seat name and
     // never consults the microphone holder.
