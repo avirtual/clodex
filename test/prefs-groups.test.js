@@ -26,6 +26,7 @@ const CONTROLS = [
   'prefs-voice-mode', 'prefs-voice-state',
   'prefs-voice-submit', 'prefs-voice-submit-phrase', 'prefs-voice-submit-composition',
   'prefs-voice-submit-rearm',
+  'prefs-speak-replies', 'prefs-speak-voice', 'prefs-speak-rate',
   'prefs-claude-components', 'prefs-claude-sl-cmd', 'prefs-codex-components',
   'prefs-proxy-enabled', 'ws-dot', 'ws-status-text', 'ws-restart-btn',
   'prefs-compact-on-resume', 'prefs-compact-on-resume-why',

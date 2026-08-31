@@ -31,6 +31,18 @@ const SAY_BIN = '/usr/bin/say';
 // not warmth. A friendlier default is a regression for the use it was built for.
 const DEFAULT_VOICE = 'Daniel';
 
+// Words per minute for `say -r`. 210 rather than the ~175 default because the
+// operator compared 175, 210 and 240 aloud and picked this one — 175 dragged,
+// 240 was rushed. It is a listening judgement, not a derivation, so do not
+// retune it from a reading-speed table.
+const DEFAULT_RATE = 210;
+
+// `say` takes any integer here and a nonsense one is not rejected, it is
+// SPOKEN — 5 wpm narrates a sentence for minutes with no way to tell the box
+// is not wedged. The bounds are the sanity check the binary does not do.
+const MIN_RATE = 80;
+const MAX_RATE = 400;
+
 // `say -v '?'` lines are `Name <spaces> locale <spaces> # sample`. A name may
 // contain spaces ("Eddy (English (UK))") AND a long name is followed by only a
 // single space, so neither the first whitespace run nor a fixed column finds the
@@ -117,16 +129,49 @@ function createVoiceCatalog({ execFileImpl = execFile, bin = SAY_BIN, lang = 'en
   return { list, refresh };
 }
 
-function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN } = {}) {
+// `onBusy` is fired with true when playback STARTS and false when it ENDS, and
+// only on a change. It exists because the re-arm lives in the renderer, which
+// cannot see this process at all: the microphone re-arms at turn end and the
+// narration starts at the same instant, so without a signal crossing that seam
+// the recorder hears `say` and transcribes it into the composer.
+//
+// The false edge is execFile's own callback, which fires when the child exits —
+// and `say` BLOCKS until audio playback completes (measured: 5.2s for a ~5s
+// sentence). So this is a precise end-of-speech signal, and the reason no
+// consumer of it may fall back to a duration estimate or a poll.
+function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN, onBusy = null } = {}) {
   let child = null;
+  let busy = false;
 
-  function stop() {
+  // Consume-only: the listener is a broadcast to every window, and a throw from
+  // it must not take down a kill path or an exec callback.
+  function setBusy(next) {
+    if (next === busy) return;
+    busy = next;
+    if (onBusy) { try { onBusy(next); } catch { /* observer-grade */ } }
+  }
+
+  // The kill WITHOUT the announcement, which is the half speak() needs. A
+  // replacement utterance must not emit a false edge on its way in: playback
+  // never actually stopped, and a consumer waiting on that edge — the turn-end
+  // re-arm — would take the gap as permission and arm into the narration that
+  // is about to start.
+  function killChild() {
     if (!child) return false;
     const c = child;
     // Cleared BEFORE the kill so the exit handler cannot null out a NEWER child:
     // kill() is async and speak() may start a replacement before SIGTERM lands.
     child = null;
     try { c.kill(); } catch { /* already gone */ }
+    return true;
+  }
+
+  function stop() {
+    if (!killChild()) return false;
+    // Announced HERE rather than left to the exit callback, which lands a tick
+    // or more later. A killed narration is over the moment it is killed, and a
+    // consumer waiting on the false edge would otherwise sit through the gap.
+    setBusy(false);
     return true;
   }
 
@@ -148,11 +193,21 @@ function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN } = {}) {
   // first rather than queueing behind it: the newer reply is the one the
   // operator is waiting on, and a queue would fall further behind on every turn
   // until it narrated the distant past.
-  function speak(text, { voice = DEFAULT_VOICE } = {}) {
+  function speak(text, { voice = DEFAULT_VOICE, rate = DEFAULT_RATE } = {}) {
     if (!text) return false;
-    stop();
+    // The silent kill, never stop(): see killChild.
+    killChild();
     const args = [];
     if (voice) args.push('-v', voice);
+    // Dropped rather than clamped when it is out of range or not a number: the
+    // store already resolves those, so reaching here with one means a caller
+    // that bypassed it, and `say`'s own default is a better answer than a
+    // number this module invented.
+    if (Number.isFinite(rate) && rate >= MIN_RATE && rate <= MAX_RATE) args.push('-r', String(Math.round(rate)));
+    // LAST, and the text is its own argv element. execFile has no shell to
+    // interpret the model's text, and `--` stops a reply opening with a hyphen
+    // from being read as a flag — both are the command-injection guard, not
+    // formatting.
     args.push('--', text);
     let started;
     try {
@@ -161,17 +216,22 @@ function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN } = {}) {
         // failure all arrive here, and none of them is worth interrupting the
         // operator over. Guarded against nulling a successor for the same
         // reason stop() clears first.
-        if (child === started) child = null;
+        if (child === started) { child = null; setBusy(false); }
       });
     } catch {
       child = null;
+      setBusy(false);
       return false;
     }
     child = started;
+    setBusy(true);
     return true;
   }
 
   return { speak, stop, interruptForRecorder, isSpeaking: () => !!child };
 }
 
-module.exports = { createSpeaker, createVoiceCatalog, listVoices, parseVoices, DEFAULT_VOICE, SAY_BIN };
+module.exports = {
+  createSpeaker, createVoiceCatalog, listVoices, parseVoices,
+  DEFAULT_VOICE, DEFAULT_RATE, MIN_RATE, MAX_RATE, SAY_BIN,
+};

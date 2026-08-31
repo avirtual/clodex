@@ -39,9 +39,26 @@ async function readSpeakSettings() {
       on: s?.speakReplies === true,
       voice: typeof s?.speakVoice === 'string' ? s.speakVoice : '',
       voices: Array.isArray(s?.speakVoices) ? s.speakVoices : [],
+      rate: Number.isInteger(s?.speakRate) ? s.speakRate : null,
     };
   } catch { return null; }
 }
+
+// The rates offered, not a free-text field: this is a listening choice, and a
+// slider invites tuning a number nobody can hear the difference in. 210 is the
+// default because the operator compared all three aloud.
+const SPEAK_RATES = [
+  { rate: 150, label: '150 — slow' },
+  { rate: 175, label: "175 — say's default" },
+  { rate: 210, label: '210 — brisk' },
+  { rate: 240, label: '240 — fast' },
+];
+
+// The fallback for a read that produced no rate. Named rather than inlined
+// because it is the fourth copy of this number (stores.js, speaker.js and the
+// <option> list in index.html hold the others) and was the only one no test
+// could reach — the two main-process copies are pinned against each other.
+const DEFAULT_SPEAK_RATE = 210;
 
 
 // How often the open popover re-reads the recorder state. Matched to the
@@ -184,10 +201,27 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
       // No enumerable voices means `say` did not answer. The name is still shown
       // and still saved: it is what the store holds and what would be spoken.
       : `<span class="speak-voice-fixed">${esc(speak.voice)}</span>`;
+    // Falls back to the default when the read produced nothing rather than
+    // leaving every option unselected, which would show a picker asserting a
+    // rate the store does not hold.
+    const want = speak.rate === null ? DEFAULT_SPEAK_RATE : speak.rate;
+    // A STORED value that is not on the list gets its own option, the same way
+    // setSpeakSettings does for voices. The store accepts the whole 80-400 band,
+    // so a rate set from anywhere else — a hand-edited settings file, a future
+    // surface — would otherwise leave every option unselected, and a browser
+    // renders that as the FIRST one: the picker would claim 150 while the store
+    // held 190, which is precisely what the note above says it prevents.
+    const offered = SPEAK_RATES.some((r) => r.rate === want)
+      ? SPEAK_RATES
+      : [{ rate: want, label: `${want} — set elsewhere` }, ...SPEAK_RATES];
+    const rates = `<select class="speak-rate" ${speak.on ? '' : 'disabled'}>`
+      + offered.map((r) => `<option value="${r.rate}"${r.rate === want ? ' selected' : ''}>`
+        + `${esc(r.label)}</option>`).join('')
+      + '</select>';
     return '<label class="speak-row" title="Synthesized on this machine by /usr/bin/say — no audio and no text leave the box">'
       + `<input type="checkbox" class="speak-toggle"${speak.on ? ' checked' : ''}> `
       + 'Speak the final reply aloud</label>'
-      + `<div class="speak-sub">Local only — nothing leaves this machine. ${voices}</div>`;
+      + `<div class="speak-sub">Local only — nothing leaves this machine. ${voices} ${rates}</div>`;
   }
 
   async function refreshSpeakSection() {
@@ -328,7 +362,9 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
     const toggle = e.target.closest('.speak-toggle');
     if (toggle) { saveSpeak({ speakReplies: toggle.checked }); return; }
     const sel = e.target.closest('.speak-voice');
-    if (sel) saveSpeak({ speakVoice: sel.value });
+    if (sel) { saveSpeak({ speakVoice: sel.value }); return; }
+    const rate = e.target.closest('.speak-rate');
+    if (rate) saveSpeak({ speakRate: Number(rate.value) });
   });
 
   document.addEventListener('mousedown', (e) => {

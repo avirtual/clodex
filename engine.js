@@ -921,7 +921,14 @@ let pluginLoader = null;
 // One speaker for the whole app: `say` writes to the machine's single audio
 // output, so a per-session speaker would let two seats finishing together talk
 // over each other with nothing able to arbitrate.
-const speaker = createSpeaker();
+// Late-bound through a mutable holder because `manager` is built BELOW this
+// line and the callback fires only once a turn ends, long after both exist.
+// Broadcast to every window rather than sent to one: the speaker is box-wide,
+// so the seat whose re-arm has to wait is not necessarily the seat that spoke.
+let speakerBusyBroadcast = null;
+const speaker = createSpeaker({
+  onBusy: (busy) => { if (speakerBusyBroadcast) speakerBusyBroadcast(busy); },
+});
 // NOT warmed here. Building the engine must spawn NOTHING: every test that
 // constructs it would otherwise fork a real 650ms `say -v '?'`, and those
 // children outlive a test process that exits first — orphaned to pid 1 with
@@ -1092,6 +1099,7 @@ const SessionManager = createSessionManager({
   getPluginHooks: () => (pluginHost ? pluginHost.hooks : null),
 });
 const manager = new SessionManager();
+speakerBusyBroadcast = (busy) => { try { manager._broadcast('speaker-busy', busy); } catch {} };
 const proxyPoller = new ProxyPoller(manager);
 manager._proxyPoller = proxyPoller;
 
@@ -1988,10 +1996,12 @@ const toolCache = createToolCache({ whichBin });
     // Workbench shells are children of this process with no persistence record
     // to resume from, so a quit that skipped this would orphan them outright.
     if (drawerPtys) { try { drawerPtys.dispose(); } catch {} }
-    // Before killAll: a narration is not tied to a session's pty, so nothing
-    // downstream would stop it and the app would exit still talking.
-    try { speaker.stop(); } catch {}
+    // AFTER killAll, not before. killAll runs each session's teardown, and a
+    // watcher stopping flushes its pending text — which can re-enter _maybeSpeak
+    // and START a narration. Stopping first therefore leaves the app exiting
+    // while talking, which is the case this call exists to prevent.
     manager.killAll();
+    try { speaker.stop(); } catch {}
   }
 
   return {

@@ -1897,10 +1897,12 @@ function rearmHarness({
   voiceMode = 'tap',
   trigger = ' ',
   abandonMs,
+  speechAbandonMs,
+  speaking = false,
 } = {}) {
   const writes = [];
   const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)) });
-  const env = { config, attention, voiceMode, trigger };
+  const env = { config, attention, voiceMode, trigger, speaking };
   // The terminal-quiet check compares timestamps, so a test that wants to say
   // "the CLI is still painting" has to control the clock rather than race it:
   // real elapsed time between a write and the assertion is longer than any
@@ -1919,10 +1921,12 @@ function rearmHarness({
     getAttention: () => env.attention,
     getVoiceMode: () => env.voiceMode,
     getTriggerKey: () => env.trigger,
+    getSpeakerBusy: () => env.speaking,
     write: (d) => writes.push(d),
     quietMs: TEST_QUIET_MS,
     rearmMs: TEST_REARM_MS,
     ...(abandonMs === undefined ? {} : { abandonMs }),
+    ...(speechAbandonMs === undefined ? {} : { speechAbandonMs }),
   }));
   // A turn, then its end. Every re-arm needs the edge, so this is the shape
   // every test below starts from.
@@ -2294,6 +2298,254 @@ test('MF1: one edge cannot reschedule forever — the abandon deadline holds', a
   await h.done();
   assert.deepStrictEqual(h.writes, [' ']);
   h.watcher.dispose();
+});
+
+// ---------------------------------------------------- speech vs the re-arm
+//
+// THE RACE, reported from the live microphone, which is the only place it is
+// observable: with the re-arm on and speech on, both fire on the same turn-end
+// edge, so the recorder hears `say` and transcribes the narration into the
+// composer. The interlocks that already existed cover neither half of this —
+// interruptForRecorder covers a tap DURING narration, _maybeSpeak covers
+// starting to speak into a LIVE mic, and this is the two starting together.
+//
+// These assert on what reached the pty, not on a predicate: the deferral can be
+// deleted and leave every function still returning the right answer while the
+// byte goes out anyway.
+
+test('SPEECH: nothing is written while a narration is playing', async () => {
+  const h = rearmHarness({ speaking: true });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [], 'the recorder would transcribe the narration');
+  assert.strictEqual(h.watcher.rearmCount(), 0);
+  h.watcher.dispose();
+});
+
+test('SPEECH OFF: the re-arm fires exactly as it does today', async () => {
+  // The other direction, and it is not optional. The test above passes just as
+  // well on a build whose re-arm never fires at all — this is what says the
+  // deferral is a WAIT rather than a silence, and it is the operator's explicit
+  // requirement that a seat with speech off is unchanged.
+  const h = rearmHarness({ speaking: false });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [' ']);
+  assert.strictEqual(h.watcher.rearmCount(), 1);
+  h.watcher.dispose();
+});
+
+test('SPEECH: the deferred re-arm fires once the narration ENDS', async () => {
+  // `say` blocks until playback completes, so main's exit callback flips this
+  // flag at the end of audio. The wait must resume from it — a deferral that
+  // never re-armed would be indistinguishable from the test above.
+  const h = rearmHarness({ speaking: true });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [], 'still talking');
+  h.env.speaking = false;
+  await h.done();
+  assert.deepStrictEqual(h.writes, [' '], 'the microphone comes back when the room is quiet');
+  assert.strictEqual(h.watcher.rearmCount(), 1, 'once, not once per reschedule');
+  h.watcher.dispose();
+});
+
+test('SPEECH: a narration does not spend the abandon budget', async () => {
+  // REARM_ABANDON_MS bounds a DOOMED retry loop; waiting out audio is not that.
+  //
+  // THE SEQUENCE MATTERS, and an earlier version of this test did not have it.
+  // The deadline is consulted ONLY inside the still-painting branch, so merely
+  // deferring and then releasing never reads it — that test passed with the
+  // extension deleted (found by mutation). The case where narration having
+  // eaten the budget actually bites is: narration ends, the CLI then PAINTS,
+  // and the paint-wait consults a deadline the narration already exhausted.
+  //
+  // The CLOCK IS DRIVEN, not raced, for the same reason the MF1 abandon test
+  // drives it: on real timers the post-narration attempt usually lands after the
+  // quiet window and skips the still-painting branch altogether, so the deadline
+  // is never read and the test passes either way. Freezing with a paint stamped
+  // NOW forces every attempt through the branch that consults it.
+  //
+  // abandonMs is just over one settle, so an unextended deadline is long gone by
+  // the time the narration finishes.
+  const h = rearmHarness({ speaking: true, abandonMs: TEST_REARM_MS + 1 });
+  h.turn();
+  for (let i = 0; i < 6; i += 1) await settle(TEST_REARM_MS);
+  assert.deepStrictEqual(h.writes, [], 'still narrating');
+
+  // Narration ends and the CLI repaints — the ordering the wire path always
+  // produces, since the composer is drawn after the turn-end edge.
+  h.env.speaking = false;
+  h.term.write(EMPTY_COMPOSER);
+  h.clock.frozen = h.clock.now();
+  await settle(TEST_REARM_MS * 3);
+  // Still painting, so nothing may have been written yet — but the edge must be
+  // ALIVE, which is what the release below proves.
+  assert.deepStrictEqual(h.writes, [], 'still painting');
+
+  h.clock.frozen = null;
+  await h.done();
+  assert.deepStrictEqual(h.writes, [' '],
+    'the paint after a long narration must not hit a deadline the narration ate');
+  h.watcher.dispose();
+});
+
+test('SPEECH: a flag stuck true is abandoned rather than rescheduling forever', async () => {
+  // The deferral pushes the abandon deadline out, so speech cannot spend the
+  // re-arm's budget — which also means nothing else bounds this wait. The flag
+  // mirrors a value MAIN owns, so a dropped false edge (a window that missed the
+  // broadcast, a main that died mid-utterance) strands this side believing the
+  // room is still talking, and an unbounded timer is what every other wait here
+  // refuses. Found by mutation: with the flag pinned true the test process hung.
+  const h = rearmHarness({ speaking: true, speechAbandonMs: TEST_REARM_MS });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [], 'nothing written while it believes the room is talking');
+
+  // THE DISCRIMINATOR, and without it this test passes on an unbounded build:
+  // releasing the flag with NO new turn must write nothing, because the edge was
+  // abandoned. A wait that was merely still running would fire here instead.
+  h.env.speaking = false;
+  await h.done();
+  assert.deepStrictEqual(h.writes, [], 'the abandoned edge must not resurrect when the flag clears');
+
+  // And the abandonment is per-EDGE: a fresh turn end re-arms normally, so one
+  // stuck flag costs a single re-arm rather than the feature.
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, [' ']);
+  h.watcher.dispose();
+});
+
+test('SPEECH: an abandoned deferral does not poison the NEXT turn', async () => {
+  // THE LEAK, and it needs no operator action to reach: an injected dm, a
+  // reminder or a peer message starts the new turn all by itself.
+  //
+  // `speechDeferredSince` is per-EDGE state, but it was cleared only on the
+  // fall-through where speech is already over. Every early return from
+  // attemptRearm during a deferral leaves it set — and two are reachable, the
+  // stale-edge return and the still-painting abandon. So the NEXT edge inherits
+  // the old start stamp, reads its budget as already spent, and returns without
+  // deferring AND without rescheduling: nothing fires when speech ends, because
+  // no timer survives. It then only heals on a turn end with no narration, which
+  // is the uncommon case once speech is on.
+  //
+  // The distinguishing move from the test above: `speaking` stays TRUE across
+  // the second edge. Clearing it first is what masked this.
+  //
+  // The CLOCK IS DRIVEN, and it has to be: the budget must be exhausted by the
+  // FIRST edge and still have room for the second, so the gap between the edges
+  // is jumped rather than slept. With a budget small enough to expire in real
+  // settle time, the second edge abandons on its own merits and the test cannot
+  // tell the leak from correct behaviour — which is exactly what a first
+  // version of it did.
+  const BUDGET = 200;
+  const h = rearmHarness({ speaking: true, speechAbandonMs: BUDGET });
+
+  h.turn();
+  await settle(TEST_REARM_MS * 3);
+  assert.deepStrictEqual(h.writes, [], 'first edge is deferring, narration playing');
+
+  // Jump past the budget so the FIRST edge abandons — the state this leaks.
+  h.clock.offset += BUDGET + 100;
+  await settle(TEST_REARM_MS * 3);
+  assert.deepStrictEqual(h.writes, [], 'first edge abandoned, no timer left');
+
+  // A fresh turn arrives WHILE the narration is still playing — an injected dm,
+  // a reminder or a peer message is enough to produce it.
+  h.turn();
+  await settle(TEST_REARM_MS * 3);
+  assert.deepStrictEqual(h.writes, [], 'second edge: still speaking, so still nothing');
+
+  // Speech ends. This edge is entitled to its OWN budget, so the re-arm the
+  // operator is waiting for must fire. Without the reset in noteActivity the
+  // second edge inherited the first's spent stamp, returned without scheduling
+  // anything, and nothing survives to fire here.
+  h.env.speaking = false;
+  await h.done();
+  assert.deepStrictEqual(h.writes, [' '],
+    'the new edge must get its own budget, not the previous edge\'s exhausted one');
+  h.watcher.dispose();
+});
+
+test('SPEECH: a tap DURING the narration is not re-armed on top of', async () => {
+  // He tapped the microphone himself while the reply was being read out. Main
+  // kills the narration (interruptForRecorder), so the flag clears — and the
+  // deferred attempt must NOT then write a character into a recorder he just
+  // started, where the byte would STOP it and drop what he is saying.
+  const h = rearmHarness({
+    speaking: true,
+    rows: [{ text: EMPTY_COMPOSER, cursor: true }],
+  });
+  h.turn();
+  await h.done();
+  assert.deepStrictEqual(h.writes, []);
+  // The tap: the indicator lights, and the narration is killed by it.
+  h.term._state.rows = [{ text: EMPTY_COMPOSER, cursor: true }, { text: REC_ROW }];
+  h.env.speaking = false;
+  await h.done();
+  assert.deepStrictEqual(h.writes, [], 'the byte would stop the recording he just started');
+  h.watcher.dispose();
+});
+
+test('SPEECH: an absent signal leaves the path byte-identical to before', async () => {
+  // No `getSpeakerBusy` at all — an older main, or a host that wires no speaker.
+  // The default must be "not speaking", or the feature wedges on every box that
+  // cannot report.
+  const writes = [];
+  const term = fakeTerminal({ rows: [{ text: EMPTY_COMPOSER }] });
+  const watcher = createVoiceSubmitWatcher(term, {
+    getConfig: () => ({ enabled: true, rearm: true, phrase: DEFAULT_SUBMIT_PHRASE }),
+    getAttention: () => null,
+    getVoiceMode: () => 'tap',
+    getTriggerKey: () => ' ',
+    write: (d) => writes.push(d),
+    quietMs: TEST_QUIET_MS,
+    rearmMs: TEST_REARM_MS,
+  });
+  watcher.noteActivity('thinking');
+  watcher.noteActivity('idle', true);
+  await settle(TEST_REARM_MS + TEST_QUIET_MS + ENTER_SETTLE_MS + 25);
+  assert.deepStrictEqual(writes, [' ']);
+  watcher.dispose();
+});
+
+test('SPEECH: a throwing busy read declines to defer rather than wedging', async () => {
+  const writes = [];
+  const term = fakeTerminal({ rows: [{ text: EMPTY_COMPOSER }] });
+  const watcher = createVoiceSubmitWatcher(term, {
+    getConfig: () => ({ enabled: true, rearm: true, phrase: DEFAULT_SUBMIT_PHRASE }),
+    getAttention: () => null,
+    getVoiceMode: () => 'tap',
+    getTriggerKey: () => ' ',
+    getSpeakerBusy: () => { throw new Error('x'); },
+    write: (d) => writes.push(d),
+    quietMs: TEST_QUIET_MS,
+    rearmMs: TEST_REARM_MS,
+  });
+  watcher.noteActivity('thinking');
+  watcher.noteActivity('idle', true);
+  await settle(TEST_REARM_MS + TEST_QUIET_MS + ENTER_SETTLE_MS + 25);
+  assert.deepStrictEqual(writes, [' '],
+    'a broken signal must not silence the feature — the cost of a missed defer is one narration');
+  watcher.dispose();
+});
+
+test('SPEECH: the defer check sits BELOW the still-painting branch', async () => {
+  // A source-shape pin on an ORDER no runtime fixture can reach. The abandon
+  // deadline is consulted only inside the still-painting branch, so hoisting the
+  // speech check above it breaks the `abandonMs: 0` pin's premise — and the
+  // standing rule in this file's header says the same about any new top check.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'renderer', 'voice-submit-watcher.js'), 'utf-8');
+  const body = src.slice(src.indexOf('function attemptRearm()'));
+  const painting = body.indexOf('if (quietFor < rearmMs)');
+  const speech = body.indexOf('getSpeakerBusy()');
+  assert.ok(painting > 0 && speech > 0, 'both branches must still be there');
+  assert.ok(painting < speech,
+    'the speech defer must not be hoisted above the still-painting branch');
 });
 
 // MF2: our "empty" must not be laxer than the CLI's `value.length > 0`, or we

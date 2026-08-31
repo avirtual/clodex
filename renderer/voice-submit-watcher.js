@@ -149,6 +149,22 @@ const REARM_SETTLE_MS = 3000;
 // starts a fresh attempt.
 const REARM_ABANDON_MS = 20000;
 
+// How long a narration may hold the re-arm before it is abandoned like any
+// other doomed wait.
+//
+// The deferral pushes the abandon deadline out on every attempt, so speech does
+// not spend the re-arm's own budget — which is correct, and which also means a
+// busy flag STUCK TRUE would reschedule forever. That is reachable without any
+// bug here: the flag mirrors a value main owns, and a dropped false edge (a
+// window that missed the broadcast, a main that died mid-utterance) leaves this
+// side believing the room is still talking. An unbounded timer is the one
+// outcome this file already refuses everywhere else.
+//
+// Two minutes: far past any narration the 700-character ceiling can produce
+// (~40s at 210 wpm) so it never truncates a real wait, and short enough that a
+// wedged flag costs one re-arm rather than the feature.
+const SPEECH_ABANDON_MS = 120000;
+
 // THE INDICATOR IS NOT EVIDENCE THAT *THIS DRAFT* WAS SPOKEN, which is why the
 // clear below exists and why it is not optional.
 //
@@ -317,6 +333,7 @@ function createVoiceSubmitWatcher(terminal, {
   getTriggerKey = () => null,
   rearmMs = REARM_SETTLE_MS,
   abandonMs = REARM_ABANDON_MS,
+  speechAbandonMs = SPEECH_ABANDON_MS,
   // Marks the submit as voice-originated. Absent, the feature is simply off and
   // every other path here is unchanged — the marker is an annotation on a
   // submit, never a precondition for one.
@@ -343,6 +360,11 @@ function createVoiceSubmitWatcher(terminal, {
   // and gating his protection on an unrelated checkbox would fix the bug only
   // for the seats that had opted into something else.
   recorderScope = () => false,
+  // Whether a spoken reply is PLAYING right now, box-wide, reported by main —
+  // this side cannot see the `say` child at all. Absent, the re-arm behaves
+  // exactly as it did before speech existed, which is the requirement for a
+  // seat with the feature switched off.
+  getSpeakerBusy = () => false,
   evidenceMs = VOICE_EVIDENCE_MS,
   now = Date.now,
 }) {
@@ -444,6 +466,8 @@ function createVoiceSubmitWatcher(terminal, {
   let lastWriteAt = 0;
   // When the edge currently being waited on arrived, for the abandon deadline.
   let rearmDeadline = 0;
+  // When the CURRENT speech deferral began, or 0 when not deferring.
+  let speechDeferredSince = 0;
 
   // The cursor row alone, truncated at the cursor column. The phrase ends the
   // utterance, so it is on the row the cursor is on even when the draft wrapped.
@@ -864,6 +888,43 @@ function createVoiceSubmitWatcher(terminal, {
       return;
     }
 
+    // A narration is PLAYING, and it started on this same turn-end edge. Arming
+    // now points a live microphone at the machine's own speaker, and the CLI
+    // transcribes `say` into the composer — reported from the live microphone,
+    // which is the only place it can be seen.
+    //
+    // BELOW the still-painting branch, never hoisted above it: the abandon
+    // deadline is consulted only there, and the `abandonMs: 0` pin depends on
+    // that branch being the first one an attempt reaches.
+    //
+    // The abandon deadline is REFRESHED for as long as this waits, so narration
+    // cannot spend it. A long reply would otherwise burn the whole 20s budget
+    // and cancel the re-arm the operator is standing there waiting for — that
+    // budget exists to bound a doomed retry loop, and waiting out audio is not
+    // that. This wait has its own bound, SPEECH_ABANDON_MS.
+    let speaking = false;
+    try { speaking = getSpeakerBusy() === true; } catch { speaking = false; }
+    if (speaking) {
+      // BOUNDED, for the reason SPEECH_ABANDON_MS gives: the deadline being
+      // pushed out is what stops narration spending the re-arm's budget, and it
+      // is also what would let a stuck flag reschedule forever.
+      if (speechDeferredSince === 0) speechDeferredSince = now();
+      if (now() - speechDeferredSince >= speechAbandonMs) return;
+      // The budget is REFRESHED, not incremented. Adding `rearmMs` per attempt
+      // only keeps pace with real time because attempts are `rearmMs` apart —
+      // an approximation that lands a hair either side of the deadline
+      // depending on timer jitter. Restating it makes the property exact: the
+      // abandon budget starts counting when the narration ENDS, and speech
+      // cannot spend any of it.
+      rearmDeadline = now() + abandonMs;
+      rearmTimer = setTimeout(attemptRearm, rearmMs);
+      return;
+    }
+    // The narration is over. `noteActivity` clears this too, and that one is
+    // what makes the budget per-edge; this clear covers the release WITHIN an
+    // edge, so a second deferral on the same edge starts its own budget.
+    speechDeferredSince = 0;
+
     // Last, because it is the only gate that reads the screen, and the reason
     // it is not optional: the CLI's tap handler bails on a NON-EMPTY composer
     // BEFORE it swallows the key, so the character would be INSERTED into the
@@ -1055,6 +1116,14 @@ function createVoiceSubmitWatcher(terminal, {
     if (!rearmAllowed(from, state)) return;
     if (rearmTimer) clearTimeout(rearmTimer);
     rearmDeadline = now() + abandonMs;
+    // PER-EDGE, exactly like the deadline above it. Every early return from
+    // attemptRearm during a deferral leaves this set — the stale-edge return and
+    // the still-painting abandon are both reachable — so without the reset the
+    // next edge inherits a spent budget, returns without deferring AND without
+    // rescheduling, and nothing fires when speech ends because no timer
+    // survives. Clearing it only on attemptRearm's fall-through is not enough:
+    // that path runs when speech is already over.
+    speechDeferredSince = 0;
     rearmTimer = setTimeout(attemptRearm, rearmMs);
   }
 
@@ -1133,6 +1202,7 @@ function createVoiceSubmitWatcher(terminal, {
       if (stopTimer) clearTimeout(stopTimer);
       if (pollTimer) clearInterval(pollTimer);
       if (rearmTimer) clearTimeout(rearmTimer);
+      speechDeferredSince = 0;
       timer = null;
       enterTimer = null;
       stopTimer = null;
@@ -1146,5 +1216,5 @@ function createVoiceSubmitWatcher(terminal, {
 module.exports = {
   createVoiceSubmitWatcher, readComposition, commitComposition,
   QUIET_MS, ENTER_SETTLE_MS, STOP_SETTLE_MS, COMPOSITION_POLL_MS, CONSUMED_IDLE_MS,
-  REARM_SETTLE_MS, REARM_ABANDON_MS, VOICE_EVIDENCE_MS,
+  REARM_SETTLE_MS, REARM_ABANDON_MS, SPEECH_ABANDON_MS, VOICE_EVIDENCE_MS,
 };

@@ -10,7 +10,10 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { speakable, isUnspeakableToken, SPEAK_MAX_CHARS } = require('../speakable');
-const { createSpeaker, createVoiceCatalog, listVoices, DEFAULT_VOICE, SAY_BIN } = require('../speaker');
+const {
+  createSpeaker, createVoiceCatalog, listVoices,
+  DEFAULT_VOICE, DEFAULT_RATE, MIN_RATE, MAX_RATE, SAY_BIN,
+} = require('../speaker');
 const { isTurnEndEntry } = require('../transcript');
 
 // --- the discriminator ------------------------------------------------------
@@ -257,7 +260,7 @@ test('say is spawned with the text as an argument, never a shell string', () => 
   const { args } = calls[0];
   // The payload is one element, byte-identical to what was handed in.
   assert.strictEqual(args[args.length - 1], nasty);
-  assert.deepStrictEqual(args, ['-v', DEFAULT_VOICE, '--', nasty]);
+  assert.deepStrictEqual(args, ['-v', DEFAULT_VOICE, '-r', String(DEFAULT_RATE), '--', nasty]);
   // No element is a joined command line — that shape is what a shell would parse.
   assert.ok(!args.some((a) => a !== nasty && /[;&|]/.test(a)), 'no arg may carry shell metacharacters');
 });
@@ -352,14 +355,15 @@ test('an unknown voice is still passed through and still speaks', () => {
   const calls = [];
   const sp = createSpeaker({ execFileImpl: (_b, args) => { calls.push(args); return { kill() {} }; } });
   assert.strictEqual(sp.speak('hello', { voice: 'NoSuchVoiceXYZ' }), true);
-  assert.deepStrictEqual(calls[0], ['-v', 'NoSuchVoiceXYZ', '--', 'hello']);
+  assert.deepStrictEqual(calls[0], ['-v', 'NoSuchVoiceXYZ', '-r', String(DEFAULT_RATE), '--', 'hello']);
 });
 
 test('a blank voice omits the flag rather than sending an empty one', () => {
   const calls = [];
   const sp = createSpeaker({ execFileImpl: (_b, args) => { calls.push(args); return { kill() {} }; } });
   sp.speak('hello', { voice: '' });
-  assert.deepStrictEqual(calls[0], ['--', 'hello'], 'an empty -v argument would be a malformed command');
+  assert.deepStrictEqual(calls[0], ['-r', String(DEFAULT_RATE), '--', 'hello'],
+    'an empty -v argument would be a malformed command');
 });
 
 // The enumeration costs ~650ms and settings:get is called on every popover open,
@@ -437,15 +441,20 @@ test('constructing the engine does not spawn the voice enumeration', () => {
 // ACTIVE seat's recorder, so the background seat's own stamp is undefined
 // forever — a per-seat gate passes and `say` narrates into the open microphone.
 // One microphone, one speaker, one gate.
-function bootSpeakingManager() {
+// `speakReplies` is a PARAMETER, not a constant, and that is the whole reason
+// this helper exists in this shape: with it hardcoded true, the gate in
+// _maybeSpeak could be deleted outright and the suite stayed green — an unpinned
+// guard is the only thing the "default OFF" requirement rests on.
+function bootSpeakingManager({ speakReplies = true, speakRate } = {}) {
   const { createSessionManager } = require('../session-manager');
   const spoken = [];
+  const opts = [];
   const SessionManager = createSessionManager({
     INJECT_SPEAKING_STALE_MS: 3000,
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
-    getUiSettings: () => ({ get: () => ({ speakReplies: true, speakVoice: 'Daniel' }) }),
+    getUiSettings: () => ({ get: () => ({ speakReplies, speakVoice: 'Daniel', speakRate }) }),
     speaker: {
-      speak: (text) => { spoken.push(text); return true; },
+      speak: (text, o) => { spoken.push(text); opts.push(o); return true; },
       stop: () => false, interruptForRecorder: () => false, isSpeaking: () => false,
     },
   });
@@ -453,8 +462,23 @@ function bootSpeakingManager() {
   m._broadcast = () => {};
   const mk = (name) => ({ name, agentType: 'claude', _dead: false });
   m.sessions = new Map([['seatA', mk('seatA')], ['seatB', mk('seatB')]]);
-  return { m, spoken };
+  return { m, spoken, opts };
 }
+
+test('speakReplies false speaks NOTHING, which is what default-off rests on', () => {
+  const { m, spoken } = bootSpeakingManager({ speakReplies: false });
+  m._maybeSpeak('seatB', 'this must stay silent', true);
+  assert.deepStrictEqual(spoken, [],
+    'the setting is the only guard between a fresh install and a talking box');
+});
+
+test('the operator-chosen rate reaches the speaker, per turn', () => {
+  const { m, opts } = bootSpeakingManager({ speakRate: 210 });
+  m._maybeSpeak('seatB', 'read this at the chosen speed', true);
+  assert.strictEqual(opts.length, 1);
+  assert.strictEqual(opts[0].rate, 210, 'a rate read but never passed is a setting that does nothing');
+  assert.strictEqual(opts[0].voice, 'Daniel');
+});
 
 test('the recorder on ONE seat silences a turn ending on ANOTHER', () => {
   const { m, spoken } = bootSpeakingManager();
@@ -490,6 +514,181 @@ test('the setting defaults OFF and to the clearest voice', () => {
   assert.strictEqual(DEFAULT_UI_SETTINGS.speakVoice, DEFAULT_VOICE);
 });
 
+// --- the rate ---------------------------------------------------------------
+
+test('the rate rides as its own argv pair, and the text stays last', () => {
+  const calls = [];
+  const sp = createSpeaker({ execFileImpl: (_b, args) => { calls.push(args); return { kill() {} }; } });
+  sp.speak('hello', { voice: 'Daniel', rate: 240 });
+  assert.deepStrictEqual(calls[0], ['-v', 'Daniel', '-r', '240', '--', 'hello']);
+});
+
+// `say -r 5` is accepted and SPOKEN at 5 wpm — a box that looks wedged with no
+// error anywhere. Each row carries its own literal rather than re-deriving the
+// bound from the rule under test.
+test('a rate outside the sane band is dropped, not passed through', () => {
+  for (const [label, rate] of [
+    ['zero', 0], ['negative', -50], ['absurdly slow', 5], ['absurdly fast', 5000],
+    ['not a number', 'fast'], ['null', null], ['NaN', NaN], ['Infinity', Infinity],
+  ]) {
+    const calls = [];
+    const sp = createSpeaker({ execFileImpl: (_b, args) => { calls.push(args); return { kill() {} }; } });
+    sp.speak('hello', { voice: 'Daniel', rate });
+    assert.deepStrictEqual(calls[0], ['-v', 'Daniel', '--', 'hello'], label);
+  }
+});
+
+test('the boundary rates are IN, and one step past each is out', () => {
+  const argsFor = (rate) => {
+    const calls = [];
+    const sp = createSpeaker({ execFileImpl: (_b, a) => { calls.push(a); return { kill() {} }; } });
+    sp.speak('x', { voice: '', rate });
+    return calls[0];
+  };
+  assert.deepStrictEqual(argsFor(80), ['-r', '80', '--', 'x']);
+  assert.deepStrictEqual(argsFor(400), ['-r', '400', '--', 'x']);
+  assert.deepStrictEqual(argsFor(79), ['--', 'x']);
+  assert.deepStrictEqual(argsFor(401), ['--', 'x']);
+});
+
+test('the operator listened to three rates and picked 210', () => {
+  assert.strictEqual(DEFAULT_RATE, 210);
+  const { DEFAULT_UI_SETTINGS } = requireDefaults();
+  assert.strictEqual(DEFAULT_UI_SETTINGS.speakRate, 210,
+    'the store default and the speaker default must not be able to disagree');
+});
+
+// The band is written twice — stores.js cannot import speaker.js, since it is
+// loaded before whenReady and must stay off the process side. Nothing held the
+// pair, and the drift is SILENT in the direction that matters: the store admits
+// a rate `speak()` then drops, so the operator hears `say`'s 175 with the
+// picker showing what he chose.
+test('the store admits exactly the band the speaker will honour', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'stores.js'), 'utf-8');
+  const guard = /raw >= (\d+) && raw <= (\d+)/.exec(src);
+  assert.ok(guard, 'sanitizeSpeakRate must still express the band as literals');
+  assert.strictEqual(Number(guard[1]), MIN_RATE, 'store floor === speaker MIN_RATE');
+  assert.strictEqual(Number(guard[2]), MAX_RATE, 'store ceiling === speaker MAX_RATE');
+});
+
+// The popover's copy of the default is the one that would LIE: the two
+// main-process copies are pinned against each other above, and this one is what
+// the operator sees when a read produces no rate.
+test('every surface offering a rate agrees on the default', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const pop = fs.readFileSync(
+    path.join(__dirname, '..', 'renderer', 'popovers', 'voice-popover.js'), 'utf-8');
+  const fallback = /const DEFAULT_SPEAK_RATE = (\d+);/.exec(pop);
+  assert.ok(fallback, 'the popover fallback must be a named constant, not inlined');
+  assert.strictEqual(Number(fallback[1]), DEFAULT_RATE,
+    'the popover would show a default the speaker does not use');
+  // And the chosen rate must actually be OFFERED, or picking it back after
+  // switching away is impossible from the surface that owns the choice.
+  const listed = [...pop.matchAll(/\{ rate: (\d+), label:/g)].map((m) => Number(m[1]));
+  assert.ok(listed.includes(DEFAULT_RATE), `the picker must offer ${DEFAULT_RATE}: got ${listed}`);
+
+  const html = fs.readFileSync(
+    path.join(__dirname, '..', 'renderer', 'index.html'), 'utf-8');
+  const opts = [...html.matchAll(/<option value="(\d+)">\d+ &mdash;/g)].map((m) => Number(m[1]));
+  assert.deepStrictEqual(opts, listed,
+    'Settings and the popover must offer the same rates, in the same order');
+});
+
+// --- the busy signal --------------------------------------------------------
+//
+// The renderer cannot see this process, so these two edges are the ENTIRE
+// mechanism by which the turn-end re-arm knows to wait. `say` blocks until
+// playback completes (measured 5.2s for a ~5s sentence), so the exit callback IS
+// the end of audio — which is why no consumer may substitute a timer for it.
+
+test('onBusy reports the start and the end of playback, and only on a change', () => {
+  const seen = [];
+  let exit = null;
+  const sp = createSpeaker({
+    execFileImpl: (_b, _a, cb) => { exit = cb; return { kill() {} }; },
+    onBusy: (b) => seen.push(b),
+  });
+  sp.speak('a reply');
+  assert.deepStrictEqual(seen, [true]);
+  // A second utterance replaces the first WITHOUT a false in between: the
+  // speaker never went quiet, and a spurious false would release a waiting
+  // re-arm into a live narration.
+  sp.speak('a newer reply');
+  assert.deepStrictEqual(seen, [true], 'replacing an utterance is not a gap in playback');
+  exit();
+  assert.deepStrictEqual(seen, [true, false]);
+});
+
+test('a killed narration reports false at the kill, not a tick later', () => {
+  // stop() is what interruptForRecorder and every teardown path calls. A
+  // consumer waiting on the false edge would otherwise sit out the gap until
+  // the exit callback landed.
+  const seen = [];
+  const sp = createSpeaker({ execFileImpl: () => ({ kill() {} }), onBusy: (b) => seen.push(b) });
+  sp.speak('a long narration');
+  sp.interruptForRecorder();
+  assert.deepStrictEqual(seen, [true, false]);
+});
+
+test('a speak that throws does not leave the box marked busy forever', () => {
+  const seen = [];
+  const sp = createSpeaker({ execFileImpl: () => { throw new Error('ENOENT'); }, onBusy: (b) => seen.push(b) });
+  assert.strictEqual(sp.speak('hello'), false);
+  assert.deepStrictEqual(seen, [], 'never announced busy, so there is nothing to release');
+  assert.strictEqual(sp.isSpeaking(), false);
+});
+
+test('a throwing onBusy cannot take down speak or stop', () => {
+  const sp = createSpeaker({
+    execFileImpl: () => ({ kill() {} }),
+    onBusy: () => { throw new Error('a window went away'); },
+  });
+  assert.strictEqual(sp.speak('hello'), true);
+  assert.strictEqual(sp.stop(), true);
+});
+
+test('a speaker with no listener still works — the signal is optional', () => {
+  const sp = createSpeaker({ execFileImpl: () => ({ kill() {} }) });
+  assert.strictEqual(sp.speak('hello'), true);
+  assert.strictEqual(sp.isSpeaking(), true);
+});
+
+// --- the teardown ordering --------------------------------------------------
+//
+// A source-shape pin, because the defect is an ORDER and no runtime fixture
+// reaches it: `watcher.stop()` calls `_flushPending()`, which re-enters
+// _maybeSpeak and can START a narration. A speaker stopped BEFORE it therefore
+// leaves a dead seat — or an exiting app — still talking.
+
+test('the speaker is stopped AFTER the thing that can start it speaking', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  // Scoped to a WINDOW around the flushing call, never a file-wide indexOf:
+  // both files hold other, legitimate `speaker.stop()` calls — the window-close
+  // one in session-manager.js precedes this code entirely — and a bare search
+  // measures whichever came first in the file rather than the pair under test.
+  const WINDOW = 600;
+  for (const [file, starter] of [
+    ['session-manager.js', 'if (s.watcher) s.watcher.stop();'],
+    ['engine.js', 'manager.killAll();'],
+  ]) {
+    const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf-8');
+    const at = src.indexOf(starter);
+    assert.ok(at > 0, `${file}: the flushing call must still exist`);
+    assert.ok(src.indexOf(starter, at + 1) === -1,
+      `${file}: \`${starter}\` must be unique, or this pin is reading the wrong one`);
+    const after = src.slice(at + starter.length, at + starter.length + WINDOW);
+    const before = src.slice(Math.max(0, at - WINDOW), at);
+    assert.ok(after.includes('speaker.stop()'),
+      `${file}: speaker.stop() must follow \`${starter}\` — the flush can start a narration`);
+    assert.ok(!before.includes('speaker.stop()'),
+      `${file}: speaker.stop() must NOT precede \`${starter}\` — that is the defect this pins`);
+  }
+});
+
 function requireDefaults() {
   // stores.js is a factory over electron paths; the defaults table is a module
   // constant, read here without constructing a store.
@@ -498,6 +697,13 @@ function requireDefaults() {
   const src = fs.readFileSync(path.join(__dirname, '..', 'stores.js'), 'utf-8');
   const speakReplies = /^\s*speakReplies:\s*(\w+),/m.exec(src);
   const speakVoice = /^\s*speakVoice:\s*'([^']+)',/m.exec(src);
-  assert.ok(speakReplies && speakVoice, 'the defaults must be declared in DEFAULT_UI_SETTINGS');
-  return { DEFAULT_UI_SETTINGS: { speakReplies: speakReplies[1] === 'true', speakVoice: speakVoice[1] } };
+  const speakRate = /^\s*speakRate:\s*(\d+),/m.exec(src);
+  assert.ok(speakReplies && speakVoice && speakRate, 'the defaults must be declared in DEFAULT_UI_SETTINGS');
+  return {
+    DEFAULT_UI_SETTINGS: {
+      speakReplies: speakReplies[1] === 'true',
+      speakVoice: speakVoice[1],
+      speakRate: Number(speakRate[1]),
+    },
+  };
 }
