@@ -1813,10 +1813,20 @@ html, body {
   font-size: 11px; color: var(--text-dim);
 }
 .rec-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-/* Only the LIT row is a control: it is the one state where a click has a byte
-   to write, and the watcher declines every other one. */
+/* Only the LIT row LOOKS like a control, but `data-rec` is emitted on every
+   rendered state, so any of them can be clicked. THE WATCHER is what declines,
+   not this rule — a painted reading is up to one tick (300ms) stale, so a row
+   reading "Not recording" may be lit by the time the click lands, and deciding
+   from the paint would let that click through into a live recording. */
 .rec-lit { color: var(--error); cursor: pointer; }
 .rec-lit:hover { background: var(--active-bg); }
+/* Transient, on a decline the watcher made silently. Must not outlive the next
+   reading: the tick would otherwise paint a fresh state under a stale flash. */
+.rec-declined { animation: rec-decline-flash 600ms ease-out; }
+@keyframes rec-decline-flash {
+  0% { background: var(--warn); }
+  100% { background: transparent; }
+}
 .rec-busy { color: var(--warn); }
 /* Hollow, not filled: an outline reads as "no reading taken" where a solid dot
    in any colour reads as a measurement. */

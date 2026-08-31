@@ -880,10 +880,11 @@ function createVoiceSubmitWatcher(terminal, {
     if (tapTrigger()) rearms += 1;
   }
 
-  // THE ONLY PLACE A TRIGGER CHARACTER IS WRITTEN. Three callers reach the
-  // recorder through it — the turn-end re-arm, the submit-time stop, and the
-  // external tap — and each carries its OWN screen gate, which is the part that
-  // differs between them and must stay at the call site. What is shared is only
+  // THE ONLY PLACE A TRIGGER CHARACTER IS WRITTEN. Four callers reach the
+  // recorder through it — the turn-end re-arm, the submit-time stop, the
+  // external ensure-on tap, and the operator's ensure-off click — and each
+  // carries its OWN screen gate, which is the part that differs between them
+  // and must stay at the call site. What is shared is only
   // what it takes to put the byte out, and a fourth caller open-coding that is
   // how this subsystem's polarity bugs started.
   //
@@ -1003,7 +1004,7 @@ function createVoiceSubmitWatcher(terminal, {
     if (attention === 'permission') return false;
 
     const rows = indicatorRows();
-    if (!Array.isArray(rows)) return false;
+    if (!Array.isArray(rows)) return false;   // unreadable: never write — redundant today (recordingObserved(null) is false); see above
     // LIT, not merely busy. During PROCESSING the recorder has already stopped,
     // so ensure-off is met and there is nothing to write for; the byte would
     // only land as the literal described above.
@@ -1012,9 +1013,7 @@ function createVoiceSubmitWatcher(terminal, {
     // The CLI paints `tap to send` beside the lit indicator, and that is what
     // the key does: while recording it stops AND SUBMITS. An empty composer is
     // what keeps this an ensure-off rather than a send of whatever is sitting
-    // there unsent — and it is the same bail the CLI itself makes before
-    // swallowing the key, so on a non-empty composer the byte would be inserted
-    // and would stop nothing.
+    // there unsent.
     if (!composerIsEmpty(cursorRow())) return false;
 
     if (!tapTrigger()) return false;

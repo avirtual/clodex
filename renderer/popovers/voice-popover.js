@@ -22,6 +22,7 @@
 
 const { esc } = require('../lib/format');
 const { VOICE_ITEMS } = require('../voice-control');
+const { COMPOSITION_POLL_MS } = require('../voice-submit-watcher');
 
 // How often the open popover re-reads the recorder state. Matched to the
 // watcher's own composition poll, which is what actually moves the value: a
@@ -33,7 +34,7 @@ const { VOICE_ITEMS } = require('../voice-control');
 // bar would repaint #proxy-actions on this timer, which is the measured
 // click-eating rebuild that ate 10-15% of clicks; the popover placement is what
 // makes a tick this fast affordable at all.
-const RECORDER_TICK_MS = 300;
+const RECORDER_TICK_MS = COMPOSITION_POLL_MS;
 
 // What CLODEX believes, in the words of the predicate that produced it. THREE
 // states rendered distinctly and not two — 'unreadable' is the one this whole
@@ -45,7 +46,7 @@ const RECORDER_TICK_MS = 300;
 // seat that is not the active Claude one, so there is no reading to report and
 // claiming 'off' would be a measurement nobody took.
 const RECORDER_STATES = {
-  lit: { cls: 'rec-lit', text: 'Recording', hint: 'Clodex sees the recorder running — click to stop it' },
+  lit: { cls: 'rec-lit', text: 'Recording', hint: 'Clodex sees the recorder running — click to stop it (declines while a draft is in the composer, since the key would SEND it)' },
   busy: { cls: 'rec-busy', text: 'Processing', hint: 'The CLI is finishing the last utterance — Clodex will not write to it now' },
   unreadable: { cls: 'rec-unreadable', text: 'Cannot read the screen', hint: 'Clodex cannot see the indicator, so it will not write — a re-arm is blocked while this shows' },
   off: { cls: 'rec-off', text: 'Not recording', hint: 'Clodex sees no recorder running' },
@@ -173,12 +174,25 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, tapOffReco
     // painted state, which is one tick old and would let a click through into a
     // recorder that stopped in the meantime.
     if (e.target.closest('[data-rec]')) {
-      try { tapOffRecorder(); } catch {}
+      let stopped = false;
+      try { stopped = tapOffRecorder() === true; } catch {}
       // Left OPEN, deliberately: the operator asked for a state change and the
       // indicator is where he watches it land. Closing would hide the one
-      // surface that says whether the click did anything — and it may honestly
-      // have done nothing, which is a decline he is owed the sight of.
+      // surface that says whether the click did anything.
       paintRecorder();
+      // A decline is SHOWN, not merely not-done. The watcher declines silently
+      // (a draft in the composer, a screen it cannot read), and paintRecorder
+      // alone renders nothing new in that case because the reading has not
+      // moved — so a click that did nothing would be indistinguishable from one
+      // that worked. The class is transient and self-clearing: it must not
+      // survive into the next reading, which the tick would then contradict.
+      if (!stopped) {
+        const host = body.querySelector('[data-rec]');
+        if (host) {
+          host.classList.add('rec-declined');
+          setTimeout(() => { try { host.classList.remove('rec-declined'); } catch {} }, 600);
+        }
+      }
       return;
     }
     const row = e.target.closest('.voice-row');
