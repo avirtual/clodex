@@ -20987,6 +20987,38 @@ ${i3.join("\n")}
     }
   });
 
+  // renderer/lib/mirror-latch.js
+  var require_mirror_latch = __commonJS({
+    "renderer/lib/mirror-latch.js"(exports, module) {
+      "use strict";
+      function createMirrorLatch(initial = null, { normalize = (v) => v } = {}) {
+        let value = normalize(initial);
+        let heard = false;
+        return {
+          // A broadcast landed. Always wins, and latches the mirror against pulls.
+          note(next) {
+            heard = true;
+            value = normalize(next);
+          },
+          // The catch-up read resolved. Ignored once any broadcast has been heard.
+          pull(next) {
+            if (heard) return;
+            value = normalize(next);
+          },
+          read() {
+            return value;
+          },
+          // For tests and for a caller that needs to distinguish "no host answers
+          // this" from a legitimate falsy value — the headless host never reports.
+          heard() {
+            return heard;
+          }
+        };
+      }
+      module.exports = { createMirrorLatch };
+    }
+  });
+
   // renderer/lib/web-notify.js
   var require_web_notify = __commonJS({
     "renderer/lib/web-notify.js"(exports, module) {
@@ -32270,6 +32302,7 @@ ${detail}` });
       var { splitModelArg, withModelArg } = require_args_model();
       var { expandTeamRoot, usesTeamRoot } = require_team_root_expand();
       var { altChordAction } = require_web_shortcuts();
+      var { createMirrorLatch } = require_mirror_latch();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
       var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
@@ -33358,11 +33391,11 @@ ${detail}` });
           // Does THIS seat hold the microphone? Compared against main's box-wide
           // name, never against `activeSession`, which is this window's own answer
           // and true of one seat in every window that is open.
-          isMicTarget: () => micTarget !== null && micTarget === name,
+          isMicTarget: () => micTargetMirror.read() === name,
           // Is Clodex frontmost? Read fresh per attempt and never captured, for the
           // same reason as the speaker flag: he alt-tabs away DURING the settle
           // window, and that is the case this exists to catch.
-          isAppFocused: () => appFocused,
+          isAppFocused: () => appFocusedMirror.read(),
           noteVoiceRecording: () => window.api.noteVoiceRecording(name),
           noteVoiceDraft: () => window.api.noteVoiceDraft(name)
         });
@@ -35494,27 +35527,15 @@ Click for live activity`;
       window.api.onSpeakerBusy((busy) => {
         speakerBusy = busy === true;
       });
-      var micTarget = null;
-      var micTargetHeard = false;
-      window.api.onMicTarget((name) => {
-        micTargetHeard = true;
-        micTarget = typeof name === "string" ? name : null;
+      var micTargetMirror = createMirrorLatch(null, {
+        normalize: (name) => typeof name === "string" ? name : null
       });
-      window.api.micTarget().then((name) => {
-        if (micTargetHeard) return;
-        micTarget = typeof name === "string" ? name : null;
-      }).catch(() => {
+      window.api.onMicTarget((name) => micTargetMirror.note(name));
+      window.api.micTarget().then((name) => micTargetMirror.pull(name)).catch(() => {
       });
-      var appFocused = false;
-      var appFocusedHeard = false;
-      window.api.onAppFocused((on) => {
-        appFocusedHeard = true;
-        appFocused = on === true;
-      });
-      window.api.appFocused().then((on) => {
-        if (appFocusedHeard) return;
-        appFocused = on === true;
-      }).catch(() => {
+      var appFocusedMirror = createMirrorLatch(false, { normalize: (on) => on === true });
+      window.api.onAppFocused((on) => appFocusedMirror.note(on));
+      window.api.appFocused().then((on) => appFocusedMirror.pull(on)).catch(() => {
       });
       function reportFocusedSession() {
         try {

@@ -581,6 +581,14 @@ function createSessionManager(deps) {
       // Starts FALSE. Before any host has reported, no seat may arm: the
       // opposite default records the room at launch, which is the failure.
       this._appFocused = false;
+      // Whether any host has EVER reported app focus. Distinct from the flag
+      // itself, which cannot carry it: `false` is both "backgrounded" and "no
+      // host answers this". The headless/browser host never reports — a remote
+      // operator must not arm a recorder attached to the HOST's microphone —
+      // and on that path the tap must not try to raise a window either, since
+      // there is no window to bring forward and the attempt only fans a
+      // `focus-hint` nobody asked for.
+      this._appFocusReported = false;
       // Box-wide recorder stamp — see noteVoiceRecording. Separate from the
       // per-seat field of the same name because audio has no seat.
       this._lastVoiceRecordingTs = 0;
@@ -2213,8 +2221,29 @@ function createSessionManager(deps) {
     // session: the record is a REPORT, and validating it here against a map
     // that a spawn may not have filled yet would silently drop the first
     // report for a seat that is about to exist. The reader below resolves it.
-    noteFocusedSession(name) {
+    // `win` is the window the report CAME FROM, resolved in main where the
+    // sender is known. Without it the two writes below cannot be told apart,
+    // and that is the whole of this method.
+    //
+    // The ROUTING record updates unconditionally: an external tap that names no
+    // seat must keep landing on the seat he is looking at even when the report
+    // arrived from a background window, which is the feature the tap exists for.
+    //
+    // The MICROPHONE does not. A window reports its own `activeSession`, and it
+    // does so with NO operator action at all — a seat exiting in a background
+    // window switches that window to its next seat and reports it. Retargeting
+    // on that took the microphone off the seat he was dictating into and gave
+    // it to one he could not see, which is this ticket's own bug through a
+    // third door: a box-wide resource written from per-window state.
+    //
+    // So the AUTHORITY to move the microphone is two box-wide facts, neither of
+    // which a window knows about itself — whether it is the focused window, and
+    // whether the app is frontmost. The window supplies only the name.
+    noteFocusedSession(name, win = null) {
       this._focusedSession = name || null;
+      let reporterInFront = false;
+      try { reporterInFront = !!win && win.isFocused() === true; } catch { reporterInFront = false; }
+      if (!reporterInFront || !this._appFocused) return;
       this._setMicTarget(this._focusedSession);
     }
 
@@ -2253,6 +2282,10 @@ function createSessionManager(deps) {
     // the APP's frontmost-ness changing at all.
     noteAppFocused(focused) {
       const next = focused === true;
+      // Set BEFORE the equality guard, or a host whose first report is `false`
+      // (the common desktop case: launched into the background) would be
+      // indistinguishable from a host that never reports at all.
+      this._appFocusReported = true;
       if (this._appFocused === next) return;
       this._appFocused = next;
       this._broadcast('app-focused', next);
@@ -2301,7 +2334,10 @@ function createSessionManager(deps) {
       // already hold the microphone when its window comes forward, and the
       // renderer decides whether the key may be written against an app that is
       // by then coming to the front.
-      if (!this._appFocused) {
+      // Only where a host actually answers the question. On the headless path
+      // nothing reports focus, so `_appFocused` is permanently false and an
+      // unconditional raise would fan a `focus-hint` on EVERY tap.
+      if (this._appFocusReported && !this._appFocused) {
         try { win.show(); win.focus(); } catch { /* a host that cannot raise still routes the tap */ }
       }
       this._sendToSession(name, 'voice-tap', name);

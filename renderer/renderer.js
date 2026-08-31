@@ -27,6 +27,7 @@ const GUTTER_HEADER_SCAN = 400;
 const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
+const { createMirrorLatch } = require('./lib/mirror-latch');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
@@ -1200,11 +1201,11 @@ function createTerminal(name, peer = null) {
     // Does THIS seat hold the microphone? Compared against main's box-wide
     // name, never against `activeSession`, which is this window's own answer
     // and true of one seat in every window that is open.
-    isMicTarget: () => micTarget !== null && micTarget === name,
+    isMicTarget: () => micTargetMirror.read() === name,
     // Is Clodex frontmost? Read fresh per attempt and never captured, for the
     // same reason as the speaker flag: he alt-tabs away DURING the settle
     // window, and that is the case this exists to catch.
-    isAppFocused: () => appFocused,
+    isAppFocused: () => appFocusedMirror.read(),
     noteVoiceRecording: () => window.api.noteVoiceRecording(name),
     noteVoiceDraft: () => window.api.noteVoiceDraft(name),
   });
@@ -3633,23 +3634,14 @@ window.api.onSpeakerBusy((busy) => { speakerBusy = busy === true; });
 // Starts null, so every seat declines until main has spoken. The opposite
 // default would arm every seat in a window that had not yet heard, which is the
 // bug; a seat that declines for one poll costs the operator one repeated tap.
-let micTarget = null;
-// Whether a BROADCAST has landed, tracked apart from the value. The value
-// cannot carry this: `null` is both "nobody has told us yet" and a legitimate
-// released target, and `false` is both for the app-focus mirror below. Without
-// the separate flag a catch-up pull that resolves after a broadcast overwrites
-// the fresh answer with the stale one it asked for first.
-let micTargetHeard = false;
-window.api.onMicTarget((name) => {
-  micTargetHeard = true;
-  micTarget = typeof name === 'string' ? name : null;
+const micTargetMirror = createMirrorLatch(null, {
+  normalize: (name) => (typeof name === 'string' ? name : null),
 });
+window.api.onMicTarget((name) => micTargetMirror.note(name));
 // A window that opened or reloaded mid-dictation missed the broadcast, and the
-// target does not move again while he keeps talking to the seat he picked.
-window.api.micTarget().then((name) => {
-  if (micTargetHeard) return;
-  micTarget = typeof name === 'string' ? name : null;
-}).catch(() => {});
+// target does not move again while he keeps talking to the seat he picked. The
+// latch is what keeps this late answer from overwriting a fresher one.
+window.api.micTarget().then((name) => micTargetMirror.pull(name)).catch(() => {});
 
 // Is CLODEX the frontmost application? A second condition on the automatic
 // re-arm, independent of the target: the operator browsed the web with Clodex
@@ -3661,15 +3653,9 @@ window.api.micTarget().then((name) => {
 // browser — precisely the case that recorded.
 //
 // Starts false, like the target: before the host has reported, no seat arms.
-let appFocused = false;
-let appFocusedHeard = false;
-window.api.onAppFocused((on) => { appFocusedHeard = true; appFocused = on === true; });
-window.api.appFocused().then((on) => {
-  // Same precedence rule as the target's pull, and the same reason it needs its
-  // own flag: `false` is a legitimate broadcast value here.
-  if (appFocusedHeard) return;
-  appFocused = on === true;
-}).catch(() => {});
+const appFocusedMirror = createMirrorLatch(false, { normalize: (on) => on === true });
+window.api.onAppFocused((on) => appFocusedMirror.note(on));
+window.api.appFocused().then((on) => appFocusedMirror.pull(on)).catch(() => {});
 
 // Tell main which seat the operator is looking at.
 //

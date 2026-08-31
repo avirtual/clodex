@@ -543,6 +543,19 @@ app.whenReady().then(() => {
   // focus` without the blur never releases, and the blur without the focus
   // never re-arms. Seeded from the current answer so a launch into the
   // foreground does not wait for the first alt-tab.
+  // THE APP-LEVEL EDGES CARRY THE ANSWER IN THEIR IDENTITY, and that is why
+  // they are here rather than one more `app.isFocused()` read. The blur handler
+  // runs while the app is still resigning active, where `isFocused()` is widely
+  // observed to answer `true` — and this is the one read that decides "he
+  // alt-tabbed away". Stuck true fails OPEN: the frontmost condition silently
+  // becomes a no-op, the recorder arms behind a browser again, and no test can
+  // see it because the value, not the shape of the call, is what went wrong.
+  app.on('did-become-active', () => { try { manager.noteAppFocused(true); } catch {} });
+  app.on('did-resign-active', () => { try { manager.noteAppFocused(false); } catch {} });
+
+  // The cross-platform backstop: the two edges above are macOS-only. These
+  // re-derive the answer, which is imprecise on exactly the blur instant the
+  // pair above exists to cover — so they are kept, and never relied on alone.
   const reportAppFocus = () => { try { manager.noteAppFocused(app.isFocused()); } catch {} };
   app.on('browser-window-focus', reportAppFocus);
   app.on('browser-window-blur', reportAppFocus);
