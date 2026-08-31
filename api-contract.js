@@ -363,6 +363,11 @@ const API_CONTRACT = [
   // t509: the box-wide voice-input mode the CLI persists. Read-only — the mode is
   // CHANGED by injecting `/voice <mode>`, so there is no setter row to pair with it.
   { name: 'getVoiceMode', kind: 'invoke', channel: 'settings:voiceMode' },
+  // t572: mark the hands-free submit about to happen as voice-originated. A
+  // SEND, not an invoke, and that is the contract: the marker must never put a
+  // round trip in front of the operator's Enter, so there is no result to wait
+  // for and a failure costs the annotation alone.
+  { name: 'markVoiceOrigin', kind: 'send', channel: 'voice:markOrigin' },
   { name: 'listWorkspaces', kind: 'invoke', channel: 'workspace:list' },
   { name: 'currentWorkspace', kind: 'invoke', channel: 'workspace:current' },
   { name: 'setWorkspaceName', kind: 'invoke', channel: 'workspace:setName' },

@@ -373,6 +373,7 @@ const memoryLoad = createMemoryLoad({ logDir: path.join(REGISTRY_DIR, 'library',
 // checkbox. `enabled` is a getter rather than a construction-time value so the
 // checkbox takes effect on the next keystroke instead of the next launch.
 const { createHintArm } = require('./hint-arm');
+const { createVoiceOriginArm } = require('./voice-origin-arm');
 const { createSelectionArm } = require('./selection-arm');
 const {
   createMemoryRetriever, createCommonRetriever, createCompositeRetriever,
@@ -458,6 +459,16 @@ const hintArm = createHintArm({
 // second token list here would drift from the one that redacted it on the way
 // in. `ctlService` is declared far below, so this reads it through the closure
 // rather than capturing it.
+// The voice-origin marker. Its own id on the shared register — verified against
+// a live proxy that two ids coexist on one route (armHints posts mode=merge and
+// the registry is keyed by id), so this cannot clear the contextual hint the
+// operator's typing arms.
+const voiceOriginArm = createVoiceOriginArm({
+  armHints: ({ base, route, id, text, ttl_s, turn_start_only, once }) =>
+    ProxyClient.armHints(base, route, [{ id, text, ttl_s, turn_start_only, once }]),
+  log,
+});
+
 const selectionArm = createSelectionArm({
   enabled: () => !!uiSettings.get().selectionHints,
   scrubber: () => (ctlService && ctlService.scrubber ? ctlService.scrubber() : null),
@@ -986,6 +997,7 @@ const SessionManager = createSessionManager({
     memoryLoad,
     hintArm,
     selectionArm,
+    voiceOriginArm,
     mergeClaudeSystemPrompt,
     mergeCodexInstructions,
     normalizeProxyBase,

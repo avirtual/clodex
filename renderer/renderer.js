@@ -1185,6 +1185,9 @@ function createTerminal(name, peer = null) {
       return (state && state.effective) || null;
     },
     getTriggerKey: () => resolveTriggerKey(voiceCore.triggerBinding()),
+    // A `send`, so this returns immediately and the erase/Enter that follow it
+    // are never waiting on the proxy.
+    markVoiceOrigin: () => window.api.markVoiceOrigin(name),
   });
 
   const searchAddon = new SearchAddon();

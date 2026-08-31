@@ -7474,6 +7474,11 @@ body {
         // t509: the box-wide voice-input mode the CLI persists. Read-only — the mode is
         // CHANGED by injecting `/voice <mode>`, so there is no setter row to pair with it.
         { name: "getVoiceMode", kind: "invoke", channel: "settings:voiceMode" },
+        // t572: mark the hands-free submit about to happen as voice-originated. A
+        // SEND, not an invoke, and that is the contract: the marker must never put a
+        // round trip in front of the operator's Enter, so there is no result to wait
+        // for and a failure costs the annotation alone.
+        { name: "markVoiceOrigin", kind: "send", channel: "voice:markOrigin" },
         { name: "listWorkspaces", kind: "invoke", channel: "workspace:list" },
         { name: "currentWorkspace", kind: "invoke", channel: "workspace:current" },
         { name: "setWorkspaceName", kind: "invoke", channel: "workspace:setName" },
@@ -23620,6 +23625,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (!Array.isArray(rows)) return true;
         return rows.some((row) => typeof row === "string" && RECORDING.test(row));
       }
+      function isVoiceOriginated({ evidenceAt, now, windowMs } = {}) {
+        if (typeof evidenceAt !== "number" || !Number.isFinite(evidenceAt)) return false;
+        if (typeof now !== "number" || typeof windowMs !== "number") return false;
+        return now - evidenceAt <= windowMs && now >= evidenceAt;
+      }
+      function recordingObserved(rows) {
+        if (!Array.isArray(rows)) return false;
+        return rows.some((row) => typeof row === "string" && RECORDING.test(row));
+      }
       function resolveTriggerKey(binding) {
         if (!binding || typeof binding !== "object") return null;
         if (binding.ctrl || binding.alt || binding.shift || binding.meta || binding.super) return null;
@@ -23646,6 +23660,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         shouldRearm,
         composerIsEmpty,
         recordingBlocksRearm,
+        isVoiceOriginated,
+        recordingObserved,
         resolveTriggerKey,
         readVoiceSubmitSettings
       };
@@ -23661,7 +23677,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         shouldFire,
         shouldRearm,
         composerIsEmpty,
-        recordingBlocksRearm
+        recordingBlocksRearm,
+        isVoiceOriginated,
+        recordingObserved
       } = require_voice_submit();
       var QUIET_MS = 1200;
       var ENTER_SETTLE_MS = 30;
@@ -23669,6 +23687,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var COMPOSITION_POLL_MS = 300;
       var REARM_SETTLE_MS = 3e3;
       var REARM_ABANDON_MS = 1e4;
+      var VOICE_EVIDENCE_MS = 2e4;
       function readComposition(terminal) {
         const root = terminal && terminal.element;
         if (!root || typeof root.querySelector !== "function") return null;
@@ -23713,6 +23732,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
         getTriggerKey = () => null,
         rearmMs = REARM_SETTLE_MS,
         abandonMs = REARM_ABANDON_MS,
+        // Marks the submit as voice-originated. Absent, the feature is simply off and
+        // every other path here is unchanged — the marker is an annotation on a
+        // submit, never a precondition for one.
+        markVoiceOrigin = null,
+        evidenceMs = VOICE_EVIDENCE_MS,
         now = Date.now
       }) {
         let timer = null;
@@ -23721,6 +23745,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let disposed = false;
         let answered = null;
         let fires = 0;
+        let voiceEvidenceAt = null;
+        let marks = 0;
         let pending = null;
         let pendingAt = 0;
         let committed = null;
@@ -23790,6 +23816,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (!shouldFire({ enabled: cfg.enabled, attention })) return;
           fires += 1;
+          if (markVoiceOrigin && isVoiceOriginated({ evidenceAt: voiceEvidenceAt, now: now(), windowMs: evidenceMs })) {
+            marks += 1;
+            voiceEvidenceAt = null;
+            try {
+              markVoiceOrigin();
+            } catch {
+            }
+          }
           write("\x7F".repeat(found.erase));
           enterTimer = setTimeout(() => {
             enterTimer = null;
@@ -23818,6 +23852,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             forgetPending();
             return;
           }
+          if (recordingObserved(indicatorRows())) voiceEvidenceAt = now();
           if (cfg.composition !== true) {
             forgetPending();
             forgetConsumed();
@@ -23864,6 +23899,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (!shouldFire({ enabled: cfg.enabled, attention })) return;
           commits += 1;
+          voiceEvidenceAt = now();
           let took = false;
           try {
             took = commitPending(terminal, text, alreadySent) !== false;
@@ -23951,6 +23987,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           rearmCount: () => rearms,
           commitCount: () => commits,
           commitFailureCount: () => commitFailures,
+          markCount: () => marks,
           dispose() {
             disposed = true;
             if (timer) clearTimeout(timer);
@@ -23974,7 +24011,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         COMPOSITION_POLL_MS,
         CONSUMED_IDLE_MS,
         REARM_SETTLE_MS,
-        REARM_ABANDON_MS
+        REARM_ABANDON_MS,
+        VOICE_EVIDENCE_MS
       };
     }
   });
@@ -32778,7 +32816,10 @@ ${detail}` });
             const { state } = voiceCore.snapshot();
             return state && state.effective || null;
           },
-          getTriggerKey: () => resolveTriggerKey(voiceCore.triggerBinding())
+          getTriggerKey: () => resolveTriggerKey(voiceCore.triggerBinding()),
+          // A `send`, so this returns immediately and the erase/Enter that follow it
+          // are never waiting on the proxy.
+          markVoiceOrigin: () => window.api.markVoiceOrigin(name)
         });
         const searchAddon = new SearchAddon();
         terminal.loadAddon(searchAddon);

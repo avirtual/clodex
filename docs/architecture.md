@@ -525,6 +525,13 @@ worktree, which is why membership is by repo.
   Selecting (peek) goes to the wirescope tail, one-shot and short-TTL; the
   explicit gesture takes the durable channel. The two-gestures/two-channels
   split is the design.
+- **voice-origin-arm.js** — marks a hands-free submit as voice-originated, so
+  the reader treats a garbled word as a likely mis-transcription rather than a
+  deliberate choice. Its own hint id, never hint-arm.js's: that register is
+  fixed-id and self-clearing under the operator's typing, while the proxy
+  registry is keyed by id and armHints merges, so distinct ids coexist. The
+  renderer decides WHETHER (it watched the microphone); this owns the id, the
+  text and the TTL.
 
 ### Sandbox and external tools
 

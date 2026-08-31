@@ -1883,6 +1883,14 @@ function registerIpcHandlers(deps) {
     manager.write(name, data);
   });
 
+  // The renderer knows a submit is voice-originated (it watched the composition
+  // or the recorder); the proxy base and route live here. Carries no text — the
+  // marker's wording is decided in voice-origin-arm.js, so a doctored payload
+  // cannot choose what the agent is told.
+  on('voice:markOrigin', (_e, name) => {
+    manager.markVoiceOrigin(String(name || ''));
+  });
+
   handle('app:restore-sessions', (e) => restoreSessionsForWorkspace(workspaceOfSender(e)));
 
   handle('session:retrySpawn', async (e, name) => {

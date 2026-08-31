@@ -2237,3 +2237,171 @@ test('MF2: a row with no prompt marker is not a composer', async () => {
     h.watcher.dispose();
   }
 });
+
+// -------------------------------------------------------- the voice-origin marker
+
+// The marker tells the receiving agent the text was spoken, so it can read a
+// garbled word as a mis-transcription rather than a deliberate choice. Two
+// properties carry the whole feature, and both are asserted on ORDER and on
+// what reached the pty rather than on a return value:
+//
+//   1. IT MARKS ONLY VOICE. The trigger phrase submits a TYPED draft ending in
+//      those words too, and marking that teaches the reader to distrust the
+//      marker on text the operator typed exactly.
+//   2. THE ARM PRECEDES ENTER. A marker registered after the submitted text
+//      reaches the model rides the wrong turn — or, worse, the NEXT one, which
+//      may be typed.
+
+// The buffer harness above takes no marker seam; this is the same shape with
+// one. `events` records the marker and the writes in ONE list, because the
+// ordering between them is the property under test and two separate lists
+// cannot express it.
+function markHarness({
+  rows = [''],
+  // `composition: true` because the dictation half is gated on it — without it
+  // the composition tests below reach no commit, and the `ENTER:` guards are
+  // what say so rather than letting the mark assertions vacuum out.
+  config = { enabled: true, composition: true, phrase: DEFAULT_SUBMIT_PHRASE },
+  attention = null, evidenceMs,
+} = {}) {
+  const events = [];
+  const term = fakeTerminal({ rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)) });
+  const env = { config, attention };
+  const watcher = track(createVoiceSubmitWatcher(term, {
+    getConfig: () => env.config,
+    getAttention: () => env.attention,
+    write: (d) => events.push(d === '\r' ? 'ENTER' : 'ERASE'),
+    markVoiceOrigin: () => events.push('MARK'),
+    quietMs: TEST_QUIET_MS,
+    pollMs: 1,
+    readComposition: () => env.composed ?? null,
+    commitComposition: () => { env.composed = null; return true; },
+    ...(evidenceMs === undefined ? {} : { evidenceMs }),
+  }));
+  return {
+    term, watcher, events, env,
+    done: () => settle(TEST_QUIET_MS + ENTER_SETTLE_MS + 25),
+  };
+}
+
+test('a TYPED draft ending in the phrase submits UNMARKED', async () => {
+  // The case Bogdan asked to be told about explicitly. No composition, no
+  // recording indicator — nothing but a row of text — so there is no positive
+  // evidence of a microphone and the submit must carry no marker.
+  const h = markHarness();
+  h.term.write('❯ finish the report over and out');
+  await h.done();
+  assert.deepStrictEqual(h.events, ['ERASE', 'ENTER'],
+    'a typed submit must reach the pty with no marker between');
+  assert.strictEqual(h.watcher.fireCount(), 1, 'ENTER: it must still have SUBMITTED');
+  assert.strictEqual(h.watcher.markCount(), 0);
+  h.watcher.dispose();
+});
+
+test('a DICTATED submit is marked, and the mark precedes both writes', async () => {
+  // The ordering assertion. The marker must be registered before the text can
+  // reach the model, so it rides this turn rather than the next.
+  const h = markHarness();
+  h.env.composed = ' finish the report over and out';
+  await settle(TEST_QUIET_MS + 30);
+  assert.strictEqual(h.watcher.commitCount(), 1, 'ENTER: the composition must have committed');
+  // The commit echoes as an ordinary write, exactly as the real boundary does.
+  h.term.write('❯ finish the report over and out');
+  await h.done();
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'ENTER'],
+    'the marker must be armed BEFORE the erase and the Enter');
+  assert.strictEqual(h.watcher.markCount(), 1);
+  h.watcher.dispose();
+});
+
+test('the CLI recording indicator is evidence too, and it marks the submit', async () => {
+  // The CLI's own voice mode produces no composition: it transcribes straight
+  // into the composer, so the indicator is the only moment the microphone is
+  // visible from here.
+  const h = markHarness({ rows: ['❯ ', ' agents ⏺REC · tap to send'] });
+  await settle(10); // one poll, to observe the indicator
+  h.term.write('❯ finish the report over and out');
+  await h.done();
+  assert.deepStrictEqual(h.events, ['MARK', 'ERASE', 'ENTER']);
+  assert.strictEqual(h.watcher.markCount(), 1);
+  h.watcher.dispose();
+});
+
+test('evidence goes STALE, and a later submit is unmarked', async () => {
+  // The staleness bound: evidence cannot outlive the utterance that produced it
+  // and mark a message typed long afterwards.
+  const h = markHarness({ rows: ['❯ ', ' agents ⏺REC · tap to send'], evidenceMs: 1 });
+  await settle(10);
+  h.term.write('❯ ', ' agents · tap to speak'); // the recorder stopped
+  await settle(20); // longer than evidenceMs
+  h.term.write('❯ finish the report over and out');
+  await h.done();
+  assert.deepStrictEqual(h.events, ['ERASE', 'ENTER'], 'stale evidence must not mark');
+  assert.strictEqual(h.watcher.markCount(), 0);
+  h.watcher.dispose();
+});
+
+test('one utterance marks ONE submit: the evidence is consumed', async () => {
+  const h = markHarness();
+  h.env.composed = ' finish the report over and out';
+  await settle(TEST_QUIET_MS + 30);
+  h.term.write('❯ finish the report over and out');
+  await h.done();
+  assert.strictEqual(h.watcher.markCount(), 1);
+  // A SECOND submit with no fresh evidence — the operator typed this one.
+  h.term.write('❯ ');
+  await settle(TEST_QUIET_MS + 5);
+  h.term.write('❯ send it over and out');
+  await h.done();
+  assert.strictEqual(h.watcher.fireCount(), 2, 'ENTER: the second submit must have FIRED');
+  assert.strictEqual(h.watcher.markCount(), 1, 'but it must not inherit the first utterance');
+  h.watcher.dispose();
+});
+
+test('a permission dialog blocks the marker with the submit', async () => {
+  // The marker rides the fire, so the interlock covers it for free — but a
+  // marker armed for a submit that never happened would ride the NEXT turn,
+  // which is the failure this asserts is impossible.
+  const h = markHarness({ attention: 'permission' });
+  h.env.composed = ' finish the report over and out';
+  await settle(TEST_QUIET_MS + 30);
+  h.term.write('❯ finish the report over and out');
+  await h.done();
+  assert.deepStrictEqual(h.events, [], 'nothing may be written OR armed behind a dialog');
+  assert.strictEqual(h.watcher.markCount(), 0);
+  h.watcher.dispose();
+});
+
+test('a marker that THROWS cannot cost the operator the submit', async () => {
+  // Arming may never affect the keystroke: a dead wirescope costs the marker,
+  // never the Enter.
+  const events = [];
+  const term = fakeTerminal({ rows: [{ text: '' }] });
+  const watcher = track(createVoiceSubmitWatcher(term, {
+    getConfig: () => ({ enabled: true, composition: true, phrase: DEFAULT_SUBMIT_PHRASE }),
+    getAttention: () => null,
+    write: (d) => events.push(d === '\r' ? 'ENTER' : 'ERASE'),
+    markVoiceOrigin: () => { throw new Error('proxy is down'); },
+    quietMs: TEST_QUIET_MS,
+    pollMs: 1,
+    readComposition: () => null,
+  }));
+  // Force evidence through the indicator path, then submit.
+  term.write('❯ ', ' agents ⏺REC · tap to send');
+  await settle(10);
+  term.write('❯ finish the report over and out');
+  await settle(TEST_QUIET_MS + ENTER_SETTLE_MS + 25);
+  assert.deepStrictEqual(events, ['ERASE', 'ENTER'], 'the submit must survive a throwing marker');
+  assert.strictEqual(watcher.fireCount(), 1);
+  watcher.dispose();
+});
+
+test('with no marker seam the submit is entirely unchanged', async () => {
+  // The feature is an annotation on a submit, never a precondition for one.
+  const h = fastHarness();
+  h.term.write('❯ finish the report over and out');
+  await h.done();
+  assert.deepStrictEqual(h.writes, ['\x7f'.repeat(13), '\r']);
+  assert.strictEqual(h.watcher.markCount(), 0);
+  h.watcher.dispose();
+});

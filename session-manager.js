@@ -412,6 +412,7 @@ function createSessionManager(deps) {
     memoryLoad,
     hintArm,
     selectionArm: selectionArmDep,
+    voiceOriginArm: voiceOriginArmDep,
     mergeClaudeSystemPrompt,
     mergeCodexInstructions,
     normalizeProxyBase,
@@ -488,6 +489,10 @@ function createSessionManager(deps) {
     forget() {},
   };
   const selectionArm = selectionArmDep || NO_SELECTION_ARM;
+
+  // Same stand-in shape: a host that built no armer marks nothing, and the
+  // hands-free submit is unaffected.
+  const voiceOriginArm = voiceOriginArmDep || { arm: () => false };
 
   const termExec = termExecDep
     || (() => ({ ok: false, error: 'terminal tabs are not available on this host' }));
@@ -2089,6 +2094,19 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return Promise.resolve({ armed: false, reason: 'no such session' });
       return selectionArm.arm(s.name, payload || {}, this._armCtx(s));
+    }
+
+    // Routed through _armCtx like every other hint, which is what keeps the
+    // captured-vs-live base rule and the route grammar in one place.
+    //
+    // Returns nothing and awaits nothing: the caller is one write away from
+    // sending the operator's message, and the marker is worth less than that
+    // write. A seat that is gone is not an error — the submit it would have
+    // marked cannot happen either.
+    markVoiceOrigin(name) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead) return;
+      try { voiceOriginArm.arm(this._armCtx(s)); } catch {}
     }
 
     releaseSelection(name) {
