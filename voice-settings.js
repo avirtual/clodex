@@ -118,10 +118,35 @@ function writeVoiceMode(mode, { homeDir = os.homedir() } = {}) {
     base = parsed;
   }
 
+  // WRITE THROUGH THE SYMLINK, not over it. atomicWriteFileSync renames onto the
+  // path it is given, so handing it a symlinked settings.json (a dotfiles repo,
+  // or a symlinked ~/.claude) would REPLACE the link with a regular file: the
+  // repo silently stops driving the setting and the next sync reverts the mode,
+  // with nothing in the result or the log saying so. Same genus as refusing an
+  // unparseable file — a write that discards the structure the user has.
+  //
+  // The result keeps reporting `file`, the path the caller asked about; `target`
+  // is where the bytes land.
+  let target = file;
+  try {
+    target = fs.realpathSync(file);
+  } catch {
+    // realpath fails for an absent file (ordinary: fall through and create it)
+    // and for a DANGLING link, which is not ordinary — a link whose target is
+    // missing or unmounted is still a structure the user put there deliberately,
+    // and writing would convert it to a regular file. Refuse instead: this is
+    // the one case where falling back to `file` destroys something.
+    let dangling = false;
+    try { dangling = fs.lstatSync(file).isSymbolicLink(); } catch { dangling = false; }
+    if (dangling) {
+      return { ok: false, error: `${file} is a symlink whose target cannot be resolved — voice mode not changed` };
+    }
+  }
+
   const v = base.voice && typeof base.voice === 'object' && !Array.isArray(base.voice) ? base.voice : {};
   const next = { ...base, voiceEnabled: true, voice: { ...v, enabled: true, mode } };
   try {
-    atomicWriteFileSync(file, `${JSON.stringify(next, null, 2)}\n`);
+    atomicWriteFileSync(target, `${JSON.stringify(next, null, 2)}\n`);
   } catch (e) {
     return { ok: false, error: e.message };
   }
