@@ -2,7 +2,8 @@
 // transcript symlink (created by the SessionStart hook) every 250ms, follows it
 // through /clear + /compact, extracts assistant text (Claude type:"assistant";
 // Codex event_msg/agent_message), buffers by requestId, and flushes on a new
-// requestId / non-assistant entry / 1s silence — emitting onText (intent scan),
+// requestId / non-assistant entry / 1s silence — emitting onText (intent scan,
+// with a per-flush { turnEnd } read off the entry's own stop reason),
 // onSessionId (persistence), onActivity (UI), onCompactSummary, onFileTouches.
 //
 // FACTORY (M3 DI): the class reads one main.js global, REGISTRY_DIR (to resolve
@@ -14,7 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { extractText } = require('./transcript');
+const { extractText, isTurnEndEntry } = require('./transcript');
 const { extractFileTouches } = require('./file-touch');
 const { pathFor } = require('./clodex-paths');
 
@@ -39,9 +40,14 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
       this._position = 0;
       this._pendingRid = null;
       this._pendingText = null;
+      this._pendingTurnEnd = false;
       this._pendingTime = 0;
       this._readBuf = '';
       this._activityState = 'idle';
+      // Whether the entry that contributed the pending text ended the turn.
+      // Carried to the flush rather than re-derived there: by flush time the
+      // entry is gone, and the 1s-silence flush has no entry at all.
+      this._pendingTurnEnd = false;
       // Touches seen since the last text flush. They fire per-LINE the moment
       // they are parsed (onFileTouches, below) because the touched-files UI wants them
       // immediately; onText flushes on a requestId change or 1s of silence. The
@@ -170,6 +176,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
           this._pendingRid = rid;
           this._pendingText = text;
           this._pendingTime = Date.now();
+          this._pendingTurnEnd = isTurnEndEntry(obj);
           this._setActivity('thinking');
         } else if (!['assistant', 'response_item'].includes(obj.type || '')) {
           if (this._pendingText) this._flushPending();
@@ -179,7 +186,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
 
     _flushPending() {
       if (this._pendingText) {
-        try { this._onText(this._pendingText, this._pendingTouches); } catch {}
+        try { this._onText(this._pendingText, this._pendingTouches, { turnEnd: this._pendingTurnEnd }); } catch {}
         this._setActivity('idle');
       }
       this._pendingRid = null;

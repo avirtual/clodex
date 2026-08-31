@@ -73,6 +73,12 @@ const DEFAULT_UI_SETTINGS = {
   voiceSubmitComposition: false,
   voiceSubmitRearm: false,
   voiceSubmitPhrase: 'over and out',
+  speakReplies: false,
+  // A NAME, never a variant: `say -v Daniel` resolves to whichever Daniel is
+  // installed, so the free enhanced download upgrades the speech with no code
+  // change. Daniel (en_GB) because it was the clearest across a room in the
+  // operator's listening test — clarity is the criterion, not warmth.
+  speakVoice: 'Daniel',
   // New installs get the capability WITHOUT the firehose. Existing ones never
   // reach this value for this key — sanitizeTerminalReports resolves an absent
   // key to 'off' rather than falling through to the default.
@@ -1261,6 +1267,15 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
           voiceSubmitPhrase: (typeof raw?.voiceSubmitPhrase === 'string' && raw.voiceSubmitPhrase.trim())
             ? raw.voiceSubmitPhrase.trim()
             : DEFAULT_UI_SETTINGS.voiceSubmitPhrase,
+          speakReplies: typeof raw?.speakReplies === 'boolean' ? raw.speakReplies : DEFAULT_UI_SETTINGS.speakReplies,
+          // Blank resolves to the DEFAULT rather than to '', which would be an
+          // empty `-v` argument. NOT validated against the installed set here:
+          // `say` substitutes the system voice for an unknown name and still
+          // speaks, and a read that rejected an uninstalled name would silence
+          // the feature instead of degrading it.
+          speakVoice: (typeof raw?.speakVoice === 'string' && raw.speakVoice.trim())
+            ? raw.speakVoice.trim()
+            : DEFAULT_UI_SETTINGS.speakVoice,
           terminalReports: sanitizeTerminalReports(raw),
           discoverOnStartup: typeof raw?.discoverOnStartup === 'boolean' ? raw.discoverOnStartup : DEFAULT_UI_SETTINGS.discoverOnStartup,
           recentCwds: Array.isArray(raw?.recentCwds) ? raw.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : defaultUiSettings().recentCwds,
@@ -1325,6 +1340,13 @@ function initStores(userDataPath, { log, registryDir, resourcesDir } = {}) {
         // string written here would read back as itself, and every gate
         // downstream compares against a literal — so `'On'` would silently mean
         // neither 'all' nor 'off' and disclosure would depend on a typo.
+        speakReplies: typeof partial?.speakReplies === 'boolean' ? partial.speakReplies : cur.speakReplies,
+        // Same absent-vs-blank split as voiceSubmitPhrase: absent keeps the
+        // current value, blank is the operator clearing the field back to the
+        // default.
+        speakVoice: typeof partial?.speakVoice === 'string'
+          ? (partial.speakVoice.trim() || DEFAULT_UI_SETTINGS.speakVoice)
+          : cur.speakVoice,
         terminalReports: TERMINAL_REPORTS.includes(partial?.terminalReports) ? partial.terminalReports : cur.terminalReports,
         discoverOnStartup: partial?.discoverOnStartup ?? cur.discoverOnStartup,
         recentCwds: Array.isArray(partial?.recentCwds) ? partial.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : cur.recentCwds,

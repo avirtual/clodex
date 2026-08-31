@@ -314,6 +314,8 @@ function deniedBodyDisposition(intent) {
   }
 }
 
+const { speakable } = require('./speakable');
+
 function createSessionManager(deps) {
   const {
     AGENT_NAME_RE,
@@ -327,6 +329,7 @@ function createSessionManager(deps) {
     INJECT_QUIET_MS,
     INJECT_SPEAKING_STALE_MS,
     INJECT_VOICE_DRAFT_STALE_MS,
+    speaker,
     InjectQueue,
     JsonlWatcher,
     LONG_TEXT_DELAY,
@@ -707,6 +710,11 @@ function createSessionManager(deps) {
           });
           const s = this.sessions.get(t.agent);
           if (s) s.lastMainStop = { isTurn: !!(t.stop && t.stop.is_turn), ts: Date.now() };
+          // Already past the side-call / subagent filter above, so this is the
+          // main line's own text. `stop.is_turn` is the wire's truthful
+          // discriminator — the same one ActivityTracker trusts for its
+          // notification-worthy idle.
+          this._maybeSpeak(t.agent, t.text, !!(t.stop && t.stop.is_turn));
           if (s && t.stop && t.stop.is_turn) this._maybeDeliverDigest(s, t.sessionId || s.sessionId);
           if (s && s.intentSource === 'wire') {
             if (s.sentinel) s.sentinel.noteWireHealthy();
@@ -1043,6 +1051,9 @@ function createSessionManager(deps) {
 
     unregisterWindow(workspaceId) {
       this.windows.delete(workspaceId);
+      // Closing the window that was narrating must stop the sound. Sessions
+      // survive a window close by design, so nothing else on this path would.
+      try { speaker.stop(); } catch {}
     }
 
     windowForWorkspace(workspaceId) {
@@ -1822,7 +1833,7 @@ function createSessionManager(deps) {
       } else if (agentType) {
         session.watcher = new JsonlWatcher(
           name,
-          (text, touches) => this._scanJsonlText(text, name, touches),
+          (text, touches, meta) => this._scanJsonlText(text, name, touches, meta),
           onSessionId,
           (state) => this._emitActivity(name, state, state === 'idle'),
           () => this._fireCompactContinuation(session),
@@ -2130,6 +2141,11 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
       s.lastVoiceRecordingTs = Date.now();
+      // He tapped the microphone while a narration was still playing — the
+      // converse of the gate in _maybeSpeak, and the harder half. Stopping is
+      // what a person does when interrupted; see interruptForRecorder for the
+      // alternative that was rejected.
+      try { speaker.interruptForRecorder(); } catch {}
     }
 
     // The renderer saw a DICTATED draft still sitting unsent in this seat's
@@ -3021,6 +3037,12 @@ function createSessionManager(deps) {
       // prompt unconditionally. Residue for a never-recreated name is a few small
       // files and is harmless.
       if (this._wire) { try { this._wire.unregisterAgent(name); } catch {} }
+      // A narration outliving the seat that produced it is the obvious bug: the
+      // `say` child is ours, not the pty's, so nothing else here reaches it.
+      // Unconditional — the speaker is box-wide and cannot attribute an
+      // utterance to a session, so the alternative is leaving a dead seat's
+      // voice playing.
+      try { speaker.stop(); } catch {}
       if (s.watcher) s.watcher.stop();
       if (s.sentinel) { try { s.sentinel.stop(); } catch {} }
       if (s.ctxWatcher) { try { s.ctxWatcher.close(); } catch {} }
@@ -3544,8 +3566,16 @@ function createSessionManager(deps) {
       return intents;
     }
 
-    _scanJsonlText(text, senderName, touches) {
+    _scanJsonlText(text, senderName, touches, meta) {
       const s = this.sessions.get(senderName);
+      // Mirrors the publish gate directly below and for the same reason: a
+      // wire-routed session with a live tee already spoke from turn.completed,
+      // and speaking here too would say every reply twice. A tee-blind
+      // (Bedrock/Vertex) session is wireRouted but never fires turn.completed,
+      // so `!s.backend` is what keeps this its ONLY voice rather than none.
+      if (!(s && s.wireRouted && !s.backend)) {
+        this._maybeSpeak(senderName, text, !!(meta && meta.turnEnd));
+      }
       // A wire-routed session running intentSource:'jsonl' (shadow mode) has
       // BOTH junctions live. Publishing here too would double-deliver every
       // turn deterministically, so the wire wins: it is already firing and
@@ -3592,6 +3622,39 @@ function createSessionManager(deps) {
         if (!ev.text && !hasFiles && !hasReads) return;
         hooks.fireAgentText(ev);
       } catch { /* consume-only */ }
+    }
+
+
+    // Speak the agent's FINAL reply, when the operator asked to hear it.
+    //
+    // TURN-END IS THE WHOLE FEATURE. The caller supplies it from a source that
+    // knows: the wire's `stop.is_turn`, or the transcript entry's own
+    // `stop_reason` via isTurnEndEntry. Deliberately NOT the renderer activity
+    // seam, whose `turnEnd` is `state === 'idle'` for jsonl sessions and so is
+    // true on every inter-tool flush — reading it here would narrate after every
+    // tool call, which is precisely what the operator asked not to happen.
+    //
+    // Off by default and read fresh per turn: the setting is a live toggle, so a
+    // cached answer would keep talking after it was switched off.
+    _maybeSpeak(name, text, turnEnd) {
+      if (!turnEnd || !text) return;
+      try {
+        const s = this.sessions.get(name);
+        if (!s || !s.agentType) return;
+        const store = getUiSettings && getUiSettings();
+        const cfg = store ? store.get() : null;
+        if (!cfg || cfg.speakReplies !== true) return;
+        // DO NOT TALK OVER A LIVE MICROPHONE. The same level the inject gate
+        // reads, not a second detector: his mic is open, and narrating into it
+        // feeds the speaker's own words back through transcription. Absent
+        // evidence reads as NOT recording, matching the inject gate's polarity —
+        // the cost of a wrong "quiet" here is one narration he can stop, while a
+        // deferral nothing releases would silence the feature permanently.
+        if (Date.now() - (s.lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS) return;
+        const say = speakable(text);
+        if (!say) return;
+        speaker.speak(say, { voice: cfg.speakVoice });
+      } catch { /* observer-grade: speech must never break turn handling */ }
     }
 
 

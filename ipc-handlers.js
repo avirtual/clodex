@@ -46,7 +46,7 @@ function registerIpcHandlers(deps) {
     readSessionArgs, applySessionArgs, sessionMeta, sessionInfo,
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
-    setRemoteToken, hasRemoteToken, refreshRemoteToken,
+    setRemoteToken, hasRemoteToken, refreshRemoteToken, listSpeakVoices,
     wirescope, workspaceOfSender,
     sessionScopeCtx, renameWorkspaceScope,
     templates, workspaces, promptLibrary, agentDefaults,
@@ -939,6 +939,13 @@ function registerIpcHandlers(deps) {
       voiceSubmitComposition: s.voiceSubmitComposition,
       voiceSubmitRearm: s.voiceSubmitRearm,
       voiceSubmitPhrase: s.voiceSubmitPhrase,
+      speakReplies: s.speakReplies,
+      speakVoice: s.speakVoice,
+      // Enumerated per box, not a constant: the installed set is far smaller
+      // than the documented one and differs per machine, and `say` answers an
+      // uninstalled name by substituting the system voice rather than failing.
+      // Offering a name from memory would offer one the operator cannot get.
+      speakVoices: typeof listSpeakVoices === 'function' ? listSpeakVoices() : [],
       terminalReports: s.terminalReports,
       discoverOnStartup: s.discoverOnStartup,
       theme: s.theme,

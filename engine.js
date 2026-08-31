@@ -19,6 +19,7 @@ const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { resolveDisplayedPath } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 const { readVoiceMode, readVoiceTrigger } = require('./voice-settings');
+const { createSpeaker, listVoices } = require('./speaker');
 const { runTicketsMigration } = require('./tickets-migrate');
 const { materializeExecScripts } = require('./bin-materialize');
 // Module-level, unlike the rest of pending-store's surface (required inside
@@ -917,6 +918,11 @@ let pluginLoader = null;
 
 
 
+// One speaker for the whole app: `say` writes to the machine's single audio
+// output, so a per-session speaker would let two seats finishing together talk
+// over each other with nothing able to arbitrate.
+const speaker = createSpeaker();
+
 const SessionManager = createSessionManager({
     AGENT_NAME_RE,
     COMPACT_CONTINUATION_DELAY,
@@ -928,6 +934,7 @@ const SessionManager = createSessionManager({
     INJECT_QUIET_MAXWAIT,
     INJECT_QUIET_MS,
     INJECT_SPEAKING_STALE_MS,
+    speaker,
     INJECT_VOICE_DRAFT_STALE_MS,
     InjectQueue,
     JsonlWatcher,
@@ -1975,6 +1982,9 @@ const toolCache = createToolCache({ whichBin });
     // Workbench shells are children of this process with no persistence record
     // to resume from, so a quit that skipped this would orphan them outright.
     if (drawerPtys) { try { drawerPtys.dispose(); } catch {} }
+    // Before killAll: a narration is not tied to a session's pty, so nothing
+    // downstream would stop it and the app would exit still talking.
+    try { speaker.stop(); } catch {}
     manager.killAll();
   }
 
@@ -1983,6 +1993,7 @@ const toolCache = createToolCache({ whichBin });
     refreshRemoteToken,
     setRemoteToken: (token) => writeRemoteEnvToken(userDataPath, token),
     hasRemoteToken: () => hasRemoteEnvToken(userDataPath),
+    listSpeakVoices: () => listVoices(),
     REGISTRY_DIR, proxyPoller, wirescope, ProxyClient, pty,
     getRemoteServer: () => remoteServer,
     getRemoteError: () => remoteError,

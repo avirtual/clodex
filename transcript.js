@@ -146,6 +146,29 @@ function jsonlToMessages(jsonlPath, limit = 100) {
   return messages.slice(-limit);
 }
 
+// Does THIS entry end the agent's main-line turn? The discriminator the
+// renderer activity seam cannot give you: session-manager passes
+// `state === 'idle'` for the jsonl watcher, so its `turnEnd` is true on every
+// inter-tool flush. Read the transcript instead, which carries the model's own
+// stop reason.
+//
+// Measured over 60 real transcripts: assistant stop_reason is `tool_use` 1768
+// times against `end_turn` 107 — the ratio is the whole point, since speaking
+// on the wrong one narrates after every tool call.
+//
+// A sidechain entry is a SUBAGENT's turn ending, not the seat's, and it lands
+// in the same transcript. Excluded here rather than at the call site so no
+// second consumer has to rediscover it.
+function isTurnEndEntry(obj) {
+  if (!obj || obj.isSidechain === true || obj.isMeta === true) return false;
+  if ((obj.type || '') === 'assistant') {
+    return ((obj.message || {}).stop_reason || '') === 'end_turn';
+  }
+  // Codex closes a turn with its own event; `agent_message` is per-chunk and
+  // says nothing about the turn being over.
+  return (obj.type || '') === 'event_msg' && (obj.payload || {}).type === 'task_complete';
+}
+
 function extractText(obj) {
   const type = obj.type || '';
   // Claude format
@@ -168,4 +191,4 @@ function extractText(obj) {
   return '';
 }
 
-module.exports = { jsonlToMarkdown, extractClaudeBlocks, jsonlToMessages, extractText };
+module.exports = { jsonlToMarkdown, extractClaudeBlocks, jsonlToMessages, extractText, isTurnEndEntry };
