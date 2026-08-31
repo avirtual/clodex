@@ -620,14 +620,14 @@ test('speech arriving under a live meter RESTARTS the window', async () => {
   //
   // The meter animates throughout, so the restart cannot be coming from the
   // frames -- only the words can have caused it.
-  const h = fastHarness({ quietMs: 60 });
+  const h = fastHarness({ quietMs: 120 });
   const half = '\u276f tell them over and out';
   h.term.write({ text: half + METER[0], cursorX: half.length, cursor: true });
-  await settle(30);
+  await settle(60);
   const full = '\u276f tell them over and out and i mean it over and out';
   for (let i = 0; i < 5; i += 1) {
     h.term.write({ text: full + METER[i % 4], cursorX: full.length, cursor: true });
-    await settle(8);
+    await settle(16);
   }
   assert.deepStrictEqual(h.writes, [],
     'the partial draft must NOT have been submitted at its own deadline');
@@ -638,7 +638,7 @@ test('speech arriving under a live meter RESTARTS the window', async () => {
   // would also produce.
   for (let i = 0; i < 12; i += 1) {
     h.term.write({ text: full + METER[i % 4], cursorX: full.length, cursor: true });
-    await settle(8);
+    await settle(16);
   }
   await settle(ENTER_SETTLE_MS + 25);
   assert.strictEqual(h.watcher.fireCount(), 1, 'the settled draft must submit');
