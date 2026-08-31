@@ -554,12 +554,13 @@ app.whenReady().then(() => {
   app.on('did-resign-active', () => { try { manager.noteAppFocused(false); } catch {} });
 
   // The cross-platform backstop, for the platforms the macOS-only pair above
-  // does not cover. It RE-DERIVES the answer, so off darwin it must not be
-  // registered alongside them: on any ordering where `browser-window-blur` runs
-  // after `did-resign-active`, the re-read answers true while the app is still
-  // resigning and flips the flag back, restoring the stuck-true no-op the pair
-  // exists to prevent. The startup seed runs on every platform — it reads once,
-  // before any edge, so it cannot undo one.
+  // does not cover. It RE-DERIVES the answer, so ON DARWIN — where that pair is
+  // the authority — it must not be registered alongside them: on any ordering
+  // where `browser-window-blur` runs after `did-resign-active`, the re-read
+  // answers true while the app is still resigning and flips the flag back,
+  // restoring the stuck-true no-op the pair exists to prevent. Hence the guard
+  // below registers it only OFF darwin. The startup seed runs on every platform
+  // — it reads once, before any edge, so it cannot undo one.
   const reportAppFocus = () => { try { manager.noteAppFocused(app.isFocused()); } catch {} };
   if (process.platform !== 'darwin') {
     app.on('browser-window-focus', reportAppFocus);
