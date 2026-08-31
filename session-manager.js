@@ -457,6 +457,7 @@ function createSessionManager(deps) {
     termExec: termExecDep,
     whichBin,
     writeClaudeDigestFile,
+    writeVoiceMode,
     writeSkillPlugin,
     writeAgentPlugin,
     getPersistence, getTemplates, getUiSettings, getEnvScopes, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
@@ -2334,46 +2335,32 @@ function createSessionManager(deps) {
       return this.voiceTap(r.name, { raise: true });
     }
 
-    // Switch the CLI's own push-to-talk mode by INJECTING `/voice <mode>`, so
-    // the CLI's own handler performs the write and owns the merge and schema of
-    // the file it writes.
+    // Switch the CLI's push-to-talk mode by WRITING the settings file it reads.
+    // A running CLI picks that up: the mode is read through a live store
+    // selector rather than cached at startup, and the CLI watches the settings
+    // directory. Observed directly — an external edit moved a live session.
     //
-    // A SPAWNED CLI CANNOT REPLACE THIS, measured 2026-09-01 against 2.1.252.
-    // `/voice` is a `type:"local"` command declaring supportsNonInteractive
-    // false, so the headless filter drops it: `claude -p "/voice tap"` exits 0
-    // and changes nothing — a silent no-op, the worst available failure. The
-    // positional form `claude "/voice tap"` is not headless at all; it starts
-    // the interactive TUI, which needs a real pty (with stdio ignored it also
-    // exits 0 having done nothing) and does NOT self-exit once it has written.
+    // NOT AN INJECTION, and not a spawned CLI either. Injection dragged in the
+    // composer, the inject queue, the quiet gate and `parkable` — and a PARKED
+    // slash command never executes, because the hook hands parked text back as
+    // additionalContext, which the model reads as prose instead of typing. So
+    // the verb could silently do nothing behind an open draft. Spawning was
+    // measured and rejected: `/voice` declares supportsNonInteractive false, so
+    // `claude -p "/voice tap"` exits 0 and changes nothing, and the positional
+    // form starts an interactive TUI that needs a pty and does not self-exit.
     //
-    // Targets the MICROPHONE HOLDER, never `activeSession` — the holder is the
-    // one invariant that is single-valued across windows, and the mode belongs
-    // to whichever seat would actually record.
+    // TAKES NO SEAT. The file is one per box, so there is no mic holder, window
+    // or live session for this to resolve, and arming a mode before any seat
+    // exists is a thing he can reasonably want from across the room. An invalid
+    // mode and a failed write are the only declines left.
     voiceMode(mode) {
-      if (mode !== 'tap' && mode !== 'hold') return { ok: false, error: `unknown voice mode "${mode}" (use tap|hold)` };
-      const name = this._micTarget;
-      if (!name) return { ok: false, error: 'no seat holds the microphone' };
-      const r = this._voiceRoute(name);
-      if (!r.ok) return r;
-      // bypassHold, like every other injected slash command: a held bare command
-      // '\n'-joins into a flush batch and the CLI reads the rest of the batch as
-      // garbage arguments.
-      //
-      // parkable protects his draft, and the cost is that a PARKED slash command
-      // does not execute: the CLI hook returns parked text as additionalContext,
-      // which is prose the model reads, not a typed line — so the mode does not
-      // change. Whether that happens is a race with the idle drain, which does
-      // deliver it as a command. Nothing is lost or spliced either way, so the
-      // draft still wins; the divert logs the outcome rather than leaving a
-      // spoken verb that silently did nothing.
-      this._injectText(r.session, `/voice ${mode}`, {
-        bypassHold: true,
-        parkable: true,
-        onDivert: () => log.info('voice',
-          `mode ${mode} → ${name} parked behind an open draft — it will not execute as a command`),
-      });
-      log.info('voice', `mode ${mode} → ${name}`);
-      return { ok: true, name, mode };
+      const r = writeVoiceMode(mode);
+      if (!r.ok) {
+        log.warn('voice', `mode ${mode} failed: ${r.error}`);
+        return r;
+      }
+      log.info('voice', `mode ${mode}`);
+      return { ok: true, mode };
     }
 
     // Spoken replies on or off, from across the room. CLODEX'S OWN setting, so

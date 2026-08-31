@@ -1,15 +1,5 @@
-// voice-settings.js — read the Claude CLI's PERSISTED voice-input state out of
-// `~/.claude/settings.json`, for the voice-mode selector.
-//
-// READ-ONLY BY CONSTRUCTION. The mode is changed by running the CLI's own
-// `/voice <mode>`, which owns the merge and the schema of the file it writes;
-// nothing here needs a writer, so there is none to keep correct.
-//
-// A running CLI DOES pick up an external write — the mode is read through a
-// live selector, not cached at startup — but only where the CLI is watching:
-// it watches directories that had a settings file when that session started.
-// A box whose ~/.claude/settings.json did not exist at session start is not
-// covered, which is why the write is left to `/voice` rather than done here.
+// voice-settings.js — read and write the Claude CLI's PERSISTED voice-input
+// state in `~/.claude/settings.json`, for the voice-mode selector.
 //
 // The legacy sibling key `voiceEnabled` is REPORTED and never merged: `voice` is
 // authoritative, so a file whose two keys disagree still reports `voice`, and a
@@ -22,7 +12,7 @@
 
 const path = require('path');
 const os = require('os');
-const { readJsonSafe } = require('./fs-util');
+const { readJsonSafe, atomicWriteFileSync } = require('./fs-util');
 
 // The three modes `/voice` accepts. Order is the order the menu offers them.
 const VOICE_MODES = ['off', 'tap', 'hold'];
@@ -54,6 +44,52 @@ function readVoiceMode({ homeDir = os.homedir() } = {}) {
     legacy,
     effective: enabled === false ? 'off' : mode,
   };
+}
+
+// Set the mode by writing the file the CLI reads, mirroring what its own
+// `/voice` handler writes:
+//
+//   rn("userSettings", { voiceEnabled: true,
+//                        voice: { ...existing.voice, enabled: true, mode } })
+//
+// READ-MODIFY-WRITE, and every part of that matters. This is the user's GLOBAL
+// CLI settings file and holds far more than voice: unrelated top-level keys are
+// carried through untouched, and `voice`'s own siblings (autoSubmit, language,
+// whatever a later CLI adds) survive the spread. A whole-object write here would
+// silently delete the rest of their configuration.
+//
+// `enabled: true` is not incidental — a mode change also turns voice input ON
+// when it was off, which is exactly what `/voice` does. Matching the handler is
+// the point; diverging would make our write and theirs disagree about a file
+// they share. `voiceEnabled` rides along for the same reason: the CLI writes
+// both, and readVoiceMode above has opinions about a file where they disagree.
+//
+// The GLOBAL file only. A per-agent `--settings` file is the CLI's flagSettings
+// layer, which `/voice` explicitly no-ops on, so writing a mode there would
+// produce a file the CLI never honors.
+//
+// Two limits this cannot fix, both accepted: a seat launched with
+// CLAUDE_CONFIG_DIR elsewhere reads a different file and never sees this (Clodex
+// sets that for no seat); and the CLI's watcher only covers directories that had
+// a settings file when that session started, so CREATING this file will not
+// reach an already-running seat — the write lands, that seat does not move.
+function writeVoiceMode(mode, { homeDir = os.homedir() } = {}) {
+  if (mode !== 'tap' && mode !== 'hold') return { ok: false, error: `unknown voice mode "${mode}" (use tap|hold)` };
+  const file = path.join(homeDir, '.claude', 'settings.json');
+  // An unreadable or corrupt file flattens to null, and the write proceeds onto
+  // `{}` rather than throwing: that is the same "ordinary state of a box that
+  // never used voice" the read treats it as. It cannot lose keys that were not
+  // legible to begin with.
+  const data = readJsonSafe(file);
+  const raw = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  const v = raw.voice && typeof raw.voice === 'object' && !Array.isArray(raw.voice) ? raw.voice : {};
+  const next = { ...raw, voiceEnabled: true, voice: { ...v, enabled: true, mode } };
+  try {
+    atomicWriteFileSync(file, `${JSON.stringify(next, null, 2)}\n`);
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+  return { ok: true, mode, file };
 }
 
 // The key that arms the CLI's recorder, read from `~/.claude/keybindings.json`.
@@ -124,4 +160,4 @@ function readVoiceTrigger({ homeDir = os.homedir() } = {}) {
   return { file, binding: found, custom };
 }
 
-module.exports = { VOICE_MODES, readVoiceMode, readVoiceTrigger };
+module.exports = { VOICE_MODES, readVoiceMode, writeVoiceMode, readVoiceTrigger };

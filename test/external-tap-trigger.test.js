@@ -1221,40 +1221,34 @@ test('SELECT: the socket arm dispatches voice-select', () => {
       ['mic-target', 'B'], ['#show'], ['#focus'], ['voice-tap', 'B']]);
 });
 
-// `mode` is the only verb that reaches the pty, so its manager needs the inject
-// machinery `mk` leaves out — the REAL InjectQueue, because the whole claim is
-// that the bytes ride the queue and inherit its gates. A stub queue here would
-// assert only that this file can call a function it also wrote.
+// `mode` no longer touches a pty: it writes the CLI's settings file. So this
+// harness seams the WRITER and asserts the call that reaches it, while the seat
+// below keeps a recording pty so the no-injection claim is made against real
+// bytes rather than against the absence of a call.
 //
-// Timings flattened to zero so the writes land inside the test rather than
-// production's quiet window; the SPEAKING window is the one exception, set per
-// test, because a gate that never holds cannot show a deferral.
-function mkInject({ speakingStale = 0 } = {}) {
-  const fs = require('node:fs');
-  const os = require('node:os');
-  const path = require('node:path');
-  const PENDING_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voicemode-'));
+// The writer's own behaviour — sibling survival, unrelated keys, atomicity,
+// corrupt files — is pinned in test/voice-settings.test.js against a temp dir,
+// which is where that module is testable without a manager at all.
+function mkMode({ writeResult = null } = {}) {
+  const calls = [];
+  const logs = [];
   const m = mk({
-    InjectQueue: require('../inject-queue').InjectQueue,
-    PENDING_DIR,
-    parkDelivery: require('../pending-store').parkDelivery,
-    INJECT_QUIET_MS: 0,
-    // Large: the cap firing underneath a deferral test would inject the very
-    // bytes that test asserts are withheld, and it would look like a pass of
-    // the opposite claim.
-    INJECT_QUIET_MAXWAIT: 3_600_000,
-    INJECT_BOOT_MAXWAIT: 0,
-    INJECT_SPEAKING_STALE_MS: speakingStale,
-    INJECT_VOICE_DRAFT_STALE_MS: 0,
-    SHORT_TEXT_DELAY: 0, LONG_TEXT_DELAY: 0, LONG_TEXT_THRESHOLD: 1e9,
-    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+    writeVoiceMode: (mode) => {
+      calls.push(mode);
+      return writeResult || { ok: true, mode, file: '/tmp/fake/settings.json' };
+    },
+    log: {
+      info: (...a) => logs.push(['info', a.join(' ')]),
+      warn: (...a) => logs.push(['warn', a.join(' ')]),
+      error: () => {}, debug: () => {},
+    },
   });
   m._broadcast = () => {};
-  return { m, PENDING_DIR };
+  return { m, calls, logs };
 }
 
-// A seat with a pty whose writes are recorded, so `mode` can be followed all the
-// way to the bytes rather than to a spy on the manager's own method.
+// A claude seat with a recording pty, so "nothing was typed" is an assertion
+// about bytes and not about a method nobody called.
 function micSeat(m, name, win) {
   const writes = [];
   m.sessions.set(name, {
@@ -1268,98 +1262,82 @@ function micSeat(m, name, win) {
 
 function settle(ms = 250) { return new Promise((r) => setTimeout(r, ms)); }
 
-test('MODE: injects /voice into the MIC HOLDER, not the active session', async () => {
-  const { m } = mkInject();
-  const a = fakeWin(); a.ws = 'ws1';
-  const b = fakeWin(); b.ws = 'ws2';
-  m.registerWindow('ws1', a);
-  m.registerWindow('ws2', b);
-  const aWrites = micSeat(m, 'A', a);
-  const bWrites = micSeat(m, 'B', b);
-  // THE TWO DIFFER, which is the whole point of the fixture: B holds the
-  // microphone while A is the seat a window would call active. `activeSession`
-  // is per-window and there are two windows, so it cannot answer this.
-  reportFrom(m, a, 'A');
-  m.voiceTap('B');
-  assert.strictEqual(m.micTarget(), 'B');
-
-  assert.deepStrictEqual(m.voiceMode('hold'), { ok: true, name: 'B', mode: 'hold' });
-  await settle();
-  assert.ok(bWrites.join('').includes('/voice hold'), 'the mic holder got the command');
-  assert.deepStrictEqual(aWrites, [], 'the other seat got nothing');
+test('MODE: writes the mode through the settings writer', () => {
+  const { m, calls } = mkMode();
+  assert.deepStrictEqual(m.voiceMode('hold'), { ok: true, mode: 'hold' });
+  assert.deepStrictEqual(calls, ['hold']);
 });
 
-test('MODE: the bytes ride the inject queue rather than a raw pty write', async () => {
-  const { m } = mkInject();
-  const win = fakeWin(); win.ws = 'ws1';
-  m.registerWindow('ws1', win);
-  const writes = micSeat(m, 'A', win);
-  reportFrom(m, win, 'A');
+test('MODE: tap and hold both reach the writer verbatim', () => {
+  const { m, calls } = mkMode();
   m.voiceMode('tap');
-  await settle();
-  // The queue's signature, not the manager's: a leading Ctrl-U in its own write
-  // and the text in a later one. A raw `pty.write('/voice tap\r')` would be a
-  // single chunk with no '\x15' — and would splice a half-typed draft, which is
-  // exactly what riding the queue prevents.
-  assert.ok(writes.length > 1, 'more than one write — the Ctrl-U is split from the text');
-  assert.strictEqual(writes[0], '\x15', 'the queue leads with clear-line');
-  assert.ok(writes.join('').includes('/voice tap'));
+  m.voiceMode('hold');
+  assert.deepStrictEqual(calls, ['tap', 'hold']);
 });
 
-test('MODE: a mode switch DEFERS while he is dictating', async () => {
-  // The recorder window must be OPEN for the gate to hold at all — with it
-  // closed this test would pass for the wrong reason (nothing to defer).
-  const { m } = mkInject({ speakingStale: 60_000 });
+test('MODE: takes NO seat — no mic holder, no window, no live session', () => {
+  const { m, calls } = mkMode();
+  // Exactly the state the OLD mechanism declined in: nothing focused or tapped.
+  assert.strictEqual(m.micTarget(), null,
+    'ENTER: no seat holds the microphone, or the unconditional claim is vacuous');
+  assert.strictEqual(m.sessions.size, 0, 'ENTER: and no session exists at all');
+  assert.deepStrictEqual(m.voiceMode('hold'), { ok: true, mode: 'hold' });
+  assert.deepStrictEqual(calls, ['hold'], 'the box-wide setting changed anyway');
+});
+
+test('MODE: nothing is typed into the seat holding the microphone', async () => {
+  const { m, calls } = mkMode();
   const win = fakeWin(); win.ws = 'ws1';
   m.registerWindow('ws1', win);
   const writes = micSeat(m, 'A', win);
   reportFrom(m, win, 'A');
-  const s = m.sessions.get('A');
-  // Dictation gets the protection typing has: the Ctrl-U that opens an injection
-  // eats a half-SPOKEN draft exactly as it eats a half-typed one.
-  s.lastVoiceRecordingTs = Date.now();
-  assert.ok(Date.now() - s.lastVoiceRecordingTs < 60_000,
-    'ENTER: the recorder window is open, or the deferral below is vacuous');
+  // ENTER: a live seat DOES hold the mic, so an injection had a destination.
+  // Without this the empty-writes assertion is true of an empty fixture.
+  assert.strictEqual(m.micTarget(), 'A');
+  assert.ok(m.sessions.get('A') && !m.sessions.get('A')._dead);
 
   m.voiceMode('hold');
   await settle();
-  assert.deepStrictEqual(writes, [], 'nothing was written into the live dictation');
-
-  // Release the deferral loop before the file ends. It polls until the window
-  // closes or the seat dies, and with the quiet interval flattened to zero for
-  // this fixture it would spin for the full 60s and hang the run — production's
-  // interval is not zero, so this is the fixture's debt, not the queue's.
-  s._dead = true;
-  await settle(20);
-  assert.deepStrictEqual(writes, [], 'and the release did not flush it either');
+  assert.deepStrictEqual(writes, [], 'no composer, no queue, no park divert');
+  assert.deepStrictEqual(calls, ['hold'], 'it went to the file instead');
 });
 
-test('MODE: an unknown mode and an unheld microphone are declined', () => {
-  const { m } = mkInject();
-  const win = fakeWin(); win.ws = 'ws1';
-  m.registerWindow('ws1', win);
-  micSeat(m, 'A', win);
-  // No mic target yet: nothing has focused or tapped.
-  assert.match(m.voiceMode('tap').error, /no seat holds the microphone/);
-  reportFrom(m, win, 'A');
-  assert.match(m.voiceMode('loud').error, /unknown voice mode "loud"/);
-  // The mode is validated BEFORE the target is resolved, so a typo cannot
-  // reach a live seat at all.
-  assert.match(m.voiceMode(null).error, /unknown voice mode/);
+test('MODE: an invalid mode is declined by the writer and reported', () => {
+  // The enum lives in the writer, so the manager must PASS THROUGH its refusal
+  // rather than keep a second copy of the rule that could drift from it.
+  const { m } = mkMode({ writeResult: { ok: false, error: 'unknown voice mode "loud" (use tap|hold)' } });
+  const r = m.voiceMode('loud');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /unknown voice mode "loud"/);
+});
+
+test('MODE: a failed write is returned and logged, never thrown', () => {
+  const { m, logs } = mkMode({ writeResult: { ok: false, error: 'EACCES: permission denied' } });
+  const r = m.voiceMode('hold');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /EACCES/);
+  assert.ok(logs.some(([lvl, msg]) => lvl === 'warn' && /EACCES/.test(msg)),
+    'the failure is logged rather than silent');
 });
 
 test('MODE: the socket arm dispatches voice-mode and takes the mode only as a string', async () => {
-  const { m } = mkInject();
+  const { m, calls } = mkMode();
   const win = fakeWin(); win.ws = 'ws1';
   m.registerWindow('ws1', win);
-  const writes = micSeat(m, 'A', win);
+  micSeat(m, 'A', win);
   reportFrom(m, win, 'A');
   m._onIncoming('courier', { type: 'voice-mode', from: 'voice-tap', mode: 'hold' });
   await settle();
-  assert.ok(writes.join('').includes('/voice hold'));
+  assert.deepStrictEqual(calls, ['hold']);
   // Delivered to NO transcript: a box-wide request arriving on an agent's
   // socket is not a message to that agent.
   assert.deepStrictEqual(win.sent.filter((f) => f[0] === 'agent-message'), []);
+
+  // A non-string mode is nulled at the arm, so it reaches the writer as a value
+  // the enum rejects rather than being interpolated into a file as an object.
+  m._onIncoming('courier', { type: 'voice-mode', from: 'voice-tap', mode: { evil: 1 } });
+  await settle();
+  assert.deepStrictEqual(calls, ['hold', null]);
 });
 
 // The one hop nothing else covers, extended to the new verbs: the script builds

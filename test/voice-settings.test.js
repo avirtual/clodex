@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { readVoiceMode, readVoiceTrigger, VOICE_MODES } = require('../voice-settings');
+const { readVoiceMode, writeVoiceMode, readVoiceTrigger, VOICE_MODES } = require('../voice-settings');
 
 // A temp HOME whose .claude/settings.json holds `body` verbatim (a string is
 // written raw, so a case can express a CORRUPT file — the one shape JSON.stringify
@@ -236,5 +236,144 @@ test('the trigger read never writes, and never creates the file it missed', () =
   withKeys(null, (home) => {
     readVoiceTrigger({ homeDir: home });
     assert.equal(fs.existsSync(path.join(home, '.claude')), false, 'no .claude/ created');
+  });
+});
+
+// THE WRITE. `mode` changes the CLI's push-to-talk setting by writing
+// this file rather than by injecting `/voice`, so what these pin is that the
+// write mirrors the CLI's own handler and cannot damage the file around it.
+//
+// The file is the user's GLOBAL CLI settings and holds far more than voice, so
+// the destructive failure — clobbering an unrelated key — is the one worth the
+// most assertions. Real files in a temp HOME, same genus as the reads above.
+//
+// NOT PINNED HERE, because nothing in this process can observe it: that a
+// RUNNING CLI picks the write up. That was established by Bogdan editing the
+// file by hand under a live session and watching it move; a fixture claiming it
+// would be asserting a state it cannot reach.
+function withWrite(body, fn) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-voicew-'));
+  try {
+    if (body !== null) {
+      fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+      fs.writeFileSync(
+        path.join(home, '.claude', 'settings.json'),
+        typeof body === 'string' ? body : JSON.stringify(body, null, 2),
+      );
+    }
+    const file = path.join(home, '.claude', 'settings.json');
+    return fn({
+      home,
+      file,
+      write: (mode) => writeVoiceMode(mode, { homeDir: home }),
+      read: () => JSON.parse(fs.readFileSync(file, 'utf8')),
+    });
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test('writeVoiceMode sets the mode and turns voice on, mirroring /voice', () => {
+  withWrite({ voice: { mode: 'hold', enabled: false } }, (t) => {
+    assert.deepStrictEqual(t.write('tap'), { ok: true, mode: 'tap', file: t.file });
+    const d = t.read();
+    assert.strictEqual(d.voice.mode, 'tap');
+    // enabled:true is deliberate and matches the CLI handler: setting a mode
+    // also un-mutes voice input. A write that left `enabled:false` would leave
+    // the UI showing a mode that does nothing.
+    assert.strictEqual(d.voice.enabled, true);
+    assert.strictEqual(d.voiceEnabled, true);
+  });
+});
+
+test('writeVoiceMode preserves voice siblings and every unrelated top-level key', () => {
+  const before = {
+    model: 'opus',
+    env: { FOO: '1' },
+    permissions: { allow: ['Bash'] },
+    voice: { mode: 'hold', enabled: true, autoSubmit: true, language: 'en' },
+  };
+  withWrite(before, (t) => {
+    t.write('tap');
+    const d = t.read();
+    // The whole object, not a spot check: a partial assertion here would read
+    // around exactly the key a future spread forgot to carry.
+    assert.deepStrictEqual(d, {
+      model: 'opus',
+      env: { FOO: '1' },
+      permissions: { allow: ['Bash'] },
+      voiceEnabled: true,
+      voice: { mode: 'tap', enabled: true, autoSubmit: true, language: 'en' },
+    });
+  });
+});
+
+test('writeVoiceMode round-trips through readVoiceMode', () => {
+  withWrite({ voice: { mode: 'hold', enabled: true } }, (t) => {
+    t.write('tap');
+    const r = readVoiceMode({ homeDir: t.home });
+    assert.strictEqual(r.mode, 'tap');
+    assert.strictEqual(r.effective, 'tap', 'the selector shows what was written');
+  });
+});
+
+test('writeVoiceMode refuses anything outside the two-valued CLI enum', () => {
+  withWrite({ model: 'opus', voice: { mode: 'hold' } }, (t) => {
+    // "off" is the case worth naming: it is a VOICE_MODES member and the CLI's
+    // own argumentHint advertises it, but it is enabled:false, NOT a mode — a
+    // write of mode:"off" would produce a value the CLI never stores.
+    for (const bad of ['off', 'loud', '', null, undefined, { evil: 1 }]) {
+      const r = t.write(bad);
+      assert.strictEqual(r.ok, false, String(bad));
+      assert.match(r.error, /unknown voice mode/, String(bad));
+    }
+    assert.deepStrictEqual(t.read(), { model: 'opus', voice: { mode: 'hold' } },
+      'a refused write leaves the file byte-for-byte alone');
+  });
+});
+
+test('writeVoiceMode creates the file when a box has never used voice', () => {
+  withWrite(null, (t) => {
+    assert.strictEqual(fs.existsSync(t.file), false, 'ENTER: no file to start with');
+    assert.strictEqual(t.write('hold').ok, true);
+    assert.deepStrictEqual(t.read(), {
+      voiceEnabled: true, voice: { enabled: true, mode: 'hold' },
+    });
+  });
+});
+
+test('writeVoiceMode does not throw on a corrupt file, and does not preserve its garbage', () => {
+  for (const body of ['{ not json', '[]', 'null', '"a string"']) {
+    withWrite(body, (t) => {
+      const r = t.write('tap');
+      assert.strictEqual(r.ok, true, body);
+      // Nothing legible was there to keep, so the result is the bare voice
+      // shape rather than an attempt to merge onto an array or a scalar.
+      assert.deepStrictEqual(t.read(), {
+        voiceEnabled: true, voice: { enabled: true, mode: 'tap' },
+      }, body);
+    });
+  }
+});
+
+test('writeVoiceMode leaves no temp file behind, and writes atomically', () => {
+  withWrite({ voice: { mode: 'hold' } }, (t) => {
+    t.write('tap');
+    const strays = fs.readdirSync(path.join(t.home, '.claude')).filter((f) => f !== 'settings.json');
+    assert.deepStrictEqual(strays, [], 'the atomic temp file was renamed, not orphaned');
+  });
+});
+
+test('writeVoiceMode reports a write it could not perform rather than throwing', () => {
+  withWrite({ voice: { mode: 'hold' } }, (t) => {
+    const dir = path.join(t.home, '.claude');
+    fs.chmodSync(dir, 0o500); // readable, not writable
+    try {
+      const r = t.write('tap');
+      assert.strictEqual(r.ok, false);
+      assert.ok(r.error && /EACCES|EPERM|EROFS/.test(r.error), `unexpected: ${r.error}`);
+    } finally {
+      fs.chmodSync(dir, 0o700);
+    }
   });
 });

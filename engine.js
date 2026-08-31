@@ -18,7 +18,7 @@ const { confine } = require('./path-confine');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { resolveDisplayedPath } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
-const { readVoiceMode, readVoiceTrigger } = require('./voice-settings');
+const { readVoiceMode, writeVoiceMode, readVoiceTrigger } = require('./voice-settings');
 const { createSpeaker, createVoiceCatalog } = require('./speaker');
 const { runTicketsMigration } = require('./tickets-migrate');
 const { materializeExecScripts } = require('./bin-materialize');
@@ -1079,6 +1079,7 @@ const SessionManager = createSessionManager({
     termExec,
     whichBin,
     writeClaudeDigestFile,
+    writeVoiceMode,
     writeSkillPlugin,
     writeAgentPlugin,
   getPersistence: () => persistence,
