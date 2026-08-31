@@ -7620,6 +7620,30 @@ body {
         // this terminal's own screen says that is safe. The DECISION is the
         // renderer's because only it can read the recorder; main routes.
         { name: "onVoiceTap", kind: "on", channel: "voice-tap" },
+        // WHICH SEAT HOLDS THE MICROPHONE, box-wide. Main owns the answer for the
+        // reason it owns the speaker flag above: `activeSession` is PER-WINDOW, so
+        // with two workspace windows open two seats are each active in their own and
+        // a locally-evaluated "am I allowed to arm?" answers yes in both.
+        //
+        // Broadcast to every window rather than sent to the holder, because the
+        // windows that LOST it are the ones that have to stop arming.
+        { name: "onMicTarget", kind: "on", channel: "mic-target" },
+        // The pull that pairs with it. A window opened or reloaded mid-dictation has
+        // missed the broadcast, and the target does not change again while he keeps
+        // talking to the seat he already picked — so without this read the new
+        // window's seat could never arm, however long he waited.
+        { name: "micTarget", kind: "invoke", channel: "voice:micTarget" },
+        // Whether CLODEX is the frontmost APPLICATION — the second condition on the
+        // automatic re-arm, independent of the target above. A renderer cannot answer
+        // it: `document.hasFocus()` is about the WINDOW, and a window can be the
+        // focused window of an app sitting behind a browser, which is the case that
+        // transcribed video audio into a composer.
+        //
+        // Broadcast plus catch-up pull, the same pair and for the same reason as the
+        // target: a window that opened while the app was already frontmost missed the
+        // edge, and there is no poll to correct it.
+        { name: "onAppFocused", kind: "on", channel: "app-focused" },
+        { name: "appFocused", kind: "invoke", channel: "voice:appFocused" },
         { name: "listWorkspaces", kind: "invoke", channel: "workspace:list" },
         { name: "currentWorkspace", kind: "invoke", channel: "workspace:current" },
         { name: "setWorkspaceName", kind: "invoke", channel: "workspace:setName" },
@@ -20963,6 +20987,38 @@ ${i3.join("\n")}
     }
   });
 
+  // renderer/lib/mirror-latch.js
+  var require_mirror_latch = __commonJS({
+    "renderer/lib/mirror-latch.js"(exports, module) {
+      "use strict";
+      function createMirrorLatch(initial = null, { normalize = (v) => v } = {}) {
+        let value = normalize(initial);
+        let heard = false;
+        return {
+          // A broadcast landed. Always wins, and latches the mirror against pulls.
+          note(next) {
+            heard = true;
+            value = normalize(next);
+          },
+          // The catch-up read resolved. Ignored once any broadcast has been heard.
+          pull(next) {
+            if (heard) return;
+            value = normalize(next);
+          },
+          read() {
+            return value;
+          },
+          // For tests and for a caller that needs to distinguish "no host answers
+          // this" from a legitimate falsy value — the headless host never reports.
+          heard() {
+            return heard;
+          }
+        };
+      }
+      module.exports = { createMirrorLatch };
+    }
+  });
+
   // renderer/lib/web-notify.js
   var require_web_notify = __commonJS({
     "renderer/lib/web-notify.js"(exports, module) {
@@ -23935,6 +23991,20 @@ ${m[2].replace(/^\r?\n/, "")}`;
         // exactly as it did before speech existed, which is the requirement for a
         // seat with the feature switched off.
         getSpeakerBusy = () => false,
+        // Whether this seat is the one seat that holds the microphone, box-wide, as
+        // main decides it. The automatic re-arm may arm the target and nothing else.
+        //
+        // DEFAULTS TO FALSE, the same polarity every interlock here takes: a host
+        // that forgets to wire this silences the re-arm rather than restoring the
+        // failure it exists to prevent — one operator's speech reaching two agents.
+        isMicTarget = () => false,
+        // Whether CLODEX is the frontmost application, as main reports it. Independent
+        // of the target: a seat can legitimately hold the microphone while the app
+        // sits behind a browser, and a recorder armed there transcribes whatever the
+        // room is playing.
+        //
+        // DEFAULTS FALSE, same polarity and same reason as isMicTarget above.
+        isAppFocused = () => false,
         evidenceMs = VOICE_EVIDENCE_MS,
         now = Date.now
       }) {
@@ -24213,6 +24283,20 @@ ${m[2].replace(/^\r?\n/, "")}`;
             rearmTimer = setTimeout(attemptRearm, rearmMs - quietFor);
             return;
           }
+          let mine = false;
+          try {
+            mine = isMicTarget() === true;
+          } catch {
+            mine = false;
+          }
+          if (!mine) return;
+          let frontmost = false;
+          try {
+            frontmost = isAppFocused() === true;
+          } catch {
+            frontmost = false;
+          }
+          if (!frontmost) return;
           let speaking = false;
           try {
             speaking = getSpeakerBusy() === true;
@@ -32218,6 +32302,7 @@ ${detail}` });
       var { splitModelArg, withModelArg } = require_args_model();
       var { expandTeamRoot, usesTeamRoot } = require_team_root_expand();
       var { altChordAction } = require_web_shortcuts();
+      var { createMirrorLatch } = require_mirror_latch();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
       var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
@@ -33303,6 +33388,14 @@ ${detail}` });
           // Box-wide and read fresh per attempt, never captured: the flag flips
           // mid-wait, which is the entire point of the deferral.
           getSpeakerBusy: () => speakerBusy,
+          // Does THIS seat hold the microphone? Compared against main's box-wide
+          // name, never against `activeSession`, which is this window's own answer
+          // and true of one seat in every window that is open.
+          isMicTarget: () => micTargetMirror.read() === name,
+          // Is Clodex frontmost? Read fresh per attempt and never captured, for the
+          // same reason as the speaker flag: he alt-tabs away DURING the settle
+          // window, and that is the case this exists to catch.
+          isAppFocused: () => appFocusedMirror.read(),
           noteVoiceRecording: () => window.api.noteVoiceRecording(name),
           noteVoiceDraft: () => window.api.noteVoiceDraft(name)
         });
@@ -35433,6 +35526,16 @@ Click for live activity`;
       var speakerBusy = false;
       window.api.onSpeakerBusy((busy) => {
         speakerBusy = busy === true;
+      });
+      var micTargetMirror = createMirrorLatch(null, {
+        normalize: (name) => typeof name === "string" ? name : null
+      });
+      window.api.onMicTarget((name) => micTargetMirror.note(name));
+      window.api.micTarget().then((name) => micTargetMirror.pull(name)).catch(() => {
+      });
+      var appFocusedMirror = createMirrorLatch(false, { normalize: (on) => on === true });
+      window.api.onAppFocused((on) => appFocusedMirror.note(on));
+      window.api.appFocused().then((on) => appFocusedMirror.pull(on)).catch(() => {
       });
       function reportFocusedSession() {
         try {

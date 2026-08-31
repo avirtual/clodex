@@ -27,6 +27,7 @@ const GUTTER_HEADER_SCAN = 400;
 const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
+const { createMirrorLatch } = require('./lib/mirror-latch');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
@@ -1197,6 +1198,14 @@ function createTerminal(name, peer = null) {
     // Box-wide and read fresh per attempt, never captured: the flag flips
     // mid-wait, which is the entire point of the deferral.
     getSpeakerBusy: () => speakerBusy,
+    // Does THIS seat hold the microphone? Compared against main's box-wide
+    // name, never against `activeSession`, which is this window's own answer
+    // and true of one seat in every window that is open.
+    isMicTarget: () => micTargetMirror.read() === name,
+    // Is Clodex frontmost? Read fresh per attempt and never captured, for the
+    // same reason as the speaker flag: he alt-tabs away DURING the settle
+    // window, and that is the case this exists to catch.
+    isAppFocused: () => appFocusedMirror.read(),
     noteVoiceRecording: () => window.api.noteVoiceRecording(name),
     noteVoiceDraft: () => window.api.noteVoiceDraft(name),
   });
@@ -3616,6 +3625,37 @@ window.addEventListener('focus', () => { refreshVoiceSubmitConfig(); });
 // a stuck one silences the feature.
 let speakerBusy = false;
 window.api.onSpeakerBusy((busy) => { speakerBusy = busy === true; });
+
+// Which seat holds the microphone, box-wide. A mirror of main's value like
+// `speakerBusy` above, and never a reading taken here: `activeSession` is this
+// WINDOW's answer, and two windows each have one — which is precisely how a
+// background seat's re-arm put a second live recorder in the room.
+//
+// Starts null, so every seat declines until main has spoken. The opposite
+// default would arm every seat in a window that had not yet heard, which is the
+// bug; a seat that declines for one poll costs the operator one repeated tap.
+const micTargetMirror = createMirrorLatch(null, {
+  normalize: (name) => (typeof name === 'string' ? name : null),
+});
+window.api.onMicTarget((name) => micTargetMirror.note(name));
+// A window that opened or reloaded mid-dictation missed the broadcast, and the
+// target does not move again while he keeps talking to the seat he picked. The
+// latch is what keeps this late answer from overwriting a fresher one.
+window.api.micTarget().then((name) => micTargetMirror.pull(name)).catch(() => {});
+
+// Is CLODEX the frontmost application? A second condition on the automatic
+// re-arm, independent of the target: the operator browsed the web with Clodex
+// behind it, an agent's turn ended, the re-arm fired, and the CLI transcribed
+// the VIDEO he was watching into that seat's composer.
+//
+// Main's answer, never `document.hasFocus()`, which answers about this WINDOW:
+// a window can be the focused window of an application that is itself behind a
+// browser — precisely the case that recorded.
+//
+// Starts false, like the target: before the host has reported, no seat arms.
+const appFocusedMirror = createMirrorLatch(false, { normalize: (on) => on === true });
+window.api.onAppFocused((on) => appFocusedMirror.note(on));
+window.api.appFocused().then((on) => appFocusedMirror.pull(on)).catch(() => {});
 
 // Tell main which seat the operator is looking at.
 //

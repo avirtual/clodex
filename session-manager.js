@@ -561,6 +561,34 @@ function createSessionManager(deps) {
       // ONE seat for the whole box, and the last report is the one that moved
       // most recently — which is the window he is in.
       this._focusedSession = null;
+      // WHICH SEAT HOLDS THE MICROPHONE. One name for the whole box, because
+      // there is one microphone: a seat may arm only if it IS this, so two
+      // seats cannot both hold it by construction. A per-seat "may I arm?"
+      // test cannot express that — a dozen seats each answering locally all
+      // answer yes, which is how the operator's speech reached two composers.
+      //
+      // NOT merged with _focusedSession above, which it tracks by default: an
+      // external tap moves this and deliberately does NOT move that, so after
+      // one tap the two differ, and a later untargeted tap must still route by
+      // the seat he is LOOKING at rather than the one he last named.
+      this._micTarget = null;
+      // IS CLODEX THE FRONTMOST APPLICATION? The second condition on the
+      // automatic re-arm, and independent of the target: the operator browsed
+      // the web with Clodex behind it, a turn ended, the re-arm fired, and the
+      // CLI transcribed the VIDEO he was watching into that seat's composer.
+      // The seat legitimately held the microphone — nobody was talking to it.
+      //
+      // Starts FALSE. Before any host has reported, no seat may arm: the
+      // opposite default records the room at launch, which is the failure.
+      this._appFocused = false;
+      // Whether any host has EVER reported app focus. Distinct from the flag
+      // itself, which cannot carry it: `false` is both "backgrounded" and "no
+      // host answers this". The headless/browser host never reports — a remote
+      // operator must not arm a recorder attached to the HOST's microphone —
+      // and on that path the tap must not try to raise a window either, since
+      // there is no window to bring forward and the attempt only fans a
+      // `focus-hint` nobody asked for.
+      this._appFocusReported = false;
       // Box-wide recorder stamp — see noteVoiceRecording. Separate from the
       // per-seat field of the same name because audio has no seat.
       this._lastVoiceRecordingTs = 0;
@@ -2193,9 +2221,77 @@ function createSessionManager(deps) {
     // session: the record is a REPORT, and validating it here against a map
     // that a spawn may not have filled yet would silently drop the first
     // report for a seat that is about to exist. The reader below resolves it.
-    noteFocusedSession(name) {
+    // `win` is the window the report CAME FROM, resolved in main where the
+    // sender is known. Without it the two writes below cannot be told apart,
+    // and that is the whole of this method.
+    //
+    // The ROUTING record updates unconditionally: an external tap that names no
+    // seat must keep landing on the seat he is looking at even when the report
+    // arrived from a background window, which is the feature the tap exists for.
+    //
+    // The MICROPHONE does not. A window reports its own `activeSession`, and it
+    // does so with NO operator action at all — a seat exiting in a background
+    // window switches that window to its next seat and reports it. Retargeting
+    // on that took the microphone off the seat he was dictating into and gave
+    // it to one he could not see, which is this ticket's own bug through a
+    // third door: a box-wide resource written from per-window state.
+    //
+    // So the AUTHORITY to move the microphone is two box-wide facts, neither of
+    // which a window knows about itself — whether it is the focused window, and
+    // whether the app is frontmost. The window supplies only the name.
+    noteFocusedSession(name, win = null) {
       this._focusedSession = name || null;
+      let reporterInFront = false;
+      try { reporterInFront = !!win && win.isFocused() === true; } catch { reporterInFront = false; }
+      if (!reporterInFront || !this._appFocused) return;
+      this._setMicTarget(this._focusedSession);
     }
+
+    // THE ONLY WRITER of the target, so the invariant is enforceable by reading
+    // one function: every path that moves the microphone comes through here and
+    // every window learns the same name.
+    //
+    // Broadcast to ALL windows, not sent to the target's: the losers are what
+    // makes this an invariant. A seat that has just STOPPED being the target
+    // has to hear so, or it goes on believing it may arm and the second live
+    // recorder — the whole bug — survives.
+    //
+    // Idempotent by the equality guard: the focus report repeats on every
+    // window focus, and re-broadcasting an unchanged name would put a frame on
+    // every window each time he alt-tabs.
+    _setMicTarget(name) {
+      const next = name || null;
+      if (this._micTarget === next) return;
+      this._micTarget = next;
+      this._broadcast('mic-target', next);
+    }
+
+    // A window opened, or reloaded, and starts life believing it holds nothing.
+    // Without this it would stay that way until the target next CHANGED — and
+    // the target does not change while the operator is dictating into the seat
+    // he already picked, so the re-arm would be dead in a fresh window.
+    micTarget() { return this._micTarget; }
+
+    // The host telling us whether Clodex is the frontmost APPLICATION. Only a
+    // host can answer it: a window reporting its own focus answers a different
+    // question — a window can be the focused window of an app that is itself
+    // behind a browser, which is exactly the case that recorded video audio.
+    //
+    // Same broadcast-plus-pull shape as the target above, and the same
+    // idempotence guard: window focus churns between sibling windows without
+    // the APP's frontmost-ness changing at all.
+    noteAppFocused(focused) {
+      const next = focused === true;
+      // Set BEFORE the equality guard, or a host whose first report is `false`
+      // (the common desktop case: launched into the background) would be
+      // indistinguishable from a host that never reports at all.
+      this._appFocusReported = true;
+      if (this._appFocused === next) return;
+      this._appFocused = next;
+      this._broadcast('app-focused', next);
+    }
+
+    appFocused() { return this._appFocused; }
 
     // ENSURE-ON from outside the app: a Voice Control wake word arrived over
     // this box's agent socket asking for the recorder.
@@ -2212,7 +2308,38 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return { ok: false, error: `no live session "${name}"` };
       if (s.agentType !== 'claude') return { ok: false, error: `"${name}" is not a claude seat` };
-      if (!this.windowForSession(name)) return { ok: false, error: `"${name}" has no window attached` };
+      const win = this.windowForSession(name);
+      if (!win) return { ok: false, error: `"${name}" has no window attached` };
+      // THE TAP RETARGETS, and the automatic re-arm never does. That asymmetry
+      // is the design: he NAMED this seat, so it takes the microphone from
+      // whoever held it; a re-arm names nobody, so it gets no say in who holds
+      // it and may only arm the seat that already does.
+      //
+      // BEFORE the frame, so the seat cannot receive its own tap while another
+      // seat is still recorded as the holder.
+      //
+      // Only past every decline above: a tap that routed nowhere must not move
+      // the microphone off the seat that has it.
+      this._setMicTarget(name);
+      // FOCUS-THEN-ARM, not decline. No path arms the recorder while Clodex is
+      // in the background — a microphone behind a browser records whatever the
+      // room is playing. But the tap NAMES a seat, so unlike the automatic
+      // re-arm it knows which window to raise, and raising it is what keeps the
+      // daily workflow (a Voice Control phrase with another app in front)
+      // working rather than silently declining.
+      //
+      // `show()` then `focus()`, the pair the file-view path already uses and
+      // the window-bridge contract already documents — this adds no window
+      // capability. AFTER the retarget and BEFORE the frame: the seat must
+      // already hold the microphone when its window comes forward, and the
+      // renderer decides whether the key may be written against an app that is
+      // by then coming to the front.
+      // Only where a host actually answers the question. On the headless path
+      // nothing reports focus, so `_appFocused` is permanently false and an
+      // unconditional raise would fan a `focus-hint` on EVERY tap.
+      if (this._appFocusReported && !this._appFocused) {
+        try { win.show(); win.focus(); } catch { /* a host that cannot raise still routes the tap */ }
+      }
       this._sendToSession(name, 'voice-tap', name);
       return { ok: true, name };
     }

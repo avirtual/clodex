@@ -365,6 +365,20 @@ function createVoiceSubmitWatcher(terminal, {
   // exactly as it did before speech existed, which is the requirement for a
   // seat with the feature switched off.
   getSpeakerBusy = () => false,
+  // Whether this seat is the one seat that holds the microphone, box-wide, as
+  // main decides it. The automatic re-arm may arm the target and nothing else.
+  //
+  // DEFAULTS TO FALSE, the same polarity every interlock here takes: a host
+  // that forgets to wire this silences the re-arm rather than restoring the
+  // failure it exists to prevent — one operator's speech reaching two agents.
+  isMicTarget = () => false,
+  // Whether CLODEX is the frontmost application, as main reports it. Independent
+  // of the target: a seat can legitimately hold the microphone while the app
+  // sits behind a browser, and a recorder armed there transcribes whatever the
+  // room is playing.
+  //
+  // DEFAULTS FALSE, same polarity and same reason as isMicTarget above.
+  isAppFocused = () => false,
   evidenceMs = VOICE_EVIDENCE_MS,
   now = Date.now,
 }) {
@@ -887,6 +901,46 @@ function createVoiceSubmitWatcher(terminal, {
       rearmTimer = setTimeout(attemptRearm, rearmMs - quietFor);
       return;
     }
+
+    // THIS SEAT DOES NOT HOLD THE MICROPHONE. There is one microphone and one
+    // target, so a turn ending on any other seat is a turn ending in the
+    // background: arming here puts a second live recorder in the room, and the
+    // operator's next sentence lands in two composers — including, once his
+    // words happen to end in the trigger phrase, as a SENT turn to an agent he
+    // was not addressing.
+    //
+    // A flat decline that writes nothing and schedules nothing. Nothing to
+    // wait for: re-arming names no seat, so it can never become the reason the
+    // microphone moves — only an explicit tap or the operator's own focus does
+    // that, and either one arrives with its own edge.
+    //
+    // BELOW the still-painting branch for the standing reason: the abandon
+    // deadline is consulted only there, and the `abandonMs: 0` pin depends on
+    // that branch being the first one an attempt reaches. ABOVE the speech
+    // branch because a seat that cannot arm has no reason to spend a speech
+    // budget waiting for a narration it will decline after anyway.
+    let mine = false;
+    try { mine = isMicTarget() === true; } catch { mine = false; }
+    if (!mine) return;
+
+    // CLODEX IS NOT FRONTMOST. He was browsing the web with the app behind it
+    // when a turn ended here: the re-arm fired, and the CLI transcribed the
+    // VIDEO he was watching into this composer — four turns of ambient
+    // narration reached the agent. This seat WAS the microphone's target, so
+    // the check above passes; nobody was talking to it.
+    //
+    // A second, independent condition rather than a refinement of the target:
+    // the target answers WHICH seat, this answers WHETHER anyone is here at
+    // all. Neither implies the other.
+    //
+    // The automatic re-arm DECLINES rather than raising the window — it names
+    // nobody, so it has no seat whose window it could justify bringing forward,
+    // and an app that raised itself because a background agent finished a turn
+    // would be worse than the recording. The external tap names a seat and does
+    // raise; that asymmetry is in voiceTap.
+    let frontmost = false;
+    try { frontmost = isAppFocused() === true; } catch { frontmost = false; }
+    if (!frontmost) return;
 
     // A narration is PLAYING, and it started on this same turn-end edge. Arming
     // now points a live microphone at the machine's own speaker, and the CLI

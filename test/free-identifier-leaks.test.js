@@ -270,6 +270,10 @@ const RENDERER_SCANNED_MODULES = [
   // gate the caller can supply and one that cannot be tested at all.
   'renderer/lib/voice-submit.js',
   'renderer/voice-submit-watcher.js',
+  // The broadcast-beats-late-pull latch behind the mic-target and app-focused
+  // mirrors. A pure leaf read by renderer.js, which has no harness — the whole
+  // reason it was lifted out of it.
+  'renderer/lib/mirror-latch.js',
   'renderer/lib/constants.js',
   'renderer/lib/format.js',
   'renderer/lib/render-html.js',

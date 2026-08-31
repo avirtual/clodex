@@ -400,6 +400,30 @@ const API_CONTRACT = [
   // this terminal's own screen says that is safe. The DECISION is the
   // renderer's because only it can read the recorder; main routes.
   { name: 'onVoiceTap', kind: 'on', channel: 'voice-tap' },
+  // WHICH SEAT HOLDS THE MICROPHONE, box-wide. Main owns the answer for the
+  // reason it owns the speaker flag above: `activeSession` is PER-WINDOW, so
+  // with two workspace windows open two seats are each active in their own and
+  // a locally-evaluated "am I allowed to arm?" answers yes in both.
+  //
+  // Broadcast to every window rather than sent to the holder, because the
+  // windows that LOST it are the ones that have to stop arming.
+  { name: 'onMicTarget', kind: 'on', channel: 'mic-target' },
+  // The pull that pairs with it. A window opened or reloaded mid-dictation has
+  // missed the broadcast, and the target does not change again while he keeps
+  // talking to the seat he already picked — so without this read the new
+  // window's seat could never arm, however long he waited.
+  { name: 'micTarget', kind: 'invoke', channel: 'voice:micTarget' },
+  // Whether CLODEX is the frontmost APPLICATION — the second condition on the
+  // automatic re-arm, independent of the target above. A renderer cannot answer
+  // it: `document.hasFocus()` is about the WINDOW, and a window can be the
+  // focused window of an app sitting behind a browser, which is the case that
+  // transcribed video audio into a composer.
+  //
+  // Broadcast plus catch-up pull, the same pair and for the same reason as the
+  // target: a window that opened while the app was already frontmost missed the
+  // edge, and there is no poll to correct it.
+  { name: 'onAppFocused', kind: 'on', channel: 'app-focused' },
+  { name: 'appFocused', kind: 'invoke', channel: 'voice:appFocused' },
   { name: 'listWorkspaces', kind: 'invoke', channel: 'workspace:list' },
   { name: 'currentWorkspace', kind: 'invoke', channel: 'workspace:current' },
   { name: 'setWorkspaceName', kind: 'invoke', channel: 'workspace:setName' },

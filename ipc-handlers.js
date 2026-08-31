@@ -1920,9 +1920,26 @@ function registerIpcHandlers(deps) {
   // Null clears it, and clearing has to be possible: a window that closed with
   // its last seat archived leaves nothing focused, and a stale name would send
   // the next tap at a seat he is not watching.
-  on('session:focused', (_e, name) => {
-    manager.noteFocusedSession(name == null ? null : String(name));
+  // The SENDER is resolved here and passed down, because only main can tell
+  // which window spoke. Every window reports its own `activeSession`, including
+  // one in the background doing so with no operator action at all — a seat
+  // exiting there switches that window to its next seat and reports it. Main
+  // uses the window to decide whether that report may move the MICROPHONE; the
+  // routing record moves either way.
+  on('session:focused', (e, name) => {
+    manager.noteFocusedSession(
+      name == null ? null : String(name),
+      manager.windowForWorkspace(workspaceOfSender(e)),
+    );
   });
+
+  // What a window that opened or reloaded mid-dictation missed. Read-only: the
+  // target moves on a focus report or an external tap, never on being asked.
+  handle('voice:micTarget', () => manager.micTarget());
+
+  // The same catch-up read for the frontmost-app condition. Read-only: the flag
+  // moves on the host's focus/blur events, never on being asked.
+  handle('voice:appFocused', () => manager.appFocused());
 
   handle('app:restore-sessions', (e) => restoreSessionsForWorkspace(workspaceOfSender(e)));
 

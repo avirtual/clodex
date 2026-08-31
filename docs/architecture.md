@@ -847,6 +847,18 @@ Own state + DOM, `init*(deps)`:
   the boundary reports as failed is counted and NOT retried — retrying would
   spray Meta keydowns at the terminal, and the failure it would answer (xterm no
   longer finalizing on that key) is one a retry cannot fix.
+- **lib/mirror-latch.js** — a renderer-side mirror of a value MAIN owns, fed by
+  a broadcast and by a catch-up pull the window fires on startup for the edge it
+  was not open for. The pull resolves at an unspecified time, so it can land
+  after a broadcast has already delivered a newer answer; the latch is the rule
+  that a broadcast, once heard, wins over every later pull. Its own `heard` flag
+  rather than comparing the value against its initial one, because for both
+  users `null` is a legitimate released mic target and `false` a legitimate
+  backgrounded app — the value cannot double as the flag. Read by the two
+  microphone mirrors in renderer.js, which has no harness: that is why the rule
+  lives out here where `test/mirror-latch.test.js` can reach it. `heard()` also
+  separates "no host answers this" from a falsy answer, which is how the
+  headless path is told apart from a backgrounded desktop one.
 - **plugin-host.js** — the renderer-side plugin host. Plugins hand it data or
   callbacks, NEVER HTML: everything user-supplied is escaped here, and every
   registered id becomes `"<pluginId>:<id>"` before it reaches the DOM, so a

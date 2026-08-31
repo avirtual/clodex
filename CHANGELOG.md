@@ -13,6 +13,26 @@ blocks a release.
 
 ## Unreleased
 
+- **The microphone opens only when Clodex is in front.** With Clodex in the
+  background — a browser over it, a video playing — an agent finishing a turn
+  re-armed the recorder, and the audio in the room was transcribed into its
+  composer as several turns of nonsense the agent then acted on. Nothing arms
+  the recorder now unless Clodex is the frontmost application. There is no
+  exception and no setting: a "listen from the background" switch is the same
+  hole behind a checkbox. An external `clodex-voice-tap` still works with
+  another app in front — it brings Clodex forward first and then listens,
+  since naming a seat out loud is the act that makes listening intended.
+
+- **Your speech goes to exactly one agent.** Dictating to one session while a
+  different one — in a different workspace window — finished a turn left both
+  recorders live, and the words went into both composers. If the phrase you
+  spoke happened to end in your submit trigger, the background agent was
+  *sent* a turn you never addressed to it, and acted on it. The microphone now
+  has a single target box-wide: the seat you are looking at, or the one an
+  external `clodex-voice-tap <name>` names. An agent finishing a turn can
+  re-arm the recorder only if it already holds the microphone, so it can never
+  take it from the seat you are talking to.
+
 - **Spoken replies no longer talk into their own microphone.** With both
   "speak the final reply aloud" and the tap-mode re-arm switched on, the two
   fired on the same turn-end edge — so the recorder came back to life just as

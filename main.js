@@ -533,6 +533,34 @@ app.whenReady().then(() => {
   manager = engine.manager;
   ({ workspaces, uiSettings, agentLibrary, skillLibrary, envScopes } = engine.stores);
 
+  // WHETHER CLODEX IS FRONTMOST, which gates the automatic microphone re-arm.
+  // Only this process can answer it: `app.isFocused()` is about the
+  // APPLICATION, while a renderer's `document.hasFocus()` is about its window —
+  // and a window reports focus perfectly happily while the app itself sits
+  // behind a browser playing video, which is the case that got transcribed.
+  //
+  // Both Electron edges, because either alone is a stuck flag: `browser-window-
+  // focus` without the blur never releases, and the blur without the focus
+  // never re-arms. Seeded from the current answer so a launch into the
+  // foreground does not wait for the first alt-tab.
+  // THE APP-LEVEL EDGES CARRY THE ANSWER IN THEIR IDENTITY, and that is why
+  // they are here rather than one more `app.isFocused()` read. The blur handler
+  // runs while the app is still resigning active, where `isFocused()` is widely
+  // observed to answer `true` — and this is the one read that decides "he
+  // alt-tabbed away". Stuck true fails OPEN: the frontmost condition silently
+  // becomes a no-op, the recorder arms behind a browser again, and no test can
+  // see it because the value, not the shape of the call, is what went wrong.
+  app.on('did-become-active', () => { try { manager.noteAppFocused(true); } catch {} });
+  app.on('did-resign-active', () => { try { manager.noteAppFocused(false); } catch {} });
+
+  // The cross-platform backstop: the two edges above are macOS-only. These
+  // re-derive the answer, which is imprecise on exactly the blur instant the
+  // pair above exists to cover — so they are kept, and never relied on alone.
+  const reportAppFocus = () => { try { manager.noteAppFocused(app.isFocused()); } catch {} };
+  app.on('browser-window-focus', reportAppFocus);
+  app.on('browser-window-blur', reportAppFocus);
+  reportAppFocus();
+
   log.info('app', `startup — Clodex ${app.getVersion()} (electron ${process.versions.electron}, pid ${process.pid})`);
 
   writeHostStamp(path.join(REGISTRY_DIR, 'run'), __dirname);
