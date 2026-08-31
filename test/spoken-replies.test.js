@@ -281,6 +281,20 @@ test('a failed enumeration keeps the last good list rather than blanking it', ()
     'a failed refresh must not empty the picker');
 });
 
+// Every existing fixture builds SessionManager without a speaker, and speech is
+// observer-grade: a host that wires none must get silence, never a throw on the
+// turn path. Pinned on the SOURCE because constructing the manager here would
+// need the whole dependency graph.
+test('a manager built without a speaker still handles a turn', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf-8');
+  assert.ok(/const speaker = deps\.speaker \|\| \{/.test(src),
+    'the speaker dep must fall back to a silent stub, not arrive undefined');
+  assert.ok(!/^\s*speaker,$/m.test(src),
+    'and must not ALSO be destructured, which would shadow the fallback with undefined');
+});
+
 // --- the settings -----------------------------------------------------------
 
 test('the setting defaults OFF and to the clearest voice', () => {

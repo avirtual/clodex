@@ -329,7 +329,6 @@ function createSessionManager(deps) {
     INJECT_QUIET_MS,
     INJECT_SPEAKING_STALE_MS,
     INJECT_VOICE_DRAFT_STALE_MS,
-    speaker,
     InjectQueue,
     JsonlWatcher,
     LONG_TEXT_DELAY,
@@ -501,6 +500,14 @@ function createSessionManager(deps) {
 
   const termExec = termExecDep
     || (() => ({ ok: false, error: 'terminal tabs are not available on this host' }));
+
+  // A SILENT speaker when none is injected, rather than a bare destructure whose
+  // absence would be swallowed by the try/catch at each call site. Every test
+  // fixture builds this manager without one, and speech is observer-grade: a
+  // host that wires no speaker gets no narration, never a broken session.
+  const speaker = deps.speaker || {
+    speak: () => false, stop: () => false, interruptForRecorder: () => false, isSpeaking: () => false,
+  };
 
   const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
   // Settle margin before the boot-ready rising edge fires its pending drain.
