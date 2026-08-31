@@ -24,7 +24,7 @@
 
 const {
   findSubmit, matchTrigger, shouldFire, shouldRearm, composerIsEmpty,
-  recordingBlocksRearm, isVoiceOriginated, recordingObserved,
+  recorderBlocksRearm, isVoiceOriginated, recordingObserved,
 } = require('./lib/voice-submit');
 // The SAME classifier the main process and typeToTakeControl use. A second
 // predicate here would drift from the one that already decides what counts as a
@@ -44,6 +44,15 @@ const QUIET_MS = 1200;
 // \r is read as a single paste-like event, which leaves the \r in the buffer as
 // a literal instead of submitting. Merging these two writes reintroduces that.
 const ENTER_SETTLE_MS = 30;
+
+// The gap between the submit's `\r` and the trigger key that stops the recorder.
+// Its own write and its own gap for the SAME reason ENTER_SETTLE_MS exists: a
+// chunk carrying `\r` with a character behind it is read as one paste-like
+// event: the `\r` stays in the buffer as a literal and the key rides in with
+// it. This does NOT widen ENTER_SETTLE_MS, which is 30 for the erase/Enter
+// pair; it is a second gap AFTER the Enter, so nothing above it is delayed or
+// reordered.
+const STOP_SETTLE_MS = 30;
 
 // How long a consumed prefix outlives the composition it came from.
 //
@@ -104,13 +113,26 @@ const REARM_SETTLE_MS = 3000;
 // the check to the top of `attemptRearm` — the `abandonMs: 0` re-arm in `MF1:
 // one edge cannot reschedule forever` depends on the current placement.
 //
-// Ten seconds because a genuine turn end that has not produced a settle-length
-// lull within it is almost certainly not a turn end. The trailing window below
-// re-arms its own timer on every paint, so without a deadline a terminal that
-// never goes quiet — a spinner, a tailing log, an agent that went straight back
-// to work without an activity event — would reschedule off one edge forever.
-// Abandoning is the safe end: the next real turn end starts a fresh attempt.
-const REARM_ABANDON_MS = 10000;
+// Twenty seconds: it must outlast the CLI's tap-recorder silence timeout, which
+// is 15000ms exactly (measured — see below), or a turn ending while the recorder
+// is still lit ALWAYS abandons before the indicator clears and the mic never
+// comes back without a keypress — the regression cutting this to 10000 caused.
+// Do not lower it back under that timeout.
+//
+// The deadline is the recording-hazard exposure window, which is why it was cut
+// in the first place: for as long as it stands, one idle edge can still reschedule
+// an attempt. Raising it is safe here only because the submit-time stop above
+// removes the case that made a long window dangerous — the recorder is stopped at
+// the submit, so the usual path never reaches turn end lit at all, and this is
+// the net for the paths that do. It is still bounded, and every gate is
+// re-evaluated when the timer lands.
+//
+// The trailing window below re-arms its own timer on every paint, so without a
+// deadline a terminal that never goes quiet — a spinner, a tailing log, an agent
+// that went straight back to work without an activity event — would reschedule
+// off one edge forever. Abandoning is the safe end: the next real turn end
+// starts a fresh attempt.
+const REARM_ABANDON_MS = 20000;
 
 // THE INDICATOR IS NOT EVIDENCE THAT *THIS DRAFT* WAS SPOKEN, which is why the
 // clear below exists and why it is not optional.
@@ -274,6 +296,7 @@ function createVoiceSubmitWatcher(terminal, {
 }) {
   let timer = null;
   let enterTimer = null;
+  let stopTimer = null;
   let pollTimer = null;
   let disposed = false;
   // The composer CONTENT a match was already answered for, not a bare boolean.
@@ -284,6 +307,8 @@ function createVoiceSubmitWatcher(terminal, {
   // stays killed.
   let answered = null;
   let fires = 0;
+  // Submits that found the recorder still lit afterwards and stopped it.
+  let stops = 0;
   // When the microphone was last seen. Written ONLY where dictation is proven
   // (a composition commit, or the CLI's recording indicator on screen) and read
   // only by the marker — never by a gate, so a wrong value here can cost the
@@ -378,7 +403,7 @@ function createVoiceSubmitWatcher(terminal, {
   // transcript, where U+23FA opens every ordinary tool bullet — a scan that
   // walks up hits arbitrary scrollback, measured.
   //
-  // Null, not [], when the screen cannot be read: `recordingBlocksRearm` maps
+  // Null, not [], when the screen cannot be read: `recorderBlocksRearm` maps
   // that to "blocked", and an empty array would mean "read it, saw nothing".
   function indicatorRows() {
     if (!onNormalBuffer()) return null;
@@ -438,7 +463,45 @@ function createVoiceSubmitWatcher(terminal, {
     write('\x7f'.repeat(found.erase));
     enterTimer = setTimeout(() => {
       enterTimer = null;
-      if (!disposed) write('\r');
+      if (disposed) return;
+      write('\r');
+      // AFTER the Enter, never merged into it, and never at turn end.
+      //
+      // The CLI normally stops its own recorder when it submits, but when the
+      // model answers inside the recorder's silence timeout it does not, and the
+      // surviving recording is DEAD: `\u23faREC` stays painted and no words reach
+      // the composer. The re-arm then cannot run — writing the trigger key into
+      // what looks like a live recording would stop it — so the mic stays stuck
+      // until the operator taps by hand.
+      //
+      // Stopping it HERE is what makes that safe, and the safety is positional,
+      // not a heuristic: at this instant the operator has just completed an
+      // utterance ending in the trigger phrase, so the recording is complete BY
+      // CONSTRUCTION and the key can cut nothing off. The same write at turn end
+      // is forbidden — there a lit indicator is indistinguishable from the
+      // operator mid-sentence, and cutting them off loses what they are saying.
+      //
+      // The turn-end re-arm then taps it back through its existing path; this
+      // adds no second way to arm the recorder.
+      stopTimer = setTimeout(() => {
+        stopTimer = null;
+        if (disposed) return;
+        // Read LATE, not at match time: the CLI may have stopped the recorder
+        // itself in the meantime, and this must reflect the screen as it is when
+        // the key would land.
+        //
+        // `recordingObserved`, NOT the re-arm's gate: unreadable must read as
+        // NOT lit here. The two mistakes are inverted relative to the re-arm —
+        // there a missed indicator stops a live recording, here a phantom one
+        // ARMS a recording the operator never asked for, and an armed mic that
+        // nobody knows is running is worse than the stuck state this fixes.
+        if (!recordingObserved(indicatorRows())) return;
+        let key = null;
+        try { key = getTriggerKey(); } catch { key = null; }
+        if (typeof key !== 'string' || key.length !== 1) return;
+        stops += 1;
+        write(key);
+      }, STOP_SETTLE_MS);
     }, ENTER_SETTLE_MS);
   }
 
@@ -483,7 +546,7 @@ function createVoiceSubmitWatcher(terminal, {
     // seconds, so 300ms resolves it, while a scan on every write parse would
     // run orders of magnitude more often for the same answer.
     //
-    // Read-only. `recordingBlocksRearm` makes the re-arm's own decision from the
+    // Read-only. `recorderBlocksRearm` makes the re-arm's own decision from the
     // same rows and is deliberately untouched here.
     const observed = recordingObserved(indicatorRows());
     // A RISE is the recorder starting, which is the operator reaching for the
@@ -651,7 +714,7 @@ function createVoiceSubmitWatcher(terminal, {
     // The CLI's tap recorder auto-finishes after ~15s of silence and only then
     // does our character arm it; a turn ending within that window leaves it
     // recording, and this is the read that tells the two apart.
-    if (recordingBlocksRearm(indicatorRows())) return;
+    if (recorderBlocksRearm(indicatorRows())) return;
 
     let key = null;
     try { key = getTriggerKey(); } catch { key = null; }
@@ -754,6 +817,7 @@ function createVoiceSubmitWatcher(terminal, {
     noteActivity,
     noteInput,
     fireCount: () => fires,
+    stopCount: () => stops,
     rearmCount: () => rearms,
     commitCount: () => commits,
     commitFailureCount: () => commitFailures,
@@ -762,10 +826,12 @@ function createVoiceSubmitWatcher(terminal, {
       disposed = true;
       if (timer) clearTimeout(timer);
       if (enterTimer) clearTimeout(enterTimer);
+      if (stopTimer) clearTimeout(stopTimer);
       if (pollTimer) clearInterval(pollTimer);
       if (rearmTimer) clearTimeout(rearmTimer);
       timer = null;
       enterTimer = null;
+      stopTimer = null;
       pollTimer = null;
       rearmTimer = null;
       for (const s of subs) s.dispose();
@@ -775,6 +841,6 @@ function createVoiceSubmitWatcher(terminal, {
 
 module.exports = {
   createVoiceSubmitWatcher, readComposition, commitComposition,
-  QUIET_MS, ENTER_SETTLE_MS, COMPOSITION_POLL_MS, CONSUMED_IDLE_MS,
+  QUIET_MS, ENTER_SETTLE_MS, STOP_SETTLE_MS, COMPOSITION_POLL_MS, CONSUMED_IDLE_MS,
   REARM_SETTLE_MS, REARM_ABANDON_MS, VOICE_EVIDENCE_MS,
 };

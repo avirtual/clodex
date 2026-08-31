@@ -205,8 +205,27 @@ function composerIsEmpty(row) {
 // because every ordinary bullet paints a space after itself.
 const RECORDING = /\u23faREC/u;
 
-// Whether the re-arm must stand down — the recorder is running, or the screen
-// could not be read at all.
+// The CLI's PROCESSING indicator, which REPLACES the lit one rather than joining
+// it: the moment recording stops, `\u23faREC` is gone and this is painted in its
+// place, for ~500ms, while the utterance is still being transcribed.
+//
+// That replacement is why this pattern has to exist. A gate anchored only on the
+// lit indicator reads NOT RECORDING for that whole window, so a re-arm landing
+// in it writes the trigger key into a recorder that is still finishing and
+// aborts the transcription — the operator's words are lost with nothing on
+// screen to say so.
+//
+// Anchored on `Voice:` + `processing` and NOTHING ELSE. The trailing ellipsis is
+// deliberately not encoded: the CLI's own literal is a single U+2026, but that is
+// one editor normalisation away from the three-ASCII-dot form, and a rule that
+// matches neither is a dead rule nobody can see is dead. `\s*` rather than a
+// literal space because JS `\s` admits U+00A0, which is the separator the CLI
+// actually paints elsewhere in this footer — spelling a U+0020 here is the exact
+// defect COMPOSER_EMPTY carried while its fixtures agreed with it.
+const PROCESSING = /Voice:\s*processing/i;
+
+// Whether the re-arm must stand down — the recorder is BUSY (running OR still
+// finishing), or the screen could not be read at all.
 //
 // The polarity is deliberate and it is the OPPOSITE of `composerIsEmpty`'s,
 // which declines silently on anything it does not recognise. Here the two
@@ -219,9 +238,10 @@ const RECORDING = /\u23faREC/u;
 // because the indicator paints to the RIGHT of the cursor, and downward-only
 // because the rows ABOVE the composer are transcript, where the bullet is
 // ordinary output — a whole-buffer scan is a measured false positive.
-function recordingBlocksRearm(rows) {
+function recorderBlocksRearm(rows) {
   if (!Array.isArray(rows)) return true;
-  return rows.some((row) => typeof row === 'string' && RECORDING.test(row));
+  return rows.some((row) => typeof row === 'string'
+    && (RECORDING.test(row) || PROCESSING.test(row)));
 }
 
 // Was this submit VOICE-originated, and so worth marking as transcribed?
@@ -248,8 +268,15 @@ function isVoiceOriginated({ evidenceAt, now, windowMs } = {}) {
   return now - evidenceAt <= windowMs && now >= evidenceAt;
 }
 
-// Whether the screen shows the CLI recording RIGHT NOW. Same pattern and same
-// rows as `recordingBlocksRearm`, opposite failure handling: this one feeds a
+// Whether the screen shows the CLI recording RIGHT NOW. Deliberately NOT widened
+// to the processing state the way `recorderBlocksRearm` is, and the asymmetry is
+// the point: this one answers "is a recording live enough that one key would STOP
+// it", and during processing the recorder has ALREADY stopped — a key written
+// then ARMS a recording nobody asked for, which is the inverted failure the
+// submit-time stop must never produce.
+//
+// Same pattern and same
+// rows as `recorderBlocksRearm`, opposite failure handling: this one feeds a
 // marker rather than an interlock, so an unreadable screen is "no evidence"
 // rather than "assume the worst". Reading the recorder's state must never be
 // confused with the re-arm's decision to stand down.
@@ -304,7 +331,7 @@ module.exports = {
   shouldFire,
   shouldRearm,
   composerIsEmpty,
-  recordingBlocksRearm,
+  recorderBlocksRearm,
   isVoiceOriginated,
   recordingObserved,
   resolveTriggerKey,
