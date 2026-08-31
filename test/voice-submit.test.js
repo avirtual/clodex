@@ -2360,19 +2360,33 @@ test('SPEECH: a narration does not spend the abandon budget', async () => {
   // eaten the budget actually bites is: narration ends, the CLI then PAINTS,
   // and the paint-wait consults a deadline the narration already exhausted.
   //
+  // The CLOCK IS DRIVEN, not raced, for the same reason the MF1 abandon test
+  // drives it: on real timers the post-narration attempt usually lands after the
+  // quiet window and skips the still-painting branch altogether, so the deadline
+  // is never read and the test passes either way. Freezing with a paint stamped
+  // NOW forces every attempt through the branch that consults it.
+  //
   // abandonMs is just over one settle, so an unextended deadline is long gone by
-  // the time the paint is waited out.
+  // the time the narration finishes.
   const h = rearmHarness({ speaking: true, abandonMs: TEST_REARM_MS + 1 });
   h.turn();
   for (let i = 0; i < 6; i += 1) await settle(TEST_REARM_MS);
   assert.deepStrictEqual(h.writes, [], 'still narrating');
-  // Narration ends, and the CLI repaints the composer — the ordering the wire
-  // path always produces.
+
+  // Narration ends and the CLI repaints — the ordering the wire path always
+  // produces, since the composer is drawn after the turn-end edge.
   h.env.speaking = false;
   h.term.write(EMPTY_COMPOSER);
+  h.clock.frozen = h.clock.now();
+  await settle(TEST_REARM_MS * 3);
+  // Still painting, so nothing may have been written yet — but the edge must be
+  // ALIVE, which is what the release below proves.
+  assert.deepStrictEqual(h.writes, [], 'still painting');
+
+  h.clock.frozen = null;
   await h.done();
   assert.deepStrictEqual(h.writes, [' '],
-    'the paint after a long narration must not hit an exhausted deadline');
+    'the paint after a long narration must not hit a deadline the narration ate');
   h.watcher.dispose();
 });
 
