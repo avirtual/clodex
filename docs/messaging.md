@@ -183,12 +183,26 @@ reach Clodex by different routes and neither predicate can see the other's:
   inject-queue.js, which defers only while the recorder is LIT: the indicator
   goes dark when he stops talking, and the exposure is the reading that follows.
 
+  The composer read is MULTI-ROW: the CLI hard-paints continuation rows
+  (`isWrapped` is false on them, measured) with a two-space indent, so a long
+  dictated draft — the case the protection exists for — puts the cursor on a row
+  carrying no marker. The watcher scans upward from the cursor, bounded by the
+  screen height, for the composer head.
+
   It EXPIRES rather than waiting for a release event, because dictation has no
   submit Clodex can observe. Every way the report can stop — submitted, cleared,
   seat switched, window closed, screen unreadable — releases it, and the park
   cap bounds it again from a timer that reads no voice signal. The renderer's
-  composer read is positive (`composerHasDraft`) and never `!composerIsEmpty`:
-  an unreadable row must not park deliveries nothing can then release.
+  composer read is positive (`composerHasDraftRows`) and never
+  `!composerIsEmpty`: an unreadable row, a scan that falls off the top, and a
+  head that is never found all decline, because an unreadable screen must not
+  park deliveries nothing can then release.
+
+The idle and boot-ready pending drains consult `_anyDraftOpen` — BOTH
+predicates — rather than `isDraftOpen` alone. Guarding on the typed one let a
+dictated draft through, `drainPending` claimed the directory destructively, and
+the divert re-parked the joined text as one ACTIVE entry: no message lost, but a
+`.passive.` park came back active, and a passive park never earns a turn.
 
 ### Parking & resend (pending-store.js)
 

@@ -3382,13 +3382,19 @@ function createSessionManager(deps) {
     // the queue's critical section, so claim and write are the same instant.
     _drainPendingAtIdle(session) {
       if (!session || session.agentType !== 'claude' || session._dead) return;
-      try { if (isDraftOpen(session)) return; } catch { return; }   // don't splice an open draft
+      // Dictated as well as typed: with only the typed check here, a dictated
+      // draft passed the guard, drainPending CLAIMED the files destructively, and
+      // the divert then re-parked the joined text as ONE ACTIVE entry. No message
+      // was lost, but a `.passive.` entry came back active — and a passive park
+      // never earns a turn by design, so the promotion wakes a seat that should
+      // have stayed quiet.
+      if (this._anyDraftOpen(session)) return;   // don't splice an open draft
       if (!hasActivePending(PENDING_DIR, session.name)) return;
       this._injectText(session, '', {
         parkable: true,
         produce: () => {
           if (session._dead) return null;
-          try { if (isDraftOpen(session)) return null; } catch { return null; }
+          if (this._anyDraftOpen(session)) return null;
           let texts = [];
           try { texts = drainPending(PENDING_DIR, session.name, `idle.${process.pid}`, this._bornFor(session.name)); } catch { return null; }
           if (!texts.length) {
@@ -3410,7 +3416,7 @@ function createSessionManager(deps) {
     // messages.
     _drainPendingAtBootReady(session) {
       if (!session || session.agentType !== 'claude' || session._dead) return;
-      try { if (isDraftOpen(session)) return; } catch { return; } // don't splice an open draft
+      if (this._anyDraftOpen(session)) return;                     // don't splice an open draft
       if (!hasActivePending(PENDING_DIR, session.name)) return;    // nothing active — leave passives parked
       // Every bail here is a park that stays on disk EXCEPT the last one, where the
       // claim already succeeded and came back empty. Saying which is the difference
@@ -3418,7 +3424,7 @@ function createSessionManager(deps) {
       // why a lost boot-window delivery left no evidence across seven reboots.
       const produce = () => {
         if (session._dead) return null;
-        try { if (isDraftOpen(session)) return null; } catch { return null; }
+        if (this._anyDraftOpen(session)) return null;
         let texts = [];
         try { texts = drainPending(PENDING_DIR, session.name, `boot.${process.pid}`, this._bornFor(session.name)); } catch { return null; }
         if (!texts.length) {
@@ -5726,6 +5732,14 @@ function createSessionManager(deps) {
     // unreadable — every one of those stops the level and the stamp goes stale.
     // Past that the park cap bounds it again from a timer that reads no voice
     // signal at all, so the protection cannot outlive its release.
+    // What every drain and the divert must agree "an open draft" means. The two
+    // predicates are separate because typed and dictated drafts reach Clodex by
+    // different routes (see _voiceDraftOpen); a reader consulting only the typed
+    // one treats a dictated draft as no draft at all.
+    _anyDraftOpen(session) {
+      try { return isDraftOpen(session) || this._voiceDraftOpen(session); } catch { return false; }
+    }
+
     _voiceDraftOpen(session) {
       return Date.now() - (session.lastVoiceDraftTs || 0) < INJECT_VOICE_DRAFT_STALE_MS;
     }
@@ -5734,7 +5748,7 @@ function createSessionManager(deps) {
       if (!session || session.agentType !== 'claude') return null;
       return (text) => {
         if (session._dead) return false;
-        if (!isDraftOpen(session) && !this._voiceDraftOpen(session)) return false;
+        if (!this._anyDraftOpen(session)) return false;
         try {
           parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), id, false, this._bornFor(session.name));
         } catch (e) {

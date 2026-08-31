@@ -3050,17 +3050,21 @@ test('a throwing recorderScope leaves a configured seat reporting anyway', async
 
 const DRAFT_ROW = '\u276f\u00a0the long transcription he is re-reading';
 
-function draftReportHarness({ rows = [DRAFT_ROW], scope = true, lit = true } = {}) {
+function draftReportHarness({ rows = [DRAFT_ROW], scope = true, lit = true, onDraft = null } = {}) {
   const drafts = [];
   const recs = [];
-  // The real screen shape: the composer is the CURSOR row and the indicator
-  // paints BELOW it, which is the only arrangement in which both reads see what
-  // they are meant to — `cursorRow` truncates at the cursor, and the indicator
-  // scan walks downward from it. The cursor mark is required because this stub
-  // otherwise puts it on the LAST row, i.e. on the indicator, where the composer
-  // read finds no draft and every subject here passes or fails for the wrong
-  // reason.
-  const composer = rows.map((r) => ({ text: r, cursor: true }));
+  // The real screen shape: the composer occupies one or more rows, the cursor
+  // sits on its LAST row, and the indicator paints BELOW that. Both reads depend
+  // on this — the composer scan walks UP from the cursor, the indicator scan
+  // walks DOWN from it.
+  //
+  // The cursor mark goes on the LAST composer row only. `fakeTerminal` resolves
+  // the cursor to the FIRST row carrying the mark, so marking every row put it
+  // on the HEAD — which made a multi-row fixture read as a single-row draft and
+  // left the wrapped case untested while looking tested. Without any mark it
+  // falls to the last row of all, i.e. the indicator, where the composer scan
+  // finds nothing. Both mistakes are silent.
+  const composer = rows.map((r, i) => (i === rows.length - 1 ? { text: r, cursor: true } : { text: r }));
   const term = fakeTerminal({ rows: lit ? [...composer, { text: REC_ROW }] : composer });
   const watcher = track(createVoiceSubmitWatcher(term, {
     getConfig: () => null,
@@ -3070,7 +3074,7 @@ function draftReportHarness({ rows = [DRAFT_ROW], scope = true, lit = true } = {
     pollMs: 1,
     recorderScope: () => scope,
     noteVoiceRecording: () => recs.push('REC'),
-    noteVoiceDraft: () => drafts.push('DRAFT'),
+    noteVoiceDraft: () => { drafts.push('DRAFT'); if (onDraft) onDraft(); },
   }));
   return { term, watcher, drafts, recs };
 }
@@ -3146,23 +3150,62 @@ test('a composer never touched by the recorder reports no draft', async () => {
   h.watcher.dispose();
 });
 
-test('a throwing noteVoiceDraft does not break the poll', async () => {
-  const term = fakeTerminal({ rows: [{ text: DRAFT_ROW }, { text: REC_ROW }] });
-  const recs = [];
-  const watcher = track(createVoiceSubmitWatcher(term, {
-    getConfig: () => null,
-    getAttention: () => null,
-    write: () => {},
-    quietMs: TEST_QUIET_MS,
-    pollMs: 1,
-    recorderScope: () => true,
-    noteVoiceRecording: () => recs.push('REC'),
-    noteVoiceDraft: () => { throw new Error('ipc gone'); },
-  }));
+// The MEASURED multi-row shape (pty + xterm, CLI 2.1.251, 60 cols): the CLI
+// HARD-PAINTS continuation rows — `isWrapped` is false on every one — and
+// indents them with two ASCII spaces, while the head carries U+276F U+00A0.
+const WRAP_HEAD = '\u276f\u00a0this is a long dictated thought that will certainly';
+const WRAP_TAIL_1 = '  exceed a single visual row of sixty columns and keep';
+const WRAP_TAIL_2 = '  going well past it';
+
+test('a WRAPPED dictated draft is reported — the ticket’s own case', async () => {
+  // A long transcription is precisely the draft that occupies more than one
+  // row, so a single-row read left the protection off in the case it exists
+  // for. The cursor is on the LAST continuation row, which carries no marker.
+  const h = draftReportHarness({ rows: [WRAP_HEAD, WRAP_TAIL_1, WRAP_TAIL_2] });
   await settle(10);
-  assert.ok(recs.length > 0,
-    'the poll survived a throwing draft reporter — the recorder report still ran');
-  watcher.dispose();
+  assert.ok(h.drafts.length > 0,
+    'a draft that wraps must report — this is the long transcription he re-reads');
+  h.watcher.dispose();
+});
+
+test('continuation rows over TRANSCRIPT, with no composer head, report nothing', async () => {
+  // The bound's other side. Indented rows are not evidence by themselves: the
+  // scan must find the marker at the head, and a screen of transcript above the
+  // cursor must decline — otherwise the report fires on ordinary output.
+  const h = draftReportHarness({
+    rows: ['────────────────────────', '  ⚠ Transcript saving is off', '  going well past it'],
+  });
+  await settle(10);
+  assert.ok(h.recs.length > 0, 'ENTER: the recorder is lit, so only the composer scan can be declining');
+  assert.deepStrictEqual(h.drafts, [],
+    'no marker at the head ⇒ no draft, however many indented rows sit above the cursor');
+  h.watcher.dispose();
+});
+
+test('a wrapped EMPTY composer is not a draft', async () => {
+  // The head is reachable and holds nothing. Reported separately from the
+  // single-row empty case because the scan reaches it by a different path.
+  const h = draftReportHarness({ rows: ['some transcript', EMPTY_COMPOSER] });
+  await settle(10);
+  assert.deepStrictEqual(h.drafts, [], 'an empty composer holds nothing to protect');
+  h.watcher.dispose();
+});
+
+test('a throwing noteVoiceDraft does not break the poll', async () => {
+  // Counted, not inferred. An earlier revision built its own terminal WITHOUT
+  // the cursor mark, so the cursor sat on the indicator row, the draft read
+  // declined, and the throwing reporter was never called at all — the subject
+  // passed off the RECORDER report, which this change does not touch, and
+  // deleting the throw left it green. `calls > 1` is what carries it: the first
+  // proves the throw happened, the second that the poll ran again past it.
+  let calls = 0;
+  const h = draftReportHarness({
+    onDraft: () => { calls++; throw new Error('ipc gone'); },
+  });
+  await settle(30);
+  assert.ok(calls > 1,
+    `the poll must keep reporting past a throwing reporter (calls=${calls})`);
+  h.watcher.dispose();
 });
 
 test('a throwing noteVoiceRecording does not break the poll', async () => {

@@ -24,7 +24,7 @@
 
 const {
   findSubmit, matchTrigger, shouldFire, shouldRearm, composerIsEmpty,
-  composerHasDraft, recorderBlocksRearm, isVoiceOriginated, recordingObserved,
+  composerHasDraftRows, recorderBlocksRearm, isVoiceOriginated, recordingObserved,
 } = require('./lib/voice-submit');
 // The SAME classifier the main process and typeToTakeControl use. A second
 // predicate here would drift from the one that already decides what counts as a
@@ -472,6 +472,30 @@ function createVoiceSubmitWatcher(terminal, {
     } catch { return null; }
   }
 
+  // The composer rows ending at the CURSOR's row, top→bottom, each read WHOLE.
+  // Upward because a long draft's head — the row carrying the marker, which is
+  // the only evidence a draft exists — is ABOVE the cursor; `indicatorRows`
+  // scans downward for the opposite reason, the indicator painting to the right
+  // and below.
+  //
+  // Bounded by `terminal.rows`, so a screen with no marker anywhere costs one
+  // screen of reads and not a walk through scrollback. Null (never []) when the
+  // screen cannot be read, so `composerHasDraftRows` declines rather than
+  // guessing — an unreadable screen must not park deliveries.
+  function composerRows() {
+    if (!onNormalBuffer()) return null;
+    try {
+      const buf = terminal.buffer.active;
+      const out = [];
+      for (let y = buf.cursorY; y >= 0 && out.length < terminal.rows; y--) {
+        const line = buf.getLine(buf.baseY + y);
+        if (!line) break;
+        out.unshift(line.translateToString(true));
+      }
+      return out.length ? out : null;
+    } catch { return null; }
+  }
+
   function tick() {
     timer = null;
     if (disposed) return;
@@ -639,9 +663,9 @@ function createVoiceSubmitWatcher(terminal, {
     // every seat with text in its composer and quietly reroutes injection
     // box-wide.
     if (inScope && noteVoiceDraft && lastLitAt && now() - lastLitAt < voiceDraftMs) {
-      let draftRow = null;
-      try { draftRow = cursorRow(); } catch { draftRow = null; }
-      if (composerHasDraft(draftRow)) { try { noteVoiceDraft(); } catch {} }
+      let rows = null;
+      try { rows = composerRows(); } catch { rows = null; }
+      if (composerHasDraftRows(rows)) { try { noteVoiceDraft(); } catch {} }
     }
 
     // A null config is an out-of-scope SEAT, not a stop: getConfig returns it

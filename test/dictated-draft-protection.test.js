@@ -23,7 +23,7 @@ const path = require('node:path');
 const { InjectQueue } = require('../inject-queue');
 const { createSessionManager } = require('../session-manager');
 const { isDraftOpen } = require('../proxy-util');
-const { parkDelivery, drainPending, hasPending, hasActivePending, countPending } = require('../pending-store');
+const { parkDelivery, drainPending, hasPending, hasActivePending } = require('../pending-store');
 const { composerHasDraft, composerIsEmpty } = require('../renderer/lib/voice-submit');
 
 const settle = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -43,17 +43,18 @@ async function settleQueue(h) { await h.m._injectQueueFor(h.s).enqueue(SENTINEL)
 // is the one engine.js sets, and its size is not what this file is pinning.
 const DRAFT_STALE_MS = 150;
 
-function boot({ draftStale = DRAFT_STALE_MS } = {}) {
+function boot({ draftStale = DRAFT_STALE_MS, recorderStale = 0 } = {}) {
   const PENDING_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-vdraft-'));
   const SessionManager = createSessionManager({
     InjectQueue,
     PENDING_DIR, parkDelivery, drainPending, hasActivePending, isDraftOpen,
+    countPending: require('../pending-store').countPending,
     INJECT_QUIET_MS: 0,
     // Large: the park cap is a real bound on this protection and has its own
     // subject below, but it must not fire underneath the others.
     INJECT_QUIET_MAXWAIT: 3_600_000,
     INJECT_BOOT_MAXWAIT: 0,
-    INJECT_SPEAKING_STALE_MS: 0,     // the RECORDER window: expired throughout, so
+    INJECT_SPEAKING_STALE_MS: recorderStale,   // the RECORDER window: 0 by default, so
                                      // nothing below can pass for the `speaking` gate
     INJECT_VOICE_DRAFT_STALE_MS: draftStale,
     SHORT_TEXT_DELAY: 0, LONG_TEXT_DELAY: 0, LONG_TEXT_THRESHOLD: 1e9,
@@ -113,17 +114,26 @@ test('REGRESSION: with the recorder dark and no dictated draft, the injection go
   cleanup(h);
 });
 
-test('the protection outlives the recorder — the case the 3s speaking window cannot cover', async () => {
-  // INJECT_SPEAKING_STALE_MS is 0 in this harness, so the `speaking` gate is
-  // fully expired at every instant below. He stopped talking; the words are still on
-  // screen; this is the operator's actual exposure.
-  const h = boot();
-  h.m.noteVoiceDraft('hand');
-  await settle(DRAFT_STALE_MS / 3);            // the recorder has been dark this whole time
-  h.m._injectText(h.s, 'a dm', { parkable: true });
-  await settleQueue(h);
-  assert.deepStrictEqual(h.writes, SENTINEL_BYTES,
-    'still protected after the recorder went dark — the DM parked, only the sentinel landed');
+test('the protection outlives the RECORDER window by a stated multiple', async () => {
+  // Bounded against something the first subject does not already prove. There
+  // the recorder window is merely expired; here the level is held across a span
+  // that is a stated MULTIPLE of it, which is the shape of the operator's real
+  // exposure — he stopped talking long ago and is still reading. Anchored to
+  // RECORDER_MS rather than to a bare number so the relationship survives a
+  // retune of either constant.
+  const RECORDER_MS = 30;                       // the harness's speaking window
+  const h = boot({ recorderStale: RECORDER_MS });
+  const poll = setInterval(() => h.m.noteVoiceDraft('hand'), DRAFT_STALE_MS / 5);
+  try {
+    h.m.noteVoiceDraft('hand');
+    await settle(RECORDER_MS * 10);             // ten recorder windows of pure reading
+    h.m._injectText(h.s, 'a dm', { parkable: true });
+    await settleQueue(h);
+    assert.ok(Date.now() - (h.s.lastVoiceRecordingTs || 0) > RECORDER_MS * 5,
+      'ENTER: the recorder window is long gone, or this proves nothing the first subject does not');
+    assert.deepStrictEqual(h.writes, SENTINEL_BYTES,
+      'still protected ten recorder-windows after he stopped talking');
+  } finally { clearInterval(poll); }
   assert.ok(hasPending(h.PENDING_DIR, 'hand'));
   cleanup(h);
 });
@@ -232,4 +242,76 @@ test('composerHasDraft is NOT the negation of composerIsEmpty', () => {
   const whitespaceOnly = '❯    ';
   assert.strictEqual(composerHasDraft(whitespaceOnly), false,
     'a composer holding only spaces is not a draft to protect');
+});
+
+// --- the drains agree with the divert about what an open draft is ------------
+//
+// The idle and boot-ready drains guarded on the TYPED predicate alone. With a
+// dictated draft open they passed that guard, `drainPending` CLAIMED the parked
+// files destructively, and the divert re-parked the joined text as ONE ACTIVE
+// entry. No message is lost — the divert catches it — but a `.passive.` park
+// comes back ACTIVE, and a passive park never earns a turn by design. The
+// promotion wakes a seat that was meant to stay quiet.
+//
+// Asserted on the FILENAMES on disk, because that is where the distinction
+// lives: `<seq>.passive.json` vs `<seq>.json`.
+
+const fsp = require('node:fs');
+
+function parkedNames(h) {
+  const dir = path.join(h.PENDING_DIR, 'hand');
+  try { return fsp.readdirSync(dir).sort(); } catch { return []; }
+}
+
+test('the idle drain leaves a PASSIVE park passive while a dictated draft is open', async () => {
+  const h = boot();
+  // BOTH kinds. A passive entry ALONE cannot reach the guard under test:
+  // `hasActivePending` is false, so the drain returns one line earlier and the
+  // subject would pass without ever exercising the draft check. The active entry
+  // is what carries the drain past that bail and up to the guard, and
+  // `drainPending` claims the whole DIRECTORY — which is how the passive one
+  // gets swept up and re-parked as active.
+  parkDelivery(h.PENDING_DIR, 'hand', '[agent:from x] passive note', '1', null, true, null);
+  parkDelivery(h.PENDING_DIR, 'hand', '[agent:from y] active note', '2', null, false, null);
+  assert.ok(parkedNames(h).some((n) => n.includes('.passive.')),
+    'ENTER: the entry really is parked passive, or the promotion below cannot be observed');
+  assert.ok(hasActivePending(h.PENDING_DIR, 'hand'),
+    'ENTER: an active entry is present, or the drain bails before the guard under test');
+
+  h.m.noteVoiceDraft('hand');
+  h.m._drainPendingAtIdle(h.s);
+  await settleQueue(h);
+
+  assert.deepStrictEqual(h.writes, SENTINEL_BYTES,
+    'nothing may be spliced into his dictated draft');
+  assert.ok(parkedNames(h).some((n) => n.includes('.passive.')),
+    'the passive entry must still be PASSIVE — a re-park as active promotes it, '
+    + 'and a passive park never earns a turn');
+  cleanup(h);
+});
+
+test('the boot-ready drain does the same', async () => {
+  const h = boot();
+  parkDelivery(h.PENDING_DIR, 'hand', '[agent:from x] passive note', '1', null, true, null);
+  parkDelivery(h.PENDING_DIR, 'hand', '[agent:from y] active note', '2', null, false, null);
+  h.m.noteVoiceDraft('hand');
+  h.m._drainPendingAtBootReady(h.s);
+  await settleQueue(h);
+
+  assert.deepStrictEqual(h.writes, SENTINEL_BYTES);
+  assert.ok(parkedNames(h).some((n) => n.includes('.passive.')),
+    'the boot-ready drain must not promote a passive park either');
+  cleanup(h);
+});
+
+test('ENTER: with NO dictated draft, the idle drain still delivers an ACTIVE park', async () => {
+  // The guard must not have been widened into a drain that never fires. Without
+  // this, both subjects above pass for a drain that is simply dead.
+  const h = boot();
+  parkDelivery(h.PENDING_DIR, 'hand', '[agent:from x] active note', '1', null, false, null);
+  h.m._drainPendingAtIdle(h.s);
+  await settleQueue(h);
+  assert.deepStrictEqual(h.writes, ['\x15', '[agent:from x] active note', '\r', ...SENTINEL_BYTES],
+    'an undrafted seat still gets its parked message delivered');
+  cleanup(h);
 });

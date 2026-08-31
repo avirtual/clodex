@@ -205,6 +205,65 @@ function composerHasDraft(row) {
   return COMPOSER_DRAFT.test(row);
 }
 
+// A CONTINUATION row of a multi-row composer draft.
+//
+// MEASURED 2026-08-31 through a real pty + a real xterm at 60 cols (CLI
+// 2.1.251), by typing a draft longer than one row and never submitting it:
+//
+//   row 7  isWrapped=false  U+276F U+00A0 'this is a long dictated thought…'
+//   row 8  isWrapped=false  U+0020 U+0020 'exceed a single visual row…'
+//   row 9  isWrapped=false  U+0020 U+0020 'going well past it'   ← the cursor
+//
+// TWO facts decide the reader, and neither is guessable from a fixture. The CLI
+// HARD-PAINTS its continuation rows (CR + cursor-down, then a fresh indent), so
+// `isWrapped` is FALSE on every one of them — an isWrapped walk finds nothing
+// and a reader built on one is dead on the case it exists for. And the indent is
+// two ASCII U+0020, NOT the U+00A0 that separates the marker on the head row, so
+// the two cannot be matched by one pattern.
+//
+// `\S` is required: a row of pure whitespace is the blank line under the
+// composer, not a continuation of it.
+const COMPOSER_CONTINUATION = /^\u0020\u0020\S/u;
+
+function composerContinues(row) {
+  if (typeof row !== 'string') return false;
+  return COMPOSER_CONTINUATION.test(row);
+}
+
+// Does the composer hold a draft, given the buffer rows ENDING at the cursor's
+// row (top→bottom, each read WHOLE)? A long dictated draft — the exact case the
+// protection exists for — puts the cursor on a continuation row that carries no
+// marker, so a single-row read reports nothing and the protection never engages.
+//
+// Reads WHOLE rows rather than truncating at the cursor, and that differs from
+// the submit path deliberately: the submit path looks for the trigger phrase,
+// which ends the utterance and so is never to the right of the caret, and it
+// must not act on stale text ahead of it. This asks only whether a draft
+// EXISTS, and text the operator left to the right of the caret is still his
+// draft.
+//
+// This does NOT re-litigate the walk deleted from the submit path. That walk was
+// rightly deleted: the phrase lands on the LAST visual row, which is the cursor's
+// row, so walking up bought it nothing. The evidence THIS question needs is the
+// marker at the composer's HEAD. Same buffer, opposite end — do not delete this
+// one on the strength of that deletion.
+//
+// Polarity, and it is the whole reason this is a positive rule: fell off the top,
+// no marker found, a non-composer row in the way, or anything unreadable ⇒ FALSE.
+// Main PARKS deliveries on this answer, and a park nothing can release is a seat
+// nobody can reach.
+function composerHasDraftRows(rows) {
+  if (!Array.isArray(rows) || !rows.length) return false;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (typeof row !== 'string') return false;
+    if (composerHasDraft(row)) return true;   // the head, holding text
+    if (composerIsEmpty(row)) return false;   // the head, holding nothing
+    if (!composerContinues(row)) return false;
+  }
+  return false;
+}
+
 // The CLI's own recording indicator, as it lands in the BUFFER. Measured
 // 2026-08-31 through a real xterm replaying the painted spans (CLI 2.1.251):
 // the row reads ` agents ⏺REC · tap to send`, and the bullet and
@@ -363,6 +422,8 @@ module.exports = {
   shouldRearm,
   composerIsEmpty,
   composerHasDraft,
+  composerContinues,
+  composerHasDraftRows,
   recorderBlocksRearm,
   isVoiceOriginated,
   recordingObserved,

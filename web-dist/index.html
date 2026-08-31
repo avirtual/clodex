@@ -23635,6 +23635,22 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (typeof row !== "string") return false;
         return COMPOSER_DRAFT.test(row);
       }
+      var COMPOSER_CONTINUATION = /^\u0020\u0020\S/u;
+      function composerContinues(row) {
+        if (typeof row !== "string") return false;
+        return COMPOSER_CONTINUATION.test(row);
+      }
+      function composerHasDraftRows(rows) {
+        if (!Array.isArray(rows) || !rows.length) return false;
+        for (let i = rows.length - 1; i >= 0; i--) {
+          const row = rows[i];
+          if (typeof row !== "string") return false;
+          if (composerHasDraft(row)) return true;
+          if (composerIsEmpty(row)) return false;
+          if (!composerContinues(row)) return false;
+        }
+        return false;
+      }
       var RECORDING = /\u23faREC/u;
       var PROCESSING = /Voice:\s*processing/i;
       function recorderBlocksRearm(rows) {
@@ -23676,6 +23692,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         shouldRearm,
         composerIsEmpty,
         composerHasDraft,
+        composerContinues,
+        composerHasDraftRows,
         recorderBlocksRearm,
         isVoiceOriginated,
         recordingObserved,
@@ -23694,7 +23712,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         shouldFire,
         shouldRearm,
         composerIsEmpty,
-        composerHasDraft,
+        composerHasDraftRows,
         recorderBlocksRearm,
         isVoiceOriginated,
         recordingObserved
@@ -23836,6 +23854,21 @@ ${m[2].replace(/^\r?\n/, "")}`;
             return null;
           }
         }
+        function composerRows() {
+          if (!onNormalBuffer()) return null;
+          try {
+            const buf = terminal.buffer.active;
+            const out = [];
+            for (let y = buf.cursorY; y >= 0 && out.length < terminal.rows; y--) {
+              const line = buf.getLine(buf.baseY + y);
+              if (!line) break;
+              out.unshift(line.translateToString(true));
+            }
+            return out.length ? out : null;
+          } catch {
+            return null;
+          }
+        }
         function tick() {
           timer = null;
           if (disposed) return;
@@ -23933,13 +23966,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (observed) lastLitAt = now();
           if (inScope && noteVoiceDraft && lastLitAt && now() - lastLitAt < voiceDraftMs) {
-            let draftRow = null;
+            let rows = null;
             try {
-              draftRow = cursorRow();
+              rows = composerRows();
             } catch {
-              draftRow = null;
+              rows = null;
             }
-            if (composerHasDraft(draftRow)) {
+            if (composerHasDraftRows(rows)) {
               try {
                 noteVoiceDraft();
               } catch {
