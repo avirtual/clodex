@@ -73,7 +73,7 @@ const SCANNED_MODULES = [
   'remind-scheduler.js',
   'argv-merge.js',
   'transcript.js',
-  // The spoken-reply pair (t597). speakable.js is a pure string leaf; speaker.js
+  // The spoken-reply pair. speakable.js is a pure string leaf; speaker.js
   // owns the `say` child and must reach for NOTHING in the engine scope — it is
   // constructed there and injected, so a grab for `uiSettings` or a session map
   // would put the "may I speak" decision in the process owner, where the gates

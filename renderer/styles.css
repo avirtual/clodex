@@ -1776,7 +1776,7 @@ html, body {
 #voice-popover.hidden { display: none; }
 #voice-popover .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 .voice-rows { display: flex; flex-direction: column; gap: 2px; }
-/* The output half of the voice popover (t597). */
+/* The output half of the voice popover. */
 .speak-host { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px; }
 .speak-row { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11px; color: var(--text); }
 .speak-sub { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 10px; color: var(--text-dim); margin-top: 4px; }

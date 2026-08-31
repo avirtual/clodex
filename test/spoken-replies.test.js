@@ -1,4 +1,4 @@
-// t597 — speaking the agent's final reply aloud.
+// Speaking the agent's final reply aloud.
 //
 // Nobody here can HEAR the output, so nothing below claims the speech is
 // pleasant; that test is the operator's. What is provable is the mechanism:

@@ -11,7 +11,7 @@
 // Claude only. Codex has no `/voice`, so a button on a Codex seat's bar would
 // name a setting that seat cannot have.
 //
-// It also carries the OUTPUT half (t597): whether Clodex reads the final reply
+// It also carries the OUTPUT half: whether Clodex reads the final reply
 // aloud. Input and output are one popover because they are one conversation
 // across the room, and because the two interlock — a narration is suppressed
 // while the recorder is lit and killed when it lights.
